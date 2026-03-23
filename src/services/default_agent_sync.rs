@@ -7,7 +7,7 @@ use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
 };
 use crate::services::user_agent_presets::{
-    filter_allowed_tools, normalize_tool_list, PresetSyncMode, PresetSyncSummary,
+    build_requested_tool_names_for_sync, PresetSyncMode, PresetSyncSummary,
 };
 use crate::services::worker_card_settings::{
     canonicalize_default_agent_config, collect_context_skill_names,
@@ -21,6 +21,7 @@ use crate::storage::{
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use anyhow::Result;
 use chrono::Utc;
+use std::collections::HashSet;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
@@ -66,13 +67,21 @@ fn synthetic_user(user_id: &str) -> UserAccountRecord {
     }
 }
 
-fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
+async fn collect_user_skill_name_keys(state: &AppState, user_id: &str) -> HashSet<String> {
+    let context = build_user_tool_context(state, user_id).await;
+    collect_context_skill_names(&context)
+}
+
+fn normalize_default_agent_config(
+    config: &mut DefaultAgentConfig,
+    skill_name_keys: &HashSet<String>,
+) {
     if config.name.trim().is_empty() {
         config.name = DEFAULT_AGENT_NAME.to_string();
     } else {
         config.name = config.name.trim().to_string();
     }
-    let normalized = canonicalize_default_agent_config(config, &std::collections::HashSet::new());
+    let normalized = canonicalize_default_agent_config(config, skill_name_keys);
     config.description = normalized.description;
     config.system_prompt = normalized.system_prompt;
     config.ability_items = normalized.ability_items;
@@ -93,9 +102,12 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     }
 }
 
-fn config_from_record(record: &UserAgentRecord) -> DefaultAgentConfig {
+fn config_from_record(
+    record: &UserAgentRecord,
+    skill_name_keys: &HashSet<String>,
+) -> DefaultAgentConfig {
     let mut config = default_agent_config_from_record(record);
-    normalize_default_agent_config(&mut config);
+    normalize_default_agent_config(&mut config, skill_name_keys);
     config
 }
 
@@ -111,6 +123,7 @@ fn record_from_config(user_id: &str, config: &DefaultAgentConfig) -> UserAgentRe
 async fn load_default_agent_config(
     state: &AppState,
     user_id: &str,
+    skill_name_keys: &HashSet<String>,
 ) -> Result<Option<DefaultAgentConfig>> {
     let raw = state
         .user_store
@@ -126,7 +139,7 @@ async fn load_default_agent_config(
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    normalize_default_agent_config(&mut parsed);
+    normalize_default_agent_config(&mut parsed, skill_name_keys);
     Ok(Some(parsed))
 }
 
@@ -136,6 +149,7 @@ async fn build_default_agent_config(
 ) -> DefaultAgentConfig {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed = compute_allowed_tool_names(user, &context);
+    let skill_name_keys = collect_context_skill_names(&context);
     let tool_names = curated_default_tool_names(&allowed);
     let mut config = DefaultAgentConfig {
         name: DEFAULT_AGENT_NAME.to_string(),
@@ -153,7 +167,7 @@ async fn build_default_agent_config(
         created_at: now_ts(),
         updated_at: now_ts(),
     };
-    normalize_default_agent_config(&mut config);
+    normalize_default_agent_config(&mut config, &skill_name_keys);
     config
 }
 
@@ -161,7 +175,8 @@ async fn resolve_default_agent_config(
     state: &AppState,
     user: &UserAccountRecord,
 ) -> Result<DefaultAgentConfig> {
-    if let Some(config) = load_default_agent_config(state, &user.user_id).await? {
+    let skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
+    if let Some(config) = load_default_agent_config(state, &user.user_id, &skill_name_keys).await? {
         return Ok(config);
     }
     if let Some(record) = state
@@ -169,7 +184,7 @@ async fn resolve_default_agent_config(
         .storage_backend()
         .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)?
     {
-        return Ok(config_from_record(&record));
+        return Ok(config_from_record(&record, &skill_name_keys));
     }
     Ok(build_default_agent_config(state, user).await)
 }
@@ -186,8 +201,11 @@ pub async fn load_effective_default_agent_record(
     Ok(record_from_config(&owner.user_id, &config))
 }
 
-fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot {
-    let mut snapshot = preset_snapshot_from_record(record, &std::collections::HashSet::new());
+fn snapshot_from_default_record(
+    record: &UserAgentRecord,
+    skill_name_keys: &HashSet<String>,
+) -> UserAgentPresetSnapshot {
+    let mut snapshot = preset_snapshot_from_record(record, skill_name_keys);
     snapshot.model_name = None;
     snapshot
 }
@@ -201,13 +219,13 @@ async fn build_target_snapshot(
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
     let skill_name_keys = collect_context_skill_names(&context);
     let required_skill_names = curated_default_skill_names(&allowed_tool_names);
-    let tool_names = if template.tool_names.is_empty() {
-        curated_default_tool_names(&allowed_tool_names)
-    } else {
-        let mut merged = template.tool_names.clone();
-        merged.extend(required_skill_names);
-        filter_allowed_tools(&normalize_tool_list(merged), &allowed_tool_names)
-    };
+    let tool_names = build_requested_tool_names_for_sync(
+        &template.tool_names,
+        &template.declared_tool_names,
+        &template.declared_skill_names,
+        &required_skill_names,
+        &allowed_tool_names,
+    );
     let (declared_tool_names, declared_skill_names) = resolve_selected_declared_names(
         &tool_names,
         &template.declared_tool_names,
@@ -255,6 +273,8 @@ fn plan_snapshot_sync(
     compare_field!(system_prompt);
     compare_field!(ability_items);
     compare_field!(tool_names);
+    compare_field!(declared_tool_names);
+    compare_field!(declared_skill_names);
     compare_field!(preset_questions);
     compare_field!(approval_mode);
     compare_field!(status);
@@ -289,6 +309,8 @@ fn apply_sync_mode(
     sync_field!(system_prompt);
     sync_field!(ability_items);
     sync_field!(tool_names);
+    sync_field!(declared_tool_names);
+    sync_field!(declared_skill_names);
     sync_field!(preset_questions);
     sync_field!(approval_mode);
     sync_field!(status);
@@ -346,13 +368,14 @@ fn has_explicit_default_agent_state(state: &AppState, user_id: &str) -> Result<b
         .is_some_and(|raw| !raw.trim().is_empty()))
 }
 
-fn persist_default_agent_state(
+async fn persist_default_agent_state(
     state: &AppState,
     user_id: &str,
     record: &UserAgentRecord,
     sync_created: bool,
 ) -> Result<()> {
-    let mut config = config_from_record(record);
+    let skill_name_keys = collect_user_skill_name_keys(state, user_id).await;
+    let mut config = config_from_record(record, &skill_name_keys);
     if sync_created {
         let now = now_ts();
         config.created_at = now;
@@ -396,7 +419,9 @@ pub async fn sync_default_agent_across_users(
 ) -> Result<PresetSyncSummary> {
     let template_record =
         load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID).await?;
-    let template_config = config_from_record(&template_record);
+    let template_skill_name_keys =
+        collect_user_skill_name_keys(state, PRESET_TEMPLATE_USER_ID).await;
+    let template_config = config_from_record(&template_record, &template_skill_name_keys);
     let (users, _) = state.user_store.list_users(None, unit_scope, 0, 0)?;
     let mut summary = PresetSyncSummary {
         total_users: users.len(),
@@ -406,7 +431,8 @@ pub async fn sync_default_agent_across_users(
     for user in users {
         state.user_store.ensure_default_hive(&user.user_id)?;
         let current_record = load_effective_default_agent_record(state, &user.user_id).await?;
-        let current = snapshot_from_default_record(&current_record);
+        let current_skill_name_keys = collect_user_skill_name_keys(state, &user.user_id).await;
+        let current = snapshot_from_default_record(&current_record, &current_skill_name_keys);
         let target = build_target_snapshot(state, &user, &template_config).await;
         let binding = load_sync_binding(state, &user.user_id)?;
         let binding_matches = binding
@@ -456,7 +482,7 @@ pub async fn sync_default_agent_across_users(
         let applied = apply_sync_mode(&mut next_record, &baseline, &target, mode);
         let write_config = !has_explicit || applied || !binding_matches;
         if write_config {
-            persist_default_agent_state(state, &user.user_id, &next_record, !has_explicit)?;
+            persist_default_agent_state(state, &user.user_id, &next_record, !has_explicit).await?;
         }
         save_sync_binding(
             state,

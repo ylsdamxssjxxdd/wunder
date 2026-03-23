@@ -547,6 +547,190 @@ async fn admin_default_agent_sync_safe_and_force_respects_user_override() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_default_agent_sync_force_updates_tools_and_skills() {
+    let context = build_test_context_with_config("default_sync_tools_user_a", |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.skills.enabled = vec!["技能创建器".to_string()];
+    })
+    .await;
+    context
+        .state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = context
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+    context
+        .state
+        .user_store
+        .create_user(
+            "default_sync_tools_user_b",
+            Some("default_sync_tools_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+
+    let available_tools =
+        list_available_tool_names(&context.app, "default_sync_tools_user_a").await;
+    let tool_name = "读取文件".to_string();
+    let skill_name = "技能创建器".to_string();
+    assert!(
+        available_tools.iter().any(|name| name == &tool_name),
+        "expected default-agent catalog to contain {tool_name}"
+    );
+    assert!(
+        available_tools.iter().any(|name| name == &skill_name),
+        "expected default-agent catalog to contain {skill_name}"
+    );
+
+    let template_default = update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-description",
+            "system_prompt": "template-system-prompt",
+            "tool_names": [tool_name.clone(), skill_name.clone()],
+            "preset_questions": ["What should I do next?"],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 7
+        }),
+    )
+    .await;
+    assert!(
+        read_tool_names(&template_default)
+            .iter()
+            .any(|name| name == &tool_name),
+        "template default agent should keep tool {tool_name}"
+    );
+    assert!(
+        read_tool_names(&template_default)
+            .iter()
+            .any(|name| name == &skill_name),
+        "template default agent should keep skill {skill_name}"
+    );
+    assert_eq!(
+        read_declared_skill_names(&template_default),
+        vec![skill_name.clone()]
+    );
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_sync_tools_user_b",
+        json!({
+            "name": "User Customized Default",
+            "description": "custom-description",
+            "system_prompt": "custom-system-prompt",
+            "tool_names": [],
+            "preset_questions": ["custom-question"],
+            "approval_mode": "suggest",
+            "status": "active",
+            "sandbox_container_id": 3
+        }),
+    )
+    .await;
+
+    let safe_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "safe", None).await;
+    let safe_created = safe_summary["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    let safe_overridden = safe_summary["data"]["summary"]["overridden_agents"]
+        .as_u64()
+        .expect("overridden_agents should be number");
+    assert!(
+        safe_created >= 1,
+        "expected at least 1 created agent in safe sync, got {safe_created}"
+    );
+    assert!(
+        safe_overridden >= 1,
+        "expected at least 1 overridden default agent in safe sync, got {safe_overridden}"
+    );
+
+    let user_a_after_safe = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_sync_tools_user_a",
+    )
+    .await;
+    assert!(
+        read_tool_names(&user_a_after_safe)
+            .iter()
+            .any(|name| name == &tool_name),
+        "safe sync should apply tool {tool_name} for user A"
+    );
+    assert!(
+        read_tool_names(&user_a_after_safe)
+            .iter()
+            .any(|name| name == &skill_name),
+        "safe sync should apply skill {skill_name} for user A"
+    );
+    assert_eq!(
+        read_declared_skill_names(&user_a_after_safe),
+        vec![skill_name.clone()]
+    );
+
+    let user_b_after_safe = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_sync_tools_user_b",
+    )
+    .await;
+    assert!(
+        read_tool_names(&user_b_after_safe).is_empty(),
+        "safe sync should preserve customized default-agent tools for user B"
+    );
+    assert!(
+        read_declared_skill_names(&user_b_after_safe).is_empty(),
+        "safe sync should preserve customized default-agent declared skills for user B"
+    );
+
+    let force_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "force", None).await;
+    let force_updated = force_summary["data"]["summary"]["updated_agents"]
+        .as_u64()
+        .expect("updated_agents should be number");
+    assert!(
+        force_updated >= 1,
+        "expected at least 1 updated agent in force sync, got {force_updated}"
+    );
+
+    let user_b_after_force = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_sync_tools_user_b",
+    )
+    .await;
+    assert!(
+        read_tool_names(&user_b_after_force)
+            .iter()
+            .any(|name| name == &tool_name),
+        "force sync should apply tool {tool_name} for user B"
+    );
+    assert!(
+        read_tool_names(&user_b_after_force)
+            .iter()
+            .any(|name| name == &skill_name),
+        "force sync should apply skill {skill_name} for user B"
+    );
+    assert_eq!(
+        read_declared_skill_names(&user_b_after_force),
+        vec![skill_name.clone()],
+        "force sync should apply declared skills for user B"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_agent_rename_does_not_spawn_duplicate_bootstrap_copy() {
     let context = build_test_context_with_config("preset_rename_user", |config| {
         config.user_agents.presets = vec![build_preset_config("preset_bootstrap_rename", None)];
@@ -965,6 +1149,107 @@ async fn preset_tool_sync_safe_and_force_respects_user_override() {
         user_b_tools_v3.iter().any(|name| name == &tool_b),
         "force sync should apply preset tool {tool_b} for customized user B"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_force_sync_repairs_declared_skills_for_users() {
+    let user_a_id = "preset_skill_sync_user_a";
+    let context = build_test_context_with_config(user_a_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.skills.enabled = vec!["技能创建器".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_sync_skill_names", None)];
+    })
+    .await;
+
+    let user_b = context
+        .state
+        .user_store
+        .create_user(
+            "preset_skill_sync_user_b",
+            Some("preset_skill_sync_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+    let token_b = context
+        .state
+        .user_store
+        .create_session_token(&user_b.user_id)
+        .expect("create second user token")
+        .token;
+
+    let available_tools = list_available_tool_names(&context.app, user_a_id).await;
+    let tool_name = "读取文件".to_string();
+    let skill_name = "技能创建器".to_string();
+    assert!(
+        available_tools.iter().any(|name| name == &tool_name),
+        "expected available tool list to contain {tool_name}"
+    );
+    assert!(
+        available_tools.iter().any(|name| name == &skill_name),
+        "expected available tool list to contain {skill_name}"
+    );
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_sync_skill_names")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_name.clone()]);
+            item["declared_tool_names"] = json!([tool_name.clone()]);
+            item["declared_skill_names"] = json!([skill_name.clone()]);
+        }
+    }
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    let normalized_preset = find_preset_item(&updated_items, &preset_id);
+    let normalized_tool_names = read_tool_names(normalized_preset);
+    assert!(
+        normalized_tool_names.iter().any(|name| name == &tool_name),
+        "normalized preset should keep tool {tool_name}"
+    );
+    assert!(
+        normalized_tool_names.iter().any(|name| name == &skill_name),
+        "normalized preset should merge declared skill {skill_name} into selected tools"
+    );
+    assert_eq!(
+        read_declared_skill_names(normalized_preset),
+        vec![skill_name.clone()]
+    );
+
+    let force_summary = sync_preset(&context.app, &preset_id, "force", None).await;
+    let created_agents = force_summary["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_agents >= 2,
+        "expected at least 2 created agents in force skill sync, got {created_agents}"
+    );
+
+    let user_a_agents = list_user_agents(&context.app, &context.token).await;
+    let user_b_agents = list_user_agents(&context.app, &token_b).await;
+    for (label, agents) in [("user A", user_a_agents), ("user B", user_b_agents)] {
+        let synced_agent = find_agent_by_name(&agents, PRESET_NAME);
+        let synced_tool_names = read_tool_names(synced_agent);
+        assert!(
+            synced_tool_names.iter().any(|name| name == &tool_name),
+            "{label} should contain preset tool {tool_name} after force sync"
+        );
+        assert!(
+            synced_tool_names.iter().any(|name| name == &skill_name),
+            "{label} should contain preset skill {skill_name} after force sync"
+        );
+        assert_eq!(
+            read_declared_skill_names(synced_agent),
+            vec![skill_name.clone()],
+            "{label} should keep preset declared skills after force sync"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

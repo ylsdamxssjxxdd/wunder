@@ -211,10 +211,10 @@ pub fn canonicalize_worker_card_update(
     let explicit_declared_tool_names = normalize_tool_list(update.declared_tool_names.clone());
     let explicit_declared_skill_names = normalize_tool_list(update.declared_skill_names.clone());
     if selected_tool_names.is_empty() {
-        selected_tool_names = explicit_declared_tool_names.clone();
-        selected_tool_names.extend(explicit_declared_skill_names.iter().cloned());
-        selected_tool_names = normalize_tool_list(selected_tool_names);
+        selected_tool_names.extend(explicit_declared_tool_names.iter().cloned());
     }
+    selected_tool_names.extend(explicit_declared_skill_names.iter().cloned());
+    selected_tool_names = normalize_tool_list(selected_tool_names);
     let (declared_tool_names, declared_skill_names) = if selected_tool_names.is_empty() {
         (explicit_declared_tool_names, explicit_declared_skill_names)
     } else {
@@ -500,6 +500,39 @@ mod tests {
         assert_eq!(normalized.preset_questions, vec!["q1".to_string()]);
         assert_eq!(normalized.approval_mode, "full_auto");
         assert_eq!(normalized.icon_color, "#aabbcc");
+    }
+
+    #[test]
+    fn canonicalize_preset_config_keeps_explicit_declared_skills_selected() {
+        let preset = UserAgentPresetConfig {
+            preset_id: "preset_demo".to_string(),
+            revision: 2,
+            name: "Demo Preset".to_string(),
+            description: "desc".to_string(),
+            system_prompt: "prompt".to_string(),
+            model_name: Some("model-a".to_string()),
+            icon_name: "spark".to_string(),
+            icon_color: "#ABC".to_string(),
+            sandbox_container_id: 2,
+            tool_names: vec!["read_file".to_string()],
+            declared_tool_names: vec!["read_file".to_string()],
+            declared_skill_names: vec!["planner".to_string()],
+            preset_questions: Vec::new(),
+            approval_mode: "full_auto".to_string(),
+            status: "active".to_string(),
+        };
+
+        let normalized =
+            canonicalize_preset_config(&preset, "preset_demo", &sample_skill_keys()).unwrap();
+        assert_eq!(
+            normalized.tool_names,
+            vec!["read_file".to_string(), "planner".to_string()]
+        );
+        assert_eq!(
+            normalized.declared_tool_names,
+            vec!["read_file".to_string()]
+        );
+        assert_eq!(normalized.declared_skill_names, vec!["planner".to_string()]);
     }
 
     #[test]

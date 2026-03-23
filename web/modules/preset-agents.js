@@ -35,6 +35,7 @@ const ensureState = () => {
       autoSaveTimer: 0,
       saving: false,
       savePromise: null,
+      toolListScrollTopByPresetKey: {},
     };
   }
   if (typeof state.presetAgents.selectedPresetId !== "string") {
@@ -492,11 +493,14 @@ const renderToolSelector = (selected) => {
   if (!list || !empty) {
     return;
   }
+  const presetKey = currentToolListPresetKey();
+  rememberToolListScroll(presetKey);
   list.textContent = "";
   const groups = Array.isArray(state.presetAgents.toolGroups) ? state.presetAgents.toolGroups : [];
   if (!groups.length) {
     empty.textContent = t("presetAgents.userAgent.toolsEmpty");
     empty.style.display = "block";
+    list.scrollTop = 0;
     return;
   }
   empty.style.display = "none";
@@ -556,6 +560,7 @@ const renderToolSelector = (selected) => {
       schedulePresetAutoSave({ immediate: true });
     });
   });
+  list.scrollTop = resolveToolListScrollTop(presetKey);
 };
 
 const parseDate = (value) => {
@@ -591,6 +596,31 @@ const selectedPreset = () =>
     presetId: state.presetAgents.selectedPresetId,
     name: state.presetAgents.selectedPresetName,
   }) || null;
+
+const currentToolListPresetKey = () => {
+  const preset = selectedPreset();
+  const presetId = normalizePresetId(preset?.preset_id);
+  if (presetId) {
+    return `id:${presetId}`;
+  }
+  const nameKey = normalizePresetNameKey(preset?.name);
+  return nameKey ? `name:${nameKey}` : "";
+};
+
+const rememberToolListScroll = (presetKey = currentToolListPresetKey()) => {
+  if (!presetKey || !elements.presetUserAgentTools) {
+    return;
+  }
+  state.presetAgents.toolListScrollTopByPresetKey[presetKey] = elements.presetUserAgentTools.scrollTop;
+};
+
+const resolveToolListScrollTop = (presetKey = currentToolListPresetKey()) => {
+  if (!presetKey) {
+    return 0;
+  }
+  const raw = state.presetAgents.toolListScrollTopByPresetKey?.[presetKey];
+  return Number.isFinite(Number(raw)) ? Number(raw) : 0;
+};
 
 const isDefaultPreset = (preset) =>
   Boolean(preset) &&
@@ -1751,6 +1781,16 @@ const bindPresetAutoSaveFields = () => {
 };
 
 const bindActions = () => {
+  if (elements.presetUserAgentTools.dataset.scrollBound !== "1") {
+    elements.presetUserAgentTools.dataset.scrollBound = "1";
+    elements.presetUserAgentTools.addEventListener(
+      "scroll",
+      () => {
+        rememberToolListScroll();
+      },
+      { passive: true }
+    );
+  }
   if (elements.presetAgentsRefreshBtn.dataset.bound !== "1") {
     elements.presetAgentsRefreshBtn.dataset.bound = "1";
     elements.presetAgentsRefreshBtn.addEventListener("click", async () => loadPresetAgents());
