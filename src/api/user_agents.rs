@@ -1074,10 +1074,6 @@ async fn update_agent(
         let tool_context = build_user_tool_context(&state, &user_id).await;
         let allowed = compute_allowed_tool_names(&resolved.user, &tool_context);
         let skill_name_keys = collect_context_skill_names(&tool_context);
-        eprintln!(
-            "default-update payload tool_names={:?} declared_tools={:?} declared_skills={:?}",
-            payload.tool_names, payload.declared_tool_names, payload.declared_skill_names
-        );
         if let Some(name) = payload.name.as_deref() {
             let cleaned = name.trim();
             if !cleaned.is_empty() {
@@ -1112,10 +1108,6 @@ async fn update_agent(
             config.ability_items = selection.ability_items;
             config.declared_tool_names = selection.declared_tool_names;
             config.declared_skill_names = selection.declared_skill_names;
-            eprintln!(
-                "default-update normalized tool_names={:?} declared_tools={:?} declared_skills={:?}",
-                config.tool_names, config.declared_tool_names, config.declared_skill_names
-            );
         }
         if let Some(preset_questions) = payload.preset_questions {
             config.preset_questions = normalize_preset_questions(preset_questions);
@@ -1140,10 +1132,6 @@ async fn update_agent(
         sync_inner_visible_after_user_change(&state, &user_id).await;
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
-        eprintln!(
-            "default-update return tool_names={:?} declared_tools={:?} declared_skills={:?}",
-            config.tool_names, config.declared_tool_names, config.declared_skill_names
-        );
         return Ok(Json(
             json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
         ));

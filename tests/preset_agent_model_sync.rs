@@ -795,7 +795,7 @@ async fn admin_default_agent_force_sync_can_disable_skill_creator() {
     let tool_name = "读取文件".to_string();
     let skill_name = "技能创建器".to_string();
 
-    let updated_template = update_default_agent(
+    update_default_agent(
         &context.app,
         Some(&admin_token),
         "preset_template",
@@ -846,7 +846,12 @@ async fn admin_default_agent_force_sync_can_disable_skill_creator() {
         }),
     )
     .await;
-    eprintln!("updated_template={updated_template}");
+    let updated_template = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+    )
+    .await;
     assert!(
         !read_tool_names(&updated_template)
             .iter()
