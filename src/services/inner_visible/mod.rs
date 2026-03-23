@@ -18,12 +18,12 @@ use crate::services::inner_visible::layout::{
     agent_id_from_worker_card_file_name, defaults_worker_card_path, normalize_agent_file_stem,
     tooling_path, user_paths, worker_card_path, InnerVisiblePaths,
 };
-use crate::services::worker_card_files::worker_card_file_name as canonical_worker_card_file_name;
 use crate::services::user_access::{compute_allowed_tool_names, UserToolContext};
 use crate::services::user_agent_presets::{
     filter_allowed_tools, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list,
 };
+use crate::services::worker_card_files::worker_card_file_name as canonical_worker_card_file_name;
 use crate::skills::SkillRegistry;
 use crate::storage::{
     normalize_hive_id, UserAccountRecord, UserAgentRecord, DEFAULT_HIVE_ID,
@@ -179,7 +179,7 @@ impl InnerVisibleService {
             .unwrap_or(0.0);
 
         // File changes win only when they are strictly newer than the runtime snapshot.
-        if latest_file_mtime > config.updated_at + FILE_TIME_EPSILON_S
+        if latest_file_mtime + FILE_TIME_EPSILON_S >= config.updated_at
             || (!has_persisted_state && latest_file_mtime > 0.0)
         {
             match self.apply_default_agent_file(
@@ -249,7 +249,7 @@ impl InnerVisibleService {
 
             let final_record = if let Some(worker_card_file) = worker_card_file
                 .as_ref()
-                .filter(|_| worker_card_mtime > record_updated_at + FILE_TIME_EPSILON_S)
+                .filter(|_| worker_card_mtime + FILE_TIME_EPSILON_S >= record_updated_at)
             {
                 match self.apply_agent_files(
                     user_id,
@@ -356,11 +356,8 @@ impl InnerVisibleService {
             hive.as_ref().map(|item| item.description.as_str()),
             worker_card_skill_names,
         );
-        let worker_card_file = worker_card_path(
-            paths,
-            Some(record.name.as_str()),
-            Some(&record.agent_id),
-        );
+        let worker_card_file =
+            worker_card_path(paths, Some(record.name.as_str()), Some(&record.agent_id));
         atomic_write_text(
             &worker_card_file,
             &serde_json::to_string_pretty(&document).context("serialize worker card failed")?,
@@ -678,16 +675,17 @@ fn resolve_latest_worker_card_file(
 ) -> Option<std::path::PathBuf> {
     let mut candidates = matching_worker_card_files(paths, agent_id).ok()?;
     if candidates.is_empty() {
-        let fallback = paths
-            .agents_dir
-            .join(canonical_worker_card_file_name(None, Some(&normalize_agent_file_stem(agent_id))));
+        let fallback = paths.agents_dir.join(canonical_worker_card_file_name(
+            None,
+            Some(&normalize_agent_file_stem(agent_id)),
+        ));
         if fallback.exists() {
             candidates.push(fallback);
         }
     }
-    candidates.into_iter().max_by(|left, right| {
-        file_modified_ts(left).total_cmp(&file_modified_ts(right))
-    })
+    candidates
+        .into_iter()
+        .max_by(|left, right| file_modified_ts(left).total_cmp(&file_modified_ts(right)))
 }
 
 fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {

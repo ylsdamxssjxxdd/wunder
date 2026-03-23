@@ -40,7 +40,7 @@ pub mod user_store;
 pub mod user_tools;
 pub mod user_world;
 pub mod vector_knowledge;
-pub mod worker_card_protocol;
 pub mod worker_card_files;
+pub mod worker_card_protocol;
 pub mod worker_card_settings;
 pub mod workspace;

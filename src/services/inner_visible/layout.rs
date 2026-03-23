@@ -62,7 +62,8 @@ pub fn worker_card_path(
     display_name: Option<&str>,
     agent_id: Option<&str>,
 ) -> PathBuf {
-    paths.agents_dir
+    paths
+        .agents_dir
         .join(worker_card_file_name(display_name, agent_id))
 }
 

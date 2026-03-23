@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::fs as tokio_fs;
 use tokio::sync::Mutex;
+use tracing::info;
 use uuid::Uuid;
 
 const DEFAULT_USER_PREFIX: &str = "throughput_user";
@@ -845,6 +846,15 @@ struct RequestOutcome {
     speed: SessionSpeed,
 }
 
+fn compute_speed_drift_percent(main: Option<f64>, approx: Option<f64>) -> Option<f64> {
+    let main = main?;
+    let approx = approx?;
+    if !main.is_finite() || main <= 0.0 || !approx.is_finite() || approx <= 0.0 {
+        return None;
+    }
+    Some(((approx - main).abs() / main) * 100.0)
+}
+
 async fn run_supervisor(
     inner: Arc<ThroughputManagerInner>,
     orchestrator: Arc<Orchestrator>,
@@ -982,6 +992,24 @@ async fn run_supervisor(
         } else {
             None
         };
+        let total_decode_stream_chunk_drift_pct =
+            compute_speed_drift_percent(total_decode_speed, total_decode_speed_stream_chunk);
+        let single_decode_stream_chunk_drift_pct =
+            compute_speed_drift_percent(single_decode_speed, single_decode_speed_stream_chunk);
+        info!(
+            run_id = run_id_ref,
+            concurrency,
+            elapsed_s,
+            total_decode_speed_tps = ?total_decode_speed,
+            total_decode_speed_stream_chunk_tps = ?total_decode_speed_stream_chunk,
+            total_decode_stream_chunk_drift_pct = ?total_decode_stream_chunk_drift_pct,
+            single_decode_speed_tps = ?single_decode_speed,
+            single_decode_speed_stream_chunk_tps = ?single_decode_speed_stream_chunk,
+            single_decode_stream_chunk_drift_pct = ?single_decode_stream_chunk_drift_pct,
+            decode_tokens_total = decode_tokens_total_by_request,
+            decode_stream_chunk_tokens_total = decode_stream_chunk_tokens_total_by_request,
+            "throughput decode speed comparison"
+        );
         if single_prefill_speed.is_none() {
             if let Some(total) = total_prefill_speed {
                 if concurrency_f > 0.0 {

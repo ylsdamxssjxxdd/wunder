@@ -4051,16 +4051,14 @@ async fn admin_preset_agents_update(
         let registry = state.skills.read().await;
         collect_registry_skill_names(&registry)
     };
-    let existing_items = match preset_worker_cards::load_effective_preset_configs(
-        &current,
-        &skill_name_keys,
-    ) {
-        Ok(items) => items,
-        Err(err) => {
-            warn!("failed to load preset worker cards before admin save: {err}");
-            current.user_agents.presets.clone()
-        }
-    };
+    let existing_items =
+        match preset_worker_cards::load_effective_preset_configs(&current, &skill_name_keys) {
+            Ok(items) => items,
+            Err(err) => {
+                warn!("failed to load preset worker cards before admin save: {err}");
+                current.user_agents.presets.clone()
+            }
+        };
     let normalized = normalize_preset_agents(&existing_items, payload.items, &skill_name_keys)?;
     let persisted_to_assets =
         preset_worker_cards::persist_preset_configs(&current, &normalized, &skill_name_keys)
@@ -4143,10 +4141,7 @@ async fn admin_preset_agent_worker_card(
         .into_iter()
         .find(|item| item.preset_id == cleaned)
         .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                "preset agent not found".to_string(),
-            )
+            error_response(StatusCode::NOT_FOUND, "preset agent not found".to_string())
         })?;
     let document =
         preset_worker_cards::worker_card_document_from_preset_config(&preset, &skill_name_keys)

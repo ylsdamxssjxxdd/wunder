@@ -148,14 +148,14 @@ pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
         let registry = state.skills.read().await;
         collect_registry_skill_names(&registry)
     };
-    let configured = match preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
-    {
-        Ok(items) => items,
-        Err(err) => {
-            tracing::warn!("failed to load preset worker cards, falling back to config: {err}");
-            config.user_agents.presets.clone()
-        }
-    };
+    let configured =
+        match preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys) {
+            Ok(items) => items,
+            Err(err) => {
+                tracing::warn!("failed to load preset worker cards, falling back to config: {err}");
+                config.user_agents.presets.clone()
+            }
+        };
     let mut seen_ids = HashSet::new();
     let mut presets = Vec::new();
     for item in &configured {

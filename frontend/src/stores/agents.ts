@@ -17,6 +17,58 @@ export const useAgentStore = defineStore('agents', {
     loading: false
   }),
   actions: {
+    resolveAgentId(item: unknown): string {
+      if (!item || typeof item !== 'object') return '';
+      return String((item as Record<string, unknown>)?.id || '').trim();
+    },
+
+    isSameAgentIdSet(previous: unknown[], incoming: unknown[]): boolean {
+      if (previous.length !== incoming.length) return false;
+      const previousSet = new Set<string>();
+      for (const item of previous) {
+        const id = this.resolveAgentId(item);
+        if (!id) continue;
+        previousSet.add(id);
+      }
+      const incomingSet = new Set<string>();
+      for (const item of incoming) {
+        const id = this.resolveAgentId(item);
+        if (!id) continue;
+        incomingSet.add(id);
+      }
+      if (previousSet.size !== incomingSet.size) return false;
+      for (const id of incomingSet) {
+        if (!previousSet.has(id)) return false;
+      }
+      return true;
+    },
+
+    stabilizeAgentOrder(previous: unknown[], incoming: unknown[]): Record<string, unknown>[] {
+      const next = Array.isArray(incoming) ? (incoming as Record<string, unknown>[]) : [];
+      const prev = Array.isArray(previous) ? previous : [];
+      if (!prev.length || !next.length) return next;
+      // Preserve visual order when only metadata changed; avoid middle-pane jumps after save.
+      if (!this.isSameAgentIdSet(prev, next)) {
+        return next;
+      }
+      const latestById = new Map<string, Record<string, unknown>>();
+      next.forEach((item) => {
+        const id = this.resolveAgentId(item);
+        if (!id) return;
+        latestById.set(id, item);
+      });
+      const ordered: Record<string, unknown>[] = [];
+      prev.forEach((item) => {
+        const id = this.resolveAgentId(item);
+        if (!id) return;
+        const latest = latestById.get(id);
+        if (latest) {
+          ordered.push(latest);
+        }
+      });
+      return ordered.length === next.length ? ordered : next;
+    },
+
     hydrateMap(agents, sharedAgents) {
       const map: Record<string, Record<string, unknown> | null> = {};
       if (this.agentMap?.__default__) {
@@ -40,9 +92,11 @@ export const useAgentStore = defineStore('agents', {
         if (sharedResult.status !== 'fulfilled') {
           console.warn('[agents] load shared agents failed, fallback to empty list', sharedResult.reason);
         }
-        const ownedItems = ownedResult.value?.data?.data?.items || [];
-        const sharedItems =
+        const ownedItemsRaw = ownedResult.value?.data?.data?.items || [];
+        const sharedItemsRaw =
           sharedResult.status === 'fulfilled' ? (sharedResult.value?.data?.data?.items || []) : [];
+        const ownedItems = this.stabilizeAgentOrder(this.agents, ownedItemsRaw);
+        const sharedItems = this.stabilizeAgentOrder(this.sharedAgents, sharedItemsRaw);
         this.agents = ownedItems;
         this.sharedAgents = sharedItems;
         this.hydrateMap(ownedItems, sharedItems);

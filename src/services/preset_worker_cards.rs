@@ -1,5 +1,6 @@
 use crate::config::{Config, UserAgentPresetConfig};
 use crate::core::atomic_write::atomic_write_text;
+use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
 use crate::services::inner_visible::{
     build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardRecordUpdate,
 };
@@ -9,10 +10,10 @@ use crate::services::worker_card_files::{
 };
 use crate::services::worker_card_settings::{
     canonicalize_preset_config, normalize_agent_approval_mode, normalize_agent_status,
-    normalize_optional_model_name, normalize_preset_icon_parts, normalize_preset_questions,
-    normalize_tool_list, preset_config_from_update, preset_update_from_config,
+    normalize_optional_model_name, normalize_preset_questions, normalize_tool_list,
+    preset_config_from_update, preset_update_from_config,
 };
-use crate::storage::{normalize_hive_id, normalize_sandbox_container_id, UserAgentRecord, DEFAULT_HIVE_ID};
+use crate::storage::{normalize_hive_id, normalize_sandbox_container_id, UserAgentRecord};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -27,7 +28,6 @@ const PRESET_WORKER_CARD_EXTENSION_KEY: &str = "preset_agent";
 #[derive(Debug, Clone)]
 pub struct PresetWorkerCardAsset {
     pub preset: UserAgentPresetConfig,
-    pub document: WorkerCardDocument,
     pub path: PathBuf,
 }
 
@@ -51,8 +51,7 @@ pub fn load_effective_preset_configs(
     let mut presets = Vec::new();
     for item in &config.user_agents.presets {
         let preset_id = resolve_preset_id(&item.preset_id, &item.name);
-        let Some(normalized) = canonicalize_preset_config(item, &preset_id, skill_name_keys)
-        else {
+        let Some(normalized) = canonicalize_preset_config(item, &preset_id, skill_name_keys) else {
             continue;
         };
         if seen_ids.insert(preset_id) {
@@ -83,8 +82,7 @@ pub fn persist_preset_configs(
 
     for item in items {
         let preset_id = resolve_preset_id(&item.preset_id, &item.name);
-        let Some(normalized) = canonicalize_preset_config(item, &preset_id, skill_name_keys)
-        else {
+        let Some(normalized) = canonicalize_preset_config(item, &preset_id, skill_name_keys) else {
             continue;
         };
         let Some(document) = worker_card_document_from_preset_config(&normalized, skill_name_keys)
@@ -157,14 +155,20 @@ pub fn load_preset_worker_card_assets(
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(err) => {
-                warn!("failed to read preset worker card {}: {err}", path.display());
+                warn!(
+                    "failed to read preset worker card {}: {err}",
+                    path.display()
+                );
                 continue;
             }
         };
         let document = match serde_json::from_str::<WorkerCardDocument>(&content) {
             Ok(document) => document,
             Err(err) => {
-                warn!("failed to parse preset worker card {}: {err}", path.display());
+                warn!(
+                    "failed to parse preset worker card {}: {err}",
+                    path.display()
+                );
                 continue;
             }
         };
@@ -179,11 +183,7 @@ pub fn load_preset_worker_card_assets(
         };
         assets_by_id.insert(
             preset.preset_id.clone(),
-            PresetWorkerCardAsset {
-                preset,
-                document,
-                path,
-            },
+            PresetWorkerCardAsset { preset, path },
         );
     }
 
@@ -200,11 +200,7 @@ pub fn worker_card_document_from_preset_config(
     let record = record_from_preset_update(&normalized.preset_id, &update);
     let mut document = build_worker_card(&record, None, None, skill_name_keys);
     document.metadata.id = normalized.preset_id.clone();
-    document.extensions = preset_extensions_value(
-        &normalized.preset_id,
-        normalized.revision,
-        &normalized.status,
-    );
+    document.extensions = preset_extensions_value(normalized.revision, &normalized.status);
     Some(document)
 }
 
@@ -263,11 +259,10 @@ fn normalize_preset_id(raw: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn preset_extensions_value(preset_id: &str, revision: u64, status: &str) -> Value {
+fn preset_extensions_value(revision: u64, status: &str) -> Value {
     json!({
         PRESET_WORKER_CARD_EXTENSION_ROOT: {
             PRESET_WORKER_CARD_EXTENSION_KEY: {
-                "preset_id": preset_id.trim(),
                 "revision": revision.max(1),
                 "status": normalize_agent_status(Some(status)),
             }
@@ -307,18 +302,25 @@ pub fn export_file_name_for_preset(config: &UserAgentPresetConfig) -> String {
 }
 
 pub fn export_file_name_for_default_agent(record: &UserAgentRecord) -> String {
-    worker_card_file_name(Some(&record.name), Some(&record.agent_id))
-}
-
-pub fn icon_parts_for_preset_document(document: &WorkerCardDocument) -> (String, String) {
-    normalize_preset_icon_parts(Some(&document.metadata.icon))
+    let display_name = record.name.trim();
+    let canonical_name = if record.agent_id.trim() == DEFAULT_AGENT_ID_ALIAS
+        && (display_name.is_empty() || display_name == DEFAULT_AGENT_ID_ALIAS)
+    {
+        DEFAULT_AGENT_NAME
+    } else if display_name.is_empty() {
+        record.agent_id.as_str()
+    } else {
+        display_name
+    };
+    worker_card_file_name(Some(canonical_name), Some(&record.agent_id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         configured_worker_cards_root, export_file_name_for_preset, load_effective_preset_configs,
-        load_preset_worker_card_assets, persist_preset_configs, worker_card_document_from_preset_config,
+        load_preset_worker_card_assets, persist_preset_configs,
+        worker_card_document_from_preset_config,
     };
     use crate::config::{Config, UserAgentPresetConfig};
     use std::collections::HashSet;
@@ -372,6 +374,22 @@ mod tests {
     }
 
     #[test]
+    fn worker_card_document_uses_metadata_id_as_preset_identity() {
+        let skill_keys = HashSet::new();
+        let preset = sample_preset();
+        let document =
+            worker_card_document_from_preset_config(&preset, &skill_keys).expect("build document");
+        assert_eq!(document.metadata.id, "preset_demo");
+        assert!(
+            document.extensions["wunder"]["preset_agent"]
+                .get("preset_id")
+                .is_none(),
+            "preset worker cards should derive stable id from metadata.id/file name instead of duplicating it in extensions"
+        );
+        assert_eq!(document.abilities.tool_names, vec!["read_file".to_string()]);
+    }
+
+    #[test]
     fn persist_preset_configs_renames_files_to_canonical_name() {
         let root = std::env::temp_dir().join(format!(
             "wunder-preset-worker-card-persist-{}",
@@ -417,5 +435,27 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn shipped_preset_worker_cards_declare_default_tools_and_skills_explicitly() {
+        let shipped_root = std::path::PathBuf::from("config").join("preset_worker_cards");
+        let skill_keys = HashSet::from(["技能创建器".to_string()]);
+        let assets = load_preset_worker_card_assets(&shipped_root, &skill_keys)
+            .expect("load shipped assets");
+        assert_eq!(assets.len(), 5);
+        for asset in assets {
+            assert!(
+                !asset.preset.declared_tool_names.is_empty(),
+                "shipped preset worker card {} should declare tools explicitly",
+                asset.path.display()
+            );
+            assert_eq!(
+                asset.preset.declared_skill_names,
+                vec!["技能创建器".to_string()],
+                "shipped preset worker card {} should declare the default skill explicitly",
+                asset.path.display()
+            );
+        }
     }
 }

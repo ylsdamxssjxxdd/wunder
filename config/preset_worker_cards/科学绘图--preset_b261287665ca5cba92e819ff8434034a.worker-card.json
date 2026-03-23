@@ -10,8 +10,24 @@
   },
   "extra_prompt": "你是科学绘图助手。根据研究问题与数据，绘制专业图表",
   "abilities": {
-    "tool_names": [],
-    "skills": []
+    "tool_names": [
+      "最终回复",
+      "定时任务",
+      "休眠等待",
+      "记忆管理",
+      "执行命令",
+      "ptc",
+      "列出文件",
+      "搜索内容",
+      "读取文件",
+      "网页抓取",
+      "技能调用",
+      "写入文件",
+      "应用补丁"
+    ],
+    "skills": [
+      "技能创建器"
+    ]
   },
   "interaction": {
     "preset_questions": []
@@ -29,7 +45,6 @@
   "extensions": {
     "wunder": {
       "preset_agent": {
-        "preset_id": "preset_b261287665ca5cba92e819ff8434034a",
         "revision": 1,
         "status": "active"
       }

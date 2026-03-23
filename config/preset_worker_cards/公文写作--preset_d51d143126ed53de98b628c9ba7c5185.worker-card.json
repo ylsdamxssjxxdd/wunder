@@ -10,8 +10,24 @@
   },
   "extra_prompt": "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。",
   "abilities": {
-    "tool_names": [],
-    "skills": []
+    "tool_names": [
+      "最终回复",
+      "定时任务",
+      "休眠等待",
+      "记忆管理",
+      "执行命令",
+      "ptc",
+      "列出文件",
+      "搜索内容",
+      "读取文件",
+      "网页抓取",
+      "技能调用",
+      "写入文件",
+      "应用补丁"
+    ],
+    "skills": [
+      "技能创建器"
+    ]
   },
   "interaction": {
     "preset_questions": []
@@ -29,7 +45,6 @@
   "extensions": {
     "wunder": {
       "preset_agent": {
-        "preset_id": "preset_d51d143126ed53de98b628c9ba7c5185",
         "revision": 1,
         "status": "active"
       }

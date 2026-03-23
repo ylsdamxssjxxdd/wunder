@@ -441,41 +441,6 @@ const formatTokenRate = (value, options = {}) => {
   return `${prefix}${scaled.toFixed(decimals)}${unit}${suffix}`;
 };
 
-const formatDriftPercent = (primary, approx) => {
-  const main = Number(primary);
-  const alt = Number(approx);
-  if (!Number.isFinite(main) || main <= 0 || !Number.isFinite(alt) || alt <= 0) {
-    return "-";
-  }
-  const drift = Math.abs(((alt - main) / main) * 100);
-  if (!Number.isFinite(drift)) {
-    return "-";
-  }
-  if (drift >= 100) {
-    return `${drift.toFixed(0)}%`;
-  }
-  if (drift >= 10) {
-    return `${drift.toFixed(1)}%`;
-  }
-  return `${drift.toFixed(2)}%`;
-};
-
-const formatDecodeRateWithStreamChunk = (value, streamChunkValue, options = {}) => {
-  const primary = formatTokenRate(value, options);
-  if (primary === "-") {
-    return "-";
-  }
-  const streamChunk = formatTokenRate(streamChunkValue, options);
-  if (streamChunk === "-") {
-    return primary;
-  }
-  const drift = formatDriftPercent(value, streamChunkValue);
-  if (drift === "-") {
-    return `${primary} (${t("throughput.metric.streamChunkApprox")}${streamChunk})`;
-  }
-  return `${primary} (${t("throughput.metric.streamChunkApprox")}${streamChunk}, ${t("throughput.metric.streamChunkDrift")}:${drift})`;
-};
-
 const parseTimestampMs = (value) => {
   if (!value) {
     return null;
@@ -708,27 +673,19 @@ const applySpeedMetrics = () => {
     elements.throughputTotalPrefillSpeed.textContent = formatTokenRate(currentTotalPrefillSpeed);
   }
   if (elements.throughputTotalDecodeSpeed) {
-    elements.throughputTotalDecodeSpeed.textContent = formatDecodeRateWithStreamChunk(
-      currentTotalDecodeSpeed,
-      currentTotalDecodeSpeedStreamChunk
-    );
+    elements.throughputTotalDecodeSpeed.textContent = formatTokenRate(currentTotalDecodeSpeed);
   }
   if (elements.throughputSinglePrefillSpeed) {
     elements.throughputSinglePrefillSpeed.textContent = formatTokenRate(currentSinglePrefillSpeed);
   }
   if (elements.throughputSingleDecodeSpeed) {
-    elements.throughputSingleDecodeSpeed.textContent = formatDecodeRateWithStreamChunk(
-      currentSingleDecodeSpeed,
-      currentSingleDecodeSpeedStreamChunk
-    );
+    elements.throughputSingleDecodeSpeed.textContent = formatTokenRate(currentSingleDecodeSpeed);
   }
   if (elements.throughputThreadSingleDecodeSpeed) {
-    elements.throughputThreadSingleDecodeSpeed.textContent =
-      formatDecodeRateWithStreamChunk(
-        currentSingleDecodeSpeed,
-        currentSingleDecodeSpeedStreamChunk,
-        { withUnit: false }
-      );
+    elements.throughputThreadSingleDecodeSpeed.textContent = formatTokenRate(
+      currentSingleDecodeSpeed,
+      { withUnit: false }
+    );
   }
   if (elements.throughputThreadSinglePrefillSpeed) {
     elements.throughputThreadSinglePrefillSpeed.textContent =
@@ -2022,17 +1979,11 @@ const buildHtmlReport = (report, options = {}) => {
     },
     {
       label: t("throughput.metric.totalDecodeSpeed"),
-      value: formatDecodeRateWithStreamChunk(
-        speedMetrics?.totalDecode,
-        speedMetrics?.totalDecodeStreamChunk
-      ),
+      value: formatTokenRate(speedMetrics?.totalDecode),
     },
     {
       label: t("throughput.metric.singleDecodeSpeed"),
-      value: formatDecodeRateWithStreamChunk(
-        speedMetrics?.singleDecode,
-        speedMetrics?.singleDecodeStreamChunk
-      ),
+      value: formatTokenRate(speedMetrics?.singleDecode),
     },
   ];
   const summaryRowsHtml = summaryRows
@@ -2068,19 +2019,11 @@ const buildHtmlReport = (report, options = {}) => {
     },
     {
       label: t("throughput.metric.totalDecodeSpeed"),
-      value: (sample) =>
-        formatDecodeRateWithStreamChunk(
-          sample.total_decode_speed_tps,
-          sample.total_decode_speed_stream_chunk_tps
-        ),
+      value: (sample) => formatTokenRate(sample.total_decode_speed_tps),
     },
     {
       label: t("throughput.metric.singleDecodeSpeed"),
-      value: (sample) =>
-        formatDecodeRateWithStreamChunk(
-          sample.single_decode_speed_tps,
-          sample.single_decode_speed_stream_chunk_tps
-        ),
+      value: (sample) => formatTokenRate(sample.single_decode_speed_tps),
     },
     {
       label: t("throughput.metric.inputTokens"),

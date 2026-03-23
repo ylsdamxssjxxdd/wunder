@@ -25,18 +25,6 @@ pub fn sanitize_worker_card_filename_part(raw: &str) -> String {
     }
 }
 
-pub fn normalize_worker_card_identity(raw: Option<&str>, default_value: &str) -> String {
-    let cleaned = raw
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(default_value);
-    if cleaned.eq_ignore_ascii_case("default") {
-        default_value.to_string()
-    } else {
-        cleaned.to_string()
-    }
-}
-
 pub fn worker_card_file_name(display_name: Option<&str>, stable_id: Option<&str>) -> String {
     let name_part = display_name
         .map(sanitize_worker_card_filename_part)

@@ -1184,7 +1184,7 @@ async fn preset_bound_agent_tool_update_without_declared_arrays_drops_stale_depe
 async fn admin_preset_save_roundtrip_is_worker_card_stable() {
     let user_id = "preset_admin_roundtrip_user";
     let context = build_test_context_with_config(user_id, |config| {
-        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
         config.user_agents.presets = vec![build_preset_config("preset_admin_roundtrip", None)];
     })
     .await;
@@ -1284,7 +1284,10 @@ async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
         .expect("asset preset id")
         .to_string();
     let first_path = preset_root.join(format!("Asset Preset--{preset_id}.worker-card.json"));
-    assert!(first_path.exists(), "preset worker card should be saved to configured directory");
+    assert!(
+        first_path.exists(),
+        "preset worker card should be saved to configured directory"
+    );
 
     let listed = list_admin_presets(&context.app).await;
     assert!(
@@ -1301,9 +1304,13 @@ async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
         }
     }
     update_admin_presets(&context.app, renamed_payload).await;
-    let second_path =
-        preset_root.join(format!("Asset Preset Renamed--{preset_id}.worker-card.json"));
-    assert!(second_path.exists(), "renamed preset should use canonical worker-card file name");
+    let second_path = preset_root.join(format!(
+        "Asset Preset Renamed--{preset_id}.worker-card.json"
+    ));
+    assert!(
+        second_path.exists(),
+        "renamed preset should use canonical worker-card file name"
+    );
     assert!(
         !first_path.exists(),
         "old worker-card file should be removed after canonical rename"
@@ -1346,7 +1353,7 @@ async fn admin_preset_worker_card_export_uses_canonical_filename() {
 async fn admin_default_preset_payload_exposes_canonical_declared_names() {
     let user_id = "preset_admin_default_declared_user";
     let context = build_test_context_with_config(user_id, |config| {
-        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
     })
     .await;
     context

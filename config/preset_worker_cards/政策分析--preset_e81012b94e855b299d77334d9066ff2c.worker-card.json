@@ -10,8 +10,24 @@
   },
   "extra_prompt": "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。",
   "abilities": {
-    "tool_names": [],
-    "skills": []
+    "tool_names": [
+      "最终回复",
+      "定时任务",
+      "休眠等待",
+      "记忆管理",
+      "执行命令",
+      "ptc",
+      "列出文件",
+      "搜索内容",
+      "读取文件",
+      "网页抓取",
+      "技能调用",
+      "写入文件",
+      "应用补丁"
+    ],
+    "skills": [
+      "技能创建器"
+    ]
   },
   "interaction": {
     "preset_questions": []
@@ -29,7 +45,6 @@
   "extensions": {
     "wunder": {
       "preset_agent": {
-        "preset_id": "preset_e81012b94e855b299d77334d9066ff2c",
         "revision": 1,
         "status": "active"
       }
