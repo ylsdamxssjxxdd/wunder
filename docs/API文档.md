@@ -27,6 +27,7 @@
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录），接口同时返回 `agent_id`，前端直接跳转 `/app/embed/chat`（或 `/desktop/embed/chat`）进入嵌入聊天页，不再依赖 launch 跳转接口。
+- 用户资料接口：`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
@@ -931,11 +932,12 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
+  - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
 - `POST` 入参：
   - `llm.default`：默认模型配置名称
@@ -1376,7 +1378,7 @@
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
-- 舰桥中心治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。
+- 舰桥中心治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/centers/{center_id}/weixin_bind`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。
 - 吞吐量/性能/benchmark/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/benchmark/*`、`/wunder/admin/sim_lab/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
@@ -1515,8 +1517,8 @@
   - `default_identity_strategy`
   - `username_policy`
   - `description`
-  - `shared_channels[]`：可选的批量写入能力，字段与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 基本一致；当前管理端页面默认不走一次性保存，而是通过“接入渠道”弹窗逐条保存
-- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的舰桥节点。页面当前采用“监控主页面 + 中心配置弹窗 + 接入渠道弹窗”模式。
+  - `shared_channels[]`：可选的批量写入能力；当前单个舰桥节点只允许一个渠道，管理端页面默认不走一次性保存，而是通过“渠道设置”弹窗维护单条绑定
+- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的舰桥节点。页面当前采用“监控主页面 + 中心配置弹窗 + 渠道设置弹窗”模式。
 
 ### 4.1.25.8 `/wunder/admin/bridge/centers/{center_id}`
 
@@ -1540,14 +1542,29 @@
   - `thread_strategy`
   - `reply_strategy`
   - `default_preset_agent_name_override`
-  - `status_reason`
-- 说明：底层仍保留独立接入渠道接口，便于脚本化接线；管理端页面会先通过 `/wunder/channels/accounts?user_id=bridge_center_owner__{center_id}` 创建或更新节点专属渠道账号，再用此接口写入桥接策略。
+- 说明：底层仍保留独立渠道绑定接口，便于脚本化接线；当前单个舰桥节点只允许绑定一个渠道账号。管理端页面会先通过 `/wunder/admin/channels/accounts?status=active` 拉取现有可用账号，再用此接口写入桥接绑定。
 
 ### 4.1.25.10 `/wunder/admin/bridge/accounts/{center_account_id}`
 
 - 方法：`PATCH/DELETE`
 - `PATCH`：更新某个共享渠道账号配置，入参与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 相同。
 - `DELETE`：删除该共享账号，并清理其名下 bridge routes、delivery logs、audit logs。
+
+### 4.1.25.10A `/wunder/admin/bridge/centers/{center_id}/weixin_bind`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `account_id`：可选；为空时服务端按节点自动生成稳定的 Weixin 账号 ID
+  - `api_base`
+  - `bot_type`
+  - `bot_token`
+  - `ilink_bot_id`
+  - `ilink_user_id`
+- 返回（JSON）：
+  - `data.center`：所属舰桥节点
+  - `data.account`：最终写入的 `bridge_center_account`
+  - `data.channel_account`：最终写入的 `channel_accounts.weixin/*` 配置快照
+- 说明：管理员侧 `Weixin iLink (New)` 扫码流程会先调用已有 `/wunder/channels/weixin/qr/start`、`/wunder/channels/weixin/qr/wait` 获取二维码和扫码确认结果，再调用这里把凭据落成真实渠道账号并绑定到当前舰桥节点；如果节点已有旧绑定，会先清理旧 bridge routes / delivery logs / audit logs。
 
 ### 4.1.25.11 `/wunder/admin/bridge/routes`
 

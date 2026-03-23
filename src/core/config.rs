@@ -353,6 +353,8 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub tool_call_mode: Option<String>,
     #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    #[serde(default)]
     pub model_type: Option<String>,
     #[serde(default)]
     pub stop: Option<Vec<String>>,

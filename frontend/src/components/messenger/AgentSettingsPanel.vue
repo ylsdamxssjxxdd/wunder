@@ -90,82 +90,95 @@
 
         <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item messenger-agent-form-item--base">
           <div class="messenger-agent-base">
-            <div class="messenger-agent-base-item messenger-agent-base-item--select">
-              <div class="messenger-agent-base-meta">
-                <span class="messenger-agent-base-label">{{ t('messenger.agentGroup.label') }}</span>
+            <div class="messenger-agent-base-item">
+              <div class="messenger-agent-base-label">{{ t('messenger.agentGroup.label') }}</div>
+              <div class="messenger-agent-base-control">
+                <BeeroomGroupField
+                  v-model="form.group"
+                  :groups="beeroomGroupOptions"
+                  :allow-create="false"
+                  :disabled="isReadonlyMode"
+                />
               </div>
-              <BeeroomGroupField
-                v-model="form.group"
-                :groups="beeroomGroupOptions"
-                :allow-create="false"
-                :disabled="isReadonlyMode"
-              />
             </div>
-            <div ref="modelSectionRef" class="messenger-agent-base-item messenger-agent-base-item--select">
-              <div class="messenger-agent-base-meta">
-                <span class="messenger-agent-base-label">{{ t('portal.agent.model.title') }}</span>
-                <span class="messenger-inline-hint">{{ t('portal.agent.model.hint') }}</span>
+            <div ref="modelSectionRef" class="messenger-agent-base-item">
+              <div class="messenger-agent-base-label">{{ t('portal.agent.model.title') }}</div>
+              <div class="messenger-agent-base-control">
+                <el-select
+                  v-model="form.model_name"
+                  class="messenger-agent-base-select"
+                  :disabled="isReadonlyMode || modelLoading"
+                >
+                  <el-option
+                    :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })"
+                    value=""
+                  />
+                  <el-option
+                    v-for="model in modelSelectOptions"
+                    :key="model"
+                    :label="model"
+                    :value="model"
+                  />
+                </el-select>
               </div>
-              <el-select
-                v-model="form.model_name"
-                class="messenger-agent-base-select"
-                :disabled="isReadonlyMode || modelLoading"
-              >
-                <el-option
-                  :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })"
-                  value=""
-                />
-                <el-option
-                  v-for="model in modelSelectOptions"
-                  :key="model"
-                  :label="model"
-                  :value="model"
-                />
-              </el-select>
             </div>
-            <div class="messenger-agent-base-item messenger-agent-base-item--select">
-              <div class="messenger-agent-base-meta">
-                <span class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</span>
-                <span class="messenger-inline-hint">{{ t('portal.agent.sandbox.hint') }}</span>
+            <div class="messenger-agent-base-item">
+              <div class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</div>
+              <div class="messenger-agent-base-control">
+                <el-select
+                  v-model="form.sandbox_container_id"
+                  class="messenger-agent-base-select"
+                  :disabled="isReadonlyMode"
+                >
+                  <el-option
+                    v-for="id in sandboxContainerOptions"
+                    :key="id"
+                    :label="t('portal.agent.sandbox.option', { id })"
+                    :value="id"
+                  />
+                </el-select>
               </div>
-              <el-select
-                v-model="form.sandbox_container_id"
-                class="messenger-agent-base-select"
-                :disabled="isReadonlyMode"
-              >
-                <el-option
-                  v-for="id in sandboxContainerOptions"
-                  :key="id"
-                  :label="t('portal.agent.sandbox.option', { id })"
-                  :value="id"
-                />
-              </el-select>
             </div>
-            <div v-if="showApprovalModeSetting" class="messenger-agent-base-item messenger-agent-base-item--select">
-              <div class="messenger-agent-base-meta">
-                <span class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</span>
-                <span class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</span>
+            <div v-if="showApprovalModeSetting" class="messenger-agent-base-item">
+              <div class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</div>
+              <div class="messenger-agent-base-control">
+                <el-select
+                  v-model="form.approval_mode"
+                  class="messenger-agent-base-select"
+                  :disabled="isReadonlyMode"
+                >
+                  <el-option
+                    v-for="item in approvalModeOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
+                  />
+                </el-select>
               </div>
-              <el-select
-                v-model="form.approval_mode"
-                class="messenger-agent-base-select"
-                :disabled="isReadonlyMode"
-              >
-                <el-option
-                  v-for="item in approvalModeOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
             </div>
           </div>
         </el-form-item>
-        <el-form-item
-          :label="t('portal.agent.form.presetQuestions')"
-          class="messenger-agent-form-item"
-        >
-          <AgentPresetQuestionsField v-model="form.preset_questions" :readonly="isReadonlyMode" />
+        <el-form-item class="messenger-agent-form-item">
+          <template #label>
+            <div class="messenger-agent-section-head">
+              <span>{{ t('portal.agent.form.presetQuestions') }}</span>
+              <button
+                v-if="!isReadonlyMode"
+                class="messenger-agent-icon-btn"
+                type="button"
+                :title="t('portal.agent.presetQuestions.add')"
+                :aria-label="t('portal.agent.presetQuestions.add')"
+                @click.prevent="addPresetQuestion"
+              >
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+              </button>
+            </div>
+          </template>
+          <AgentPresetQuestionsField
+            ref="presetQuestionsFieldRef"
+            v-model="form.preset_questions"
+            :readonly="isReadonlyMode"
+          />
         </el-form-item>
       </el-form>
 
@@ -318,6 +331,7 @@ const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
 const modelSectionRef = ref<HTMLElement | null>(null);
+const presetQuestionsFieldRef = ref<{ addQuestion: () => void } | null>(null);
 const panelMounted = ref(false);
 const loadedSnapshot = ref<AgentFormSnapshot | null>(null);
 let panelDisposed = false;
@@ -431,6 +445,13 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
 
 const markFormClean = (): void => {
   loadedSnapshot.value = buildFormSnapshot();
+};
+
+const addPresetQuestion = () => {
+  if (isReadonlyMode.value) {
+    return;
+  }
+  presetQuestionsFieldRef.value?.addQuestion();
 };
 
 const hasUnsavedChanges = computed(() => {
@@ -825,4 +846,79 @@ onBeforeUnmount(() => {
   clearFocusAnimationFrame();
 });
 </script>
+
+<style scoped>
+.messenger-agent-base {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.messenger-agent-base-item {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.messenger-agent-base-label {
+  color: var(--el-text-color-regular, #111827);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.messenger-agent-base-control {
+  min-width: 0;
+}
+
+.messenger-agent-base-select {
+  width: 100%;
+}
+
+.messenger-agent-base-control :deep(.el-select),
+.messenger-agent-base-control :deep(.el-select__wrapper),
+.messenger-agent-base-control :deep(.beeroom-group-field) {
+  width: 100%;
+}
+
+.messenger-agent-section-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.messenger-agent-icon-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--el-text-color-secondary, #64748b);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.messenger-agent-icon-btn:hover {
+  border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.34);
+  background: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.08);
+  color: var(--ui-accent-deep, #2563eb);
+}
+
+.messenger-agent-icon-btn:focus-visible {
+  outline: 2px solid rgba(var(--ui-accent-rgb, 59, 130, 246), 0.22);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .messenger-agent-base-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: stretch;
+  }
+}
+</style>
 

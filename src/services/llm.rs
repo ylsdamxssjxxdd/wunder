@@ -94,6 +94,25 @@ pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
     }
 }
 
+pub fn normalize_reasoning_effort(value: Option<&str>) -> Option<String> {
+    let raw = value.unwrap_or("").trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let normalized = raw.to_ascii_lowercase().replace(['-', ' '], "_");
+    let canonical = match normalized.as_str() {
+        "default" | "auto" | "inherit" => return None,
+        "none" | "off" | "disable" | "disabled" => "none",
+        "minimal" | "min" => "minimal",
+        "low" => "low",
+        "medium" | "med" | "normal" => "medium",
+        "high" => "high",
+        "xhigh" | "x_high" | "extra_high" | "very_high" => "xhigh",
+        _ => return None,
+    };
+    Some(canonical.to_string())
+}
+
 pub fn resolve_tool_call_mode(config: &LlmModelConfig) -> ToolCallMode {
     if let Some(value) = config
         .tool_call_mode
@@ -436,6 +455,11 @@ impl LlmClient {
             "temperature": temperature,
             "stream": stream,
         });
+        if let Some(reasoning_effort) =
+            normalize_reasoning_effort(self.config.reasoning_effort.as_deref())
+        {
+            payload["reasoning_effort"] = Value::String(reasoning_effort);
+        }
         if stream && include_usage {
             payload["stream_options"] = json!({ "include_usage": true });
         }
@@ -482,6 +506,11 @@ impl LlmClient {
             "temperature": temperature,
             "stream": stream,
         });
+        if let Some(reasoning_effort) =
+            normalize_reasoning_effort(self.config.reasoning_effort.as_deref())
+        {
+            payload["reasoning"] = json!({ "effort": reasoning_effort });
+        }
         if stream && include_usage {
             payload["stream_options"] = json!({ "include_usage": true });
         }
@@ -2942,6 +2971,7 @@ mod tests {
             history_compaction_ratio: None,
             history_compaction_reset: None,
             tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: None,
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
@@ -3056,6 +3086,109 @@ mod tests {
     }
 
     #[test]
+    fn normalize_reasoning_effort_accepts_codex_levels() {
+        assert_eq!(
+            normalize_reasoning_effort(Some("minimal")),
+            Some("minimal".to_string())
+        );
+        assert_eq!(
+            normalize_reasoning_effort(Some("x_high")),
+            Some("xhigh".to_string())
+        );
+        assert_eq!(
+            normalize_reasoning_effort(Some("disabled")),
+            Some("none".to_string())
+        );
+        assert_eq!(normalize_reasoning_effort(Some("default")), None);
+        assert_eq!(normalize_reasoning_effort(Some("unknown")), None);
+    }
+
+    #[test]
+    fn build_chat_payload_includes_reasoning_effort_when_configured() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some("http://127.0.0.1:18000/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-model".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            retry: Some(0),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: Some("x_high".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+        assert_eq!(
+            payload.get("reasoning_effort"),
+            Some(&Value::String("xhigh".to_string()))
+        );
+    }
+
+    #[test]
+    fn build_responses_payload_includes_reasoning_effort_when_configured() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai".to_string()),
+            api_mode: Some("responses".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("gpt-5.2".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            retry: Some(0),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("freeform_call".to_string()),
+            reasoning_effort: Some("high".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+        assert_eq!(payload["reasoning"]["effort"], "high");
+    }
+
+    #[test]
     fn resolve_tool_call_mode_defaults_by_provider() {
         let mut config = LlmModelConfig {
             enable: Some(true),
@@ -3077,6 +3210,7 @@ mod tests {
             history_compaction_ratio: None,
             history_compaction_reset: None,
             tool_call_mode: None,
+            reasoning_effort: None,
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,
@@ -3109,6 +3243,7 @@ mod tests {
             history_compaction_ratio: None,
             history_compaction_reset: None,
             tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: None,
             model_type: Some("llm".to_string()),
             stop: None,
             mock_if_unconfigured: None,

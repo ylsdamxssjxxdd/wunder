@@ -50,3 +50,19 @@ export const UserSkillPane = lazy(() => import('@/components/user-tools/UserSkil
 
 export const AgentMemoryPanel = lazy(() => import('@/components/messenger/memory/AgentMemoryPanel.vue'));
 
+let agentSettingsPanelsPreloadPromise: Promise<unknown> | null = null;
+
+export const preloadAgentSettingsPanels = () => {
+  if (!agentSettingsPanelsPreloadPromise) {
+    agentSettingsPanelsPreloadPromise = Promise.all([
+      import('@/components/messenger/AgentSettingsPanel.vue'),
+      import('@/components/messenger/AgentCronPanel.vue'),
+      import('@/components/channels/UserChannelSettingsPanel.vue'),
+      import('@/components/messenger/AgentRuntimeRecordsPanel.vue'),
+      import('@/components/messenger/memory/AgentMemoryPanel.vue'),
+      import('@/components/messenger/ArchivedThreadManager.vue')
+    ]);
+  }
+  return agentSettingsPanelsPreloadPromise;
+};
+

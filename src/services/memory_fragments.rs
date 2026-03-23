@@ -100,6 +100,60 @@ pub struct PromptMemoryRecall {
     pub total_available: usize,
 }
 
+#[derive(Debug, Clone)]
+enum MemoryHitEventKey {
+    Round {
+        session_id: String,
+        round_id: String,
+    },
+    Query {
+        session_id: String,
+        query_text: String,
+    },
+}
+
+impl MemoryHitEventKey {
+    fn build(session_id: Option<&str>, round_id: Option<&str>, query_text: &str) -> Option<Self> {
+        let cleaned_session = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        if let Some(cleaned_round) = round_id.map(str::trim).filter(|value| !value.is_empty()) {
+            return Some(Self::Round {
+                session_id: cleaned_session.to_string(),
+                round_id: cleaned_round.to_string(),
+            });
+        }
+        let cleaned_query = query_text.trim();
+        if cleaned_query.is_empty() {
+            return None;
+        }
+        Some(Self::Query {
+            session_id: cleaned_session.to_string(),
+            query_text: cleaned_query.to_string(),
+        })
+    }
+
+    fn session_id(&self) -> &str {
+        match self {
+            Self::Round { session_id, .. } | Self::Query { session_id, .. } => session_id,
+        }
+    }
+
+    fn round_id(&self) -> Option<&str> {
+        match self {
+            Self::Round { round_id, .. } => Some(round_id.as_str()),
+            Self::Query { .. } => None,
+        }
+    }
+
+    fn query_text(&self) -> Option<&str> {
+        match self {
+            Self::Round { .. } => None,
+            Self::Query { query_text, .. } => Some(query_text.as_str()),
+        }
+    }
+}
+
 pub struct MemoryFragmentStore {
     storage: Arc<dyn StorageBackend>,
     legacy_store: MemoryStore,
@@ -159,6 +213,7 @@ impl MemoryFragmentStore {
                 search_blob(&item).contains(&query).then_some(item)
             })
             .collect::<Vec<_>>();
+        self.sync_fragment_hit_counts(user_id, &scope, &mut items);
         items.sort_by(compare_fragment_records);
         if let Some(limit) = options.limit {
             items.truncate(limit.clamp(1, MAX_LIST_LIMIT));
@@ -181,6 +236,7 @@ impl MemoryFragmentStore {
         if refresh_fragment_lifecycle_record(&mut item, now_ts()) {
             let _ = self.storage.upsert_memory_fragment(&item);
         }
+        self.sync_fragment_hit_count(user_id, &scope, &mut item);
         Some(item)
     }
 
@@ -193,12 +249,10 @@ impl MemoryFragmentStore {
         let scope = normalize_agent_memory_scope(agent_id);
         self.ensure_legacy_migrated(user_id, &scope);
         let now = now_ts();
-        let existing = input.memory_id.as_deref().and_then(|memory_id| {
-            self.storage
-                .get_memory_fragment(user_id, &scope, memory_id.trim())
-                .ok()
-                .flatten()
-        });
+        let existing = input
+            .memory_id
+            .as_deref()
+            .and_then(|memory_id| self.get_fragment(user_id, Some(&scope), memory_id.trim()));
         let is_create = existing.is_none();
         let requested_tier = input
             .tier
@@ -483,6 +537,42 @@ impl MemoryFragmentStore {
             .unwrap_or_default()
     }
 
+    fn sync_fragment_hit_count(
+        &self,
+        user_id: &str,
+        agent_scope: &str,
+        fragment: &mut MemoryFragmentRecord,
+    ) {
+        let hit_counts = self
+            .storage
+            .list_memory_hit_counts(user_id, agent_scope)
+            .unwrap_or_default();
+        let previous_hit_count = fragment.hit_count;
+        sync_fragment_hit_count_from_map(fragment, &hit_counts);
+        if fragment.hit_count != previous_hit_count {
+            let _ = self.storage.upsert_memory_fragment(fragment);
+        }
+    }
+
+    fn sync_fragment_hit_counts(
+        &self,
+        user_id: &str,
+        agent_scope: &str,
+        fragments: &mut [MemoryFragmentRecord],
+    ) {
+        let hit_counts = self
+            .storage
+            .list_memory_hit_counts(user_id, agent_scope)
+            .unwrap_or_default();
+        for fragment in fragments {
+            let previous_hit_count = fragment.hit_count;
+            sync_fragment_hit_count_from_map(fragment, &hit_counts);
+            if fragment.hit_count != previous_hit_count {
+                let _ = self.storage.upsert_memory_fragment(fragment);
+            }
+        }
+    }
+
     pub async fn recall_for_prompt(
         &self,
         config: Option<&Config>,
@@ -538,8 +628,22 @@ impl MemoryFragmentStore {
                 .unwrap_or(DEFAULT_RECALL_LIMIT)
                 .clamp(1, MAX_RECALL_LIMIT),
         );
-        if let Some(session_id) = session_id.map(str::trim).filter(|item| !item.is_empty()) {
+        if let Some(recall_event) = MemoryHitEventKey::build(session_id, round_id, &query) {
             for hit in &mut hits {
+                let already_recorded = self
+                    .storage
+                    .has_memory_hit_event(
+                        user_id,
+                        &scope,
+                        &hit.fragment.memory_id,
+                        recall_event.session_id(),
+                        recall_event.round_id(),
+                        recall_event.query_text(),
+                    )
+                    .unwrap_or(false);
+                if already_recorded {
+                    continue;
+                }
                 let mut fragment = hit.fragment.clone();
                 fragment.access_count = fragment.access_count.saturating_add(1);
                 fragment.hit_count = fragment.hit_count.saturating_add(1);
@@ -552,8 +656,8 @@ impl MemoryFragmentStore {
                     memory_id: fragment.memory_id.clone(),
                     user_id: user_id.to_string(),
                     agent_id: scope.clone(),
-                    session_id: session_id.to_string(),
-                    round_id: round_id.unwrap_or("").trim().to_string(),
+                    session_id: recall_event.session_id().to_string(),
+                    round_id: recall_event.round_id().unwrap_or("").to_string(),
                     query_text: query.clone(),
                     reason_json: hit.reason_json.clone(),
                     lexical_score: hit.lexical_score,
@@ -746,7 +850,8 @@ impl MemoryFragmentStore {
         agent_scope: &str,
         now: f64,
     ) -> Vec<MemoryFragmentRecord> {
-        self.storage
+        let mut items = self
+            .storage
             .list_memory_fragments(user_id, agent_scope)
             .unwrap_or_default()
             .into_iter()
@@ -760,7 +865,9 @@ impl MemoryFragmentStore {
                 item.status == STATUS_ACTIVE && item.invalidated_at.unwrap_or(0.0) <= 0.0
             })
             .filter(|item| !is_superseded_fragment(item))
-            .collect()
+            .collect::<Vec<_>>();
+        self.sync_fragment_hit_counts(user_id, agent_scope, &mut items);
+        items
     }
 
     fn ensure_legacy_migrated(&self, user_id: &str, agent_scope: &str) {
@@ -1040,10 +1147,22 @@ fn format_prompt_memory_timestamp(value: f64) -> String {
         .unwrap_or_else(|| "unknown time".to_string())
 }
 
+fn sync_fragment_hit_count_from_map(
+    fragment: &mut MemoryFragmentRecord,
+    hit_counts: &HashMap<String, i64>,
+) {
+    fragment.hit_count = hit_counts
+        .get(&fragment.memory_id)
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+}
+
 fn compare_fragment_records(left: &MemoryFragmentRecord, right: &MemoryFragmentRecord) -> Ordering {
     right
-        .pinned
-        .cmp(&left.pinned)
+        .hit_count
+        .cmp(&left.hit_count)
+        .then_with(|| right.pinned.cmp(&left.pinned))
         .then_with(|| fragment_status_rank(&right.status).cmp(&fragment_status_rank(&left.status)))
         .then_with(|| fragment_tier_rank(&right.tier).cmp(&fragment_tier_rank(&left.tier)))
         .then_with(|| {
@@ -1655,7 +1774,9 @@ fn clamp01(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{MemoryFragmentEmbeddingRecord, SqliteStorage, StorageBackend};
+    use crate::storage::{
+        MemoryFragmentEmbeddingRecord, MemoryHitRecord, SqliteStorage, StorageBackend,
+    };
     use rusqlite::Connection;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1799,6 +1920,150 @@ mod tests {
         ]);
         assert_eq!(deduped.len(), 1);
         assert_eq!(deduped[0].fragment.memory_id, "m-newer");
+    }
+
+    #[test]
+    fn list_fragments_prefers_higher_deduped_hit_count() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-hit-count-order.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let store = MemoryFragmentStore::new(storage.clone());
+
+        let mut top = sample_fragment();
+        top.memory_id = "m-top".to_string();
+        top.title_l0 = "Top hit".to_string();
+        top.hit_count = 0;
+        top.updated_at = 10.0;
+        storage
+            .upsert_memory_fragment(&top)
+            .expect("save top fragment");
+
+        let mut low = sample_fragment();
+        low.memory_id = "m-low".to_string();
+        low.title_l0 = "Low hit".to_string();
+        low.hit_count = 99;
+        low.updated_at = 100.0;
+        storage
+            .upsert_memory_fragment(&low)
+            .expect("save low fragment");
+
+        for (hit_id, memory_id, session_id, round_id, query_text) in [
+            ("hit-1", "m-top", "s1", "r1", "rust"),
+            ("hit-2", "m-top", "s1", "r1", "rust"),
+            ("hit-3", "m-top", "s2", "r2", "rust"),
+            ("hit-4", "m-low", "s3", "", "axum"),
+        ] {
+            storage
+                .insert_memory_hit(&MemoryHitRecord {
+                    hit_id: hit_id.to_string(),
+                    memory_id: memory_id.to_string(),
+                    user_id: "u1".to_string(),
+                    agent_id: "a1".to_string(),
+                    session_id: session_id.to_string(),
+                    round_id: round_id.to_string(),
+                    query_text: query_text.to_string(),
+                    reason_json: serde_json::json!({}),
+                    lexical_score: 0.8,
+                    semantic_score: 0.0,
+                    freshness_score: 0.5,
+                    importance_score: 0.5,
+                    final_score: 0.8,
+                    created_at: now_ts(),
+                })
+                .expect("insert hit");
+        }
+
+        let listed = store.list_fragments("u1", Some("a1"), MemoryFragmentListOptions::default());
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].memory_id, "m-top");
+        assert_eq!(listed[0].hit_count, 2);
+        assert_eq!(listed[1].memory_id, "m-low");
+        assert_eq!(listed[1].hit_count, 1);
+
+        let persisted_top = store
+            .get_fragment("u1", Some("a1"), "m-top")
+            .expect("top fragment exists");
+        let persisted_low = store
+            .get_fragment("u1", Some("a1"), "m-low")
+            .expect("low fragment exists");
+        assert_eq!(persisted_top.hit_count, 2);
+        assert_eq!(persisted_low.hit_count, 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn recall_for_prompt_skips_preview_only_hits_and_dedupes_same_round() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-hit-dedupe.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let store = MemoryFragmentStore::new(storage);
+
+        let mut fragment = sample_fragment();
+        fragment.memory_id = "m-dedupe".to_string();
+        fragment.hit_count = 0;
+        fragment.access_count = 0;
+        store
+            .storage
+            .upsert_memory_fragment(&fragment)
+            .expect("save fragment");
+
+        let preview_inventory = store
+            .recall_for_prompt_inventory(
+                None,
+                "u1",
+                Some("a1"),
+                Some("preview-session"),
+                None,
+                None,
+                Some(5),
+            )
+            .await;
+        assert_eq!(preview_inventory.hits.len(), 1);
+        let after_preview = store
+            .get_fragment("u1", Some("a1"), "m-dedupe")
+            .expect("fragment after preview");
+        assert_eq!(after_preview.hit_count, 0);
+
+        let first_recall = store
+            .recall_for_prompt_inventory(
+                None,
+                "u1",
+                Some("a1"),
+                Some("chat-session"),
+                Some("round-1"),
+                Some("rust"),
+                Some(5),
+            )
+            .await;
+        assert_eq!(first_recall.hits.len(), 1);
+        let after_first = store
+            .get_fragment("u1", Some("a1"), "m-dedupe")
+            .expect("fragment after first recall");
+        assert_eq!(after_first.hit_count, 1);
+
+        let second_recall = store
+            .recall_for_prompt_inventory(
+                None,
+                "u1",
+                Some("a1"),
+                Some("chat-session"),
+                Some("round-1"),
+                Some("rust"),
+                Some(5),
+            )
+            .await;
+        assert_eq!(second_recall.hits.len(), 1);
+        let after_second = store
+            .get_fragment("u1", Some("a1"), "m-dedupe")
+            .expect("fragment after second recall");
+        assert_eq!(after_second.hit_count, 1);
+
+        let hit_rows = store.list_hits("u1", Some("a1"), Some("chat-session"), 20);
+        assert_eq!(hit_rows.len(), 1);
+        assert_eq!(hit_rows[0].memory_id, "m-dedupe");
     }
 
     #[test]

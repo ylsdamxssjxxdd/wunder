@@ -1,119 +1,12 @@
-﻿import { elements } from "./elements.js?v=20260323-02";
+﻿import { elements } from "./elements.js?v=20260323-03";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { notify } from "./notify.js";
 
-const BRIDGE_OWNER_PREFIX = "bridge_center_owner__";
-const USER_ONLY_CHANNELS = new Set(["wechat", "wechat_mp", "weixin"]);
-const CHANNEL_CONFIG_TEMPLATES = {
-  feishu: {
-    feishu: {
-      app_id: "",
-      app_secret: "",
-      domain: "open.feishu.cn",
-      receive_id_type: "chat_id",
-      verification_token: "",
-      encrypt_key: "",
-      long_connection_enabled: true,
-    },
-  },
-  qqbot: {
-    qqbot: {
-      app_id: "",
-      client_secret: "",
-      token: "",
-      sandbox: false,
-      long_connection_enabled: true,
-    },
-  },
-  whatsapp: {
-    whatsapp_cloud: {
-      phone_number_id: "",
-      access_token: "",
-      verify_token: "",
-      api_version: "v21.0",
-    },
-  },
-  wechat: {
-    wechat: {
-      corp_id: "",
-      agent_id: "",
-      secret: "",
-      token: "",
-      encoding_aes_key: "",
-      domain: "qyapi.weixin.qq.com",
-    },
-  },
-  wechat_mp: {
-    wechat_mp: {
-      app_id: "",
-      app_secret: "",
-      token: "",
-      encoding_aes_key: "",
-      original_id: "",
-      domain: "api.weixin.qq.com",
-    },
-  },
-  weixin: {
-    weixin: {
-      api_base: "https://ilinkai.weixin.qq.com",
-      cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c",
-      bot_token: "",
-      ilink_bot_id: "",
-      ilink_user_id: "",
-      long_connection_enabled: true,
-      allow_from: [],
-    },
-  },
-  xmpp: {
-    xmpp: {
-      jid: "bot@example.com",
-      password: "",
-      domain: "example.com",
-      host: "",
-      port: 5222,
-      tls_enabled: true,
-      direct_tls: false,
-      trust_self_signed: false,
-      long_connection_enabled: true,
-    },
-  },
-  telegram: {
-    telegram: {
-      bot_token: "",
-      webhook_secret: "",
-    },
-  },
-  discord: {
-    discord: {
-      bot_token: "",
-      application_id: "",
-      public_key: "",
-    },
-  },
-  slack: {
-    slack: {
-      bot_token: "",
-      signing_secret: "",
-      app_token: "",
-    },
-  },
-  line: {
-    line: {
-      channel_access_token: "",
-      channel_secret: "",
-    },
-  },
-  dingtalk: {
-    dingtalk: {
-      client_id: "",
-      client_secret: "",
-      token: "",
-      aes_key: "",
-    },
-  },
-};
+const WEIXIN_CHANNEL = "weixin";
+const DEFAULT_WEIXIN_API_BASE = "https://ilinkai.weixin.qq.com";
+const DEFAULT_WEIXIN_BOT_TYPE = "1";
 
 const emptyCenter = () => ({
   center_id: "",
@@ -136,14 +29,17 @@ const emptyChannelForm = () => ({
   center_account_id: "",
   channel: "",
   account_id: "",
-  account_name: "",
-  peer_kind: "group",
-  enabled: true,
-  config_text: "{}",
-  default_preset_agent_name_override: "",
-  thread_strategy: "main_thread",
-  status_reason: "",
-  owned: true,
+});
+
+const emptyWeixinQrState = () => ({
+  sessionKey: "",
+  qrcode: "",
+  qrcodeUrl: "",
+  apiBase: DEFAULT_WEIXIN_API_BASE,
+  status: "",
+  message: "",
+  loadingStart: false,
+  loadingWait: false,
 });
 
 const ensureBridgeState = () => {
@@ -153,6 +49,7 @@ const ensureBridgeState = () => {
   state.bridgeCenter.meta ||= null;
   state.bridgeCenter.centers ||= [];
   state.bridgeCenter.accounts ||= [];
+  state.bridgeCenter.availableAccounts ||= [];
   state.bridgeCenter.routes ||= [];
   state.bridgeCenter.logs ||= [];
   state.bridgeCenter.selectedCenterId ||= "";
@@ -161,6 +58,7 @@ const ensureBridgeState = () => {
   state.bridgeCenter.routeStatus ||= "";
   state.bridgeCenter.configEditingCenterId ||= "";
   state.bridgeCenter.channelForm ||= emptyChannelForm();
+  state.bridgeCenter.weixinQr ||= emptyWeixinQrState();
 };
 
 const channelMeta = (channel) =>
@@ -174,7 +72,7 @@ const resolveChannelLabel = (channel) => {
 const cleanText = (value) => String(value || "").trim();
 const isPlainObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const bridgeAccountKey = (channel, accountId) => `${cleanText(channel).toLowerCase()}::${cleanText(accountId).toLowerCase()}`;
-const centerOwnerUserId = (centerId) => (cleanText(centerId) ? `${BRIDGE_OWNER_PREFIX}${cleanText(centerId)}` : "");
+const isWeixinChannel = (channel) => cleanText(channel).toLowerCase() === WEIXIN_CHANNEL;
 
 const safeTs = (value) => {
   const ts = Number(value);
@@ -188,7 +86,9 @@ const currentCenter = () =>
   state.bridgeCenter.centers.find((item) => item.center_id === state.bridgeCenter.selectedCenterId) || null;
 
 const currentAccount = () =>
-  state.bridgeCenter.accounts.find((item) => item.center_account_id === state.bridgeCenter.selectedAccountId) || null;
+  state.bridgeCenter.accounts.find((item) => item.center_account_id === state.bridgeCenter.selectedAccountId) ||
+  state.bridgeCenter.accounts[0] ||
+  null;
 
 const parseResponseError = async (response) => {
   const payload = await response.json().catch(() => ({}));
@@ -224,6 +124,7 @@ const fillSelect = (element, items, placeholder = "请选择") => {
 
 const openModal = (modal) => modal?.classList.add("active");
 const closeModal = (modal) => modal?.classList.remove("active");
+const currentWeixinQrState = () => state.bridgeCenter.weixinQr || emptyWeixinQrState();
 
 const sanitizeCenterCode = (rawValue, fallbackValue) => {
   const normalized = String(rawValue || "")
@@ -250,76 +151,121 @@ const normalizeBridgeAccount = (item = {}) => ({
   enabled: item.enabled !== false,
   default_preset_agent_name_override: cleanText(item.default_preset_agent_name_override),
   thread_strategy: cleanText(item.thread_strategy) || "main_thread",
-  status_reason: cleanText(item.status_reason),
   route_count: Number(item.route_count) || 0,
   updated_at: Number(item.updated_at) || 0,
 });
 
-const normalizeOwnedChannelAccount = (item = {}) => ({
-  key: bridgeAccountKey(item.channel, item.account_id),
-  channel: cleanText(item.channel).toLowerCase(),
-  account_id: cleanText(item.account_id),
-  name: cleanText(item.name),
-  status: cleanText(item.status) || "active",
-  active: item.active !== false,
-  meta: isPlainObject(item.meta) ? item.meta : {},
-  raw_config: isPlainObject(item.raw_config) ? item.raw_config : {},
-  updated_at: Number(item.updated_at) || 0,
-});
-
-const buildChannelTemplateText = (channel) => {
-  const normalized = cleanText(channel).toLowerCase();
-  const template = CHANNEL_CONFIG_TEMPLATES[normalized] || {};
-  return JSON.stringify(template, null, 2);
+const normalizeAvailableChannelAccount = (item = {}) => {
+  const config = isPlainObject(item.config) ? item.config : {};
+  return {
+    key: bridgeAccountKey(item.channel, item.account_id),
+    channel: cleanText(item.channel).toLowerCase(),
+    account_id: cleanText(item.account_id),
+    name: cleanText(config.display_name),
+    status: cleanText(item.status) || "active",
+    active: cleanText(item.status || "active").toLowerCase() === "active",
+    meta: {},
+    raw_config: config,
+    updated_at: Number(item.updated_at) || 0,
+  };
 };
 
-const summarizeProviderCaps = (caps = {}) => {
-  const parts = [];
-  if (caps.supports_thread) parts.push("支持线程");
-  if (caps.supports_group_identity) parts.push("支持群组身份");
-  if (caps.supports_proactive) parts.push("支持主动发送");
-  if (caps.requires_context_token) parts.push("出站依赖上下文");
-  return parts.join(" / ") || "按通用 JSON 配置";
+const resetWeixinQrState = () => {
+  state.bridgeCenter.weixinQr = emptyWeixinQrState();
 };
 
-const refreshChannelGuide = ({ allowAutofill = false } = {}) => {
-  const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel).toLowerCase();
-  const meta = channelMeta(channel);
-  const providerCaps = meta?.provider_caps || {};
-  if (elements.bridgeCenterChannelGuideName) {
-    elements.bridgeCenterChannelGuideName.textContent = meta
-      ? `${meta.display_name || meta.channel} (${meta.channel})`
-      : "选择渠道后显示说明";
+const normalizeWeixinQrImageValue = (rawValue, apiBase = "") => {
+  const value = cleanText(rawValue);
+  if (!value) {
+    return "";
   }
-  if (elements.bridgeCenterChannelGuideRuntime) {
-    const runtimeMode = providerCaps.runtime_mode || meta?.webhook_mode || "-";
-    elements.bridgeCenterChannelGuideRuntime.textContent = `模式 ${runtimeMode}`;
+  if (value.startsWith("data:image/")) {
+    return value;
   }
-  if (elements.bridgeCenterChannelGuideAdapter) {
-    elements.bridgeCenterChannelGuideAdapter.textContent = providerCaps.adapter_registered ? "适配器已接线" : "目录已注册";
+  const compact = value.replace(/\s+/g, "");
+  const base64Candidate = compact.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+  if (base64Candidate.length > 64 && /^[A-Za-z0-9+/]+=*$/.test(base64Candidate)) {
+    return `data:image/png;base64,${base64Candidate}`;
   }
-  if (elements.bridgeCenterChannelGuideDescription) {
-    elements.bridgeCenterChannelGuideDescription.textContent = meta?.description
-      ? `${meta.description}。渠道专属字段请放进下方 JSON 配置。`
-      : "先选择渠道，再按模板填写当前节点专属的接入账号配置。";
+  if (value.startsWith("blob:") || /^https?:\/\//i.test(value)) {
+    return value;
   }
-  if (elements.bridgeCenterChannelGuideDocsHint) {
-    elements.bridgeCenterChannelGuideDocsHint.textContent = meta?.docs_hint || "-";
+  if (value.startsWith("//")) {
+    return `${window.location.protocol}${value}`;
   }
-  if (elements.bridgeCenterChannelGuideCaps) {
-    elements.bridgeCenterChannelGuideCaps.textContent = summarizeProviderCaps(providerCaps);
+  if (value.startsWith("/")) {
+    if (apiBase) {
+      try {
+        return new URL(value, apiBase).toString();
+      } catch (error) {
+        return `${window.location.origin}${value}`;
+      }
+    }
+    return `${window.location.origin}${value}`;
   }
-  const configLocked = state.bridgeCenter.channelForm.mode === "edit" && state.bridgeCenter.channelForm.owned === false;
-  if (elements.bridgeCenterChannelTemplateBtn) {
-    elements.bridgeCenterChannelTemplateBtn.disabled = !channel || configLocked;
+  return "";
+};
+
+const resolveWeixinQrPreviewUrl = (qrState) =>
+  normalizeWeixinQrImageValue(qrState.qrcodeUrl, qrState.apiBase) ||
+  normalizeWeixinQrImageValue(qrState.qrcode, qrState.apiBase);
+
+const formatWeixinQrStatus = (status) => {
+  const normalized = cleanText(status).toLowerCase();
+  if (!normalized) {
+    return "";
   }
-  if (elements.bridgeCenterChannelEmptyBtn) {
-    elements.bridgeCenterChannelEmptyBtn.disabled = configLocked;
+  const labels = {
+    wait: "等待扫码",
+    confirmed: "已确认",
+    expired: "已过期",
+  };
+  return labels[normalized] || normalized;
+};
+
+const renderWeixinQrPanel = () => {
+  const show = isWeixinChannel(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel);
+  const qrState = currentWeixinQrState();
+  const previewUrl = resolveWeixinQrPreviewUrl(qrState);
+  const canOpenPreview = /^https?:\/\//i.test(previewUrl) || previewUrl.startsWith("blob:");
+  if (elements.bridgeCenterWeixinQrSection) {
+    elements.bridgeCenterWeixinQrSection.hidden = !show;
   }
-  if (allowAutofill && elements.bridgeCenterChannelConfig) {
-    const current = cleanText(elements.bridgeCenterChannelConfig.value);
-    if (!current || current === "{}") {
-      elements.bridgeCenterChannelConfig.value = buildChannelTemplateText(channel);
+  if (!show) {
+    return;
+  }
+  if (elements.bridgeCenterWeixinQrPreview) {
+    elements.bridgeCenterWeixinQrPreview.hidden = !previewUrl;
+  }
+  if (elements.bridgeCenterWeixinQrImage) {
+    if (previewUrl) {
+      elements.bridgeCenterWeixinQrImage.src = previewUrl;
+    } else {
+      elements.bridgeCenterWeixinQrImage.removeAttribute("src");
+    }
+  }
+  if (elements.bridgeCenterWeixinQrOpenLink) {
+    elements.bridgeCenterWeixinQrOpenLink.hidden = !previewUrl || !canOpenPreview;
+    elements.bridgeCenterWeixinQrOpenLink.href = previewUrl || "#";
+  }
+  if (elements.bridgeCenterWeixinQrSession) {
+    elements.bridgeCenterWeixinQrSession.textContent = qrState.sessionKey ? `会话 Key: ${qrState.sessionKey}` : "";
+  }
+  if (elements.bridgeCenterWeixinQrStatus) {
+    elements.bridgeCenterWeixinQrStatus.textContent = qrState.status ? `状态: ${formatWeixinQrStatus(qrState.status)}` : "";
+  }
+  if (elements.bridgeCenterWeixinQrMessage) {
+    elements.bridgeCenterWeixinQrMessage.textContent = qrState.message || "";
+  }
+  if (elements.bridgeCenterWeixinQrStartBtn) {
+    const loading = qrState.loadingStart || qrState.loadingWait;
+    elements.bridgeCenterWeixinQrStartBtn.disabled = loading;
+    const span = elements.bridgeCenterWeixinQrStartBtn.querySelector("span");
+    const label = loading ? "处理中..." : qrState.sessionKey ? "重新生成二维码" : "生成二维码";
+    if (span) {
+      span.textContent = label;
+    } else {
+      elements.bridgeCenterWeixinQrStartBtn.textContent = label;
     }
   }
 };
@@ -360,11 +306,174 @@ const refreshMetaOptions = () => {
     })),
     "选择渠道"
   );
+  refreshChannelAccountOptions();
+};
+
+const refreshChannelAccountOptions = () => {
+  if (!elements.bridgeCenterChannelFormAccountId) {
+    return;
+  }
+  const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel).toLowerCase();
+  const current = currentAccount();
+  const items = state.bridgeCenter.availableAccounts
+    .filter((item) => item.channel === channel)
+    .map((item) => ({
+      value: item.account_id,
+      label: item.name ? `${item.account_id} (${item.name})` : item.account_id,
+    }));
+  if (
+    current?.account_id &&
+    current.channel === channel &&
+    !items.some((item) => item.value === current.account_id)
+  ) {
+    items.unshift({
+      value: current.account_id,
+      label: current.name ? `${current.account_id} (${current.name})` : current.account_id,
+    });
+  }
   fillSelect(
-    elements.bridgeCenterChannelPresetOverride,
-    (meta.preset_agents || []).map((item) => ({ value: item.name, label: item.name })),
-    "沿用节点默认预设"
+    elements.bridgeCenterChannelFormAccountId,
+    items,
+    isWeixinChannel(channel) ? "自动生成新账号" : "选择账号"
   );
+  const nextValue = state.bridgeCenter.channelForm.account_id || current?.account_id || items[0]?.value || "";
+  elements.bridgeCenterChannelFormAccountId.value = nextValue;
+  state.bridgeCenter.channelForm.account_id = elements.bridgeCenterChannelFormAccountId.value || "";
+  renderWeixinQrPanel();
+};
+
+const confirmChannelReplacement = (channel, accountId) => {
+  const existing = currentAccount();
+  if (!existing?.center_account_id) {
+    return true;
+  }
+  const sameBinding =
+    existing.channel === cleanText(channel).toLowerCase() && existing.account_id === cleanText(accountId);
+  if (sameBinding) {
+    return true;
+  }
+  return window.confirm("切换渠道会清理当前节点已有的自动路由和投递日志，确认继续吗？");
+};
+
+const bindWeixinQrResult = async (result) => {
+  const center = currentCenter();
+  const existing = currentAccount();
+  if (!center?.center_id) {
+    throw new Error("请先保存舰桥节点，再配置渠道");
+  }
+  const botToken = cleanText(result.bot_token);
+  const ilinkBotId = cleanText(result.ilink_bot_id);
+  if (!botToken || !ilinkBotId) {
+    throw new Error("Weixin 扫码结果不完整，请重新生成二维码");
+  }
+  const payload = {
+    account_id:
+      cleanText(elements.bridgeCenterChannelFormAccountId?.value) ||
+      (existing?.channel === WEIXIN_CHANNEL ? existing.account_id : "") ||
+      undefined,
+    api_base: cleanText(result.api_base) || currentWeixinQrState().apiBase || DEFAULT_WEIXIN_API_BASE,
+    bot_type: DEFAULT_WEIXIN_BOT_TYPE,
+    bot_token: botToken,
+    ilink_bot_id: ilinkBotId,
+    ilink_user_id: cleanText(result.ilink_user_id) || undefined,
+  };
+  await fetchJson(`/admin/bridge/centers/${encodeURIComponent(center.center_id)}/weixin_bind`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
+  closeModal(elements.bridgeCenterChannelModal);
+  notify("Weixin 渠道已扫码绑定", "success");
+};
+
+const waitForWeixinQr = async () => {
+  const qrState = currentWeixinQrState();
+  if (!cleanText(qrState.sessionKey)) {
+    return;
+  }
+  qrState.loadingWait = true;
+  qrState.message = "等待扫码确认...";
+  renderWeixinQrPanel();
+  try {
+    const payload = await fetchJson("/channels/weixin/qr/wait", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session_key: qrState.sessionKey,
+        api_base: qrState.apiBase || DEFAULT_WEIXIN_API_BASE,
+        timeout_ms: 120000,
+      }),
+    });
+    const result = isPlainObject(payload?.data) ? payload.data : {};
+    qrState.status = cleanText(result.status).toLowerCase() || qrState.status || "wait";
+    qrState.message = cleanText(result.message) || qrState.message;
+    qrState.apiBase = cleanText(result.api_base) || qrState.apiBase || DEFAULT_WEIXIN_API_BASE;
+    renderWeixinQrPanel();
+    if (result.connected === true) {
+      await bindWeixinQrResult(result);
+      return;
+    }
+    if (qrState.status === "expired") {
+      qrState.message = qrState.message || "二维码已过期，请重新生成";
+      notify("Weixin 二维码已过期", "warning");
+    }
+  } catch (error) {
+    qrState.message = error.message || "Weixin 扫码确认失败";
+    notify(qrState.message, "error");
+  } finally {
+    qrState.loadingWait = false;
+    renderWeixinQrPanel();
+  }
+};
+
+const startWeixinQr = async (force = false) => {
+  const center = currentCenter();
+  if (!center?.center_id) {
+    notify("请先保存舰桥节点，再配置渠道", "warning");
+    return;
+  }
+  if (!isWeixinChannel(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel)) {
+    return;
+  }
+  const selectedAccountId = cleanText(elements.bridgeCenterChannelFormAccountId?.value);
+  if (!confirmChannelReplacement(WEIXIN_CHANNEL, selectedAccountId || currentAccount()?.account_id || "")) {
+    return;
+  }
+  const qrState = currentWeixinQrState();
+  qrState.loadingStart = true;
+  qrState.message = "";
+  qrState.status = "";
+  renderWeixinQrPanel();
+  try {
+    const payload = await fetchJson("/channels/weixin/qr/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        api_base: qrState.apiBase || DEFAULT_WEIXIN_API_BASE,
+        bot_type: DEFAULT_WEIXIN_BOT_TYPE,
+        force,
+      }),
+    });
+    const result = isPlainObject(payload?.data) ? payload.data : {};
+    qrState.sessionKey = cleanText(result.session_key);
+    qrState.qrcode = cleanText(result.qrcode);
+    qrState.qrcodeUrl = cleanText(result.qrcode_url);
+    qrState.apiBase = cleanText(result.api_base) || DEFAULT_WEIXIN_API_BASE;
+    qrState.status = "wait";
+    qrState.message = "二维码已生成，请扫码确认";
+    renderWeixinQrPanel();
+    if (!qrState.sessionKey || !resolveWeixinQrPreviewUrl(qrState)) {
+      throw new Error("Weixin 二维码生成失败");
+    }
+    void waitForWeixinQr();
+  } catch (error) {
+    qrState.message = error.message || "Weixin 二维码生成失败";
+    notify(qrState.message, "error");
+  } finally {
+    qrState.loadingStart = false;
+    renderWeixinQrPanel();
+  }
 };
 
 const renderCenterList = () => {
@@ -410,6 +519,7 @@ const renderCenterList = () => {
 
 const renderCenterOverview = () => {
   const center = currentCenter();
+  const account = currentAccount();
   const units = state.bridgeCenter.meta?.org_units || [];
   const unit = units.find((item) => item.unit_id === center?.target_unit_id);
   if (elements.bridgeCenterCurrentName) {
@@ -418,16 +528,19 @@ const renderCenterOverview = () => {
   if (elements.bridgeCenterOwner) {
     elements.bridgeCenterOwner.textContent = center
       ? `${center.owner_username ? `创建人：${center.owner_username} | ` : ""}更新时间：${safeTs(center.updated_at)}`
-      : "先创建舰桥节点，再配置接入渠道。";
+      : "先创建舰桥节点，再配置渠道。";
   }
   if (elements.bridgeCenterSummaryStatus) elements.bridgeCenterSummaryStatus.textContent = center?.status || "-";
   if (elements.bridgeCenterSummaryPreset) elements.bridgeCenterSummaryPreset.textContent = center?.default_preset_agent_name || "-";
   if (elements.bridgeCenterSummaryUnit) elements.bridgeCenterSummaryUnit.textContent = unit?.path_name || unit?.name || "默认不指定";
-  if (elements.bridgeCenterSummaryChannels) elements.bridgeCenterSummaryChannels.textContent = String(center?.shared_channel_count || center?.account_count || 0);
+  if (elements.bridgeCenterSummaryChannels) {
+    const channelLabel = account ? resolveChannelLabel(account.channel) : "";
+    elements.bridgeCenterSummaryChannels.textContent = account
+      ? `${channelLabel === account.channel ? channelLabel : `${channelLabel} (${account.channel})`} / ${account.account_id}`
+      : "未配置";
+  }
   if (elements.bridgeCenterSummaryRoutes) elements.bridgeCenterSummaryRoutes.textContent = String(center?.route_count || 0);
   if (elements.bridgeCenterSummaryActiveRoutes) elements.bridgeCenterSummaryActiveRoutes.textContent = String(center?.active_route_count || 0);
-  if (elements.bridgeCenterSummaryPassword) elements.bridgeCenterSummaryPassword.textContent = state.bridgeCenter.meta?.default_password || "123456";
-  if (elements.bridgeCenterSummaryDescription) elements.bridgeCenterSummaryDescription.textContent = center?.description || "该节点暂无说明。";
   if (elements.bridgeCenterDeleteBtn) elements.bridgeCenterDeleteBtn.disabled = !center;
   if (elements.bridgeCenterChannelsBtn) elements.bridgeCenterChannelsBtn.disabled = !center;
 };
@@ -438,7 +551,7 @@ const renderAccountList = () => {
   elements.bridgeCenterAccountList.textContent = "";
   if (!state.bridgeCenter.accounts.length) {
     const row = document.createElement("tr");
-    row.innerHTML = '<td colspan="8" class="muted">暂无接入渠道</td>';
+    row.innerHTML = '<td colspan="8" class="muted">暂无渠道绑定</td>';
     elements.bridgeCenterAccountList.appendChild(row);
     return;
   }
@@ -525,25 +638,30 @@ const loadBridgeMetadata = async () => {
   refreshMetaOptions();
 };
 
+const loadAvailableChannelAccounts = async () => {
+  const payload = await fetchJson("/admin/channels/accounts?status=active");
+  state.bridgeCenter.availableAccounts = (payload?.data?.items || []).map((item) => normalizeAvailableChannelAccount(item));
+  refreshChannelAccountOptions();
+};
+
 const loadBridgeCenterAccounts = async () => {
   const centerId = state.bridgeCenter.selectedCenterId;
   if (!centerId) {
     state.bridgeCenter.accounts = [];
     renderAccountList();
+    renderCenterOverview();
     return;
   }
-  const ownerUserId = centerOwnerUserId(centerId);
-  const [bridgePayload, ownerPayload] = await Promise.all([
-    fetchJson(`/admin/bridge/centers/${encodeURIComponent(centerId)}/accounts`),
-    fetchJson(`/channels/accounts?user_id=${encodeURIComponent(ownerUserId)}`).catch(() => ({ data: { items: [] } })),
-  ]);
-  const bridgeAccounts = (bridgePayload?.data?.items || []).map((item) => normalizeBridgeAccount(item));
-  const ownedAccounts = (ownerPayload?.data?.items || []).map((item) => normalizeOwnedChannelAccount(item));
-  state.bridgeCenter.accounts = mergeBridgeAccounts(bridgeAccounts, ownedAccounts);
-  if (!state.bridgeCenter.accounts.some((item) => item.center_account_id === state.bridgeCenter.selectedAccountId)) {
-    state.bridgeCenter.selectedAccountId = "";
+  if (!state.bridgeCenter.availableAccounts.length) {
+    await loadAvailableChannelAccounts().catch(() => null);
   }
+  const bridgePayload = await fetchJson(`/admin/bridge/centers/${encodeURIComponent(centerId)}/accounts`);
+  const bridgeAccounts = (bridgePayload?.data?.items || []).map((item) => normalizeBridgeAccount(item));
+  state.bridgeCenter.accounts = mergeBridgeAccounts(bridgeAccounts, state.bridgeCenter.availableAccounts);
+  state.bridgeCenter.selectedAccountId = state.bridgeCenter.accounts[0]?.center_account_id || "";
   renderAccountList();
+  renderCenterOverview();
+  refreshChannelAccountOptions();
 };
 
 const loadBridgeRoutes = async () => {
@@ -592,6 +710,7 @@ const loadBridgeCenters = async ({ silent = false, selectedCenterId = "" } = {})
   renderCenterList();
   renderCenterOverview();
   if (!state.bridgeCenter.selectedCenterId) {
+    state.bridgeCenter.selectedAccountId = "";
     state.bridgeCenter.accounts = [];
     state.bridgeCenter.routes = [];
     state.bridgeCenter.logs = [];
@@ -606,12 +725,14 @@ const loadBridgeCenters = async ({ silent = false, selectedCenterId = "" } = {})
   }
 };
 const applyChannelForm = (account) => {
+  resetWeixinQrState();
   if (!account) {
     state.bridgeCenter.selectedAccountId = "";
     state.bridgeCenter.channelForm = {
-      ...emptyChannelForm(),
+      mode: "create",
+      center_account_id: "",
       channel: state.bridgeCenter.meta?.supported_channels?.[0]?.channel || "",
-      peer_kind: "group",
+      account_id: "",
     };
   } else {
     state.bridgeCenter.selectedAccountId = account.center_account_id;
@@ -620,43 +741,27 @@ const applyChannelForm = (account) => {
       center_account_id: account.center_account_id,
       channel: account.channel,
       account_id: account.account_id,
-      account_name: account.name || "",
-      peer_kind: USER_ONLY_CHANNELS.has(account.channel) ? "user" : cleanText(account.meta?.peer_kind) || "group",
-      enabled: account.enabled,
-      config_text: account.owned ? JSON.stringify(account.raw_config || {}, null, 2) : "{}",
-      default_preset_agent_name_override: account.default_preset_agent_name_override || "",
-      thread_strategy: account.thread_strategy || "main_thread",
-      status_reason: account.status_reason || "",
-      owned: account.owned !== false,
     };
   }
   const form = state.bridgeCenter.channelForm;
-  if (elements.bridgeCenterChannelModalTitle) elements.bridgeCenterChannelModalTitle.textContent = form.mode === "edit" ? "编辑接入渠道" : "新增接入渠道";
-  if (elements.bridgeCenterChannelEditorHint) elements.bridgeCenterChannelEditorHint.textContent = form.mode === "edit" ? (form.owned ? "修改后会同步更新渠道账号和舰桥策略。" : "该账号不归当前节点所有，仅允许调整舰桥策略。") : "直接在这里配置节点专属渠道账号。";
-  if (elements.bridgeCenterChannelOwnedBadge) elements.bridgeCenterChannelOwnedBadge.textContent = form.mode === "edit" ? (form.owned ? "节点内账号" : "外部账号") : "新渠道";
+  if (elements.bridgeCenterChannelModalTitle) elements.bridgeCenterChannelModalTitle.textContent = "渠道设置";
+  if (elements.bridgeCenterChannelEditorHint) {
+    elements.bridgeCenterChannelEditorHint.textContent =
+      form.mode === "edit"
+        ? "当前节点已经绑定了一个渠道账号；切换绑定会清理该节点已有的自动路由和投递日志。"
+        : "每个舰桥节点只绑定一个渠道账号。";
+  }
+  if (elements.bridgeCenterChannelOwnedBadge) elements.bridgeCenterChannelOwnedBadge.textContent = form.mode === "edit" ? "已绑定" : "未绑定";
   if (elements.bridgeCenterChannelFormChannel) {
     elements.bridgeCenterChannelFormChannel.value = form.channel || "";
-    elements.bridgeCenterChannelFormChannel.disabled = form.mode === "edit";
+    elements.bridgeCenterChannelFormChannel.disabled = false;
   }
   if (elements.bridgeCenterChannelFormAccountId) {
     elements.bridgeCenterChannelFormAccountId.value = form.account_id || "";
-    elements.bridgeCenterChannelFormAccountId.readOnly = form.mode === "edit";
   }
-  if (elements.bridgeCenterChannelFormAccountName) elements.bridgeCenterChannelFormAccountName.value = form.account_name || "";
-  if (elements.bridgeCenterChannelFormPeerKind) {
-    elements.bridgeCenterChannelFormPeerKind.value = form.peer_kind || "group";
-    elements.bridgeCenterChannelFormPeerKind.disabled = USER_ONLY_CHANNELS.has(form.channel) || (form.mode === "edit" && form.owned === false);
-  }
-  if (elements.bridgeCenterChannelFormEnabled) elements.bridgeCenterChannelFormEnabled.checked = Boolean(form.enabled);
-  if (elements.bridgeCenterChannelConfig) {
-    elements.bridgeCenterChannelConfig.value = form.config_text || "{}";
-    elements.bridgeCenterChannelConfig.disabled = form.mode === "edit" && form.owned === false;
-  }
-  if (elements.bridgeCenterChannelPresetOverride) elements.bridgeCenterChannelPresetOverride.value = form.default_preset_agent_name_override || "";
-  if (elements.bridgeCenterChannelThreadStrategy) elements.bridgeCenterChannelThreadStrategy.value = form.thread_strategy || "main_thread";
-  if (elements.bridgeCenterChannelStatusReason) elements.bridgeCenterChannelStatusReason.value = form.status_reason || "";
   if (elements.bridgeCenterChannelDeleteBtn) elements.bridgeCenterChannelDeleteBtn.disabled = form.mode !== "edit";
-  refreshChannelGuide({ allowAutofill: form.mode !== "edit" });
+  refreshChannelAccountOptions();
+  renderWeixinQrPanel();
 };
 
 const readCenterConfig = () => {
@@ -693,76 +798,51 @@ const saveCenterConfig = async () => {
 const saveChannelConfig = async () => {
   const center = currentCenter();
   if (!center?.center_id) {
-    throw new Error("请先保存舰桥节点，再配置接入渠道");
+    throw new Error("请先保存舰桥节点，再配置渠道");
   }
-  const form = state.bridgeCenter.channelForm;
   const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value).toLowerCase();
   if (!channel) {
     throw new Error("请选择渠道");
   }
   const accountId = cleanText(elements.bridgeCenterChannelFormAccountId?.value);
-  const accountName = cleanText(elements.bridgeCenterChannelFormAccountName?.value);
-  const peerKind = USER_ONLY_CHANNELS.has(channel) ? "user" : cleanText(elements.bridgeCenterChannelFormPeerKind?.value) || "group";
-  const enabled = Boolean(elements.bridgeCenterChannelFormEnabled?.checked);
-  const rawConfig = cleanText(elements.bridgeCenterChannelConfig?.value);
-  let config = null;
-  if (form.mode === "create" || form.owned !== false) {
-    if (!rawConfig) {
-      throw new Error("请填写渠道 JSON 配置，至少保留 {} 或点击“填入模板”");
+  if (!accountId) {
+    if (isWeixinChannel(channel)) {
+      throw new Error("请选择一个已有账号，或先完成 Weixin 扫码绑定");
     }
-    try {
-      config = JSON.parse(rawConfig || "{}");
-    } catch (error) {
-      throw new Error("JSON 配置格式错误，请输入对象格式");
-    }
-    if (!isPlainObject(config)) {
-      throw new Error("JSON 配置格式错误，请输入对象格式");
-    }
+    throw new Error("请选择一个已配置的渠道账号");
   }
-  const ownerUserId = centerOwnerUserId(center.center_id);
-  let savedAccount = { channel, account_id: accountId, name: accountName };
-  if (form.mode === "create" || form.owned !== false) {
-    const channelPayload = {
-      channel,
-      account_id: accountId || undefined,
-      create_new: !accountId && form.mode !== "edit",
-      account_name: accountName || undefined,
-      peer_kind: peerKind,
-      enabled,
-      config,
-    };
-    const result = await fetchJson(`/channels/accounts?user_id=${encodeURIComponent(ownerUserId)}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(channelPayload),
-    });
-    savedAccount = result?.data || savedAccount;
+  if (!confirmChannelReplacement(channel, accountId)) {
+    return;
   }
+  const existing = currentAccount();
   const bridgePayload = {
     center_id: center.center_id,
-    channel: savedAccount.channel,
-    account_id: savedAccount.account_id,
-    enabled,
-    default_preset_agent_name_override: cleanText(elements.bridgeCenterChannelPresetOverride?.value) || undefined,
-    thread_strategy: cleanText(elements.bridgeCenterChannelThreadStrategy?.value) || "main_thread",
-    status_reason: cleanText(elements.bridgeCenterChannelStatusReason?.value) || undefined,
+    channel,
+    account_id: accountId,
+    enabled: true,
   };
-  if (form.mode === "edit" && form.center_account_id) {
-    await fetchJson(`/admin/bridge/accounts/${encodeURIComponent(form.center_account_id)}`, {
+  const bindingChanged = !existing || existing.channel !== channel || existing.account_id !== accountId;
+  if (existing?.center_account_id && !bindingChanged) {
+    await fetchJson(`/admin/bridge/accounts/${encodeURIComponent(existing.center_account_id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(bridgePayload),
     });
   } else {
+    if (existing?.center_account_id) {
+      await fetchJson(`/admin/bridge/accounts/${encodeURIComponent(existing.center_account_id)}`, {
+        method: "DELETE",
+      });
+    }
     await fetchJson(`/admin/bridge/centers/${encodeURIComponent(center.center_id)}/accounts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(bridgePayload),
     });
   }
-  await loadBridgeCenterAccounts();
-  applyChannelForm();
-  notify("接入渠道已保存", "success");
+  await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
+  closeModal(elements.bridgeCenterChannelModal);
+  notify("渠道设置已保存", "success");
 };
 
 const removeChannelConfig = async () => {
@@ -771,17 +851,13 @@ const removeChannelConfig = async () => {
   if (!center?.center_id || !account?.center_account_id) {
     return;
   }
-  if (!window.confirm(`确认移除 ${account.channel} / ${account.account_id} 吗？`)) {
+  if (!window.confirm(`确认移除 ${account.channel} / ${account.account_id} 吗？这会清理该节点已有的自动路由和投递日志。`)) {
     return;
   }
   await fetchJson(`/admin/bridge/accounts/${encodeURIComponent(account.center_account_id)}`, { method: "DELETE" });
-  if (account.owned) {
-    const ownerUserId = centerOwnerUserId(center.center_id);
-    await fetchJson(`/channels/accounts/${encodeURIComponent(account.channel)}/${encodeURIComponent(account.account_id)}?user_id=${encodeURIComponent(ownerUserId)}`, { method: "DELETE" }).catch(() => null);
-  }
-  await loadBridgeCenterAccounts();
-  applyChannelForm();
-  notify("接入渠道已移除", "success");
+  await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
+  closeModal(elements.bridgeCenterChannelModal);
+  notify("渠道绑定已移除", "success");
 };
 
 const patchRouteStatus = async (status) => {
@@ -811,7 +887,7 @@ export const initBridgeCenterPanel = () => {
     if (elements.bridgeCenterConfigPreset) elements.bridgeCenterConfigPreset.value = "";
     if (elements.bridgeCenterConfigUnit) elements.bridgeCenterConfigUnit.value = "";
     if (elements.bridgeCenterConfigDescription) elements.bridgeCenterConfigDescription.value = "";
-    if (elements.bridgeCenterConfigOwner) elements.bridgeCenterConfigOwner.textContent = "保存后即可继续配置该节点接入渠道";
+    if (elements.bridgeCenterConfigOwner) elements.bridgeCenterConfigOwner.textContent = "保存后即可继续配置节点渠道";
     openModal(elements.bridgeCenterConfigModal);
   });
   elements.bridgeCenterDeleteBtn?.addEventListener("click", async () => {
@@ -831,46 +907,32 @@ export const initBridgeCenterPanel = () => {
     if (elements.bridgeCenterConfigPreset) elements.bridgeCenterConfigPreset.value = center.default_preset_agent_name || "";
     if (elements.bridgeCenterConfigUnit) elements.bridgeCenterConfigUnit.value = center.target_unit_id || "";
     if (elements.bridgeCenterConfigDescription) elements.bridgeCenterConfigDescription.value = center.description || "";
-    if (elements.bridgeCenterConfigOwner) elements.bridgeCenterConfigOwner.textContent = center.owner_username ? `创建人：${center.owner_username} | 最近更新：${safeTs(center.updated_at)}` : "保存后即可继续配置该节点接入渠道";
+    if (elements.bridgeCenterConfigOwner) elements.bridgeCenterConfigOwner.textContent = center.owner_username ? `创建人：${center.owner_username} | 最近更新：${safeTs(center.updated_at)}` : "保存后即可继续配置节点渠道";
     openModal(elements.bridgeCenterConfigModal);
   });
   elements.bridgeCenterChannelsBtn?.addEventListener("click", async () => {
-    if (!currentCenter()?.center_id) return notify("请先保存舰桥节点，再配置接入渠道", "warning");
-    await loadBridgeCenterAccounts();
-    applyChannelForm();
+    if (!currentCenter()?.center_id) return notify("请先保存舰桥节点，再配置渠道", "warning");
+    await Promise.all([loadAvailableChannelAccounts(), loadBridgeCenterAccounts()]);
+    applyChannelForm(currentAccount());
     openModal(elements.bridgeCenterChannelModal);
   });
   elements.bridgeCenterConfigSaveBtn?.addEventListener("click", () => saveCenterConfig().catch((error) => notify(error.message, "error")));
-  elements.bridgeCenterChannelNewBtn?.addEventListener("click", () => applyChannelForm());
   elements.bridgeCenterChannelSaveBtn?.addEventListener("click", () => saveChannelConfig().catch((error) => notify(error.message, "error")));
   elements.bridgeCenterChannelDeleteBtn?.addEventListener("click", () => removeChannelConfig().catch((error) => notify(error.message, "error")));
   elements.bridgeCenterChannelFormChannel?.addEventListener("change", () => {
+    resetWeixinQrState();
     const channel = cleanText(elements.bridgeCenterChannelFormChannel.value).toLowerCase();
     state.bridgeCenter.channelForm.channel = channel;
-    if (elements.bridgeCenterChannelFormPeerKind) {
-      if (USER_ONLY_CHANNELS.has(channel)) {
-        elements.bridgeCenterChannelFormPeerKind.value = "user";
-        elements.bridgeCenterChannelFormPeerKind.disabled = true;
-      } else {
-        elements.bridgeCenterChannelFormPeerKind.disabled = false;
-      }
-    }
-    refreshChannelGuide({ allowAutofill: state.bridgeCenter.channelForm.mode !== "edit" });
+    state.bridgeCenter.channelForm.account_id = "";
+    refreshChannelAccountOptions();
   });
-  elements.bridgeCenterChannelTemplateBtn?.addEventListener("click", () => {
-    const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value).toLowerCase();
-    if (!channel || !elements.bridgeCenterChannelConfig) {
-      return;
-    }
-    elements.bridgeCenterChannelConfig.value = buildChannelTemplateText(channel);
-    notify("已填入渠道模板", "info");
+  elements.bridgeCenterChannelFormAccountId?.addEventListener("change", () => {
+    resetWeixinQrState();
+    state.bridgeCenter.channelForm.account_id = cleanText(elements.bridgeCenterChannelFormAccountId.value);
+    renderWeixinQrPanel();
   });
-  elements.bridgeCenterChannelEmptyBtn?.addEventListener("click", () => {
-    if (!elements.bridgeCenterChannelConfig) {
-      return;
-    }
-    elements.bridgeCenterChannelConfig.value = "{}";
-  });
+  elements.bridgeCenterWeixinQrStartBtn?.addEventListener("click", () => startWeixinQr(Boolean(currentWeixinQrState().sessionKey)).catch((error) => notify(error.message, "error")));
+  elements.bridgeCenterWeixinQrImage?.addEventListener("click", () => startWeixinQr(true).catch((error) => notify(error.message, "error")));
   elements.bridgeCenterConfigClose?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
   elements.bridgeCenterConfigCancel?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
   elements.bridgeCenterChannelClose?.addEventListener("click", () => closeModal(elements.bridgeCenterChannelModal));
@@ -891,5 +953,6 @@ export const initBridgeCenterPanel = () => {
 };
 
 export { loadBridgeCenters };
+
 
 

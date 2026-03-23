@@ -186,6 +186,10 @@ const props = defineProps({
   agentId: {
     type: String,
     default: ''
+  },
+  active: {
+    type: Boolean,
+    default: true
   }
 });
 const emit = defineEmits<{
@@ -199,6 +203,8 @@ const contextAgentId = computed(() => {
   if (!value || value === '__default__' || value === 'default') return '';
   return value;
 });
+const activeContextKey = computed(() => contextAgentId.value || '__default__');
+const isPanelActive = computed(() => props.active !== false);
 
 const jobs = ref<any[]>([]);
 const runs = ref<any[]>([]);
@@ -209,6 +215,7 @@ const permissionDenied = ref(false);
 const createDialogVisible = ref(false);
 const selectedJobId = ref('');
 const selectedRunId = ref('');
+const lastLoadedContextKey = ref('');
 
 const createForm = reactive({
   message: '',
@@ -427,6 +434,7 @@ const loadRuns = async (jobId: string) => {
 const refreshAll = async () => {
   await loadJobs();
   await loadRuns(selectedJobId.value);
+  lastLoadedContextKey.value = activeContextKey.value;
   emit('changed', {
     agentId: contextAgentId.value || '__default__',
     hasJobs: jobs.value.length > 0
@@ -553,9 +561,24 @@ const removeSelectedJob = async () => {
 };
 
 watch(
-  () => contextAgentId.value,
-  async () => {
+  () => [activeContextKey.value, isPanelActive.value] as const,
+  async ([contextKey, active], previous) => {
+    if (!active) {
+      return;
+    }
+    const previousContextKey = previous?.[0] || '';
+    const wasActive = previous?.[1] === true;
+    if (!wasActive && lastLoadedContextKey.value === contextKey) {
+      return;
+    }
     resetCreateForm();
+    if (contextKey !== previousContextKey) {
+      selectedJobId.value = '';
+      selectedRunId.value = '';
+      jobs.value = [];
+      runs.value = [];
+      permissionDenied.value = false;
+    }
     await refreshAll();
   },
   { immediate: true }

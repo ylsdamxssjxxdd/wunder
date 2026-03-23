@@ -102,7 +102,7 @@
       <template #header>
         <div class="profile-edit-header">
           <div class="profile-edit-title">{{ t('profile.edit.title') }}</div>
-          <button class="icon-btn" type="button" @click="editDialogVisible = false">&times;</button>
+          <button class="icon-btn" type="button" @click="closeProfileEditor">&times;</button>
         </div>
       </template>
       <el-form :model="editForm" label-position="top" class="profile-edit-form">
@@ -132,9 +132,39 @@
             />
           </el-select>
         </el-form-item>
+        <template v-if="canEditPassword">
+          <div class="muted">{{ t('profile.edit.passwordHint') }}</div>
+          <el-form-item :label="t('profile.edit.currentPassword')">
+            <el-input
+              v-model="editForm.current_password"
+              type="password"
+              show-password
+              :placeholder="t('profile.edit.currentPasswordPlaceholder')"
+              autocomplete="current-password"
+            />
+          </el-form-item>
+          <el-form-item :label="t('profile.edit.newPassword')">
+            <el-input
+              v-model="editForm.new_password"
+              type="password"
+              show-password
+              :placeholder="t('profile.edit.newPasswordPlaceholder')"
+              autocomplete="new-password"
+            />
+          </el-form-item>
+          <el-form-item :label="t('profile.edit.confirmPassword')">
+            <el-input
+              v-model="editForm.confirm_password"
+              type="password"
+              show-password
+              :placeholder="t('profile.edit.confirmPasswordPlaceholder')"
+              autocomplete="new-password"
+            />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
-        <el-button @click="editDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button @click="closeProfileEditor">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveProfile">
           {{ t('common.save') }}
         </el-button>
@@ -173,12 +203,16 @@ const editSaving = ref(false);
 const editForm = reactive({
   username: '',
   email: '',
-  unit_id: ''
+  unit_id: '',
+  current_password: '',
+  new_password: '',
+  confirm_password: ''
 });
 const unitOptions = ref([]);
 const unitLoading = ref(false);
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
+const canEditPassword = computed(() => !demoMode.value);
 const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const userName = computed(() => authStore.user?.username || t('user.guest'));
 const userId = computed(() => authStore.user?.id || '-');
@@ -213,7 +247,17 @@ const openProfileEditor = () => {
   editForm.username = authStore.user?.username || '';
   editForm.email = authStore.user?.email || '';
   editForm.unit_id = authStore.user?.unit_id || '';
+  editForm.current_password = '';
+  editForm.new_password = '';
+  editForm.confirm_password = '';
   editDialogVisible.value = true;
+};
+
+const closeProfileEditor = () => {
+  editDialogVisible.value = false;
+  editForm.current_password = '';
+  editForm.new_password = '';
+  editForm.confirm_password = '';
 };
 
 const buildUnitOptions = (items) =>
@@ -241,23 +285,56 @@ const loadUnits = async () => {
 const saveProfile = async () => {
   const username = String(editForm.username || '').trim();
   const email = String(editForm.email || '').trim();
+  const currentPassword = String(editForm.current_password || '').trim();
+  const newPassword = String(editForm.new_password || '').trim();
+  const confirmPassword = String(editForm.confirm_password || '').trim();
+  const passwordChangeRequested =
+    canEditPassword.value && Boolean(currentPassword || newPassword || confirmPassword);
   if (!username) {
     ElMessage.warning(t('profile.edit.usernameRequired'));
     return;
+  }
+  if (passwordChangeRequested) {
+    if (!currentPassword) {
+      ElMessage.warning(t('profile.edit.currentPasswordRequired'));
+      return;
+    }
+    if (!newPassword) {
+      ElMessage.warning(t('profile.edit.newPasswordRequired'));
+      return;
+    }
+    if (!confirmPassword) {
+      ElMessage.warning(t('profile.edit.confirmPasswordRequired'));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      ElMessage.warning(t('profile.edit.passwordMismatch'));
+      return;
+    }
+    if (currentPassword === newPassword) {
+      ElMessage.warning(t('profile.edit.passwordSameAsCurrent'));
+      return;
+    }
   }
   editSaving.value = true;
   try {
     const payload = {
       username,
       email: email || '',
-      unit_id: String(editForm.unit_id || '').trim()
+      unit_id: String(editForm.unit_id || '').trim(),
+      ...(passwordChangeRequested
+        ? {
+            current_password: currentPassword,
+            new_password: newPassword
+          }
+        : {})
     };
     const { data } = await updateProfile(payload);
     const profile = data?.data;
     if (profile) {
       authStore.user = profile;
     }
-    editDialogVisible.value = false;
+    closeProfileEditor();
     ElMessage.success(t('profile.edit.saved'));
   } catch (error) {
     showApiError(error, t('profile.edit.saveFailed'));
@@ -629,4 +706,11 @@ watch(
     });
   }
 );
+
+watch(editDialogVisible, (visible) => {
+  if (visible) return;
+  editForm.current_password = '';
+  editForm.new_password = '';
+  editForm.confirm_password = '';
+});
 </script>

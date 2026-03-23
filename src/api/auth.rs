@@ -123,6 +123,10 @@ struct UpdateProfileRequest {
     email: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
+    #[serde(default)]
+    current_password: Option<String>,
+    #[serde(default)]
+    new_password: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,8 +511,15 @@ async fn update_me(
     let resolved = resolve_user(&state, &headers, None).await?;
     let desktop_mode = is_desktop_mode(&state).await;
     let mut record = resolved.user.clone();
+    let UpdateProfileRequest {
+        username,
+        email,
+        unit_id,
+        current_password,
+        new_password,
+    } = payload;
     let mut changed = false;
-    if let Some(username) = payload.username {
+    if let Some(username) = username {
         let trimmed = username.trim();
         if trimmed.is_empty() {
             return Err(error_response(
@@ -542,11 +553,11 @@ async fn update_me(
         } else {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
-                "用户名格式不正确".to_string(),
+                "鐢ㄦ埛鍚嶆牸寮忎笉姝ｇ‘".to_string(),
             ));
         }
     }
-    if let Some(email) = payload.email {
+    if let Some(email) = email {
         let trimmed = email.trim();
         if trimmed.is_empty() {
             if record.email.is_some() {
@@ -562,7 +573,7 @@ async fn update_me(
                 if existing.user_id != record.user_id {
                     return Err(error_response(
                         StatusCode::BAD_REQUEST,
-                        "邮箱已被占用".to_string(),
+                        "閭宸茶鍗犵敤".to_string(),
                     ));
                 }
             }
@@ -570,7 +581,7 @@ async fn update_me(
             changed = true;
         }
     }
-    if let Some(unit_id) = payload.unit_id {
+    if let Some(unit_id) = unit_id {
         let next_unit_id = normalize_optional_id(Some(&unit_id));
         if desktop_mode {
             if next_unit_id != record.unit_id {
@@ -611,12 +622,57 @@ async fn update_me(
             }
         }
     }
+    let current_password = current_password.unwrap_or_default();
+    let new_password = new_password.unwrap_or_default();
+    let current_password = current_password.trim();
+    let new_password = new_password.trim();
+    if !current_password.is_empty() || !new_password.is_empty() {
+        if record.is_demo {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "婕旂ず璐﹀彿鏆備笉鏀寔淇敼瀵嗙爜".to_string(),
+            ));
+        }
+        if current_password.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "请输入当前密码".to_string(),
+            ));
+        }
+        if new_password.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "璇疯緭鍏ユ柊瀵嗙爜".to_string(),
+            ));
+        }
+        if !UserStore::verify_password(&record.password_hash, current_password) {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "当前密码不正确".to_string(),
+            ));
+        }
+        if current_password == new_password {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "鏂板瘑鐮佷笉鑳戒笌褰撳墠瀵嗙爜鐩稿悓".to_string(),
+            ));
+        }
+        record.password_hash = UserStore::hash_password(new_password).map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                localize_update_profile_error_message(&err.to_string()),
+            )
+        })?;
+        changed = true;
+    }
     if changed {
         record.updated_at = now_ts();
-        state
-            .user_store
-            .update_user(&record)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        state.user_store.update_user(&record).map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                localize_update_profile_error_message(&err.to_string()),
+            )
+        })?;
     }
     let profile = build_user_profile(&state, &record)?;
     Ok(Json(json!({ "data": profile })))
@@ -1176,10 +1232,53 @@ fn localize_register_error(err: &anyhow::Error) -> String {
     localize_register_error_message(&err.to_string())
 }
 
+fn localize_update_profile_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "淇濆瓨璧勬枡澶辫触锛岃绋嶅悗閲嶈瘯".to_string();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    {
+        return trimmed.to_string();
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
+        return "新密码不能为空".to_string();
+    }
+    if normalized.contains("invalid password") {
+        return "当前密码不正确".to_string();
+    }
+    if normalized.contains("user disabled") {
+        return "账号已被禁用，请联系管理员".to_string();
+    }
+    if normalized.contains("username already exists")
+        || normalized.contains("idx_user_accounts_username")
+        || normalized.contains("user_accounts.username")
+    {
+        return "用户名已被占用".to_string();
+    }
+    if normalized.contains("email already exists")
+        || normalized.contains("idx_user_accounts_email")
+        || normalized.contains("user_accounts.email")
+    {
+        return "閭宸茶鍗犵敤".to_string();
+    }
+    if normalized.contains("invalid username") {
+        return "鐢ㄦ埛鍚嶆牸寮忎笉姝ｇ‘".to_string();
+    }
+    if normalized.contains("unit not found") {
+        return i18n::t("error.org_unit_not_found");
+    }
+    "淇濆瓨璧勬枡澶辫触锛岃绋嶅悗閲嶈瘯".to_string()
+}
+
 fn localize_register_error_message(message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
-        return "注册失败，请稍后重试".to_string();
+        return "娉ㄥ唽澶辫触锛岃绋嶅悗閲嶈瘯".to_string();
     }
     if trimmed
         .chars()
@@ -1199,13 +1298,13 @@ fn localize_register_error_message(message: &str) -> String {
         || normalized.contains("idx_user_accounts_email")
         || normalized.contains("user_accounts.email")
     {
-        return "邮箱已被占用".to_string();
+        return "閭宸茶鍗犵敤".to_string();
     }
     if normalized.contains("invalid username") {
-        return "用户名格式不正确，请使用3-64位字母、数字、下划线、中划线或点".to_string();
+        return "鐢ㄦ埛鍚嶆牸寮忎笉姝ｇ‘锛岃浣跨敤3-64浣嶅瓧姣嶃€佹暟瀛椼€佷笅鍒掔嚎銆佷腑鍒掔嚎鎴栫偣".to_string();
     }
     if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
-        return "密码不能为空".to_string();
+        return "瀵嗙爜涓嶈兘涓虹┖".to_string();
     }
     if normalized.contains("unit not found") {
         return i18n::t("error.org_unit_not_found");
@@ -1216,7 +1315,7 @@ fn localize_register_error_message(message: &str) -> String {
     if normalized.contains("admin account is protected")
         || normalized.contains("default admin account is protected")
     {
-        return "该账号不允许注册".to_string();
+        return "璇ヨ处鍙蜂笉鍏佽娉ㄥ唽".to_string();
     }
     if normalized.contains("duplicate key value violates unique constraint")
         || normalized.contains("unique constraint failed")
@@ -1224,7 +1323,7 @@ fn localize_register_error_message(message: &str) -> String {
     {
         return "账号信息已存在，请更换用户名或邮箱".to_string();
     }
-    "注册失败，请稍后重试".to_string()
+    "娉ㄥ唽澶辫触锛岃绋嶅悗閲嶈瘯".to_string()
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
@@ -1241,8 +1340,9 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        localize_register_error_message, normalize_avatar_color, normalize_avatar_icon,
-        normalize_theme_mode, normalize_theme_palette, provision_external_launch_session,
+        localize_register_error_message, localize_update_profile_error_message,
+        normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
+        normalize_theme_palette, provision_external_launch_session,
         resolve_external_embed_target_agent_name, validate_external_embed_jwt,
         DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
@@ -1327,20 +1427,21 @@ mod tests {
     #[test]
     fn resolve_external_embed_target_agent_name_prefers_request_value() {
         let resolved = resolve_external_embed_target_agent_name(
-            Some("  数据分析  "),
-            Some("文稿校对".to_string()),
+            Some("  鏁版嵁鍒嗘瀽  "),
+            Some("鏂囩鏍″".to_string()),
         )
         .expect("requested agent name should win");
 
-        assert_eq!(resolved, "数据分析");
+        assert_eq!(resolved, "鏁版嵁鍒嗘瀽");
     }
 
     #[test]
     fn resolve_external_embed_target_agent_name_falls_back_to_default_value() {
-        let resolved = resolve_external_embed_target_agent_name(None, Some("文稿校对".to_string()))
-            .expect("default preset agent should be used");
+        let resolved =
+            resolve_external_embed_target_agent_name(None, Some("鏂囩鏍″".to_string()))
+                .expect("default preset agent should be used");
 
-        assert_eq!(resolved, "文稿校对");
+        assert_eq!(resolved, "鏂囩鏍″");
     }
 
     #[test]
@@ -1394,6 +1495,22 @@ mod tests {
         assert_eq!(
             localize_register_error_message("some unexpected english error"),
             "注册失败，请稍后重试"
+        );
+    }
+
+    #[test]
+    fn localize_update_profile_error_message_maps_password_and_conflicts() {
+        assert_eq!(
+            localize_update_profile_error_message("password is empty"),
+            "新密码不能为空"
+        );
+        assert_eq!(
+            localize_update_profile_error_message("invalid password"),
+            "当前密码不正确"
+        );
+        assert_eq!(
+            localize_update_profile_error_message("username already exists"),
+            "用户名已被占用"
         );
     }
 }

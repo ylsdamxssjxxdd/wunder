@@ -306,7 +306,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch, withDefaults } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
   createAgentMemory,
@@ -332,8 +332,17 @@ type EditorState = {
   pinned: boolean;
   invalidated: boolean;
 };
-const props = defineProps<{ agentId: string }>();
+const props = withDefaults(
+  defineProps<{
+    agentId: string;
+    active?: boolean;
+  }>(),
+  {
+    active: true
+  }
+);
 const { t } = useI18n();
+const isPanelActive = computed(() => props.active !== false);
 const loading = ref(false);
 const saving = ref(false);
 const mutating = ref(false);
@@ -355,27 +364,37 @@ const editor = ref<EditorState>(createEmptyEditor());
 const mounted = ref(false);
 let disposed = false;
 let requestToken = 0;
+let lastLoadedAgentKey = '';
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const requestAgentId = computed(() => normalizedAgentId.value || '__default__');
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase();
-  return items.value.filter((item) => {
-    if (categoryFilter.value && item.category !== categoryFilter.value) return false;
-    if (statusFilter.value && String(item.status || '') !== statusFilter.value) return false;
-    if (!query) return true;
-    return [
-      item.title_l0,
-      item.summary_l1,
-      item.content_l2,
-      item.fact_key,
-      item.category,
-      ...(item.tags || []),
-      ...(item.entities || [])
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(query);
-  });
+  return items.value
+    .filter((item) => {
+      if (categoryFilter.value && item.category !== categoryFilter.value) return false;
+      if (statusFilter.value && String(item.status || '') !== statusFilter.value) return false;
+      if (!query) return true;
+      return [
+        item.title_l0,
+        item.summary_l1,
+        item.content_l2,
+        item.fact_key,
+        item.category,
+        ...(item.tags || []),
+        ...(item.entities || [])
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query);
+    })
+    .slice()
+    .sort((left, right) => {
+      const hitDiff = Number(right?.hit_count || 0) - Number(left?.hit_count || 0);
+      if (hitDiff !== 0) return hitDiff;
+      const updatedDiff = Number(right?.updated_at || 0) - Number(left?.updated_at || 0);
+      if (updatedDiff !== 0) return updatedDiff;
+      return String(left?.memory_id || '').localeCompare(String(right?.memory_id || ''));
+    });
 });
 const categories = computed(() => [...new Set(items.value.map((item) => String(item.category || '').trim()).filter(Boolean))]);
 const currentEditingItem = computed(() => items.value.find((item) => item.memory_id === editingId.value) || null);
@@ -469,6 +488,7 @@ async function loadData(): Promise<void> {
     hits.value = Array.isArray(memoryRes?.data?.data?.recent_hits) ? memoryRes.data.data.recent_hits : [];
     jobs.value = Array.isArray(memoryRes?.data?.data?.recent_jobs) ? memoryRes.data.data.recent_jobs : [];
     autoExtractEnabled.value = Boolean(memoryRes?.data?.data?.settings?.auto_extract_enabled);
+    lastLoadedAgentKey = requestAgentId.value;
     if (editingId.value) {
       syncEditorFromItem(items.value.find((item) => item.memory_id === editingId.value) || null);
     }
@@ -746,15 +766,20 @@ function formatJobMeta(job: MemoryJob): string {
 }
 onMounted(() => {
   mounted.value = true;
-  void loadData();
+  if (isPanelActive.value) {
+    void loadData();
+  }
 });
 onBeforeUnmount(() => {
   disposed = true;
 });
 watch(
-  () => props.agentId,
-  (value, previousValue) => {
-    if (!mounted.value || disposed || String(value || '') === String(previousValue || '')) return;
+  () => [requestAgentId.value, isPanelActive.value] as const,
+  ([agentKey, active], previous) => {
+    if (!mounted.value || disposed || !active) return;
+    const wasActive = previous?.[1] === true;
+    if (!wasActive && lastLoadedAgentKey === agentKey) return;
+    if (agentKey === previous?.[0] && wasActive) return;
     dialogVisible.value = false;
     hitsDialogVisible.value = false;
     jobsDialogVisible.value = false;

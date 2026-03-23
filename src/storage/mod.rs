@@ -1089,6 +1089,17 @@ pub trait StorageBackend: Send + Sync {
         session_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<MemoryHitRecord>>;
+    fn list_memory_hit_counts(&self, user_id: &str, agent_id: &str)
+        -> Result<HashMap<String, i64>>;
+    fn has_memory_hit_event(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        session_id: &str,
+        round_id: Option<&str>,
+        query_text: Option<&str>,
+    ) -> Result<bool>;
     fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()>;
     fn list_memory_jobs(
         &self,

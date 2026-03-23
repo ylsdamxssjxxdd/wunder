@@ -67,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch, withDefaults } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { deleteSession as deleteSessionApi } from '@/api/chat';
@@ -83,9 +83,15 @@ type ArchivedSessionItem = {
   lastAt: unknown;
 };
 
-const props = defineProps<{
-  agentId: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    agentId: string;
+    active?: boolean;
+  }>(),
+  {
+    active: true
+  }
+);
 
 const emit = defineEmits<{
   (event: 'open-session-detail', sessionId: string): void;
@@ -101,6 +107,9 @@ const archivedSessions = ref<ArchivedSessionItem[]>([]);
 const busySessionIds = ref<Set<string>>(new Set());
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+const isPanelActive = computed(() => props.active !== false);
+const archivedAgentKey = computed(() => normalizedAgentId.value || '__default__');
+let lastLoadedAgentKey = '';
 
 const setSessionBusy = (sessionId: string, busy: boolean) => {
   const next = new Set(busySessionIds.value);
@@ -181,6 +190,7 @@ const loadArchivedSessions = async () => {
       }))
       .filter((item) => item.id)
       .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt));
+    lastLoadedAgentKey = archivedAgentKey.value;
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   } finally {
@@ -239,14 +249,23 @@ const deleteArchivedSession = async (sessionId: string) => {
 };
 
 watch(
-  () => normalizedAgentId.value,
-  () => {
+  () => [archivedAgentKey.value, isPanelActive.value] as const,
+  ([agentKey, active], previous) => {
+    if (!active) {
+      return;
+    }
+    const wasActive = previous?.[1] === true;
+    if (!wasActive && lastLoadedAgentKey === agentKey) {
+      return;
+    }
     void loadArchivedSessions();
   }
 );
 
 onMounted(() => {
-  void loadArchivedSessions();
+  if (isPanelActive.value) {
+    void loadArchivedSessions();
+  }
 });
 </script>
 

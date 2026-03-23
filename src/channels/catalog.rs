@@ -1,4 +1,4 @@
-﻿#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct ChannelCatalogItem {
     pub channel: &'static str,
     pub display_name: &'static str,
@@ -130,4 +130,3 @@ pub fn user_supported_channel_names() -> Vec<&'static str> {
         .map(|item| item.channel)
         .collect()
 }
-

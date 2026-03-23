@@ -138,6 +138,10 @@ const props = defineProps({
   agentId: {
     type: String,
     default: ''
+  },
+  active: {
+    type: Boolean,
+    default: true
   }
 });
 
@@ -220,11 +224,14 @@ const errorMessage = ref('');
 const runtimeData = ref<RuntimePayload | null>(null);
 const selectedDate = ref(resolveTodayDate());
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+const isPanelActive = computed(() => props.active !== false);
+const activeRuntimeKey = computed(() => `${normalizedAgentId.value || '__default__'}:${selectedDate.value}`);
 const heatmapRows = ref(3);
 
 let trendChart: ECharts | null = null;
 let requestSerial = 0;
 let heatmapResizeObserver: ResizeObserver | null = null;
+let lastLoadedRuntimeKey = '';
 
 const dailyRows = computed<RuntimeDailyRecord[]>(() => {
   const source = Array.isArray(runtimeData.value?.daily) ? runtimeData.value?.daily : [];
@@ -559,6 +566,7 @@ async function loadRuntimeRecords() {
       return;
     }
     runtimeData.value = (data?.data as RuntimePayload) || null;
+    lastLoadedRuntimeKey = activeRuntimeKey.value;
   } catch (error) {
     if (serial !== requestSerial) {
       return;
@@ -709,11 +717,29 @@ watch(
 );
 
 watch([() => normalizedAgentId.value, selectedDate], () => {
-  if (!normalizedAgentId.value) {
+  if (!normalizedAgentId.value || !isPanelActive.value) {
     return;
   }
   void loadRuntimeRecords();
 }, { immediate: true });
+
+watch(
+  () => [isPanelActive.value, activeRuntimeKey.value] as const,
+  async ([active, runtimeKey], previous) => {
+    if (!active || !normalizedAgentId.value) {
+      return;
+    }
+    if (lastLoadedRuntimeKey !== runtimeKey) {
+      void loadRuntimeRecords();
+      return;
+    }
+    if (previous?.[0] === false) {
+      await nextTick();
+      resizeCharts();
+      renderTrendChart();
+    }
+  }
+);
 
 watch(
   () => themeStore.mode,

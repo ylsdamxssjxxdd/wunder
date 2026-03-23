@@ -93,6 +93,46 @@ const normalizeToolCallMode = (value, provider) => {
     : resolveDefaultToolCallMode(provider);
 };
 
+const normalizeReasoningEffort = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
+  if (
+    normalized === "default" ||
+    normalized === "auto" ||
+    normalized === "inherit"
+  ) {
+    return "";
+  }
+  if (
+    normalized === "none" ||
+    normalized === "off" ||
+    normalized === "disable" ||
+    normalized === "disabled"
+  ) {
+    return "none";
+  }
+  if (normalized === "minimal" || normalized === "min") {
+    return "minimal";
+  }
+  if (normalized === "low") return "low";
+  if (normalized === "medium" || normalized === "med" || normalized === "normal") {
+    return "medium";
+  }
+  if (normalized === "high") return "high";
+  if (
+    normalized === "xhigh" ||
+    normalized === "x_high" ||
+    normalized === "extra_high" ||
+    normalized === "very_high"
+  ) {
+    return "xhigh";
+  }
+  return "";
+};
+
 const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding"]);
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
@@ -232,6 +272,7 @@ const normalizeLlmConfig = (raw) => {
   stream: raw?.stream === true,
   stream_include_usage: raw?.stream_include_usage !== false,
   tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode, provider),
+  reasoning_effort: normalizeReasoningEffort(raw?.reasoning_effort),
   history_compaction_ratio:
     typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
       ? raw.history_compaction_ratio
@@ -303,6 +344,9 @@ const clearLlmForm = () => {
   if (elements.llmToolCallMode) {
     elements.llmToolCallMode.value = resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID);
   }
+  if (elements.llmReasoningEffort) {
+    elements.llmReasoningEffort.value = "";
+  }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
@@ -356,6 +400,9 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
   if (elements.llmToolCallMode) {
     elements.llmToolCallMode.value = normalizeToolCallMode(llm.tool_call_mode, llm.provider);
+  }
+  if (elements.llmReasoningEffort) {
+    elements.llmReasoningEffort.value = normalizeReasoningEffort(llm.reasoning_effort);
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(
     llm.history_compaction_ratio ?? 0.8,
@@ -494,6 +541,9 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const model = elements.llmModel.value.trim();
   const timeoutValue = Number.isFinite(timeout) ? timeout : 120;
   const retryValue = Number.isFinite(retry) ? retry : 1;
+  const reasoningEffort = normalizeReasoningEffort(
+    elements.llmReasoningEffort?.value || base.reasoning_effort
+  );
   if (modelType === "embedding") {
     return {
       enable: base.enable,
@@ -513,6 +563,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
       stream: false,
       stream_include_usage: false,
       tool_call_mode: null,
+      reasoning_effort: null,
       history_compaction_ratio: null,
       history_compaction_reset: null,
       mock_if_unconfigured: base.mock_if_unconfigured,
@@ -539,6 +590,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
       elements.llmToolCallMode?.value || base.tool_call_mode,
       provider
     ),
+    reasoning_effort: reasoningEffort || null,
     history_compaction_ratio:
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio

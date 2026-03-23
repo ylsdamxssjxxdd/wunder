@@ -1,8 +1,5 @@
 <template>
   <div class="agent-preset-questions-field">
-    <div class="agent-preset-questions-field__hint">
-      {{ t('portal.agent.presetQuestions.hint') }}
-    </div>
     <div v-if="!draftQuestions.length" class="agent-preset-questions-field__empty">
       {{ t('portal.agent.presetQuestions.empty') }}
     </div>
@@ -31,15 +28,6 @@
         <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
       </button>
     </div>
-    <button
-      v-if="!readonly"
-      class="agent-preset-questions-field__add"
-      type="button"
-      @click="addQuestion"
-    >
-      <i class="fa-solid fa-plus" aria-hidden="true"></i>
-      <span>{{ t('portal.agent.presetQuestions.add') }}</span>
-    </button>
   </div>
 </template>
 
@@ -90,6 +78,10 @@ function removeQuestion(index: number) {
   emitQuestions();
 }
 
+defineExpose({
+  addQuestion
+});
+
 watch(
   () => props.modelValue,
   (value) => {
@@ -106,11 +98,14 @@ watch(
   gap: 10px;
 }
 
-.agent-preset-questions-field__hint,
 .agent-preset-questions-field__empty {
   font-size: 12px;
   line-height: 1.6;
   color: var(--el-text-color-secondary, #6b7280);
+  padding: 10px 12px;
+  border: 1px dashed rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.04);
 }
 
 .agent-preset-questions-field__row {
@@ -132,8 +127,7 @@ watch(
   font-weight: 600;
 }
 
-.agent-preset-questions-field__remove,
-.agent-preset-questions-field__add {
+.agent-preset-questions-field__remove {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
   background: transparent;
@@ -149,16 +143,7 @@ watch(
   height: 32px;
 }
 
-.agent-preset-questions-field__add {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  align-self: flex-start;
-  padding: 7px 12px;
-}
-
-.agent-preset-questions-field__remove:hover,
-.agent-preset-questions-field__add:hover {
+.agent-preset-questions-field__remove:hover {
   border-color: rgba(var(--ui-accent-rgb, 59, 130, 246), 0.3);
   background: var(--ui-accent-soft, rgba(59, 130, 246, 0.08));
 }

@@ -59,6 +59,7 @@ fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelCon
         history_compaction_ratio: None,
         history_compaction_reset: None,
         tool_call_mode: Some("tool_call".to_string()),
+        reasoning_effort: None,
         model_type: Some(model_type.to_string()),
         stop: None,
         mock_if_unconfigured: None,
@@ -761,11 +762,12 @@ async fn admin_default_agent_sync_force_updates_tools_and_skills() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_default_agent_force_sync_can_disable_skill_creator() {
-    let context = build_test_context_with_config("default_disable_skill_creator_user_a", |config| {
-        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
-        config.skills.enabled = vec!["技能创建器".to_string()];
-    })
-    .await;
+    let context =
+        build_test_context_with_config("default_disable_skill_creator_user_a", |config| {
+            config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+            config.skills.enabled = vec!["技能创建器".to_string()];
+        })
+        .await;
     context
         .state
         .user_store
@@ -846,12 +848,8 @@ async fn admin_default_agent_force_sync_can_disable_skill_creator() {
         }),
     )
     .await;
-    let updated_template = get_default_agent(
-        &context.app,
-        Some(&admin_token),
-        "preset_template",
-    )
-    .await;
+    let updated_template =
+        get_default_agent(&context.app, Some(&admin_token), "preset_template").await;
     assert!(
         !read_tool_names(&updated_template)
             .iter()
@@ -1502,7 +1500,8 @@ async fn preset_force_sync_can_disable_skill_creator_without_reinjection() {
     let context = build_test_context_with_config(user_id, |config| {
         config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
         config.skills.enabled = vec!["技能创建器".to_string()];
-        config.user_agents.presets = vec![build_preset_config("preset_disable_skill_creator", None)];
+        config.user_agents.presets =
+            vec![build_preset_config("preset_disable_skill_creator", None)];
     })
     .await;
 

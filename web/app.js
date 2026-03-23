@@ -10,7 +10,7 @@ import {
 
 } from "./app.config.js?v=20260215-01";
 
-import { elements } from "./modules/elements.js?v=20260323-02";
+import { elements } from "./modules/elements.js?v=20260323-03";
 
 import { state } from "./modules/state.js";
 
@@ -47,7 +47,7 @@ import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-li
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
-import { initBridgeCenterPanel, loadBridgeCenters } from "./modules/bridge-center.js?v=20260323-03";
+import { initBridgeCenterPanel, loadBridgeCenters } from "./modules/bridge-center.js?v=20260323-05";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {

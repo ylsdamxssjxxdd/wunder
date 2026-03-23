@@ -95,6 +95,17 @@
   z-index: 1;
 }
 
+.auth-page--user .auth-alert {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #f1c7c7;
+  background: #fff4f4;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .auth-page--user .auth-field {
   display: flex;
   flex-direction: column;
@@ -133,6 +144,20 @@
   border-color: rgba(var(--ui-accent-rgb), 0.65);
   box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
   background: #ffffff;
+}
+
+.auth-page--user .auth-field-error {
+  color: #c2410c;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.auth-page--user .auth-input--error,
+.auth-page--user .auth-input--error:hover,
+.auth-page--user .auth-input--error:focus {
+  border-color: #e58d7c;
+  background: #fff8f6;
+  box-shadow: none;
 }
 
 .auth-page--user .auth-select {

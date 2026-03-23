@@ -524,7 +524,11 @@
                   </button>
                 </div>
 
-                <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
+                <div
+                  v-if="mountedAgentSettingModes.agent"
+                  v-show="agentSettingMode === 'agent'"
+                  class="messenger-chat-settings-block"
+                >
                   <AgentSettingsPanel
                     ref="agentSettingsPanelRef"
                     :agent-id="settingsAgentIdForPanel"
@@ -537,29 +541,58 @@
                   />
                 </div>
 
-                <div v-else-if="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
-                  <AgentCronPanel :agent-id="settingsAgentIdForApi" @changed="handleCronPanelChanged" />
+                <div
+                  v-if="mountedAgentSettingModes.cron"
+                  v-show="agentSettingMode === 'cron'"
+                  class="messenger-chat-settings-block"
+                >
+                  <AgentCronPanel
+                    :agent-id="settingsAgentIdForApi"
+                    :active="agentSettingMode === 'cron'"
+                    @changed="handleCronPanelChanged"
+                  />
                 </div>
 
                 <div
-                  v-else-if="agentSettingMode === 'channel'"
+                  v-if="mountedAgentSettingModes.channel"
+                  v-show="agentSettingMode === 'channel'"
                   class="messenger-chat-settings-block messenger-channel-panel-wrap"
                 >
                   <UserChannelSettingsPanel
                     mode="page"
                     :agent-id="settingsAgentIdForApi"
+                    :active="agentSettingMode === 'channel'"
                     @changed="loadChannelBoundAgentIds"
                   />
                 </div>
-                <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
-                  <AgentRuntimeRecordsPanel :agent-id="settingsRuntimeAgentIdForApi" />
+                <div
+                  v-if="mountedAgentSettingModes.runtime"
+                  v-show="agentSettingMode === 'runtime'"
+                  class="messenger-chat-settings-block"
+                >
+                  <AgentRuntimeRecordsPanel
+                    :agent-id="settingsRuntimeAgentIdForApi"
+                    :active="agentSettingMode === 'runtime'"
+                  />
                 </div>
-                <div v-else-if="agentSettingMode === 'memory'" class="messenger-chat-settings-block">
-                  <AgentMemoryPanel :agent-id="settingsAgentIdForApi" />
+                <div
+                  v-if="mountedAgentSettingModes.memory"
+                  v-show="agentSettingMode === 'memory'"
+                  class="messenger-chat-settings-block"
+                >
+                  <AgentMemoryPanel
+                    :agent-id="settingsAgentIdForApi"
+                    :active="agentSettingMode === 'memory'"
+                  />
                 </div>
-                <div v-else-if="agentSettingMode === 'archived'" class="messenger-chat-settings-block">
+                <div
+                  v-if="mountedAgentSettingModes.archived"
+                  v-show="agentSettingMode === 'archived'"
+                  class="messenger-chat-settings-block"
+                >
                   <ArchivedThreadManager
                     :agent-id="settingsAgentIdForApi"
+                    :active="agentSettingMode === 'archived'"
                     @open-session-detail="openTimelineSessionDetail"
                     @session-deleted="handleArchivedSessionRemoved"
                   />
@@ -1472,6 +1505,7 @@ import {
   MessengerLocalFileSearchPanel,
   MessengerSettingsPanel,
   MessengerWorldComposer,
+  preloadAgentSettingsPanels,
   UserChannelSettingsPanel,
   UserKnowledgePane,
   UserMcpPane,
@@ -1776,7 +1810,16 @@ const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expire
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
-const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'archived'>('agent');
+type AgentSettingMode = 'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'archived';
+const agentSettingMode = ref<AgentSettingMode>('agent');
+const mountedAgentSettingModes = ref<Record<AgentSettingMode, boolean>>({
+  agent: true,
+  cron: false,
+  channel: false,
+  runtime: false,
+  memory: false,
+  archived: false
+});
 const agentSettingsFocusTarget = ref<'' | 'model'>('');
 const agentSettingsFocusToken = ref(0);
 type SettingsPanelMode =
@@ -3190,6 +3233,14 @@ const filteredOwnedAgents = computed(() => {
   );
 });
 
+watch(
+  () => agentSettingMode.value,
+  (mode) => {
+    mountedAgentSettingModes.value[mode] = true;
+  },
+  { immediate: true }
+);
+
 const filteredSharedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
   return sharedAgents.value.filter(
@@ -3219,6 +3270,17 @@ const visibleAgentIdsForSelection = computed(() => {
 
 const showAgentGridOverview = computed(
   () => sessionHub.activeSection === 'agents' && agentOverviewMode.value === 'grid'
+);
+
+watch(
+  () => [showAgentSettingsPanel.value, showAgentGridOverview.value] as const,
+  ([visible, showGrid]) => {
+    if (!visible || showGrid) {
+      return;
+    }
+    void preloadAgentSettingsPanels();
+  },
+  { immediate: true }
 );
 
 const agentOverviewCards = computed<AgentOverviewCard[]>(() => {

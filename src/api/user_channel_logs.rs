@@ -21,6 +21,7 @@ const USER_CHANNEL_QQBOT: &str = "qqbot";
 const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
 const USER_CHANNEL_WECHAT: &str = "wechat";
 const USER_CHANNEL_WECHAT_MP: &str = "wechat_mp";
+const USER_CHANNEL_WEIXIN: &str = "weixin";
 const USER_CHANNEL_XMPP: &str = "xmpp";
 
 #[derive(Debug, Deserialize)]
@@ -479,6 +480,7 @@ fn is_supported_user_channel(channel: &str) -> bool {
             | USER_CHANNEL_WHATSAPP
             | USER_CHANNEL_WECHAT
             | USER_CHANNEL_WECHAT_MP
+            | USER_CHANNEL_WEIXIN
             | USER_CHANNEL_XMPP
     )
 }

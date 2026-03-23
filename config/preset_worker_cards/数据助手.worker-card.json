@@ -2,13 +2,13 @@
   "schema_version": "wunder/worker-card@2",
   "kind": "WorkerCard",
   "metadata": {
-    "agent_id": "preset_ba13fa8e3c9450ffa41a822f9cbe717a",
-    "name": "公文写作",
-    "description": "公文起草、格式规范与措辞润色",
-    "icon": "{\"color\":\"#94a3b8\",\"name\":\"shield\"}",
-    "exported_at": "2026-03-23T13:19:16.749011871+00:00"
+    "agent_id": "preset_726dceabaec657bd9d3ba1c79fd1cace",
+    "name": "数据助手",
+    "description": "数据助手",
+    "icon": "{\"color\":\"#94a3b8\",\"name\":\"spark\"}",
+    "exported_at": "2026-03-23T13:19:16.773243552+00:00"
   },
-  "extra_prompt": "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。",
+  "extra_prompt": "你是数据助手，优先使用大数据处理技能和公司制度来完成数据分析任务",
   "abilities": {
     "tool_names": [
       "最终回复",
@@ -20,13 +20,19 @@
       "列出文件",
       "搜索内容",
       "读取文件",
-      "网页抓取",
       "技能调用",
       "写入文件",
-      "应用补丁"
+      "应用补丁",
+      "网页抓取",
+      "extra_mcp@db_query",
+      "extra_mcp@db_export",
+      "公司制度知识库"
     ],
     "skills": [
-      "技能创建器"
+      "公文写作",
+      "大数据处理",
+      "技能创建器",
+      "文稿校对"
     ]
   },
   "interaction": {

@@ -86,7 +86,10 @@
                 :alt="item.icon.label"
               />
             </span>
-            <div class="workspace-item-name">
+            <div
+              class="workspace-item-name"
+              :title="state.renamingPath === item.entry.path ? '' : item.entry.name"
+            >
               <input
                 v-if="state.renamingPath === item.entry.path"
                 v-model="state.renamingValue"

@@ -247,6 +247,22 @@
                 <el-option label="freeform_call" value="freeform_call" />
               </el-select>
             </label>
+            <label class="desktop-system-settings-field desktop-system-settings-field--full">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.reasoningEffort') }}</span>
+              <el-select
+                v-model="selectedModel.reasoning_effort"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+              >
+                <el-option :label="t('desktop.system.reasoningEffort.default')" value="" />
+                <el-option :label="t('desktop.system.reasoningEffort.none')" value="none" />
+                <el-option :label="t('desktop.system.reasoningEffort.minimal')" value="minimal" />
+                <el-option :label="t('desktop.system.reasoningEffort.low')" value="low" />
+                <el-option :label="t('desktop.system.reasoningEffort.medium')" value="medium" />
+                <el-option :label="t('desktop.system.reasoningEffort.high')" value="high" />
+                <el-option :label="t('desktop.system.reasoningEffort.xhigh')" value="xhigh" />
+              </el-select>
+            </label>
           </div>
           <div v-else class="desktop-system-settings-section-empty">
             {{ t('desktop.system.sectionLlmOnly') }}
@@ -457,6 +473,7 @@ import {
 
 type ModelType = 'llm' | 'embedding';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
+type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 type HistoryCompactionReset = 'zero' | 'current' | 'keep';
 type SelectedModelPreference = {
   key: string;
@@ -480,6 +497,7 @@ type ModelRow = {
   support_hearing: boolean;
   stream_include_usage: boolean;
   tool_call_mode: ToolCallMode;
+  reasoning_effort: ReasoningEffort;
   history_compaction_ratio: string;
   history_compaction_reset: HistoryCompactionReset;
   raw: Record<string, unknown>;
@@ -684,6 +702,24 @@ const normalizeToolCallMode = (value: unknown, provider?: unknown): ToolCallMode
   return resolveDefaultToolCallMode(provider);
 };
 
+const normalizeReasoningEffort = (value: unknown): ReasoningEffort => {
+  const raw = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (!raw || raw === 'default' || raw === 'auto' || raw === 'inherit') {
+    return '';
+  }
+  if (raw === 'none' || raw === 'off' || raw === 'disable' || raw === 'disabled') {
+    return 'none';
+  }
+  if (raw === 'minimal' || raw === 'min') return 'minimal';
+  if (raw === 'low') return 'low';
+  if (raw === 'medium' || raw === 'med' || raw === 'normal') return 'medium';
+  if (raw === 'high') return 'high';
+  if (raw === 'xhigh' || raw === 'x_high' || raw === 'extra_high' || raw === 'very_high') {
+    return 'xhigh';
+  }
+  return '';
+};
+
 const applyModelPresetContext = (row: ModelRow, force = true) => {
   if (!row || normalizeModelType(row.model_type) !== 'llm') return;
   if (!force && String(row.max_context || '').trim()) return;
@@ -792,6 +828,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     support_hearing: raw.support_hearing === true,
     stream_include_usage: raw.stream_include_usage !== false,
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
+    reasoning_effort: normalizeReasoningEffort(raw.reasoning_effort),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.8),
     history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
@@ -893,6 +930,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     support_hearing: false,
     stream_include_usage: true,
     tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
+    reasoning_effort: '',
     history_compaction_ratio: modelType === 'llm' ? '0.8' : '',
     history_compaction_reset: 'zero',
     raw: {}
@@ -997,6 +1035,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     output.support_hearing = row.support_hearing === true;
     output.stream_include_usage = row.stream_include_usage !== false;
     setText('tool_call_mode', row.tool_call_mode);
+    setText('reasoning_effort', normalizeReasoningEffort(row.reasoning_effort));
     setFloat('history_compaction_ratio', row.history_compaction_ratio);
     setText('history_compaction_reset', normalizeHistoryCompactionReset(row.history_compaction_reset));
   } else {
@@ -1008,6 +1047,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     delete output.support_hearing;
     delete output.stream_include_usage;
     delete output.tool_call_mode;
+    delete output.reasoning_effort;
     delete output.history_compaction_ratio;
     delete output.history_compaction_reset;
   }

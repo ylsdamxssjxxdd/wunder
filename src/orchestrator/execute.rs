@@ -2463,6 +2463,7 @@ mod tests {
             history_compaction_ratio: None,
             history_compaction_reset: None,
             tool_call_mode: None,
+            reasoning_effort: None,
             model_type: None,
             stop: None,
             mock_if_unconfigured: None,

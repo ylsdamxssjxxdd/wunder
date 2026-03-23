@@ -39,9 +39,6 @@
           :value="group.group_id"
         />
       </el-select>
-      <div class="beeroom-group-field__hint">
-        {{ t('messenger.agentGroup.existingHint') }}
-      </div>
     </template>
 
     <template v-else>

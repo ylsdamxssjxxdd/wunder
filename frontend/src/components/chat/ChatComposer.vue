@@ -268,6 +268,7 @@
               :disabled="!canSendOrStop"
               :title="loading ? t('common.stop') : t('chat.input.send')"
               :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+              @keydown="handleSendButtonKeydown"
               @click="handleSendOrStop"
             >
               <i
@@ -318,6 +319,7 @@
           :disabled="!canSendOrStop"
           :title="loading ? t('common.stop') : t('chat.input.send')"
           :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+          @keydown="handleSendButtonKeydown"
           @click="handleSendOrStop"
         >
           <i
@@ -1239,6 +1241,21 @@ const handleInput = () => {
   syncCaretPosition();
 };
 
+const focusComposerInputAtEnd = () => {
+  void nextTick(() => {
+    const el = inputRef.value;
+    if (!el) return;
+    const cursor = String(inputText.value || '').length;
+    if (typeof el.focus === 'function') {
+      el.focus();
+    }
+    if (typeof el.setSelectionRange === 'function') {
+      el.setSelectionRange(cursor, cursor);
+    }
+    caretPosition.value = cursor;
+  });
+};
+
 const setCommandMenuIndex = (index) => {
   const total = commandSuggestions.value.length;
   if (total <= 0) {
@@ -1807,6 +1824,7 @@ const handleSend = async () => {
   caretPosition.value = 0;
   resetInputHeight();
   clearAttachments();
+  focusComposerInputAtEnd();
 };
 
 const handleSendOrStop = async () => {
@@ -1815,6 +1833,17 @@ const handleSendOrStop = async () => {
     return;
   }
   await handleSend();
+};
+
+const handleSendButtonKeydown = (event: KeyboardEvent) => {
+  if (!props.loading) {
+    return;
+  }
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    event.stopPropagation();
+    focusComposerInputAtEnd();
+  }
 };
 
 const handleToggleVoiceRecord = () => {

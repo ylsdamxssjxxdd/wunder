@@ -4,10 +4,10 @@ use crate::services::default_agent_protocol::DefaultAgentConfig;
 use crate::services::inner_visible::{
     build_worker_card, parse_worker_card, WorkerCardRecordUpdate,
 };
-use crate::skills::load_skills;
 use crate::services::skills::SkillRegistry;
 use crate::services::user_access::UserToolContext;
 use crate::services::user_tools::UserToolKind;
+use crate::skills::load_skills;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, UserAgentPresetSnapshot, UserAgentRecord,
     DEFAULT_HIVE_ID,

@@ -4020,6 +4020,88 @@ impl StorageBackend for PostgresStorage {
             .collect())
     }
 
+    fn list_memory_hit_counts(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT memory_id, COUNT(DISTINCT CASE
+                WHEN BTRIM(round_id) <> '' THEN CONCAT(session_id, '::r::', BTRIM(round_id))
+                WHEN BTRIM(query_text) <> '' THEN CONCAT(session_id, '::q::', BTRIM(query_text))
+                ELSE NULL
+             END) AS hit_count
+             FROM memory_hits
+             WHERE user_id = $1 AND agent_id = $2
+             GROUP BY memory_id",
+            &[&user_id.trim(), &agent_id.trim()],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<_, String>(0),
+                    row.get::<_, Option<i64>>(1).unwrap_or(0),
+                )
+            })
+            .collect())
+    }
+
+    fn has_memory_hit_event(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        session_id: &str,
+        round_id: Option<&str>,
+        query_text: Option<&str>,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        let cleaned_memory = memory_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty()
+            || cleaned_agent.is_empty()
+            || cleaned_memory.is_empty()
+            || cleaned_session.is_empty()
+        {
+            return Ok(false);
+        }
+
+        if let Some(cleaned_round) = round_id.map(str::trim).filter(|value| !value.is_empty()) {
+            let row = conn.query_opt(
+                "SELECT 1 FROM memory_hits
+                 WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3 AND session_id = $4 AND round_id = $5
+                 LIMIT 1",
+                &[&cleaned_user, &cleaned_agent, &cleaned_memory, &cleaned_session, &cleaned_round],
+            )?;
+            return Ok(row.is_some());
+        }
+
+        if let Some(cleaned_query) = query_text.map(str::trim).filter(|value| !value.is_empty()) {
+            let row = conn.query_opt(
+                "SELECT 1 FROM memory_hits
+                 WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3 AND session_id = $4
+                   AND BTRIM(round_id) = '' AND query_text = $5
+                 LIMIT 1",
+                &[
+                    &cleaned_user,
+                    &cleaned_agent,
+                    &cleaned_memory,
+                    &cleaned_session,
+                    &cleaned_query,
+                ],
+            )?;
+            return Ok(row.is_some());
+        }
+
+        Ok(false)
+    }
+
     fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

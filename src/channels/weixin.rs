@@ -26,8 +26,8 @@ pub const DEFAULT_CDN_BASE: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 pub const DEFAULT_QR_BOT_TYPE: &str = "3";
 const DEFAULT_POLL_TIMEOUT_MS: u64 = 35_000;
 const DEFAULT_API_TIMEOUT_MS: u64 = 15_000;
-const DEFAULT_BACKOFF_MS: u64 = 30_000;
-const DEFAULT_MAX_CONSECUTIVE_FAILURES: u64 = 3;
+const DEFAULT_BACKOFF_MS: u64 = 8_000;
+const DEFAULT_MAX_CONSECUTIVE_FAILURES: u64 = 2;
 const MAX_MEDIA_BYTES: usize = 100 * 1024 * 1024;
 const AES_BLOCK_SIZE: usize = 16;
 

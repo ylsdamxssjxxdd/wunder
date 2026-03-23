@@ -80,7 +80,7 @@
 说明：
 
 - 页面已经把 `code / default_identity_strategy / username_policy` 隐藏，前端会按规则自动生成或写固定值。
-- 后端仍接受 `shared_channels[]` 一次性提交，但当前舰桥中心页面不再走这条交互，而是由“接入渠道”弹窗逐条保存。
+- 后端仍接受 `shared_channels[]` 一次性提交，但当前舰桥节点只允许一个渠道；管理端页面通过“渠道设置”弹窗维护单条绑定。
 
 ### `GET /wunder/admin/bridge/centers/{center_id}`
 
@@ -98,15 +98,15 @@
 
 ---
 
-## 4. 节点接入渠道接口
+## 4. 节点渠道设置接口
 
 ### `GET /wunder/admin/bridge/centers/{center_id}/accounts`
 
-用途：获取某个节点的接入渠道列表。
+用途：获取某个节点的渠道绑定列表。
 
 ### `POST /wunder/admin/bridge/centers/{center_id}/accounts`
 
-用途：为某个节点新增接入渠道。
+用途：为某个节点新增渠道绑定。
 
 字段：
 
@@ -119,20 +119,36 @@
 - `thread_strategy`
 - `reply_strategy`
 - `fallback_policy`
-- `status_reason`
+- 当前舰桥节点只允许挂一个渠道账号。
+- 管理端页面不再在节点内维护复杂渠道表单，而是先调用 `/wunder/admin/channels/accounts?status=active` 拉取现有可用账号，再把选中的账号绑定到舰桥节点。
+- 如果切换绑定，前端会先移除旧绑定，再新建新绑定，避免旧路由和日志跟着旧的 `center_account_id` 残留。
+
+### `POST /wunder/admin/bridge/centers/{center_id}/weixin_bind`
+
+用途：在舰桥中心中把 `Weixin iLink (New)` 扫码结果直接落成渠道账号，并自动绑定到当前舰桥节点。
+
+字段：
+
+- `account_id`：可选；为空时服务端按节点自动生成稳定账号 ID
+- `api_base`
+- `bot_type`
+- `bot_token`
+- `ilink_bot_id`
+- `ilink_user_id`
 
 说明：
 
-- 管理端在调用这个接口前，会先通过 `/wunder/channels/accounts?user_id=bridge_center_owner__{center_id}` 创建或更新节点专属渠道账号。
-- 桥接策略和物理账号配置是分两步写入的。
+- 这个接口不会新增任何桥接专用表，只会写入已有 `channel_accounts` 与 `bridge_center_accounts`。
+- 如果当前节点已经绑定了别的渠道账号，该接口会先清理旧的 bridge account、route、delivery log、audit log，再切换到新的 Weixin 绑定。
+- 管理端前端会先调用已有用户侧二维码接口 `/wunder/channels/weixin/qr/start`、`/wunder/channels/weixin/qr/wait`，拿到扫码确认结果后再调用这里完成最终绑定。
 
 ### `PATCH /wunder/admin/bridge/accounts/{center_account_id}`
 
-用途：更新某个节点接入渠道的桥接策略。
+用途：更新某个节点渠道绑定的桥接策略。
 
 ### `DELETE /wunder/admin/bridge/accounts/{center_account_id}`
 
-用途：删除某个节点接入渠道，并清理其名下 bridge route 和日志。
+用途：删除某个节点渠道绑定，并清理其名下 bridge route 和日志。
 
 ---
 
@@ -189,6 +205,7 @@
 
 1. 主页调用 `/wunder/admin/bridge/centers`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/delivery_logs`
 2. `中心配置` 弹窗调用 `/wunder/admin/bridge/centers`
-3. `接入渠道` 弹窗先调用 `/wunder/channels/accounts`，再调用 `/wunder/admin/bridge/centers/{center_id}/accounts` 或 `/wunder/admin/bridge/accounts/{center_account_id}`
+3. `渠道设置` 弹窗对常规渠道先调用 `/wunder/admin/channels/accounts?status=active` 拉取现有账号，再调用 `/wunder/admin/bridge/centers/{center_id}/accounts` 或 `/wunder/admin/bridge/accounts/{center_account_id}`
+4. `Weixin iLink (New)` 额外调用 `/wunder/channels/weixin/qr/start`、`/wunder/channels/weixin/qr/wait` 和 `/wunder/admin/bridge/centers/{center_id}/weixin_bind`
 
 这就是当前真实 API 使用方式。

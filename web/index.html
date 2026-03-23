@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260323-02" />
+    <link rel="stylesheet" href="./app.css?v=20260323-05" />
   </head>
   <body>
     <div class="app">
@@ -2167,7 +2167,7 @@
             </div>
           </div>
           <div class="tips">
-            管理员只需要在舰桥中心中新建一个舰桥节点，配置默认预设和节点专属接入渠道。外部用户首次发消息时，系统会自动开户、默认密码 123456、自动挂到选定预设智能体，并通过原渠道回送结果。
+            管理员只需要在舰桥中心中新建一个舰桥节点，配置默认预设和节点专属渠道。外部用户首次发消息时，系统会自动开户、默认密码 123456、自动挂到选定预设智能体，并通过原渠道回送结果。
           </div>
           <div class="management-layout">
             <div class="management-list">
@@ -2181,7 +2181,7 @@
               <div class="detail-header">
                 <div>
                   <div id="bridgeCenterCurrentName" class="detail-title">未选择舰桥节点</div>
-                  <div id="bridgeCenterOwner" class="muted">先创建舰桥节点，再配置接入渠道。</div>
+                  <div id="bridgeCenterOwner" class="muted">先创建舰桥节点，再配置渠道。</div>
                 </div>
                 <div class="detail-actions">
                   <button id="bridgeCenterConfigBtn" class="secondary btn-with-icon" type="button">
@@ -2190,7 +2190,7 @@
                   </button>
                   <button id="bridgeCenterChannelsBtn" class="secondary btn-with-icon" type="button">
                     <i class="fa-solid fa-link"></i>
-                    <span>接入渠道</span>
+                    <span>渠道设置</span>
                   </button>
                 </div>
               </div>
@@ -2208,7 +2208,7 @@
                   <strong id="bridgeCenterSummaryUnit">-</strong>
                 </div>
                 <div class="metric-card">
-                  <label>接入渠道</label>
+                  <label>渠道绑定</label>
                   <strong id="bridgeCenterSummaryChannels">0</strong>
                 </div>
                 <div class="metric-card">
@@ -2220,39 +2220,7 @@
                   <strong id="bridgeCenterSummaryActiveRoutes">0</strong>
                 </div>
               </div>
-              <div class="bridge-center-summary-note">
-                <div>
-                  <strong>默认密码</strong>
-                  <span id="bridgeCenterSummaryPassword">123456</span>
-                </div>
-                <div id="bridgeCenterSummaryDescription" class="muted">该节点暂无说明。</div>
-              </div>
-              <div class="channel-detail-section">
-                <div class="detail-header">
-                  <div>
-                    <div class="detail-title">接入渠道</div>
-                    <div class="muted">这里只展示当前舰桥节点的接入状态；新增、编辑和删除都在“接入渠道”弹窗内完成。</div>
-                  </div>
-                </div>
-                <div class="monitor-table-scroll">
-                  <table class="monitor-table">
-                    <thead>
-                      <tr>
-                        <th>渠道</th>
-                        <th>账号</th>
-                        <th>显示名</th>
-                        <th>配置</th>
-                        <th>线程策略</th>
-                        <th>路由数</th>
-                        <th>更新时间</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="bridgeCenterAccountList"></tbody>
-                  </table>
-                </div>
-              </div>
-              <div class="channel-detail-section">
+              <div class="bridge-center-block">
                 <div class="detail-header">
                   <div class="detail-title">自动分配路由</div>
                   <div class="detail-actions">
@@ -2287,7 +2255,7 @@
                   </table>
                 </div>
               </div>
-              <div class="channel-detail-section">
+              <div class="bridge-center-block">
                 <div class="detail-title">最近投递日志</div>
                 <div class="monitor-table-scroll">
                   <table class="monitor-table">
@@ -2341,7 +2309,7 @@
                   <textarea id="bridgeCenterConfigDescription" rows="3" placeholder="说明这个舰桥节点面向的业务场景"></textarea>
                 </div>
               </div>
-              <div id="bridgeCenterConfigOwner" class="muted">保存后即可继续配置该节点接入渠道</div>
+              <div id="bridgeCenterConfigOwner" class="muted">保存后即可继续配置节点渠道</div>
             </div>
             <div class="modal-actions">
               <button id="bridgeCenterConfigCancel" class="secondary" type="button">取消</button>
@@ -2356,8 +2324,8 @@
           <div class="modal-card modal-card-lg">
             <div class="modal-header">
               <div>
-                <div id="bridgeCenterChannelModalTitle" class="detail-title">接入渠道</div>
-                <div id="bridgeCenterChannelEditorHint" class="muted">直接在这里配置节点专属渠道账号。</div>
+                <div id="bridgeCenterChannelModalTitle" class="detail-title">渠道设置</div>
+                <div id="bridgeCenterChannelEditorHint" class="muted">每个舰桥节点只绑定一个渠道账号。</div>
               </div>
               <div class="modal-header-actions">
                 <span id="bridgeCenterChannelOwnedBadge" class="status-chip">新渠道</span>
@@ -2367,38 +2335,7 @@
               </div>
             </div>
             <div class="modal-body">
-              <div class="detail-header">
-                <div class="muted">管理员侧单独维护这套接入渠道表单。公共字段直接填写，渠道专属字段通过 JSON 配置补齐。</div>
-                <div class="detail-actions">
-                  <button id="bridgeCenterChannelNewBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-plus"></i>
-                    <span>新增渠道</span>
-                  </button>
-                </div>
-              </div>
-              <div class="bridge-channel-guide">
-                <div class="bridge-channel-guide-main">
-                  <div class="bridge-channel-guide-title">
-                    <strong id="bridgeCenterChannelGuideName">选择渠道后显示说明</strong>
-                    <span id="bridgeCenterChannelGuideRuntime" class="status-chip">模式 -</span>
-                    <span id="bridgeCenterChannelGuideAdapter" class="status-chip">适配器 -</span>
-                  </div>
-                  <div id="bridgeCenterChannelGuideDescription" class="muted">
-                    先选择渠道，再按模板填写当前节点专属的接入账号配置。
-                  </div>
-                  <div class="bridge-channel-guide-meta">
-                    <span>回调提示：<code id="bridgeCenterChannelGuideDocsHint">-</code></span>
-                    <span>能力：<span id="bridgeCenterChannelGuideCaps">-</span></span>
-                  </div>
-                </div>
-                <div class="bridge-channel-guide-actions">
-                  <button id="bridgeCenterChannelTemplateBtn" class="secondary btn-with-icon" type="button">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i>
-                    <span>填入模板</span>
-                  </button>
-                  <button id="bridgeCenterChannelEmptyBtn" class="secondary" type="button">清空为 {}</button>
-                </div>
-              </div>
+              <div class="muted">普通渠道继续绑定“渠道监控”中的现有账号；选择 Weixin iLink (New) 时可直接扫码创建并绑定。</div>
               <div class="settings-grid settings-grid--auto">
                 <div class="form-row">
                   <label for="bridgeCenterChannelFormChannel">渠道</label>
@@ -2406,49 +2343,47 @@
                 </div>
                 <div class="form-row">
                   <label for="bridgeCenterChannelFormAccountId">账号 ID</label>
-                  <input id="bridgeCenterChannelFormAccountId" type="text" placeholder="可留空，保存时自动生成" />
+                  <select id="bridgeCenterChannelFormAccountId"></select>
                 </div>
-                <div class="form-row">
-                  <label for="bridgeCenterChannelFormAccountName">显示名称</label>
-                  <input id="bridgeCenterChannelFormAccountName" type="text" placeholder="例如 客服主账号 / 企业助手" />
-                </div>
-                <div class="form-row">
-                  <label for="bridgeCenterChannelFormPeerKind">默认会话类型</label>
-                  <select id="bridgeCenterChannelFormPeerKind">
-                    <option value="group">group</option>
-                    <option value="user">user</option>
-                  </select>
-                </div>
-                <div class="form-row">
-                  <label for="bridgeCenterChannelPresetOverride">预设覆盖</label>
-                  <select id="bridgeCenterChannelPresetOverride"></select>
-                </div>
-                <div class="form-row">
-                  <label for="bridgeCenterChannelThreadStrategy">线程策略</label>
-                  <select id="bridgeCenterChannelThreadStrategy">
-                    <option value="main_thread">main_thread</option>
-                    <option value="per_peer">per_peer</option>
-                    <option value="hybrid">hybrid</option>
-                  </select>
-                </div>
-                <div class="form-row form-row-span">
-                  <label for="bridgeCenterChannelStatusReason">状态说明</label>
-                  <input id="bridgeCenterChannelStatusReason" type="text" placeholder="停用原因 / 备注" />
-                </div>
-                <div class="form-row form-row-span">
-                  <label class="checkbox-row">
-                    <input id="bridgeCenterChannelFormEnabled" type="checkbox" checked />
-                    <span>启用该接入渠道</span>
-                  </label>
-                </div>
-                <div class="form-row form-row-span">
-                  <label for="bridgeCenterChannelConfig">JSON 配置</label>
-                  <textarea id="bridgeCenterChannelConfig" rows="10" placeholder='{\n  "xmpp": {\n    "jid": "bot@example.com",\n    "password": "******"\n  }\n}'></textarea>
+                <div id="bridgeCenterWeixinQrSection" class="bridge-weixin-qr-panel" hidden>
+                  <div class="bridge-weixin-qr-header">
+                    <div>
+                      <div class="bridge-weixin-qr-title">Weixin iLink (New) 扫码</div>
+                      <div class="muted">扫码成功后会自动创建或更新当前节点的 Weixin 账号并完成绑定。</div>
+                    </div>
+                    <button id="bridgeCenterWeixinQrStartBtn" class="secondary btn-with-icon" type="button">
+                      <i class="fa-solid fa-qrcode"></i>
+                      <span>生成二维码</span>
+                    </button>
+                  </div>
+                  <div id="bridgeCenterWeixinQrPreview" class="bridge-weixin-qr-preview" hidden>
+                    <img
+                      id="bridgeCenterWeixinQrImage"
+                      class="bridge-weixin-qr-image"
+                      alt="Weixin QR Code"
+                      referrerpolicy="no-referrer"
+                    />
+                    <a
+                      id="bridgeCenterWeixinQrOpenLink"
+                      class="bridge-weixin-qr-link"
+                      href="#"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      hidden
+                    >
+                      新窗口打开
+                    </a>
+                  </div>
+                  <div class="bridge-weixin-qr-meta">
+                    <div id="bridgeCenterWeixinQrSession" class="muted"></div>
+                    <div id="bridgeCenterWeixinQrStatus" class="muted"></div>
+                    <div id="bridgeCenterWeixinQrMessage" class="muted"></div>
+                  </div>
                 </div>
               </div>
             </div>
             <div class="modal-actions">
-              <button id="bridgeCenterChannelDeleteBtn" class="danger" type="button">删除</button>
+              <button id="bridgeCenterChannelDeleteBtn" class="danger" type="button">移除绑定</button>
               <button id="bridgeCenterChannelCancel" class="secondary" type="button">关闭</button>
               <button id="bridgeCenterChannelSaveBtn" class="primary btn-with-icon" type="button">
                 <i class="fa-solid fa-floppy-disk"></i>
@@ -2939,6 +2874,18 @@
                       <option value="tool_call" data-i18n="llm.toolCallMode.toolCall">tool_call</option>
                       <option value="function_call" data-i18n="llm.toolCallMode.functionCall">function_call</option>
                       <option value="freeform_call" data-i18n="llm.toolCallMode.freeformCall">freeform_call</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="llmReasoningEffort" data-i18n="llm.field.reasoningEffort">思考等级</label>
+                    <select id="llmReasoningEffort">
+                      <option value="" data-i18n="llm.reasoningEffort.default">default（模型默认）</option>
+                      <option value="none" data-i18n="llm.reasoningEffort.none">none（不额外思考）</option>
+                      <option value="minimal" data-i18n="llm.reasoningEffort.minimal">minimal</option>
+                      <option value="low" data-i18n="llm.reasoningEffort.low">low</option>
+                      <option value="medium" data-i18n="llm.reasoningEffort.medium">medium</option>
+                      <option value="high" data-i18n="llm.reasoningEffort.high">high</option>
+                      <option value="xhigh" data-i18n="llm.reasoningEffort.xhigh">xhigh</option>
                     </select>
                   </div>
                 </div>
@@ -5183,7 +5130,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260323-03"></script>
+    <script type="module" src="./app.js?v=20260323-05"></script>
 </body>
 </html>
 

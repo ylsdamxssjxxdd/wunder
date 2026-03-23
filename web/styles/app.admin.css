@@ -2470,7 +2470,7 @@
   margin-top: 2px;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut {
+.tool-manager-shortcuts button.tool-manager-shortcut {
   width: 100%;
   justify-content: flex-start;
   border: 1px solid #d8e1ef;
@@ -2479,35 +2479,42 @@
   transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut:hover:not(:disabled) {
+.tool-manager-shortcuts button.tool-manager-shortcut:hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: #b9d6ff;
+  background: #eef4ff;
+  color: #1d4ed8;
+  filter: none;
+}
+
+.tool-manager-shortcuts button.tool-manager-shortcut:active:not(:disabled):not([aria-disabled="true"]) {
   border-color: #93c5fd;
-  background: #f1f5f9;
-  color: #1e293b;
+  background: #e4edff;
+  color: #1d4ed8;
+  filter: none;
+  opacity: 1;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut:active:not(:disabled) {
-  opacity: 0.9;
-}
-
-.tool-manager-shortcuts .tool-manager-shortcut:focus-visible {
+.tool-manager-shortcuts button.tool-manager-shortcut:focus-visible {
   outline: 2px solid rgba(96, 165, 250, 0.95);
   outline-offset: 2px;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut:disabled {
+.tool-manager-shortcuts button.tool-manager-shortcut:disabled,
+.tool-manager-shortcuts button.tool-manager-shortcut[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
   box-shadow: none;
   transform: none;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut.is-active {
+.tool-manager-shortcuts button.tool-manager-shortcut.is-active {
   border-color: #3b82f6;
   background: #e8f0ff;
   color: #1d4ed8;
+  filter: none;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut.is-active i {
+.tool-manager-shortcuts button.tool-manager-shortcut.is-active i {
   color: #2563eb;
 }
 

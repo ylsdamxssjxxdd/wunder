@@ -3629,6 +3629,87 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
+    fn list_memory_hit_counts(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<HashMap<String, i64>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT memory_id, COUNT(DISTINCT CASE
+                WHEN TRIM(round_id) <> '' THEN session_id || '::r::' || TRIM(round_id)
+                WHEN TRIM(query_text) <> '' THEN session_id || '::q::' || TRIM(query_text)
+                ELSE NULL
+             END) AS hit_count
+             FROM memory_hits
+             WHERE user_id = ? AND agent_id = ?
+             GROUP BY memory_id",
+        )?;
+        let rows = stmt.query_map(params![user_id.trim(), agent_id.trim()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            ))
+        })?;
+        Ok(rows.collect::<std::result::Result<HashMap<_, _>, _>>()?)
+    }
+
+    fn has_memory_hit_event(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        session_id: &str,
+        round_id: Option<&str>,
+        query_text: Option<&str>,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        let cleaned_memory = memory_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty()
+            || cleaned_agent.is_empty()
+            || cleaned_memory.is_empty()
+            || cleaned_session.is_empty()
+        {
+            return Ok(false);
+        }
+
+        if let Some(cleaned_round) = round_id.map(str::trim).filter(|value| !value.is_empty()) {
+            let exists = conn.query_row(
+                "SELECT 1 FROM memory_hits
+                 WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND session_id = ? AND round_id = ?
+                 LIMIT 1",
+                params![cleaned_user, cleaned_agent, cleaned_memory, cleaned_session, cleaned_round],
+                |_| Ok(()),
+            );
+            return Ok(exists.is_ok());
+        }
+
+        if let Some(cleaned_query) = query_text.map(str::trim).filter(|value| !value.is_empty()) {
+            let exists = conn.query_row(
+                "SELECT 1 FROM memory_hits
+                 WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND session_id = ?
+                   AND TRIM(round_id) = '' AND query_text = ?
+                 LIMIT 1",
+                params![
+                    cleaned_user,
+                    cleaned_agent,
+                    cleaned_memory,
+                    cleaned_session,
+                    cleaned_query
+                ],
+                |_| Ok(()),
+            );
+            return Ok(exists.is_ok());
+        }
+
+        Ok(false)
+    }
+
     fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;

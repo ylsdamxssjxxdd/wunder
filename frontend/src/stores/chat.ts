@@ -2762,6 +2762,19 @@ const resolveMaxStreamEventId = (messages) => {
   return maxId > 0 ? maxId : null;
 };
 
+const resolveMaxStreamRound = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  let maxRound = 0;
+  messages.forEach((message) => {
+    if (message?.role !== 'assistant') return;
+    const round = normalizeStreamRound(message.stream_round);
+    if (round && round > maxRound) {
+      maxRound = round;
+    }
+  });
+  return maxRound > 0 ? maxRound : null;
+};
+
 const findAssistantMessageByUserRound = (messages, userRound) => {
   const normalizedRound = normalizeStreamRound(userRound);
   if (!Array.isArray(messages) || normalizedRound === null || normalizedRound <= 0) return null;
@@ -2822,14 +2835,14 @@ const resolveLastAssistantTimestampMs = (messages) => {
 };
 
 const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
-const WATCHDOG_IDLE_MS_ACTIVE = 8000;
+const WATCHDOG_IDLE_MS_ACTIVE = 1500;
 const WATCHDOG_IDLE_MS_BACKGROUND = 14000;
 const WATCHDOG_IDLE_MS_HIDDEN = 26000;
-const WATCHDOG_INTERVAL_MS_ACTIVE = 2000;
+const WATCHDOG_INTERVAL_MS_ACTIVE = 500;
 const WATCHDOG_INTERVAL_MS_BACKGROUND = 3500;
 const WATCHDOG_INTERVAL_MS_HIDDEN = 7000;
-const SLOW_CLIENT_RESUME_DELAY_MS = 260;
-const STREAM_FLUSH_BASE_MS = 40;
+const SLOW_CLIENT_RESUME_DELAY_MS = 120;
+const STREAM_FLUSH_BASE_MS = 20;
 const STREAM_FLUSH_MAX_MS = 160;
 const HISTORY_PAGE_LIMIT = 80;
 const HISTORY_PAGE_MAX = 200;
@@ -2962,6 +2975,7 @@ const startSessionWatcher = (store, sessionId) => {
   const workflowState = getSessionWorkflowState(key);
   const roundStates = new Map();
   const completedRounds = new Set();
+  let maxKnownRound = resolveMaxStreamRound(sessionMessagesRef) || 0;
   let lastEventId = Math.max(
     resolveMaxStreamEventId(sessionMessagesRef) || 0,
     getRuntimeLastEventId(runtime)
@@ -2972,6 +2986,7 @@ const startSessionWatcher = (store, sessionId) => {
   const ensureRoundState = (roundNumber, eventTimestampMs, userRoundNumber = null) => {
     const normalizedRound = normalizeStreamRound(roundNumber);
     if (normalizedRound === null || normalizedRound <= 0) return null;
+    maxKnownRound = Math.max(maxKnownRound, normalizedRound);
     if (completedRounds.has(normalizedRound)) return null;
     const existing = roundStates.get(normalizedRound);
     if (existing) return existing;
@@ -3065,6 +3080,7 @@ const startSessionWatcher = (store, sessionId) => {
   const finalizeRound = (roundNumber, aborted) => {
     const normalizedRound = normalizeStreamRound(roundNumber);
     if (normalizedRound === null) return;
+    maxKnownRound = Math.max(maxKnownRound, normalizedRound);
     const state = roundStates.get(normalizedRound);
     if (!state) return;
     state.processor.finalize();
@@ -3084,6 +3100,71 @@ const startSessionWatcher = (store, sessionId) => {
 
   const finalizeAll = (aborted) => {
     Array.from(roundStates.keys()).forEach((round) => finalizeRound(round, aborted));
+  };
+
+  const resolveWatchRoundNumber = (
+    eventType,
+    payload,
+    data,
+    isRoundStart
+  ) => {
+    const directRound = resolveEventRoundNumber(payload, data);
+    if (directRound !== null) {
+      maxKnownRound = Math.max(maxKnownRound, directRound);
+      return directRound;
+    }
+
+    const activeRound = Array.from(roundStates.keys()).reduce(
+      (maxValue, value) => (value > maxValue ? value : maxValue),
+      0
+    );
+    if (isRoundStart) {
+      const nextRound = activeRound > 0 ? activeRound + 1 : Math.max(maxKnownRound + 1, 1);
+      maxKnownRound = Math.max(maxKnownRound, nextRound);
+      return nextRound;
+    }
+
+    const segmented = parseSegmentedDelta(payload, data);
+    const hasNonEmptyText = (value: unknown) =>
+      typeof value === 'string' && value.trim().length > 0;
+    const hasContentDelta =
+      Boolean(segmented?.delta) ||
+      Boolean(segmented?.reasoningDelta) ||
+      hasNonEmptyText(data?.delta) ||
+      hasNonEmptyText(data?.content) ||
+      hasNonEmptyText(data?.answer) ||
+      hasNonEmptyText(data?.message) ||
+      hasNonEmptyText(payload?.message);
+    const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    const eventHasWorkflowHint =
+      hasContentDelta ||
+      normalizedEventType === 'final' ||
+      normalizedEventType === 'error' ||
+      normalizedEventType === 'received' ||
+      normalizedEventType === 'round_start' ||
+      normalizedEventType === 'progress' ||
+      normalizedEventType === 'message' ||
+      normalizedEventType === 'delta' ||
+      normalizedEventType === 'think_delta' ||
+      normalizedEventType === 'reasoning_delta' ||
+      normalizedEventType === 'llm_output' ||
+      normalizedEventType === 'tool_call' ||
+      normalizedEventType === 'tool_result' ||
+      normalizedEventType === 'tool_output' ||
+      normalizedEventType === 'team_progress' ||
+      normalizedEventType === 'team_finish' ||
+      normalizedEventType === 'team_error';
+    if (!eventHasWorkflowHint) {
+      return null;
+    }
+
+    if (activeRound > 0) {
+      maxKnownRound = Math.max(maxKnownRound, activeRound);
+      return activeRound;
+    }
+    const fallbackRound = Math.max(maxKnownRound, 1);
+    maxKnownRound = Math.max(maxKnownRound, fallbackRound);
+    return fallbackRound;
   };
 
   const markWatchdogEvent = () => {
@@ -3187,15 +3268,30 @@ const startSessionWatcher = (store, sessionId) => {
     if (eventType === 'slow_client' && !data) {
       return;
     }
+    const stage = data?.stage ?? payload?.stage;
+    const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
+    const isRoundStart =
+      eventType === 'round_start' ||
+      eventType === 'received' ||
+      (eventType === 'progress' && stage === 'start');
     const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventId !== null) {
       if (normalizedEventId <= lastEventId) {
-        return;
+        const latestAssistantTimestamp = resolveLastAssistantTimestampMs(sessionMessagesRef);
+        const canResetSequence =
+          isRoundStart &&
+          roundStates.size === 0 &&
+          !findPendingAssistantMessage(sessionMessagesRef) &&
+          Number.isFinite(eventTimestampMs) &&
+          (!Number.isFinite(latestAssistantTimestamp) ||
+            eventTimestampMs > Number(latestAssistantTimestamp) + 500);
+        if (!canResetSequence) {
+          return;
+        }
       }
       lastEventId = normalizedEventId;
       updateRuntimeLastEventId(runtime, normalizedEventId);
     }
-    const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
     if (
       Number.isFinite(minEventTimestampMs) &&
       Number.isFinite(eventTimestampMs) &&
@@ -3203,10 +3299,8 @@ const startSessionWatcher = (store, sessionId) => {
     ) {
       return;
     }
-    const roundNumber = resolveEventRoundNumber(payload, data);
+    const roundNumber = resolveWatchRoundNumber(eventType, payload, data, isRoundStart);
     const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
-    const stage = data?.stage ?? payload?.stage;
-    const isRoundStart = eventType === 'round_start' || (eventType === 'progress' && stage === 'start');
     const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber);
     if (isRoundStart && state) {
       const question =
@@ -3335,7 +3429,7 @@ const startSessionWatcher = (store, sessionId) => {
       }
       const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
       if (store.activeSessionId === key && (pendingMessage || !controller.signal.aborted)) {
-        setTimeout(() => startSessionWatcher(store, key), 200);
+        setTimeout(() => startSessionWatcher(store, key), 80);
       }
     });
 };
@@ -3354,7 +3448,7 @@ const buildWsRequestId = () => {
   return `req_${Date.now().toString(36)}_${wsRequestSeq}`;
 };
 
-const markWsUnavailable = (ttlMs = 60000) => {
+const markWsUnavailable = (ttlMs = 15000) => {
   const now = Date.now();
   wsUnavailableUntil = now + Math.max(ttlMs, 5000);
 };

@@ -28,15 +28,7 @@
                 {{ option.label }}
               </option>
             </select>
-            <span class="channel-detail-hint">{{ providerDesc(createForm.channel) }}</span>
           </label>
-          <div v-if="hasLegacyCreateOptions" class="channel-inline-options">
-            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
-              <input v-model="showLegacyCreateChannels" type="checkbox" />
-              <span>{{ t('channels.create.showLegacyChannels') }}</span>
-            </label>
-            <div class="channel-detail-hint">{{ t('channels.create.showLegacyChannelsHint') }}</div>
-          </div>
           <div class="channel-create-checks">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
               <input v-model="createForm.enabled" type="checkbox" />
@@ -72,34 +64,18 @@
           </template>
           <div v-if="createForm.channel === 'weixin'" class="channel-weixin-qr-panel">
             <div class="channel-detail-label">{{ t('channels.form.weixin.qrTitle') }}</div>
-            <div class="channel-inline-options">
-              <button
-                class="channel-refresh-btn subtle"
-                type="button"
-                :disabled="createSaving || createWeixinQrState.loadingStart || createWeixinQrState.loadingWait"
-                @click="startCreateWeixinQr"
-              >
-                {{
-                  createWeixinQrState.loadingStart || createWeixinQrState.loadingWait
-                    ? t('common.loading')
-                    : t('channels.form.weixin.qrGenerate')
-                }}
-              </button>
-            </div>
             <div v-if="createWeixinQrPreviewUrl" class="channel-weixin-qr-preview">
               <img
                 class="channel-weixin-qr-image"
                 :src="createWeixinQrPreviewUrl"
                 :alt="t('channels.form.weixin.qrImageAlt')"
+                referrerpolicy="no-referrer"
+                role="button"
+                tabindex="0"
+                @click="refreshCreateWeixinQr"
+                @keydown.enter.prevent="refreshCreateWeixinQr"
+                @keydown.space.prevent="refreshCreateWeixinQr"
               />
-              <a
-                class="channel-weixin-qr-link"
-                :href="createWeixinQrPreviewUrl"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {{ t('channels.form.weixin.qrOpenLink') }}
-              </a>
             </div>
             <div v-if="createWeixinQrState.sessionKey" class="channel-detail-hint">
               {{ t('channels.form.weixin.qrSessionKey') }}: {{ createWeixinQrState.sessionKey }}
@@ -135,7 +111,13 @@
         </div>
 
         <div class="channel-create-actions">
-          <button class="channel-action-btn" type="button" :disabled="createSaving" @click="createAccount">
+          <button
+            v-if="createForm.channel !== 'weixin'"
+            class="channel-action-btn"
+            type="button"
+            :disabled="createSaving"
+            @click="createAccount"
+          >
             {{ createSaving ? t('common.saving') : t('channels.create.create') }}
           </button>
           <button class="channel-action-btn" type="button" :disabled="createSaving" @click="cancelCreate">
@@ -263,6 +245,7 @@
                   class="channel-weixin-qr-image"
                   :src="editWeixinQrPreviewUrl"
                   :alt="t('channels.form.weixin.qrImageAlt')"
+                  referrerpolicy="no-referrer"
                 />
                 <a
                   class="channel-weixin-qr-link"
@@ -389,12 +372,17 @@ const props = defineProps({
   agentId: {
     type: String,
     default: ''
+  },
+  active: {
+    type: Boolean,
+    default: true
   }
 });
 
 const emit = defineEmits(['changed']);
 
 const { t } = useI18n();
+const isPanelActive = computed(() => props.active !== false);
 
 type DynamicFieldType = 'text' | 'password' | 'checkbox';
 
@@ -957,7 +945,6 @@ const FALLBACK_CHANNELS = [
 ];
 const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp', 'weixin'];
 const DEFAULT_CREATE_CHANNELS = ['weixin'];
-const LEGACY_CREATE_CHANNELS = ['wechat', 'wechat_mp'];
 const AUTO_ACCOUNT_NAME_PREFIX: Record<string, string> = {
   weixin: '微信',
   wechat: '微信',
@@ -1000,11 +987,11 @@ const permissionDenied = ref(false);
 const accounts = ref<ChannelAccountItem[]>([]);
 const supportedChannels = ref<SupportedChannelItem[]>([]);
 const selectedKey = ref('');
-const showLegacyCreateChannels = ref(false);
 const createXmppAdvancedEnabled = ref(false);
 const editXmppAdvancedEnabled = ref(false);
 const createWeixinAdvancedEnabled = ref(false);
 const editWeixinAdvancedEnabled = ref(false);
+const createWeixinAutoCreating = ref(false);
 const createDynamicFields = reactive<Record<string, string | boolean>>({});
 const editDynamicFields = reactive<Record<string, string | boolean>>({});
 const editSecretSaved = reactive<Record<string, boolean>>({});
@@ -1039,6 +1026,7 @@ const disposed = ref(false);
 let runtimeLogsPollTimer: ReturnType<typeof setTimeout> | null = null;
 let loadAccountsRequestId = 0;
 let runtimeLogsRequestId = 0;
+let lastLoadedAgentKey = '';
 
 const createForm = reactive({
   channel: 'weixin',
@@ -1084,9 +1072,6 @@ const supportedChannelOptions = computed(() => {
       return left.label.localeCompare(right.label, 'zh-Hans-CN');
     });
 });
-const hasLegacyCreateOptions = computed(() =>
-  supportedChannelOptions.value.some((item) => LEGACY_CREATE_CHANNELS.includes(item.channel))
-);
 const createChannelOptions = computed(() => {
   const optionMap = new Map(
     supportedChannelOptions.value.map((item) => [item.channel, item] as const)
@@ -1103,14 +1088,6 @@ const createChannelOptions = computed(() => {
       label: providerLabel(channel),
       priority: CHANNEL_PRIORITY[channel] ?? 99
     });
-  }
-  if (showLegacyCreateChannels.value) {
-    for (const channel of LEGACY_CREATE_CHANNELS) {
-      const found = optionMap.get(channel);
-      if (found) {
-        options.push(found);
-      }
-    }
   }
   return options;
 });
@@ -1411,7 +1388,7 @@ const resolveDefaultCreateChannel = () => {
   if (createChannelOptions.value.length > 0) {
     return createChannelOptions.value[0].channel;
   }
-  return supportedChannelOptions.value[0]?.channel || 'weixin';
+  return DEFAULT_CREATE_CHANNELS[0] || 'weixin';
 };
 
 const applyCreateChannelDefaults = () => {
@@ -1423,7 +1400,7 @@ const applyCreateChannelDefaults = () => {
 };
 
 const resetCreateForm = () => {
-  showLegacyCreateChannels.value = false;
+  createWeixinAutoCreating.value = false;
   createForm.channel = resolveDefaultCreateChannel();
   createForm.enabled = true;
   applyCreateChannelDefaults();
@@ -1643,7 +1620,7 @@ const applyWeixinQrResultToFields = (
   }
 };
 
-const startWeixinQrFlow = async (scope: 'create' | 'edit') => {
+const startWeixinQrFlow = async (scope: 'create' | 'edit', force = false) => {
   const isCreate = scope === 'create';
   if (isCreate && createForm.channel !== 'weixin') {
     return;
@@ -1663,7 +1640,8 @@ const startWeixinQrFlow = async (scope: 'create' | 'edit') => {
   try {
     const payload: Record<string, unknown> = {
       api_base: apiBase,
-      bot_type: botType
+      bot_type: botType,
+      force
     };
     if (accountId) {
       payload.account_id = accountId;
@@ -1736,6 +1714,20 @@ const waitWeixinQrFlow = async (scope: 'create' | 'edit') => {
       applyWeixinQrResultToFields(values, result);
       state.message = trimmedText(result.message) || t('channels.form.weixin.qrWaitSuccess');
       ElMessage.success(t('channels.form.weixin.qrWaitSuccess'));
+      if (
+        isCreate &&
+        creating.value &&
+        createForm.channel === 'weixin' &&
+        !createWeixinAutoCreating.value &&
+        !createSaving.value
+      ) {
+        createWeixinAutoCreating.value = true;
+        try {
+          await createAccount();
+        } finally {
+          createWeixinAutoCreating.value = false;
+        }
+      }
       return;
     }
 
@@ -1750,8 +1742,12 @@ const waitWeixinQrFlow = async (scope: 'create' | 'edit') => {
   }
 };
 
-const startCreateWeixinQr = async () => {
-  await startWeixinQrFlow('create');
+const startCreateWeixinQr = async (force = false) => {
+  await startWeixinQrFlow('create', force);
+};
+
+const refreshCreateWeixinQr = async () => {
+  await startCreateWeixinQr(true);
 };
 
 const startEditWeixinQr = async () => {
@@ -1851,7 +1847,7 @@ const clearRuntimeLogTimer = () => {
 };
 
 const scheduleRuntimeLogPolling = () => {
-  if (!mounted.value || disposed.value) {
+  if (!mounted.value || disposed.value || !isPanelActive.value) {
     return;
   }
   clearRuntimeLogTimer();
@@ -2041,6 +2037,7 @@ const loadAccounts = async (preferred = undefined) => {
     }
     resetEditForm();
     permissionDenied.value = false;
+    lastLoadedAgentKey = resolvedAgentId.value || '__default__';
   } catch (error) {
     if (requestId !== loadAccountsRequestId || disposed.value) {
       return;
@@ -2072,6 +2069,9 @@ const refreshAll = async () => {
 const startCreate = () => {
   creating.value = true;
   resetCreateForm();
+  if (createForm.channel === 'weixin') {
+    void startCreateWeixinQr();
+  }
 };
 
 const cancelCreate = () => {
@@ -2081,6 +2081,9 @@ const cancelCreate = () => {
 
 const onCreateChannelChange = () => {
   applyCreateChannelDefaults();
+  if (createForm.channel === 'weixin') {
+    void startCreateWeixinQr();
+  }
 };
 
 const createAccount = async () => {
@@ -2212,6 +2215,7 @@ const submitCreate = async (payload: ChannelAccountPayload) => {
     showApiError(error, t('channels.create.createFailed'));
   } finally {
     createSaving.value = false;
+    createWeixinAutoCreating.value = false;
   }
 };
 
@@ -2424,9 +2428,19 @@ defineExpose({
 });
 
 watch(
-  () => resolvedAgentId.value,
-  () => {
+  () => [resolvedAgentId.value, isPanelActive.value] as const,
+  ([agentId, active], previous) => {
     if (!mounted.value || disposed.value) {
+      return;
+    }
+    if (!active) {
+      clearRuntimeLogTimer();
+      return;
+    }
+    const agentKey = agentId || '__default__';
+    const wasActive = previous?.[1] === true;
+    if (!wasActive && lastLoadedAgentKey === agentKey) {
+      void refreshRuntimeLogs(true);
       return;
     }
     permissionDenied.value = false;
@@ -2437,24 +2451,12 @@ watch(
   }
 );
 
-watch(
-  () => showLegacyCreateChannels.value,
-  () => {
-    if (!creating.value) {
-      return;
-    }
-    if (createChannelOptions.value.some((item) => item.channel === createForm.channel)) {
-      return;
-    }
-    createForm.channel = resolveDefaultCreateChannel();
-    applyCreateChannelDefaults();
-  }
-);
-
 onMounted(() => {
   mounted.value = true;
   disposed.value = false;
-  void refreshAll();
+  if (isPanelActive.value) {
+    void refreshAll();
+  }
 });
 
 onBeforeUnmount(() => {

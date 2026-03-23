@@ -1,5 +1,7 @@
 use crate::auth as guard_auth;
 use crate::channels::catalog::user_supported_channels;
+use crate::channels::types::{ChannelAccountConfig, WeixinConfig};
+use crate::channels::weixin;
 use crate::services::bridge::{
     build_bridge_provider_caps, normalize_bridge_center_status, normalize_bridge_fallback_policy,
     normalize_bridge_identity_strategy, normalize_bridge_reply_strategy,
@@ -11,17 +13,20 @@ use crate::services::user_agent_presets::configured_preset_agents;
 use crate::state::AppState;
 use crate::storage::{
     BridgeCenterAccountRecord, BridgeCenterRecord, BridgeDeliveryLogRecord,
-    BridgeRouteAuditLogRecord, BridgeUserRouteRecord, ListBridgeCenterAccountsQuery,
-    ListBridgeCentersQuery, ListBridgeDeliveryLogsQuery, ListBridgeRouteAuditLogsQuery,
-    ListBridgeUserRoutesQuery,
+    BridgeRouteAuditLogRecord, BridgeUserRouteRecord, ChannelAccountRecord,
+    ListBridgeCenterAccountsQuery, ListBridgeCentersQuery, ListBridgeDeliveryLogsQuery,
+    ListBridgeRouteAuditLogsQuery, ListBridgeUserRoutesQuery,
 };
 use crate::user_store::UserStore;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use axum::{routing::get, routing::patch, Json, Router};
+use axum::{
+    routing::{get, patch, post},
+    Json, Router,
+};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -47,6 +52,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/bridge/centers/{center_id}/accounts",
             get(admin_bridge_center_accounts).post(admin_bridge_center_account_create),
+        )
+        .route(
+            "/wunder/admin/bridge/centers/{center_id}/weixin_bind",
+            post(admin_bridge_center_weixin_bind),
         )
         .route(
             "/wunder/admin/bridge/accounts/{center_account_id}",
@@ -303,6 +312,20 @@ struct BridgeCenterAccountUpsertPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct BridgeCenterWeixinBindPayload {
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default, alias = "apiBase")]
+    api_base: Option<String>,
+    #[serde(default, alias = "botType")]
+    bot_type: Option<String>,
+    bot_token: String,
+    ilink_bot_id: String,
+    #[serde(default)]
+    ilink_user_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct BridgeRoutePatchPayload {
     #[serde(default)]
     status: Option<String>,
@@ -516,6 +539,197 @@ async fn admin_bridge_center_account_delete(
     })))
 }
 
+async fn admin_bridge_center_weixin_bind(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(center_id): AxumPath<String>,
+    Json(payload): Json<BridgeCenterWeixinBindPayload>,
+) -> Result<Json<Value>, Response> {
+    ensure_admin_user(&state, &headers)?;
+    let center_id = required_text(&center_id, "center_id")?;
+    let center = state
+        .storage
+        .get_bridge_center(&center_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| {
+            error_response(StatusCode::NOT_FOUND, "bridge center not found".to_string())
+        })?;
+    let account_id = clean_optional_text(payload.account_id.as_deref())
+        .unwrap_or_else(|| build_bridge_weixin_account_id(&center));
+    let api_base = weixin::normalize_api_base(payload.api_base.as_deref())
+        .unwrap_or_else(|| weixin::DEFAULT_API_BASE.to_string());
+    let bot_type = weixin::normalize_bot_type(payload.bot_type.as_deref());
+    let bot_token = required_text(&payload.bot_token, "bot_token")?;
+    let ilink_bot_id = required_text(&payload.ilink_bot_id, "ilink_bot_id")?;
+    let ilink_user_id = clean_optional_text(payload.ilink_user_id.as_deref());
+    let now = now_ts();
+
+    let existing_account = state
+        .storage
+        .get_channel_account(weixin::WEIXIN_CHANNEL, &account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let created_at = existing_account
+        .as_ref()
+        .map(|record| record.created_at)
+        .unwrap_or(now);
+    let mut config_value = existing_account
+        .as_ref()
+        .map(|record| record.config.clone())
+        .unwrap_or_else(|| json!({}));
+    if !config_value.is_object() {
+        config_value = Value::Object(Map::new());
+    }
+    let existing_weixin = ChannelAccountConfig::from_value(&config_value)
+        .weixin
+        .unwrap_or_default();
+    let long_connection_enabled = weixin::long_connection_enabled(&existing_weixin);
+    let map = config_value.as_object_mut().ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid channel config".to_string(),
+        )
+    })?;
+    let inbound_token_missing = map
+        .get("inbound_token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_none();
+    if inbound_token_missing {
+        map.insert(
+            "inbound_token".to_string(),
+            Value::String(format!("bridgech_{}", Uuid::new_v4().simple())),
+        );
+    }
+    map.insert(
+        "owner_user_id".to_string(),
+        Value::String(center.owner_user_id.clone()),
+    );
+    map.insert("agent_id".to_string(), Value::Null);
+    map.insert(
+        "weixin".to_string(),
+        json!(WeixinConfig {
+            api_base: Some(api_base.clone()),
+            cdn_base: existing_weixin.cdn_base.clone(),
+            bot_token: Some(bot_token),
+            ilink_bot_id: Some(ilink_bot_id),
+            ilink_user_id,
+            bot_type: Some(bot_type.clone()),
+            long_connection_enabled: Some(long_connection_enabled),
+            allow_from: existing_weixin.allow_from.clone(),
+            poll_timeout_ms: existing_weixin.poll_timeout_ms,
+            api_timeout_ms: existing_weixin.api_timeout_ms,
+            max_consecutive_failures: existing_weixin.max_consecutive_failures,
+            backoff_ms: existing_weixin.backoff_ms,
+            typing_enabled: existing_weixin.typing_enabled,
+            media_enabled: existing_weixin.media_enabled,
+            route_tag: existing_weixin.route_tag.clone(),
+        }),
+    );
+
+    let channel_account = ChannelAccountRecord {
+        channel: weixin::WEIXIN_CHANNEL.to_string(),
+        account_id: account_id.clone(),
+        config: config_value.clone(),
+        status: "active".to_string(),
+        created_at,
+        updated_at: now,
+    };
+    state
+        .storage
+        .upsert_channel_account(&channel_account)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let existing_bindings = state
+        .storage
+        .list_bridge_center_accounts(ListBridgeCenterAccountsQuery {
+            center_id: Some(center.center_id.as_str()),
+            channel: None,
+            account_id: None,
+            enabled: None,
+            offset: 0,
+            limit: BRIDGE_OVERVIEW_LIMIT,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .0;
+    let reused_center_account_id = existing_bindings
+        .iter()
+        .find(|record| {
+            record.channel.eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
+                && record.account_id.eq_ignore_ascii_case(&account_id)
+        })
+        .map(|record| record.center_account_id.clone());
+    for record in existing_bindings {
+        if record.channel.eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
+            && record.account_id.eq_ignore_ascii_case(&account_id)
+        {
+            continue;
+        }
+        delete_bridge_center_account_cascade(&state, &record.center_account_id)?;
+    }
+
+    let bridge_record = build_bridge_center_account_record(
+        &state,
+        &center,
+        BridgeCenterAccountUpsertPayload {
+            center_account_id: reused_center_account_id,
+            center_id: Some(center.center_id.clone()),
+            channel: weixin::WEIXIN_CHANNEL.to_string(),
+            account_id,
+            enabled: Some(true),
+            default_preset_agent_name_override: None,
+            identity_strategy: None,
+            thread_strategy: None,
+            reply_strategy: None,
+            fallback_policy: None,
+            status_reason: None,
+        },
+    )
+    .await?;
+    state
+        .storage
+        .upsert_bridge_center_account(&bridge_record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let weixin_cfg = ChannelAccountConfig::from_value(&channel_account.config)
+        .weixin
+        .unwrap_or_default();
+    let long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
+    let configured = weixin::has_long_connection_credentials(&weixin_cfg);
+    if configured {
+        state.channels.record_runtime_info(
+            weixin::WEIXIN_CHANNEL,
+            Some(&channel_account.account_id),
+            "weixin_config_ready",
+            format!(
+                "bridge weixin config ready; runtime_mode=long_poll, long_connection_enabled={long_connection_enabled}"
+            ),
+        );
+    } else {
+        state.channels.record_runtime_warn(
+            weixin::WEIXIN_CHANNEL,
+            Some(&channel_account.account_id),
+            "weixin_config_incomplete",
+            "bridge weixin config incomplete: api_base/bot_token/ilink_bot_id missing".to_string(),
+        );
+    }
+
+    let overview = load_bridge_overview_maps(&state)?;
+    Ok(Json(json!({
+        "data": {
+            "center": bridge_center_payload(&state, &center, &overview)?,
+            "account": bridge_center_account_payload(&bridge_record, &overview),
+            "channel_account": {
+                "channel": channel_account.channel,
+                "account_id": channel_account.account_id,
+                "status": channel_account.status,
+                "updated_at": channel_account.updated_at,
+                "config": channel_account.config,
+            },
+        }
+    })))
+}
+
 async fn admin_bridge_routes(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -704,6 +918,30 @@ async fn upsert_bridge_center_account(
             )
         })?;
     let record = build_bridge_center_account_record(state, &center, payload).await?;
+    let existing_accounts = state
+        .storage
+        .list_bridge_center_accounts(ListBridgeCenterAccountsQuery {
+            center_id: Some(center.center_id.as_str()),
+            channel: None,
+            account_id: None,
+            enabled: None,
+            offset: 0,
+            limit: BRIDGE_OVERVIEW_LIMIT,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .0;
+    if existing_accounts
+        .iter()
+        .any(|item| item.center_account_id != record.center_account_id)
+    {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            format!(
+                "each bridge node supports only one channel: {}",
+                center.center_id
+            ),
+        ));
+    }
     state
         .storage
         .upsert_bridge_center_account(&record)
@@ -722,6 +960,15 @@ async fn sync_bridge_center_accounts(
     center: &BridgeCenterRecord,
     shared_channels: Vec<BridgeCenterAccountUpsertPayload>,
 ) -> Result<(), Response> {
+    if shared_channels.len() > 1 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "each bridge node supports only one channel: {}",
+                center.center_id
+            ),
+        ));
+    }
     let existing_accounts = state
         .storage
         .list_bridge_center_accounts(ListBridgeCenterAccountsQuery {
@@ -889,6 +1136,26 @@ fn bridge_center_account_key(channel: &str, account_id: &str) -> String {
         channel.trim().to_ascii_lowercase(),
         account_id.trim()
     )
+}
+
+fn build_bridge_weixin_account_id(center: &BridgeCenterRecord) -> String {
+    let normalized = center
+        .center_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string();
+    if normalized.is_empty() {
+        return format!("bridge_weixin_{}", Uuid::new_v4().simple());
+    }
+    format!("bridge_weixin_{normalized}")
 }
 
 fn delete_bridge_center_account_cascade(
@@ -1260,10 +1527,11 @@ fn error_response(status: StatusCode, message: String) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        bridge_center_account_key, resolve_bridge_center_account_record,
-        BridgeCenterAccountUpsertPayload, BridgeCenterUpsertPayload,
+        bridge_center_account_key, build_bridge_weixin_account_id,
+        resolve_bridge_center_account_record, BridgeCenterAccountUpsertPayload,
+        BridgeCenterUpsertPayload,
     };
-    use crate::storage::BridgeCenterAccountRecord;
+    use crate::storage::{BridgeCenterAccountRecord, BridgeCenterRecord};
     use futures::executor::block_on;
     use serde_json::json;
 
@@ -1346,6 +1614,31 @@ mod tests {
         assert_eq!(
             bridge_center_account_key("XMPP", "support@example.com"),
             "xmpp:support@example.com"
+        );
+    }
+
+    #[test]
+    fn build_bridge_weixin_account_id_uses_stable_center_id() {
+        let center = BridgeCenterRecord {
+            center_id: "bc_AbC-123".to_string(),
+            name: "舰桥".to_string(),
+            code: "bridge".to_string(),
+            description: None,
+            owner_user_id: "admin".to_string(),
+            status: "active".to_string(),
+            default_preset_agent_name: "客服".to_string(),
+            target_unit_id: None,
+            default_identity_strategy: "sender_in_peer".to_string(),
+            username_policy: "namespaced_generated".to_string(),
+            password_policy: "fixed_default_123456".to_string(),
+            settings: json!({}),
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+
+        assert_eq!(
+            build_bridge_weixin_account_id(&center),
+            "bridge_weixin_bc_abc_123"
         );
     }
 

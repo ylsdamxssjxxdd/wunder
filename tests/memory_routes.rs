@@ -120,6 +120,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
                 history_compaction_ratio: None,
                 history_compaction_reset: None,
                 tool_call_mode: Some("tool_call".to_string()),
+                reasoning_effort: None,
                 model_type: None,
                 stop: None,
                 mock_if_unconfigured: None,
