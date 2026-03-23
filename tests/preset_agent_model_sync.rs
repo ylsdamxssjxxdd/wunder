@@ -760,6 +760,141 @@ async fn admin_default_agent_sync_force_updates_tools_and_skills() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_default_agent_force_sync_can_disable_skill_creator() {
+    let context = build_test_context_with_config("default_disable_skill_creator_user_a", |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.skills.enabled = vec!["技能创建器".to_string()];
+    })
+    .await;
+    context
+        .state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = context
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+    context
+        .state
+        .user_store
+        .create_user(
+            "default_disable_skill_creator_user_b",
+            Some("default_disable_skill_creator_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+
+    let tool_name = "读取文件".to_string();
+    let skill_name = "技能创建器".to_string();
+
+    let updated_template = update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-description",
+            "system_prompt": "template-system-prompt",
+            "tool_names": [tool_name.clone(), skill_name.clone()],
+            "declared_tool_names": [tool_name.clone()],
+            "declared_skill_names": [skill_name.clone()],
+            "preset_questions": [],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 7
+        }),
+    )
+    .await;
+    sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "force", None).await;
+
+    let user_b_with_skill = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_disable_skill_creator_user_b",
+    )
+    .await;
+    assert!(
+        read_tool_names(&user_b_with_skill)
+            .iter()
+            .any(|name| name == &skill_name),
+        "precondition: force sync should first apply skill creator to default agent"
+    );
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-description",
+            "system_prompt": "template-system-prompt",
+            "tool_names": [tool_name.clone()],
+            "declared_tool_names": [tool_name.clone()],
+            "declared_skill_names": [],
+            "preset_questions": [],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 7
+        }),
+    )
+    .await;
+    eprintln!("updated_template={updated_template}");
+    assert!(
+        !read_tool_names(&updated_template)
+            .iter()
+            .any(|name| name == &skill_name),
+        "template default agent should no longer include skill creator after admin disables it"
+    );
+    assert!(
+        read_declared_skill_names(&updated_template).is_empty(),
+        "template default agent should clear declared skill creator after admin disables it"
+    );
+    sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "force", None).await;
+
+    let user_b_after_disable = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_disable_skill_creator_user_b",
+    )
+    .await;
+    assert!(
+        !read_tool_names(&user_b_after_disable)
+            .iter()
+            .any(|name| name == &skill_name),
+        "force sync should remove skill creator from default agent when template disables it"
+    );
+    assert!(
+        read_declared_skill_names(&user_b_after_disable).is_empty(),
+        "force sync should clear declared skill creator for default agent"
+    );
+
+    let user_b_after_reload = get_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_disable_skill_creator_user_b",
+    )
+    .await;
+    assert!(
+        !read_tool_names(&user_b_after_reload)
+            .iter()
+            .any(|name| name == &skill_name),
+        "reading default agent again should not silently re-add skill creator"
+    );
+    assert!(
+        read_declared_skill_names(&user_b_after_reload).is_empty(),
+        "reading default agent again should keep declared skills cleared"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_agent_rename_does_not_spawn_duplicate_bootstrap_copy() {
     let context = build_test_context_with_config("preset_rename_user", |config| {
         config.user_agents.presets = vec![build_preset_config("preset_bootstrap_rename", None)];
@@ -1285,14 +1420,23 @@ async fn preset_force_sync_repairs_declared_skills_for_users() {
 async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
     let user_id = "preset_skill_inner_visible_user";
     let context = build_test_context_with_config(user_id, |config| {
-        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
-        config.skills.enabled = vec!["鎶€鑳藉垱寤哄櫒".to_string()];
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.skills.enabled = vec!["技能创建器".to_string()];
         config.user_agents.presets = vec![build_preset_config("preset_skill_inner_visible", None)];
     })
     .await;
 
-    let tool_name = "璇诲彇鏂囦欢".to_string();
-    let skill_name = "鎶€鑳藉垱寤哄櫒".to_string();
+    let available_tools = list_available_tool_names(&context.app, user_id).await;
+    let tool_name = "读取文件".to_string();
+    let skill_name = "技能创建器".to_string();
+    assert!(
+        available_tools.iter().any(|name| name == &tool_name),
+        "expected available tool list to contain {tool_name}"
+    );
+    assert!(
+        available_tools.iter().any(|name| name == &skill_name),
+        "expected available tool list to contain {skill_name}"
+    );
 
     let mut admin_items = list_admin_presets(&context.app).await;
     let preset_id = find_preset_item(&admin_items, "preset_skill_inner_visible")["preset_id"]
@@ -1344,6 +1488,124 @@ async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
         worker_card["abilities"]["skills"],
         json!([skill_name.clone()]),
         "worker card should keep declared skills after preset force sync"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_force_sync_can_disable_skill_creator_without_reinjection() {
+    let user_id = "preset_disable_skill_creator_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.skills.enabled = vec!["技能创建器".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_disable_skill_creator", None)];
+    })
+    .await;
+
+    let tool_name = "读取文件".to_string();
+    let skill_name = "技能创建器".to_string();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_disable_skill_creator")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_name.clone(), skill_name.clone()]);
+            item["declared_tool_names"] = json!([tool_name.clone()]);
+            item["declared_skill_names"] = json!([skill_name.clone()]);
+        }
+    }
+    update_admin_presets(&context.app, admin_items).await;
+    sync_preset(&context.app, &preset_id, "force", None).await;
+
+    let agents_with_skill = list_user_agents(&context.app, &context.token).await;
+    let agent_with_skill = find_agent_by_name(&agents_with_skill, PRESET_NAME);
+    assert!(
+        read_tool_names(agent_with_skill)
+            .iter()
+            .any(|name| name == &skill_name),
+        "precondition: force sync should first apply skill creator"
+    );
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_name.clone()]);
+            item["declared_tool_names"] = json!([tool_name.clone()]);
+            item["declared_skill_names"] = json!([]);
+        }
+    }
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    let normalized_preset = find_preset_item(&updated_items, &preset_id);
+    assert!(
+        !read_tool_names(normalized_preset)
+            .iter()
+            .any(|name| name == &skill_name),
+        "updated preset should no longer include skill creator"
+    );
+    assert!(
+        read_declared_skill_names(normalized_preset).is_empty(),
+        "updated preset should no longer declare skill creator"
+    );
+
+    sync_preset(&context.app, &preset_id, "force", None).await;
+
+    let agents_after_force = list_user_agents(&context.app, &context.token).await;
+    let synced_agent = find_agent_by_name(&agents_after_force, PRESET_NAME);
+    let agent_id = find_agent_id_by_name(&agents_after_force, PRESET_NAME);
+    assert!(
+        !read_tool_names(synced_agent)
+            .iter()
+            .any(|name| name == &skill_name),
+        "force sync should remove skill creator when preset no longer enables it"
+    );
+    assert!(
+        read_declared_skill_names(synced_agent).is_empty(),
+        "force sync should clear declared skill creator when preset no longer enables it"
+    );
+
+    let agents_after_reload = list_user_agents(&context.app, &context.token).await;
+    let reloaded_agent = find_agent_by_name(&agents_after_reload, PRESET_NAME);
+    assert!(
+        !read_tool_names(reloaded_agent)
+            .iter()
+            .any(|name| name == &skill_name),
+        "listing agents again should not silently re-add skill creator"
+    );
+    assert!(
+        read_declared_skill_names(reloaded_agent).is_empty(),
+        "listing agents again should keep declared skills cleared"
+    );
+
+    let (detail_status, detail_payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::GET,
+        &format!("/wunder/agents/{agent_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(detail_status, StatusCode::OK);
+    let detailed_agent = detail_payload["data"].clone();
+    assert!(
+        !read_tool_names(&detailed_agent)
+            .iter()
+            .any(|name| name == &skill_name),
+        "agent detail should not silently re-add skill creator"
+    );
+    assert!(
+        read_declared_skill_names(&detailed_agent).is_empty(),
+        "agent detail should keep declared skills cleared"
+    );
+
+    let search_root = context._temp_dir.path().join("workspaces");
+    let worker_card = find_worker_card_document_by_agent_id(&search_root, &agent_id)
+        .expect("preset sync should keep inner-visible worker card available");
+    assert_eq!(
+        worker_card["abilities"]["skills"],
+        json!([]),
+        "inner-visible worker card should keep skill creator disabled"
     );
 }
 

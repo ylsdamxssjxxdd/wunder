@@ -3,9 +3,7 @@ use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
     DefaultAgentConfig,
 };
-use crate::services::default_tool_profile::{
-    curated_default_skill_names, curated_default_tool_names,
-};
+use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::user_agent_presets::{
     build_requested_tool_names_for_sync, PresetSyncMode, PresetSyncSummary,
 };
@@ -218,12 +216,10 @@ async fn build_target_snapshot(
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
     let skill_name_keys = collect_context_skill_names(&context);
-    let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let tool_names = build_requested_tool_names_for_sync(
         &template.tool_names,
         &template.declared_tool_names,
         &template.declared_skill_names,
-        &required_skill_names,
         &allowed_tool_names,
     );
     let (declared_tool_names, declared_skill_names) = resolve_selected_declared_names(

@@ -1074,6 +1074,10 @@ async fn update_agent(
         let tool_context = build_user_tool_context(&state, &user_id).await;
         let allowed = compute_allowed_tool_names(&resolved.user, &tool_context);
         let skill_name_keys = collect_context_skill_names(&tool_context);
+        eprintln!(
+            "default-update payload tool_names={:?} declared_tools={:?} declared_skills={:?}",
+            payload.tool_names, payload.declared_tool_names, payload.declared_skill_names
+        );
         if let Some(name) = payload.name.as_deref() {
             let cleaned = name.trim();
             if !cleaned.is_empty() {
@@ -1108,6 +1112,10 @@ async fn update_agent(
             config.ability_items = selection.ability_items;
             config.declared_tool_names = selection.declared_tool_names;
             config.declared_skill_names = selection.declared_skill_names;
+            eprintln!(
+                "default-update normalized tool_names={:?} declared_tools={:?} declared_skills={:?}",
+                config.tool_names, config.declared_tool_names, config.declared_skill_names
+            );
         }
         if let Some(preset_questions) = payload.preset_questions {
             config.preset_questions = normalize_preset_questions(preset_questions);
@@ -1132,6 +1140,10 @@ async fn update_agent(
         sync_inner_visible_after_user_change(&state, &user_id).await;
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
+        eprintln!(
+            "default-update return tool_names={:?} declared_tools={:?} declared_skills={:?}",
+            config.tool_names, config.declared_tool_names, config.declared_skill_names
+        );
         return Ok(Json(
             json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
         ));
@@ -1837,18 +1849,6 @@ async fn ensure_preset_agents(
         existing.retain(|record| !duplicate_ids.contains(&record.agent_id));
     }
 
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let allowed_tool_names = compute_allowed_tool_names(user, &context);
-    let required_preset_skill_names: Vec<String> = {
-        let config = state.config_store.get().await;
-        config
-            .skills
-            .enabled
-            .iter()
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty() && allowed_tool_names.contains(name))
-            .collect()
-    };
     let now = now_ts();
     let container_layout_seeded = state
         .user_store
@@ -1916,16 +1916,6 @@ async fn ensure_preset_agents(
                     updated.sandbox_container_id = container_id;
                     changed = true;
                 }
-            }
-        }
-        if matched_preset.is_some() && !required_preset_skill_names.is_empty() {
-            let mut merged_tools = updated.tool_names.clone();
-            merged_tools.extend(required_preset_skill_names.iter().cloned());
-            merged_tools = normalize_tool_list(merged_tools);
-            merged_tools = filter_allowed_tools(&merged_tools, &allowed_tool_names);
-            if merged_tools != updated.tool_names {
-                updated.tool_names = merged_tools;
-                changed = true;
             }
         }
         if let Some(preset) = matched_preset.as_ref() {

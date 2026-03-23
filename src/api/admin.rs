@@ -5380,10 +5380,6 @@ fn preset_agent_payload(
         status,
         ..
     } = normalized;
-    eprintln!(
-        "preset payload {preset_id}: tools={:?} declared_tools={:?} declared_skills={:?}",
-        tool_names, declared_tool_names, declared_skill_names
-    );
     Some(json!({
         "preset_id": preset_id,
         "revision": revision.max(1),
@@ -5483,10 +5479,6 @@ fn normalize_preset_agents(
                 "preset agent name is required".to_string(),
             )
         })?;
-        eprintln!(
-            "preset normalize {preset_id}: tools={:?} declared_tools={:?} declared_skills={:?}",
-            candidate.tool_names, candidate.declared_tool_names, candidate.declared_skill_names
-        );
         let revision_changed = previous.as_ref() != Some(&candidate);
         let revision = previous
             .map(|prev| {

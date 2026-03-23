@@ -417,7 +417,7 @@ const renderCenterOverview = () => {
   }
   if (elements.bridgeCenterOwner) {
     elements.bridgeCenterOwner.textContent = center
-      ? `${center.owner_username ? `创建人：${center.owner_username} | ` : ""`}更新时间：${safeTs(center.updated_at)}`
+      ? `${center.owner_username ? `创建人：${center.owner_username} | ` : ""}更新时间：${safeTs(center.updated_at)}`
       : "先创建舰桥节点，再配置接入渠道。";
   }
   if (elements.bridgeCenterSummaryStatus) elements.bridgeCenterSummaryStatus.textContent = center?.status || "-";

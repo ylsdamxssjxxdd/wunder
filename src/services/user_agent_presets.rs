@@ -1,8 +1,6 @@
 use crate::config::UserAgentPresetConfig;
 use crate::services::agent_abilities::resolve_selected_declared_names;
-use crate::services::default_tool_profile::{
-    curated_default_skill_names, curated_default_tool_names,
-};
+use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::inner_visible::WorkerCardRecordUpdate;
 use crate::services::preset_worker_cards;
 use crate::services::worker_card_settings::{
@@ -136,7 +134,6 @@ pub fn build_requested_tool_names_for_sync(
     selected_tool_names: &[String],
     explicit_declared_tool_names: &[String],
     explicit_declared_skill_names: &[String],
-    required_skill_names: &[String],
     allowed_tool_names: &HashSet<String>,
 ) -> Vec<String> {
     let mut requested_tool_names = normalize_tool_list(selected_tool_names.to_vec());
@@ -148,7 +145,6 @@ pub fn build_requested_tool_names_for_sync(
     if requested_tool_names.is_empty() {
         return curated_default_tool_names(allowed_tool_names);
     }
-    requested_tool_names.extend(required_skill_names.iter().cloned());
     filter_allowed_tools(
         &normalize_tool_list(requested_tool_names),
         allowed_tool_names,
@@ -227,12 +223,10 @@ fn build_target_snapshot_from_context(
 ) -> UserAgentPresetSnapshot {
     let allowed_tool_names = compute_allowed_tool_names(user, context);
     let skill_name_keys = collect_context_skill_names(context);
-    let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let requested_tool_names = build_requested_tool_names_for_sync(
         &preset.tool_names,
         &preset.declared_tool_names,
         &preset.declared_skill_names,
-        &required_skill_names,
         &allowed_tool_names,
     );
     let (declared_tool_names, declared_skill_names) = resolve_selected_declared_names(
