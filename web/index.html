@@ -480,7 +480,29 @@
                 <div class="monitor-table-wrap">
                   <div class="monitor-sections">
                     <div class="monitor-section">
-                      <div class="monitor-section-title" data-i18n="monitor.section.active">活动线程</div>
+                      <div class="monitor-section-title-row">
+                        <div class="monitor-section-title" data-i18n="monitor.section.sessions">线程列表</div>
+                        <div class="monitor-session-filters">
+                          <label class="monitor-session-filter">
+                            <span data-i18n="monitor.filter.status">状态</span>
+                            <select id="monitorStatusFilter" class="select">
+                              <option value="all" data-i18n="monitor.filter.status.all">全部</option>
+                              <option value="active" data-i18n="monitor.filter.status.active">活动中</option>
+                              <option value="history" data-i18n="monitor.filter.status.history">历史</option>
+                            </select>
+                          </label>
+                          <label class="monitor-session-filter">
+                            <span data-i18n="monitor.filter.feedback">反馈</span>
+                            <select id="monitorFeedbackFilter" class="select">
+                              <option value="all" data-i18n="monitor.filter.feedback.all">全部</option>
+                              <option value="up" data-i18n="monitor.filter.feedback.up">点赞</option>
+                              <option value="down" data-i18n="monitor.filter.feedback.down">点踩</option>
+                              <option value="none" data-i18n="monitor.filter.feedback.none">无反馈</option>
+                              <option value="mixed" data-i18n="monitor.filter.feedback.mixed">混合</option>
+                            </select>
+                          </label>
+                        </div>
+                      </div>
                       <div class="monitor-section-body monitor-paged">
                         <div class="monitor-table-scroll">
                           <table class="monitor-table">
@@ -490,6 +512,7 @@
                               <col class="col-user" />
                               <col class="col-question" />
                               <col class="col-status" />
+                              <col class="col-feedback" />
                               <col class="col-token" />
                               <col class="col-elapsed" />
                               <col class="col-stage" />
@@ -502,6 +525,7 @@
                                 <th data-i18n="monitor.table.user">用户</th>
                                 <th data-i18n="monitor.table.question">问题</th>
                                 <th data-i18n="monitor.table.status">状态</th>
+                                <th data-i18n="monitor.table.feedback">反馈</th>
                                 <th data-i18n="monitor.table.token">Token</th>
                                 <th data-i18n="monitor.table.elapsed">耗时</th>
                                 <th data-i18n="monitor.table.stage">阶段</th>
@@ -510,7 +534,7 @@
                             </thead>
                             <tbody id="monitorTableBody"></tbody>
                           </table>
-                          <div id="monitorEmpty" class="muted" data-i18n="monitor.empty.active">暂无活动线程。</div>
+                          <div id="monitorEmpty" class="muted" data-i18n="monitor.empty.sessions">暂无线程。</div>
                         </div>
                         <div id="monitorActivePagination" class="monitor-pagination">
                           <div
@@ -525,58 +549,6 @@
                               上一页
                             </button>
                             <button id="monitorActiveNextBtn" class="secondary" type="button" data-i18n="pagination.next">
-                              下一页
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="monitor-section">
-                      <div class="monitor-section-title" data-i18n="monitor.section.history">历史线程</div>
-                      <div class="monitor-section-body monitor-paged">
-                        <div class="monitor-table-scroll">
-                          <table class="monitor-table">
-                            <colgroup>
-                              <col class="col-start" />
-                              <col class="col-session" />
-                              <col class="col-user" />
-                              <col class="col-question" />
-                              <col class="col-status" />
-                              <col class="col-token" />
-                              <col class="col-elapsed" />
-                              <col class="col-stage" />
-                              <col class="col-action" />
-                            </colgroup>
-                            <thead>
-                              <tr>
-                                <th data-i18n="monitor.table.start">开始时间</th>
-                                <th data-i18n="monitor.table.session">会话</th>
-                                <th data-i18n="monitor.table.user">用户</th>
-                                <th data-i18n="monitor.table.question">问题</th>
-                                <th data-i18n="monitor.table.status">状态</th>
-                                <th data-i18n="monitor.table.token">Token</th>
-                                <th data-i18n="monitor.table.elapsed">耗时</th>
-                                <th data-i18n="monitor.table.stage">阶段</th>
-                                <th data-i18n="monitor.table.action">操作</th>
-                              </tr>
-                            </thead>
-                            <tbody id="monitorHistoryBody"></tbody>
-                          </table>
-                          <div id="monitorHistoryEmpty" class="muted" data-i18n="monitor.empty.history">暂无历史线程。</div>
-                        </div>
-                        <div id="monitorHistoryPagination" class="monitor-pagination">
-                          <div
-                            id="monitorHistoryPageInfo"
-                            class="monitor-pagination-info"
-                            data-i18n="pagination.info.empty"
-                          >
-                            共 0 条 · 第 1 / 1 页 · 每页 100 条
-                          </div>
-                          <div class="monitor-pagination-controls">
-                            <button id="monitorHistoryPrevBtn" class="secondary" type="button" data-i18n="pagination.prev">
-                              上一页
-                            </button>
-                            <button id="monitorHistoryNextBtn" class="secondary" type="button" data-i18n="pagination.next">
                               下一页
                             </button>
                           </div>
@@ -4890,6 +4862,11 @@
               </div>
             </div>
             <div id="monitorDetailQuestion" class="log"></div>
+          </div>
+          <div class="form-row">
+            <label data-i18n="monitor.detail.feedback">反馈</label>
+            <div id="monitorDetailFeedbackSummary" class="muted">-</div>
+            <div id="monitorDetailFeedback" class="monitor-detail-feedback-list"></div>
           </div>
           <div class="form-row">
             <label data-i18n="monitor.detail.events">事件详情</label>

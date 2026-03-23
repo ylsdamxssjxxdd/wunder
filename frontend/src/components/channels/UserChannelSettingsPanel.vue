@@ -29,15 +29,8 @@
               </option>
             </select>
           </label>
-          <div class="channel-create-checks">
+          <div v-if="isFeishuCreate" class="channel-create-checks">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
-              <input v-model="createForm.enabled" type="checkbox" />
-              <span>{{ t('channels.field.enabled') }}</span>
-            </label>
-            <label
-              v-if="isFeishuCreate"
-              class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
-            >
               <input v-model="createForm.receive_group_chat" type="checkbox" />
               <span>{{ t('channels.config.receiveGroup') }}</span>
             </label>
@@ -192,11 +185,6 @@
         <div class="channel-detail-card">
           <div class="channel-detail-title">{{ t('channels.config.title') }}</div>
           <div class="channel-form">
-            <label class="channel-form-field channel-form-checkbox">
-              <input v-model="editForm.enabled" type="checkbox" />
-              <span>{{ t('channels.field.enabled') }}</span>
-            </label>
-
             <label v-if="isFeishuEdit" class="channel-form-field channel-form-checkbox">
               <input v-model="editForm.receive_group_chat" type="checkbox" />
               <span>{{ t('channels.config.receiveGroup') }}</span>
@@ -944,7 +932,6 @@ const FALLBACK_CHANNELS = [
   'xmpp'
 ];
 const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp', 'weixin'];
-const DEFAULT_CREATE_CHANNELS = ['weixin'];
 const AUTO_ACCOUNT_NAME_PREFIX: Record<string, string> = {
   weixin: '微信',
   wechat: '微信',
@@ -1030,12 +1017,10 @@ let lastLoadedAgentKey = '';
 
 const createForm = reactive({
   channel: 'weixin',
-  enabled: true,
   receive_group_chat: true
 });
 
 const editForm = reactive({
-  enabled: true,
   receive_group_chat: true
 });
 
@@ -1072,25 +1057,7 @@ const supportedChannelOptions = computed(() => {
       return left.label.localeCompare(right.label, 'zh-Hans-CN');
     });
 });
-const createChannelOptions = computed(() => {
-  const optionMap = new Map(
-    supportedChannelOptions.value.map((item) => [item.channel, item] as const)
-  );
-  const options: Array<{ channel: string; label: string; priority: number }> = [];
-  for (const channel of DEFAULT_CREATE_CHANNELS) {
-    const found = optionMap.get(channel);
-    if (found) {
-      options.push(found);
-      continue;
-    }
-    options.push({
-      channel,
-      label: providerLabel(channel),
-      priority: CHANNEL_PRIORITY[channel] ?? 99
-    });
-  }
-  return options;
-});
+const createChannelOptions = computed(() => supportedChannelOptions.value);
 
 const isFeishuCreate = computed(() => createForm.channel === 'feishu');
 const isFeishuEdit = computed(() => selectedAccount.value?.channel === 'feishu');
@@ -1385,10 +1352,14 @@ const selectAccount = (account) => {
 };
 
 const resolveDefaultCreateChannel = () => {
+  const preferred = createChannelOptions.value.find((item) => item.channel === 'weixin');
+  if (preferred) {
+    return preferred.channel;
+  }
   if (createChannelOptions.value.length > 0) {
     return createChannelOptions.value[0].channel;
   }
-  return DEFAULT_CREATE_CHANNELS[0] || 'weixin';
+  return 'weixin';
 };
 
 const applyCreateChannelDefaults = () => {
@@ -1402,7 +1373,6 @@ const applyCreateChannelDefaults = () => {
 const resetCreateForm = () => {
   createWeixinAutoCreating.value = false;
   createForm.channel = resolveDefaultCreateChannel();
-  createForm.enabled = true;
   applyCreateChannelDefaults();
 };
 
@@ -1411,14 +1381,12 @@ const resetEditForm = () => {
   clearSecretState();
   const account = selectedAccount.value;
   if (!account) {
-    editForm.enabled = true;
     editForm.receive_group_chat = true;
     editXmppAdvancedEnabled.value = false;
     editWeixinAdvancedEnabled.value = false;
     clearDynamicFields(editDynamicFields);
     return;
   }
-  editForm.enabled = account.active;
   editForm.receive_group_chat = account.receiveGroupChat;
   editXmppAdvancedEnabled.value = false;
   editWeixinAdvancedEnabled.value = false;
@@ -2097,7 +2065,7 @@ const createAccount = async () => {
     channel,
     create_new: true,
     account_name: buildAutoAccountName(channel),
-    enabled: Boolean(createForm.enabled)
+    enabled: true
   };
   if (resolvedAgentId.value) {
     payload.agent_id = resolvedAgentId.value;
@@ -2243,7 +2211,7 @@ const saveAccount = async () => {
   const payload: ChannelAccountPayload = {
     channel: account.channel,
     account_id: account.account_id,
-    enabled: Boolean(editForm.enabled)
+    enabled: account.active
   };
   if (resolvedAgentId.value) {
     payload.agent_id = resolvedAgentId.value;

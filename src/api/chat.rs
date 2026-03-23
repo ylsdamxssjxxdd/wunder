@@ -80,6 +80,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(send_message),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/messages/{history_id}/feedback",
+            post(submit_message_feedback),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/resume",
             get(resume_session),
         )
@@ -226,6 +230,11 @@ struct SessionTitleUpdateRequest {
 struct SessionCompactionRequest {
     #[serde(default)]
     model_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessageFeedbackRequest {
+    vote: String,
 }
 
 async fn create_session(
@@ -432,12 +441,14 @@ async fn get_session(
             .and_then(Value::as_i64);
         (items, has_more, before_id)
     };
-    let session_status = state.monitor.get_record(&session_id).and_then(|record| {
+    let monitor_record = state.monitor.get_record(&session_id);
+    let session_status = monitor_record.as_ref().and_then(|record| {
         record
             .get("status")
             .and_then(Value::as_str)
             .map(|value| value.to_string())
     });
+    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
     let session_running = session_status
         .as_deref()
         .map(|status| {
@@ -448,7 +459,7 @@ async fn get_session(
     let filtered_history = filter_history_messages(history, session_running);
     let mut messages = filtered_history
         .into_iter()
-        .filter_map(map_history_message)
+        .filter_map(|item| map_history_message(item, &message_feedback))
         .collect::<Vec<_>>();
 
     if session_running {
@@ -606,9 +617,11 @@ async fn get_session_history(
         .and_then(|item| item.get("_history_id"))
         .and_then(Value::as_i64);
     let filtered_history = filter_history_messages(history, false);
+    let monitor_record = state.monitor.get_record(&session_id);
+    let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
     let messages = filtered_history
         .into_iter()
-        .filter_map(map_history_message)
+        .filter_map(|item| map_history_message(item, &message_feedback))
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "data": {
@@ -618,6 +631,88 @@ async fn get_session_history(
             "history_before_id": before_id
         }
     })))
+}
+
+async fn submit_message_feedback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, history_id)): AxumPath<(String, i64)>,
+    Json(payload): Json<MessageFeedbackRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() || history_id <= 0 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.param_required"),
+        ));
+    }
+    let vote = normalize_message_feedback_vote(&payload.vote).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid vote, expected up/down".to_string(),
+        )
+    })?;
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let target_history = state
+        .workspace
+        .load_history_page(
+            &resolved.user.user_id,
+            &session_id,
+            Some(history_id.saturating_add(1)),
+            1,
+        )
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        .into_iter()
+        .find(|item| {
+            item.get("_history_id")
+                .and_then(Value::as_i64)
+                .map(|value| value == history_id)
+                .unwrap_or(false)
+        })
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    let target_role = target_history
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if target_role != "assistant" {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "feedback only supports assistant messages".to_string(),
+        ));
+    }
+
+    let outcome = state.monitor.set_message_feedback(
+        &session_id,
+        history_id,
+        vote,
+        &resolved.user.user_id,
+    );
+    match outcome {
+        crate::monitor::SetMessageFeedbackResult::Applied(item) => Ok(Json(json!({
+            "data": {
+                "session_id": session_id,
+                "history_id": history_id,
+                "feedback": {
+                    "vote": item.vote,
+                    "created_at": format_ts(item.created_time),
+                    "locked": true,
+                }
+            }
+        }))),
+        crate::monitor::SetMessageFeedbackResult::AlreadyExists(_item) => Err(error_response(
+            StatusCode::CONFLICT,
+            "feedback already submitted".to_string(),
+        )),
+        crate::monitor::SetMessageFeedbackResult::SessionNotFound => Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.session_not_found"),
+        )),
+    }
 }
 
 async fn delete_session(
@@ -1177,6 +1272,15 @@ fn normalize_optional_approval_mode(raw: Option<&str>) -> Option<String> {
     Some(normalize_agent_approval_mode(Some(cleaned)))
 }
 
+fn normalize_message_feedback_vote(raw: &str) -> Option<&'static str> {
+    let value = raw.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "up" | "like" | "thumb_up" | "thumbs_up" => Some("up"),
+        "down" | "dislike" | "thumb_down" | "thumbs_down" => Some("down"),
+        _ => None,
+    }
+}
+
 fn normalize_history_page_limit(raw: Option<i64>) -> i64 {
     let value = raw.unwrap_or(80);
     if value <= 0 {
@@ -1703,7 +1807,7 @@ async fn chat_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Re
     })))
 }
 
-fn map_history_message(item: Value) -> Option<Value> {
+fn map_history_message(item: Value, message_feedback: &HashMap<i64, Value>) -> Option<Value> {
     let role = item.get("role").and_then(Value::as_str)?;
     if role == "system" || role == "tool" {
         return None;
@@ -1766,9 +1870,65 @@ fn map_history_message(item: Value) -> Option<Value> {
     if let Some(history_id) = item.get("_history_id").and_then(Value::as_i64) {
         if let Value::Object(ref mut map) = message {
             map.insert("history_id".to_string(), json!(history_id));
+            if role == "assistant" {
+                if let Some(feedback) = message_feedback.get(&history_id) {
+                    map.insert("feedback".to_string(), feedback.clone());
+                }
+            }
         }
     }
     Some(message)
+}
+
+fn extract_monitor_message_feedback_map(record: Option<&Value>) -> HashMap<i64, Value> {
+    let mut feedback_map = HashMap::new();
+    let Some(record) = record else {
+        return feedback_map;
+    };
+    let Some(items) = record.get("message_feedback").and_then(Value::as_object) else {
+        return feedback_map;
+    };
+    for (raw_history_id, raw_feedback) in items {
+        let Ok(history_id) = raw_history_id.parse::<i64>() else {
+            continue;
+        };
+        if history_id <= 0 {
+            continue;
+        }
+        let Some(normalized) = normalize_monitor_message_feedback(raw_feedback) else {
+            continue;
+        };
+        feedback_map.insert(history_id, normalized);
+    }
+    feedback_map
+}
+
+fn normalize_monitor_message_feedback(raw: &Value) -> Option<Value> {
+    let vote = normalize_message_feedback_vote(
+        raw.get("vote")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )?;
+    let mut feedback = json!({
+        "vote": vote,
+        "locked": true,
+    });
+    let created_time = raw
+        .get("created_time")
+        .or_else(|| raw.get("created_at"))
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|text| text.parse::<f64>().ok()))
+        });
+    if let Some(created_time) = created_time {
+        if created_time > 0.0 {
+            if let Value::Object(ref mut map) = feedback {
+                map.insert("created_at".to_string(), json!(format_ts(created_time)));
+            }
+        }
+    }
+    Some(feedback)
 }
 
 fn filter_history_messages(mut history: Vec<Value>, preserve_last_assistant: bool) -> Vec<Value> {

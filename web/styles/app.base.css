@@ -1405,6 +1405,32 @@ button.btn-with-icon[aria-busy="true"] i {
   font-size: 12px;
 }
 
+.monitor-detail-feedback-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.monitor-detail-feedback-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #334155;
+}
+
+.monitor-detail-feedback-item--up {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(220, 252, 231, 0.45);
+}
+
+.monitor-detail-feedback-item--down {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(254, 226, 226, 0.52);
+}
+
 .log-item {
   border: 1px solid rgba(148, 163, 184, 0.2);
   border-radius: 8px;
@@ -2420,12 +2446,8 @@ button.btn-with-icon[aria-busy="true"] i {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1.8fr) minmax(0, 1.2fr);
-  gap: 32px;
-}
-
-#usersPanel .monitor-sections {
-  grid-template-rows: minmax(0, 1.5fr) minmax(0, 1.5fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 16px;
 }
 
 #usersPanel .monitor-table col.col-session {
@@ -2528,23 +2550,27 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .monitor-table col.col-start {
-  width: 13%;
+  width: 12%;
 }
 
 .monitor-table col.col-session {
-  width: 18%;
+  width: 10%;
 }
 
 .monitor-table col.col-user {
-  width: 9%;
+  width: 8%;
 }
 
 .monitor-table col.col-question {
-  width: 16%;
+  width: 19%;
 }
 
 .monitor-table col.col-status {
   width: 8%;
+}
+
+.monitor-table col.col-feedback {
+  width: 10%;
 }
 
 .monitor-table col.col-token {
@@ -2552,15 +2578,15 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .monitor-table col.col-elapsed {
-  width: 8%;
+  width: 7%;
 }
 
 .monitor-table col.col-stage {
-  width: 14%;
+  width: 11%;
 }
 
 .monitor-table col.col-action {
-  width: 6%;
+  width: 7%;
 }
 
 .monitor-section {
@@ -2568,6 +2594,33 @@ button.btn-with-icon[aria-busy="true"] i {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
+}
+
+.monitor-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.monitor-session-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.monitor-session-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.monitor-session-filter .select {
+  min-width: 120px;
 }
 
 .monitor-section-body {

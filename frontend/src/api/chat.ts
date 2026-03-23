@@ -115,6 +115,11 @@ export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/res
 export const renameSession = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/title`, payload);
 export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);
+export const submitMessageFeedback = (
+  sessionId: string,
+  historyId: number | string,
+  payload: unknown
+) => api.post(`/chat/sessions/${sessionId}/messages/${historyId}/feedback`, payload);
 export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);
 export const fetchRealtimeSystemPrompt = (payload: unknown) => api.post('/chat/system-prompt', payload);

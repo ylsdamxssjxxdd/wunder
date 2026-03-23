@@ -220,6 +220,8 @@ impl Orchestrator {
     ) -> ToolResultPayload {
         let skip_truncation = should_skip_tool_truncation(tool_name);
         let duration_ms = started_at.elapsed().as_millis() as i64;
+        let continuation_supported =
+            supports_tool_result_continuation(&result.data, result.meta.as_ref());
         let mut truncated = false;
         if !is_admin && !skip_truncation {
             truncated = truncate_tool_result_data(
@@ -246,6 +248,7 @@ impl Orchestrator {
                 TOOL_RESULT_HEAD_CHARS,
                 TOOL_RESULT_TAIL_CHARS,
                 TOOL_RESULT_TRUNCATION_MARKER,
+                continuation_supported,
             );
             truncated = true;
             output_chars = estimate_tool_result_chars(&result.data);
@@ -255,7 +258,7 @@ impl Orchestrator {
         meta.insert("duration_ms".to_string(), json!(duration_ms));
         meta.insert("truncated".to_string(), json!(truncated));
         meta.insert("output_chars".to_string(), json!(output_chars));
-        if truncated {
+        if truncated && continuation_supported {
             meta.insert("continuation_required".to_string(), Value::Bool(true));
             meta.insert(
                 "continuation_hint".to_string(),
@@ -1348,6 +1351,73 @@ const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
 const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
 const TRUNCATION_CONTINUATION_HINT: &str =
     "result_truncated_continue_with_pagination_or_narrower_query";
+const CONTINUATION_SIGNAL_KEYS: [&str; 10] = [
+    "query_handle",
+    "next_cursor",
+    "cursor",
+    "next_page_token",
+    "page_token",
+    "continuation_token",
+    "next_token",
+    "next_url",
+    "next_offset",
+    "resume_token",
+];
+const CONTINUATION_NESTED_KEYS: [&str; 7] = [
+    "meta",
+    "data",
+    "result",
+    "output",
+    "payload",
+    "structured_content",
+    "pagination",
+];
+
+fn value_has_continuation_signal(value: &Value, depth: usize) -> bool {
+    if depth > 4 {
+        return false;
+    }
+    match value {
+        Value::Object(map) => {
+            if map.get("continuation_required").and_then(Value::as_bool) == Some(true)
+                || map.get("has_more").and_then(Value::as_bool) == Some(true)
+            {
+                return true;
+            }
+            if CONTINUATION_SIGNAL_KEYS
+                .iter()
+                .any(|key| map.get(*key).is_some_and(is_non_empty_continuation_value))
+            {
+                return true;
+            }
+            CONTINUATION_NESTED_KEYS.iter().any(|key| {
+                map.get(*key)
+                    .is_some_and(|nested| value_has_continuation_signal(nested, depth + 1))
+            })
+        }
+        Value::Array(items) => items
+            .iter()
+            .take(6)
+            .any(|item| value_has_continuation_signal(item, depth + 1)),
+        _ => false,
+    }
+}
+
+fn is_non_empty_continuation_value(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Number(_) => true,
+        Value::Bool(flag) => *flag,
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
+        Value::Null => false,
+    }
+}
+
+fn supports_tool_result_continuation(data: &Value, meta: Option<&Value>) -> bool {
+    value_has_continuation_signal(data, 0)
+        || meta.is_some_and(|value| value_has_continuation_signal(value, 0))
+}
 
 fn should_skip_tool_truncation(tool_name: &str) -> bool {
     matches!(tool_name, "技能调用" | "skill_call" | "skill_get")
@@ -1363,6 +1433,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let Some(raw_data) = map.get("data").cloned() else {
         return;
     };
+    let continuation_supported = supports_tool_result_continuation(&raw_data, map.get("meta"));
     let Some(mut compacted_data) = extract_mcp_observation_data(&raw_data) else {
         return;
     };
@@ -1381,6 +1452,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             OBSERVATION_HEAD_CHARS,
             OBSERVATION_TAIL_CHARS,
             TOOL_RESULT_TRUNCATION_MARKER,
+            continuation_supported,
         );
         observation_truncated = true;
     }
@@ -1394,11 +1466,13 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             "observation_output_chars".to_string(),
             json!(observation_output_chars),
         );
-        meta.insert("continuation_required".to_string(), Value::Bool(true));
-        meta.insert(
-            "continuation_hint".to_string(),
-            Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
-        );
+        if continuation_supported {
+            meta.insert("continuation_required".to_string(), Value::Bool(true));
+            meta.insert(
+                "continuation_hint".to_string(),
+                Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
+            );
+        }
         map.insert("meta".to_string(), Value::Object(meta));
     }
     if let Some(meta_value) = map.get("meta").cloned() {
@@ -1659,6 +1733,7 @@ fn compact_large_tool_result_data(
     head_chars: usize,
     tail_chars: usize,
     marker: &str,
+    continuation_supported: bool,
 ) -> Value {
     let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
     let preview = truncate_tool_result_string(&serialized, head_chars, tail_chars, marker);
@@ -1666,9 +1741,16 @@ fn compact_large_tool_result_data(
         "truncated": true,
         "original_chars": original_chars,
         "preview": preview,
-        "continuation_required": true,
-        "continuation_hint": TRUNCATION_CONTINUATION_HINT,
     });
+    if continuation_supported {
+        if let Value::Object(ref mut map) = payload {
+            map.insert("continuation_required".to_string(), Value::Bool(true));
+            map.insert(
+                "continuation_hint".to_string(),
+                Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
+            );
+        }
+    }
     if let Some(exit_code) = extract_exit_code(value) {
         if let Value::Object(ref mut map) = payload {
             map.insert("exit_code".to_string(), json!(exit_code));
@@ -1828,6 +1910,7 @@ mod tests {
             TOOL_RESULT_HEAD_CHARS,
             TOOL_RESULT_TAIL_CHARS,
             TOOL_RESULT_TRUNCATION_MARKER,
+            true,
         );
         assert_eq!(
             compacted.get("truncated").and_then(Value::as_bool),
@@ -1899,15 +1982,7 @@ mod tests {
                 .get("meta")
                 .and_then(|value| value.get("continuation_required"))
                 .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_hint"))
-                .and_then(Value::as_str)
-                .unwrap_or(""),
-            TRUNCATION_CONTINUATION_HINT
+            None
         );
         assert!(
             payload
@@ -1916,6 +1991,40 @@ mod tests {
                 .and_then(Value::as_u64)
                 .unwrap_or_default()
                 > 0
+        );
+    }
+
+    #[test]
+    fn test_compact_observation_payload_marks_continuation_when_resumable() {
+        let text = "x".repeat(OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80);
+        let mut payload = json!({
+            "tool": "extra_mcp@db_query",
+            "ok": true,
+            "data": {
+                "structured_content": {
+                    "query_handle": "handle_123",
+                    "rows": [
+                        {"text": text}
+                    ]
+                }
+            }
+        });
+
+        compact_observation_payload(&mut payload, "extra_mcp@db_query");
+
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_required"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_hint"))
+                .and_then(Value::as_str),
+            Some(TRUNCATION_CONTINUATION_HINT)
         );
     }
 

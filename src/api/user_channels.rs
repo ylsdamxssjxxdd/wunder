@@ -16,9 +16,12 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
+use image::{DynamicImage, ImageBuffer, ImageFormat, Luma};
+use qrcode::types::Color as QrColor;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap};
+use std::io::Cursor;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::time::{sleep, Duration};
 use uuid::Uuid;
@@ -155,6 +158,49 @@ fn extract_first_img_src(text: &str) -> Option<String> {
     None
 }
 
+fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
+    let qrcode_text = normalize_weixin_qr_image_value(raw_qrcode);
+    if qrcode_text.is_empty() {
+        return None;
+    }
+    let qrcode = qrcode::QrCode::new(qrcode_text.as_bytes()).ok()?;
+    let width = qrcode.width();
+    if width == 0 {
+        return None;
+    }
+    let quiet_zone = 4usize;
+    let scale = 8u32;
+    let image_side = ((width + quiet_zone * 2) as u32).saturating_mul(scale);
+    if image_side == 0 {
+        return None;
+    }
+
+    let mut image = ImageBuffer::from_pixel(image_side, image_side, Luma([255u8]));
+    let colors = qrcode.to_colors();
+    for y in 0..width {
+        for x in 0..width {
+            let index = y.saturating_mul(width).saturating_add(x);
+            if !matches!(colors.get(index), Some(QrColor::Dark)) {
+                continue;
+            }
+            let px = ((x + quiet_zone) as u32).saturating_mul(scale);
+            let py = ((y + quiet_zone) as u32).saturating_mul(scale);
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    image.put_pixel(px + dx, py + dy, Luma([0u8]));
+                }
+            }
+        }
+    }
+
+    let mut cursor = Cursor::new(Vec::new());
+    DynamicImage::ImageLuma8(image)
+        .write_to(&mut cursor, ImageFormat::Png)
+        .ok()?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(cursor.into_inner());
+    Some(format!("data:image/png;base64,{encoded}"))
+}
+
 async fn resolve_weixin_qr_preview_url(
     http: &reqwest::Client,
     api_base: &str,
@@ -219,6 +265,20 @@ async fn resolve_weixin_qr_preview_url(
     }
 
     Some(current_url)
+}
+
+async fn resolve_weixin_qr_preview_image(
+    http: &reqwest::Client,
+    api_base: &str,
+    qrcode_text: &str,
+    raw_qrcode_url: &str,
+) -> String {
+    if let Some(png_data_uri) = build_weixin_qr_png_data_uri(qrcode_text) {
+        return png_data_uri;
+    }
+    resolve_weixin_qr_preview_url(http, api_base, raw_qrcode_url)
+        .await
+        .unwrap_or_else(|| raw_qrcode_url.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1478,10 +1538,13 @@ async fn start_weixin_qr_login(
     if !force {
         if let Some(existing) = load_weixin_qr_session(&session_key) {
             if existing.user_id == user_id && !is_weixin_qr_session_expired(&existing) {
-                let preview_qrcode_url =
-                    resolve_weixin_qr_preview_url(&http, &existing.api_base, &existing.qrcode_url)
-                        .await
-                        .unwrap_or_else(|| existing.qrcode_url.clone());
+                let preview_qrcode_url = resolve_weixin_qr_preview_image(
+                    &http,
+                    &existing.api_base,
+                    &existing.qrcode,
+                    &existing.qrcode_url,
+                )
+                .await;
                 if preview_qrcode_url != existing.qrcode_url {
                     let mut refreshed = existing.clone();
                     refreshed.qrcode_url = preview_qrcode_url.clone();
@@ -1532,9 +1595,8 @@ async fn start_weixin_qr_login(
                 "weixin qr response missing qrcode image".to_string(),
             )
         })?;
-    let qrcode_url = resolve_weixin_qr_preview_url(&http, &api_base, &raw_qrcode_url)
-        .await
-        .unwrap_or(raw_qrcode_url);
+    let qrcode_url =
+        resolve_weixin_qr_preview_image(&http, &api_base, &qrcode, &raw_qrcode_url).await;
 
     let session = WeixinQrSession {
         session_key: session_key.clone(),
@@ -3031,5 +3093,19 @@ mod tests {
         assert!(load_weixin_qr_session("session-expired").is_none());
         assert!(load_weixin_qr_session("session-active").is_some());
         clear_qr_sessions();
+    }
+
+    #[test]
+    fn build_weixin_qr_png_data_uri_returns_png_prefix() {
+        let uri = build_weixin_qr_png_data_uri("wxqr_test_payload")
+            .expect("png data uri should be generated");
+        assert!(uri.starts_with("data:image/png;base64,"));
+        let encoded = uri
+            .strip_prefix("data:image/png;base64,")
+            .expect("png data uri prefix should exist");
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded.as_bytes())
+            .expect("png base64 should decode");
+        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]));
     }
 }

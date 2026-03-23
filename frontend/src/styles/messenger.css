@@ -1943,6 +1943,29 @@ button.messenger-chat-header-model {
   color: var(--hula-accent);
 }
 
+.messenger-message-feedback-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messenger-message-feedback-btn.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messenger-message-feedback-btn:disabled {
+  opacity: 0.56;
+  pointer-events: auto;
+  cursor: not-allowed;
+}
+
+.messenger-message-feedback-btn.is-active {
+  border-color: rgba(var(--ui-accent-rgb), 0.55);
+  background: var(--ui-accent-soft-5);
+  color: var(--hula-accent);
+}
+
 .messenger-bubble-copy-btn {
   position: absolute;
   top: 8px;

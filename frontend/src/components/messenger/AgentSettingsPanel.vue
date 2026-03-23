@@ -849,12 +849,16 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .messenger-agent-base {
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
 .messenger-agent-base-item {
+  width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: 148px minmax(0, 1fr);
   gap: 16px;
@@ -869,11 +873,18 @@ onBeforeUnmount(() => {
 }
 
 .messenger-agent-base-control {
+  width: 100%;
   min-width: 0;
 }
 
 .messenger-agent-base-select {
   width: 100%;
+}
+
+.messenger-agent-form-item--base :deep(.el-form-item__content) {
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 
 .messenger-agent-base-control :deep(.el-select),

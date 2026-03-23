@@ -1109,6 +1109,10 @@
                   >
                     <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
                   </button>
+                  <MessageFeedbackActions
+                    v-if="item.message.role === 'assistant'"
+                    :message="item.message"
+                  />
                   <button
                     class="messenger-message-footer-copy"
                     type="button"
@@ -1480,6 +1484,7 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import {
   InquiryPanel,
   MessageCompactionDivider,
+  MessageFeedbackActions,
   MessageKnowledgeCitation,
   MessageThinking,
   MessageToolWorkflow,

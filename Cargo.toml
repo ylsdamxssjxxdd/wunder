@@ -136,6 +136,7 @@ scraper = "0.19"
 syntect = "5"
 textwrap = "0.16.2"
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+qrcode = "0.14"
 
 [build-dependencies]
 tauri-build = { version = "2", features = ["codegen"], optional = true }

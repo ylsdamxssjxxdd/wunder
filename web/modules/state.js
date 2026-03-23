@@ -206,12 +206,13 @@ export const state = {
     availableTools: [],
     availableToolsUpdatedAt: 0,
     userFilter: "",
+    sessionStatusFilter: "all",
+    feedbackFilter: "all",
     timeRangeHours: 3,
     serviceSnapshot: null,
     pagination: {
       pageSize: 100,
       activePage: 1,
-      historyPage: 1,
     },
     timeFilter: {
       enabled: false,

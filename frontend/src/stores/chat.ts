@@ -16,6 +16,7 @@ import {
   restoreSession as restoreSessionApi,
   resumeMessageStream,
   sendMessageStream,
+  submitMessageFeedback as submitMessageFeedbackApi,
   updateSessionTools as updateSessionToolsApi
 } from '@/api/chat';
 import { t } from '@/i18n';
@@ -25,6 +26,11 @@ import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import { isSessionBusyFromSignals } from '@/utils/chatSessionRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import {
+  normalizeMessageFeedback,
+  normalizeMessageFeedbackVote,
+  resolveMessageHistoryId
+} from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -54,6 +60,7 @@ type SnapshotAssistantMessage = {
   workflowItems?: unknown[];
   plan?: unknown;
   questionPanel?: unknown;
+  feedback?: unknown;
   stats?: unknown;
   planVisible?: boolean;
   isGreeting?: boolean;
@@ -617,6 +624,7 @@ const buildMessage = (role, content, createdAt = undefined) => ({
   plan: null,
   planVisible: false,
   questionPanel: null,
+  feedback: null,
   stats: role === 'assistant' ? buildMessageStats() : null
 });
 
@@ -987,6 +995,10 @@ const normalizeSnapshotMessage = (message) => {
     if (questionPanel) {
       base.questionPanel = questionPanel;
     }
+    const feedback = normalizeMessageFeedback(message.feedback);
+    if (feedback) {
+      base.feedback = feedback;
+    }
     const stats = normalizeMessageStats(message.stats);
     if (stats) {
       base.stats = stats;
@@ -1138,6 +1150,7 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const targetRound = normalizeStreamRound(target.stream_round);
   const snapshotPlan = normalizePlanPayload(snapshot.plan);
   const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
+  const snapshotFeedback = normalizeMessageFeedback(snapshot.feedback);
   const snapshotStats = normalizeMessageStats(snapshot.stats);
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
@@ -1152,7 +1165,8 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       hasSnapshotPlan ||
       snapshotRound !== null ||
       snapshotEventId !== null ||
-      snapshot.questionPanel
+      snapshot.questionPanel ||
+      snapshotFeedback
   );
   if (!shouldMergeContent && !shouldMergeFlags && !snapshotStats) {
     return false;
@@ -1194,6 +1208,9 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       target.plan = snapshotPlan;
       target.planVisible =
         Boolean(target.planVisible) || shouldAutoShowPlan(snapshotPlan, snapshot);
+    }
+    if (snapshotFeedback) {
+      target.feedback = snapshotFeedback;
     }
   }
   if (snapshotStats) {
@@ -2254,6 +2271,36 @@ const findOldestHistoryId = (messages) => {
     }
   }
   return null;
+};
+
+const applyMessageFeedbackByHistoryId = (messages, historyId, feedback) => {
+  if (!Array.isArray(messages)) return false;
+  const normalizedHistoryId = Number.parseInt(String(historyId ?? ''), 10);
+  if (!Number.isFinite(normalizedHistoryId) || normalizedHistoryId <= 0) {
+    return false;
+  }
+  const normalizedFeedback = normalizeMessageFeedback(feedback);
+  if (!normalizedFeedback) return false;
+  let updated = false;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (!message || message.role !== 'assistant') continue;
+    if (resolveMessageHistoryId(message) !== normalizedHistoryId) continue;
+    const current = normalizeMessageFeedback(message.feedback);
+    const shouldUpdate =
+      !current ||
+      current.vote !== normalizedFeedback.vote ||
+      current.locked !== true ||
+      String(current.created_at || '') !== String(normalizedFeedback.created_at || '');
+    message.feedback = {
+      ...normalizedFeedback,
+      locked: true
+    };
+    if (shouldUpdate) {
+      updated = true;
+    }
+  }
+  return updated;
 };
 
 const applyMessageWindow = (store, sessionId, messages, options: { force?: boolean } = {}) => {
@@ -5164,6 +5211,7 @@ const hydrateMessage = (message, workflowState) => {
     stream_incomplete: normalizeFlag(message?.stream_incomplete),
     reasoning: normalizedOutput.reasoning,
     reasoningStreaming: normalizeFlag(message?.reasoningStreaming),
+    feedback: normalizeMessageFeedback(message?.feedback),
     stats: normalizeMessageStats(message.stats) || buildMessageStats()
   };
   const plan = normalizePlanPayload(message.plan);
@@ -5497,6 +5545,58 @@ export const useChatStore = defineStore('chat', {
         selected: Array.isArray(patch.selected) ? patch.selected : panel.selected
       };
       this.scheduleSnapshot(true);
+    },
+    async submitMessageFeedback(sessionId, historyId, vote) {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) return null;
+      const targetHistoryId = Number.parseInt(String(historyId ?? ''), 10);
+      if (!Number.isFinite(targetHistoryId) || targetHistoryId <= 0) return null;
+      const normalizedVote = normalizeMessageFeedbackVote(vote);
+      if (!normalizedVote) return null;
+
+      const activeSessionId = resolveSessionKey(this.activeSessionId);
+      const targetMessages =
+        activeSessionId === targetSessionId
+          ? this.messages
+          : getSessionMessages(targetSessionId) || [];
+      const existing = Array.isArray(targetMessages)
+        ? targetMessages.find(
+            (message) =>
+              message?.role === 'assistant' &&
+              resolveMessageHistoryId(message) === targetHistoryId
+          )
+        : null;
+      const existingFeedback = normalizeMessageFeedback(existing?.feedback);
+      if (existingFeedback?.vote) {
+        return existingFeedback;
+      }
+
+      let feedback = null;
+      try {
+        const { data } = await submitMessageFeedbackApi(targetSessionId, targetHistoryId, {
+          vote: normalizedVote
+        });
+        feedback =
+          normalizeMessageFeedback(data?.data?.feedback) ||
+          normalizeMessageFeedback({ vote: normalizedVote, locked: true });
+      } catch (error) {
+        if (resolveChatHttpStatus(error) === 409) {
+          feedback =
+            normalizeMessageFeedback(existing?.feedback) ||
+            normalizeMessageFeedback({ vote: normalizedVote, locked: true });
+        } else {
+          throw error;
+        }
+      }
+      if (!feedback) return null;
+
+      const updated = applyMessageFeedbackByHistoryId(targetMessages, targetHistoryId, feedback);
+      if (!updated) {
+        return feedback;
+      }
+      touchSessionUpdatedAt(this, targetSessionId, Date.now());
+      notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+      return feedback;
     },
     dismissPendingInquiryPanel() {
       for (let i = this.messages.length - 1; i >= 0; i -= 1) {

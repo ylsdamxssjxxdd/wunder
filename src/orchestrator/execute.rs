@@ -20,6 +20,83 @@ struct ToolExecutionOutcome {
     result: ToolResultPayload,
 }
 
+#[derive(Default, Clone, Copy)]
+struct ToolBudgetUsage {
+    total: u32,
+    db_query: u32,
+    memory_recall: u32,
+}
+
+#[derive(Clone, Copy)]
+struct ToolBudgetLimits {
+    total: u32,
+    db_query: u32,
+    memory_recall: u32,
+}
+
+#[derive(Clone)]
+struct CachedToolResult {
+    ok: bool,
+    data: Value,
+    error: String,
+    sandbox: bool,
+    meta: Option<Value>,
+}
+
+impl CachedToolResult {
+    fn from_payload(result: &ToolResultPayload) -> Self {
+        Self {
+            ok: result.ok,
+            data: result.data.clone(),
+            error: result.error.clone(),
+            sandbox: result.sandbox,
+            meta: result.meta.clone(),
+        }
+    }
+
+    fn to_payload(&self) -> ToolResultPayload {
+        ToolResultPayload {
+            ok: self.ok,
+            data: self.data.clone(),
+            error: self.error.clone(),
+            sandbox: self.sandbox,
+            timestamp: Utc::now(),
+            meta: self.meta.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CachedRecallResult {
+    revision: u64,
+    result: CachedToolResult,
+}
+
+#[derive(Clone, Copy)]
+enum ToolBudgetBlockKind {
+    Total,
+    DbQuery,
+    MemoryRecall,
+}
+
+impl ToolBudgetBlockKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            ToolBudgetBlockKind::Total => "total",
+            ToolBudgetBlockKind::DbQuery => "db_query",
+            ToolBudgetBlockKind::MemoryRecall => "memory_recall",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct ToolBudgetBlock {
+    kind: ToolBudgetBlockKind,
+    limit: u32,
+    attempted: u32,
+    tool: String,
+}
+
 enum TerminalTool {
     A2ui,
     Final,
@@ -30,6 +107,10 @@ const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = MIN_NON_ADMIN_MAX_ROUNDS;
 const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
 const DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD: u32 = 5;
+const DEFAULT_TOOL_CALL_BUDGET_PER_TURN: u32 = 10_000;
+const DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 2_000;
+const EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 10_000;
+const DEFAULT_MEMORY_RECALL_BUDGET_PER_TURN: u32 = 2_000;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
 const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
@@ -309,6 +390,15 @@ impl Orchestrator {
             let mut repeated_tool_failure_count = 0_u32;
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
+            let memory_manager_tool_name = resolve_tool_name("memory_manager");
+            let tool_budget_limits = ToolBudgetLimits {
+                total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
+                db_query: resolve_db_query_tool_budget(&question),
+                memory_recall: DEFAULT_MEMORY_RECALL_BUDGET_PER_TURN,
+            };
+            let mut tool_budget_usage = ToolBudgetUsage::default();
+            let mut memory_recall_cache: HashMap<String, CachedRecallResult> = HashMap::new();
+            let mut memory_recall_revision: u64 = 0;
             let tools_payload = function_tooling
                 .as_ref()
                 .map(|tooling| tooling.tools.as_slice());
@@ -687,6 +777,58 @@ impl Orchestrator {
                     exec_calls.push(planned);
                 }
 
+                let mut budget_blocked: Option<ToolBudgetBlock> = None;
+                let mut preview_usage = tool_budget_usage;
+                let mut budgeted_exec_calls: Vec<PlannedToolCall> = Vec::new();
+                for planned in exec_calls {
+                    let projected_total = preview_usage.total.saturating_add(1);
+                    if projected_total > tool_budget_limits.total {
+                        budget_blocked = Some(ToolBudgetBlock {
+                            kind: ToolBudgetBlockKind::Total,
+                            limit: tool_budget_limits.total,
+                            attempted: projected_total,
+                            tool: planned.name.clone(),
+                        });
+                        break;
+                    }
+                    preview_usage.total = projected_total;
+
+                    if is_db_query_tool_name(&planned.name) {
+                        let projected_db = preview_usage.db_query.saturating_add(1);
+                        if projected_db > tool_budget_limits.db_query {
+                            budget_blocked = Some(ToolBudgetBlock {
+                                kind: ToolBudgetBlockKind::DbQuery,
+                                limit: tool_budget_limits.db_query,
+                                attempted: projected_db,
+                                tool: planned.name.clone(),
+                            });
+                            break;
+                        }
+                        preview_usage.db_query = projected_db;
+                    }
+
+                    if is_memory_recall_tool_call(
+                        &planned.name,
+                        &planned.call.arguments,
+                        &memory_manager_tool_name,
+                    ) {
+                        let projected_recall = preview_usage.memory_recall.saturating_add(1);
+                        if projected_recall > tool_budget_limits.memory_recall {
+                            budget_blocked = Some(ToolBudgetBlock {
+                                kind: ToolBudgetBlockKind::MemoryRecall,
+                                limit: tool_budget_limits.memory_recall,
+                                attempted: projected_recall,
+                                tool: planned.name.clone(),
+                            });
+                            break;
+                        }
+                        preview_usage.memory_recall = projected_recall;
+                    }
+
+                    budgeted_exec_calls.push(planned);
+                }
+                let mut exec_calls = budgeted_exec_calls;
+
                 self.ensure_not_cancelled(&session_id)?;
 
                 for planned in &exec_calls {
@@ -727,9 +869,32 @@ impl Orchestrator {
 
                 let mut should_finish = false;
                 if !exec_calls.is_empty() {
-                    let outcomes = self
-                        .execute_tool_calls_parallel(
-                            exec_calls,
+                    let mut cached_recall_outcomes = Vec::new();
+                    let mut executable_calls = Vec::new();
+                    for planned in exec_calls.drain(..) {
+                        if let Some(cached) = resolve_cached_memory_recall_result(
+                            &planned,
+                            &memory_manager_tool_name,
+                            &memory_recall_cache,
+                            memory_recall_revision,
+                        ) {
+                            let mut result = cached.to_payload();
+                            result.insert_meta("recall_cache_hit", Value::Bool(true));
+                            cached_recall_outcomes.push(ToolExecutionOutcome {
+                                call: planned.call,
+                                name: planned.name,
+                                result,
+                            });
+                        } else {
+                            executable_calls.push(planned);
+                        }
+                    }
+
+                    let mut outcomes = if executable_calls.is_empty() {
+                        Vec::new()
+                    } else {
+                        self.execute_tool_calls_parallel(
+                            executable_calls,
                             &tool_context,
                             &allowed_tool_names,
                             &session_id,
@@ -739,11 +904,45 @@ impl Orchestrator {
                             prepared.approval_tx.clone(),
                             round_info,
                         )
-                        .await?;
+                        .await?
+                    };
+                    outcomes.extend(cached_recall_outcomes);
                     for (index, outcome) in outcomes.into_iter().enumerate() {
                         let ToolExecutionOutcome { call, name, result } = outcome;
                         let ToolCall { id, arguments, .. } = call;
                         let args = arguments;
+
+                        tool_budget_usage.total = tool_budget_usage.total.saturating_add(1);
+                        if is_db_query_tool_name(&name) {
+                            tool_budget_usage.db_query = tool_budget_usage.db_query.saturating_add(1);
+                        }
+                        if is_memory_recall_tool_call(&name, &args, &memory_manager_tool_name) {
+                            tool_budget_usage.memory_recall =
+                                tool_budget_usage.memory_recall.saturating_add(1);
+                        }
+
+                        if is_memory_manager_tool_name(&name, &memory_manager_tool_name) {
+                            if let Some(action) = extract_memory_manager_action(&args) {
+                                if is_memory_write_action(action.as_str()) && result.ok {
+                                    memory_recall_revision =
+                                        memory_recall_revision.saturating_add(1);
+                                    memory_recall_cache.clear();
+                                } else if is_memory_recall_action(action.as_str()) && result.ok {
+                                    if let Some(query_key) = normalize_memory_recall_query(
+                                        extract_memory_manager_query(&args).as_deref(),
+                                    ) {
+                                        memory_recall_cache.insert(
+                                            query_key,
+                                            CachedRecallResult {
+                                                revision: memory_recall_revision,
+                                                result: CachedToolResult::from_payload(&result),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
                         let question_panel_finished = name == question_panel_name && result.ok;
                         if question_panel_finished {
                             answer = i18n::t("response.question_panel_waiting");
@@ -1010,6 +1209,36 @@ impl Orchestrator {
                             should_finish = true;
                             break;
                         }
+                    }
+                }
+
+                if let Some(blocked) = budget_blocked.as_ref() {
+                    if !should_finish && answer.is_empty() {
+                        let mut guard_payload = json!({
+                            "stage": "tool_budget_guard",
+                            "summary": "Tool budget soft-guard reached; model notified to continue with current evidence.",
+                            "kind": blocked.kind.as_str(),
+                            "limit": blocked.limit,
+                            "attempted": blocked.attempted,
+                            "tool": blocked.tool.clone(),
+                            "usage_total": tool_budget_usage.total,
+                            "usage_db_query": tool_budget_usage.db_query,
+                            "usage_memory_recall": tool_budget_usage.memory_recall,
+                        });
+                        if let Value::Object(ref mut map) = guard_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("progress", guard_payload).await;
+                        let model_notice = build_tool_budget_guard_model_notice(
+                            blocked,
+                            &tool_budget_limits,
+                            &tool_budget_usage,
+                        );
+                        messages.push(json!({
+                            "role": "user",
+                            "content": format!("{OBSERVATION_PREFIX}{model_notice}"),
+                        }));
+                        continue;
                     }
                 }
 
@@ -1775,6 +2004,127 @@ fn resolve_non_admin_max_rounds(llm_config: &LlmModelConfig, skip_tool_calls: bo
     i64::from(configured.max(minimum))
 }
 
+fn resolve_db_query_tool_budget(question: &str) -> u32 {
+    if should_allow_extended_db_query_budget(question) {
+        EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN
+    } else {
+        DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN
+    }
+}
+
+fn should_allow_extended_db_query_budget(question: &str) -> bool {
+    let text = question.trim().to_lowercase();
+    if text.is_empty() {
+        return false;
+    }
+    let keywords = [
+        "全量",
+        "全部",
+        "所有记录",
+        "完整数据",
+        "全表",
+        "所有行",
+        "导出全部",
+        "all rows",
+        "all records",
+        "full dataset",
+        "entire dataset",
+        "full export",
+        "paginate all",
+    ];
+    keywords.iter().any(|keyword| text.contains(keyword))
+}
+
+fn is_db_query_tool_name(tool_name: &str) -> bool {
+    let cleaned = tool_name.trim().to_lowercase();
+    cleaned == "db_query" || cleaned.ends_with("@db_query")
+}
+
+fn is_memory_manager_tool_name(tool_name: &str, memory_manager_tool_name: &str) -> bool {
+    let cleaned = tool_name.trim();
+    cleaned == memory_manager_tool_name || cleaned.eq_ignore_ascii_case("memory_manager")
+}
+
+fn extract_memory_manager_action(args: &Value) -> Option<String> {
+    let normalized = crate::core::tool_args::recover_tool_args_value(args);
+    normalized
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_lowercase)
+}
+
+fn extract_memory_manager_query(args: &Value) -> Option<String> {
+    let normalized = crate::core::tool_args::recover_tool_args_value(args);
+    normalized
+        .get("query")
+        .or_else(|| normalized.get("content"))
+        .or_else(|| normalized.get("summary"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn is_memory_recall_action(action: &str) -> bool {
+    matches!(
+        action.trim().to_lowercase().as_str(),
+        "recall" | "search" | "query" | "retrieve"
+    )
+}
+
+fn is_memory_write_action(action: &str) -> bool {
+    matches!(
+        action.trim().to_lowercase().as_str(),
+        "add" | "create" | "append" | "update" | "upsert" | "delete" | "remove" | "clear" | "reset"
+    )
+}
+
+fn normalize_memory_recall_query(query: Option<&str>) -> Option<String> {
+    let query = query.unwrap_or("").trim();
+    if query.is_empty() {
+        return None;
+    }
+    Some(query.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+fn is_memory_recall_tool_call(
+    tool_name: &str,
+    args: &Value,
+    memory_manager_tool_name: &str,
+) -> bool {
+    if !is_memory_manager_tool_name(tool_name, memory_manager_tool_name) {
+        return false;
+    }
+    extract_memory_manager_action(args)
+        .as_deref()
+        .is_some_and(is_memory_recall_action)
+}
+
+fn resolve_cached_memory_recall_result(
+    planned: &PlannedToolCall,
+    memory_manager_tool_name: &str,
+    recall_cache: &HashMap<String, CachedRecallResult>,
+    revision: u64,
+) -> Option<CachedToolResult> {
+    if !is_memory_recall_tool_call(
+        &planned.name,
+        &planned.call.arguments,
+        memory_manager_tool_name,
+    ) {
+        return None;
+    }
+    let query_key = normalize_memory_recall_query(
+        extract_memory_manager_query(&planned.call.arguments).as_deref(),
+    )?;
+    let cached = recall_cache.get(&query_key)?;
+    if cached.revision != revision {
+        return None;
+    }
+    Some(cached.result.clone())
+}
+
 fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
     err.code() == "CONTEXT_WINDOW_EXCEEDED"
         || super::llm::is_context_window_error_text(err.message())
@@ -1864,6 +2214,45 @@ fn build_tool_failure_guard_answer(
         .collect::<String>();
     params.insert("detail".to_string(), clipped);
     i18n::t_with_params("error.tool_failure_guard_user_guidance_with_error", &params)
+}
+
+fn build_tool_budget_guard_model_notice(
+    block: &ToolBudgetBlock,
+    limits: &ToolBudgetLimits,
+    usage: &ToolBudgetUsage,
+) -> String {
+    let scope = match block.kind {
+        ToolBudgetBlockKind::Total => "total tool calls",
+        ToolBudgetBlockKind::DbQuery => "db_query calls",
+        ToolBudgetBlockKind::MemoryRecall => "memory recall calls",
+    };
+    let limit = match block.kind {
+        ToolBudgetBlockKind::Total => limits.total,
+        ToolBudgetBlockKind::DbQuery => limits.db_query,
+        ToolBudgetBlockKind::MemoryRecall => limits.memory_recall,
+    };
+    let next_step = match block.kind {
+        ToolBudgetBlockKind::Total => {
+            "Stop repeating identical tool calls in this turn. Re-plan and continue from existing observations."
+        }
+        ToolBudgetBlockKind::DbQuery => {
+            "Do not continue blind pagination. Prefer aggregation, narrower filters, or resumable/export flow."
+        }
+        ToolBudgetBlockKind::MemoryRecall => {
+            "Do not repeatedly recall the same memory query. Consolidate findings and continue reasoning."
+        }
+    };
+    format!(
+        "Runtime notice: soft guard reached for {scope}. Attempted {attempted} > limit {limit} (blocked tool: {tool}). Current usage: total={total}/{total_limit}, db_query={db}/{db_limit}, memory_recall={recall}/{recall_limit}. {next_step} Keep working and complete the task for the user.",
+        attempted = block.attempted,
+        tool = block.tool,
+        total = usage.total,
+        total_limit = limits.total,
+        db = usage.db_query,
+        db_limit = limits.db_query,
+        recall = usage.memory_recall,
+        recall_limit = limits.memory_recall,
+    )
 }
 
 fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
@@ -2439,6 +2828,85 @@ mod tests {
         let planned = build_planned_tool_calls(calls, &allowed);
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].name, resolve_tool_name("final_response"));
+    }
+
+    #[test]
+    fn resolve_db_query_tool_budget_uses_extended_only_for_full_scan_intent() {
+        assert_eq!(
+            resolve_db_query_tool_budget("请全量导出所有记录"),
+            EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN
+        );
+        assert_eq!(
+            resolve_db_query_tool_budget("只看最近100条并给我摘要"),
+            DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN
+        );
+    }
+
+    #[test]
+    fn build_tool_budget_guard_model_notice_contains_usage_snapshot() {
+        let block = ToolBudgetBlock {
+            kind: ToolBudgetBlockKind::DbQuery,
+            limit: 2000,
+            attempted: 2001,
+            tool: "extra_mcp@db_query".to_string(),
+        };
+        let limits = ToolBudgetLimits {
+            total: 10_000,
+            db_query: 2000,
+            memory_recall: 2000,
+        };
+        let usage = ToolBudgetUsage {
+            total: 1200,
+            db_query: 2000,
+            memory_recall: 11,
+        };
+        let notice = build_tool_budget_guard_model_notice(&block, &limits, &usage);
+        assert!(notice.contains("soft guard reached"));
+        assert!(notice.contains("Attempted 2001 > limit 2000"));
+        assert!(notice.contains("db_query=2000/2000"));
+        assert!(notice.contains("extra_mcp@db_query"));
+    }
+
+    #[test]
+    fn is_memory_recall_tool_call_matches_memory_manager_recall_action() {
+        let tool_name = resolve_tool_name("memory_manager");
+        let args = json!({ "action": "query", "query": "晋升规则" });
+        assert!(is_memory_recall_tool_call(&tool_name, &args, &tool_name,));
+        let add_args = json!({ "action": "add", "content": "规则" });
+        assert!(!is_memory_recall_tool_call(
+            &tool_name, &add_args, &tool_name
+        ));
+    }
+
+    #[test]
+    fn resolve_cached_memory_recall_result_respects_revision() {
+        let tool_name = resolve_tool_name("memory_manager");
+        let planned = PlannedToolCall {
+            call: ToolCall {
+                id: Some("call_1".to_string()),
+                name: tool_name.clone(),
+                arguments: json!({ "action": "recall", "query": "晋升规则" }),
+            },
+            name: tool_name.clone(),
+        };
+        let cache_key = normalize_memory_recall_query(Some("晋升规则")).expect("query key");
+        let mut cache = HashMap::new();
+        cache.insert(
+            cache_key,
+            CachedRecallResult {
+                revision: 3,
+                result: CachedToolResult {
+                    ok: true,
+                    data: json!({ "action": "recall", "count": 1 }),
+                    error: String::new(),
+                    sandbox: false,
+                    meta: None,
+                },
+            },
+        );
+
+        assert!(resolve_cached_memory_recall_result(&planned, &tool_name, &cache, 3).is_some());
+        assert!(resolve_cached_memory_recall_result(&planned, &tool_name, &cache, 4).is_none());
     }
 
     #[test]

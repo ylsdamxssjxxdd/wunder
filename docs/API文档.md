@@ -2076,3 +2076,50 @@
   - `POST /wunder/channels/weixin/qr/wait`
     - 入参：`session_key`、`api_base?`、`timeout_ms?`
     - 返回：`connected`、`status`，若确认登录则附带 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`
+
+## 2026-03-24 增补：聊天消息反馈（点赞/踩）
+
+### `POST /wunder/chat/sessions/{session_id}/messages/{history_id}/feedback`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `vote`：`up` / `down`（支持 `like/dislike/thumb_up/thumb_down` 等兼容写法）
+- 约束：
+  - 仅允许对 `assistant` 消息提交反馈。
+  - 同一条消息只允许提交一次；提交后锁定，不可修改。
+- 返回（JSON）：
+  - `data.session_id`：会话 ID
+  - `data.history_id`：消息 history_id
+  - `data.feedback`：
+    - `vote`：`up` / `down`
+    - `created_at`：反馈时间（RFC3339）
+    - `locked`：固定为 `true`
+- 错误码：
+  - `400`：参数非法或目标不是 assistant 消息
+  - `404`：会话或消息不存在
+  - `409`：该消息已存在反馈（已锁定）
+
+### 会话消息返回体补充（用户侧聊天接口）
+
+- `GET /wunder/chat/sessions/{session_id}`
+- `GET /wunder/chat/sessions/{session_id}/history`
+- 当消息为 `assistant` 且已反馈时，`messages[].feedback` 结构如下：
+  - `vote`：`up` / `down`
+  - `created_at`：反馈时间（RFC3339）
+  - `locked`：`true`
+
+### 监控接口补充（管理员侧）
+
+- `GET /wunder/admin/monitor` 的 `sessions[]` 新增：
+  - `feedback_up_count`：点赞数
+  - `feedback_down_count`：点踩数
+  - `feedback_total_count`：反馈总数
+  - `feedback_status`：`up` / `down` / `mixed` / `none`
+- `GET /wunder/admin/monitor/{session_id}` 新增：
+  - `feedback[]`：线程反馈列表
+    - `history_id`：消息 history_id
+    - `vote`：`up` / `down`
+    - `user_id`：提交反馈的用户 ID
+    - `created_at`：反馈时间（RFC3339）
+    - `created_time`：UNIX 时间戳（秒）
