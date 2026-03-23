@@ -5,8 +5,8 @@
     "id": "preset_cb0e40824076596dbf5b5f9eddab2d56",
     "name": "文稿校对",
     "description": "语病检查、错别字修正与语气优化",
-    "icon": "{\"name\":\"spark\",\"color\":\"#fbbf24\"}",
-    "exported_at": "2026-03-23T00:00:00+08:00"
+    "icon": "{\"color\":\"#fbbf24\",\"name\":\"spark\"}",
+    "exported_at": "2026-03-23T01:32:12.710190619+00:00"
   },
   "extra_prompt": "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。",
   "abilities": {
@@ -33,6 +33,7 @@
     "preset_questions": []
   },
   "runtime": {
+    "model_name": null,
     "approval_mode": "full_auto",
     "sandbox_container_id": 1,
     "is_shared": false

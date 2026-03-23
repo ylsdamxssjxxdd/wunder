@@ -9,6 +9,7 @@ const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
 const TEMPLATE_USER_ID = "preset_template";
 const DEFAULT_HIVE_ID = "default";
+const PRESET_AUTO_SAVE_DEBOUNCE_MS = 300;
 
 const ensureState = () => {
   if (!state.presetAgents) {
@@ -29,6 +30,11 @@ const ensureState = () => {
       supportedChannels: [],
       loading: false,
       initialized: false,
+      draftDirty: false,
+      draftVersion: 0,
+      autoSaveTimer: 0,
+      saving: false,
+      savePromise: null,
     };
   }
   if (typeof state.presetAgents.selectedPresetId !== "string") {
@@ -49,7 +55,6 @@ const REQUIRED_KEYS = [
   "presetAgentList",
   "presetAgentDetailTitle",
   "presetAgentDetailMeta",
-  "presetAgentSaveBtn",
   "presetAgentExportBtn",
   "presetAgentSyncSafeBtn",
   "presetAgentSyncForceBtn",
@@ -445,6 +450,10 @@ const renderToolSelector = (selected) => {
       checkbox.type = "checkbox";
       checkbox.value = option.value;
       checkbox.checked = selectedSet.has(option.value);
+      checkbox.addEventListener("change", () => {
+        markPresetDraftDirty();
+        schedulePresetAutoSave({ immediate: true });
+      });
       groupCheckboxes.push(checkbox);
       const label = document.createElement("label");
       const desc = option.description ? `<span class="muted">${option.description}</span>` : "";
@@ -454,6 +463,8 @@ const renderToolSelector = (selected) => {
           return;
         }
         checkbox.checked = !checkbox.checked;
+        markPresetDraftDirty();
+        schedulePresetAutoSave({ immediate: true });
       });
       row.appendChild(checkbox);
       row.appendChild(label);
@@ -466,6 +477,8 @@ const renderToolSelector = (selected) => {
       groupCheckboxes.forEach((checkbox) => {
         checkbox.checked = true;
       });
+      markPresetDraftDirty();
+      schedulePresetAutoSave({ immediate: true });
     });
   });
 };
@@ -481,6 +494,21 @@ const parseDate = (value) => {
 const setStatus = (text, kind = "") => {
   elements.presetAgentsStatusText.textContent = String(text || "").trim();
   elements.presetAgentsStatusText.dataset.kind = kind;
+};
+
+const clearPresetAutoSaveTimer = () => {
+  const timer = Number(state.presetAgents?.autoSaveTimer) || 0;
+  if (!timer) {
+    return;
+  }
+  clearTimeout(timer);
+  state.presetAgents.autoSaveTimer = 0;
+};
+
+const markPresetDraftDirty = () => {
+  ensureState();
+  state.presetAgents.draftDirty = true;
+  state.presetAgents.draftVersion = (Number(state.presetAgents.draftVersion) || 0) + 1;
 };
 
 const selectedPreset = () =>
@@ -580,6 +608,13 @@ const renderPresetQuestionEditor = (questions) => {
     textarea.rows = 2;
     textarea.placeholder = t("presetAgents.form.presetQuestionsPlaceholder");
     textarea.value = question;
+    textarea.addEventListener("input", () => {
+      markPresetDraftDirty();
+    });
+    textarea.addEventListener("change", () => {
+      markPresetDraftDirty();
+      schedulePresetAutoSave({ immediate: true });
+    });
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -591,6 +626,8 @@ const renderPresetQuestionEditor = (questions) => {
       const nextDrafts = collectPresetQuestionDrafts();
       nextDrafts.splice(index, 1);
       renderPresetQuestionEditor(nextDrafts);
+      markPresetDraftDirty();
+      schedulePresetAutoSave({ immediate: true });
     });
 
     row.appendChild(badge);
@@ -673,6 +710,10 @@ const renderPresetList = () => {
     row.appendChild(title);
     row.appendChild(meta);
     row.addEventListener("click", async () => {
+      const saved = await flushPresetAutoSave();
+      if (!saved) {
+        return;
+      }
       setSelectedPreset(preset);
       state.presetAgents.syncSummary = null;
       renderAll();
@@ -1059,6 +1100,34 @@ const collectPresetForm = () => {
   };
 };
 
+const schedulePresetAutoSave = ({ immediate = false } = {}) => {
+  ensureState();
+  clearPresetAutoSaveTimer();
+  if (!state.presetAgents.draftDirty) {
+    return;
+  }
+  if (immediate) {
+    void savePreset({ silentSuccess: true });
+    return;
+  }
+  state.presetAgents.autoSaveTimer = window.setTimeout(() => {
+    state.presetAgents.autoSaveTimer = 0;
+    void savePreset({ silentSuccess: true });
+  }, PRESET_AUTO_SAVE_DEBOUNCE_MS);
+};
+
+const flushPresetAutoSave = async () => {
+  ensureState();
+  clearPresetAutoSaveTimer();
+  if (state.presetAgents.saving) {
+    return (await state.presetAgents.savePromise) !== false;
+  }
+  if (!state.presetAgents.draftDirty) {
+    return true;
+  }
+  return savePreset({ silentSuccess: true });
+};
+
 const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {}) => {
   const defaultPreset = state.presetAgents.presets.find((item) => item.is_default_agent === true) || null;
   const payload = {
@@ -1099,54 +1168,89 @@ const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {})
   setSelectedPreset(state.presetAgents.presets[0]);
 };
 
-const savePreset = async () => {
-  try {
-    const current = selectedPreset();
-    const effective = effectiveSelectedPreset() || current;
-    if (!current || !effective) {
-      throw new Error(t("presetAgents.error.noPresetSelected"));
-    }
-    const draft = collectPresetForm();
-    const next = { ...current, ...effective, ...draft };
-    const duplicate = state.presetAgents.presets.find(
-      (item) => item.name.toLowerCase() === next.name.toLowerCase() && !isSamePreset(item, current)
-    );
-    if (duplicate) {
-      throw new Error(t("presetAgents.error.duplicateName", { name: next.name }));
-    }
-    const agentPayload = collectAgentForm();
-    next.tool_names = agentPayload.tool_names;
-    next.declared_tool_names = [];
-    next.declared_skill_names = [];
-    next.preset_questions = agentPayload.preset_questions;
-    next.approval_mode = agentPayload.approval_mode;
-    next.status = agentPayload.status || effective.status || current.status || "active";
-    next.model_name = normalizeOptionalModelName(agentPayload.model_name);
-    next.sandbox_container_id = agentPayload.sandbox_container_id;
-    if (isDefaultPreset(current)) {
-      await requestJson(`/agents/${encodeURIComponent(DEFAULT_AGENT_ID_ALIAS)}`, {
-        method: "PUT",
-        query: { user_id: TEMPLATE_USER_ID },
-        body: { ...agentPayload, name: next.name },
-      });
-      await loadPresetAgents({ silent: true, selectedName: next.name });
-      notify(t("presetAgents.toast.savePresetSuccess"), "success");
-      return;
-    }
-    state.presetAgents.presets = state.presetAgents.presets.map((item) => (isSamePreset(item, current) ? next : item));
-    setSelectedPreset(next);
-    await persistPresets({ selectedName: next.name, selectedPresetId: next.preset_id });
-    await refreshContext({ ensureAgent: false, silent: true });
-    await loadSyncSummary({ silent: true });
-    renderAll();
-    notify(t("presetAgents.toast.savePresetSuccess"), "success");
-  } catch (error) {
-    notify(t("presetAgents.toast.savePresetFailed", { message: error.message || "-" }), "error");
+const savePreset = async ({ silentSuccess = false } = {}) => {
+  if (state.presetAgents.saving) {
+    return state.presetAgents.savePromise || false;
   }
+  clearPresetAutoSaveTimer();
+  const draftVersion = Number(state.presetAgents.draftVersion) || 0;
+  const saveTask = (async () => {
+    let resaveNeeded = false;
+    try {
+      const current = selectedPreset();
+      const effective = effectiveSelectedPreset() || current;
+      if (!current || !effective) {
+        throw new Error(t("presetAgents.error.noPresetSelected"));
+      }
+      const draft = collectPresetForm();
+      const next = { ...current, ...effective, ...draft };
+      const duplicate = state.presetAgents.presets.find(
+        (item) => item.name.toLowerCase() === next.name.toLowerCase() && !isSamePreset(item, current)
+      );
+      if (duplicate) {
+        throw new Error(t("presetAgents.error.duplicateName", { name: next.name }));
+      }
+      const agentPayload = collectAgentForm();
+      next.tool_names = agentPayload.tool_names;
+      next.declared_tool_names = [];
+      next.declared_skill_names = [];
+      next.preset_questions = agentPayload.preset_questions;
+      next.approval_mode = agentPayload.approval_mode;
+      next.status = agentPayload.status || effective.status || current.status || "active";
+      next.model_name = normalizeOptionalModelName(agentPayload.model_name);
+      next.sandbox_container_id = agentPayload.sandbox_container_id;
+      setStatus(t("presetAgents.status.autoSaving"), "warning");
+      if (isDefaultPreset(current)) {
+        await requestJson(`/agents/${encodeURIComponent(DEFAULT_AGENT_ID_ALIAS)}`, {
+          method: "PUT",
+          query: { user_id: TEMPLATE_USER_ID },
+          body: { ...agentPayload, name: next.name },
+        });
+        await loadPresetAgents({ silent: true, selectedName: next.name, flushDraft: false });
+      } else {
+        state.presetAgents.presets = state.presetAgents.presets.map((item) =>
+          isSamePreset(item, current) ? next : item
+        );
+        setSelectedPreset(next);
+        await persistPresets({ selectedName: next.name, selectedPresetId: next.preset_id });
+        await refreshContext({ ensureAgent: false, silent: true });
+        await loadSyncSummary({ silent: true });
+        renderAll();
+      }
+      if ((Number(state.presetAgents.draftVersion) || 0) === draftVersion) {
+        state.presetAgents.draftDirty = false;
+      } else {
+        resaveNeeded = true;
+      }
+      setStatus(t("presetAgents.status.autoSaved"), "success");
+      if (!silentSuccess) {
+        notify(t("presetAgents.toast.savePresetSuccess"), "success");
+      }
+      return true;
+    } catch (error) {
+      state.presetAgents.draftDirty = true;
+      setStatus(t("presetAgents.status.autoSaveFailed", { message: error.message || "-" }), "error");
+      notify(t("presetAgents.toast.savePresetFailed", { message: error.message || "-" }), "error");
+      return false;
+    } finally {
+      state.presetAgents.saving = false;
+      state.presetAgents.savePromise = null;
+      if (resaveNeeded && state.presetAgents.draftDirty) {
+        schedulePresetAutoSave({ immediate: true });
+      }
+    }
+  })();
+  state.presetAgents.saving = true;
+  state.presetAgents.savePromise = saveTask;
+  return saveTask;
 };
 
 const exportPresetWorkerCard = async () => {
   try {
+    const saved = await flushPresetAutoSave();
+    if (!saved) {
+      return;
+    }
     const preset = selectedPreset();
     if (!preset?.preset_id) {
       throw new Error(t("presetAgents.error.noPresetSelected"));
@@ -1201,6 +1305,8 @@ const createPreset = () => {
   state.presetAgents.syncSummary = null;
   renderAll();
   setTab("preset");
+  markPresetDraftDirty();
+  schedulePresetAutoSave({ immediate: true });
 };
 
 const deletePreset = async () => {
@@ -1438,6 +1544,10 @@ const loadSyncSummary = async ({ silent = false } = {}) => {
 };
 
 const runPresetSync = async (mode = "safe") => {
+  const saved = await flushPresetAutoSave();
+  if (!saved) {
+    return;
+  }
   const preset = selectedPreset();
   if (!preset?.preset_id) {
     return;
@@ -1475,10 +1585,16 @@ const runPresetSync = async (mode = "safe") => {
   await loadSyncSummary({ silent: true });
 };
 
-export const loadPresetAgents = async ({ silent = false, selectedName = "" } = {}) => {
+export const loadPresetAgents = async ({ silent = false, selectedName = "", flushDraft = true } = {}) => {
   ensureState();
   if (!ensureElements()) {
     return;
+  }
+  if (flushDraft) {
+    const saved = await flushPresetAutoSave();
+    if (!saved) {
+      return;
+    }
   }
   state.presetAgents.loading = true;
   try {
@@ -1526,6 +1642,43 @@ const bindTabs = () => {
   });
 };
 
+const bindPresetAutoSaveFields = () => {
+  const textFields = [
+    elements.presetAgentFormName,
+    elements.presetAgentFormDescription,
+    elements.presetAgentFormPrompt,
+  ].filter(Boolean);
+  textFields.forEach((field) => {
+    if (field.dataset.autosaveBound === "1") {
+      return;
+    }
+    field.dataset.autosaveBound = "1";
+    field.addEventListener("input", () => {
+      markPresetDraftDirty();
+    });
+    field.addEventListener("change", () => {
+      markPresetDraftDirty();
+      schedulePresetAutoSave({ immediate: true });
+    });
+  });
+
+  const changeFields = [
+    elements.presetAgentFormModelName,
+    elements.presetAgentFormContainerId,
+    elements.presetUserAgentApproval,
+  ].filter(Boolean);
+  changeFields.forEach((field) => {
+    if (field.dataset.autosaveBound === "1") {
+      return;
+    }
+    field.dataset.autosaveBound = "1";
+    field.addEventListener("change", () => {
+      markPresetDraftDirty();
+      schedulePresetAutoSave({ immediate: true });
+    });
+  });
+};
+
 const bindActions = () => {
   if (elements.presetAgentsRefreshBtn.dataset.bound !== "1") {
     elements.presetAgentsRefreshBtn.dataset.bound = "1";
@@ -1533,11 +1686,13 @@ const bindActions = () => {
   }
   if (elements.presetAgentCreateBtn.dataset.bound !== "1") {
     elements.presetAgentCreateBtn.dataset.bound = "1";
-    elements.presetAgentCreateBtn.addEventListener("click", createPreset);
-  }
-  if (elements.presetAgentSaveBtn.dataset.bound !== "1") {
-    elements.presetAgentSaveBtn.dataset.bound = "1";
-    elements.presetAgentSaveBtn.addEventListener("click", savePreset);
+    elements.presetAgentCreateBtn.addEventListener("click", async () => {
+      const saved = await flushPresetAutoSave();
+      if (!saved) {
+        return;
+      }
+      createPreset();
+    });
   }
   if (elements.presetAgentExportBtn.dataset.bound !== "1") {
     elements.presetAgentExportBtn.dataset.bound = "1";
@@ -1549,6 +1704,7 @@ const bindActions = () => {
       const nextDrafts = collectPresetQuestionDrafts();
       nextDrafts.push("");
       renderPresetQuestionEditor(nextDrafts);
+      markPresetDraftDirty();
     });
   }
   if (elements.presetAgentSyncSafeBtn.dataset.bound !== "1") {
@@ -1582,6 +1738,7 @@ export const initPresetAgentsPanel = () => {
     return;
   }
   bindTabs();
+  bindPresetAutoSaveFields();
   bindActions();
   renderAll();
   state.presetAgents.initialized = true;

@@ -5,8 +5,8 @@
     "id": "preset_e81012b94e855b299d77334d9066ff2c",
     "name": "政策分析",
     "description": "解读政策要点并评估影响",
-    "icon": "{\"name\":\"briefcase\",\"color\":\"#f97316\"}",
-    "exported_at": "2026-03-23T00:00:00+08:00"
+    "icon": "{\"color\":\"#f97316\",\"name\":\"briefcase\"}",
+    "exported_at": "2026-03-23T01:32:12.756597057+00:00"
   },
   "extra_prompt": "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。",
   "abilities": {
@@ -33,6 +33,7 @@
     "preset_questions": []
   },
   "runtime": {
+    "model_name": null,
     "approval_mode": "full_auto",
     "sandbox_container_id": 1,
     "is_shared": false

@@ -1122,7 +1122,7 @@ async fn run_request(
         tool_names: Vec::new(),
         skip_tool_calls: true,
         stream: true,
-        debug_payload: false,
+        debug_payload: true,
         session_id: Some(session_id.clone()),
         agent_id: None,
         model_name,
@@ -1131,7 +1131,7 @@ async fn run_request(
         agent_prompt: None,
         attachments: None,
         allow_queue: true,
-        is_admin: false,
+        is_admin: true,
         approval_tx: None,
     };
     let started = Instant::now();

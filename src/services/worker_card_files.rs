@@ -16,7 +16,7 @@ pub fn sanitize_worker_card_filename_part(raw: &str) -> String {
         output.push(mapped);
     }
     output = output
-        .trim_matches(|ch: char| ch.is_whitespace() || ch == '.' || ch == '_')
+        .trim_matches(|ch: char| ch.is_whitespace() || ch == '.')
         .to_string();
     if output.is_empty() {
         String::new()
@@ -79,6 +79,10 @@ mod tests {
         assert_eq!(
             worker_card_file_name(Some("agent_demo"), Some("agent_demo")),
             "agent_demo.worker-card.json"
+        );
+        assert_eq!(
+            worker_card_file_name(Some("Default Agent"), Some("__default__")),
+            "Default Agent--__default__.worker-card.json"
         );
     }
 
