@@ -1,7 +1,18 @@
 use crate::config::UserAgentPresetConfig;
-use crate::services::agent_abilities::{build_ability_items_from_legacy, normalize_ability_items};
+use crate::services::agent_abilities::resolve_selected_declared_names;
 use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
+};
+use crate::services::inner_visible::WorkerCardRecordUpdate;
+use crate::services::preset_worker_cards;
+use crate::services::worker_card_settings::{
+    self, canonicalize_preset_config, collect_context_skill_names, collect_registry_skill_names,
+    normalize_agent_approval_mode as shared_normalize_agent_approval_mode,
+    normalize_agent_status as shared_normalize_agent_status,
+    normalize_optional_model_name as shared_normalize_optional_model_name,
+    normalize_preset_questions as shared_normalize_preset_questions,
+    normalize_tool_list as shared_normalize_tool_list, preset_snapshot_from_record,
+    preset_snapshot_from_update, preset_update_from_config,
 };
 use crate::state::AppState;
 use crate::storage::{
@@ -15,15 +26,11 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
-const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
-const DEFAULT_AGENT_STATUS: &str = "active";
-const PRESET_TEMPLATE_USER_ID: &str = "preset_template";
-
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresetAgent {
     pub preset_id: String,
     pub revision: u64,
@@ -76,57 +83,27 @@ pub fn resolve_preset_id(raw_preset_id: &str, name: &str) -> String {
 }
 
 pub fn normalize_tool_list(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut output = Vec::new();
-    for raw in values {
-        let cleaned = raw.trim().to_string();
-        if cleaned.is_empty() || !seen.insert(cleaned.clone()) {
-            continue;
-        }
-        output.push(cleaned);
-    }
-    output
+    shared_normalize_tool_list(values)
 }
 
 pub fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut output = Vec::new();
-    for raw in values {
-        let cleaned = raw.trim().to_string();
-        if cleaned.is_empty() || !seen.insert(cleaned.clone()) {
-            continue;
-        }
-        output.push(cleaned);
-    }
-    output
+    shared_normalize_preset_questions(values)
 }
 
 pub fn normalize_optional_model_name(raw: Option<&str>) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
+    shared_normalize_optional_model_name(raw)
 }
 
 pub fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
-    match raw.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
-        "suggest" => "suggest".to_string(),
-        "auto_edit" | "auto-edit" => "auto_edit".to_string(),
-        "full_auto" | "full-auto" => "full_auto".to_string(),
-        _ => DEFAULT_AGENT_APPROVAL_MODE.to_string(),
-    }
+    shared_normalize_agent_approval_mode(raw)
 }
 
 pub fn normalize_agent_status(raw: Option<&str>) -> String {
-    let cleaned = raw.unwrap_or(DEFAULT_AGENT_STATUS).trim();
-    if cleaned.is_empty() {
-        DEFAULT_AGENT_STATUS.to_string()
-    } else {
-        cleaned.to_string()
-    }
+    shared_normalize_agent_status(raw)
 }
 
 pub fn build_icon_payload(name: &str, color: &str) -> String {
-    serde_json::json!({ "name": name, "color": color }).to_string()
+    worker_card_settings::build_icon_payload(name, color)
 }
 
 pub fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec<String> {
@@ -137,55 +114,60 @@ pub fn filter_allowed_tools(values: &[String], allowed: &HashSet<String>) -> Vec
         .collect()
 }
 
-pub fn preset_from_config(config: &UserAgentPresetConfig) -> Option<PresetAgent> {
-    let name = config.name.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let icon_name = if config.icon_name.trim().is_empty() {
-        "spark".to_string()
-    } else {
-        config.icon_name.trim().to_string()
-    };
-    let icon_color = if config.icon_color.trim().is_empty() {
-        "#94a3b8".to_string()
-    } else {
-        config.icon_color.trim().to_string()
-    };
+fn preset_from_config_with_skill_names(
+    config: &UserAgentPresetConfig,
+    skill_name_keys: &HashSet<String>,
+) -> Option<PresetAgent> {
+    let preset_id = resolve_preset_id(&config.preset_id, &config.name);
+    let normalized = canonicalize_preset_config(config, &preset_id, skill_name_keys)?;
+    let update = preset_update_from_config(&normalized, skill_name_keys)?;
+    let (icon_name, icon_color) =
+        worker_card_settings::normalize_preset_icon_parts(update.icon.as_deref());
     Some(PresetAgent {
-        preset_id: resolve_preset_id(&config.preset_id, name),
-        revision: config.revision.max(1),
-        name: name.to_string(),
-        description: config.description.trim().to_string(),
-        system_prompt: config.system_prompt.trim().to_string(),
-        model_name: normalize_optional_model_name(config.model_name.as_deref()),
+        preset_id,
+        revision: normalized.revision.max(1),
+        name: update.name,
+        description: update.description,
+        system_prompt: update.system_prompt,
+        model_name: normalize_optional_model_name(update.model_name.as_deref()),
         icon_name,
         icon_color,
-        sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
-        tool_names: normalize_tool_list(config.tool_names.clone()),
-        declared_tool_names: normalize_tool_list(config.declared_tool_names.clone()),
-        declared_skill_names: normalize_tool_list(config.declared_skill_names.clone()),
-        preset_questions: normalize_preset_questions(config.preset_questions.clone()),
-        approval_mode: normalize_agent_approval_mode(Some(&config.approval_mode)),
-        status: normalize_agent_status(Some(&config.status)),
+        sandbox_container_id: normalize_sandbox_container_id(update.sandbox_container_id),
+        tool_names: normalize_tool_list(update.tool_names),
+        declared_tool_names: normalize_tool_list(update.declared_tool_names),
+        declared_skill_names: normalize_tool_list(update.declared_skill_names),
+        preset_questions: normalize_preset_questions(update.preset_questions),
+        approval_mode: normalize_agent_approval_mode(Some(&update.approval_mode)),
+        status: normalize_agent_status(Some(&normalized.status)),
     })
 }
 
 pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
     let config = state.config_store.get().await;
-    let template_agents = state
-        .user_store
-        .list_user_agents(PRESET_TEMPLATE_USER_ID)
-        .unwrap_or_default();
+    let skill_name_keys = {
+        let registry = state.skills.read().await;
+        collect_registry_skill_names(&registry)
+    };
+    let configured = match preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
+    {
+        Ok(items) => items,
+        Err(err) => {
+            tracing::warn!("failed to load preset worker cards, falling back to config: {err}");
+            config.user_agents.presets.clone()
+        }
+    };
     let mut seen_ids = HashSet::new();
     let mut presets = Vec::new();
-    for item in &config.user_agents.presets {
-        let Some(mut preset) = preset_from_config(item) else {
+    for item in &configured {
+        let preset_id = resolve_preset_id(&item.preset_id, &item.name);
+        let Some(normalized) = canonicalize_preset_config(item, &preset_id, &skill_name_keys)
+        else {
             continue;
         };
-        if let Some(template_agent) = same_name_agent(&template_agents, &preset.name) {
-            apply_template_agent_fields(&mut preset, template_agent);
-        }
+        let Some(preset) = preset_from_config_with_skill_names(&normalized, &skill_name_keys)
+        else {
+            continue;
+        };
         if seen_ids.insert(preset.preset_id.clone()) {
             presets.push(preset);
         }
@@ -194,33 +176,7 @@ pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
 }
 
 pub fn snapshot_from_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot {
-    UserAgentPresetSnapshot {
-        name: record.name.clone(),
-        description: record.description.clone(),
-        system_prompt: record.system_prompt.clone(),
-        model_name: record.model_name.clone(),
-        ability_items: {
-            let ability_items = normalize_ability_items(record.ability_items.clone());
-            if ability_items.is_empty() {
-                build_ability_items_from_legacy(
-                    &record.tool_names,
-                    &record.declared_tool_names,
-                    &record.declared_skill_names,
-                    &HashSet::new(),
-                )
-            } else {
-                ability_items
-            }
-        },
-        tool_names: normalize_tool_list(record.tool_names.clone()),
-        declared_tool_names: normalize_tool_list(record.declared_tool_names.clone()),
-        declared_skill_names: normalize_tool_list(record.declared_skill_names.clone()),
-        preset_questions: normalize_preset_questions(record.preset_questions.clone()),
-        approval_mode: normalize_agent_approval_mode(Some(&record.approval_mode)),
-        status: normalize_agent_status(Some(&record.status)),
-        icon: record.icon.clone(),
-        sandbox_container_id: normalize_sandbox_container_id(record.sandbox_container_id),
-    }
+    preset_snapshot_from_record(record, &std::collections::HashSet::new())
 }
 
 pub async fn build_target_snapshot(
@@ -230,6 +186,7 @@ pub async fn build_target_snapshot(
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
+    let skill_name_keys = collect_context_skill_names(&context);
     let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let requested_tool_names = if preset.tool_names.is_empty() {
         curated_default_tool_names(&allowed_tool_names)
@@ -238,26 +195,35 @@ pub async fn build_target_snapshot(
         merged.extend(required_skill_names);
         filter_allowed_tools(&normalize_tool_list(merged), &allowed_tool_names)
     };
-    UserAgentPresetSnapshot {
-        name: preset.name.clone(),
-        description: preset.description.clone(),
-        system_prompt: preset.system_prompt.clone(),
-        model_name: normalize_optional_model_name(preset.model_name.as_deref()),
-        ability_items: build_ability_items_from_legacy(
-            &requested_tool_names,
-            &preset.declared_tool_names,
-            &preset.declared_skill_names,
-            &HashSet::new(),
+    let (declared_tool_names, declared_skill_names) = resolve_selected_declared_names(
+        &requested_tool_names,
+        &preset.declared_tool_names,
+        &preset.declared_skill_names,
+        &skill_name_keys,
+    );
+    preset_snapshot_from_update(
+        &worker_card_settings::canonicalize_worker_card_update(
+            WorkerCardRecordUpdate {
+                name: preset.name.clone(),
+                description: preset.description.clone(),
+                system_prompt: preset.system_prompt.clone(),
+                model_name: normalize_optional_model_name(preset.model_name.as_deref()),
+                ability_items: Vec::new(),
+                tool_names: requested_tool_names,
+                declared_tool_names,
+                declared_skill_names,
+                preset_questions: preset.preset_questions.clone(),
+                approval_mode: preset.approval_mode.clone(),
+                is_shared: false,
+                icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
+                hive_id: DEFAULT_HIVE_ID.to_string(),
+                sandbox_container_id: preset.sandbox_container_id,
+            },
+            &skill_name_keys,
         ),
-        tool_names: requested_tool_names,
-        declared_tool_names: preset.declared_tool_names.clone(),
-        declared_skill_names: preset.declared_skill_names.clone(),
-        preset_questions: preset.preset_questions.clone(),
-        approval_mode: preset.approval_mode.clone(),
-        status: preset.status.clone(),
-        icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
-        sandbox_container_id: preset.sandbox_container_id,
-    }
+        normalize_optional_model_name(preset.model_name.as_deref()),
+        &preset.status,
+    )
 }
 
 pub fn build_binding(
@@ -278,19 +244,6 @@ fn same_name_agent<'a>(agents: &'a [UserAgentRecord], name: &str) -> Option<&'a 
         .filter(|record| normalize_hive_id(&record.hive_id) == DEFAULT_HIVE_ID)
         .filter(|record| record.name.trim() == cleaned)
         .max_by(|left, right| left.updated_at.total_cmp(&right.updated_at))
-}
-
-fn apply_template_agent_fields(preset: &mut PresetAgent, template: &UserAgentRecord) {
-    preset.description = template.description.trim().to_string();
-    preset.system_prompt = template.system_prompt.trim().to_string();
-    preset.model_name = normalize_optional_model_name(template.model_name.as_deref());
-    preset.sandbox_container_id = normalize_sandbox_container_id(template.sandbox_container_id);
-    preset.tool_names = normalize_tool_list(template.tool_names.clone());
-    preset.declared_tool_names = normalize_tool_list(template.declared_tool_names.clone());
-    preset.declared_skill_names = normalize_tool_list(template.declared_skill_names.clone());
-    preset.preset_questions = normalize_preset_questions(template.preset_questions.clone());
-    preset.approval_mode = normalize_agent_approval_mode(Some(&template.approval_mode));
-    preset.status = normalize_agent_status(Some(&template.status));
 }
 
 pub fn find_preset_agent<'a>(

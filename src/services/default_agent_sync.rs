@@ -1,4 +1,4 @@
-use crate::services::agent_abilities::{build_ability_items_from_legacy, normalize_ability_items};
+use crate::services::agent_abilities::resolve_selected_declared_names;
 use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
     DefaultAgentConfig,
@@ -7,8 +7,11 @@ use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
 };
 use crate::services::user_agent_presets::{
-    filter_allowed_tools, normalize_agent_approval_mode, normalize_agent_status,
-    normalize_preset_questions, normalize_tool_list, PresetSyncMode, PresetSyncSummary,
+    filter_allowed_tools, normalize_tool_list, PresetSyncMode, PresetSyncSummary,
+};
+use crate::services::worker_card_settings::{
+    canonicalize_default_agent_config, collect_context_skill_names,
+    default_agent_update_from_config, preset_snapshot_from_record, preset_snapshot_from_update,
 };
 use crate::state::AppState;
 use crate::storage::{
@@ -69,19 +72,18 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     } else {
         config.name = config.name.trim().to_string();
     }
-    config.description = config.description.trim().to_string();
-    config.system_prompt = config.system_prompt.trim().to_string();
-    config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
-    config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
-    config.declared_tool_names =
-        normalize_tool_list(std::mem::take(&mut config.declared_tool_names));
-    config.declared_skill_names =
-        normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
-    config.preset_questions =
-        normalize_preset_questions(std::mem::take(&mut config.preset_questions));
-    config.approval_mode = normalize_agent_approval_mode(Some(&config.approval_mode));
-    config.status = normalize_agent_status(Some(&config.status));
-    config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
+    let normalized = canonicalize_default_agent_config(config, &std::collections::HashSet::new());
+    config.description = normalized.description;
+    config.system_prompt = normalized.system_prompt;
+    config.ability_items = normalized.ability_items;
+    config.tool_names = normalized.tool_names;
+    config.declared_tool_names = normalized.declared_tool_names;
+    config.declared_skill_names = normalized.declared_skill_names;
+    config.preset_questions = normalized.preset_questions;
+    config.approval_mode = normalized.approval_mode;
+    config.status = normalized.status;
+    config.icon = normalized.icon;
+    config.sandbox_container_id = normalize_sandbox_container_id(normalized.sandbox_container_id);
     let now = now_ts();
     if config.created_at <= 0.0 {
         config.created_at = now;
@@ -139,12 +141,7 @@ async fn build_default_agent_config(
         name: DEFAULT_AGENT_NAME.to_string(),
         description: String::new(),
         system_prompt: String::new(),
-        ability_items: build_ability_items_from_legacy(
-            &tool_names,
-            &[],
-            &[],
-            &std::collections::HashSet::new(),
-        ),
+        ability_items: Vec::new(),
         tool_names,
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -190,33 +187,9 @@ pub async fn load_effective_default_agent_record(
 }
 
 fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot {
-    UserAgentPresetSnapshot {
-        name: record.name.trim().to_string(),
-        description: record.description.trim().to_string(),
-        system_prompt: record.system_prompt.trim().to_string(),
-        model_name: None,
-        ability_items: {
-            let ability_items = normalize_ability_items(record.ability_items.clone());
-            if ability_items.is_empty() {
-                build_ability_items_from_legacy(
-                    &record.tool_names,
-                    &record.declared_tool_names,
-                    &record.declared_skill_names,
-                    &std::collections::HashSet::new(),
-                )
-            } else {
-                ability_items
-            }
-        },
-        tool_names: normalize_tool_list(record.tool_names.clone()),
-        declared_tool_names: normalize_tool_list(record.declared_tool_names.clone()),
-        declared_skill_names: normalize_tool_list(record.declared_skill_names.clone()),
-        preset_questions: normalize_preset_questions(record.preset_questions.clone()),
-        approval_mode: normalize_agent_approval_mode(Some(&record.approval_mode)),
-        status: normalize_agent_status(Some(&record.status)),
-        icon: record.icon.clone(),
-        sandbox_container_id: normalize_sandbox_container_id(record.sandbox_container_id),
-    }
+    let mut snapshot = preset_snapshot_from_record(record, &std::collections::HashSet::new());
+    snapshot.model_name = None;
+    snapshot
 }
 
 async fn build_target_snapshot(
@@ -226,6 +199,7 @@ async fn build_target_snapshot(
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
+    let skill_name_keys = collect_context_skill_names(&context);
     let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let tool_names = if template.tool_names.is_empty() {
         curated_default_tool_names(&allowed_tool_names)
@@ -234,26 +208,28 @@ async fn build_target_snapshot(
         merged.extend(required_skill_names);
         filter_allowed_tools(&normalize_tool_list(merged), &allowed_tool_names)
     };
-    UserAgentPresetSnapshot {
-        name: template.name.clone(),
-        description: template.description.clone(),
-        system_prompt: template.system_prompt.clone(),
-        model_name: None,
-        ability_items: build_ability_items_from_legacy(
-            &tool_names,
-            &template.declared_tool_names,
-            &template.declared_skill_names,
-            &std::collections::HashSet::new(),
+    let (declared_tool_names, declared_skill_names) = resolve_selected_declared_names(
+        &tool_names,
+        &template.declared_tool_names,
+        &template.declared_skill_names,
+        &skill_name_keys,
+    );
+    let mut snapshot = preset_snapshot_from_update(
+        &default_agent_update_from_config(
+            &DefaultAgentConfig {
+                ability_items: Vec::new(),
+                tool_names,
+                declared_tool_names,
+                declared_skill_names,
+                ..template.clone()
+            },
+            &skill_name_keys,
         ),
-        tool_names,
-        declared_tool_names: template.declared_tool_names.clone(),
-        declared_skill_names: template.declared_skill_names.clone(),
-        preset_questions: template.preset_questions.clone(),
-        approval_mode: template.approval_mode.clone(),
-        status: template.status.clone(),
-        icon: template.icon.clone(),
-        sandbox_container_id: template.sandbox_container_id,
-    }
+        None,
+        &template.status,
+    );
+    snapshot.model_name = None;
+    snapshot
 }
 
 fn plan_snapshot_sync(

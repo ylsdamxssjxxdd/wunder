@@ -1,4 +1,7 @@
 use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
+use crate::services::worker_card_files::{
+    stable_id_from_worker_card_file_name, worker_card_file_name as canonical_worker_card_file_name,
+};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::workspace::WorkspaceManager;
 use std::path::PathBuf;
@@ -9,7 +12,6 @@ pub const SKILLS_DIR: &str = "skills";
 pub const KNOWLEDGE_DIR: &str = "knowledge";
 pub const TOOLING_FILE: &str = "tooling.json";
 pub const DEFAULTS_WORKER_CARD_FILE: &str = "defaults.worker-card.json";
-pub const WORKER_CARD_FILE_SUFFIX: &str = ".worker-card.json";
 pub const LEGACY_INNER_VISIBLE_DIR: &str = ".wunder";
 
 #[derive(Debug, Clone)]
@@ -51,16 +53,17 @@ pub fn normalize_agent_file_stem(agent_id: Option<&str>) -> String {
     }
 }
 
-pub fn worker_card_file_name(agent_id: Option<&str>) -> String {
-    format!(
-        "{}{}",
-        normalize_agent_file_stem(agent_id),
-        WORKER_CARD_FILE_SUFFIX
-    )
+pub fn worker_card_file_name(display_name: Option<&str>, agent_id: Option<&str>) -> String {
+    canonical_worker_card_file_name(display_name, Some(&normalize_agent_file_stem(agent_id)))
 }
 
-pub fn worker_card_path(paths: &InnerVisiblePaths, agent_id: Option<&str>) -> PathBuf {
-    paths.agents_dir.join(worker_card_file_name(agent_id))
+pub fn worker_card_path(
+    paths: &InnerVisiblePaths,
+    display_name: Option<&str>,
+    agent_id: Option<&str>,
+) -> PathBuf {
+    paths.agents_dir
+        .join(worker_card_file_name(display_name, agent_id))
 }
 
 pub fn tooling_path(paths: &InnerVisiblePaths) -> PathBuf {
@@ -72,17 +75,6 @@ pub fn defaults_worker_card_path(paths: &InnerVisiblePaths) -> PathBuf {
 }
 
 pub fn agent_id_from_worker_card_file_name(file_name: &str) -> Option<String> {
-    let trimmed = file_name.trim();
-    if !trimmed.ends_with(WORKER_CARD_FILE_SUFFIX) {
-        return None;
-    }
-    let stem = trimmed
-        .trim_end_matches(WORKER_CARD_FILE_SUFFIX)
-        .trim()
-        .to_string();
-    if stem.is_empty() {
-        None
-    } else {
-        Some(normalize_agent_file_stem(Some(&stem)))
-    }
+    stable_id_from_worker_card_file_name(file_name)
+        .map(|stable_id| normalize_agent_file_stem(Some(&stable_id)))
 }

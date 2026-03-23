@@ -5,6 +5,9 @@ use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
 use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::user_prompt_templates;
+use crate::services::worker_card_files::{
+    stable_id_from_worker_card_file_name, worker_card_file_name as canonical_worker_card_file_name,
+};
 use crate::skills::{SkillRegistry, SkillSpec};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::tools::{
@@ -685,12 +688,20 @@ fn build_inner_visible_prompt_mapping(
     let global_tooling_file = global_dir.join("tooling.json");
     let global_defaults_card = global_dir.join("defaults.worker-card.json");
     let current_agent_id = normalize_inner_visible_agent_id(current_agent_id);
-    let current_agent_card = agents_dir.join(format!("{current_agent_id}.worker-card.json"));
+    let current_agent_card = resolve_inner_visible_agent_card_path(&agents_dir, &current_agent_id);
+    let default_agent_card =
+        resolve_inner_visible_agent_card_path(&agents_dir, DEFAULT_AGENT_ID_ALIAS);
+    let default_agent_note_path = default_agent_card
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("agents/{name}"))
+        .unwrap_or_else(|| "agents/__default__.worker-card.json".to_string());
     let default_agent_only_note = if current_agent_id == DEFAULT_AGENT_ID_ALIAS {
-        "当前为默认智能体 / default agent in use: agents/__default__.worker-card.json".to_string()
+        format!("当前为默认智能体 / default agent in use: {default_agent_note_path}")
     } else {
-        "当前为普通智能体 / non-default agent: do not edit agents/__default__.worker-card.json unless user explicitly asks"
-            .to_string()
+        format!(
+            "当前为普通智能体 / non-default agent: do not edit {default_agent_note_path} unless user explicitly asks"
+        )
     };
 
     let display = |path: &Path| -> String {
@@ -739,6 +750,28 @@ fn normalize_inner_visible_agent_id(agent_id: Option<&str>) -> String {
     } else {
         cleaned.to_string()
     }
+}
+
+fn resolve_inner_visible_agent_card_path(agents_dir: &Path, agent_id: &str) -> PathBuf {
+    if let Ok(entries) = std::fs::read_dir(agents_dir) {
+        let mut matched = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_file() {
+                    return None;
+                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let stable_id = stable_id_from_worker_card_file_name(&file_name)?;
+                (stable_id == agent_id).then(|| entry.path())
+            })
+            .collect::<Vec<_>>();
+        matched.sort();
+        if let Some(path) = matched.into_iter().next_back() {
+            return path;
+        }
+    }
+    agents_dir.join(canonical_worker_card_file_name(None, Some(agent_id)))
 }
 
 fn resolve_inner_visible_display_path(

@@ -2062,11 +2062,15 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                     entry.last_output_ts = Some(event.timestamp);
                     if event.event_type == "llm_output" {
                         let (input_tokens, output_tokens) = parse_usage_tokens(&event.data);
+                        let decode_output_tokens =
+                            parse_decode_output_tokens(&event.data).or(output_tokens);
                         if entry.input_tokens.is_none() {
                             entry.input_tokens = input_tokens;
                         }
-                        if entry.output_tokens.is_none() {
-                            entry.output_tokens = output_tokens;
+                        if let Some(tokens) = decode_output_tokens {
+                            if entry.output_tokens.is_none_or(|current| tokens > current) {
+                                entry.output_tokens = Some(tokens);
+                            }
                         }
                         if entry.prefill_duration_s.is_none() {
                             entry.prefill_duration_s =
@@ -2090,8 +2094,12 @@ fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<S
                     if entry.input_tokens.is_none() {
                         entry.input_tokens = parse_i64_value(event.data.get("input_tokens"));
                     }
-                    if entry.output_tokens.is_none() {
-                        entry.output_tokens = parse_i64_value(event.data.get("output_tokens"));
+                    let decode_output_tokens = parse_decode_output_tokens(&event.data)
+                        .or_else(|| parse_i64_value(event.data.get("output_tokens")));
+                    if let Some(tokens) = decode_output_tokens {
+                        if entry.output_tokens.is_none_or(|current| tokens > current) {
+                            entry.output_tokens = Some(tokens);
+                        }
                     }
                     if entry.prefill_duration_s.is_none() {
                         entry.prefill_duration_s =
@@ -2290,6 +2298,14 @@ fn parse_usage_tokens(data: &Value) -> (Option<i64>, Option<i64>) {
         parse_i64_value(usage.get("input_tokens")),
         parse_i64_value(usage.get("output_tokens")),
     )
+}
+
+fn parse_decode_output_tokens(data: &Value) -> Option<i64> {
+    parse_i64_value(data.get("decode_output_tokens")).or_else(|| {
+        data.get("usage")
+            .and_then(Value::as_object)
+            .and_then(|usage| parse_i64_value(usage.get("decode_output_tokens")))
+    })
 }
 
 fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
@@ -2747,10 +2763,10 @@ fn localize_summary(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        derive_effective_context_tokens, should_skip_event_for_profile, trim_string_fields,
-        MonitorEvent, MonitorLogProfile,
+        build_llm_speed_summary, derive_effective_context_tokens, should_skip_event_for_profile,
+        trim_string_fields, MonitorEvent, MonitorLogProfile,
     };
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::VecDeque;
 
     #[test]
@@ -2847,5 +2863,42 @@ mod tests {
             data: json!({ "context_tokens": 1234 }),
         });
         assert_eq!(derive_effective_context_tokens(&events), None);
+    }
+
+    #[test]
+    fn llm_speed_summary_prefers_decode_output_tokens() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "llm_request".to_string(),
+            data: json!({ "model_round": 1 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 3.0,
+            event_type: "token_usage".to_string(),
+            data: json!({
+                "model_round": 1,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "decode_output_tokens": 120,
+                "prefill_duration_s": 0.5,
+                "decode_duration_s": 2.0
+            }),
+        });
+        let summary = build_llm_speed_summary(&events);
+        assert_eq!(
+            summary.get("decode_tokens").and_then(Value::as_i64),
+            Some(120)
+        );
+        assert_eq!(
+            summary.get("decode_duration_s").and_then(Value::as_f64),
+            Some(2.0)
+        );
+        assert_eq!(
+            summary.get("decode_speed_tps").and_then(Value::as_f64),
+            Some(60.0)
+        );
     }
 }

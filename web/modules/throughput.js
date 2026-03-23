@@ -60,8 +60,10 @@ let throughputSessionPrefix = "";
 let throughputThreadFilter = "all";
 let currentTotalPrefillSpeed = null;
 let currentTotalDecodeSpeed = null;
+let currentTotalDecodeSpeedStreamChunk = null;
 let currentSinglePrefillSpeed = null;
 let currentSingleDecodeSpeed = null;
+let currentSingleDecodeSpeedStreamChunk = null;
 let pendingModelName = "";
 let currentRunSnapshot = null;
 
@@ -439,6 +441,41 @@ const formatTokenRate = (value, options = {}) => {
   return `${prefix}${scaled.toFixed(decimals)}${unit}${suffix}`;
 };
 
+const formatDriftPercent = (primary, approx) => {
+  const main = Number(primary);
+  const alt = Number(approx);
+  if (!Number.isFinite(main) || main <= 0 || !Number.isFinite(alt) || alt <= 0) {
+    return "-";
+  }
+  const drift = Math.abs(((alt - main) / main) * 100);
+  if (!Number.isFinite(drift)) {
+    return "-";
+  }
+  if (drift >= 100) {
+    return `${drift.toFixed(0)}%`;
+  }
+  if (drift >= 10) {
+    return `${drift.toFixed(1)}%`;
+  }
+  return `${drift.toFixed(2)}%`;
+};
+
+const formatDecodeRateWithStreamChunk = (value, streamChunkValue, options = {}) => {
+  const primary = formatTokenRate(value, options);
+  if (primary === "-") {
+    return "-";
+  }
+  const streamChunk = formatTokenRate(streamChunkValue, options);
+  if (streamChunk === "-") {
+    return primary;
+  }
+  const drift = formatDriftPercent(value, streamChunkValue);
+  if (drift === "-") {
+    return `${primary} (${t("throughput.metric.streamChunkApprox")}${streamChunk})`;
+  }
+  return `${primary} (${t("throughput.metric.streamChunkApprox")}${streamChunk}, ${t("throughput.metric.streamChunkDrift")}:${drift})`;
+};
+
 const parseTimestampMs = (value) => {
   if (!value) {
     return null;
@@ -671,17 +708,27 @@ const applySpeedMetrics = () => {
     elements.throughputTotalPrefillSpeed.textContent = formatTokenRate(currentTotalPrefillSpeed);
   }
   if (elements.throughputTotalDecodeSpeed) {
-    elements.throughputTotalDecodeSpeed.textContent = formatTokenRate(currentTotalDecodeSpeed);
+    elements.throughputTotalDecodeSpeed.textContent = formatDecodeRateWithStreamChunk(
+      currentTotalDecodeSpeed,
+      currentTotalDecodeSpeedStreamChunk
+    );
   }
   if (elements.throughputSinglePrefillSpeed) {
     elements.throughputSinglePrefillSpeed.textContent = formatTokenRate(currentSinglePrefillSpeed);
   }
   if (elements.throughputSingleDecodeSpeed) {
-    elements.throughputSingleDecodeSpeed.textContent = formatTokenRate(currentSingleDecodeSpeed);
+    elements.throughputSingleDecodeSpeed.textContent = formatDecodeRateWithStreamChunk(
+      currentSingleDecodeSpeed,
+      currentSingleDecodeSpeedStreamChunk
+    );
   }
   if (elements.throughputThreadSingleDecodeSpeed) {
     elements.throughputThreadSingleDecodeSpeed.textContent =
-      formatTokenRate(currentSingleDecodeSpeed, { withUnit: false });
+      formatDecodeRateWithStreamChunk(
+        currentSingleDecodeSpeed,
+        currentSingleDecodeSpeedStreamChunk,
+        { withUnit: false }
+      );
   }
   if (elements.throughputThreadSinglePrefillSpeed) {
     elements.throughputThreadSinglePrefillSpeed.textContent =
@@ -689,15 +736,21 @@ const applySpeedMetrics = () => {
   }
 };
 
-const setTotalSpeedMetrics = (prefill, decode) => {
+const setTotalSpeedMetrics = (prefill, decode, decodeStreamChunk = null) => {
   currentTotalPrefillSpeed = Number.isFinite(prefill) ? prefill : null;
   currentTotalDecodeSpeed = Number.isFinite(decode) ? decode : null;
+  currentTotalDecodeSpeedStreamChunk = Number.isFinite(decodeStreamChunk)
+    ? decodeStreamChunk
+    : null;
   applySpeedMetrics();
 };
 
-const setSingleSpeedMetrics = (prefill, decode) => {
+const setSingleSpeedMetrics = (prefill, decode, decodeStreamChunk = null) => {
   currentSinglePrefillSpeed = Number.isFinite(prefill) ? prefill : null;
   currentSingleDecodeSpeed = Number.isFinite(decode) ? decode : null;
+  currentSingleDecodeSpeedStreamChunk = Number.isFinite(decodeStreamChunk)
+    ? decodeStreamChunk
+    : null;
   applySpeedMetrics();
 };
 
@@ -924,11 +977,11 @@ const collectSessionSpeedStats = (sessions, tokenKey, durationKey, speedKey) => 
 
 const computeAverageSpeed = (sessions, tokenKey, durationKey, speedKey) => {
   const stats = collectSessionSpeedStats(sessions, tokenKey, durationKey, speedKey);
-  if (stats.tokensTotal > 0 && stats.durationTotal > 0) {
-    return stats.tokensTotal / stats.durationTotal;
-  }
   if (stats.speedCount > 0) {
     return stats.speedSum / stats.speedCount;
+  }
+  if (stats.tokensTotal > 0 && stats.durationTotal > 0) {
+    return stats.tokensTotal / stats.durationTotal;
   }
   return null;
 };
@@ -1065,7 +1118,7 @@ const loadThroughputSessions = async (options = {}) => {
         "decode_speed_tps"
       );
       if (Number.isFinite(prefillSpeed) || Number.isFinite(decodeSpeed)) {
-        setSingleSpeedMetrics(prefillSpeed, decodeSpeed);
+        setSingleSpeedMetrics(prefillSpeed, decodeSpeed, null);
       }
       const totalPrefillSpeed = computeSumSpeed(
         concurrencySessions,
@@ -1080,7 +1133,7 @@ const loadThroughputSessions = async (options = {}) => {
         "decode_speed_tps"
       );
       if (Number.isFinite(totalPrefillSpeed) || Number.isFinite(totalDecodeSpeed)) {
-        setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed);
+        setTotalSpeedMetrics(totalPrefillSpeed, totalDecodeSpeed, null);
       }
     }
   } catch (error) {
@@ -1515,10 +1568,19 @@ const resolveSpeedMetrics = (sample) => {
   if (!Number.isFinite(singleDecode) || singleDecode <= 0) {
     singleDecode = Number.isFinite(legacyDecode) && legacyDecode > 0 ? legacyDecode : NaN;
   }
+  let singleDecodeStreamChunk = Number(sample.single_decode_speed_stream_chunk_tps);
+  if (!Number.isFinite(singleDecodeStreamChunk) || singleDecodeStreamChunk <= 0) {
+    singleDecodeStreamChunk = NaN;
+  }
   const totalPrefillRaw = Number(sample.total_prefill_speed_tps);
   const totalDecodeRaw = Number(sample.total_decode_speed_tps);
+  const totalDecodeStreamChunkRaw = Number(sample.total_decode_speed_stream_chunk_tps);
   let totalPrefill = Number.isFinite(totalPrefillRaw) && totalPrefillRaw > 0 ? totalPrefillRaw : NaN;
   let totalDecode = Number.isFinite(totalDecodeRaw) && totalDecodeRaw > 0 ? totalDecodeRaw : NaN;
+  let totalDecodeStreamChunk =
+    Number.isFinite(totalDecodeStreamChunkRaw) && totalDecodeStreamChunkRaw > 0
+      ? totalDecodeStreamChunkRaw
+      : NaN;
   if (
     (!Number.isFinite(totalPrefill) || totalPrefill <= 0) &&
     Number.isFinite(singlePrefill) &&
@@ -1535,6 +1597,14 @@ const resolveSpeedMetrics = (sample) => {
   ) {
     totalDecode = singleDecode * concurrency;
   }
+  if (
+    (!Number.isFinite(totalDecodeStreamChunk) || totalDecodeStreamChunk <= 0) &&
+    Number.isFinite(singleDecodeStreamChunk) &&
+    Number.isFinite(concurrency) &&
+    concurrency > 0
+  ) {
+    totalDecodeStreamChunk = singleDecodeStreamChunk * concurrency;
+  }
   if ((!Number.isFinite(singlePrefill) || singlePrefill <= 0) && Number.isFinite(totalPrefill)) {
     if (Number.isFinite(concurrency) && concurrency > 0) {
       singlePrefill = totalPrefill / concurrency;
@@ -1545,11 +1615,21 @@ const resolveSpeedMetrics = (sample) => {
       singleDecode = totalDecode / concurrency;
     }
   }
+  if (
+    (!Number.isFinite(singleDecodeStreamChunk) || singleDecodeStreamChunk <= 0) &&
+    Number.isFinite(totalDecodeStreamChunk)
+  ) {
+    if (Number.isFinite(concurrency) && concurrency > 0) {
+      singleDecodeStreamChunk = totalDecodeStreamChunk / concurrency;
+    }
+  }
   return {
     singlePrefill,
     singleDecode,
+    singleDecodeStreamChunk,
     totalPrefill,
     totalDecode,
+    totalDecodeStreamChunk,
   };
 };
 
@@ -1567,10 +1647,18 @@ const applyReportSampleSpeedMetrics = (concurrency) => {
   const hasTotal =
     Number.isFinite(metrics.totalPrefill) || Number.isFinite(metrics.totalDecode);
   if (hasSingle) {
-    setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
+    setSingleSpeedMetrics(
+      metrics.singlePrefill,
+      metrics.singleDecode,
+      metrics.singleDecodeStreamChunk
+    );
   }
   if (hasTotal) {
-    setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+    setTotalSpeedMetrics(
+      metrics.totalPrefill,
+      metrics.totalDecode,
+      metrics.totalDecodeStreamChunk
+    );
   }
   return hasSingle || hasTotal;
 };
@@ -1586,8 +1674,12 @@ const applyHistorySpeedMetrics = (report) => {
   if (!metrics) {
     return;
   }
-  setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
-  setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+  setSingleSpeedMetrics(
+    metrics.singlePrefill,
+    metrics.singleDecode,
+    metrics.singleDecodeStreamChunk
+  );
+  setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode, metrics.totalDecodeStreamChunk);
 };
 
 const applyLiveSpeedMetrics = (report) => {
@@ -1603,10 +1695,18 @@ const applyLiveSpeedMetrics = (report) => {
     return;
   }
   if (Number.isFinite(metrics.singlePrefill) || Number.isFinite(metrics.singleDecode)) {
-    setSingleSpeedMetrics(metrics.singlePrefill, metrics.singleDecode);
+    setSingleSpeedMetrics(
+      metrics.singlePrefill,
+      metrics.singleDecode,
+      metrics.singleDecodeStreamChunk
+    );
   }
   if (Number.isFinite(metrics.totalPrefill) || Number.isFinite(metrics.totalDecode)) {
-    setTotalSpeedMetrics(metrics.totalPrefill, metrics.totalDecode);
+    setTotalSpeedMetrics(
+      metrics.totalPrefill,
+      metrics.totalDecode,
+      metrics.totalDecodeStreamChunk
+    );
   }
 };
 
@@ -1720,6 +1820,8 @@ const buildCsv = (report) => {
     "single_prefill_speed_tps",
     "total_decode_speed_tps",
     "single_decode_speed_tps",
+    "total_decode_speed_stream_chunk_tps",
+    "single_decode_speed_stream_chunk_tps",
     "input_tokens",
     "output_tokens",
     "total_tokens",
@@ -1753,6 +1855,8 @@ const buildCsv = (report) => {
       row.single_prefill_speed_tps ?? "",
       row.total_decode_speed_tps ?? "",
       row.single_decode_speed_tps ?? "",
+      row.total_decode_speed_stream_chunk_tps ?? "",
+      row.single_decode_speed_stream_chunk_tps ?? "",
       row.input_tokens ?? "",
       row.output_tokens ?? "",
       row.total_tokens ?? "",
@@ -1918,11 +2022,17 @@ const buildHtmlReport = (report, options = {}) => {
     },
     {
       label: t("throughput.metric.totalDecodeSpeed"),
-      value: formatTokenRate(speedMetrics?.totalDecode),
+      value: formatDecodeRateWithStreamChunk(
+        speedMetrics?.totalDecode,
+        speedMetrics?.totalDecodeStreamChunk
+      ),
     },
     {
       label: t("throughput.metric.singleDecodeSpeed"),
-      value: formatTokenRate(speedMetrics?.singleDecode),
+      value: formatDecodeRateWithStreamChunk(
+        speedMetrics?.singleDecode,
+        speedMetrics?.singleDecodeStreamChunk
+      ),
     },
   ];
   const summaryRowsHtml = summaryRows
@@ -1958,11 +2068,19 @@ const buildHtmlReport = (report, options = {}) => {
     },
     {
       label: t("throughput.metric.totalDecodeSpeed"),
-      value: (sample) => formatTokenRate(sample.total_decode_speed_tps),
+      value: (sample) =>
+        formatDecodeRateWithStreamChunk(
+          sample.total_decode_speed_tps,
+          sample.total_decode_speed_stream_chunk_tps
+        ),
     },
     {
       label: t("throughput.metric.singleDecodeSpeed"),
-      value: (sample) => formatTokenRate(sample.single_decode_speed_tps),
+      value: (sample) =>
+        formatDecodeRateWithStreamChunk(
+          sample.single_decode_speed_tps,
+          sample.single_decode_speed_stream_chunk_tps
+        ),
     },
     {
       label: t("throughput.metric.inputTokens"),

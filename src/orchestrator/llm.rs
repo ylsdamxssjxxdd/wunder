@@ -310,8 +310,13 @@ impl Orchestrator {
                 let content = i18n::t("error.llm_not_configured");
                 let usage = self.estimate_token_usage(messages, &content, "");
                 if emit_events {
-                    let mut output_payload =
-                        json!({ "content": content, "reasoning": "", "usage": usage });
+                    let decode_output_tokens = usage.total.saturating_sub(usage.input);
+                    let mut output_payload = json!({
+                        "content": content,
+                        "reasoning": "",
+                        "usage": usage,
+                        "decode_output_tokens": decode_output_tokens,
+                    });
                     if let Value::Object(ref mut map) = output_payload {
                         round_info.insert_into(map);
                     }
@@ -320,6 +325,7 @@ impl Orchestrator {
                         "input_tokens": usage.input,
                         "output_tokens": usage.output,
                         "total_tokens": usage.total,
+                        "decode_output_tokens": decode_output_tokens,
                     });
                     if let Value::Object(ref mut map) = usage_payload {
                         round_info.insert_into(map);
@@ -399,7 +405,7 @@ impl Orchestrator {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
-                        if !delta.is_empty() {
+                        if !delta.is_empty() || !reasoning_delta.is_empty() {
                             timing.lock().mark_output(Instant::now());
                         }
                         if emit_events {
@@ -480,12 +486,14 @@ impl Orchestrator {
                     } else {
                         (None, None)
                     };
+                    let decode_output_tokens = usage.total.saturating_sub(usage.input);
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({
                             "content": content,
                             "reasoning": reasoning,
                             "usage": usage,
+                            "decode_output_tokens": decode_output_tokens,
                             "tool_calls": tool_calls_snapshot,
                             "prefill_duration_s": prefill_duration_s,
                             "decode_duration_s": decode_duration_s,
@@ -498,6 +506,7 @@ impl Orchestrator {
                             "input_tokens": usage.input,
                             "output_tokens": usage.output,
                             "total_tokens": usage.total,
+                            "decode_output_tokens": decode_output_tokens,
                             "prefill_duration_s": prefill_duration_s,
                             "decode_duration_s": decode_duration_s,
                         });

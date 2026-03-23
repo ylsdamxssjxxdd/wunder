@@ -113,6 +113,21 @@ const sanitizeFilenamePart = (value: unknown): string => {
   return normalized || 'worker-card';
 };
 
+const sanitizeOptionalFilenamePart = (value: unknown): string => {
+  const raw = trimString(value);
+  return raw ? sanitizeFilenamePart(raw) : '';
+};
+
+const buildWorkerCardFilename = (displayName: unknown, stableId: unknown): string => {
+  const namePart = sanitizeOptionalFilenamePart(displayName);
+  const idPart = sanitizeOptionalFilenamePart(stableId);
+  const stem =
+    namePart && idPart && namePart !== idPart
+      ? `${namePart}--${idPart}`
+      : namePart || idPart || 'worker-card';
+  return `${stem}.worker-card.json`;
+};
+
 const joinPromptSections = (...parts: unknown[]): string =>
   parts
     .map((item) => trimString(item))
@@ -362,7 +377,7 @@ export const downloadWorkerCard = (value: Record<string, unknown> | null | undef
 };
 
 const downloadWorkerCardDocument = (document: WorkerCardDocument) => {
-  const filename = `${sanitizeFilenamePart(document.metadata.name || document.metadata.id || 'worker-card')}.worker-card.json`;
+  const filename = buildWorkerCardFilename(document.metadata.name, document.metadata.id);
   createDownload(filename, JSON.stringify(document, null, 2));
   return filename;
 };

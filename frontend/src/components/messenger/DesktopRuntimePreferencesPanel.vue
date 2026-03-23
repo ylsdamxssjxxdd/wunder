@@ -20,111 +20,95 @@
       </div>
     </div>
 
-    <div class="desktop-runtime-preferences-summary">
-      <div class="desktop-runtime-preferences-summary-card">
-        <span class="desktop-runtime-preferences-summary-label">{{ t('messenger.settings.versionNumber') }}</span>
-        <span class="desktop-runtime-preferences-summary-value">
-          {{ pythonRuntimeVersion || '-' }}
+    <div class="desktop-runtime-preferences-block">
+      <label class="desktop-runtime-preferences-field">
+        <span class="desktop-runtime-preferences-field-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
+        <div class="desktop-runtime-preferences-editor">
+          <el-input
+            v-model="pythonPathDraft"
+            clearable
+            class="desktop-runtime-preferences-input"
+            :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
+          />
+          <div class="desktop-runtime-preferences-action-row">
+            <el-button
+              class="desktop-runtime-preferences-btn desktop-runtime-preferences-btn--primary"
+              :loading="savingPythonPath"
+              :disabled="!pythonPathDirty"
+              @click="savePythonPath()"
+            >
+              {{ t('desktop.common.save') }}
+            </el-button>
+            <el-button class="desktop-runtime-preferences-btn" @click="openPythonPathPicker">
+              {{ t('desktop.common.browse') }}
+            </el-button>
+            <el-button
+              v-if="supplementImportSupported"
+              class="desktop-runtime-preferences-btn"
+              :loading="importingSupplement"
+              @click="handleImportSupplementPackage"
+            >
+              {{ t('desktop.system.pythonSupplementImport') }}
+            </el-button>
+            <el-button
+              class="desktop-runtime-preferences-btn"
+              :disabled="!pythonPathDraft.trim() && !configuredPythonPath"
+              @click="resetPythonPath"
+            >
+              {{ t('desktop.system.pythonInterpreterReset') }}
+            </el-button>
+          </div>
+        </div>
+        <span class="desktop-runtime-preferences-field-hint">
+          {{ t('desktop.system.pythonInterpreterHint') }}
         </span>
-      </div>
-      <div class="desktop-runtime-preferences-summary-card desktop-runtime-preferences-summary-card--wide">
-        <span class="desktop-runtime-preferences-summary-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
+        <span v-if="supplementImportSupported" class="desktop-runtime-preferences-field-hint">
+          {{ t('desktop.system.pythonSupplementImportHint') }}
+        </span>
         <span
-          class="desktop-runtime-preferences-summary-value desktop-runtime-preferences-summary-value--mono"
-          :title="pythonRuntimeBin || '-'"
+          class="desktop-runtime-preferences-field-state"
+          :class="{ 'desktop-runtime-preferences-field-state--warning': showConfiguredPythonWarning }"
         >
-          {{ pythonRuntimeBin || '-' }}
+          {{ pythonInterpreterStateHint }}
         </span>
-      </div>
-      <div class="desktop-runtime-preferences-summary-card">
-        <span class="desktop-runtime-preferences-summary-label">{{ t('desktop.system.pythonInterpreterTitle') }}</span>
-        <span class="desktop-runtime-preferences-summary-value">
-          {{ pythonRuntimeSourceLabel }}
-        </span>
-      </div>
+      </label>
     </div>
 
-    <label class="desktop-runtime-preferences-field">
-      <span class="desktop-runtime-preferences-field-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
-      <div class="desktop-runtime-preferences-editor">
-        <el-input
-          v-model="pythonPathDraft"
-          clearable
-          class="desktop-runtime-preferences-input"
-          :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
-        />
-        <div class="desktop-runtime-preferences-action-row">
-          <el-button
-            class="desktop-runtime-preferences-btn desktop-runtime-preferences-btn--primary"
-            :loading="savingPythonPath"
-            :disabled="!pythonPathDirty"
-            @click="savePythonPath()"
-          >
-            {{ t('desktop.common.save') }}
-          </el-button>
-          <el-button class="desktop-runtime-preferences-btn" @click="openPythonPathPicker">
-            {{ t('desktop.common.browse') }}
-          </el-button>
-          <el-button
-            v-if="supplementImportSupported"
-            class="desktop-runtime-preferences-btn"
-            :loading="importingSupplement"
-            @click="handleImportSupplementPackage"
-          >
-            {{ t('desktop.system.pythonSupplementImport') }}
-          </el-button>
-          <el-button
-            class="desktop-runtime-preferences-btn"
-            :disabled="!pythonPathDraft.trim() && !configuredPythonPath"
-            @click="resetPythonPath"
-          >
-            {{ t('desktop.system.pythonInterpreterReset') }}
-          </el-button>
+    <div v-if="launchAtLoginSupported || windowCloseBehaviorSupported" class="desktop-runtime-preferences-controls">
+      <div v-if="launchAtLoginSupported" class="desktop-runtime-preferences-row">
+        <div class="desktop-runtime-preferences-row-main">
+          <div class="desktop-runtime-preferences-row-title">{{ t('desktop.system.startAtLogin') }}</div>
+          <div class="desktop-runtime-preferences-row-hint">{{ t('desktop.system.startAtLoginHint') }}</div>
+        </div>
+        <div class="desktop-runtime-preferences-row-control desktop-runtime-preferences-row-control--switch">
+          <el-switch
+            v-model="launchAtLoginEnabled"
+            :loading="launchAtLoginLoading"
+            :disabled="launchAtLoginLoading"
+            @change="handleLaunchAtLoginChange"
+          />
         </div>
       </div>
-      <span class="desktop-runtime-preferences-field-hint">
-        {{ t('desktop.system.pythonInterpreterHint') }}
-      </span>
-      <span v-if="supplementImportSupported" class="desktop-runtime-preferences-field-hint">
-        {{ t('desktop.system.pythonSupplementImportHint') }}
-      </span>
-      <span
-        class="desktop-runtime-preferences-field-state"
-        :class="{ 'desktop-runtime-preferences-field-state--warning': showConfiguredPythonWarning }"
-      >
-        {{ pythonInterpreterStateHint }}
-      </span>
-    </label>
 
-    <div v-if="launchAtLoginSupported" class="desktop-runtime-preferences-row">
-      <div class="desktop-runtime-preferences-row-main">
-        <div class="desktop-runtime-preferences-row-title">{{ t('desktop.system.startAtLogin') }}</div>
-        <div class="desktop-runtime-preferences-row-hint">{{ t('desktop.system.startAtLoginHint') }}</div>
-      </div>
-      <el-switch
-        v-model="launchAtLoginEnabled"
-        :loading="launchAtLoginLoading"
-        :disabled="launchAtLoginLoading"
-        @change="handleLaunchAtLoginChange"
-      />
-    </div>
-
-    <div v-if="windowCloseBehaviorSupported" class="desktop-runtime-preferences-row">
-      <div class="desktop-runtime-preferences-row-main">
-        <div class="desktop-runtime-preferences-row-title">{{ t('messenger.settings.windowCloseBehavior') }}</div>
-        <div class="desktop-runtime-preferences-row-hint">
-          {{ t('messenger.settings.windowCloseBehaviorHint') }}
+      <div v-if="windowCloseBehaviorSupported" class="desktop-runtime-preferences-row">
+        <div class="desktop-runtime-preferences-row-main">
+          <div class="desktop-runtime-preferences-row-title">{{ t('messenger.settings.windowCloseBehavior') }}</div>
+          <div class="desktop-runtime-preferences-row-hint">
+            {{ t('messenger.settings.windowCloseBehaviorHint') }}
+          </div>
+        </div>
+        <div class="desktop-runtime-preferences-row-control">
+          <el-select
+            v-model="windowCloseBehavior"
+            class="desktop-runtime-preferences-select"
+            :disabled="windowCloseBehaviorLoading"
+            @change="handleWindowCloseBehaviorChange"
+          >
+            <el-option :label="t('messenger.settings.windowCloseBehaviorHide')" value="tray" />
+            <el-option :label="t('messenger.settings.windowCloseBehaviorQuit')" value="quit" />
+          </el-select>
         </div>
       </div>
-      <el-select
-        v-model="windowCloseBehavior"
-        class="desktop-runtime-preferences-select"
-        :disabled="windowCloseBehaviorLoading"
-        @change="handleWindowCloseBehaviorChange"
-      >
-        <el-option :label="t('messenger.settings.windowCloseBehaviorHide')" value="tray" />
-        <el-option :label="t('messenger.settings.windowCloseBehaviorQuit')" value="quit" />
-      </el-select>
     </div>
   </section>
 
@@ -253,9 +237,6 @@ const pythonPathDraft = ref('');
 const configuredPythonPath = ref('');
 const configuredPythonPathValid = ref(true);
 const pythonRuntimeBin = ref('');
-const pythonRuntimeVersion = ref('');
-const pythonRuntimeSource = ref('');
-const pythonRuntimeBundled = ref(true);
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
 const launchAtLoginEnabled = ref(false);
@@ -297,18 +278,6 @@ const pythonInterpreterStateHint = computed(() => {
     return t('desktop.system.pythonInterpreterCustomHint');
   }
   return t('desktop.system.pythonInterpreterBundledHint');
-});
-const pythonRuntimeSourceLabel = computed(() => {
-  const source = String(pythonRuntimeSource.value || '').trim().toLowerCase();
-  if (source === 'settings') return t('desktop.system.pythonInterpreterSource.settings');
-  if (source === 'env') return t('desktop.system.pythonInterpreterSource.env');
-  if (source === 'path') return t('desktop.system.pythonInterpreterSource.path');
-  if (source === 'venv') return t('desktop.system.pythonInterpreterSource.venv');
-  if (source === 'none') return t('desktop.system.pythonInterpreterSource.none');
-  if (source === 'bundled' || pythonRuntimeBundled.value) {
-    return t('desktop.system.pythonInterpreterSource.bundled');
-  }
-  return t('desktop.system.pythonInterpreterSource.none');
 });
 
 function normalizePathForCompare(value: string): string {
@@ -378,15 +347,9 @@ function applySettingsData(data: DesktopSettingsData | Record<string, unknown> |
 function applyFallbackPythonRuntimeInfo() {
   if (configuredPythonPath.value) {
     pythonRuntimeBin.value = configuredPythonPath.value;
-    pythonRuntimeVersion.value = '';
-    pythonRuntimeSource.value = 'settings';
-    pythonRuntimeBundled.value = false;
     return;
   }
   pythonRuntimeBin.value = '';
-  pythonRuntimeVersion.value = '';
-  pythonRuntimeSource.value = 'bundled';
-  pythonRuntimeBundled.value = true;
 }
 
 function resolveInitialPickerPath(): string | undefined {
@@ -438,10 +401,7 @@ async function loadPythonRuntimeInfo() {
     if (disposed) return;
     const source = payload && typeof payload === 'object' ? payload : {};
     pythonRuntimeBin.value = String(source.bin || '').trim();
-    pythonRuntimeVersion.value = String(source.version || '').trim();
-    pythonRuntimeSource.value = String(source.source || '').trim();
-    pythonRuntimeBundled.value = source.bundled !== false;
-    if (!pythonRuntimeBin.value && !pythonRuntimeSource.value) {
+    if (!pythonRuntimeBin.value) {
       applyFallbackPythonRuntimeInfo();
     }
   } catch (error) {
@@ -699,6 +659,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   display: grid;
   gap: 14px;
+  overflow: hidden;
 }
 
 .desktop-runtime-preferences-head {
@@ -731,41 +692,12 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.desktop-runtime-preferences-summary {
-  display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.desktop-runtime-preferences-summary-card {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
+.desktop-runtime-preferences-block {
   border: 1px solid var(--portal-border, #d8dee8);
   border-radius: 14px;
   background: var(--portal-surface, #f8fafc);
+  padding: 12px;
   min-width: 0;
-}
-
-.desktop-runtime-preferences-summary-card--wide {
-  grid-column: span 2;
-}
-
-.desktop-runtime-preferences-summary-label {
-  color: var(--portal-muted, #6b7280);
-  font-size: 12px;
-}
-
-.desktop-runtime-preferences-summary-value {
-  color: var(--portal-text, #1f2937);
-  font-size: 13px;
-  line-height: 1.6;
-  min-width: 0;
-  word-break: break-all;
-}
-
-.desktop-runtime-preferences-summary-value--mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 .desktop-runtime-preferences-field {
@@ -787,6 +719,10 @@ onBeforeUnmount(() => {
 .desktop-runtime-preferences-input,
 .desktop-runtime-preferences-select {
   width: 100%;
+}
+
+.desktop-runtime-preferences-select {
+  min-width: 220px;
 }
 
 .desktop-runtime-preferences-action-row {
@@ -812,11 +748,10 @@ onBeforeUnmount(() => {
 
 .desktop-runtime-preferences-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
   gap: 14px;
   align-items: center;
-  padding-top: 14px;
-  border-top: 1px solid var(--portal-border, #e5e7eb);
+  min-width: 0;
 }
 
 .desktop-runtime-preferences-row-main {
@@ -835,6 +770,33 @@ onBeforeUnmount(() => {
   color: var(--portal-muted, #6b7280);
   font-size: 12px;
   line-height: 1.6;
+}
+
+.desktop-runtime-preferences-controls {
+  border: 1px solid var(--portal-border, #d8dee8);
+  border-radius: 14px;
+  background: var(--portal-surface, #f8fafc);
+  padding: 0 12px;
+  overflow: hidden;
+}
+
+.desktop-runtime-preferences-controls .desktop-runtime-preferences-row {
+  padding: 12px 0;
+}
+
+.desktop-runtime-preferences-controls .desktop-runtime-preferences-row + .desktop-runtime-preferences-row {
+  border-top: 1px solid var(--portal-border, #e5e7eb);
+}
+
+.desktop-runtime-preferences-row-control {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+}
+
+.desktop-runtime-preferences-row-control--switch {
+  min-height: 40px;
 }
 
 .desktop-runtime-preferences-picker {
@@ -979,16 +941,16 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .desktop-runtime-preferences-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .desktop-runtime-preferences-summary-card--wide {
-    grid-column: auto;
-  }
-
   .desktop-runtime-preferences-row {
     grid-template-columns: 1fr;
+  }
+
+  .desktop-runtime-preferences-row-control {
+    justify-content: flex-start;
+  }
+
+  .desktop-runtime-preferences-select {
+    min-width: 0;
   }
 }
 </style>

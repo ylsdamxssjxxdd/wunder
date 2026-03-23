@@ -1,3 +1,6 @@
+LangString WunderDataCleanupSectionName 1033 "Delete local temp cache (WUNDER_TEMPD)"
+LangString WunderDataCleanupSectionName 2052 "删除本地临时缓存（WUNDER_TEMPD）"
+
 !macro customInstall
   ${if} ${FileExists} "$INSTDIR\resources\wunder-cli.exe"
     CopyFiles /SILENT "$INSTDIR\resources\wunder-cli.exe" "$INSTDIR\wunder-cli.exe"
@@ -21,4 +24,16 @@
 !macro customUnInstall
   Delete "$INSTDIR\wunder-cli.exe"
   Delete "$INSTDIR\README-win7-supplement.txt"
+!macroend
+
+!macro customUnInstallSection
+  Section /o "un.$(WunderDataCleanupSectionName)"
+    SetShellVarContext current
+    # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
+    RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"
+    RMDir /r "$APPDATA\wunder-desktop-electron-win7\WUNDER_TEMPD"
+    # Trim verified app-data roots only when they become empty after temp cleanup.
+    RMDir "$APPDATA\wunder-desktop-electron"
+    RMDir "$APPDATA\wunder-desktop-electron-win7"
+  SectionEnd
 !macroend

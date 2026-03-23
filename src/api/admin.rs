@@ -23,9 +23,15 @@ use crate::performance::{
 use crate::services::default_agent_sync::{
     self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
 };
+use crate::services::inner_visible::build_worker_card;
+use crate::services::preset_worker_cards;
 use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
+};
+use crate::services::worker_card_settings::{
+    canonicalize_preset_config, collect_registry_skill_names, normalize_preset_icon_color,
+    normalize_preset_icon_name, normalize_preset_icon_parts,
 };
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -57,7 +63,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -285,6 +291,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/preset_agents",
             get(admin_preset_agents_list).post(admin_preset_agents_update),
+        )
+        .route(
+            "/wunder/admin/preset_agents/{preset_id}/worker_card",
+            get(admin_preset_agent_worker_card),
         )
         .route(
             "/wunder/admin/preset_agents/sync",
@@ -4037,25 +4047,122 @@ async fn admin_preset_agents_update(
     Json(payload): Json<PresetAgentsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let current = state.config_store.get().await;
-    let normalized = normalize_preset_agents(&current.user_agents.presets, payload.items)?;
-    let next_presets = normalized.clone();
-    state
-        .config_store
-        .update(move |config| {
-            config.user_agents.presets = next_presets;
-        })
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let skill_name_keys = {
+        let registry = state.skills.read().await;
+        collect_registry_skill_names(&registry)
+    };
+    let existing_items = match preset_worker_cards::load_effective_preset_configs(
+        &current,
+        &skill_name_keys,
+    ) {
+        Ok(items) => items,
+        Err(err) => {
+            warn!("failed to load preset worker cards before admin save: {err}");
+            current.user_agents.presets.clone()
+        }
+    };
+    let normalized = normalize_preset_agents(&existing_items, payload.items, &skill_name_keys)?;
+    let persisted_to_assets =
+        preset_worker_cards::persist_preset_configs(&current, &normalized, &skill_name_keys)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if persisted_to_assets {
+        if !current.user_agents.presets.is_empty() {
+            state
+                .config_store
+                .update(|config| {
+                    config.user_agents.presets.clear();
+                })
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+    } else {
+        let next_presets = normalized.clone();
+        state
+            .config_store
+            .update(move |config| {
+                config.user_agents.presets = next_presets;
+            })
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
     let items = admin_preset_agent_items(&state).await?;
     Ok(Json(json!({ "data": { "items": items } })))
 }
 
 async fn admin_preset_agent_items(state: &AppState) -> Result<Vec<Value>, Response> {
     let config = state.config_store.get().await;
-    let mut items = Vec::with_capacity(config.user_agents.presets.len() + 1);
+    let skill_name_keys = {
+        let registry = state.skills.read().await;
+        collect_registry_skill_names(&registry)
+    };
+    let configured = preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut items = Vec::with_capacity(configured.len() + 1);
     items.push(admin_default_preset_agent_payload(state).await?);
-    items.extend(config.user_agents.presets.iter().map(preset_agent_payload));
+    items.extend(
+        configured
+            .iter()
+            .filter_map(|preset| preset_agent_payload(preset, &skill_name_keys)),
+    );
     Ok(items)
+}
+
+async fn admin_preset_agent_worker_card(
+    State(state): State<Arc<AppState>>,
+    AxumPath(preset_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = preset_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "preset_id is required".to_string(),
+        ));
+    }
+    let skill_name_keys = {
+        let registry = state.skills.read().await;
+        collect_registry_skill_names(&registry)
+    };
+    if cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS) {
+        let record = load_effective_default_agent_record(&state, PRESET_TEMPLATE_USER_ID)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let document = build_worker_card(&record, None, None, &skill_name_keys);
+        let filename = preset_worker_cards::export_file_name_for_default_agent(&record);
+        return Ok(Json(json!({
+            "data": {
+                "filename": filename,
+                "document": document,
+            }
+        })));
+    }
+
+    let config = state.config_store.get().await;
+    let presets = preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let preset = presets
+        .into_iter()
+        .find(|item| item.preset_id == cleaned)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "preset agent not found".to_string(),
+            )
+        })?;
+    let document =
+        preset_worker_cards::worker_card_document_from_preset_config(&preset, &skill_name_keys)
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "failed to build preset worker card".to_string(),
+                )
+            })?;
+    let filename = preset_worker_cards::export_file_name_for_preset(&preset);
+    Ok(Json(json!({
+        "data": {
+            "filename": filename,
+            "document": document,
+        }
+    })))
 }
 
 async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, Response> {
@@ -4075,8 +4182,8 @@ async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, R
         "icon_color": icon_color,
         "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
         "tool_names": normalize_tool_list(record.tool_names),
-        "declared_tool_names": Vec::<String>::new(),
-        "declared_skill_names": Vec::<String>::new(),
+        "declared_tool_names": normalize_tool_list(record.declared_tool_names),
+        "declared_skill_names": normalize_tool_list(record.declared_skill_names),
         "preset_questions": normalize_preset_questions(record.preset_questions),
         "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
         "status": normalize_agent_status(Some(&record.status)),
@@ -5265,30 +5372,53 @@ fn external_link_payload(record: &ExternalLinkRecord) -> Value {
     })
 }
 
-fn preset_agent_payload(record: &UserAgentPresetConfig) -> Value {
-    json!({
-        "preset_id": resolve_preset_id(&record.preset_id, &record.name),
-        "revision": record.revision.max(1),
-        "name": record.name.trim(),
-        "description": record.description.trim(),
-        "system_prompt": record.system_prompt.trim(),
-        "model_name": user_agent_presets::normalize_optional_model_name(record.model_name.as_deref()),
-        "icon_name": normalize_preset_icon_name(Some(record.icon_name.as_str())),
-        "icon_color": normalize_preset_icon_color(Some(record.icon_color.as_str())),
-        "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
-        "tool_names": normalize_tool_list(record.tool_names.clone()),
-        "declared_tool_names": normalize_tool_list(record.declared_tool_names.clone()),
-        "declared_skill_names": normalize_tool_list(record.declared_skill_names.clone()),
-        "preset_questions": normalize_preset_questions(record.preset_questions.clone()),
-        "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
-        "status": normalize_agent_status(Some(&record.status)),
+fn preset_agent_payload(
+    record: &UserAgentPresetConfig,
+    skill_name_keys: &HashSet<String>,
+) -> Option<Value> {
+    let preset_id = resolve_preset_id(&record.preset_id, &record.name);
+    let normalized = canonicalize_preset_config(record, &preset_id, skill_name_keys)?;
+    let UserAgentPresetConfig {
+        revision,
+        name,
+        description,
+        system_prompt,
+        model_name,
+        icon_name,
+        icon_color,
+        sandbox_container_id,
+        tool_names,
+        declared_tool_names,
+        declared_skill_names,
+        preset_questions,
+        approval_mode,
+        status,
+        ..
+    } = normalized;
+    Some(json!({
+        "preset_id": preset_id,
+        "revision": revision.max(1),
+        "name": name.trim(),
+        "description": description.trim(),
+        "system_prompt": system_prompt.trim(),
+        "model_name": user_agent_presets::normalize_optional_model_name(model_name.as_deref()),
+        "icon_name": normalize_preset_icon_name(Some(icon_name.as_str())),
+        "icon_color": normalize_preset_icon_color(Some(icon_color.as_str())),
+        "sandbox_container_id": crate::storage::normalize_sandbox_container_id(sandbox_container_id),
+        "tool_names": normalize_tool_list(tool_names),
+        "declared_tool_names": normalize_tool_list(declared_tool_names),
+        "declared_skill_names": normalize_tool_list(declared_skill_names),
+        "preset_questions": normalize_preset_questions(preset_questions),
+        "approval_mode": normalize_agent_approval_mode(Some(&approval_mode)),
+        "status": normalize_agent_status(Some(&status)),
         "is_default_agent": false,
-    })
+    }))
 }
 
 fn normalize_preset_agents(
     existing_items: &[UserAgentPresetConfig],
     items: Vec<PresetAgentUpsertItem>,
+    skill_name_keys: &HashSet<String>,
 ) -> Result<Vec<UserAgentPresetConfig>, Response> {
     let existing_by_id = user_agent_presets::configs_by_preset_id(existing_items);
     let mut seen_names = HashSet::new();
@@ -5324,41 +5454,47 @@ fn normalize_preset_agents(
                 format!("duplicate preset agent id: {preset_id}"),
             ));
         }
-        let previous = existing_by_id.get(&preset_id);
-        let next_tool_names = normalize_tool_list(item.tool_names.unwrap_or_default());
-        let next_declared_tool_names =
-            normalize_tool_list(item.declared_tool_names.unwrap_or_default());
-        let next_declared_skill_names =
-            normalize_tool_list(item.declared_skill_names.unwrap_or_default());
-        let next_preset_questions =
-            normalize_preset_questions(item.preset_questions.unwrap_or_default());
-        let next_model_name =
-            user_agent_presets::normalize_optional_model_name(item.model_name.as_deref());
-        let next_approval_mode = normalize_agent_approval_mode(item.approval_mode.as_deref());
-        let next_status = normalize_agent_status(item.status.as_deref());
-        let revision_changed = previous.is_some_and(|prev| {
-            prev.name.trim() != cleaned_name
-                || prev.description.trim() != item.description.trim()
-                || prev.system_prompt.trim() != item.system_prompt.trim()
-                || user_agent_presets::normalize_optional_model_name(prev.model_name.as_deref())
-                    != next_model_name
-                || normalize_preset_icon_name(Some(prev.icon_name.as_str()))
-                    != normalize_preset_icon_name(item.icon_name.as_deref())
-                || normalize_preset_icon_color(Some(prev.icon_color.as_str()))
-                    != normalize_preset_icon_color(item.icon_color.as_deref())
-                || crate::storage::normalize_sandbox_container_id(prev.sandbox_container_id)
-                    != crate::storage::normalize_sandbox_container_id(
-                        item.sandbox_container_id.unwrap_or(1),
-                    )
-                || normalize_tool_list(prev.tool_names.clone()) != next_tool_names
-                || normalize_tool_list(prev.declared_tool_names.clone()) != next_declared_tool_names
-                || normalize_tool_list(prev.declared_skill_names.clone())
-                    != next_declared_skill_names
-                || normalize_preset_questions(prev.preset_questions.clone())
-                    != next_preset_questions
-                || normalize_agent_approval_mode(Some(&prev.approval_mode)) != next_approval_mode
-                || normalize_agent_status(Some(&prev.status)) != next_status
-        });
+        let previous = existing_by_id
+            .get(&preset_id)
+            .and_then(|prev| canonicalize_preset_config(prev, &preset_id, skill_name_keys));
+        let candidate = canonicalize_preset_config(
+            &UserAgentPresetConfig {
+                preset_id: preset_id.clone(),
+                revision: previous.as_ref().map(|prev| prev.revision).unwrap_or(1),
+                name: cleaned_name.to_string(),
+                description: item.description.trim().to_string(),
+                system_prompt: item.system_prompt.trim().to_string(),
+                model_name: user_agent_presets::normalize_optional_model_name(
+                    item.model_name.as_deref(),
+                ),
+                icon_name: normalize_preset_icon_name(item.icon_name.as_deref()),
+                icon_color: normalize_preset_icon_color(item.icon_color.as_deref()),
+                sandbox_container_id: crate::storage::normalize_sandbox_container_id(
+                    item.sandbox_container_id.unwrap_or(1),
+                ),
+                tool_names: normalize_tool_list(item.tool_names.unwrap_or_default()),
+                declared_tool_names: normalize_tool_list(
+                    item.declared_tool_names.unwrap_or_default(),
+                ),
+                declared_skill_names: normalize_tool_list(
+                    item.declared_skill_names.unwrap_or_default(),
+                ),
+                preset_questions: normalize_preset_questions(
+                    item.preset_questions.unwrap_or_default(),
+                ),
+                approval_mode: normalize_agent_approval_mode(item.approval_mode.as_deref()),
+                status: normalize_agent_status(item.status.as_deref()),
+            },
+            &preset_id,
+            skill_name_keys,
+        )
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "preset agent name is required".to_string(),
+            )
+        })?;
+        let revision_changed = previous.as_ref() != Some(&candidate);
         let revision = previous
             .map(|prev| {
                 if revision_changed {
@@ -5369,69 +5505,11 @@ fn normalize_preset_agents(
             })
             .unwrap_or(1);
         output.push(UserAgentPresetConfig {
-            preset_id,
             revision,
-            name: cleaned_name.to_string(),
-            description: item.description.trim().to_string(),
-            system_prompt: item.system_prompt.trim().to_string(),
-            model_name: next_model_name,
-            icon_name: normalize_preset_icon_name(item.icon_name.as_deref()),
-            icon_color: normalize_preset_icon_color(item.icon_color.as_deref()),
-            sandbox_container_id: crate::storage::normalize_sandbox_container_id(
-                item.sandbox_container_id.unwrap_or(1),
-            ),
-            tool_names: next_tool_names,
-            declared_tool_names: next_declared_tool_names,
-            declared_skill_names: next_declared_skill_names,
-            preset_questions: next_preset_questions,
-            approval_mode: next_approval_mode,
-            status: next_status,
+            ..candidate
         });
     }
     Ok(output)
-}
-
-fn normalize_preset_icon_name(raw: Option<&str>) -> String {
-    let cleaned = raw.unwrap_or_default().trim();
-    if cleaned.is_empty() {
-        return "spark".to_string();
-    }
-    if cleaned
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return cleaned.to_string();
-    }
-    "spark".to_string()
-}
-
-fn normalize_preset_icon_color(raw: Option<&str>) -> String {
-    raw.and_then(normalize_external_icon_color)
-        .unwrap_or_else(|| "#94a3b8".to_string())
-}
-
-fn normalize_preset_icon_parts(raw: Option<&str>) -> (String, String) {
-    let cleaned = raw.unwrap_or_default().trim();
-    if cleaned.is_empty() {
-        return (
-            normalize_preset_icon_name(None),
-            normalize_preset_icon_color(None),
-        );
-    }
-    if cleaned.starts_with('{') {
-        if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
-            let icon_name = normalize_preset_icon_name(value.get("name").and_then(Value::as_str));
-            let icon_color = value.get("color").and_then(Value::as_str).map_or_else(
-                || normalize_preset_icon_color(None),
-                |color| normalize_preset_icon_color(Some(color)),
-            );
-            return (icon_name, icon_color);
-        }
-    }
-    (
-        normalize_preset_icon_name(Some(cleaned)),
-        normalize_preset_icon_color(None),
-    )
 }
 
 fn normalize_external_link_levels(levels: Vec<i32>) -> Vec<i32> {

@@ -1409,7 +1409,12 @@ const handleEnterKeydown = async (event) => {
     }
     return;
   }
-  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+  if (event.shiftKey) {
+    return;
+  }
+  if (hasBackupSendModifier(event) || hasPrimarySendModifier(event)) {
+    event.preventDefault();
+    await handleSend();
     return;
   }
   event.preventDefault();

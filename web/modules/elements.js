@@ -375,6 +375,7 @@ export const elements = {
   presetAgentDetailTitle: document.getElementById("presetAgentDetailTitle"),
   presetAgentDetailMeta: document.getElementById("presetAgentDetailMeta"),
   presetAgentSaveBtn: document.getElementById("presetAgentSaveBtn"),
+  presetAgentExportBtn: document.getElementById("presetAgentExportBtn"),
   presetAgentSyncSafeBtn: document.getElementById("presetAgentSyncSafeBtn"),
   presetAgentSyncForceBtn: document.getElementById("presetAgentSyncForceBtn"),
   presetAgentSyncSummary: document.getElementById("presetAgentSyncSummary"),

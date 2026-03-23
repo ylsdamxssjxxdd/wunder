@@ -79,6 +79,42 @@ fn split_requested_tool_names(
     (tool_names, skill_names)
 }
 
+pub fn resolve_selected_declared_names(
+    requested_tool_names: &[String],
+    explicit_declared_tool_names: &[String],
+    explicit_declared_skill_names: &[String],
+    skill_name_keys: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let selected_names = normalize_names(requested_tool_names.iter().map(String::as_str));
+    let selected_name_set: HashSet<String> = selected_names.iter().cloned().collect();
+    let mut covered = HashSet::new();
+    let mut declared_tool_names = Vec::new();
+    let mut declared_skill_names = Vec::new();
+
+    let mut push_declared_name = |name: String| {
+        if !selected_name_set.contains(&name) || !covered.insert(name.clone()) {
+            return;
+        }
+        if skill_name_keys.contains(&name) {
+            declared_skill_names.push(name);
+        } else {
+            declared_tool_names.push(name);
+        }
+    };
+
+    for name in normalize_names(explicit_declared_skill_names.iter().map(String::as_str)) {
+        push_declared_name(name);
+    }
+    for name in normalize_names(explicit_declared_tool_names.iter().map(String::as_str)) {
+        push_declared_name(name);
+    }
+    for name in selected_names {
+        push_declared_name(name);
+    }
+
+    (declared_tool_names, declared_skill_names)
+}
+
 fn synthesize_ability_descriptor(runtime_name: &str, kind: AbilityKind) -> AbilityDescriptor {
     let runtime_name = runtime_name.trim().to_string();
     let (group, source) = ability_group_and_source(kind);
@@ -338,7 +374,7 @@ impl IfEmptyThen for String {
 mod tests {
     use super::{
         build_ability_items_from_legacy, normalize_ability_items, resolve_agent_ability_selection,
-        resolve_record_declared_names, split_ability_item_names,
+        resolve_record_declared_names, resolve_selected_declared_names, split_ability_item_names,
     };
     use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
     use serde_json::json;
@@ -430,5 +466,36 @@ mod tests {
         );
         assert_eq!(tool_names, vec!["list_files".to_string()]);
         assert_eq!(skill_names, vec!["writer".to_string()]);
+    }
+
+    #[test]
+    fn resolve_selected_declared_names_prunes_stale_items_and_fills_gaps() {
+        let (tool_names, skill_names) = resolve_selected_declared_names(
+            &[
+                "read_file".to_string(),
+                "planner".to_string(),
+                "write_file".to_string(),
+            ],
+            &["stale_tool".to_string(), "write_file".to_string()],
+            &["planner".to_string(), "stale_skill".to_string()],
+            &sample_skill_keys(),
+        );
+        assert_eq!(
+            tool_names,
+            vec!["write_file".to_string(), "read_file".to_string()]
+        );
+        assert_eq!(skill_names, vec!["planner".to_string()]);
+    }
+
+    #[test]
+    fn resolve_selected_declared_names_reclassifies_legacy_skill_entries() {
+        let (tool_names, skill_names) = resolve_selected_declared_names(
+            &["planner".to_string(), "read_file".to_string()],
+            &["planner".to_string(), "read_file".to_string()],
+            &[],
+            &sample_skill_keys(),
+        );
+        assert_eq!(tool_names, vec!["read_file".to_string()]);
+        assert_eq!(skill_names, vec!["planner".to_string()]);
     }
 }

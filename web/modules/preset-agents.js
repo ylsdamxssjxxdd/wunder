@@ -50,6 +50,7 @@ const REQUIRED_KEYS = [
   "presetAgentDetailTitle",
   "presetAgentDetailMeta",
   "presetAgentSaveBtn",
+  "presetAgentExportBtn",
   "presetAgentSyncSafeBtn",
   "presetAgentSyncForceBtn",
   "presetAgentSyncSummary",
@@ -124,6 +125,22 @@ const requestJson = async (path, { method = "GET", body, query } = {}) => {
     throw new Error(message);
   }
   return payload;
+};
+
+const downloadJsonFile = (filename, value) => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return;
+  }
+  const payload = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  const blob = new Blob(["\uFEFF", payload], { type: "application/json;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = String(filename || "worker-card.json").trim() || "worker-card.json";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.URL.revokeObjectURL(url);
 };
 
 const normalizeIconName = (value) => String(value || "").trim() || "spark";
@@ -480,6 +497,9 @@ const buildEffectivePreset = (preset) => {
   if (!preset) {
     return null;
   }
+  if (!isDefaultPreset(preset)) {
+    return preset;
+  }
   const agent = state.presetAgents.userAgent;
   if (!agent || (agent.name && agent.name !== preset.name)) {
     return preset;
@@ -683,6 +703,7 @@ const renderPresetDetail = () => {
     elements.presetAgentDetailTitle.textContent = t("presetAgents.detail.empty");
     elements.presetAgentDetailMeta.textContent = "";
     elements.presetAgentDeleteBtn.disabled = true;
+    elements.presetAgentExportBtn.disabled = true;
     fillPresetForm(null);
     fillAgentForm(null);
     return;
@@ -696,6 +717,7 @@ const renderPresetDetail = () => {
     `hive: ${DEFAULT_HIVE_ID}`,
   ].join(" | ");
   elements.presetAgentDeleteBtn.disabled = isDefaultPreset(rawPreset);
+  elements.presetAgentExportBtn.disabled = false;
   fillPresetForm(preset);
   fillAgentForm(preset);
 };
@@ -996,14 +1018,12 @@ const refreshContext = async ({ ensureAgent = true, silent = false } = {}) => {
     elements.presetUserAgentToolsEmpty.textContent = t("common.loading");
     elements.presetUserAgentToolsEmpty.style.display = "block";
 
-    if (ensureAgent) {
-      state.presetAgents.userAgent = await ensureAgentForPreset(preset);
+    if (isDefaultPreset(preset) && ensureAgent) {
+      state.presetAgents.userAgent = await loadDefaultTemplateAgent();
     } else {
-      state.presetAgents.userAgent = isDefaultPreset(preset)
-        ? await loadDefaultTemplateAgent()
-        : sameNameAgent(await listUserAgents(), preset.name);
+      state.presetAgents.userAgent = null;
     }
-    fillAgentForm(preset);
+    fillAgentForm(effectiveSelectedPreset() || preset);
     state.presetAgents.cronJobs = [];
     state.presetAgents.channelAccounts = [];
     state.presetAgents.supportedChannels = [];
@@ -1012,7 +1032,7 @@ const refreshContext = async ({ ensureAgent = true, silent = false } = {}) => {
     renderChannelForms();
     renderChannelAccounts();
     renderPresetDetail();
-    setStatus(t("presetAgents.status.ready", { user: TEMPLATE_USER_ID, agent: state.presetAgents.userAgent?.name || "-" }), "success");
+    setStatus(t("presetAgents.status.ready", { user: TEMPLATE_USER_ID, agent: preset.name || "-" }), "success");
     if (!silent) {
       notify(t("presetAgents.toast.userContextReady"), "success");
     }
@@ -1094,16 +1114,10 @@ const savePreset = async () => {
     if (duplicate) {
       throw new Error(t("presetAgents.error.duplicateName", { name: next.name }));
     }
-    // Only reuse the current template agent for persisted presets to avoid cross-preset updates
-    // when a newly created draft is saved before context refresh.
-    const currentTemplateAgentId =
-      String(current.preset_id || "").trim() && state.presetAgents.userAgent?.name === current.name
-        ? String(state.presetAgents.userAgent?.id || "").trim()
-        : "";
     const agentPayload = collectAgentForm();
     next.tool_names = agentPayload.tool_names;
-    next.declared_tool_names = Array.isArray(effective.declared_tool_names) ? [...effective.declared_tool_names] : [];
-    next.declared_skill_names = Array.isArray(effective.declared_skill_names) ? [...effective.declared_skill_names] : [];
+    next.declared_tool_names = [];
+    next.declared_skill_names = [];
     next.preset_questions = agentPayload.preset_questions;
     next.approval_mode = agentPayload.approval_mode;
     next.status = agentPayload.status || effective.status || current.status || "active";
@@ -1122,22 +1136,33 @@ const savePreset = async () => {
     state.presetAgents.presets = state.presetAgents.presets.map((item) => (isSamePreset(item, current) ? next : item));
     setSelectedPreset(next);
     await persistPresets({ selectedName: next.name, selectedPresetId: next.preset_id });
-
-    if (currentTemplateAgentId) {
-      await requestJson(`/agents/${encodeURIComponent(currentTemplateAgentId)}`, {
-        method: "PUT",
-        query: { user_id: TEMPLATE_USER_ID },
-        body: { ...agentPayload, name: next.name },
-      });
-      await refreshContext({ ensureAgent: false, silent: true });
-    } else {
-      await refreshContext({ ensureAgent: true, silent: true });
-    }
+    await refreshContext({ ensureAgent: false, silent: true });
     await loadSyncSummary({ silent: true });
     renderAll();
     notify(t("presetAgents.toast.savePresetSuccess"), "success");
   } catch (error) {
     notify(t("presetAgents.toast.savePresetFailed", { message: error.message || "-" }), "error");
+  }
+};
+
+const exportPresetWorkerCard = async () => {
+  try {
+    const preset = selectedPreset();
+    if (!preset?.preset_id) {
+      throw new Error(t("presetAgents.error.noPresetSelected"));
+    }
+    const payload = await requestJson(
+      `/admin/preset_agents/${encodeURIComponent(preset.preset_id)}/worker_card`
+    );
+    const filename = String(payload?.data?.filename || "").trim() || "worker-card.json";
+    const document = payload?.data?.document;
+    if (!document || typeof document !== "object") {
+      throw new Error("worker card payload missing");
+    }
+    downloadJsonFile(filename, document);
+    notify(t("presetAgents.toast.exportWorkerCardSuccess", { filename }), "success");
+  } catch (error) {
+    notify(t("presetAgents.toast.exportWorkerCardFailed", { message: error.message || "-" }), "error");
   }
 };
 
@@ -1216,6 +1241,7 @@ const collectAgentForm = () => {
   }
   const sandbox = Number.parseInt(elements.presetAgentFormContainerId.value, 10);
   const tool_names = collectSelectedTools(elements.presetUserAgentTools);
+  const preset = effectiveSelectedPreset() || selectedPreset();
   return {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
@@ -1230,7 +1256,10 @@ const collectAgentForm = () => {
     status: String(effectiveSelectedPreset()?.status || "active").trim() || "active",
     is_shared: false,
     hive_id: DEFAULT_HIVE_ID,
-    icon: String(state.presetAgents.userAgent?.icon || ""),
+    icon: JSON.stringify({
+      name: normalizeIconName(preset?.icon_name),
+      color: normalizeIconColor(preset?.icon_color),
+    }),
   };
 };
 
@@ -1509,6 +1538,10 @@ const bindActions = () => {
   if (elements.presetAgentSaveBtn.dataset.bound !== "1") {
     elements.presetAgentSaveBtn.dataset.bound = "1";
     elements.presetAgentSaveBtn.addEventListener("click", savePreset);
+  }
+  if (elements.presetAgentExportBtn.dataset.bound !== "1") {
+    elements.presetAgentExportBtn.dataset.bound = "1";
+    elements.presetAgentExportBtn.addEventListener("click", exportPresetWorkerCard);
   }
   if (elements.presetAgentPresetQuestionAddBtn.dataset.bound !== "1") {
     elements.presetAgentPresetQuestionAddBtn.dataset.bound = "1";

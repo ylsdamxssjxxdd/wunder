@@ -1,3 +1,5 @@
+import marked from "/third/marked.esm.js";
+
 const DOCS_BASE = "/docs/";
 const MANIFEST_URL = `${DOCS_BASE}manifest.json`;
 const SEARCH_URL = `${DOCS_BASE}search.json`;
@@ -81,17 +83,6 @@ const fetchJson = async (url) => {
   return response.json();
 };
 
-const waitForMarked = async (timeoutMs = 3000) => {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt <= timeoutMs) {
-    if (globalThis.marked?.parse && globalThis.marked?.Renderer) {
-      return globalThis.marked;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 30));
-  }
-  return null;
-};
-
 const isExternalLink = (href) => /^https?:\/\//i.test(String(href || ""));
 
 const resolveHeadingPayload = (value, level, parser) => {
@@ -108,7 +99,7 @@ const resolveHeadingPayload = (value, level, parser) => {
     if (parser?.parseInline && Array.isArray(token.tokens)) {
       html = parser.parseInline(token.tokens);
     } else if (typeof token.text === "string") {
-      html = globalThis.marked?.parseInline ? globalThis.marked.parseInline(token.text) : token.text;
+      html = marked.parseInline(token.text);
     } else if (typeof token.raw === "string") {
       html = token.raw;
     } else {
@@ -267,11 +258,6 @@ const postProcessContent = () => {
 
 const renderContent = async () => {
   if (!elements.content) {
-    return;
-  }
-  const marked = await waitForMarked();
-  if (!marked) {
-    elements.content.innerHTML = `<pre>${escapeHtml(state.pageData.markdown || "")}</pre>`;
     return;
   }
   const renderer = new marked.Renderer();

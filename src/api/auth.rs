@@ -197,19 +197,18 @@ async fn register(
             "active",
             false,
         )
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, localize_register_error(&err)))?;
     if desktop_mode && requested_unit_id != created_user.unit_id {
         created_user.unit_id = requested_unit_id;
         created_user.updated_at = now_ts();
-        state
-            .user_store
-            .update_user(&created_user)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        state.user_store.update_user(&created_user).map_err(|err| {
+            error_response(StatusCode::BAD_REQUEST, localize_register_error(&err))
+        })?;
     }
     let session = state
         .user_store
         .login(username, password)
-        .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
+        .map_err(|err| error_response(StatusCode::UNAUTHORIZED, localize_register_error(&err)))?;
     let profile = build_user_profile(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
@@ -1425,6 +1424,61 @@ fn sync_external_unit_binding(
     Ok(true)
 }
 
+fn localize_register_error(err: &anyhow::Error) -> String {
+    localize_register_error_message(&err.to_string())
+}
+
+fn localize_register_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "注册失败，请稍后重试".to_string();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    {
+        return trimmed.to_string();
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.contains("username already exists")
+        || normalized.contains("idx_user_accounts_username")
+        || normalized.contains("user_accounts.username")
+    {
+        return "用户名已被占用".to_string();
+    }
+    if normalized.contains("email already exists")
+        || normalized.contains("idx_user_accounts_email")
+        || normalized.contains("user_accounts.email")
+    {
+        return "邮箱已被占用".to_string();
+    }
+    if normalized.contains("invalid username") {
+        return "用户名格式不正确，请使用3-64位字母、数字、下划线、中划线或点".to_string();
+    }
+    if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
+        return "密码不能为空".to_string();
+    }
+    if normalized.contains("unit not found") {
+        return i18n::t("error.org_unit_not_found");
+    }
+    if normalized.contains("user disabled") {
+        return "账号已被禁用，请联系管理员".to_string();
+    }
+    if normalized.contains("admin account is protected")
+        || normalized.contains("default admin account is protected")
+    {
+        return "该账号不允许注册".to_string();
+    }
+    if normalized.contains("duplicate key value violates unique constraint")
+        || normalized.contains("unique constraint failed")
+        || normalized.contains("already exists")
+    {
+        return "账号信息已存在，请更换用户名或邮箱".to_string();
+    }
+    "注册失败，请稍后重试".to_string()
+}
+
 fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
@@ -1439,8 +1493,8 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
-        normalize_theme_palette, provision_external_launch_session,
+        localize_register_error_message, normalize_avatar_color, normalize_avatar_icon,
+        normalize_theme_mode, normalize_theme_palette, provision_external_launch_session,
         resolve_external_embed_target_agent_name, validate_external_embed_jwt,
         DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
@@ -1559,5 +1613,39 @@ mod tests {
             .login("external_1", DEFAULT_EXTERNAL_LAUNCH_PASSWORD)
             .expect("login with default password");
         assert_eq!(login.user.user_id, "external_1");
+    }
+
+    #[test]
+    fn localize_register_error_message_maps_duplicate_username_and_email() {
+        assert_eq!(
+            localize_register_error_message("username already exists"),
+            "用户名已被占用"
+        );
+        assert_eq!(
+            localize_register_error_message("UNIQUE constraint failed: user_accounts.username"),
+            "用户名已被占用"
+        );
+        assert_eq!(
+            localize_register_error_message("email already exists"),
+            "邮箱已被占用"
+        );
+        assert_eq!(
+            localize_register_error_message(
+                "duplicate key value violates unique constraint \"idx_user_accounts_email\""
+            ),
+            "邮箱已被占用"
+        );
+    }
+
+    #[test]
+    fn localize_register_error_message_keeps_chinese_and_falls_back_to_generic_chinese() {
+        assert_eq!(
+            localize_register_error_message("邮箱已被占用"),
+            "邮箱已被占用"
+        );
+        assert_eq!(
+            localize_register_error_message("some unexpected english error"),
+            "注册失败，请稍后重试"
+        );
     }
 }

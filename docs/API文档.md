@@ -1863,8 +1863,10 @@
 - `p50_latency_ms/p90_latency_ms/p99_latency_ms`：延迟分位（毫秒）
 - `total_prefill_speed_tps`：总预填充速度（token/s）
 - `single_prefill_speed_tps`：单预填充速度（token/s）
-- `total_decode_speed_tps`：总解码速度（token/s）
-- `single_decode_speed_tps`：单解码速度（token/s）
+- `total_decode_speed_tps`：总解码速度（token/s，按该档位 `decode_tokens_total / elapsed_s` 计算）
+- `single_decode_speed_tps`：并发平均解码速度（token/s，按每请求 `decode_tokens / request_elapsed_s` 算术平均，包含排队等待与首包等待）
+- `total_decode_speed_stream_chunk_tps`：流分片近似总解码速度（token/s，按该档位 `llm_output_delta 有效分片数 / elapsed_s` 计算）
+- `single_decode_speed_stream_chunk_tps`：流分片近似并发平均解码速度（token/s，按每请求 `llm_output_delta 有效分片数 / request_elapsed_s` 算术平均）
 - `input_tokens/output_tokens/total_tokens`：该档位 token 统计
 - `avg_total_tokens`：平均 token（按成功请求统计）
 

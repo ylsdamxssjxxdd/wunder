@@ -123,6 +123,38 @@ fn resolve_private_root(state: &AppState, user_id: &str) -> PathBuf {
     state.workspace.workspace_root(&scoped)
 }
 
+fn find_worker_card_path(private_root: &std::path::Path, agent_id: &str) -> PathBuf {
+    let agents_dir = private_root.join("agents");
+    let suffix = ".worker-card.json";
+    if let Ok(entries) = fs::read_dir(&agents_dir) {
+        let mut matched = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_file() {
+                    return None;
+                }
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let stable_id = file_name
+                    .strip_suffix(suffix)
+                    .map(str::trim)
+                    .filter(|stem| !stem.is_empty())
+                    .map(|stem| {
+                        stem.rsplit_once("--")
+                            .map(|(_, stable_id)| stable_id.trim().to_string())
+                            .unwrap_or_else(|| stem.to_string())
+                    })?;
+                (stable_id == agent_id).then(|| entry.path())
+            })
+            .collect::<Vec<_>>();
+        matched.sort();
+        if let Some(path) = matched.into_iter().next_back() {
+            return path;
+        }
+    }
+    agents_dir.join(format!("{agent_id}.worker-card.json"))
+}
+
 fn pick_stable_allowed_tool(allowed: &HashSet<String>, exclude: Option<&str>) -> Option<String> {
     let exclude = exclude.unwrap_or_default().trim().to_string();
     let mut candidates = allowed
@@ -210,9 +242,7 @@ async fn get_agent_reads_worker_card_updates_after_pre_read_sync() {
     let allowed = compute_allowed_tool_names(&user, &tool_context);
     let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
 
-    let worker_card_path = private_root
-        .join("agents")
-        .join(format!("{agent_id}.worker-card.json"));
+    let worker_card_path = find_worker_card_path(&private_root, &agent_id);
     let mut worker_card: Value =
         serde_json::from_str(&fs::read_to_string(&worker_card_path).expect("read worker card"))
             .expect("parse worker card");
@@ -306,9 +336,7 @@ async fn get_agent_survives_invalid_worker_card_and_keeps_last_good_state() {
         .to_string();
 
     let private_root = resolve_private_root(context.state.as_ref(), &context.user_id);
-    let worker_card_path = private_root
-        .join("agents")
-        .join(format!("{agent_id}.worker-card.json"));
+    let worker_card_path = find_worker_card_path(&private_root, &agent_id);
     std::thread::sleep(Duration::from_millis(30));
     fs::write(
         &worker_card_path,

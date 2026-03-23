@@ -359,7 +359,6 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
   <title>{page_title}</title>
   <meta name="description" content="{description}">
   <link rel="stylesheet" href="/docs/site.css">
-  <script defer src="/third/marked.min.js"></script>
   <script type="module" src="/docs/site.js"></script>
 </head>
 <body>

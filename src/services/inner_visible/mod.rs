@@ -1,5 +1,8 @@
 mod layout;
 mod worker_card;
+pub use worker_card::{
+    build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardRecordUpdate,
+};
 
 use crate::config::Config;
 use crate::config_store::ConfigStore;
@@ -15,6 +18,7 @@ use crate::services::inner_visible::layout::{
     agent_id_from_worker_card_file_name, defaults_worker_card_path, normalize_agent_file_stem,
     tooling_path, user_paths, worker_card_path, InnerVisiblePaths,
 };
+use crate::services::worker_card_files::worker_card_file_name as canonical_worker_card_file_name;
 use crate::services::user_access::{compute_allowed_tool_names, UserToolContext};
 use crate::services::user_agent_presets::{
     filter_allowed_tools, normalize_agent_approval_mode, normalize_agent_status,
@@ -35,8 +39,6 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
-
-use self::worker_card::{build_worker_card, parse_worker_card, WorkerCardDocument};
 
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_STATUS: &str = "active";
@@ -97,8 +99,7 @@ impl InnerVisibleService {
 
     pub fn remove_agent_files(&self, user_id: &str, agent_id: &str) -> Result<()> {
         let paths = self.ensure_scaffold(user_id)?;
-        remove_path_if_exists(&worker_card_path(&paths, Some(agent_id)))?;
-        remove_path_if_exists(&legacy_worker_card_dir(&paths, Some(agent_id)))?;
+        remove_matching_worker_card_files(&paths, Some(agent_id), None)?;
         Ok(())
     }
 
@@ -355,12 +356,16 @@ impl InnerVisibleService {
             hive.as_ref().map(|item| item.description.as_str()),
             worker_card_skill_names,
         );
-        let worker_card_file = worker_card_path(paths, Some(&record.agent_id));
+        let worker_card_file = worker_card_path(
+            paths,
+            Some(record.name.as_str()),
+            Some(&record.agent_id),
+        );
         atomic_write_text(
             &worker_card_file,
             &serde_json::to_string_pretty(&document).context("serialize worker card failed")?,
         )?;
-        remove_path_if_exists(&legacy_worker_card_dir(paths, Some(&record.agent_id)))?;
+        remove_matching_worker_card_files(paths, Some(&record.agent_id), Some(&worker_card_file))?;
         Ok(())
     }
 
@@ -622,24 +627,67 @@ fn legacy_worker_card_path(
     legacy_worker_card_dir(paths, agent_id).join("worker-card.json")
 }
 
+fn matching_worker_card_files(
+    paths: &InnerVisiblePaths,
+    agent_id: Option<&str>,
+) -> Result<Vec<std::path::PathBuf>> {
+    let mut output = Vec::new();
+    let normalized_agent_id = normalize_agent_file_stem(agent_id);
+    if paths.agents_dir.exists() {
+        for entry in fs::read_dir(&paths.agents_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if agent_id_from_worker_card_file_name(&file_name)
+                .as_deref()
+                .is_some_and(|parsed| parsed == normalized_agent_id)
+            {
+                output.push(entry.path());
+            }
+        }
+    }
+    let legacy = legacy_worker_card_path(paths, Some(&normalized_agent_id));
+    if legacy.exists() {
+        output.push(legacy);
+    }
+    output.sort();
+    output.dedup();
+    Ok(output)
+}
+
+fn remove_matching_worker_card_files(
+    paths: &InnerVisiblePaths,
+    agent_id: Option<&str>,
+    keep_path: Option<&Path>,
+) -> Result<()> {
+    for candidate in matching_worker_card_files(paths, agent_id)? {
+        if keep_path.is_some_and(|path| path == candidate.as_path()) {
+            continue;
+        }
+        remove_path_if_exists(&candidate)?;
+    }
+    remove_path_if_exists(&legacy_worker_card_dir(paths, agent_id))?;
+    Ok(())
+}
+
 fn resolve_latest_worker_card_file(
     paths: &InnerVisiblePaths,
     agent_id: Option<&str>,
 ) -> Option<std::path::PathBuf> {
-    let canonical = worker_card_path(paths, agent_id);
-    let legacy = legacy_worker_card_path(paths, agent_id);
-    match (canonical.exists(), legacy.exists()) {
-        (false, false) => None,
-        (true, false) => Some(canonical),
-        (false, true) => Some(legacy),
-        (true, true) => {
-            if file_modified_ts(&canonical) + FILE_TIME_EPSILON_S >= file_modified_ts(&legacy) {
-                Some(canonical)
-            } else {
-                Some(legacy)
-            }
+    let mut candidates = matching_worker_card_files(paths, agent_id).ok()?;
+    if candidates.is_empty() {
+        let fallback = paths
+            .agents_dir
+            .join(canonical_worker_card_file_name(None, Some(&normalize_agent_file_stem(agent_id))));
+        if fallback.exists() {
+            candidates.push(fallback);
         }
     }
+    candidates.into_iter().max_by(|left, right| {
+        file_modified_ts(left).total_cmp(&file_modified_ts(right))
+    })
 }
 
 fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {
@@ -851,6 +899,32 @@ mod tests {
             .expect("at least one allowed tool")
     }
 
+    fn find_worker_card_file(private_root: &Path, agent_id: &str) -> std::path::PathBuf {
+        let agents_dir = private_root.join("agents");
+        if let Ok(entries) = fs::read_dir(&agents_dir) {
+            let mut matched = entries
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| {
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    entry.file_type().ok().and_then(|file_type| {
+                        if !file_type.is_file() {
+                            return None;
+                        }
+                        agent_id_from_worker_card_file_name(&file_name)
+                            .as_deref()
+                            .is_some_and(|parsed| parsed == agent_id)
+                            .then(|| entry.path())
+                    })
+                })
+                .collect::<Vec<_>>();
+            matched.sort();
+            if let Some(path) = matched.into_iter().next_back() {
+                return path;
+            }
+        }
+        agents_dir.join(format!("{agent_id}.worker-card.json"))
+    }
+
     #[tokio::test]
     async fn sync_user_state_materializes_and_applies_agent_files() {
         let (_temp, user_store, service, workspace) = build_service().await;
@@ -885,9 +959,7 @@ mod tests {
             .await
             .expect("sync to files");
         let private_root = service.private_root("alice");
-        let worker_card_file = private_root
-            .join("agents")
-            .join("agent_demo.worker-card.json");
+        let worker_card_file = find_worker_card_file(&private_root, "agent_demo");
         assert!(worker_card_file.exists());
 
         std::thread::sleep(Duration::from_millis(20));
@@ -985,9 +1057,7 @@ mod tests {
             .sync_user_state(user_id)
             .await
             .expect("initial sync");
-        let worker_card_file = private_root
-            .join("agents")
-            .join(format!("{agent_id}.worker-card.json"));
+        let worker_card_file = find_worker_card_file(&private_root, agent_id);
         let mut document: WorkerCardDocument =
             serde_json::from_str(&fs::read_to_string(&worker_card_file).expect("read worker card"))
                 .expect("parse worker card");
@@ -1068,10 +1138,8 @@ mod tests {
             .await
             .expect("sync to files");
 
-        let worker_card_file = service
-            .private_root(user_id)
-            .join("agents")
-            .join(format!("{agent_id}.worker-card.json"));
+        let private_root = service.private_root(user_id);
+        let worker_card_file = find_worker_card_file(&private_root, agent_id);
         std::thread::sleep(Duration::from_millis(30));
         atomic_write_text(
             &worker_card_file,
@@ -1149,9 +1217,7 @@ mod tests {
             .sync_user_state(user_id)
             .await
             .expect("initial sync");
-        let default_card = private_root
-            .join("agents")
-            .join("__default__.worker-card.json");
+        let default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
         let mut document: WorkerCardDocument =
             serde_json::from_str(&fs::read_to_string(&default_card).expect("read default card"))
                 .expect("parse default card");
@@ -1259,10 +1325,8 @@ mod tests {
             .await
             .expect("initial sync without persisted default agent");
 
-        let default_card = service
-            .private_root(user_id)
-            .join("agents")
-            .join("__default__.worker-card.json");
+        let private_root = service.private_root(user_id);
+        let default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
         let mut document: WorkerCardDocument =
             serde_json::from_str(&fs::read_to_string(&default_card).expect("read default card"))
                 .expect("parse default card");

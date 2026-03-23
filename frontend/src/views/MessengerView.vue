@@ -9080,7 +9080,12 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
     }
     return;
   }
-  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+  if (event.shiftKey) {
+    return;
+  }
+  if (hasPrimaryModifier || hasBackupModifier) {
+    event.preventDefault();
+    await sendWorldMessage();
     return;
   }
   event.preventDefault();

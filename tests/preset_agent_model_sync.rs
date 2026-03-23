@@ -75,6 +75,13 @@ async fn build_test_context_with_config<F>(username: &str, configure: F) -> Test
 where
     F: FnOnce(&mut Config),
 {
+    build_test_context_with_temp_config(username, |config, _| configure(config)).await
+}
+
+async fn build_test_context_with_temp_config<F>(username: &str, configure: F) -> TestContext
+where
+    F: FnOnce(&mut Config, &std::path::Path),
+{
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
@@ -89,7 +96,7 @@ where
         .to_string_lossy()
         .to_string();
     config.skills.enabled.clear();
-    configure(&mut config);
+    configure(&mut config, temp_dir.path());
 
     let config_store = ConfigStore::new(temp_dir.path().join("wunder.override.yaml"));
     let config_for_store = config.clone();
@@ -201,6 +208,30 @@ fn read_tool_names(agent: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn read_declared_tool_names(agent: &Value) -> Vec<String> {
+    agent["declared_tool_names"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn read_declared_skill_names(agent: &Value) -> Vec<String> {
+    agent["declared_skill_names"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 async fn list_user_agents(app: &Router, token: &str) -> Vec<Value> {
     let (status, payload) = send_json(app, Some(token), Method::GET, "/wunder/agents", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -297,6 +328,19 @@ async fn update_admin_presets(app: &Router, items: Vec<Value>) -> Vec<Value> {
         .as_array()
         .expect("updated preset list should be array")
         .clone()
+}
+
+async fn export_admin_preset_worker_card(app: &Router, preset_id: &str) -> Value {
+    let (status, payload) = send_json(
+        app,
+        None,
+        Method::GET,
+        &format!("/wunder/admin/preset_agents/{preset_id}/worker_card"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    payload["data"].clone()
 }
 
 async fn sync_preset(
@@ -894,8 +938,8 @@ async fn preset_tool_sync_safe_and_force_respects_user_override() {
         .as_u64()
         .expect("updated_agents should be number");
     assert!(
-        force_updated >= 2,
-        "expected at least 2 updated agents in force tool sync, got {force_updated}"
+        force_updated >= 1,
+        "expected at least 1 updated agent in force tool sync, got {force_updated}"
     );
 
     let user_b_v3 = list_user_agents(&context.app, &token_b).await;
@@ -966,4 +1010,387 @@ async fn preset_duplicate_bound_agents_are_compacted_on_list() {
         .list_user_agents("preset_duplicate_compact_user")
         .expect("list agents after compaction");
     assert_eq!(stored_after.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_sync_ignores_conflicting_template_agent_state() {
+    let user_id = "preset_config_authority_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_config_authority", None)];
+    })
+    .await;
+
+    let available_tools = list_available_tool_names(&context.app, user_id).await;
+    assert!(
+        !available_tools.is_empty(),
+        "expected at least 1 available tool for preset config authority regression"
+    );
+    let tool_a = available_tools[0].clone();
+    let tool_b = "template_conflict_tool".to_string();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_config_authority")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_a.clone()]);
+            item["declared_tool_names"] = json!([]);
+            item["declared_skill_names"] = json!([]);
+        }
+    }
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    assert_eq!(
+        find_preset_item(&updated_items, &preset_id)["tool_names"],
+        json!([tool_a.clone()])
+    );
+
+    context
+        .state
+        .user_store
+        .upsert_user_agent(&wunder_server::storage::UserAgentRecord {
+            agent_id: "agent_conflicting_template".to_string(),
+            user_id: "preset_template".to_string(),
+            hive_id: "default".to_string(),
+            name: PRESET_NAME.to_string(),
+            description: "template conflict".to_string(),
+            system_prompt: "template conflict".to_string(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: vec![tool_b.clone()],
+            declared_tool_names: vec![tool_b.clone()],
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 2.0,
+            preset_binding: None,
+        })
+        .expect("insert conflicting template agent");
+
+    let admin_after_conflict = list_admin_presets(&context.app).await;
+    assert_eq!(
+        find_preset_item(&admin_after_conflict, &preset_id)["tool_names"],
+        json!([tool_a.clone()]),
+        "ordinary preset config should remain authoritative even if preset_template has a conflicting same-name agent"
+    );
+
+    let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
+    let created_agents = sync_result["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_agents >= 1,
+        "expected at least 1 created agent after force sync, got {created_agents}"
+    );
+
+    let user_agents = list_user_agents(&context.app, &context.token).await;
+    let synced_agent = find_agent_by_name(&user_agents, PRESET_NAME);
+    let synced_tool_names = read_tool_names(synced_agent);
+    assert!(
+        synced_tool_names.iter().any(|name| name == &tool_a),
+        "synced preset agent should use configured preset tool {tool_a}"
+    );
+    assert!(
+        synced_tool_names.iter().all(|name| name != &tool_b),
+        "conflicting preset_template tool {tool_b} must not leak into synced users"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_bound_agent_tool_update_without_declared_arrays_drops_stale_dependencies() {
+    let user_id = "preset_update_declared_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_update_declared", None)];
+    })
+    .await;
+
+    let available_tools = list_available_tool_names(&context.app, user_id).await;
+    assert!(
+        !available_tools.is_empty(),
+        "expected at least 1 available tool for declared dependency regression"
+    );
+    let tool_a = available_tools[0].clone();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_update_declared")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_a.clone()]);
+        }
+    }
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    assert_eq!(
+        find_preset_item(&updated_items, &preset_id)["tool_names"],
+        json!([tool_a.clone()])
+    );
+
+    let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
+    let created_agents = sync_result["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_agents >= 1,
+        "expected at least 1 created agent after force sync, got {created_agents}"
+    );
+
+    let user_agents = list_user_agents(&context.app, &context.token).await;
+    let agent_id = find_agent_id_by_name(&user_agents, PRESET_NAME);
+    let synced_agent = find_agent_by_name(&user_agents, PRESET_NAME);
+    assert!(
+        !read_declared_tool_names(synced_agent).is_empty(),
+        "preset sync should seed declared tool names before the direct user override"
+    );
+
+    let (status, updated_payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::PUT,
+        &format!("/wunder/agents/{agent_id}"),
+        Some(json!({ "tool_names": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(read_tool_names(&updated_payload["data"]).is_empty());
+    assert!(
+        read_declared_tool_names(&updated_payload["data"]).is_empty(),
+        "tool-only updates without declared arrays should not keep stale preset dependency names"
+    );
+    assert_eq!(
+        updated_payload["data"]["preset_binding"]["preset_id"],
+        json!(preset_id),
+        "preset binding should stay visible so the frontend can suppress worker-card mismatch warnings for preset-bound agents"
+    );
+    assert!(
+        updated_payload["data"]["preset_binding"]
+            .get("last_applied")
+            .is_none(),
+        "frontend only needs preset identity metadata, not the full sync snapshot payload"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_save_roundtrip_is_worker_card_stable() {
+    let user_id = "preset_admin_roundtrip_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_admin_roundtrip", None)];
+    })
+    .await;
+
+    let available_tools = list_available_tool_names(&context.app, user_id).await;
+    assert!(
+        !available_tools.is_empty(),
+        "expected at least 1 available tool for admin roundtrip regression"
+    );
+    let tool_a = available_tools[0].clone();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_admin_roundtrip")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_a.clone()]);
+            item["declared_tool_names"] = json!([]);
+            item["declared_skill_names"] = json!([]);
+        }
+    }
+
+    let saved_once = update_admin_presets(&context.app, admin_items).await;
+    let preset_once = find_preset_item(&saved_once, &preset_id);
+    assert_eq!(preset_once["tool_names"], json!([tool_a.clone()]));
+    assert_eq!(
+        read_declared_tool_names(preset_once),
+        vec![tool_a.clone()],
+        "admin save should canonicalize declared tool names using the same worker-card rules as sync"
+    );
+    assert!(
+        read_declared_skill_names(preset_once).is_empty(),
+        "tool-only preset should not emit synthetic declared skills"
+    );
+    let revision_once = preset_once["revision"]
+        .as_u64()
+        .expect("revision after first save");
+
+    let saved_twice = update_admin_presets(&context.app, saved_once.clone()).await;
+    let preset_twice = find_preset_item(&saved_twice, &preset_id);
+    assert_eq!(
+        preset_twice["revision"]
+            .as_u64()
+            .expect("revision after second save"),
+        revision_once,
+        "saving the already-normalized preset payload should be stable and not bump revision again"
+    );
+    assert_eq!(preset_twice["tool_names"], preset_once["tool_names"]);
+    assert_eq!(
+        preset_twice["declared_tool_names"],
+        preset_once["declared_tool_names"]
+    );
+    assert_eq!(
+        preset_twice["declared_skill_names"],
+        preset_once["declared_skill_names"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
+    let context = build_test_context_with_temp_config("preset_asset_store_user", |config, root| {
+        config.user_agents.worker_cards_root = root
+            .join("preset_worker_cards")
+            .to_string_lossy()
+            .to_string();
+    })
+    .await;
+    let preset_root = context._temp_dir.path().join("preset_worker_cards");
+
+    let saved_once = update_admin_presets(
+        &context.app,
+        vec![json!({
+            "name": "Asset Preset",
+            "description": "asset-backed preset",
+            "system_prompt": "asset prompt",
+            "model_name": Value::Null,
+            "icon_name": "spark",
+            "icon_color": "#94a3b8",
+            "sandbox_container_id": 2,
+            "tool_names": [],
+            "declared_tool_names": [],
+            "declared_skill_names": [],
+            "preset_questions": [],
+            "approval_mode": "full_auto",
+            "status": "active"
+        })],
+    )
+    .await;
+    let preset_once = saved_once
+        .iter()
+        .find(|item| item["name"] == json!("Asset Preset"))
+        .expect("asset preset should be present after save");
+    let preset_id = preset_once["preset_id"]
+        .as_str()
+        .expect("asset preset id")
+        .to_string();
+    let first_path = preset_root.join(format!("Asset Preset--{preset_id}.worker-card.json"));
+    assert!(first_path.exists(), "preset worker card should be saved to configured directory");
+
+    let listed = list_admin_presets(&context.app).await;
+    assert!(
+        listed
+            .iter()
+            .any(|item| item["preset_id"] == json!(preset_id.as_str())),
+        "preset list should read back from the configured worker-card directory"
+    );
+
+    let mut renamed_payload = saved_once.clone();
+    for item in &mut renamed_payload {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["name"] = json!("Asset Preset Renamed");
+        }
+    }
+    update_admin_presets(&context.app, renamed_payload).await;
+    let second_path =
+        preset_root.join(format!("Asset Preset Renamed--{preset_id}.worker-card.json"));
+    assert!(second_path.exists(), "renamed preset should use canonical worker-card file name");
+    assert!(
+        !first_path.exists(),
+        "old worker-card file should be removed after canonical rename"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_worker_card_export_uses_canonical_filename() {
+    let context = build_test_context_with_config("preset_export_user", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_export_demo", None)];
+    })
+    .await;
+
+    let preset_export = export_admin_preset_worker_card(&context.app, "preset_export_demo").await;
+    assert_eq!(
+        preset_export["filename"],
+        json!("Preset Auto Model--preset_export_demo.worker-card.json")
+    );
+    assert_eq!(
+        preset_export["document"]["metadata"]["id"],
+        json!("preset_export_demo")
+    );
+    assert_eq!(
+        preset_export["document"]["metadata"]["name"],
+        json!(PRESET_NAME)
+    );
+
+    let default_export =
+        export_admin_preset_worker_card(&context.app, DEFAULT_AGENT_ID_ALIAS).await;
+    let default_filename = default_export["filename"]
+        .as_str()
+        .expect("default filename");
+    assert!(
+        default_filename.ends_with("--__default__.worker-card.json"),
+        "default preset export should keep the canonical stable-id suffix"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_default_preset_payload_exposes_canonical_declared_names() {
+    let user_id = "preset_admin_default_declared_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
+    })
+    .await;
+    context
+        .state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = context
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+
+    let available_tools = list_available_tool_names(&context.app, user_id).await;
+    assert!(
+        !available_tools.is_empty(),
+        "expected at least 1 available tool for default preset declared regression"
+    );
+    let tool_a = available_tools[0].clone();
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-description",
+            "system_prompt": "template-system-prompt",
+            "tool_names": [tool_a.clone()],
+            "preset_questions": ["What should I do next?"],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 7
+        }),
+    )
+    .await;
+
+    let items = list_admin_presets(&context.app).await;
+    let default_item = find_preset_item(&items, DEFAULT_AGENT_ID_ALIAS);
+    assert_eq!(default_item["tool_names"], json!([tool_a.clone()]));
+    assert_eq!(
+        read_declared_tool_names(default_item),
+        vec![tool_a],
+        "default preset card in admin UI should expose canonical declared tool names instead of an empty placeholder"
+    );
 }

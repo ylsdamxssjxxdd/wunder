@@ -8,6 +8,12 @@ const asRecord = (value: unknown): UnknownRecord =>
 const hasOwn = (record: UnknownRecord, key: string) =>
   Object.prototype.hasOwnProperty.call(record, key);
 
+const isPresetBoundSource = (source: unknown): boolean => {
+  const record = asRecord(source);
+  const binding = record.preset_binding ?? record.presetBinding;
+  return Boolean(binding && typeof binding === 'object');
+};
+
 export const normalizeDependencyNames = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -32,6 +38,9 @@ const readDeclaredSkillNames = (source: unknown): string[] => {
 };
 
 const hasExplicitDeclaredDependencies = (source: unknown): boolean => {
+  if (isPresetBoundSource(source)) {
+    return false;
+  }
   const record = asRecord(source);
   if (
     !hasOwn(record, 'declared_tool_names') &&
@@ -117,6 +126,14 @@ export const resolveAgentDependencyStatus = (
   catalog: unknown,
   selectedToolNames?: unknown
 ) => {
+  if (isPresetBoundSource(source)) {
+    return {
+      declaredToolNames: [] as string[],
+      declaredSkillNames: [] as string[],
+      missingToolNames: [] as string[],
+      missingSkillNames: [] as string[]
+    };
+  }
   const effective = selectedToolNames === undefined
     ? {
         declared_tool_names: readDeclaredToolNames(source),

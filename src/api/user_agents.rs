@@ -1100,14 +1100,8 @@ async fn update_agent(
             let selection = resolve_agent_ability_selection(
                 &requested_tool_names,
                 requested_ability_items,
-                payload
-                    .declared_tool_names
-                    .clone()
-                    .or_else(|| Some(config.declared_tool_names.clone())),
-                payload
-                    .declared_skill_names
-                    .clone()
-                    .or_else(|| Some(config.declared_skill_names.clone())),
+                payload.declared_tool_names.clone(),
+                payload.declared_skill_names.clone(),
                 &skill_name_keys,
             );
             config.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
@@ -1183,14 +1177,8 @@ async fn update_agent(
         let selection = resolve_agent_ability_selection(
             &requested_tool_names,
             requested_ability_items,
-            payload
-                .declared_tool_names
-                .clone()
-                .or_else(|| Some(record.declared_tool_names.clone())),
-            payload
-                .declared_skill_names
-                .clone()
-                .or_else(|| Some(record.declared_skill_names.clone())),
+            payload.declared_tool_names.clone(),
+            payload.declared_skill_names.clone(),
             &skill_name_keys,
         );
         record.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
@@ -1437,6 +1425,17 @@ fn agent_payload(
         "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
+        "preset_binding": preset_binding_payload(record.preset_binding.as_ref()),
+    })
+}
+
+fn preset_binding_payload(binding: Option<&crate::storage::UserAgentPresetBinding>) -> Value {
+    let Some(binding) = binding else {
+        return Value::Null;
+    };
+    json!({
+        "preset_id": binding.preset_id,
+        "preset_revision": binding.preset_revision,
     })
 }
 
@@ -2266,6 +2265,7 @@ fn default_agent_payload(
         "sandbox_container_id": normalize_sandbox_container_id(config.sandbox_container_id),
         "created_at": format_ts(config.created_at),
         "updated_at": format_ts(config.updated_at),
+        "preset_binding": Value::Null,
     })
 }
 

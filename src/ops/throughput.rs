@@ -507,6 +507,8 @@ pub struct ThroughputSample {
     pub single_prefill_speed_tps: Option<f64>,
     pub total_decode_speed_tps: Option<f64>,
     pub single_decode_speed_tps: Option<f64>,
+    pub total_decode_speed_stream_chunk_tps: Option<f64>,
+    pub single_decode_speed_stream_chunk_tps: Option<f64>,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
@@ -695,6 +697,7 @@ struct SessionSpeed {
     decode_tokens: Option<i64>,
     decode_duration_s: Option<f64>,
     decode_speed_tps: Option<f64>,
+    decode_stream_chunk_tokens: Option<i64>,
 }
 
 #[derive(Default)]
@@ -775,51 +778,63 @@ impl SpeedAccumulator {
     }
 
     fn single_decode_speed(&self) -> Option<f64> {
-        if self.decode_tokens_total > 0 && self.decode_duration_total_s > 0.0 {
-            return Some(self.decode_tokens_total as f64 / self.decode_duration_total_s);
-        }
         if self.decode_speed_count > 0 {
             return Some(self.decode_speed_sum / self.decode_speed_count as f64);
+        }
+        if self.decode_tokens_total > 0 && self.decode_duration_total_s > 0.0 {
+            return Some(self.decode_tokens_total as f64 / self.decode_duration_total_s);
         }
         None
     }
 
     fn total_prefill_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        if self.prefill_speed_count > 0 {
-            return Some(self.prefill_speed_sum);
-        }
-        if elapsed_s <= 0.0 {
-            return None;
-        }
-        let tokens = if fallback_tokens > 0 {
-            fallback_tokens
-        } else {
-            self.prefill_tokens_total
-        };
-        if tokens > 0 {
-            Some(tokens as f64 / elapsed_s)
+        let mut total = if self.prefill_speed_count > 0 {
+            Some(self.prefill_speed_sum)
         } else {
             None
+        };
+        if elapsed_s > 0.0 {
+            let tokens = if fallback_tokens > 0 {
+                fallback_tokens
+            } else {
+                self.prefill_tokens_total
+            };
+            if tokens > self.prefill_tokens_total {
+                // Some sessions may miss per-session speed; estimate their contribution
+                // with step elapsed time to avoid under-reporting aggregate throughput.
+                let missing_tokens = tokens.saturating_sub(self.prefill_tokens_total);
+                let missing_speed = missing_tokens as f64 / elapsed_s;
+                total = Some(total.unwrap_or(0.0) + missing_speed);
+            } else if total.is_none() {
+                total = Some(tokens as f64 / elapsed_s);
+            }
         }
+        total.filter(|value| value.is_finite() && *value > 0.0)
     }
 
     fn total_decode_speed(&self, elapsed_s: f64, fallback_tokens: u64) -> Option<f64> {
-        if self.decode_speed_count > 0 {
-            return Some(self.decode_speed_sum);
-        }
-        if elapsed_s <= 0.0 {
-            return None;
-        }
-        let tokens = if fallback_tokens > 0 {
-            fallback_tokens
-        } else {
-            self.decode_tokens_total
-        };
-        if tokens > 0 {
-            Some(tokens as f64 / elapsed_s)
+        let mut total = if self.decode_speed_count > 0 {
+            Some(self.decode_speed_sum)
         } else {
             None
+        };
+        if elapsed_s > 0.0 {
+            let tokens = if fallback_tokens > 0 {
+                fallback_tokens
+            } else {
+                self.decode_tokens_total
+            };
+            if tokens > self.decode_tokens_total {
+                // Some sessions may miss per-session speed; estimate their contribution
+                // with step elapsed time to avoid under-reporting aggregate throughput.
+                let missing_tokens = tokens.saturating_sub(self.decode_tokens_total);
+                let missing_speed = missing_tokens as f64 / elapsed_s;
+                total = Some(total.unwrap_or(0.0) + missing_speed);
+            } else if total.is_none() {
+                total = Some(tokens as f64 / elapsed_s);
+            }
         }
+        total.filter(|value| value.is_finite() && *value > 0.0)
     }
 }
 
@@ -871,8 +886,38 @@ async fn run_supervisor(
             .collect::<Vec<_>>();
         let results = join_all(tasks).await;
         let mut speed_acc = SpeedAccumulator::default();
+        let mut decode_tokens_total_by_request = 0u64;
+        let mut decode_speed_sum_by_request = 0.0;
+        let mut decode_speed_count_by_request = 0u64;
+        let mut decode_stream_chunk_tokens_total_by_request = 0u64;
+        let mut decode_stream_chunk_speed_sum_by_request = 0.0;
+        let mut decode_stream_chunk_speed_count_by_request = 0u64;
         for outcome in results {
             let usage = outcome.usage.clone();
+            if let Some(decode_tokens) = resolve_decode_tokens(&outcome.speed, usage.as_ref()) {
+                decode_tokens_total_by_request =
+                    decode_tokens_total_by_request.saturating_add(decode_tokens);
+                let request_elapsed_s = outcome.latency_ms as f64 / 1000.0;
+                if request_elapsed_s.is_finite() && request_elapsed_s > 0.0 {
+                    decode_speed_sum_by_request += decode_tokens as f64 / request_elapsed_s;
+                    decode_speed_count_by_request += 1;
+                }
+            }
+            if let Some(stream_chunk_tokens) = outcome
+                .speed
+                .decode_stream_chunk_tokens
+                .filter(|value| *value > 0)
+            {
+                let stream_chunk_tokens = stream_chunk_tokens as u64;
+                decode_stream_chunk_tokens_total_by_request =
+                    decode_stream_chunk_tokens_total_by_request.saturating_add(stream_chunk_tokens);
+                let request_elapsed_s = outcome.latency_ms as f64 / 1000.0;
+                if request_elapsed_s.is_finite() && request_elapsed_s > 0.0 {
+                    decode_stream_chunk_speed_sum_by_request +=
+                        stream_chunk_tokens as f64 / request_elapsed_s;
+                    decode_stream_chunk_speed_count_by_request += 1;
+                }
+            }
             let first_token_latency_ms = outcome.speed.prefill_duration_s.and_then(|duration| {
                 if duration > 0.0 {
                     Some((duration * 1000.0).round() as u64)
@@ -899,10 +944,44 @@ async fn run_supervisor(
         let concurrency_f = concurrency as f64;
         let mut total_prefill_speed =
             speed_acc.total_prefill_speed(elapsed_s, snapshot.input_tokens);
-        let mut total_decode_speed =
-            speed_acc.total_decode_speed(elapsed_s, snapshot.output_tokens);
+        let decode_fallback_tokens = snapshot.total_tokens.saturating_sub(snapshot.input_tokens);
+        let mut total_decode_speed = if elapsed_s > 0.0 {
+            let decode_tokens = if decode_tokens_total_by_request > 0 {
+                decode_tokens_total_by_request
+            } else {
+                decode_fallback_tokens
+            };
+            if decode_tokens > 0 {
+                Some(decode_tokens as f64 / elapsed_s)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if total_decode_speed.is_none() {
+            total_decode_speed = speed_acc.total_decode_speed(elapsed_s, decode_fallback_tokens);
+        }
         let mut single_prefill_speed = speed_acc.single_prefill_speed();
-        let mut single_decode_speed = speed_acc.single_decode_speed();
+        let mut single_decode_speed = if decode_speed_count_by_request > 0 {
+            Some(decode_speed_sum_by_request / decode_speed_count_by_request as f64)
+        } else {
+            speed_acc.single_decode_speed()
+        };
+        let total_decode_speed_stream_chunk =
+            if elapsed_s > 0.0 && decode_stream_chunk_tokens_total_by_request > 0 {
+                Some(decode_stream_chunk_tokens_total_by_request as f64 / elapsed_s)
+            } else {
+                None
+            };
+        let single_decode_speed_stream_chunk = if decode_stream_chunk_speed_count_by_request > 0 {
+            Some(
+                decode_stream_chunk_speed_sum_by_request
+                    / decode_stream_chunk_speed_count_by_request as f64,
+            )
+        } else {
+            None
+        };
         if single_prefill_speed.is_none() {
             if let Some(total) = total_prefill_speed {
                 if concurrency_f > 0.0 {
@@ -947,6 +1026,8 @@ async fn run_supervisor(
             single_prefill_speed_tps: single_prefill_speed,
             total_decode_speed_tps: total_decode_speed,
             single_decode_speed_tps: single_decode_speed,
+            total_decode_speed_stream_chunk_tps: total_decode_speed_stream_chunk,
+            single_decode_speed_stream_chunk_tps: single_decode_speed_stream_chunk,
             input_tokens: snapshot.input_tokens,
             output_tokens: snapshot.output_tokens,
             total_tokens: snapshot.total_tokens,
@@ -1047,7 +1128,14 @@ async fn run_request(
     };
     let detail = monitor.get_detail(&session_id);
     let mut speed = extract_session_speed(detail);
-    if speed.prefill_duration_s.is_none() {
+    if speed.prefill_tokens.is_none()
+        || speed.prefill_duration_s.is_none()
+        || speed.prefill_speed_tps.is_none()
+        || speed.decode_tokens.is_none()
+        || speed.decode_duration_s.is_none()
+        || speed.decode_speed_tps.is_none()
+        || speed.decode_stream_chunk_tokens.is_none()
+    {
         if let Some(record) = monitor.get_record(&session_id) {
             let fallback = extract_session_speed_from_record(&record);
             merge_session_speed(&mut speed, &fallback);
@@ -1066,6 +1154,13 @@ fn extract_session_speed(detail: Option<Value>) -> SessionSpeed {
         return SessionSpeed::default();
     };
     let session = detail.get("session").unwrap_or(&detail);
+    let decode_stream_chunk_tokens = parse_i64_value(session.get("decode_stream_chunk_tokens"))
+        .or_else(|| {
+            detail
+                .get("events")
+                .and_then(Value::as_array)
+                .and_then(|events| count_stream_chunk_tokens(events))
+        });
     SessionSpeed {
         prefill_tokens: parse_i64_value(session.get("prefill_tokens")),
         prefill_duration_s: normalize_prefill_duration(parse_f64_value(
@@ -1075,6 +1170,7 @@ fn extract_session_speed(detail: Option<Value>) -> SessionSpeed {
         decode_tokens: parse_i64_value(session.get("decode_tokens")),
         decode_duration_s: normalize_duration(parse_f64_value(session.get("decode_duration_s"))),
         decode_speed_tps: parse_f64_value(session.get("decode_speed_tps")),
+        decode_stream_chunk_tokens,
     }
 }
 
@@ -1137,15 +1233,43 @@ fn normalize_prefill_duration(value: Option<f64>) -> Option<f64> {
 fn parse_usage_tokens_from_event(data: &Value) -> (Option<i64>, Option<i64>) {
     if let Some(usage) = data.get("usage").and_then(Value::as_object) {
         let input = parse_i64_value(usage.get("input_tokens"));
-        let output = parse_i64_value(usage.get("output_tokens"));
+        let output = parse_i64_value(data.get("decode_output_tokens"))
+            .or_else(|| parse_i64_value(usage.get("decode_output_tokens")))
+            .or_else(|| parse_i64_value(usage.get("output_tokens")));
         if input.is_some() || output.is_some() {
             return (input, output);
         }
     }
     (
         parse_i64_value(data.get("input_tokens")),
-        parse_i64_value(data.get("output_tokens")),
+        parse_i64_value(data.get("decode_output_tokens"))
+            .or_else(|| parse_i64_value(data.get("output_tokens"))),
     )
+}
+
+fn has_stream_output_chunk(data: &Value) -> bool {
+    let has_text = |value: Option<&Value>| -> bool {
+        value
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.trim().is_empty())
+    };
+    has_text(data.get("delta"))
+        || has_text(data.get("reasoning_delta"))
+        || has_text(data.get("reasoning"))
+}
+
+fn count_stream_chunk_tokens(events: &[Value]) -> Option<i64> {
+    let mut count = 0i64;
+    for event in events {
+        if event.get("type").and_then(Value::as_str) != Some("llm_output_delta") {
+            continue;
+        }
+        let data = event.get("data").unwrap_or(&Value::Null);
+        if has_stream_output_chunk(data) {
+            count = count.saturating_add(1);
+        }
+    }
+    (count > 0).then_some(count)
 }
 
 fn extract_session_speed_from_record(record: &Value) -> SessionSpeed {
@@ -1159,6 +1283,7 @@ fn extract_session_speed_from_record(record: &Value) -> SessionSpeed {
     let Some(events) = record.get("events").and_then(Value::as_array) else {
         return SessionSpeed::default();
     };
+    let decode_stream_chunk_tokens = count_stream_chunk_tokens(events);
     for event in events {
         let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
         let timestamp = parse_event_timestamp(event.get("timestamp"));
@@ -1226,6 +1351,7 @@ fn extract_session_speed_from_record(record: &Value) -> SessionSpeed {
         decode_tokens: output_tokens,
         decode_duration_s,
         decode_speed_tps,
+        decode_stream_chunk_tokens,
     }
 }
 
@@ -1248,6 +1374,28 @@ fn merge_session_speed(target: &mut SessionSpeed, fallback: &SessionSpeed) {
     if target.decode_speed_tps.is_none() {
         target.decode_speed_tps = fallback.decode_speed_tps;
     }
+    if target.decode_stream_chunk_tokens.is_none() {
+        target.decode_stream_chunk_tokens = fallback.decode_stream_chunk_tokens;
+    }
+}
+
+fn decode_tokens_from_usage(usage: Option<&TokenUsage>) -> Option<u64> {
+    let usage = usage?;
+    let decode_tokens = usage.total.saturating_sub(usage.input);
+    if decode_tokens > 0 {
+        return Some(decode_tokens);
+    }
+    if usage.output > 0 {
+        return Some(usage.output);
+    }
+    None
+}
+
+fn resolve_decode_tokens(speed: &SessionSpeed, usage: Option<&TokenUsage>) -> Option<u64> {
+    if let Some(tokens) = speed.decode_tokens.filter(|value| *value > 0) {
+        return Some(tokens as u64);
+    }
+    decode_tokens_from_usage(usage)
 }
 
 fn seed_for_user(user_id: &str) -> u64 {
