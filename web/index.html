@@ -20,7 +20,7 @@
       rel="stylesheet"
       href="./third/fontawesome-free-6.7.2-web/css/solid.min.css"
     />
-    <link rel="stylesheet" href="./app.css?v=20260215-01" />
+    <link rel="stylesheet" href="./app.css?v=20260323-02" />
   </head>
   <body>
     <div class="app">
@@ -2368,12 +2368,35 @@
             </div>
             <div class="modal-body">
               <div class="detail-header">
-                <div class="muted">支持所有渠道。字段结构按用户侧渠道设置对齐，复杂渠道直接填写 JSON 配置。</div>
+                <div class="muted">管理员侧单独维护这套接入渠道表单。公共字段直接填写，渠道专属字段通过 JSON 配置补齐。</div>
                 <div class="detail-actions">
                   <button id="bridgeCenterChannelNewBtn" class="secondary btn-with-icon" type="button">
                     <i class="fa-solid fa-plus"></i>
                     <span>新增渠道</span>
                   </button>
+                </div>
+              </div>
+              <div class="bridge-channel-guide">
+                <div class="bridge-channel-guide-main">
+                  <div class="bridge-channel-guide-title">
+                    <strong id="bridgeCenterChannelGuideName">选择渠道后显示说明</strong>
+                    <span id="bridgeCenterChannelGuideRuntime" class="status-chip">模式 -</span>
+                    <span id="bridgeCenterChannelGuideAdapter" class="status-chip">适配器 -</span>
+                  </div>
+                  <div id="bridgeCenterChannelGuideDescription" class="muted">
+                    先选择渠道，再按模板填写当前节点专属的接入账号配置。
+                  </div>
+                  <div class="bridge-channel-guide-meta">
+                    <span>回调提示：<code id="bridgeCenterChannelGuideDocsHint">-</code></span>
+                    <span>能力：<span id="bridgeCenterChannelGuideCaps">-</span></span>
+                  </div>
+                </div>
+                <div class="bridge-channel-guide-actions">
+                  <button id="bridgeCenterChannelTemplateBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>填入模板</span>
+                  </button>
+                  <button id="bridgeCenterChannelEmptyBtn" class="secondary" type="button">清空为 {}</button>
                 </div>
               </div>
               <div class="settings-grid settings-grid--auto">
@@ -5160,7 +5183,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260315-05"></script>
+    <script type="module" src="./app.js?v=20260323-02"></script>
 </body>
 </html>
 

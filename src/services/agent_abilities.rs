@@ -91,25 +91,31 @@ pub fn resolve_selected_declared_names(
     let mut declared_tool_names = Vec::new();
     let mut declared_skill_names = Vec::new();
 
-    let mut push_declared_name = |name: String| {
+    for name in normalize_names(explicit_declared_skill_names.iter().map(String::as_str)) {
         if !selected_name_set.contains(&name) || !covered.insert(name.clone()) {
-            return;
+            continue;
+        }
+        declared_skill_names.push(name);
+    }
+    for name in normalize_names(explicit_declared_tool_names.iter().map(String::as_str)) {
+        if !selected_name_set.contains(&name) || !covered.insert(name.clone()) {
+            continue;
         }
         if skill_name_keys.contains(&name) {
             declared_skill_names.push(name);
         } else {
             declared_tool_names.push(name);
         }
-    };
-
-    for name in normalize_names(explicit_declared_skill_names.iter().map(String::as_str)) {
-        push_declared_name(name);
-    }
-    for name in normalize_names(explicit_declared_tool_names.iter().map(String::as_str)) {
-        push_declared_name(name);
     }
     for name in selected_names {
-        push_declared_name(name);
+        if !selected_name_set.contains(&name) || !covered.insert(name.clone()) {
+            continue;
+        }
+        if skill_name_keys.contains(&name) {
+            declared_skill_names.push(name);
+        } else {
+            declared_tool_names.push(name);
+        }
     }
 
     (declared_tool_names, declared_skill_names)
@@ -497,5 +503,17 @@ mod tests {
         );
         assert_eq!(tool_names, vec!["read_file".to_string()]);
         assert_eq!(skill_names, vec!["planner".to_string()]);
+    }
+
+    #[test]
+    fn resolve_selected_declared_names_preserves_explicit_skill_split_without_registry_match() {
+        let (tool_names, skill_names) = resolve_selected_declared_names(
+            &["read_file".to_string(), "writer".to_string()],
+            &["read_file".to_string()],
+            &["writer".to_string()],
+            &sample_skill_keys(),
+        );
+        assert_eq!(tool_names, vec!["read_file".to_string()]);
+        assert_eq!(skill_names, vec!["writer".to_string()]);
     }
 }

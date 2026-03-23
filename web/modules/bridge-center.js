@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260215-01";
+﻿import { elements } from "./elements.js?v=20260323-02";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
@@ -6,6 +6,114 @@ import { notify } from "./notify.js";
 
 const BRIDGE_OWNER_PREFIX = "bridge_center_owner__";
 const USER_ONLY_CHANNELS = new Set(["wechat", "wechat_mp", "weixin"]);
+const CHANNEL_CONFIG_TEMPLATES = {
+  feishu: {
+    feishu: {
+      app_id: "",
+      app_secret: "",
+      domain: "open.feishu.cn",
+      receive_id_type: "chat_id",
+      verification_token: "",
+      encrypt_key: "",
+      long_connection_enabled: true,
+    },
+  },
+  qqbot: {
+    qqbot: {
+      app_id: "",
+      client_secret: "",
+      token: "",
+      sandbox: false,
+      long_connection_enabled: true,
+    },
+  },
+  whatsapp: {
+    whatsapp_cloud: {
+      phone_number_id: "",
+      access_token: "",
+      verify_token: "",
+      api_version: "v21.0",
+    },
+  },
+  wechat: {
+    wechat: {
+      corp_id: "",
+      agent_id: "",
+      secret: "",
+      token: "",
+      encoding_aes_key: "",
+      domain: "qyapi.weixin.qq.com",
+    },
+  },
+  wechat_mp: {
+    wechat_mp: {
+      app_id: "",
+      app_secret: "",
+      token: "",
+      encoding_aes_key: "",
+      original_id: "",
+      domain: "api.weixin.qq.com",
+    },
+  },
+  weixin: {
+    weixin: {
+      api_base: "https://ilinkai.weixin.qq.com",
+      cdn_base: "https://novac2c.cdn.weixin.qq.com/c2c",
+      bot_token: "",
+      ilink_bot_id: "",
+      ilink_user_id: "",
+      long_connection_enabled: true,
+      allow_from: [],
+    },
+  },
+  xmpp: {
+    xmpp: {
+      jid: "bot@example.com",
+      password: "",
+      domain: "example.com",
+      host: "",
+      port: 5222,
+      tls_enabled: true,
+      direct_tls: false,
+      trust_self_signed: false,
+      long_connection_enabled: true,
+    },
+  },
+  telegram: {
+    telegram: {
+      bot_token: "",
+      webhook_secret: "",
+    },
+  },
+  discord: {
+    discord: {
+      bot_token: "",
+      application_id: "",
+      public_key: "",
+    },
+  },
+  slack: {
+    slack: {
+      bot_token: "",
+      signing_secret: "",
+      app_token: "",
+    },
+  },
+  line: {
+    line: {
+      channel_access_token: "",
+      channel_secret: "",
+    },
+  },
+  dingtalk: {
+    dingtalk: {
+      client_id: "",
+      client_secret: "",
+      token: "",
+      aes_key: "",
+    },
+  },
+};
 
 const emptyCenter = () => ({
   center_id: "",
@@ -55,8 +163,11 @@ const ensureBridgeState = () => {
   state.bridgeCenter.channelForm ||= emptyChannelForm();
 };
 
+const channelMeta = (channel) =>
+  (state.bridgeCenter.meta?.supported_channels || []).find((item) => item.channel === cleanText(channel).toLowerCase()) || null;
+
 const resolveChannelLabel = (channel) => {
-  const hit = (state.bridgeCenter.meta?.supported_channels || []).find((item) => item.channel === channel);
+  const hit = channelMeta(channel);
   return hit?.display_name || channel || "-";
 };
 
@@ -155,6 +266,63 @@ const normalizeOwnedChannelAccount = (item = {}) => ({
   raw_config: isPlainObject(item.raw_config) ? item.raw_config : {},
   updated_at: Number(item.updated_at) || 0,
 });
+
+const buildChannelTemplateText = (channel) => {
+  const normalized = cleanText(channel).toLowerCase();
+  const template = CHANNEL_CONFIG_TEMPLATES[normalized] || {};
+  return JSON.stringify(template, null, 2);
+};
+
+const summarizeProviderCaps = (caps = {}) => {
+  const parts = [];
+  if (caps.supports_thread) parts.push("支持线程");
+  if (caps.supports_group_identity) parts.push("支持群组身份");
+  if (caps.supports_proactive) parts.push("支持主动发送");
+  if (caps.requires_context_token) parts.push("出站依赖上下文");
+  return parts.join(" / ") || "按通用 JSON 配置";
+};
+
+const refreshChannelGuide = ({ allowAutofill = false } = {}) => {
+  const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel).toLowerCase();
+  const meta = channelMeta(channel);
+  const providerCaps = meta?.provider_caps || {};
+  if (elements.bridgeCenterChannelGuideName) {
+    elements.bridgeCenterChannelGuideName.textContent = meta
+      ? `${meta.display_name || meta.channel} (${meta.channel})`
+      : "选择渠道后显示说明";
+  }
+  if (elements.bridgeCenterChannelGuideRuntime) {
+    const runtimeMode = providerCaps.runtime_mode || meta?.webhook_mode || "-";
+    elements.bridgeCenterChannelGuideRuntime.textContent = `模式 ${runtimeMode}`;
+  }
+  if (elements.bridgeCenterChannelGuideAdapter) {
+    elements.bridgeCenterChannelGuideAdapter.textContent = providerCaps.adapter_registered ? "适配器已接线" : "目录已注册";
+  }
+  if (elements.bridgeCenterChannelGuideDescription) {
+    elements.bridgeCenterChannelGuideDescription.textContent = meta?.description
+      ? `${meta.description}。渠道专属字段请放进下方 JSON 配置。`
+      : "先选择渠道，再按模板填写当前节点专属的接入账号配置。";
+  }
+  if (elements.bridgeCenterChannelGuideDocsHint) {
+    elements.bridgeCenterChannelGuideDocsHint.textContent = meta?.docs_hint || "-";
+  }
+  if (elements.bridgeCenterChannelGuideCaps) {
+    elements.bridgeCenterChannelGuideCaps.textContent = summarizeProviderCaps(providerCaps);
+  }
+  const configLocked = state.bridgeCenter.channelForm.mode === "edit" && state.bridgeCenter.channelForm.owned === false;
+  if (elements.bridgeCenterChannelTemplateBtn) {
+    elements.bridgeCenterChannelTemplateBtn.disabled = !channel || configLocked;
+  }
+  if (elements.bridgeCenterChannelEmptyBtn) {
+    elements.bridgeCenterChannelEmptyBtn.disabled = configLocked;
+  }
+  if (allowAutofill && elements.bridgeCenterChannelConfig) {
+    const current = cleanText(elements.bridgeCenterChannelConfig.value);
+    if (!current || current === "{}") {
+      elements.bridgeCenterChannelConfig.value = buildChannelTemplateText(channel);
+    }
+  }
+};
 
 const mergeBridgeAccounts = (bridgeAccounts, ownedAccounts) => {
   const ownedMap = new Map(ownedAccounts.map((item) => [item.key, item]));
@@ -276,9 +444,10 @@ const renderAccountList = () => {
   }
   state.bridgeCenter.accounts.forEach((account) => {
     const configStatus = account.owned ? (account.meta?.configured === false ? "未配置" : "已配置") : "外部账号";
+    const channelLabel = resolveChannelLabel(account.channel);
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${resolveChannelLabel(account.channel)}</td>
+      <td>${channelLabel === account.channel ? channelLabel : `${channelLabel} (${account.channel})`}</td>
       <td>${account.account_id}</td>
       <td>${account.name || "-"}</td>
       <td>${configStatus}</td>
@@ -487,6 +656,7 @@ const applyChannelForm = (account) => {
   if (elements.bridgeCenterChannelThreadStrategy) elements.bridgeCenterChannelThreadStrategy.value = form.thread_strategy || "main_thread";
   if (elements.bridgeCenterChannelStatusReason) elements.bridgeCenterChannelStatusReason.value = form.status_reason || "";
   if (elements.bridgeCenterChannelDeleteBtn) elements.bridgeCenterChannelDeleteBtn.disabled = form.mode !== "edit";
+  refreshChannelGuide({ allowAutofill: form.mode !== "edit" });
 };
 
 const readCenterConfig = () => {
@@ -527,6 +697,9 @@ const saveChannelConfig = async () => {
   }
   const form = state.bridgeCenter.channelForm;
   const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value).toLowerCase();
+  if (!channel) {
+    throw new Error("请选择渠道");
+  }
   const accountId = cleanText(elements.bridgeCenterChannelFormAccountId?.value);
   const accountName = cleanText(elements.bridgeCenterChannelFormAccountName?.value);
   const peerKind = USER_ONLY_CHANNELS.has(channel) ? "user" : cleanText(elements.bridgeCenterChannelFormPeerKind?.value) || "group";
@@ -534,6 +707,9 @@ const saveChannelConfig = async () => {
   const rawConfig = cleanText(elements.bridgeCenterChannelConfig?.value);
   let config = null;
   if (form.mode === "create" || form.owned !== false) {
+    if (!rawConfig) {
+      throw new Error("请填写渠道 JSON 配置，至少保留 {} 或点击“填入模板”");
+    }
     try {
       config = JSON.parse(rawConfig || "{}");
     } catch (error) {
@@ -679,6 +855,21 @@ export const initBridgeCenterPanel = () => {
         elements.bridgeCenterChannelFormPeerKind.disabled = false;
       }
     }
+    refreshChannelGuide({ allowAutofill: state.bridgeCenter.channelForm.mode !== "edit" });
+  });
+  elements.bridgeCenterChannelTemplateBtn?.addEventListener("click", () => {
+    const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value).toLowerCase();
+    if (!channel || !elements.bridgeCenterChannelConfig) {
+      return;
+    }
+    elements.bridgeCenterChannelConfig.value = buildChannelTemplateText(channel);
+    notify("已填入渠道模板", "info");
+  });
+  elements.bridgeCenterChannelEmptyBtn?.addEventListener("click", () => {
+    if (!elements.bridgeCenterChannelConfig) {
+      return;
+    }
+    elements.bridgeCenterChannelConfig.value = "{}";
   });
   elements.bridgeCenterConfigClose?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
   elements.bridgeCenterConfigCancel?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
@@ -700,3 +891,5 @@ export const initBridgeCenterPanel = () => {
 };
 
 export { loadBridgeCenters };
+
+

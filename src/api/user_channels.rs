@@ -59,9 +59,9 @@ fn looks_like_base64_image(value: &str) -> bool {
     if value.len() <= 64 {
         return false;
     }
-    value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_'))
+    value.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_')
+    })
 }
 
 fn build_absolute_weixin_qr_url(raw: &str, api_base: &str) -> Option<String> {
@@ -168,7 +168,10 @@ async fn resolve_weixin_qr_preview_url(
         return Some(normalized);
     }
 
-    let compact = normalized.chars().filter(|char| !char.is_whitespace()).collect::<String>();
+    let compact = normalized
+        .chars()
+        .filter(|char| !char.is_whitespace())
+        .collect::<String>();
     let compact_lower = compact.to_ascii_lowercase();
     let base64_candidate = if compact_lower.starts_with("data:image/") {
         compact

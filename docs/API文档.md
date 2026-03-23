@@ -1515,8 +1515,8 @@
   - `default_identity_strategy`
   - `username_policy`
   - `description`
-  - `shared_channels[]`：内嵌接入渠道配置，字段与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 基本一致；管理端页面通过它把“节点配置 + 接入渠道”一次性保存
-- 说明：管理员用它创建或更新一个“共享渠道入口 -> 默认预设智能体”的舰桥节点。共享账号绑定已收敛进节点配置，不再作为独立产品概念暴露。
+  - `shared_channels[]`：可选的批量写入能力，字段与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 基本一致；当前管理端页面默认不走一次性保存，而是通过“接入渠道”弹窗逐条保存
+- 说明：管理员用它创建或更新一个“全渠道入口 -> 默认预设智能体”的舰桥节点。页面当前采用“监控主页面 + 中心配置弹窗 + 接入渠道弹窗”模式。
 
 ### 4.1.25.8 `/wunder/admin/bridge/centers/{center_id}`
 
@@ -1541,7 +1541,7 @@
   - `reply_strategy`
   - `default_preset_agent_name_override`
   - `status_reason`
-- 说明：底层仍保留独立接入渠道接口，便于脚本化接线；管理端页面默认不再把它呈现为单独的“共享账号绑定”产品步骤，而是作为中心配置中的内嵌列表统一提交。
+- 说明：底层仍保留独立接入渠道接口，便于脚本化接线；管理端页面会先通过 `/wunder/channels/accounts?user_id=bridge_center_owner__{center_id}` 创建或更新节点专属渠道账号，再用此接口写入桥接策略。
 
 ### 4.1.25.10 `/wunder/admin/bridge/accounts/{center_account_id}`
 

@@ -4141,6 +4141,32 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return true;
   };
 
+  const finalizeCompactionProgressItem = (workflowRef, detailPayload, status) => {
+    if (!workflowRef) return false;
+    const itemId = compactionProgressItemMap.get(workflowRef);
+    if (!itemId) return false;
+    const existingItem = assistantMessage.workflowItems.find((item) => item.id === itemId) || null;
+    const existingDetail = safeJsonParse(existingItem?.detail);
+    const mergedDetail = {
+      ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
+      ...(detailPayload && typeof detailPayload === 'object' ? detailPayload : {}),
+      status:
+        detailPayload?.status
+        ?? (status === 'failed' ? 'failed' : 'done')
+    };
+    updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+      title: t('chat.toolWorkflow.compaction.title'),
+      status,
+      detail: buildDetail(mergedDetail),
+      isTool: true,
+      eventType: 'compaction',
+      toolName: '上下文压缩',
+      toolCallId: workflowRef
+    });
+    clearCompactionProgressRef(workflowRef);
+    return true;
+  };
+
   const resolveCompactionWorkflowRef = (round) => {
     if (Number.isFinite(round)) {
       return `compaction:${round}`;
@@ -4888,15 +4914,22 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           normalizedCompactionStatus === 'failed' || normalizedCompactionStatus === 'error'
             ? 'failed'
             : 'completed';
-        assistantMessage.workflowItems.push(
-          buildWorkflowItem(t('chat.toolWorkflow.compaction.title'), buildDetail(data ?? payload), compactionStatus, {
+        const finalized = finalizeCompactionProgressItem(
+          workflowRef,
+          data ?? payload ?? {},
+          compactionStatus
+        );
+        if (!finalized) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(t('chat.toolWorkflow.compaction.title'), buildDetail(data ?? payload), compactionStatus, {
             isTool: true,
             eventType: 'compaction',
             toolName: '上下文压缩',
             toolCallId: workflowRef || undefined
           })
-        );
-        clearCompactionProgressRef(workflowRef);
+          );
+          clearCompactionProgressRef(workflowRef);
+        }
         break;
       }
       case 'quota_usage': {
@@ -5936,6 +5969,15 @@ export const useChatStore = defineStore('chat', {
         });
         const resultData =
           data?.data && typeof data.data === 'object' ? data.data : {};
+        if (Array.isArray(compactionMessage.workflowItems) && compactionMessage.workflowItems.length > 0) {
+          compactionMessage.workflowItems[0].status = 'completed';
+          compactionMessage.workflowItems[0].detail = buildDetail({
+            ...(resultData as Record<string, unknown>),
+            status: 'done',
+            trigger_mode: 'manual'
+          });
+          (compactionMessage.workflowItems[0] as Record<string, unknown>).eventType = 'compaction';
+        }
         compactionMessage.workflowItems.push(
           buildWorkflowItem(
             t('chat.toolWorkflow.compaction.title'),

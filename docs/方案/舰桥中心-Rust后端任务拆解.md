@@ -1,29 +1,22 @@
-﻿# 舰桥中心 Rust 后端任务拆解（已落地版）
+﻿# 舰桥中心 Rust 后端任务拆解（已更新）
 
-## 1. 当前结论
+## 1. 已落地模块
 
-舰桥中心后端主链路已经落地，不再处于“从零规划”阶段。
+当前舰桥中心后端已经完成主路径闭环。
 
-当前真实实现位置：
+已落地模块：
 
 - 管理 API：`src/api/admin_bridge.rs`
-- 桥接服务：`src/services/bridge/service.rs`
+- 桥接服务：`src/services/bridge/`
 - 渠道接线：`src/channels/service.rs`
-- runtime 注入：`src/core/state.rs`
 - 存储抽象：`src/storage/bridge.rs`
-- 存储实现：`src/storage/sqlite.rs`、`src/storage/postgres.rs`
-
-说明：
-
-- 旧草稿中出现的 `/wunder/admin/bridge_centers/*` 路径已废弃
-- 当前真实接口统一收口为 `/wunder/admin/bridge/*`
-- 产品命名已经统一为：`舰桥中心 -> 舰桥节点`
+- SQLite / Postgres 落地：`src/storage/sqlite.rs`、`src/storage/postgres.rs`
 
 ---
 
-## 2. 已完成模块
+## 2. 已完成能力
 
-### 2.1 存储层
+### 2.1 数据层
 
 已完成：
 
@@ -33,123 +26,70 @@
 - `bridge_delivery_logs`
 - `bridge_route_audit_logs`
 
-已覆盖：
-
-- SQLite 建表与 CRUD
-- Postgres 建表与 CRUD
-- `channel/account_id` 唯一约束
-- `center_account_id + external_identity_key` 唯一路由约束
-
-### 2.2 服务层
+### 2.2 路由主链路
 
 已完成：
 
 - 外部身份提取
 - 自动开户
 - 自动确保默认预设智能体
-- bridge route 创建/复用
-- 入站/出站投递日志
-- route 活跃时间更新
+- 桥接路由创建与复用
+- 入站投递日志记录
+- 出站投递日志记录
+- 路由最近活动更新
 
-核心函数：
-
-- `resolve_inbound_bridge_route(...)`
-- `auto_provision_route(...)`
-- `touch_bridge_route_after_outbound(...)`
-- `log_bridge_delivery(...)`
-
-### 2.3 渠道主链路接线
-
-已完成：
-
-- 手工绑定/用户绑定未命中时进入 bridge 解析
-- bridge 命中后把 `route.agent_id` 注入正常会话解析链路
-- 会话 metadata 挂载 `bridge_center_id / bridge_center_account_id / bridge_route_id`
-- 出站时从 outbox/session metadata 回捞 bridge route 并记录 delivery log
-
-路由优先级：
-
-1. `channel_bindings / channel_user_bindings`
-2. `bridge route`
-3. `owner fallback`
-
-### 2.4 管理 API
+### 2.3 管理 API
 
 已完成：
 
 - 元数据接口
-- 支持渠道目录接口
-- 节点列表/详情/保存/删除
-- 接入渠道列表/单条增删改
-- 路由列表/详情/状态切换
+- 支持渠道接口
+- 舰桥节点增删改查
+- 节点接入渠道增删改查
+- 自动分配路由查询与状态治理
 - 投递日志查询
 
-额外完成：
-
-- 节点保存支持一次性提交 `shared_channels[]`
-- 同步时优先按 `(channel, account_id)` 复用已有接入渠道记录，避免因漏传 `center_account_id` 误删历史路由和日志
-
----
-
-## 3. 管理端页面落地情况
+### 2.4 管理端页面
 
 已完成：
 
-- 页面总称：`舰桥中心`
-- 单个实体：`舰桥节点`
-- 单模型页面：`节点配置 + 接入渠道 + 自动分配路由 + 投递日志`
-- 接入渠道由节点统一保存，不再暴露“共享账号绑定”独立步骤
-
-页面文件：
-
-- `web/index.html`
-- `web/modules/bridge-center.js`
-- `web/modules/elements.js`
-- `web/app.js`
+- 主页改为监控页
+- `中心配置` 改为弹窗
+- `接入渠道` 改为弹窗
+- 管理端接入渠道改为原生 JS 单独实现
+- 默认预设智能体来源修正为真实预设列表
 
 ---
 
-## 4. 当前剩余工作
+## 3. 当前剩余工作
 
-### 4.1 必做
+仍建议继续补强的部分：
 
-- 增加完整集成测试，覆盖：
-  - 共享渠道首包入站
-  - 自动开户
-  - 自动确保预设智能体
-  - route 建立
-  - 出站 delivery log
-
-### 4.2 建议做
-
-- 管理端增加更明确的错误提示和表单校验
-- 增加 route detail 的更多审计信息展开
-- 增加不同 provider 的联调样例
+- 后端集成测试：覆盖首包桥接、自动开户、自动确保预设、回消息、日志落库
+- 更多渠道联调样例
+- 更细的投递失败提示与治理提示
 
 ---
 
-## 5. 验收标准
+## 4. 当前验收标准
 
-满足以下条件即可认为舰桥中心后端闭环可用：
+满足以下条件即可视为舰桥中心可上线联调：
 
-1. 管理员能在舰桥中心中新建舰桥节点并保存接入渠道
-2. 外部用户首次从共享渠道发消息时自动开户
-3. 系统自动为该用户确保默认预设智能体
-4. 后续消息稳定命中同一 bridge route
-5. 回复沿原共享渠道账号回发成功
-6. 管理端可看到路由与投递日志
+1. 管理员能新建舰桥节点
+2. 管理员能在接入渠道弹窗里配置节点专属渠道账号
+3. 外部用户首包进入后自动开户，默认密码 `123456`
+4. 系统自动确保该用户拥有节点默认预设智能体
+5. 后续消息稳定命中同一桥接路由
+6. 回复能从原渠道账号发回
+7. 管理端可看到路由和投递日志
 
 ---
 
-## 6. 当前校验记录
+## 5. 当前校验记录
 
 已通过：
 
 - `cargo check --release`
 - `node --check web/modules/bridge-center.js`
+- `node --check web/modules/elements.js`
 - `node --check web/app.js`
-
-已补的轻量测试：
-
-- `BridgeCenterUpsertPayload` 支持 `shared_channels[]`
-- 接入渠道记录复用/冲突解析 helper 测试

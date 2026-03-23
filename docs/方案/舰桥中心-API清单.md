@@ -1,158 +1,194 @@
 ﻿# 舰桥中心 API 清单
 
-## 1. 命名约定
+## 1. 资源命名
 
-- 页面/能力总称：`舰桥中心`
-- 单个共享接入单元：`舰桥节点`
-- 后端内部主资源：`bridge_center`
-- 单个共享渠道挂接：`bridge_center_account`
+- 页面总称：`舰桥中心`
+- 单个实体：`舰桥节点`
+- 节点接入渠道：`bridge_center_account`
 - 自动分配路由：`bridge_route`
 
-说明：
-
-- 管理端页面已经收敛为“`节点配置 + 接入渠道 + 运行监控`”单模型。
-- `共享账号绑定` 不再作为独立产品步骤暴露，而是节点配置中的内嵌列表。
-- 当前真实接口以 `src/api/admin_bridge.rs` 与 `docs/API文档.md` 为准。
+当前真实接口以 `src/api/admin_bridge.rs` 为准。
 
 ---
 
-## 2. 已落地接口
+## 2. 元数据接口
 
-### 2.1 元数据与能力探测
+### `GET /wunder/admin/bridge/metadata`
 
-- `GET /wunder/admin/bridge/metadata`
-- `GET /wunder/admin/bridge/supported_channels`
+用途：初始化舰桥中心页面。
 
-用途：
+返回重点：
 
-- 返回默认开户密码、可选预设智能体、可选单位、已激活渠道账号
-- 返回所有可挂入舰桥节点的渠道目录与适配器能力
+- `data.default_password`：自动开户默认密码，当前固定 `123456`
+- `data.supported_channels[]`：支持渠道目录，含 `channel / display_name / description / docs_hint / adapter_registered / provider_caps`
+- `data.preset_agents[]`：当前可选默认预设智能体
+- `data.org_units[]`：可选目标单位
+- `data.channel_accounts[]`：当前系统已激活渠道账号概览
 
-### 2.2 舰桥节点管理
+### `GET /wunder/admin/bridge/supported_channels`
 
-- `GET /wunder/admin/bridge/centers`
-- `POST /wunder/admin/bridge/centers`
-- `GET /wunder/admin/bridge/centers/{center_id}`
-- `DELETE /wunder/admin/bridge/centers/{center_id}`
+用途：单独获取渠道目录与能力快照。
 
-说明：
+---
 
-- `POST /centers` 同时承担创建与更新职责
-- 节点保存时支持直接提交 `shared_channels[]`
-- 管理端页面默认走“节点配置 + 接入渠道一次性保存”
+## 3. 舰桥节点接口
 
-`POST /wunder/admin/bridge/centers` 关键字段：
+### `GET /wunder/admin/bridge/centers`
 
-- `center_id`：可选，传入时表示更新
+用途：获取舰桥节点列表。
+
+查询参数：
+
+- `status`
+- `keyword`
+- `offset`
+- `limit`
+
+返回重点：
+
+- `center_id`
+- `name`
+- `status`
+- `default_preset_agent_name`
+- `target_unit_id`
+- `owner_user_id`
+- `owner_username`
+- `account_count`
+- `shared_channel_count`
+- `route_count`
+- `active_route_count`
+- `created_at`
+- `updated_at`
+
+### `POST /wunder/admin/bridge/centers`
+
+用途：创建或更新舰桥节点。
+
+当前管理端主表单字段：
+
+- `center_id`：更新时传入
 - `name`
 - `code`
 - `status`
 - `default_preset_agent_name`
 - `target_unit_id`
+- `description`
 - `default_identity_strategy`
 - `username_policy`
-- `description`
-- `shared_channels[]`
+- `settings`
 
-`shared_channels[]` 每项字段：
+说明：
 
-- `center_account_id`：可选，已有记录更新时携带
+- 页面已经把 `code / default_identity_strategy / username_policy` 隐藏，前端会按规则自动生成或写固定值。
+- 后端仍接受 `shared_channels[]` 一次性提交，但当前舰桥中心页面不再走这条交互，而是由“接入渠道”弹窗逐条保存。
+
+### `GET /wunder/admin/bridge/centers/{center_id}`
+
+用途：查看单个舰桥节点详情。
+
+返回重点：
+
+- `data.center`
+- `data.shared_channels[]`
+- `data.accounts[]`
+
+### `DELETE /wunder/admin/bridge/centers/{center_id}`
+
+用途：删除舰桥节点，并级联清理节点下路由和日志。
+
+---
+
+## 4. 节点接入渠道接口
+
+### `GET /wunder/admin/bridge/centers/{center_id}/accounts`
+
+用途：获取某个节点的接入渠道列表。
+
+### `POST /wunder/admin/bridge/centers/{center_id}/accounts`
+
+用途：为某个节点新增接入渠道。
+
+字段：
+
+- `center_account_id`
 - `channel`
 - `account_id`
 - `enabled`
+- `default_preset_agent_name_override`
 - `identity_strategy`
 - `thread_strategy`
-- `default_preset_agent_name_override`
+- `reply_strategy`
+- `fallback_policy`
 - `status_reason`
 
-### 2.3 节点接入渠道管理
-
-- `GET /wunder/admin/bridge/centers/{center_id}/accounts`
-- `POST /wunder/admin/bridge/centers/{center_id}/accounts`
-- `PATCH /wunder/admin/bridge/accounts/{center_account_id}`
-- `DELETE /wunder/admin/bridge/accounts/{center_account_id}`
-
 说明：
 
-- 这组接口仍然保留，便于脚本化管理与定向调试
-- 管理端页面默认不再把它展示成单独步骤
-- 同一个 `(channel, account_id)` 只能挂到一个舰桥节点
+- 管理端在调用这个接口前，会先通过 `/wunder/channels/accounts?user_id=bridge_center_owner__{center_id}` 创建或更新节点专属渠道账号。
+- 桥接策略和物理账号配置是分两步写入的。
 
-### 2.4 自动分配路由
+### `PATCH /wunder/admin/bridge/accounts/{center_account_id}`
 
-- `GET /wunder/admin/bridge/routes`
-- `GET /wunder/admin/bridge/routes/{route_id}`
-- `PATCH /wunder/admin/bridge/routes/{route_id}`
+用途：更新某个节点接入渠道的桥接策略。
 
-说明：
+### `DELETE /wunder/admin/bridge/accounts/{center_account_id}`
 
-- 用于查看外部身份到 wunder 用户/智能体的稳定映射
-- 当前只允许桥接级治理动作：`active / paused / blocked / error`
-- 不在舰桥中心里直接编辑这些用户自己的线程、定时任务、工作区
-
-### 2.5 投递日志
-
-- `GET /wunder/admin/bridge/delivery_logs`
-
-用途：
-
-- 查询入站/出站投递记录
-- 排查 provider 回包失败、共享账号异常、路由命中异常
+用途：删除某个节点接入渠道，并清理其名下 bridge route 和日志。
 
 ---
 
-## 3. 当前页面对应关系
+## 5. 路由与日志接口
 
-### 3.1 舰桥中心页面
+### `GET /wunder/admin/bridge/routes`
 
-左侧：
+用途：查看自动分配路由。
 
-- 舰桥节点列表
+查询参数：
 
-右侧：
+- `center_id`
+- `center_account_id`
+- `channel`
+- `account_id`
+- `status`
+- `keyword`
+- `wunder_user_id`
+- `agent_id`
+- `offset`
+- `limit`
 
-- 节点配置
-- 接入渠道
-- 自动分配路由
-- 投递日志
+### `GET /wunder/admin/bridge/routes/{route_id}`
 
-### 3.2 关键交互
+用途：查看单条路由详情、最近投递日志、最近治理审计。
 
-1. 管理员在舰桥中心中新建舰桥节点
-2. 选择已经在“渠道监控”中配置好的共享账号
-3. 指定默认预设智能体
-4. 保存舰桥节点
-5. 外部用户首包进入后自动开户、自动挂预设智能体、自动建路由
-6. 回复沿原共享渠道账号发回
+### `PATCH /wunder/admin/bridge/routes/{route_id}`
+
+用途：治理路由状态。
+
+支持字段：
+
+- `status`：`active / paused / blocked / error`
+- `clear_last_error`
+
+### `GET /wunder/admin/bridge/delivery_logs`
+
+用途：查看最近投递日志。
+
+查询参数：
+
+- `center_id`
+- `center_account_id`
+- `route_id`
+- `direction`
+- `status`
+- `limit`
 
 ---
 
-## 4. 已明确不做的能力
+## 6. 页面与接口的实际对应关系
 
-舰桥中心不负责：
+舰桥中心管理端当前是“监控主页 + 2 个弹窗”：
 
-- 直接编辑桥接用户的智能体提示词
-- 直接切换桥接用户线程
-- 直接管理桥接用户定时任务
-- 直接浏览/改写桥接用户工作区
+1. 主页调用 `/wunder/admin/bridge/centers`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/delivery_logs`
+2. `中心配置` 弹窗调用 `/wunder/admin/bridge/centers`
+3. `接入渠道` 弹窗先调用 `/wunder/channels/accounts`，再调用 `/wunder/admin/bridge/centers/{center_id}/accounts` 或 `/wunder/admin/bridge/accounts/{center_account_id}`
 
-这些操作仍然属于原有用户侧或管理员其他治理页面。
-
----
-
-## 5. 真实落地状态
-
-已落地：
-
-- 存储层：`bridge_centers / bridge_center_accounts / bridge_user_routes / bridge_delivery_logs / bridge_route_audit_logs`
-- 渠道主链路桥接接线
-- 首包自动开户
-- 自动确保默认预设智能体
-- 出站回原共享渠道
-- 管理端舰桥中心页面
-
-后续建议继续补：
-
-- 完整集成测试
-- 更多管理端校验提示
-- 路由/日志联调样例
+这就是当前真实 API 使用方式。

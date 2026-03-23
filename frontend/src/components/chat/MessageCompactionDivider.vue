@@ -38,7 +38,7 @@ const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>
   const running = isCompactionRunningFromWorkflowItems(props.items);
   if (snapshot.status === 'cancelled') return 'cancelled';
   if (snapshot.status === 'failed') return 'failed';
-  if (running || props.isStreaming) return 'running';
+  if (running) return 'running';
   return 'completed';
 });
 

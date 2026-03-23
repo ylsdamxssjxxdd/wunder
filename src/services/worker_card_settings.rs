@@ -1,9 +1,10 @@
-use crate::config::UserAgentPresetConfig;
+use crate::config::{Config, UserAgentPresetConfig};
 use crate::services::agent_abilities::{normalize_ability_items, resolve_selected_declared_names};
 use crate::services::default_agent_protocol::DefaultAgentConfig;
 use crate::services::inner_visible::{
     build_worker_card, parse_worker_card, WorkerCardRecordUpdate,
 };
+use crate::skills::load_skills;
 use crate::services::skills::SkillRegistry;
 use crate::services::user_access::UserToolContext;
 use crate::services::user_tools::UserToolKind;
@@ -172,6 +173,11 @@ pub fn collect_registry_skill_names(registry: &SkillRegistry) -> HashSet<String>
             (!cleaned.is_empty()).then(|| cleaned.to_string())
         })
         .collect()
+}
+
+pub fn collect_configured_skill_names(config: &Config) -> HashSet<String> {
+    let registry = load_skills(config, false, false, true);
+    collect_registry_skill_names(&registry)
 }
 
 fn record_from_update(update: &WorkerCardRecordUpdate) -> UserAgentRecord {
@@ -454,10 +460,10 @@ pub fn canonicalize_default_agent_config(
 #[cfg(test)]
 mod tests {
     use super::{
-        canonicalize_default_agent_config, canonicalize_preset_config, normalize_preset_icon_parts,
-        preset_update_from_config,
+        canonicalize_default_agent_config, canonicalize_preset_config,
+        collect_configured_skill_names, normalize_preset_icon_parts, preset_update_from_config,
     };
-    use crate::config::UserAgentPresetConfig;
+    use crate::config::{Config, UserAgentPresetConfig};
     use crate::services::default_agent_protocol::DefaultAgentConfig;
     use std::collections::HashSet;
 
@@ -536,6 +542,40 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_preset_config_preserves_declared_skills_when_selected_list_also_contains_them()
+    {
+        let preset = UserAgentPresetConfig {
+            preset_id: "preset_demo".to_string(),
+            revision: 2,
+            name: "Demo Preset".to_string(),
+            description: "desc".to_string(),
+            system_prompt: "prompt".to_string(),
+            model_name: Some("model-a".to_string()),
+            icon_name: "spark".to_string(),
+            icon_color: "#ABC".to_string(),
+            sandbox_container_id: 2,
+            tool_names: vec!["read_file".to_string(), "planner".to_string()],
+            declared_tool_names: vec!["read_file".to_string()],
+            declared_skill_names: vec!["planner".to_string()],
+            preset_questions: Vec::new(),
+            approval_mode: "full_auto".to_string(),
+            status: "active".to_string(),
+        };
+
+        let normalized =
+            canonicalize_preset_config(&preset, "preset_demo", &sample_skill_keys()).unwrap();
+        assert_eq!(
+            normalized.tool_names,
+            vec!["read_file".to_string(), "planner".to_string()]
+        );
+        assert_eq!(
+            normalized.declared_tool_names,
+            vec!["read_file".to_string()]
+        );
+        assert_eq!(normalized.declared_skill_names, vec!["planner".to_string()]);
+    }
+
+    #[test]
     fn canonicalize_default_agent_config_round_trips_through_worker_card() {
         let config = DefaultAgentConfig {
             name: "Default Agent".to_string(),
@@ -584,5 +624,18 @@ mod tests {
         let (icon_name, icon_color) = normalize_preset_icon_parts(update.icon.as_deref());
         assert_eq!(icon_name, "spark");
         assert_eq!(icon_color, "#123456");
+    }
+
+    #[test]
+    fn collect_configured_skill_names_scans_repo_skills() {
+        let mut config = Config::default();
+        config.skills.enabled.clear();
+        config.skills.paths.clear();
+
+        let skill_names = collect_configured_skill_names(&config);
+        assert!(
+            skill_names.contains("技能创建器"),
+            "configured skill scan should include repo skill names"
+        );
     }
 }

@@ -30,7 +30,7 @@ use crate::services::user_agent_presets::{
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
 };
 use crate::services::worker_card_settings::{
-    canonicalize_preset_config, collect_registry_skill_names, normalize_preset_icon_color,
+    canonicalize_preset_config, collect_configured_skill_names, normalize_preset_icon_color,
     normalize_preset_icon_name, normalize_preset_icon_parts,
 };
 use crate::skills::{load_skills, SkillSpec};
@@ -4047,10 +4047,7 @@ async fn admin_preset_agents_update(
     Json(payload): Json<PresetAgentsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let current = state.config_store.get().await;
-    let skill_name_keys = {
-        let registry = state.skills.read().await;
-        collect_registry_skill_names(&registry)
-    };
+    let skill_name_keys = collect_configured_skill_names(&current);
     let existing_items =
         match preset_worker_cards::load_effective_preset_configs(&current, &skill_name_keys) {
             Ok(items) => items,
@@ -4089,10 +4086,7 @@ async fn admin_preset_agents_update(
 
 async fn admin_preset_agent_items(state: &AppState) -> Result<Vec<Value>, Response> {
     let config = state.config_store.get().await;
-    let skill_name_keys = {
-        let registry = state.skills.read().await;
-        collect_registry_skill_names(&registry)
-    };
+    let skill_name_keys = collect_configured_skill_names(&config);
     let configured = preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut items = Vec::with_capacity(configured.len() + 1);
@@ -4116,10 +4110,8 @@ async fn admin_preset_agent_worker_card(
             "preset_id is required".to_string(),
         ));
     }
-    let skill_name_keys = {
-        let registry = state.skills.read().await;
-        collect_registry_skill_names(&registry)
-    };
+    let config = state.config_store.get().await;
+    let skill_name_keys = collect_configured_skill_names(&config);
     if cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS) {
         let record = load_effective_default_agent_record(&state, PRESET_TEMPLATE_USER_ID)
             .await
@@ -4133,8 +4125,6 @@ async fn admin_preset_agent_worker_card(
             }
         })));
     }
-
-    let config = state.config_store.get().await;
     let presets = preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let preset = presets
@@ -5390,6 +5380,10 @@ fn preset_agent_payload(
         status,
         ..
     } = normalized;
+    eprintln!(
+        "preset payload {preset_id}: tools={:?} declared_tools={:?} declared_skills={:?}",
+        tool_names, declared_tool_names, declared_skill_names
+    );
     Some(json!({
         "preset_id": preset_id,
         "revision": revision.max(1),
@@ -5489,6 +5483,10 @@ fn normalize_preset_agents(
                 "preset agent name is required".to_string(),
             )
         })?;
+        eprintln!(
+            "preset normalize {preset_id}: tools={:?} declared_tools={:?} declared_skills={:?}",
+            candidate.tool_names, candidate.declared_tool_names, candidate.declared_skill_names
+        );
         let revision_changed = previous.as_ref() != Some(&candidate);
         let revision = previous
             .map(|prev| {

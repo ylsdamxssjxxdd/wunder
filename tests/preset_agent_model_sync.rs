@@ -1306,7 +1306,13 @@ async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
             item["declared_skill_names"] = json!([skill_name.clone()]);
         }
     }
-    update_admin_presets(&context.app, admin_items).await;
+    let updated_items = update_admin_presets(&context.app, admin_items).await;
+    let normalized_preset = find_preset_item(&updated_items, &preset_id);
+    assert_eq!(
+        read_declared_skill_names(normalized_preset),
+        vec![skill_name.clone()],
+        "admin preset save should preserve declared skills when tool_names includes the same skill"
+    );
 
     let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
     let created_agents = sync_result["data"]["summary"]["created_agents"]

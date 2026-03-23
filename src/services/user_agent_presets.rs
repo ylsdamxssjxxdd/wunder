@@ -6,7 +6,7 @@ use crate::services::default_tool_profile::{
 use crate::services::inner_visible::WorkerCardRecordUpdate;
 use crate::services::preset_worker_cards;
 use crate::services::worker_card_settings::{
-    self, canonicalize_preset_config, collect_context_skill_names, collect_registry_skill_names,
+    self, canonicalize_preset_config, collect_configured_skill_names, collect_context_skill_names,
     normalize_agent_approval_mode as shared_normalize_agent_approval_mode,
     normalize_agent_status as shared_normalize_agent_status,
     normalize_optional_model_name as shared_normalize_optional_model_name,
@@ -185,10 +185,7 @@ fn preset_from_config_with_skill_names(
 
 pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
     let config = state.config_store.get().await;
-    let skill_name_keys = {
-        let registry = state.skills.read().await;
-        collect_registry_skill_names(&registry)
-    };
+    let skill_name_keys = collect_configured_skill_names(&config);
     let configured =
         match preset_worker_cards::load_effective_preset_configs(&config, &skill_name_keys) {
             Ok(items) => items,
