@@ -186,6 +186,7 @@ const normalizeOptionalModelName = (value) => {
 };
 
 const normalizePresetId = (value) => String(value || "").trim();
+const normalizePresetNameKey = (value) => String(value || "").trim().toLowerCase();
 
 const isSamePreset = (left, right) => {
   if (!left || !right) {
@@ -231,6 +232,18 @@ const findPresetByName = (name) => {
 
 const resolvePresetSelection = ({ presetId = "", name = "" } = {}) =>
   findPresetById(presetId) || findPresetByName(name);
+
+const presetStableOrderKey = (preset) => {
+  const presetId = normalizePresetId(preset?.preset_id);
+  if (presetId) {
+    return `id:${presetId}`;
+  }
+  const nameKey = normalizePresetNameKey(preset?.name);
+  if (nameKey) {
+    return `name:${nameKey}`;
+  }
+  return "";
+};
 
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
@@ -326,6 +339,68 @@ const normalizePreset = (item) => ({
   approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
   status: String(item?.status || "active").trim() || "active",
 });
+
+const normalizePresetItems = (items) =>
+  (Array.isArray(items) ? items : []).map(normalizePreset).filter((item) => item.name);
+
+const stabilizePresetListOrder = (incomingItems, previousItems = state.presetAgents.presets) => {
+  const normalizedIncoming = normalizePresetItems(incomingItems);
+  const normalizedPrevious = Array.isArray(previousItems) ? previousItems : [];
+  const defaultPreset =
+    normalizedIncoming.find((item) => item.is_default_agent === true) ||
+    normalizedPrevious.find((item) => item?.is_default_agent === true) ||
+    null;
+
+  const incomingById = new Map();
+  const incomingByName = new Map();
+  normalizedIncoming.forEach((item) => {
+    if (item.is_default_agent === true) {
+      return;
+    }
+    const presetId = normalizePresetId(item.preset_id);
+    if (presetId) {
+      incomingById.set(presetId, item);
+    }
+    const nameKey = normalizePresetNameKey(item.name);
+    if (nameKey && !incomingByName.has(nameKey)) {
+      incomingByName.set(nameKey, item);
+    }
+  });
+
+  const ordered = [];
+  const seen = new Set();
+  normalizedPrevious.forEach((item) => {
+    if (!item || item.is_default_agent === true) {
+      return;
+    }
+    const presetId = normalizePresetId(item.preset_id);
+    const nameKey = normalizePresetNameKey(item.name);
+    const candidate = (presetId && incomingById.get(presetId)) || (nameKey && incomingByName.get(nameKey)) || null;
+    if (!candidate) {
+      return;
+    }
+    const orderKey = presetStableOrderKey(candidate);
+    if (!orderKey || seen.has(orderKey)) {
+      return;
+    }
+    seen.add(orderKey);
+    ordered.push(candidate);
+  });
+
+  normalizedIncoming.forEach((item) => {
+    if (item.is_default_agent === true) {
+      return;
+    }
+    const orderKey = presetStableOrderKey(item);
+    if (!orderKey || seen.has(orderKey)) {
+      return;
+    }
+    seen.add(orderKey);
+    ordered.push(item);
+  });
+
+  return defaultPreset ? [defaultPreset, ...ordered] : ordered;
+};
 
 const normalizeUserAgent = (item) => ({
   id: String(item?.id || item?.agent_id || "").trim(),
@@ -1129,7 +1204,6 @@ const flushPresetAutoSave = async () => {
 };
 
 const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {}) => {
-  const defaultPreset = state.presetAgents.presets.find((item) => item.is_default_agent === true) || null;
   const payload = {
     items: state.presetAgents.presets
       .filter((item) => item.is_default_agent !== true)
@@ -1152,10 +1226,7 @@ const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {})
       })),
   };
   const saved = await requestJson("/admin/preset_agents", { method: "POST", body: payload });
-  state.presetAgents.presets = (Array.isArray(saved?.data?.items) ? saved.data.items : []).map(normalizePreset).filter((item) => item.name);
-  if (defaultPreset && !state.presetAgents.presets.some((item) => item.is_default_agent === true)) {
-    state.presetAgents.presets.unshift(defaultPreset);
-  }
+  state.presetAgents.presets = stabilizePresetListOrder(saved?.data?.items, state.presetAgents.presets);
   if (!state.presetAgents.presets.length) {
     setSelectedPreset(null);
     return;
@@ -1600,7 +1671,7 @@ export const loadPresetAgents = async ({ silent = false, selectedName = "", flus
   try {
     await loadModelCatalog({ silent: true });
     const payload = await requestJson("/admin/preset_agents");
-    state.presetAgents.presets = (Array.isArray(payload?.data?.items) ? payload.data.items : []).map(normalizePreset).filter((item) => item.name);
+    state.presetAgents.presets = stabilizePresetListOrder(payload?.data?.items, state.presetAgents.presets);
 
     const preferredName = String(selectedName || "").trim();
     const preferredPreset = preferredName

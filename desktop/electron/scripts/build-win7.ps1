@@ -75,8 +75,37 @@ function Resolve-FullPath {
   return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Resolve-AppVersion {
+  param([string]$RepoRoot)
+
+  $manualVersion = [string]$env:WUNDER_APP_VERSION
+  if (-not [string]::IsNullOrWhiteSpace($manualVersion)) {
+    return $manualVersion.Trim()
+  }
+
+  $appVersionPath = Join-Path $RepoRoot 'config\app_version.json'
+  if (-not (Test-Path $appVersionPath)) {
+    throw "missing app version file: $appVersionPath"
+  }
+
+  try {
+    $payload = Get-Content -Path $appVersionPath -Raw | ConvertFrom-Json
+  }
+  catch {
+    throw "failed to parse app version file: $appVersionPath"
+  }
+
+  $resolvedVersion = [string]$payload.version
+  if ([string]::IsNullOrWhiteSpace($resolvedVersion)) {
+    throw "missing version in app version file: $appVersionPath"
+  }
+
+  return $resolvedVersion.Trim()
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..')).Path
+$appVersion = Resolve-AppVersion -RepoRoot $repoRoot
 if (-not $LabRoot) {
   $LabRoot = Join-Path $repoRoot 'temp_dir\win7-lab'
 }
@@ -183,7 +212,7 @@ if ((Test-Path $stageBuilderConfig) -and -not (Test-Path $stageIconPng)) {
 
 $stagePackage = @{
   name = 'wunder-desktop-electron-win7'
-  version = '0.1.0'
+  version = $appVersion
   private = $true
   description = 'Wunder Desktop Electron Win7 experiment'
   main = 'src/main.js'
