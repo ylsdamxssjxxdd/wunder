@@ -29,13 +29,13 @@ fn normalize_test_preset_id(preset_id: &str) -> String {
     if cleaned.is_empty() || cleaned == DEFAULT_AGENT_ID_ALIAS {
         return cleaned.to_string();
     }
-    if cleaned.starts_with("agent_") {
+    if cleaned.starts_with("preset_") {
         return cleaned.to_string();
     }
-    if let Some(stripped) = cleaned.strip_prefix("preset_") {
-        return format!("agent_{stripped}");
+    if let Some(stripped) = cleaned.strip_prefix("agent_") {
+        return format!("preset_{stripped}");
     }
-    format!("agent_{cleaned}")
+    format!("preset_{cleaned}")
 }
 
 fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelConfig {
@@ -1346,7 +1346,7 @@ async fn admin_preset_worker_card_export_hides_internal_ids_in_filename() {
     );
     assert_eq!(
         preset_export["document"]["metadata"]["agent_id"],
-        json!("agent_export_demo")
+        json!("preset_export_demo")
     );
     assert_eq!(preset_export["document"]["preset"]["revision"], json!(1));
     assert_eq!(

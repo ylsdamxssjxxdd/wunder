@@ -76,7 +76,7 @@ pub fn resolve_preset_id(raw_preset_id: &str, name: &str) -> String {
     }
     let stable_name = name.trim().to_lowercase();
     format!(
-        "agent_{}",
+        "preset_{}",
         Uuid::new_v5(&Uuid::NAMESPACE_URL, stable_name.as_bytes()).simple()
     )
 }
@@ -86,17 +86,17 @@ fn normalize_explicit_preset_id(raw_preset_id: &str) -> Option<String> {
     if cleaned.is_empty() {
         return None;
     }
-    if cleaned == "agent" {
+    if cleaned == "preset" {
         return None;
     }
-    if cleaned.starts_with("agent_") {
+    if cleaned.starts_with("preset_") {
         return Some(cleaned.to_string());
     }
-    let suffix = cleaned.strip_prefix("preset_").unwrap_or(cleaned).trim();
+    let suffix = cleaned.strip_prefix("agent_").unwrap_or(cleaned).trim();
     if suffix.is_empty() {
         None
     } else {
-        Some(format!("agent_{suffix}"))
+        Some(format!("preset_{suffix}"))
     }
 }
 
@@ -513,26 +513,26 @@ mod tests {
     use super::resolve_preset_id;
 
     #[test]
-    fn resolve_preset_id_generates_stable_agent_style_id() {
+    fn resolve_preset_id_generates_stable_prefixed_id() {
         assert_eq!(
             resolve_preset_id("", "公文写作"),
-            "agent_d51d143126ed53de98b628c9ba7c5185"
+            "preset_ba13fa8e3c9450ffa41a822f9cbe717a"
         );
         assert_eq!(
             resolve_preset_id("", "Policy Analysis / Draft"),
-            "agent_304dd17b6d97555da36f8b6d1b25a90f"
+            "preset_b906e0f59742575587df537983651419"
         );
     }
 
     #[test]
-    fn resolve_preset_id_normalizes_explicit_prefixes_to_agent_style() {
-        assert_eq!(
-            resolve_preset_id("preset_existing", "任意名称"),
-            "agent_existing"
-        );
+    fn resolve_preset_id_normalizes_explicit_prefixes_to_preset_style() {
         assert_eq!(
             resolve_preset_id("agent_existing", "任意名称"),
-            "agent_existing"
+            "preset_existing"
+        );
+        assert_eq!(
+            resolve_preset_id("preset_existing", "任意名称"),
+            "preset_existing"
         );
     }
 }

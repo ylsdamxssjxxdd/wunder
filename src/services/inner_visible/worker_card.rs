@@ -42,7 +42,7 @@ pub struct WorkerCardDocument {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkerCardMetadata {
-    #[serde(default, alias = "id")]
+    #[serde(default)]
     pub agent_id: String,
     #[serde(default)]
     pub name: String,

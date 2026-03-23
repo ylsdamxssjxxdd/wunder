@@ -290,7 +290,7 @@ mod tests {
 
     fn sample_preset() -> UserAgentPresetConfig {
         UserAgentPresetConfig {
-            preset_id: "agent_demo".to_string(),
+            preset_id: "preset_demo".to_string(),
             revision: 3,
             name: "Demo Preset".to_string(),
             description: "desc".to_string(),
@@ -328,7 +328,7 @@ mod tests {
 
         let loaded = load_preset_worker_card_assets(&root, &skill_keys).expect("load assets");
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].preset.preset_id, "agent_demo");
+        assert_eq!(loaded[0].preset.preset_id, "preset_demo");
         assert_eq!(loaded[0].preset.revision, 3);
         assert_eq!(loaded[0].preset.name, "Demo Preset");
         assert_eq!(loaded[0].preset.tool_names, vec!["read_file".to_string()]);
@@ -342,7 +342,7 @@ mod tests {
         let preset = sample_preset();
         let document =
             worker_card_document_from_preset_config(&preset, &skill_keys).expect("build document");
-        assert_eq!(document.metadata.agent_id, "agent_demo");
+        assert_eq!(document.metadata.agent_id, "preset_demo");
         assert_eq!(
             document.preset,
             Some(WorkerCardPreset {
@@ -408,7 +408,7 @@ mod tests {
         let presets =
             load_effective_preset_configs(&config, &HashSet::new()).expect("load effective");
         assert_eq!(presets.len(), 1);
-        assert_eq!(presets[0].preset_id, "agent_demo");
+        assert_eq!(presets[0].preset_id, "preset_demo");
         assert_eq!(
             configured_worker_cards_root(&config).expect("configured root"),
             root

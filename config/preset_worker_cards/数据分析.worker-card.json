@@ -1,52 +1,50 @@
 {
-    "schema_version":  "wunder/worker-card@2",
-    "kind":  "WorkerCard",
-    "metadata":  {
-                     "agent_id":  "agent_fa9f42ef8ec555f991b638e05d76f044",
-                     "name":  "数据分析",
-                     "description":  "结构化分析数据并输出结论与建议",
-                     "icon":  "{\"color\":\"#60a5fa\",\"name\":\"chart\"}",
-                     "exported_at":  "2026-03-23T01:32:12.782116700+00:00"
-                 },
-    "extra_prompt":  "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。",
-    "abilities":  {
-                      "tool_names":  [
-                                         "最终回复",
-                                         "定时任务",
-                                         "休眠等待",
-                                         "记忆管理",
-                                         "执行命令",
-                                         "ptc",
-                                         "列出文件",
-                                         "搜索内容",
-                                         "读取文件",
-                                         "网页抓取",
-                                         "技能调用",
-                                         "写入文件",
-                                         "应用补丁"
-                                     ],
-                      "skills":  [
-                                     "技能创建器"
-                                 ]
-                  },
-    "interaction":  {
-                        "preset_questions":  [
-
-                                             ]
-                    },
-    "runtime":  {
-                    "model_name":  null,
-                    "approval_mode":  "full_auto",
-                    "sandbox_container_id":  1,
-                    "is_shared":  false
-                },
-    "hive":  {
-                 "id":  "default",
-                 "name":  "",
-                 "description":  ""
-             },
-    "preset":  {
-                   "revision":  1,
-                   "status":  "active"
-               }
+  "schema_version": "wunder/worker-card@2",
+  "kind": "WorkerCard",
+  "metadata": {
+    "agent_id": "preset_1d52ea8e1ba450348bcf8b1f27b2805d",
+    "name": "数据分析",
+    "description": "结构化分析数据并输出结论与建议",
+    "icon": "{\"color\":\"#60a5fa\",\"name\":\"chart\"}",
+    "exported_at": "2026-03-23T01:32:12.782116700+00:00"
+  },
+  "extra_prompt": "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。",
+  "abilities": {
+    "tool_names": [
+      "最终回复",
+      "定时任务",
+      "休眠等待",
+      "记忆管理",
+      "执行命令",
+      "ptc",
+      "列出文件",
+      "搜索内容",
+      "读取文件",
+      "网页抓取",
+      "技能调用",
+      "写入文件",
+      "应用补丁"
+    ],
+    "skills": [
+      "技能创建器"
+    ]
+  },
+  "interaction": {
+    "preset_questions": []
+  },
+  "runtime": {
+    "model_name": null,
+    "approval_mode": "full_auto",
+    "sandbox_container_id": 1,
+    "is_shared": false
+  },
+  "hive": {
+    "id": "default",
+    "name": "",
+    "description": ""
+  },
+  "preset": {
+    "revision": 1,
+    "status": "active"
+  }
 }

@@ -292,7 +292,7 @@
   - 管理端预设保存后，模板用户同名智能体会同步该 `model_name`。
   - 新注册用户或存量同步时，若该字段非空，会将该模型配置下发到用户智能体。
   - 若提交项中包含 `preset_id="__default__"` 的默认智能体特殊项，服务端会忽略该项，避免将默认智能体误写成普通预设。
-  - 预设工蜂卡目录与管理员导出文件名默认只使用名称，`preset_id` 仍只作为后端模板绑定键；卡片协议中对应的内部稳定标识改为 `metadata.agent_id`，并统一使用 `agent_<stable-hash>` 形态，不作为用户可见文件名前缀；预设版本与启停状态写入卡片顶层 `preset.{revision,status}`，不再放在 `extensions`。
+  - 预设工蜂卡目录与管理员导出文件名默认只使用名称，`preset_id` 仍只作为后端模板绑定键；卡片协议中对应的内部稳定标识改为 `metadata.agent_id`，值继续统一使用 `preset_<stable-hash>` 形态，不作为用户可见文件名前缀；预设版本与启停状态写入卡片顶层 `preset.{revision,status}`，不再放在 `extensions`。
 
 #### `POST /wunder/admin/preset_agents/sync`
 

@@ -417,7 +417,7 @@ const normalizeWorkerCardDocument = (
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',
     metadata: {
-      agent_id: trimString(metadata.agent_id ?? metadata.id),
+      agent_id: trimString(metadata.agent_id),
       name: trimString(metadata.name),
       description: trimString(metadata.description),
       icon: trimString(metadata.icon),

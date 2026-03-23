@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn canonicalize_preset_config_reclassifies_skills_via_worker_card_rules() {
         let preset = UserAgentPresetConfig {
-            preset_id: "agent_demo".to_string(),
+            preset_id: "preset_demo".to_string(),
             revision: 2,
             name: "Demo Preset".to_string(),
             description: "desc".to_string(),
@@ -486,7 +486,7 @@ mod tests {
         };
 
         let normalized =
-            canonicalize_preset_config(&preset, "agent_demo", &sample_skill_keys()).unwrap();
+            canonicalize_preset_config(&preset, "preset_demo", &sample_skill_keys()).unwrap();
         assert_eq!(
             normalized.tool_names,
             vec!["read_file".to_string(), "planner".to_string()]
