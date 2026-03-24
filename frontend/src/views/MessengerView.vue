@@ -847,33 +847,34 @@
                 "
                 @desktop-model-meta-changed="handleDesktopModelMetaChanged"
               />
-              <MessengerSettingsPanel
-                v-else
-                :mode="generalSettingsPanelMode"
-                :username="currentUsername"
-                :user-id="currentUserId"
-                :language-label="currentLanguageLabel"
-                :send-key="messengerSendKey"
-                :desktop-local-mode="desktopLocalMode"
-                :theme-palette="themeStore.palette"
-                :ui-font-size="uiFontSize"
-                :username-saving="usernameSaving"
-                :devtools-available="debugToolsAvailable"
-                :update-available="desktopUpdateAvailable"
-                :profile-avatar-icon="currentUserAvatarIcon"
-                :profile-avatar-color="currentUserAvatarColor"
-                :profile-avatar-options="profileAvatarOptions"
-                :profile-avatar-colors="profileAvatarColors"
-                @toggle-language="toggleLanguage"
-                @check-update="checkClientUpdate"
-                @toggle-devtools="openDebugTools"
-                @update:send-key="updateSendKey"
-                @update:theme-palette="updateThemePalette"
-                @update:ui-font-size="updateUiFontSize"
-                @update:username="updateCurrentUsername"
-                @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
-                @update:profile-avatar-color="updateCurrentUserAvatarColor"
-              />
+              <div v-else class="messenger-chat-settings-scroll">
+                <MessengerSettingsPanel
+                  :mode="generalSettingsPanelMode"
+                  :username="currentUsername"
+                  :user-id="currentUserId"
+                  :language-label="currentLanguageLabel"
+                  :send-key="messengerSendKey"
+                  :desktop-local-mode="desktopLocalMode"
+                  :theme-palette="themeStore.palette"
+                  :ui-font-size="uiFontSize"
+                  :username-saving="usernameSaving"
+                  :devtools-available="debugToolsAvailable"
+                  :update-available="desktopUpdateAvailable"
+                  :profile-avatar-icon="currentUserAvatarIcon"
+                  :profile-avatar-color="currentUserAvatarColor"
+                  :profile-avatar-options="profileAvatarOptions"
+                  :profile-avatar-colors="profileAvatarColors"
+                  @toggle-language="toggleLanguage"
+                  @check-update="checkClientUpdate"
+                  @toggle-devtools="openDebugTools"
+                  @update:send-key="updateSendKey"
+                  @update:theme-palette="updateThemePalette"
+                  @update:ui-font-size="updateUiFontSize"
+                  @update:username="updateCurrentUsername"
+                  @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
+                  @update:profile-avatar-color="updateCurrentUserAvatarColor"
+                />
+              </div>
             </template>
           </div>
         </template>

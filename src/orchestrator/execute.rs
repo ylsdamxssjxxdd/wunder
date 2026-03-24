@@ -2,6 +2,9 @@ use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
     ThreadRuntimeUpdate,
 };
+use super::context_compactor::ContextCompactor;
+use super::preflight::PreflightDecision;
+use super::retry_governor::RetryGovernor;
 use super::tool_calls::ToolCall;
 use super::*;
 use crate::core::approval::{
@@ -342,6 +345,7 @@ impl Orchestrator {
 
             let history_manager = HistoryManager;
             let context_manager = ContextManager;
+            let context_compactor = ContextCompactor;
             let mut messages = vec![json!({ "role": "system", "content": system_prompt })];
             let history_limit = if is_admin {
                 0
@@ -386,10 +390,9 @@ impl Orchestrator {
             let mut last_round_info = request_round;
 
             let mut model_round = 0_i64;
-            let mut repeated_tool_failure_signature = String::new();
-            let mut repeated_tool_failure_count = 0_u32;
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
+            let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
             let memory_manager_tool_name = resolve_tool_name("memory_manager");
             let tool_budget_limits = ToolBudgetLimits {
                 total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
@@ -427,6 +430,7 @@ impl Orchestrator {
                 last_round_info = round_info;
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
+                messages = context_compactor.compact_messages(messages);
                 messages = self
                     .maybe_compact_messages(
                         &config,
@@ -455,6 +459,7 @@ impl Orchestrator {
                 }
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
+                messages = context_compactor.compact_messages(messages);
                 let context_tokens = context_manager.estimate_context_tokens(&messages);
                 let projected_request_tokens =
                     context_tokens.saturating_add(request_overhead_tokens);
@@ -908,7 +913,11 @@ impl Orchestrator {
                     };
                     outcomes.extend(cached_recall_outcomes);
                     for (index, outcome) in outcomes.into_iter().enumerate() {
-                        let ToolExecutionOutcome { call, name, result } = outcome;
+                        let ToolExecutionOutcome {
+                            call,
+                            name,
+                            mut result,
+                        } = outcome;
                         let ToolCall { id, arguments, .. } = call;
                         let args = arguments;
 
@@ -1138,30 +1147,33 @@ impl Orchestrator {
                         }
 
                         if result.ok {
-                            repeated_tool_failure_signature.clear();
-                            repeated_tool_failure_count = 0;
-                        } else {
-                            let signature = build_tool_failure_signature(&name, &result);
-                            if signature == repeated_tool_failure_signature {
-                                repeated_tool_failure_count =
-                                    repeated_tool_failure_count.saturating_add(1);
-                            } else {
-                                repeated_tool_failure_signature = signature;
-                                repeated_tool_failure_count = 1;
+                            retry_governor.record_success();
+                        } else if let Some(stop) = retry_governor.record_failure(&name, &result) {
+                            if result.error.trim().is_empty() && !stop.detail.trim().is_empty() {
+                                result.error = stop.detail.clone();
                             }
-                            if repeated_tool_failure_count >= repeated_tool_failure_threshold {
+                            let repeat_count = stop.repeat_count.max(stop.same_tool_failures);
+                            let threshold = stop.threshold.max(1);
+                            let legacy_signature = build_tool_failure_signature(&name, &result);
+                            {
                                 answer = build_tool_failure_guard_answer(
                                     &name,
                                     &result,
-                                    repeated_tool_failure_count,
-                                    repeated_tool_failure_threshold,
+                                    repeat_count,
+                                    threshold,
                                 );
                                 stop_reason = Some("tool_failure_guard".to_string());
                                 let guard_meta = json!({
                                     "type": "tool_failure_guard",
                                     "tool": name.clone(),
-                                    "repeat_count": repeated_tool_failure_count,
-                                    "threshold": repeated_tool_failure_threshold,
+                                    "reason": stop.reason,
+                                    "fingerprint": stop.fingerprint,
+                                    "legacy_signature": legacy_signature,
+                                    "repeat_count": repeat_count,
+                                    "same_tool_failures": stop.same_tool_failures,
+                                    "threshold": threshold,
+                                    "retryable": stop.retryable,
+                                    "error_code": stop.error_code,
                                     "tool_error": if result.error.trim().is_empty() {
                                         Value::Null
                                     } else {
@@ -1173,8 +1185,14 @@ impl Orchestrator {
                                     "stage": "tool_failure_guard",
                                     "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
                                     "tool": name.clone(),
-                                    "repeat_count": repeated_tool_failure_count,
-                                    "threshold": repeated_tool_failure_threshold,
+                                    "reason": stop.reason,
+                                    "fingerprint": stop.fingerprint,
+                                    "legacy_signature": legacy_signature,
+                                    "repeat_count": repeat_count,
+                                    "same_tool_failures": stop.same_tool_failures,
+                                    "threshold": threshold,
+                                    "retryable": stop.retryable,
+                                    "error_code": stop.error_code,
                                     "tool_error": if result.error.trim().is_empty() {
                                         Value::Null
                                     } else {
@@ -1560,8 +1578,63 @@ impl Orchestrator {
                 let recovered_args =
                     crate::core::tool_args::recover_tool_args_value_with_meta(&call.arguments);
                 call.arguments = recovered_args.value.clone();
-                let args = call.arguments.clone();
+                let mut args = call.arguments.clone();
                 let args_repair = recovered_args.repair.clone();
+                let mut preflight_meta: Option<Value> = None;
+                match orchestrator.run_tool_preflight(&name, &args) {
+                    PreflightDecision::Pass => {}
+                    PreflightDecision::Rewrite {
+                        args: rewritten_args,
+                        diagnostics,
+                    } => {
+                        let diagnostics = diagnostics
+                            .into_iter()
+                            .map(|item| item.to_value())
+                            .collect::<Vec<_>>();
+                        args = rewritten_args;
+                        call.arguments = args.clone();
+                        preflight_meta = Some(json!({
+                            "status": "rewrite",
+                            "diagnostics": diagnostics,
+                        }));
+                    }
+                    PreflightDecision::Reject {
+                        code,
+                        message,
+                        diagnostics,
+                    } => {
+                        let diagnostics = diagnostics
+                            .into_iter()
+                            .map(|item| item.to_value())
+                            .collect::<Vec<_>>();
+                        let mut rejected =
+                            ToolResultPayload::error(message, json!({ "tool": name.clone() }));
+                        rejected.insert_meta(
+                            "preflight",
+                            json!({
+                                "status": "reject",
+                                "code": code,
+                                "diagnostics": diagnostics,
+                            }),
+                        );
+                        if let Some(repair) = args_repair.clone() {
+                            rejected.insert_meta("repair", repair);
+                        }
+                        let started_at = Instant::now();
+                        rejected = orchestrator.normalize_tool_result_payload(&name, rejected);
+                        rejected = orchestrator.finalize_tool_result(
+                            &name,
+                            rejected,
+                            started_at,
+                            is_admin,
+                        );
+                        return Ok(ToolExecutionOutcome {
+                            call,
+                            name,
+                            result: rejected,
+                        });
+                    }
+                }
                 let workspace_version_before =
                     tool_context.workspace.get_tree_version(tool_context.workspace_id);
                 let policy_decision = crate::exec_policy::evaluate_tool_call(
@@ -1854,9 +1927,13 @@ impl Orchestrator {
                     result.insert_meta("workspace_version", json!(workspace_version_after));
                     result.insert_meta("workspace_changed", Value::Bool(true));
                 }
-                if let Some(repair) = args_repair {
+                if let Some(preflight) = preflight_meta {
+                    result.insert_meta("preflight", preflight);
+                }
+                if let Some(repair) = args_repair.clone() {
                     result.insert_meta("repair", repair);
                 }
+                result = orchestrator.normalize_tool_result_payload(&name, result);
                 result = orchestrator.finalize_tool_result(&name, result, started_at, is_admin);
                 Ok(ToolExecutionOutcome { call, name, result })
             }

@@ -185,3 +185,35 @@ fn parse_endpoint(value: &str) -> Option<Endpoint> {
         port: parsed.port_or_known_default(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_request_marks_mock_for_same_endpoint() {
+        let expected = parse_endpoint("http://127.0.0.1:19091/v1").expect("endpoint");
+        let class = classify_request(
+            Some("http://127.0.0.1:19091/chat/completions"),
+            Some(&expected),
+        );
+        assert!(matches!(class, RequestClass::Mock));
+    }
+
+    #[test]
+    fn classify_request_marks_external_for_different_endpoint() {
+        let expected = parse_endpoint("http://127.0.0.1:19091/v1").expect("endpoint");
+        let class = classify_request(
+            Some("https://api.openai.com/v1/chat/completions"),
+            Some(&expected),
+        );
+        assert!(matches!(class, RequestClass::External));
+    }
+
+    #[test]
+    fn classify_request_marks_unknown_for_missing_base_url() {
+        let expected = parse_endpoint("http://127.0.0.1:19091/v1").expect("endpoint");
+        let class = classify_request(None, Some(&expected));
+        assert!(matches!(class, RequestClass::Unknown));
+    }
+}

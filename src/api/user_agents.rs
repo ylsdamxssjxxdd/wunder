@@ -1942,22 +1942,25 @@ async fn ensure_preset_agents(
             .list_user_agents(&user.user_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    if !bootstrap_completed {
-        // Bootstrap only once for each user. Later re-creation should be explicit via preset sync,
-        // otherwise a user rename/delete would silently respawn another preset copy.
-        for preset in &preset_agents {
-            if crate::services::user_agent_presets::find_preset_agent(&existing, preset).is_some() {
-                continue;
-            }
-            let record = crate::services::user_agent_presets::create_preset_agent_record(
-                state, user, preset, now,
-            )
-            .await;
-            let _ = state.user_store.upsert_user_agent(&record);
+    let mut preset_agents_restored = false;
+    for preset in &preset_agents {
+        if crate::services::user_agent_presets::find_preset_agent(&existing, preset).is_some() {
+            continue;
         }
-        let _ = state.user_store.set_meta(&meta_key, "1");
+        // Always restore missing preset agents when the preset list is available.
+        // This recovers users that were bootstrapped while the preset config was empty.
+        let record =
+            crate::services::user_agent_presets::create_preset_agent_record(state, user, preset, now)
+                .await;
+        let _ = state.user_store.upsert_user_agent(&record);
+        preset_agents_restored = true;
     }
-    if existing_mutated || !bootstrap_completed || !container_layout_seeded {
+    let mut bootstrap_meta_written = false;
+    if !bootstrap_completed && !preset_agents.is_empty() {
+        let _ = state.user_store.set_meta(&meta_key, "1");
+        bootstrap_meta_written = true;
+    }
+    if existing_mutated || preset_agents_restored || bootstrap_meta_written || !container_layout_seeded {
         sync_inner_visible_after_user_change(state, &user.user_id).await;
     }
     Ok(())

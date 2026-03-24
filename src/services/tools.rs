@@ -1330,6 +1330,7 @@ struct SwarmBatchDispatchTask {
     session_id: String,
     created_session: bool,
     tool_names: Vec<String>,
+    model_name: Option<String>,
     agent_prompt: Option<String>,
 }
 
@@ -1354,6 +1355,7 @@ async fn dispatch_swarm_batch_task(
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
 
+    let model_name = task.model_name.clone();
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: task.message,
@@ -1363,7 +1365,7 @@ async fn dispatch_swarm_batch_task(
         debug_payload: false,
         session_id: Some(task.session_id.clone()),
         agent_id: Some(task.agent_id.clone()),
-        model_name: None,
+        model_name: model_name.clone(),
         language: Some(i18n::get_language()),
         config_overrides: context.request_config_overrides.cloned(),
         agent_prompt: task.agent_prompt,
@@ -1391,7 +1393,7 @@ async fn dispatch_swarm_batch_task(
         run_id.clone(),
         Some(context.session_id.to_string()),
         Some(task.agent_id.clone()),
-        None,
+        model_name,
         announce,
         SessionCleanup::Keep,
         None,
@@ -2016,6 +2018,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 Some(prompt.to_string())
             }
         };
+        let model_name = normalize_optional_string(agent_record.model_name.clone());
         let task_record = create_swarm_team_task_record(
             &run_record,
             &agent_record.agent_id,
@@ -2047,6 +2050,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             session_id: session_record.session_id,
             created_session,
             tool_names,
+            model_name,
             agent_prompt,
         });
     }
@@ -2759,6 +2763,9 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
+    let model_name = agent_record
+        .as_ref()
+        .and_then(|record| normalize_optional_string(record.model_name.clone()));
     let now = now_ts();
     let _ = context
         .storage
@@ -2772,7 +2779,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: record.agent_id.clone(),
-        model_name: None,
+        model_name: model_name.clone(),
         language: Some(i18n::get_language()),
         config_overrides: context.request_config_overrides.cloned(),
         agent_prompt,
@@ -2797,7 +2804,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         run_id.clone(),
         Some(context.session_id.to_string()),
         record.agent_id.clone(),
-        None,
+        model_name,
         announce,
         SessionCleanup::Keep,
         None,

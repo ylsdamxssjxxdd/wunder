@@ -21,7 +21,11 @@
 !macro customUnInstall
   Delete "$INSTDIR\wunder-cli.exe"
   Delete "$INSTDIR\README-win7-supplement.txt"
-  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Delete temp cache (WUNDER_TEMPD only) under AppData?" IDNO +5
+  # Try to stop running app process first; otherwise locked files may leave residue.
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "Wunder Desktop.exe"'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "wunder-desktop.exe"'
+  Sleep 1200
+  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "是否清理应用临时缓存（仅删除 WUNDER_TEMPD 目录）？" IDNO cache_cleanup_done
   SetShellVarContext current
   # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
   RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"
@@ -29,6 +33,7 @@
   # Trim verified app-data roots only when they become empty after temp cleanup.
   RMDir "$APPDATA\wunder-desktop-electron"
   RMDir "$APPDATA\wunder-desktop-electron-win7"
+cache_cleanup_done:
 !macroend
 
 !macro customUnInstallSection

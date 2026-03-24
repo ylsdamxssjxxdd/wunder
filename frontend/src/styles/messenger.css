@@ -1546,6 +1546,14 @@ button.messenger-chat-header-model {
   overflow: auto;
 }
 
+.messenger-chat-settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
 .messenger-chat-settings-block > * {
   min-height: 0;
 }

@@ -92,6 +92,27 @@ impl ToolResultPayload {
         if let Some(meta) = &self.meta {
             if let Value::Object(ref mut map) = payload {
                 map.insert("meta".to_string(), meta.clone());
+                if let Some(flag) = meta.get("normalized_transport_ok").and_then(Value::as_bool) {
+                    map.insert("transport_ok".to_string(), Value::Bool(flag));
+                }
+                if let Some(flag) = meta.get("normalized_business_ok").and_then(Value::as_bool) {
+                    map.insert("business_ok".to_string(), Value::Bool(flag));
+                }
+                if let Some(flag) = meta.get("normalized_final_ok").and_then(Value::as_bool) {
+                    map.insert("final_ok".to_string(), Value::Bool(flag));
+                }
+                if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
+                    let cleaned = code.trim();
+                    if !cleaned.is_empty() {
+                        map.insert(
+                            "error_code".to_string(),
+                            Value::String(cleaned.to_string()),
+                        );
+                    }
+                }
+                if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
+                    map.insert("retryable".to_string(), Value::Bool(retryable));
+                }
             }
         }
         payload

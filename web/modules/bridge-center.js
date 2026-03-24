@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260324-03";
+﻿import { elements } from "./elements.js?v=20260324-04";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
@@ -6,7 +6,7 @@ import { notify } from "./notify.js";
 
 const WEIXIN_CHANNEL = "weixin";
 const DEFAULT_WEIXIN_API_BASE = "https://ilinkai.weixin.qq.com";
-const DEFAULT_WEIXIN_BOT_TYPE = "1";
+const DEFAULT_WEIXIN_BOT_TYPE = "3";
 const BRIDGE_RUNTIME_LOG_POLL_INTERVAL_MS = 5000;
 const USER_ONLY_CHANNELS = new Set(["wechat", "wechat_mp", WEIXIN_CHANNEL]);
 
@@ -67,7 +67,6 @@ const CHANNEL_FORM_SCHEMAS = {
       { key: "client_secret", label: "Client Secret", type: "password" },
       { key: "token", label: "Token", type: "password" },
       { key: "markdown_support", label: "Markdown Support", type: "checkbox", defaultValue: false },
-      { key: "long_connection_enabled", label: "Long Connection Enabled", type: "checkbox", defaultValue: true },
     ],
   },
   whatsapp: {
@@ -120,20 +119,17 @@ const CHANNEL_FORM_SCHEMAS = {
     fields: [
       { key: "jid", label: "JID", required: true },
       { key: "password", label: "Password", type: "password", required: true },
-      { key: "domain", label: "Domain" },
+      { key: "domain", label: "Domain", advanced: true },
       { key: "host", label: "Host" },
       { key: "port", label: "Port" },
-      { key: "resource", label: "Resource" },
-      { key: "muc_nick", label: "MUC Nick" },
-      { key: "muc_rooms", label: "MUC Rooms (comma separated)" },
-      { key: "direct_tls", label: "Direct TLS", type: "checkbox", defaultValue: false },
-      { key: "tls_enabled", label: "TLS Enabled", type: "checkbox", defaultValue: true },
+      { key: "muc_nick", label: "MUC Nick", advanced: true },
+      { key: "muc_rooms", label: "MUC Rooms (comma separated)", advanced: true },
+      { key: "direct_tls", label: "Direct TLS", type: "checkbox", defaultValue: false, advanced: true },
       { key: "trust_self_signed", label: "Trust Self Signed", type: "checkbox", defaultValue: true },
-      { key: "heartbeat_enabled", label: "Heartbeat Enabled", type: "checkbox", defaultValue: true },
-      { key: "heartbeat_interval_s", label: "Heartbeat Interval (s)" },
-      { key: "heartbeat_timeout_s", label: "Heartbeat Timeout (s)" },
-      { key: "respond_ping", label: "Respond Ping", type: "checkbox", defaultValue: true },
-      { key: "custom_message_format_enabled", label: "Custom Message Format", type: "checkbox", defaultValue: false },
+      { key: "heartbeat_enabled", label: "Heartbeat Enabled", type: "checkbox", defaultValue: true, advanced: true },
+      { key: "heartbeat_interval_s", label: "Heartbeat Interval (s)", advanced: true },
+      { key: "heartbeat_timeout_s", label: "Heartbeat Timeout (s)", advanced: true },
+      { key: "respond_ping", label: "Respond Ping", type: "checkbox", defaultValue: true, advanced: true },
     ],
   },
 };
@@ -160,6 +156,8 @@ const emptyChannelForm = () => ({
   channel: "",
   account_id: "",
   dynamic_fields: {},
+  xmpp_advanced_enabled: false,
+  weixin_advanced_enabled: false,
 });
 
 const emptyRuntimeState = () => ({
@@ -325,7 +323,22 @@ const parseCommaSeparatedList = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const isChannel = (value, channel) => cleanText(value).toLowerCase() === channel;
+
 const schemaForChannel = (channel) => CHANNEL_FORM_SCHEMAS[cleanText(channel).toLowerCase()] || null;
+
+const resolveVisibleSchemaFields = (channel, schema, fields) => {
+  if (!schema) {
+    return [];
+  }
+  if (isChannel(channel, WEIXIN_CHANNEL) && !state.bridgeCenter.channelForm.weixin_advanced_enabled) {
+    return [];
+  }
+  if (isChannel(channel, "xmpp") && !state.bridgeCenter.channelForm.xmpp_advanced_enabled) {
+    return fields.filter((field) => !field.advanced);
+  }
+  return fields;
+};
 
 const readSchemaNode = (mode, config) => {
   if (!isPlainObject(config)) {
@@ -393,7 +406,50 @@ const renderChannelDynamicFields = () => {
     return;
   }
   const values = state.bridgeCenter.channelForm.dynamic_fields || {};
-  schema.fields.forEach((field) => {
+  if (isChannel(channel, WEIXIN_CHANNEL)) {
+    const toggle = document.createElement("label");
+    toggle.className = "bridge-channel-config-checkbox";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(state.bridgeCenter.channelForm.weixin_advanced_enabled);
+    input.addEventListener("change", () => {
+      state.bridgeCenter.channelForm.weixin_advanced_enabled = Boolean(input.checked);
+      renderChannelDynamicFields();
+    });
+    const text = document.createElement("span");
+    text.textContent = "高级选项";
+    toggle.appendChild(input);
+    toggle.appendChild(text);
+    container.appendChild(toggle);
+  }
+  if (isChannel(channel, "xmpp") && schema.fields.some((field) => field.advanced)) {
+    const toggle = document.createElement("label");
+    toggle.className = "bridge-channel-config-checkbox";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(state.bridgeCenter.channelForm.xmpp_advanced_enabled);
+    input.addEventListener("change", () => {
+      state.bridgeCenter.channelForm.xmpp_advanced_enabled = Boolean(input.checked);
+      renderChannelDynamicFields();
+    });
+    const text = document.createElement("span");
+    text.textContent = "显示 XMPP 高级选项";
+    toggle.appendChild(input);
+    toggle.appendChild(text);
+    container.appendChild(toggle);
+  }
+  const visibleFields = resolveVisibleSchemaFields(channel, schema, schema.fields);
+  if (!visibleFields.length) {
+    if (isChannel(channel, WEIXIN_CHANNEL)) {
+      const hint = document.createElement("div");
+      hint.className = "muted";
+      hint.textContent = "开启高级选项后可填写 Weixin iLink 连接参数。";
+      container.appendChild(hint);
+    }
+    state.bridgeCenter.channelForm.dynamic_fields = values;
+    return;
+  }
+  visibleFields.forEach((field) => {
     if (field.type === "checkbox") {
       const row = document.createElement("label");
       row.className = "bridge-channel-config-checkbox";
@@ -764,6 +820,8 @@ const applyChannelForm = (account) => {
       channel: defaultChannel,
       account_id: buildDefaultBridgeAccountId(defaultChannel),
       dynamic_fields: {},
+      xmpp_advanced_enabled: false,
+      weixin_advanced_enabled: false,
     };
   } else {
     state.bridgeCenter.selectedAccountId = account.center_account_id;
@@ -773,6 +831,8 @@ const applyChannelForm = (account) => {
       channel: account.channel,
       account_id: account.account_id,
       dynamic_fields: {},
+      xmpp_advanced_enabled: false,
+      weixin_advanced_enabled: false,
     };
   }
   const form = state.bridgeCenter.channelForm;
@@ -850,6 +910,55 @@ const validateChannelFields = (channel, values) => {
     return "";
   }
   return `${missing.label} 为必填项`;
+};
+
+const validateWeixinNumericFields = (channel, values) => {
+  if (!isChannel(channel, WEIXIN_CHANNEL)) {
+    return "";
+  }
+  const numericFields = [
+    { key: "poll_timeout_ms", label: "Poll Timeout (ms)" },
+    { key: "api_timeout_ms", label: "API Timeout (ms)" },
+    { key: "max_consecutive_failures", label: "Max Consecutive Failures" },
+    { key: "backoff_ms", label: "Backoff (ms)" },
+  ];
+  for (const field of numericFields) {
+    const rawValue = cleanText(values[field.key]);
+    if (!rawValue) {
+      continue;
+    }
+    if (!parsePositiveInteger(rawValue)) {
+      return `${field.label} 需为正整数`;
+    }
+  }
+  return "";
+};
+
+const validateWeixinCredentialsReady = (channel, values) => {
+  if (!isChannel(channel, WEIXIN_CHANNEL)) {
+    return "";
+  }
+  if (state.bridgeCenter.channelForm.weixin_advanced_enabled) {
+    return "";
+  }
+  const hasBotToken = Boolean(cleanText(values.bot_token));
+  const hasIlinkBotId = Boolean(cleanText(values.ilink_bot_id));
+  const accountId = resolveChannelBindingAccountId();
+  const ownedAccount = state.bridgeCenter.availableAccounts.find(
+    (item) => item.channel === WEIXIN_CHANNEL && item.account_id === accountId
+  );
+  const rawConfig = isPlainObject(ownedAccount?.raw_config) ? ownedAccount.raw_config : {};
+  const weixinNode = isPlainObject(rawConfig.weixin) ? rawConfig.weixin : {};
+  const previewNode = isPlainObject(rawConfig.preview) ? rawConfig.preview : {};
+  const previewWeixin = isPlainObject(previewNode.weixin) ? previewNode.weixin : {};
+  const fallbackBotTokenSet =
+    Boolean(cleanText(weixinNode.bot_token)) || previewWeixin.bot_token_set === true;
+  const fallbackIlinkBotIdSet =
+    Boolean(cleanText(weixinNode.ilink_bot_id)) || Boolean(cleanText(previewWeixin.ilink_bot_id));
+  if ((hasBotToken || fallbackBotTokenSet) && (hasIlinkBotId || fallbackIlinkBotIdSet)) {
+    return "";
+  }
+  return "请开启高级选项并填写 Bot Token 与 iLink Bot ID";
 };
 
 const buildStructuredConfigPatch = (channel, values) => {
@@ -990,6 +1099,14 @@ const upsertChannelAccountForCenter = async (center, channel, accountId) => {
     throw new Error("当前节点缺少 owner_user_id，无法写入渠道账号");
   }
   const values = state.bridgeCenter.channelForm.dynamic_fields || {};
+  const weixinReadyError = validateWeixinCredentialsReady(channel, values);
+  if (weixinReadyError) {
+    throw new Error(weixinReadyError);
+  }
+  const weixinNumericError = validateWeixinNumericFields(channel, values);
+  if (weixinNumericError) {
+    throw new Error(weixinNumericError);
+  }
   const fieldError = validateChannelFields(channel, values);
   if (fieldError) {
     throw new Error(fieldError);
@@ -1340,6 +1457,8 @@ export const initBridgeCenterPanel = () => {
     const channel = cleanText(elements.bridgeCenterChannelFormChannel.value).toLowerCase();
     state.bridgeCenter.channelForm.channel = channel;
     state.bridgeCenter.channelForm.account_id = buildDefaultBridgeAccountId(channel);
+    state.bridgeCenter.channelForm.xmpp_advanced_enabled = false;
+    state.bridgeCenter.channelForm.weixin_advanced_enabled = false;
     refreshChannelAccountOptions();
   });
   elements.bridgeCenterChannelRuntimeRefreshBtn?.addEventListener("click", () => {
@@ -1382,4 +1501,5 @@ export const initBridgeCenterPanel = () => {
 };
 
 export { loadBridgeCenters };
+
 

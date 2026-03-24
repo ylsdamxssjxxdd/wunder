@@ -656,14 +656,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .desktop-runtime-preferences-panel {
-  height: 100%;
   min-height: 0;
   display: grid;
   gap: 14px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-gutter: stable;
-  padding-right: 2px;
 }
 
 .desktop-runtime-preferences-head {
