@@ -2162,11 +2162,32 @@ const attachWorkflowEvents = (messages, rounds) => {
 };
 
 const isFailedResult = (payload) => {
-  const status = payload?.data?.status ?? payload?.status;
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : null;
+  const status = data?.status ?? payload?.status;
   if (status && String(status).toLowerCase() === 'failed') {
     return true;
   }
-  return Boolean(payload?.data?.error || payload?.error);
+
+  const finalOk = data?.final_ok;
+  if (typeof finalOk === 'boolean') {
+    return !finalOk;
+  }
+  const ok = data?.ok;
+  if (typeof ok === 'boolean') {
+    if (!ok) return true;
+    const directExit =
+      data?.meta?.exit_code ??
+      data?.exit_code ??
+      data?.returncode ??
+      (Array.isArray(data?.results) ? data.results[0]?.returncode : null);
+    const parsedExit = Number.parseInt(String(directExit ?? ''), 10);
+    if (Number.isFinite(parsedExit)) {
+      return parsedExit !== 0;
+    }
+    return false;
+  }
+
+  return Boolean(data?.error || payload?.error);
 };
 
 const normalizeToolCategory = (value) => {

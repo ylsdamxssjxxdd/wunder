@@ -1,10 +1,10 @@
+use super::context_compactor::ContextCompactor;
+use super::preflight::PreflightDecision;
+use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
     ThreadRuntimeUpdate,
 };
-use super::context_compactor::ContextCompactor;
-use super::preflight::PreflightDecision;
-use super::retry_governor::RetryGovernor;
 use super::tool_calls::ToolCall;
 use super::*;
 use crate::core::approval::{
@@ -393,6 +393,7 @@ impl Orchestrator {
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
             let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
+            let mut reroute_notice_count = 0_u32;
             let memory_manager_tool_name = resolve_tool_name("memory_manager");
             let tool_budget_limits = ToolBudgetLimits {
                 total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
@@ -873,6 +874,7 @@ impl Orchestrator {
                 }
 
                 let mut should_finish = false;
+                let mut failure_reroute_notice: Option<Value> = None;
                 if !exec_calls.is_empty() {
                     let mut cached_recall_outcomes = Vec::new();
                     let mut executable_calls = Vec::new();
@@ -1152,9 +1154,64 @@ impl Orchestrator {
                             if result.error.trim().is_empty() && !stop.detail.trim().is_empty() {
                                 result.error = stop.detail.clone();
                             }
+                            let stop_reason_key = stop.reason;
+                            let stop_fingerprint = stop.fingerprint.clone();
+                            let stop_same_tool_failures = stop.same_tool_failures;
+                            let stop_retryable = stop.retryable;
+                            let stop_error_code = stop.error_code.clone();
                             let repeat_count = stop.repeat_count.max(stop.same_tool_failures);
                             let threshold = stop.threshold.max(1);
                             let legacy_signature = build_tool_failure_signature(&name, &result);
+                            if should_request_tool_failure_reroute(
+                                stop_reason_key,
+                                reroute_notice_count,
+                            )
+                            {
+                                reroute_notice_count = reroute_notice_count.saturating_add(1);
+                                let model_notice = build_tool_failure_reroute_model_notice(
+                                    &name,
+                                    &stop,
+                                    repeat_count,
+                                    threshold,
+                                    result.error.as_str(),
+                                );
+                                let next_step_hint = build_tool_failure_next_step_hint(
+                                    &name,
+                                    stop_error_code.as_str(),
+                                    result.error.as_str(),
+                                );
+                                let mut reroute_payload = json!({
+                                    "stage": "tool_failure_reroute",
+                                    "summary": "Tool failure reroute triggered; model instructed to change strategy.",
+                                    "tool": name.clone(),
+                                    "reason": stop_reason_key,
+                                    "fingerprint": stop_fingerprint.clone(),
+                                    "legacy_signature": legacy_signature,
+                                    "repeat_count": repeat_count,
+                                    "same_tool_failures": stop_same_tool_failures,
+                                    "threshold": threshold,
+                                    "retryable": stop_retryable,
+                                    "error_code": stop_error_code.clone(),
+                                    "reroute_notice_count": reroute_notice_count,
+                                    "tool_error": if result.error.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(result.error.clone())
+                                    },
+                                    "next_step_hint": if next_step_hint.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(next_step_hint)
+                                    },
+                                });
+                                if let Value::Object(ref mut map) = reroute_payload {
+                                    round_info.insert_into(map);
+                                }
+                                emitter.emit("progress", reroute_payload).await;
+                                failure_reroute_notice = Some(model_notice);
+                                retry_governor.record_success();
+                                break;
+                            }
                             {
                                 answer = build_tool_failure_guard_answer(
                                     &name,
@@ -1162,18 +1219,31 @@ impl Orchestrator {
                                     repeat_count,
                                     threshold,
                                 );
+                                let next_step_hint = build_tool_failure_next_step_hint(
+                                    &name,
+                                    stop_error_code.as_str(),
+                                    result.error.as_str(),
+                                );
+                                if !next_step_hint.trim().is_empty() {
+                                    answer = format!("{answer}\n\n{next_step_hint}");
+                                }
                                 stop_reason = Some("tool_failure_guard".to_string());
                                 let guard_meta = json!({
                                     "type": "tool_failure_guard",
                                     "tool": name.clone(),
-                                    "reason": stop.reason,
-                                    "fingerprint": stop.fingerprint,
+                                    "reason": stop_reason_key,
+                                    "fingerprint": stop_fingerprint.clone(),
                                     "legacy_signature": legacy_signature,
                                     "repeat_count": repeat_count,
-                                    "same_tool_failures": stop.same_tool_failures,
+                                    "same_tool_failures": stop_same_tool_failures,
                                     "threshold": threshold,
-                                    "retryable": stop.retryable,
-                                    "error_code": stop.error_code,
+                                    "retryable": stop_retryable,
+                                    "error_code": stop_error_code.clone(),
+                                    "next_step_hint": if next_step_hint.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(next_step_hint.clone())
+                                    },
                                     "tool_error": if result.error.trim().is_empty() {
                                         Value::Null
                                     } else {
@@ -1185,14 +1255,19 @@ impl Orchestrator {
                                     "stage": "tool_failure_guard",
                                     "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
                                     "tool": name.clone(),
-                                    "reason": stop.reason,
-                                    "fingerprint": stop.fingerprint,
+                                    "reason": stop_reason_key,
+                                    "fingerprint": stop_fingerprint,
                                     "legacy_signature": legacy_signature,
                                     "repeat_count": repeat_count,
-                                    "same_tool_failures": stop.same_tool_failures,
+                                    "same_tool_failures": stop_same_tool_failures,
                                     "threshold": threshold,
-                                    "retryable": stop.retryable,
-                                    "error_code": stop.error_code,
+                                    "retryable": stop_retryable,
+                                    "error_code": stop_error_code,
+                                    "next_step_hint": if next_step_hint.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(next_step_hint)
+                                    },
                                     "tool_error": if result.error.trim().is_empty() {
                                         Value::Null
                                     } else {
@@ -1227,6 +1302,17 @@ impl Orchestrator {
                             should_finish = true;
                             break;
                         }
+                    }
+                }
+
+                if let Some(model_notice) = failure_reroute_notice.take() {
+                    if !should_finish && answer.is_empty() {
+                        let model_notice = encode_observation_prefixed_json(&model_notice);
+                        messages.push(json!({
+                            "role": "user",
+                            "content": model_notice,
+                        }));
+                        continue;
                     }
                 }
 
@@ -1584,6 +1670,7 @@ impl Orchestrator {
                 match orchestrator.run_tool_preflight(&name, &args) {
                     PreflightDecision::Pass => {}
                     PreflightDecision::Rewrite {
+                        code,
                         args: rewritten_args,
                         diagnostics,
                     } => {
@@ -1591,10 +1678,22 @@ impl Orchestrator {
                             .into_iter()
                             .map(|item| item.to_value())
                             .collect::<Vec<_>>();
+                        let mut rewrite_payload = json!({
+                            "stage": "tool_preflight_rewrite",
+                            "summary": "Tool preflight rewrote tool arguments before execution.",
+                            "tool": name.clone(),
+                            "code": code,
+                            "diagnostics": diagnostics,
+                        });
+                        if let Value::Object(ref mut map) = rewrite_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("progress", rewrite_payload).await;
                         args = rewritten_args;
                         call.arguments = args.clone();
                         preflight_meta = Some(json!({
                             "status": "rewrite",
+                            "code": code,
                             "diagnostics": diagnostics,
                         }));
                     }
@@ -1607,6 +1706,17 @@ impl Orchestrator {
                             .into_iter()
                             .map(|item| item.to_value())
                             .collect::<Vec<_>>();
+                        let mut reject_payload = json!({
+                            "stage": "tool_preflight_reject",
+                            "summary": "Tool preflight blocked execution due to deterministic failure pattern.",
+                            "tool": name.clone(),
+                            "code": code,
+                            "diagnostics": diagnostics,
+                        });
+                        if let Value::Object(ref mut map) = reject_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("progress", reject_payload).await;
                         let mut rejected =
                             ToolResultPayload::error(message, json!({ "tool": name.clone() }));
                         rejected.insert_meta(
@@ -2293,6 +2403,85 @@ fn build_tool_failure_guard_answer(
     i18n::t_with_params("error.tool_failure_guard_user_guidance_with_error", &params)
 }
 
+fn should_request_tool_failure_reroute(reason: &str, reroute_notice_count: u32) -> bool {
+    if reroute_notice_count >= 2 {
+        return false;
+    }
+    matches!(
+        reason,
+        "tool_failure_reroute_required" | "same_retryable_failure_exhausted"
+    )
+}
+
+fn encode_observation_prefixed_json(payload: &Value) -> String {
+    let serialized = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
+    format!("{OBSERVATION_PREFIX}{serialized}")
+}
+
+fn build_tool_failure_reroute_model_notice(
+    tool_name: &str,
+    stop: &super::retry_governor::RetryStopDecision,
+    repeat_count: u32,
+    threshold: u32,
+    detail: &str,
+) -> Value {
+    let next_step = build_tool_failure_next_step_hint(tool_name, &stop.error_code, detail);
+    let detail_head = detail
+        .trim()
+        .chars()
+        .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
+        .collect::<String>();
+    json!({
+        "type": "tool_failure_reroute_notice",
+        "ok": false,
+        "tool": tool_name,
+        "reason": stop.reason,
+        "error_code": stop.error_code,
+        "retryable": stop.retryable,
+        "repeat_count": repeat_count,
+        "threshold": threshold,
+        "same_tool_failures": stop.same_tool_failures,
+        "fingerprint": stop.fingerprint,
+        "error": if detail_head.is_empty() {
+            Value::Null
+        } else {
+            Value::String(detail_head)
+        },
+        "next_step_hint": if next_step.trim().is_empty() {
+            Value::Null
+        } else {
+            Value::String(next_step)
+        },
+        "instruction": "Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy.",
+    })
+}
+
+fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: &str) -> String {
+    let code = error_code.trim().to_ascii_uppercase();
+    let lower_detail = detail.trim().to_ascii_lowercase();
+    let execute_command = resolve_tool_name("execute_command");
+    if code.starts_with("PRECHECK_SHELL_")
+        || code == "COMMAND_NOT_FOUND"
+        || (tool_name == execute_command && lower_detail.contains("syntax error"))
+    {
+        return "建议下一步：改用 `write_file` 写入脚本文件后再执行，避免 heredoc/printf 拼接多行脚本。".to_string();
+    }
+    if code.starts_with("PRECHECK_PYTHON_") || code == "PYTHON_SYNTAX_ERROR" {
+        return "建议下一步：先修复 Python 缩进/括号语法，再执行；优先一次写入完整脚本并直接运行文件。".to_string();
+    }
+    if code.starts_with("PRECHECK_SQL_")
+        || code == "SQL_SYNTAX_ERROR"
+        || code == "SQL_FUNCTION_NOT_FOUND"
+        || code == "SQL_UNKNOWN_COLUMN"
+    {
+        return "建议下一步：改用 ASCII SQL 标点并简化查询（先 `SELECT ... LIMIT` 验证字段，再做聚合/导出）。".to_string();
+    }
+    if code == "TOOL_TIMEOUT" {
+        return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
+    }
+    "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
+}
+
 fn build_tool_budget_guard_model_notice(
     block: &ToolBudgetBlock,
     limits: &ToolBudgetLimits,
@@ -2808,6 +2997,82 @@ mod tests {
         assert!(!answer.contains("{tool_name}"));
         assert!(!answer.contains("{repeat_count}"));
         assert!(!answer.contains("{threshold}"));
+    }
+
+    #[test]
+    fn reroute_reason_allows_soft_reroute_within_budget() {
+        assert!(should_request_tool_failure_reroute(
+            "tool_failure_reroute_required",
+            0
+        ));
+        assert!(should_request_tool_failure_reroute(
+            "same_retryable_failure_exhausted",
+            1
+        ));
+        assert!(!should_request_tool_failure_reroute(
+            "same_non_retryable_failure",
+            0
+        ));
+        assert!(!should_request_tool_failure_reroute(
+            "tool_failure_reroute_required",
+            2
+        ));
+    }
+
+    #[test]
+    fn tool_failure_reroute_notice_is_structured_observation() {
+        let stop = super::retry_governor::RetryStopDecision {
+            reason: "tool_failure_reroute_required",
+            fingerprint: "TOOL_TIMEOUT:deadbeef".to_string(),
+            repeat_count: 1,
+            same_tool_failures: 3,
+            threshold: 3,
+            retryable: true,
+            error_code: "TOOL_TIMEOUT".to_string(),
+            detail: "timeout while calling service".to_string(),
+        };
+        let notice = build_tool_failure_reroute_model_notice(
+            "read_file",
+            &stop,
+            stop.repeat_count,
+            stop.threshold,
+            stop.detail.as_str(),
+        );
+        assert_eq!(
+            notice.get("type").and_then(Value::as_str),
+            Some("tool_failure_reroute_notice")
+        );
+        assert_eq!(notice.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            notice.get("tool").and_then(Value::as_str),
+            Some("read_file")
+        );
+        assert_eq!(
+            notice.get("fingerprint").and_then(Value::as_str),
+            Some("TOOL_TIMEOUT:deadbeef")
+        );
+        assert_eq!(notice.get("retryable").and_then(Value::as_bool), Some(true));
+        let encoded = encode_observation_prefixed_json(&notice);
+        assert!(encoded.starts_with(OBSERVATION_PREFIX));
+        let payload = encoded.trim_start_matches(OBSERVATION_PREFIX);
+        let parsed: Value =
+            serde_json::from_str(payload).expect("reroute notice should serialize to json");
+        assert_eq!(
+            parsed.get("instruction").and_then(Value::as_str),
+            Some(
+                "Do not repeat the same failing call pattern. Re-plan using current observations and switch execution strategy."
+            )
+        );
+    }
+
+    #[test]
+    fn next_step_hint_guides_shell_heredoc_failures() {
+        let hint = build_tool_failure_next_step_hint(
+            &resolve_tool_name("execute_command"),
+            "PRECHECK_SHELL_BAD_HEREDOC",
+            "bash: line 1: EOF: No such file or directory",
+        );
+        assert!(hint.contains("write_file"));
     }
 
     #[test]

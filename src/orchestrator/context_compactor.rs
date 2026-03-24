@@ -47,17 +47,17 @@ fn parse_failure_observation(message: &Value) -> Option<FailureObservation> {
     let role = message.get("role").and_then(Value::as_str).unwrap_or("");
     let content = message.get("content").and_then(Value::as_str)?;
 
-    let (observation_role, payload_text) = if role == "user" && content.starts_with(OBSERVATION_PREFIX)
-    {
-        (
-            ObservationRole::UserPrefixed,
-            content.trim_start_matches(OBSERVATION_PREFIX).trim(),
-        )
-    } else if role == "tool" {
-        (ObservationRole::ToolContent, content.trim())
-    } else {
-        return None;
-    };
+    let (observation_role, payload_text) =
+        if role == "user" && content.starts_with(OBSERVATION_PREFIX) {
+            (
+                ObservationRole::UserPrefixed,
+                content.trim_start_matches(OBSERVATION_PREFIX).trim(),
+            )
+        } else if role == "tool" {
+            (ObservationRole::ToolContent, content.trim())
+        } else {
+            return None;
+        };
     if payload_text.is_empty() {
         return None;
     }
@@ -118,7 +118,11 @@ fn parse_failure_observation(message: &Value) -> Option<FailureObservation> {
     })
 }
 
-fn compact_failure_message(message: &mut Value, observation: &FailureObservation, repeat_count: u32) {
+fn compact_failure_message(
+    message: &mut Value,
+    observation: &FailureObservation,
+    repeat_count: u32,
+) {
     let compacted = json!({
         "tool": observation.tool,
         "ok": false,

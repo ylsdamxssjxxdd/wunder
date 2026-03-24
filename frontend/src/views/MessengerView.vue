@@ -831,22 +831,26 @@
               >
                 <MessengerHelpManualPanel />
               </div>
-              <DesktopSystemSettingsPanel
+              <div
                 v-else-if="
                   desktopMode &&
                   (settingsPanelMode === 'desktop-models' ||
                     settingsPanelMode === 'desktop-remote' ||
                     settingsPanelMode === 'desktop-lan')
                 "
-                :panel="
-                  settingsPanelMode === 'desktop-remote'
-                    ? 'remote'
-                    : settingsPanelMode === 'desktop-lan'
-                      ? 'lan'
-                      : 'models'
-                "
-                @desktop-model-meta-changed="handleDesktopModelMetaChanged"
-              />
+                class="messenger-chat-settings-scroll messenger-chat-settings-scroll--desktop-system"
+              >
+                <DesktopSystemSettingsPanel
+                  :panel="
+                    settingsPanelMode === 'desktop-remote'
+                      ? 'remote'
+                      : settingsPanelMode === 'desktop-lan'
+                        ? 'lan'
+                        : 'models'
+                  "
+                  @desktop-model-meta-changed="handleDesktopModelMetaChanged"
+                />
+              </div>
               <div v-else class="messenger-chat-settings-scroll">
                 <MessengerSettingsPanel
                   :mode="generalSettingsPanelMode"

@@ -2087,6 +2087,9 @@
   - `POST /wunder/channels/weixin/qr/wait`
     - 入参：`session_key`、`api_base?`、`timeout_ms?`
     - 返回：`connected`、`status`，若确认登录则附带 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`
+  - `GET /wunder/channels/weixin/qr/render`
+    - 入参（Query）：`text`（必填），`api_base?`
+    - 返回：`image/png`；用于前端兜底渲染二维码，避免外部 H5 链接直接作为 `<img>` 导致破图
 
 ## 2026-03-24 增补：聊天消息反馈（点赞/踩）
 

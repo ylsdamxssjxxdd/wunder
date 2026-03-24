@@ -1,4 +1,12 @@
 !macro customInstall
+  SetShellVarContext current
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-win7-updater\installer.exe"
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-updater\installer.exe"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-updater"
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-updater"'
+
   ${if} ${FileExists} "$INSTDIR\resources\wunder-cli.exe"
     CopyFiles /SILENT "$INSTDIR\resources\wunder-cli.exe" "$INSTDIR\wunder-cli.exe"
   ${endif}
@@ -21,21 +29,46 @@
 !macro customUnInstall
   Delete "$INSTDIR\wunder-cli.exe"
   Delete "$INSTDIR\README-win7-supplement.txt"
-  # Try to stop running app process first; otherwise locked files may leave residue.
+  SetShellVarContext current
+
+  # Stop running app processes first to reduce locked-file residue.
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "Wunder Desktop.exe"'
   nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "wunder-desktop.exe"'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "wunder-desktop-bridge.exe"'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "wunder-desktop-updater.exe"'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /T /IM "Update.exe"'
   Sleep 1200
-  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "是否清理应用临时缓存（仅删除 WUNDER_TEMPD 目录）？" IDNO cache_cleanup_done
-  SetShellVarContext current
-  # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
-  RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"
-  RMDir /r "$APPDATA\wunder-desktop-electron-win7\WUNDER_TEMPD"
-  # Trim verified app-data roots only when they become empty after temp cleanup.
-  RMDir "$APPDATA\wunder-desktop-electron"
-  RMDir "$APPDATA\wunder-desktop-electron-win7"
-cache_cleanup_done:
+
+  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "是否清空缓存并删除本地数据？" IDNO skip_data_cleanup
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-win7-updater\installer.exe"
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-updater\installer.exe"
+  RMDir /r "$APPDATA\wunder-desktop-electron-win7"
+  RMDir /r "$APPDATA\wunder-desktop-electron"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-win7"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-updater"
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$APPDATA\wunder-desktop-electron-win7"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$APPDATA\wunder-desktop-electron"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-win7"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-updater"'
+skip_data_cleanup:
+
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-win7-updater\installer.exe"
+  Delete "$LOCALAPPDATA\wunder-desktop-electron-updater\installer.exe"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"
+  RMDir /r "$LOCALAPPDATA\wunder-desktop-electron-updater"
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-win7-updater"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\wunder-desktop-electron-updater"'
+
+  RMDir /r "$INSTDIR"
+  RMDir /r "$LOCALAPPDATA\Programs\Wunder Desktop"
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$INSTDIR"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C rd /s /q "$LOCALAPPDATA\Programs\Wunder Desktop"'
 !macroend
 
 !macro customUnInstallSection
-  # Keep macro for compatibility; cache cleanup option is now prompted explicitly in customUnInstall.
+  # Keep macro for compatibility.
 !macroend

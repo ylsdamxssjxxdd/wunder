@@ -53,25 +53,69 @@ const resolveUpdaterCandidates = () => {
   return candidates
 }
 
-registerRuntimeModuleRoots()
-
-let autoUpdater = null
-try {
-  ;({ autoUpdater } = require('electron-updater'))
-} catch (error) {
-  for (const candidate of resolveUpdaterCandidates()) {
-    try {
-      ;({ autoUpdater } = require(candidate))
-      console.info(`[updater] loaded bundled updater module from: ${candidate}`)
-      break
-    } catch {
-      // Continue probing fallback locations.
+const resolveUpdaterDisableMarker = () => {
+  const candidates = []
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'disable-updater.flag'))
+    candidates.push(path.join(process.resourcesPath, 'win7-disable-updater.flag'))
+  }
+  candidates.push(path.join(__dirname, '..', 'resources', 'disable-updater.flag'))
+  candidates.push(path.join(__dirname, '..', 'resources', 'win7-disable-updater.flag'))
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate
     }
   }
-  if (!autoUpdater) {
-    // Keep the desktop app bootable even if auto-update assets are missing.
-    console.warn('[updater] electron-updater is unavailable, auto update disabled:', error)
+  return ''
+}
+
+const detectWin7PackageFlavor = () => {
+  if (process.platform !== 'win32') {
+    return false
   }
+  try {
+    const userDataPath = String(app.getPath('userData') || '').toLowerCase()
+    return userDataPath.includes('wunder-desktop-electron-win7')
+  } catch {
+    return false
+  }
+}
+
+registerRuntimeModuleRoots()
+
+const updaterDisableMarker = resolveUpdaterDisableMarker()
+const runningInAppImage =
+  process.platform === 'linux' && Boolean(String(process.env.APPIMAGE || '').trim())
+const runningWin7PackageFlavor = detectWin7PackageFlavor()
+const updaterDisabledReason = updaterDisableMarker
+  ? `marker: ${updaterDisableMarker}`
+  : runningInAppImage
+    ? 'appimage'
+    : runningWin7PackageFlavor
+      ? 'win7-package'
+    : ''
+const updaterDisabledByBuild = Boolean(updaterDisabledReason)
+let autoUpdater = null
+if (!updaterDisabledByBuild) {
+  try {
+    ;({ autoUpdater } = require('electron-updater'))
+  } catch (error) {
+    for (const candidate of resolveUpdaterCandidates()) {
+      try {
+        ;({ autoUpdater } = require(candidate))
+        console.info(`[updater] loaded bundled updater module from: ${candidate}`)
+        break
+      } catch {
+        // Continue probing fallback locations.
+      }
+    }
+    if (!autoUpdater) {
+      // Keep the desktop app bootable even if auto-update assets are missing.
+      console.warn('[updater] electron-updater is unavailable, auto update disabled:', error)
+    }
+  }
+} else {
+  console.info(`[updater] disabled by ${updaterDisabledReason}`)
 }
 
 let mainWindow = null
@@ -1273,6 +1317,15 @@ const configureUpdaterEvents = () => {
   if (updaterReady) {
     return
   }
+  if (updaterDisabledByBuild) {
+    setUpdateState({
+      phase: 'unsupported',
+      message: runningInAppImage
+        ? 'auto update is disabled for appimage package'
+        : 'auto update is disabled by this build'
+    })
+    return
+  }
   if (!autoUpdater) {
     setUpdateState({
       phase: 'unsupported',
@@ -1349,6 +1402,16 @@ const checkAndDownloadUpdate = async () => {
   }
 
   updateTask = (async () => {
+    if (updaterDisabledByBuild) {
+      setUpdateState({
+        phase: 'unsupported',
+        message: runningInAppImage
+          ? 'auto update is disabled for appimage package'
+          : 'auto update is disabled by this build'
+      })
+      return getUpdateState()
+    }
+
     if (!app.isPackaged) {
       setUpdateState({
         phase: 'unsupported',
@@ -1415,6 +1478,12 @@ const checkAndDownloadUpdate = async () => {
 }
 
 const installDownloadedUpdate = () => {
+  if (updaterDisabledByBuild) {
+    return {
+      ok: false,
+      state: getUpdateState()
+    }
+  }
   if (!autoUpdater || !app.isPackaged || !updateState.downloaded || updateState.phase !== 'downloaded') {
     return {
       ok: false,

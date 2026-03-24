@@ -1429,7 +1429,8 @@ button.messenger-chat-header-model {
 }
 
 .messenger-chat-body.is-settings {
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .messenger-chat-body.is-settings.is-beeroom {
@@ -1547,11 +1548,25 @@ button.messenger-chat-header-model {
 }
 
 .messenger-chat-settings-scroll {
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1 1 auto;
   min-height: 0;
+  height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+.messenger-chat-settings-scroll > * {
+  flex-shrink: 0;
+  min-height: auto;
+}
+
+.messenger-chat-settings-scroll--desktop-system > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .messenger-chat-settings-block > * {
@@ -3837,8 +3852,8 @@ button.messenger-chat-header-model {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  height: 100%;
-  overflow: auto;
+  height: auto;
+  overflow: visible;
   padding-right: 2px;
 }
 
@@ -3850,6 +3865,10 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.messenger-settings-page .messenger-settings-card {
+  flex-shrink: 0;
 }
 
 .messenger-settings-head {

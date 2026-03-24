@@ -41,6 +41,7 @@ impl PreflightDiagnostic {
 pub(super) enum PreflightDecision {
     Pass,
     Rewrite {
+        code: &'static str,
         args: Value,
         diagnostics: Vec<PreflightDiagnostic>,
     },
@@ -69,7 +70,9 @@ impl Orchestrator {
                 if let Some(line) = detect_large_printf_script(content) {
                     return PreflightDecision::Reject {
                         code: "PRECHECK_SHELL_PRINTF_INLINE_SCRIPT",
-                        message: "Command preflight blocked: oversized inline printf script is brittle.".to_string(),
+                        message:
+                            "Command preflight blocked: oversized inline printf script is brittle."
+                                .to_string(),
                         diagnostics: vec![PreflightDiagnostic::reject(
                             "shell.printf.oversized_inline_script",
                             format!("Detected oversized inline printf script: {line}"),
@@ -99,9 +102,8 @@ impl Orchestrator {
                 if has_unbalanced_python_brackets(content) {
                     return PreflightDecision::Reject {
                         code: "PRECHECK_PYTHON_BRACKET",
-                        message:
-                            "Script preflight blocked: unmatched Python bracket detected."
-                                .to_string(),
+                        message: "Script preflight blocked: unmatched Python bracket detected."
+                            .to_string(),
                         diagnostics: vec![PreflightDiagnostic::reject(
                             "python.bracket.unbalanced",
                             "Detected unmatched bracket/brace in script.".to_string(),
@@ -121,6 +123,7 @@ impl Orchestrator {
                     if let Some(obj) = rewritten.as_object_mut() {
                         obj.insert("sql".to_string(), Value::String(normalized));
                         return PreflightDecision::Rewrite {
+                            code: "PRECHECK_SQL_PUNCTUATION_NORMALIZED",
                             args: rewritten,
                             diagnostics: vec![PreflightDiagnostic::rewrite(
                                 "sql.punctuation.fullwidth",
@@ -149,7 +152,8 @@ fn extract_text_field<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
 
 fn is_execute_command_tool_name(name: &str) -> bool {
     let cleaned = name.trim();
-    cleaned == resolve_tool_name("execute_command") || cleaned.eq_ignore_ascii_case("execute_command")
+    cleaned == resolve_tool_name("execute_command")
+        || cleaned.eq_ignore_ascii_case("execute_command")
 }
 
 fn is_programmatic_tool_name(name: &str) -> bool {
@@ -287,16 +291,17 @@ fn has_unbalanced_python_brackets(script: &str) -> bool {
 }
 
 fn normalize_sql_punctuation(sql: &str) -> String {
-    sql.replace('，', ",")
-        .replace('；', ";")
-        .replace('（', "(")
-        .replace('）', ")")
+    sql.replace('\u{FF0C}', ",")
+        .replace('\u{FF1B}', ";")
+        .replace('\u{FF08}', "(")
+        .replace('\u{FF09}', ")")
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_bad_heredoc_line, detect_non_standard_python_indentation, has_unbalanced_python_brackets,
+        detect_bad_heredoc_line, detect_large_printf_script,
+        detect_non_standard_python_indentation, has_unbalanced_python_brackets,
         normalize_sql_punctuation,
     };
 
@@ -319,11 +324,18 @@ mod tests {
     }
 
     #[test]
+    fn detects_oversized_inline_printf_script() {
+        let body = "x".repeat(500);
+        let line = format!("printf '%s\\n' '{body}' | python -");
+        assert!(detect_large_printf_script(&line).is_some());
+    }
+
+    #[test]
     fn normalizes_fullwidth_sql_punctuation() {
-        let sql = "SELECT a，b FROM t WHERE id（1）";
+        let sql = "SELECT a\u{FF0C}b FROM t WHERE id\u{FF08}1\u{FF09}\u{FF1B}";
         assert_eq!(
             normalize_sql_punctuation(sql),
-            "SELECT a,b FROM t WHERE id(1)"
+            "SELECT a,b FROM t WHERE id(1);"
         );
     }
 }

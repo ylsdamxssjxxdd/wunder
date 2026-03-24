@@ -38,7 +38,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as TokioMutex, RwLock};
 use tracing::warn;
 
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
@@ -53,6 +53,7 @@ pub struct InnerVisibleService {
     user_tool_store: Arc<UserToolStore>,
     user_tool_manager: Arc<UserToolManager>,
     user_store: Arc<UserStore>,
+    user_sync_locks: Arc<TokioMutex<HashMap<String, Arc<TokioMutex<()>>>>>,
 }
 
 impl InnerVisibleService {
@@ -71,6 +72,7 @@ impl InnerVisibleService {
             user_tool_store,
             user_tool_manager,
             user_store,
+            user_sync_locks: Arc::new(TokioMutex::new(HashMap::new())),
         }
     }
 
@@ -105,6 +107,8 @@ impl InnerVisibleService {
     }
 
     pub async fn sync_user_state(&self, user_id: &str) -> Result<()> {
+        let user_lock = self.ensure_user_sync_lock(user_id).await;
+        let _guard = user_lock.lock().await;
         let paths = self.ensure_scaffold(user_id)?;
         self.user_store.ensure_default_hive(user_id)?;
         self.user_tool_store.ensure_materialized(user_id)?;
@@ -140,6 +144,15 @@ impl InnerVisibleService {
             &worker_card_skill_names,
         )?;
         Ok(())
+    }
+
+    async fn ensure_user_sync_lock(&self, user_id: &str) -> Arc<TokioMutex<()>> {
+        let cleaned = user_id.trim();
+        let mut locks = self.user_sync_locks.lock().await;
+        locks
+            .entry(cleaned.to_string())
+            .or_insert_with(|| Arc::new(TokioMutex::new(())))
+            .clone()
     }
 
     fn allowed_tool_names(

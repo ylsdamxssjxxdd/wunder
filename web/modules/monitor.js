@@ -676,7 +676,7 @@ const buildSpeedMeta = (tokens, duration, options = {}) => {
   if (options.cached) {
     parts.push(t("monitor.detail.speedCached"));
   }
-  return parts.join(" 路 ");
+  return parts.join(" · ");
 };
 
 const floorToIntervalBoundary = (timestamp, intervalMs) => {
@@ -1630,7 +1630,7 @@ const buildMonitorDetailMeta = (session, events) => {
   if (decodeSummary) {
     metaParts.push(decodeSummary);
   }
-  return metaParts.filter(Boolean).join(" 路 ");
+  return metaParts.filter(Boolean).join(" · ");
 };
 
 // 鑾峰彇浼氳瘽鐨勫彲姣旇緝鏃堕棿鎴?
@@ -2326,7 +2326,7 @@ const renderMonitorStatusList = (sessions) => {
       metaParts.push(timeText);
     }
     const meta = document.createElement("small");
-    meta.textContent = metaParts.join(" 路 ");
+    meta.textContent = metaParts.join(" · ");
 
     const detailParts = [];
     const tokenText = formatTokenCount(resolveSessionContextTokens(session));
@@ -2353,7 +2353,7 @@ const renderMonitorStatusList = (sessions) => {
       detailParts.push(t("monitor.session.stage", { stage: session.stage }));
     }
     const detail = document.createElement("small");
-    detail.textContent = detailParts.join(" 路 ");
+    detail.textContent = detailParts.join(" · ");
 
     item.appendChild(header);
     item.appendChild(meta);
@@ -2414,7 +2414,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
         metaParts.push(timeText);
       }
       const meta = document.createElement("small");
-      meta.textContent = metaParts.join(" 路 ");
+      meta.textContent = metaParts.join(" · ");
 
       const detailParts = [];
       detailParts.push(
@@ -2444,7 +2444,7 @@ const renderMonitorToolList = (sessions, toolName = "") => {
         detailParts.push(t("monitor.session.stage", { stage: session.stage }));
       }
       const detail = document.createElement("small");
-      detail.textContent = detailParts.join(" 路 ");
+      detail.textContent = detailParts.join(" · ");
 
       item.appendChild(header);
       item.appendChild(meta);
@@ -2746,7 +2746,7 @@ const resolveMonitorEventTitle = (event) => {
       data.stage ||
       data.status;
     const title = truncateMonitorEventTitle(
-      repairSummary && summary ? `${summary} 路 ${repairSummary}` : summary || repairSummary
+      repairSummary && summary ? `${summary} · ${repairSummary}` : summary || repairSummary
     );
     if (title) {
       return title;
@@ -2754,7 +2754,7 @@ const resolveMonitorEventTitle = (event) => {
   }
   if (typeof data === "string") {
     const title = truncateMonitorEventTitle(
-      repairSummary ? `${data} 路 ${repairSummary}` : data
+      repairSummary ? `${data} · ${repairSummary}` : data
     );
     if (title) {
       return title;
@@ -2762,7 +2762,7 @@ const resolveMonitorEventTitle = (event) => {
   }
   const raw = stringifyMonitorEventData(data);
   const title = truncateMonitorEventTitle(
-    repairSummary && raw ? `${raw} 路 ${repairSummary}` : raw || repairSummary
+    repairSummary && raw ? `${raw} · ${repairSummary}` : raw || repairSummary
   );
   return title || "-";
 };
@@ -3551,7 +3551,9 @@ const exportMonitorDetailLogs = () => {
       notify(t("monitor.detail.exportEmpty"), "warning");
       return;
     }
-    const jsonl = payload.lines.map((item) => JSON.stringify(item)).join("\n");
+    const jsonlBody = payload.lines.map((item) => JSON.stringify(item)).join("\n");
+    // Prefix UTF-8 BOM for better compatibility with Windows editors/shell defaults.
+    const jsonl = `\uFEFF${jsonlBody}\n`;
     const blob = new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" });
     const filename = buildMonitorDetailExportFilename(payload.session_id);
     downloadBlob(blob, filename);

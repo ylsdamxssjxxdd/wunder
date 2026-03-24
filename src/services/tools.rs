@@ -2211,6 +2211,74 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         let wait_result =
             wait_for_swarm_runs(context, &run_ids, wait_seconds, poll_interval_seconds, true)
                 .await?;
+        if let Some(wait_items) = wait_result.get("items").and_then(Value::as_array) {
+            let mut snapshots_by_run_id: HashMap<String, &Value> = HashMap::new();
+            for item in wait_items {
+                let Some(run_id) = item
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                snapshots_by_run_id.insert(run_id.to_string(), item);
+            }
+
+            for task_record in task_records_by_index.values_mut() {
+                let Some(run_id) = task_record
+                    .session_run_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                let Some(snapshot) = snapshots_by_run_id.get(run_id) else {
+                    continue;
+                };
+                let snapshot_status = snapshot
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                task_record.status = match snapshot_status.as_str() {
+                    "success" | "ok" => "success".to_string(),
+                    "timeout" => "timeout".to_string(),
+                    "cancelled" => "cancelled".to_string(),
+                    "queued" | "running" => "queued".to_string(),
+                    _ => "error".to_string(),
+                };
+                task_record.result_summary = snapshot
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
+                task_record.error = snapshot
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
+                task_record.updated_time = now_ts();
+                if matches!(
+                    task_record.status.as_str(),
+                    "success" | "timeout" | "error" | "cancelled"
+                ) {
+                    task_record.finished_time = Some(task_record.updated_time);
+                }
+                context.storage.upsert_team_task(task_record)?;
+                emit_swarm_task_updated(context, &run_record, task_record);
+            }
+
+            let run_tasks = task_records_by_index.values().cloned().collect::<Vec<_>>();
+            let (terminal, failed) = sync_swarm_run_summary(context, &mut run_record, &run_tasks)?;
+            if terminal {
+                emit_swarm_run_terminal(context, &run_record, failed);
+            }
+        }
         if let Value::Object(ref mut map) = response {
             map.insert("wait".to_string(), wait_result.clone());
             if let Some(status) = wait_result.get("status").and_then(Value::as_str) {

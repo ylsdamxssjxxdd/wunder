@@ -594,7 +594,12 @@ async fn run_swarm_flow(
 
         let mother_session_id = create_mother_session(state.as_ref(), &user_id, &mother_agent_id)?;
         *run_control.mother_session_id.lock() = Some(mother_session_id.clone());
-        seed_swarm_workspace(state.as_ref(), &user_id)?;
+        seed_swarm_workspace(
+            state.as_ref(),
+            &user_id,
+            &mother_agent_id,
+            &worker_agent_ids,
+        )?;
         let config_overrides = build_mock_request_overrides(&args, &llm_base_url);
 
         apply_cancel_signal(state.as_ref(), run_control.as_ref());
@@ -919,7 +924,6 @@ enum WorkerToolKind {
     ApplyPatch,
     ExecuteCommand,
     ProgrammaticToolCall,
-    FinalResponse,
 }
 
 impl WorkerToolKind {
@@ -932,7 +936,6 @@ impl WorkerToolKind {
             Self::ApplyPatch => "apply_patch",
             Self::ExecuteCommand => "execute_command",
             Self::ProgrammaticToolCall => "programmatic_tool_call",
-            Self::FinalResponse => "final_response",
         }
     }
 
@@ -949,7 +952,6 @@ impl WorkerToolKind {
             Self::ApplyPatch => is_apply_patch_tool(tool_name),
             Self::ExecuteCommand => is_execute_command_tool(tool_name),
             Self::ProgrammaticToolCall => is_ptc_tool(tool_name),
-            Self::FinalResponse => is_final_response_tool(tool_name),
         }
     }
 
@@ -993,9 +995,6 @@ impl WorkerToolKind {
                 "workdir": ".",
                 "content": format!("print('swarm worker script prepared r{task_round} {suffix}')"),
             }),
-            Self::FinalResponse => json!({
-                "content": format!("worker {worker_tag} final response via tool r{task_round} {suffix}"),
-            }),
         }
     }
 }
@@ -1007,7 +1006,7 @@ enum WorkerToolProfile {
     WriteReplace,
     WriteEdit,
     CommandRead,
-    SearchFinal,
+    SearchRead,
     PtcSearch,
     CommandPtc,
 }
@@ -1020,7 +1019,7 @@ impl WorkerToolProfile {
             Self::WriteReplace => "write_replace",
             Self::WriteEdit => "write_edit",
             Self::CommandRead => "command_read",
-            Self::SearchFinal => "search_final",
+            Self::SearchRead => "search_read",
             Self::PtcSearch => "ptc_search",
             Self::CommandPtc => "command_ptc",
         }
@@ -1033,7 +1032,7 @@ impl WorkerToolProfile {
             Self::WriteReplace => (WorkerToolKind::WriteFile, WorkerToolKind::ApplyPatch),
             Self::WriteEdit => (WorkerToolKind::WriteFile, WorkerToolKind::ApplyPatch),
             Self::CommandRead => (WorkerToolKind::ExecuteCommand, WorkerToolKind::ReadFile),
-            Self::SearchFinal => (WorkerToolKind::SearchContent, WorkerToolKind::FinalResponse),
+            Self::SearchRead => (WorkerToolKind::SearchContent, WorkerToolKind::ReadFile),
             Self::PtcSearch => (
                 WorkerToolKind::ProgrammaticToolCall,
                 WorkerToolKind::SearchContent,
@@ -1107,7 +1106,7 @@ fn choose_worker_profile(task_seed: u64) -> WorkerToolProfile {
         2 => WorkerToolProfile::WriteReplace,
         3 => WorkerToolProfile::WriteEdit,
         4 => WorkerToolProfile::CommandRead,
-        5 => WorkerToolProfile::SearchFinal,
+        5 => WorkerToolProfile::SearchRead,
         6 => WorkerToolProfile::PtcSearch,
         _ => WorkerToolProfile::CommandPtc,
     }
@@ -1381,7 +1380,7 @@ fn choose_worker_mission(run_seed: u64, agent_id: &str, task_round: usize) -> &'
         "sample_latency_path",
         "stress_search_branch",
         "exercise_ptc_branch",
-        "verify_final_response",
+        "verify_response_path",
     ];
     let seed = derive_worker_task_seed(run_seed, agent_id, task_round);
     MISSIONS[(seed as usize) % MISSIONS.len()]
@@ -1431,13 +1430,6 @@ fn is_execute_command_tool(name: &str) -> bool {
 
 fn is_ptc_tool(name: &str) -> bool {
     matches!(name.trim(), "programmatic_tool_call" | "ptc")
-}
-
-fn is_final_response_tool(name: &str) -> bool {
-    matches!(
-        name.trim(),
-        "final_response" | "\u{6700}\u{7ec8}\u{56de}\u{590d}"
-    )
 }
 
 fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWaitSummary> {
@@ -1529,7 +1521,12 @@ fn extract_swarm_wait_summaries(observation_payloads: &[Value]) -> Vec<SwarmWait
     summaries
 }
 
-fn seed_swarm_workspace(state: &AppState, user_id: &str) -> Result<()> {
+fn seed_swarm_workspace(
+    state: &AppState,
+    user_id: &str,
+    mother_agent_id: &str,
+    worker_agent_ids: &[String],
+) -> Result<()> {
     let shared_context = [
         "swarm simulation context",
         "- deterministic worker loops",
@@ -1537,9 +1534,33 @@ fn seed_swarm_workspace(state: &AppState, user_id: &str) -> Result<()> {
         "- collect concurrency metrics",
     ]
     .join("\n");
-    state
-        .workspace
-        .write_file(user_id, "sim_lab/shared/context.txt", &shared_context, true)?;
+
+    // Seed shared context into all workspaces that may execute worker tools.
+    let mut workspace_ids = HashSet::new();
+    workspace_ids.insert(state.workspace.scoped_user_id(user_id, None));
+
+    let mut agent_ids = Vec::with_capacity(worker_agent_ids.len().saturating_add(1));
+    agent_ids.push(mother_agent_id.to_string());
+    agent_ids.extend(worker_agent_ids.iter().cloned());
+
+    for agent_id in agent_ids {
+        let Some(agent) = state.user_store.get_user_agent(user_id, &agent_id)? else {
+            continue;
+        };
+        let workspace_id = state
+            .workspace
+            .scoped_user_id_by_container(user_id, agent.sandbox_container_id);
+        workspace_ids.insert(workspace_id);
+    }
+
+    for workspace_id in workspace_ids {
+        state.workspace.write_file(
+            &workspace_id,
+            "sim_lab/shared/context.txt",
+            &shared_context,
+            true,
+        )?;
+    }
     Ok(())
 }
 
@@ -1622,7 +1643,6 @@ fn seeded_worker_tools() -> Vec<String> {
         "apply_patch".to_string(),
         "execute_command".to_string(),
         "programmatic_tool_call".to_string(),
-        "final_response".to_string(),
     ]
 }
 

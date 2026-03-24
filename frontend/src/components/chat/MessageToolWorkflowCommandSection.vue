@@ -9,17 +9,6 @@
 
     <pre class="tool-workflow-command-line">{{ view.command }}</pre>
 
-    <div v-if="view.metrics?.length" class="tool-workflow-command-metrics">
-      <div
-        v-for="metric in view.metrics"
-        :key="metric.key"
-        :class="['tool-workflow-command-metric', metric.tone ? `is-${metric.tone}` : '']"
-      >
-        <span class="tool-workflow-command-metric-label">{{ metric.label }}</span>
-        <span class="tool-workflow-command-metric-value">{{ metric.value }}</span>
-      </div>
-    </div>
-
     <div v-if="view.streams?.length" class="tool-workflow-command-streams">
       <section
         v-for="stream in view.streams"
@@ -111,37 +100,6 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
-}
-
-.tool-workflow-command-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-workflow-command-metric {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.tool-workflow-command-metric.is-warning {
-  border-color: rgba(251, 191, 36, 0.32);
-}
-
-.tool-workflow-command-metric-label {
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-}
-
-.tool-workflow-command-metric-value {
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .tool-workflow-command-streams,

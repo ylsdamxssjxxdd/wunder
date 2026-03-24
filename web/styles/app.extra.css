@@ -1180,11 +1180,12 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 14px 16px;
   border: 1px solid #d7e2ef;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #f8fafc;
+  overflow: hidden;
 }
 
 .bridge-channel-config-title {
@@ -1195,8 +1196,22 @@
 
 .bridge-channel-config-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.bridge-channel-config-controls {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px 12px;
+}
+
+.bridge-channel-config-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  min-width: 0;
 }
 
 .bridge-channel-config-field {
@@ -1204,6 +1219,10 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
 }
 
 .bridge-channel-config-field > span {
@@ -1213,17 +1232,115 @@
 
 .bridge-channel-config-field > input[type="text"],
 .bridge-channel-config-field > input[type="password"] {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 34px;
 }
 
 .bridge-channel-config-checkbox {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-height: 34px;
   font-size: 12px;
   color: #334155;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.bridge-channel-config-checkbox-field {
+  grid-column: 1 / -1;
+  min-height: 38px;
+}
+
+.bridge-weixin-qr-inline-panel {
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bridge-weixin-qr-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bridge-weixin-qr-inline-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.bridge-weixin-qr-inline-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bridge-weixin-qr-inline-preview {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bridge-weixin-qr-inline-image {
+  width: 152px;
+  height: 152px;
+  border-radius: 10px;
+  border: 1px solid #dbe4f0;
+  object-fit: contain;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.bridge-weixin-qr-inline-empty {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+}
+
+.bridge-weixin-qr-inline-link {
+  font-size: 12px;
+  color: #2563eb;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.bridge-weixin-qr-inline-link:hover {
+  text-decoration: underline;
+}
+
+.bridge-weixin-qr-inline-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  word-break: break-word;
+}
+
+@media (max-width: 780px) {
+  .bridge-channel-config-panel {
+    padding: 12px;
+  }
+
+  .bridge-channel-config-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bridge-weixin-qr-inline-image {
+    width: 136px;
+    height: 136px;
+  }
 }
 
 .bridge-runtime-log-panel {

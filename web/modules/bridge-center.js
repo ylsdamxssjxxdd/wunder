@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260324-04";
+import { elements } from "./elements.js?v=20260324-06";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
@@ -160,6 +160,17 @@ const emptyChannelForm = () => ({
   weixin_advanced_enabled: false,
 });
 
+const emptyWeixinQrState = () => ({
+  sessionKey: "",
+  qrcode: "",
+  qrcodeUrl: "",
+  apiBase: DEFAULT_WEIXIN_API_BASE,
+  status: "",
+  message: "",
+  loadingStart: false,
+  loadingWait: false,
+});
+
 const emptyRuntimeState = () => ({
   items: [],
   status: null,
@@ -185,6 +196,7 @@ const ensureBridgeState = () => {
   state.bridgeCenter.routeStatus ||= "";
   state.bridgeCenter.configEditingCenterId ||= "";
   state.bridgeCenter.channelForm ||= emptyChannelForm();
+  state.bridgeCenter.weixinQr ||= emptyWeixinQrState();
   state.bridgeCenter.channelRuntime ||= emptyRuntimeState();
 };
 
@@ -289,6 +301,7 @@ const normalizeAvailableChannelAccount = (item = {}) => {
     key: bridgeAccountKey(item.channel, item.account_id),
     channel: cleanText(item.channel).toLowerCase(),
     account_id: cleanText(item.account_id),
+    owner_user_id: cleanText(item.owner_user_id),
     name: cleanText(config.display_name),
     status: cleanText(item.status) || "active",
     active: cleanText(item.status || "active").toLowerCase() === "active",
@@ -324,6 +337,143 @@ const parseCommaSeparatedList = (value) =>
     .filter(Boolean);
 
 const isChannel = (value, channel) => cleanText(value).toLowerCase() === channel;
+const currentWeixinQrState = () => state.bridgeCenter.weixinQr || emptyWeixinQrState();
+const resetWeixinQrState = () => {
+  state.bridgeCenter.weixinQr = emptyWeixinQrState();
+};
+
+const buildWeixinQrRenderUrl = (rawValue, apiBase = "") => {
+  const value = cleanText(rawValue);
+  if (!value) {
+    return "";
+  }
+  const params = new URLSearchParams({ text: value });
+  const normalizedApiBase = cleanText(apiBase);
+  if (normalizedApiBase) {
+    params.set("api_base", normalizedApiBase);
+  }
+  return `${getWunderBase()}/channels/weixin/qr/render?${params.toString()}`;
+};
+
+const isLikelyImageUrl = (value) => {
+  if (!/^https?:\/\//i.test(value)) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    if (/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(parsed.pathname)) {
+      return true;
+    }
+    const format = cleanText(parsed.searchParams.get("format"));
+    if (format && /(png|jpe?g|gif|webp|svg)/i.test(format)) {
+      return true;
+    }
+  } catch (error) {
+    return false;
+  }
+  return false;
+};
+
+const normalizeWeixinQrImageValue = (rawValue, apiBase = "") => {
+  let value = cleanText(rawValue);
+  if (!value) {
+    return "";
+  }
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  value = value
+    .replace(/\\r\\n/g, "")
+    .replace(/\\n/g, "")
+    .replace(/\\r/g, "")
+    .replace(/\r\n/g, "")
+    .replace(/\n/g, "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!value) {
+    return "";
+  }
+  if (value.startsWith("data:image/")) {
+    return value;
+  }
+  const compact = value.replace(/\s+/g, "");
+  const base64Candidate = compact.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, "");
+  const looksLikeBase64 =
+    base64Candidate.length > 64 && /^[A-Za-z0-9+/]+=*$/.test(base64Candidate);
+  if (looksLikeBase64) {
+    return `data:image/png;base64,${base64Candidate}`;
+  }
+
+  if (value.startsWith("blob:") || /^https?:\/\//i.test(value)) {
+    return value;
+  }
+  if (value.startsWith("//")) {
+    return `${window.location.protocol}${value}`;
+  }
+  if (value.startsWith("/")) {
+    if (apiBase) {
+      try {
+        return new URL(value, apiBase).toString();
+      } catch (error) {
+        // Fall through to current origin.
+      }
+    }
+    return `${window.location.origin}${value}`;
+  }
+  return "";
+};
+
+const resolveWeixinQrPreviewUrl = (qrState) => {
+  const fromUrl = normalizeWeixinQrImageValue(qrState.qrcodeUrl, qrState.apiBase);
+  if (fromUrl && (fromUrl.startsWith("data:image/") || fromUrl.startsWith("blob:") || isLikelyImageUrl(fromUrl))) {
+    return fromUrl;
+  }
+
+  const fromQrText = normalizeWeixinQrImageValue(qrState.qrcode, qrState.apiBase);
+  if (fromQrText && (fromQrText.startsWith("data:image/") || fromQrText.startsWith("blob:") || isLikelyImageUrl(fromQrText))) {
+    return fromQrText;
+  }
+
+  const fallbackSource = cleanText(qrState.qrcode) || cleanText(qrState.qrcodeUrl);
+  return fallbackSource ? buildWeixinQrRenderUrl(fallbackSource, qrState.apiBase) : fromUrl || fromQrText;
+};
+
+const formatWeixinQrStatus = (status) => {
+  const normalized = cleanText(status).toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  const labels = {
+    wait: "待扫码",
+    scaned: "已扫码",
+    scanned: "已扫码",
+    confirmed: "已确认",
+    expired: "已过期",
+  };
+  return labels[normalized] || normalized;
+};
+
+const applyWeixinQrResultToFields = (values, result) => {
+  const botToken = cleanText(result.bot_token);
+  if (botToken) {
+    values.bot_token = botToken;
+  }
+  const ilinkBotId = cleanText(result.ilink_bot_id);
+  if (ilinkBotId) {
+    values.ilink_bot_id = ilinkBotId;
+  }
+  const ilinkUserId = cleanText(result.ilink_user_id);
+  if (ilinkUserId) {
+    values.ilink_user_id = ilinkUserId;
+  }
+  const apiBase = cleanText(result.api_base);
+  if (apiBase) {
+    values.api_base = apiBase;
+  }
+};
 
 const schemaForChannel = (channel) => CHANNEL_FORM_SCHEMAS[cleanText(channel).toLowerCase()] || null;
 
@@ -390,6 +540,143 @@ const buildDefaultBridgeAccountId = (channel) => {
   return `bridge_${normalizedChannel}_${normalizedCenter || "node"}`;
 };
 
+const startWeixinQrFlow = async (force = false) => {
+  if (!isChannel(resolveSelectedChannel(), WEIXIN_CHANNEL)) {
+    return;
+  }
+  const center = currentCenter();
+  const ownerUserId = cleanText(center?.owner_user_id);
+  if (!ownerUserId) {
+    notify("当前节点缺少 owner_user_id，无法生成微信二维码", "warning");
+    return;
+  }
+  const values = state.bridgeCenter.channelForm.dynamic_fields || {};
+  const qrState = currentWeixinQrState();
+  state.bridgeCenter.weixinQr = qrState;
+  const accountId = resolveChannelBindingAccountId();
+  const matchedOwnedAccount = state.bridgeCenter.availableAccounts.find(
+    (item) =>
+      item.channel === WEIXIN_CHANNEL &&
+      item.account_id === accountId &&
+      cleanText(item.owner_user_id) === ownerUserId
+  );
+  const reusableAccountId = cleanText(matchedOwnedAccount?.account_id);
+  const apiBase = cleanText(values.api_base) || cleanText(qrState.apiBase) || DEFAULT_WEIXIN_API_BASE;
+  const botType = cleanText(values.bot_type) || DEFAULT_WEIXIN_BOT_TYPE;
+
+  qrState.loadingStart = true;
+  qrState.message = "";
+  renderChannelDynamicFields();
+  try {
+    const payload = {
+      api_base: apiBase,
+      bot_type: botType,
+      force: Boolean(force),
+      account_id: reusableAccountId || undefined,
+    };
+    const params = new URLSearchParams({ user_id: ownerUserId });
+    const response = await fetchJson(`/channels/weixin/qr/start?${params.toString()}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const result = isPlainObject(response?.data) ? response.data : {};
+    qrState.sessionKey = cleanText(result.session_key);
+    qrState.qrcode = cleanText(result.qrcode);
+    qrState.qrcodeUrl = cleanText(result.qrcode_url);
+    qrState.apiBase = cleanText(result.api_base) || apiBase;
+    qrState.status = cleanText(result.status).toLowerCase() || "wait";
+    qrState.message = cleanText(result.message) || "二维码已生成，等待扫码确认...";
+    if (!qrState.sessionKey || !resolveWeixinQrPreviewUrl(qrState)) {
+      throw new Error("二维码响应异常，请重试");
+    }
+    if (!cleanText(values.api_base)) {
+      values.api_base = qrState.apiBase;
+    }
+    if (!cleanText(values.bot_type)) {
+      values.bot_type = botType;
+    }
+    state.bridgeCenter.channelForm.dynamic_fields = values;
+    state.bridgeCenter.weixinQr = qrState;
+    renderChannelDynamicFields();
+    void waitWeixinQrFlow();
+  } catch (error) {
+    qrState.message = cleanText(error?.message) || "生成微信二维码失败";
+    state.bridgeCenter.weixinQr = qrState;
+    notify(qrState.message, "error");
+    renderChannelDynamicFields();
+  } finally {
+    qrState.loadingStart = false;
+    state.bridgeCenter.weixinQr = qrState;
+    renderChannelDynamicFields();
+  }
+};
+
+const waitWeixinQrFlow = async () => {
+  if (!isChannel(resolveSelectedChannel(), WEIXIN_CHANNEL)) {
+    return;
+  }
+  const center = currentCenter();
+  const ownerUserId = cleanText(center?.owner_user_id);
+  if (!ownerUserId) {
+    return;
+  }
+  const values = state.bridgeCenter.channelForm.dynamic_fields || {};
+  const qrState = currentWeixinQrState();
+  if (!cleanText(qrState.sessionKey)) {
+    notify("请先生成二维码", "warning");
+    return;
+  }
+  const apiBase = cleanText(values.api_base) || cleanText(qrState.apiBase) || DEFAULT_WEIXIN_API_BASE;
+
+  qrState.loadingWait = true;
+  qrState.message = "正在等待微信扫码确认...";
+  state.bridgeCenter.weixinQr = qrState;
+  renderChannelDynamicFields();
+  try {
+    const params = new URLSearchParams({ user_id: ownerUserId });
+    const response = await fetchJson(`/channels/weixin/qr/wait?${params.toString()}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session_key: qrState.sessionKey,
+        api_base: apiBase,
+        timeout_ms: 120000,
+      }),
+    });
+    const result = isPlainObject(response?.data) ? response.data : {};
+    const connected = result.connected === true;
+    qrState.status = cleanText(result.status).toLowerCase() || qrState.status || "wait";
+    qrState.message = cleanText(result.message) || qrState.message;
+    const resultApiBase = cleanText(result.api_base);
+    if (resultApiBase) {
+      qrState.apiBase = resultApiBase;
+      values.api_base = resultApiBase;
+    }
+
+    if (connected) {
+      applyWeixinQrResultToFields(values, result);
+      qrState.message = cleanText(result.message) || "微信登录已确认，关键字段已回填";
+      state.bridgeCenter.channelForm.dynamic_fields = values;
+      state.bridgeCenter.weixinQr = qrState;
+      notify("微信登录已确认，已回填连接参数", "success");
+      renderChannelDynamicFields();
+      return;
+    }
+
+    if (qrState.status === "expired") {
+      notify("二维码已过期，请点击二维码刷新", "warning");
+    }
+  } catch (error) {
+    qrState.message = cleanText(error?.message) || "等待微信扫码确认失败";
+    notify(qrState.message, "error");
+  } finally {
+    qrState.loadingWait = false;
+    state.bridgeCenter.weixinQr = qrState;
+    renderChannelDynamicFields();
+  }
+};
+
 const renderChannelDynamicFields = () => {
   const container = elements.bridgeCenterChannelFormDynamicFields;
   if (!container) {
@@ -406,6 +693,10 @@ const renderChannelDynamicFields = () => {
     return;
   }
   const values = state.bridgeCenter.channelForm.dynamic_fields || {};
+  const controls = document.createElement("div");
+  controls.className = "bridge-channel-config-controls";
+  container.appendChild(controls);
+
   if (isChannel(channel, WEIXIN_CHANNEL)) {
     const toggle = document.createElement("label");
     toggle.className = "bridge-channel-config-checkbox";
@@ -420,8 +711,9 @@ const renderChannelDynamicFields = () => {
     text.textContent = "高级选项";
     toggle.appendChild(input);
     toggle.appendChild(text);
-    container.appendChild(toggle);
+    controls.appendChild(toggle);
   }
+
   if (isChannel(channel, "xmpp") && schema.fields.some((field) => field.advanced)) {
     const toggle = document.createElement("label");
     toggle.className = "bridge-channel-config-checkbox";
@@ -436,15 +728,103 @@ const renderChannelDynamicFields = () => {
     text.textContent = "显示 XMPP 高级选项";
     toggle.appendChild(input);
     toggle.appendChild(text);
-    container.appendChild(toggle);
+    controls.appendChild(toggle);
   }
+  if (!controls.childElementCount) {
+    controls.remove();
+  }
+
+  if (isChannel(channel, WEIXIN_CHANNEL)) {
+    const qrState = currentWeixinQrState();
+    const qrPanel = document.createElement("div");
+    qrPanel.className = "bridge-weixin-qr-inline-panel";
+
+    const header = document.createElement("div");
+    header.className = "bridge-weixin-qr-inline-header";
+    const title = document.createElement("div");
+    title.className = "bridge-weixin-qr-inline-title";
+    title.textContent = "微信扫码连接";
+    header.appendChild(title);
+    qrPanel.appendChild(header);
+
+    const previewUrl = resolveWeixinQrPreviewUrl(qrState);
+    if (previewUrl) {
+      const preview = document.createElement("div");
+      preview.className = "bridge-weixin-qr-inline-preview";
+      const image = document.createElement("img");
+      image.className = "bridge-weixin-qr-inline-image";
+      image.alt = "微信扫码二维码";
+      image.referrerPolicy = "no-referrer";
+      image.src = previewUrl;
+      image.role = "button";
+      image.tabIndex = 0;
+      image.title = "点击刷新二维码";
+      image.addEventListener("click", () => {
+        void startWeixinQrFlow(true);
+      });
+      image.addEventListener("error", () => {
+        const fallback = buildWeixinQrRenderUrl(cleanText(qrState.qrcode) || cleanText(qrState.qrcodeUrl), qrState.apiBase);
+        if (!fallback || image.dataset.renderFallbackApplied === "1" || image.src === fallback) {
+          return;
+        }
+        image.dataset.renderFallbackApplied = "1";
+        image.src = fallback;
+      });
+      image.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          void startWeixinQrFlow(true);
+        }
+      });
+      preview.appendChild(image);
+      if (/^https?:\/\//i.test(previewUrl) && !previewUrl.startsWith(getWunderBase())) {
+        const link = document.createElement("a");
+        link.className = "bridge-weixin-qr-inline-link";
+        link.href = previewUrl;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "打开二维码图片";
+        preview.appendChild(link);
+      }
+      qrPanel.appendChild(preview);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "bridge-weixin-qr-inline-empty muted";
+      empty.textContent = qrState.loadingStart ? "正在生成二维码..." : "二维码准备中，请稍候。";
+      qrPanel.appendChild(empty);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "bridge-weixin-qr-inline-meta";
+    const statusText = formatWeixinQrStatus(qrState.status);
+    const lines = [
+      qrState.sessionKey ? `会话标识: ${qrState.sessionKey}` : "",
+      statusText ? `状态: ${statusText}` : "",
+      cleanText(qrState.message),
+    ].filter(Boolean);
+    if (!lines.length) {
+      lines.push("生成二维码后扫码，连接参数会自动回填。");
+    }
+    lines.forEach((line) => {
+      const row = document.createElement("div");
+      row.className = "muted";
+      row.textContent = line;
+      meta.appendChild(row);
+    });
+    qrPanel.appendChild(meta);
+    container.appendChild(qrPanel);
+  }
+
+  const fieldsContainer = document.createElement("div");
+  fieldsContainer.className = "bridge-channel-config-fields";
+  container.appendChild(fieldsContainer);
   const visibleFields = resolveVisibleSchemaFields(channel, schema, schema.fields);
   if (!visibleFields.length) {
     if (isChannel(channel, WEIXIN_CHANNEL)) {
       const hint = document.createElement("div");
       hint.className = "muted";
       hint.textContent = "开启高级选项后可填写 Weixin iLink 连接参数。";
-      container.appendChild(hint);
+      fieldsContainer.appendChild(hint);
     }
     state.bridgeCenter.channelForm.dynamic_fields = values;
     return;
@@ -452,7 +832,7 @@ const renderChannelDynamicFields = () => {
   visibleFields.forEach((field) => {
     if (field.type === "checkbox") {
       const row = document.createElement("label");
-      row.className = "bridge-channel-config-checkbox";
+      row.className = "bridge-channel-config-checkbox bridge-channel-config-checkbox-field";
       const input = document.createElement("input");
       input.type = "checkbox";
       input.checked = Boolean(values[field.key]);
@@ -463,7 +843,7 @@ const renderChannelDynamicFields = () => {
       text.textContent = field.label;
       row.appendChild(input);
       row.appendChild(text);
-      container.appendChild(row);
+      fieldsContainer.appendChild(row);
       return;
     }
     const row = document.createElement("label");
@@ -480,7 +860,7 @@ const renderChannelDynamicFields = () => {
     });
     row.appendChild(label);
     row.appendChild(input);
-    container.appendChild(row);
+    fieldsContainer.appendChild(row);
   });
   state.bridgeCenter.channelForm.dynamic_fields = values;
 };
@@ -527,6 +907,9 @@ const refreshMetaOptions = () => {
 const refreshChannelAccountOptions = () => {
   const channel = resolveSelectedChannel();
   state.bridgeCenter.channelForm.channel = channel;
+  if (!isChannel(channel, WEIXIN_CHANNEL)) {
+    resetWeixinQrState();
+  }
   const existingAccountId = resolveChannelBindingAccountId();
   const accountId = existingAccountId || buildDefaultBridgeAccountId(channel);
   state.bridgeCenter.channelForm.account_id = accountId;
@@ -544,6 +927,13 @@ const refreshChannelAccountOptions = () => {
       : "请先选择渠道并填写连接参数，保存后绑定到当前舰桥节点。";
   }
   renderChannelDynamicFields();
+  if (isChannel(channel, WEIXIN_CHANNEL) && isBridgeChannelModalOpen()) {
+    const qrState = currentWeixinQrState();
+    const hasPreview = Boolean(resolveWeixinQrPreviewUrl(qrState));
+    if (!hasPreview && !qrState.loadingStart && !qrState.loadingWait) {
+      void startWeixinQrFlow();
+    }
+  }
   if (isBridgeChannelModalOpen()) {
     void refreshBridgeRuntimeLogs(true);
   }
@@ -658,6 +1048,9 @@ const renderAccountList = () => {
     row.querySelector("button")?.addEventListener("click", () => {
       applyChannelForm(account);
       openModal(elements.bridgeCenterChannelModal);
+      if (isChannel(state.bridgeCenter.channelForm.channel, WEIXIN_CHANNEL)) {
+        void startWeixinQrFlow();
+      }
     });
     elements.bridgeCenterAccountList.appendChild(row);
   });
@@ -836,6 +1229,7 @@ const applyChannelForm = (account) => {
     };
   }
   const form = state.bridgeCenter.channelForm;
+  resetWeixinQrState();
   if (elements.bridgeCenterChannelModalTitle) elements.bridgeCenterChannelModalTitle.textContent = "渠道设置";
   if (elements.bridgeCenterChannelEditorHint) {
     elements.bridgeCenterChannelEditorHint.textContent =
@@ -1443,6 +1837,9 @@ export const initBridgeCenterPanel = () => {
     await Promise.all([loadAvailableChannelAccounts(), loadBridgeCenterAccounts()]);
     applyChannelForm(currentAccount());
     openModal(elements.bridgeCenterChannelModal);
+    if (isChannel(state.bridgeCenter.channelForm.channel, WEIXIN_CHANNEL)) {
+      void startWeixinQrFlow();
+    }
     const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
     runtime.clearedAt = 0;
     runtime.error = "";
@@ -1459,6 +1856,7 @@ export const initBridgeCenterPanel = () => {
     state.bridgeCenter.channelForm.account_id = buildDefaultBridgeAccountId(channel);
     state.bridgeCenter.channelForm.xmpp_advanced_enabled = false;
     state.bridgeCenter.channelForm.weixin_advanced_enabled = false;
+    resetWeixinQrState();
     refreshChannelAccountOptions();
   });
   elements.bridgeCenterChannelRuntimeRefreshBtn?.addEventListener("click", () => {
@@ -1501,5 +1899,6 @@ export const initBridgeCenterPanel = () => {
 };
 
 export { loadBridgeCenters };
+
 
 

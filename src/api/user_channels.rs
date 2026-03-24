@@ -9,8 +9,8 @@ use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::{
     routing::{delete, get, post},
     Json, Router,
@@ -158,7 +158,7 @@ fn extract_first_img_src(text: &str) -> Option<String> {
     None
 }
 
-fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
+fn build_weixin_qr_png_bytes(raw_qrcode: &str) -> Option<Vec<u8>> {
     let qrcode_text = normalize_weixin_qr_image_value(raw_qrcode);
     if qrcode_text.is_empty() {
         return None;
@@ -197,7 +197,12 @@ fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
     DynamicImage::ImageLuma8(image)
         .write_to(&mut cursor, ImageFormat::Png)
         .ok()?;
-    let encoded = base64::engine::general_purpose::STANDARD.encode(cursor.into_inner());
+    Some(cursor.into_inner())
+}
+
+fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
+    let bytes = build_weixin_qr_png_bytes(raw_qrcode)?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     Some(format!("data:image/png;base64,{encoded}"))
 }
 
@@ -215,20 +220,18 @@ fn push_weixin_qr_candidate(candidates: &mut Vec<String>, raw: &str) {
 fn extract_weixin_qrcode_query_value(raw: &str, api_base: &str) -> Option<String> {
     let absolute_url = build_absolute_weixin_qr_url(raw, api_base)?;
     let parsed = reqwest::Url::parse(&absolute_url).ok()?;
-    parsed
-        .query_pairs()
-        .find_map(|(key, value)| {
-            if key.eq_ignore_ascii_case("qrcode") {
-                let normalized = normalize_weixin_qr_image_value(value.as_ref());
-                if normalized.is_empty() {
-                    None
-                } else {
-                    Some(normalized)
-                }
-            } else {
+    parsed.query_pairs().find_map(|(key, value)| {
+        if key.eq_ignore_ascii_case("qrcode") {
+            let normalized = normalize_weixin_qr_image_value(value.as_ref());
+            if normalized.is_empty() {
                 None
+            } else {
+                Some(normalized)
             }
-        })
+        } else {
+            None
+        }
+    })
 }
 
 async fn resolve_weixin_qr_preview_url(
@@ -481,6 +484,13 @@ struct ChannelActionQuery {
 }
 
 #[derive(Debug, Deserialize)]
+struct WeixinQrRenderQuery {
+    text: String,
+    #[serde(default, alias = "apiBase")]
+    api_base: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct WeixinQrStartRequest {
     #[serde(default, alias = "accountId")]
     account_id: Option<String>,
@@ -544,6 +554,50 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/channels/weixin/qr/wait",
             post(wait_weixin_qr_login),
         )
+        .route(
+            "/wunder/channels/weixin/qr/render",
+            get(render_weixin_qr_image),
+        )
+}
+
+async fn render_weixin_qr_image(
+    Query(query): Query<WeixinQrRenderQuery>,
+) -> Result<Response, Response> {
+    let text = normalize_weixin_qr_image_value(&query.text);
+    if text.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "weixin qr text is required".to_string(),
+        ));
+    }
+
+    let api_base = weixin::normalize_api_base(query.api_base.as_deref())
+        .unwrap_or_else(|| weixin::DEFAULT_API_BASE.to_string());
+    let mut candidates = Vec::with_capacity(3);
+    push_weixin_qr_candidate(&mut candidates, &text);
+    if let Some(query_value) = extract_weixin_qrcode_query_value(&text, &api_base) {
+        push_weixin_qr_candidate(&mut candidates, &query_value);
+    }
+    if let Some(bytes) = candidates
+        .iter()
+        .find_map(|candidate| build_weixin_qr_png_bytes(candidate))
+    {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static("image/png"),
+        );
+        headers.insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store, max-age=0"),
+        );
+        return Ok((headers, bytes).into_response());
+    }
+
+    Err(error_response(
+        StatusCode::BAD_REQUEST,
+        "unable to render weixin qr image".to_string(),
+    ))
 }
 
 async fn list_channel_accounts(

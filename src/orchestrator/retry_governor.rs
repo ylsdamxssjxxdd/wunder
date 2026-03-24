@@ -96,7 +96,8 @@ impl RetryGovernor {
             });
         }
 
-        if self.same_tool_failures >= MAX_SAME_TOOL_FAILURES && self.same_fingerprint_failures == 1 {
+        if self.same_tool_failures >= MAX_SAME_TOOL_FAILURES && self.same_fingerprint_failures == 1
+        {
             return Some(RetryStopDecision {
                 reason: "tool_failure_reroute_required",
                 fingerprint: fingerprint.key,

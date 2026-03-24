@@ -104,10 +104,7 @@ impl ToolResultPayload {
                 if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
                     let cleaned = code.trim();
                     if !cleaned.is_empty() {
-                        map.insert(
-                            "error_code".to_string(),
-                            Value::String(cleaned.to_string()),
-                        );
+                        map.insert("error_code".to_string(), Value::String(cleaned.to_string()));
                     }
                 }
                 if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {

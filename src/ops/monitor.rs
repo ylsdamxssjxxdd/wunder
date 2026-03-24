@@ -1214,7 +1214,8 @@ impl MonitorState {
                 let (result, to_persist) = {
                     let mut sessions = self.sessions.lock();
                     if !sessions.contains_key(cleaned_session_id) {
-                        if let Ok(Some(payload)) = self.storage.get_monitor_record(cleaned_session_id)
+                        if let Ok(Some(payload)) =
+                            self.storage.get_monitor_record(cleaned_session_id)
                         {
                             if let Some(record) = SessionRecord::from_storage(&payload) {
                                 sessions.insert(cleaned_session_id.to_string(), record);

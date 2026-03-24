@@ -206,6 +206,11 @@ impl TeamRunRunner {
             let active = self.active_runs.lock().await;
             let mut available_slots = max_active.saturating_sub(active.len());
             for run in runs {
+                if is_tool_managed_strategy(&run.strategy) {
+                    // `direct_send` / `batch_send` runs are already dispatched in tool paths.
+                    // Runner should not re-dispatch them, otherwise model/config may diverge.
+                    continue;
+                }
                 if active.contains_key(&run.team_run_id) {
                     continue;
                 }
@@ -268,6 +273,9 @@ impl TeamRunRunner {
             Some(record) => record,
             None => return Ok(()),
         };
+        if is_tool_managed_strategy(&run.strategy) {
+            return Ok(());
+        }
         if !is_active_run_status(&run.status) {
             return Ok(());
         }
@@ -1181,6 +1189,13 @@ fn build_task_request(
 
 fn normalize_status(status: &str) -> String {
     status.trim().to_ascii_lowercase()
+}
+
+fn is_tool_managed_strategy(strategy: &str) -> bool {
+    matches!(
+        normalize_status(strategy).as_str(),
+        "batch_send" | "direct_send"
+    )
 }
 
 fn is_active_run_status(status: &str) -> bool {

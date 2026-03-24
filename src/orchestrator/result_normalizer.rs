@@ -36,8 +36,10 @@ pub(super) fn normalize_tool_result_payload(
     if result.error.trim().is_empty() {
         if let Some(failure) = business_failure.as_ref() {
             result.error = failure.message.clone();
-        } else if let Some(detail) = extract_error_detail_from_data(&result.data) {
-            result.error = detail;
+        } else if !final_ok {
+            if let Some(detail) = extract_error_detail_from_data(&result.data) {
+                result.error = detail;
+            }
         }
     }
 
@@ -45,6 +47,17 @@ pub(super) fn normalize_tool_result_payload(
     let explicit_error_code = explicit_error_meta
         .as_ref()
         .and_then(|meta| meta.get("code"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let preflight_code = result
+        .meta
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("preflight"))
+        .and_then(Value::as_object)
+        .and_then(|preflight| preflight.get("code"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -66,7 +79,10 @@ pub(super) fn normalize_tool_result_payload(
                 business_ok,
             )
         });
-    let error_code = explicit_error_code.or(inferred_error_code).unwrap_or_default();
+    let error_code = explicit_error_code
+        .or(preflight_code)
+        .or(inferred_error_code)
+        .unwrap_or_default();
     let error_retryable = infer_retryable(
         explicit_retryable,
         error_code.as_str(),
@@ -80,7 +96,10 @@ pub(super) fn normalize_tool_result_payload(
         "normalized_transport_ok".to_string(),
         Value::Bool(transport_ok),
     );
-    meta.insert("normalized_business_ok".to_string(), Value::Bool(business_ok));
+    meta.insert(
+        "normalized_business_ok".to_string(),
+        Value::Bool(business_ok),
+    );
     meta.insert("normalized_final_ok".to_string(), Value::Bool(final_ok));
     meta.insert("error_retryable".to_string(), Value::Bool(error_retryable));
     if !error_code.is_empty() {
@@ -310,7 +329,8 @@ fn merge_meta(meta: Option<Value>) -> Map<String, Value> {
 
 fn is_execute_command_tool_name(tool_name: &str) -> bool {
     let cleaned = tool_name.trim();
-    cleaned == resolve_tool_name("execute_command") || cleaned.eq_ignore_ascii_case("execute_command")
+    cleaned == resolve_tool_name("execute_command")
+        || cleaned.eq_ignore_ascii_case("execute_command")
 }
 
 #[cfg(test)]
@@ -345,10 +365,87 @@ mod tests {
             false
         );
         assert_eq!(
-            meta.get("error_code")
-                .and_then(Value::as_str)
-                .unwrap_or(""),
+            meta.get("error_code").and_then(Value::as_str).unwrap_or(""),
             "SQL_SYNTAX_ERROR"
+        );
+    }
+
+    #[test]
+    fn preflight_code_takes_priority_over_inferred_code() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "error": "timeout while calling service"
+            }),
+            error: "timeout while calling service".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "preflight": {
+                    "status": "reject",
+                    "code": "PRECHECK_SHELL_BAD_HEREDOC"
+                }
+            })),
+        };
+        let normalized = normalize_tool_result_payload("execute_command", payload);
+        let meta = normalized.meta.expect("meta");
+        assert_eq!(
+            meta.get("error_code").and_then(Value::as_str),
+            Some("PRECHECK_SHELL_BAD_HEREDOC")
+        );
+        assert_eq!(
+            meta.get("error_retryable").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn explicit_retryable_override_is_respected() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "error_meta": {
+                    "code": "PRECHECK_SQL_PUNCTUATION_NORMALIZED",
+                    "retryable": true
+                }
+            }),
+            error: "tool returned temporary reject".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let normalized = normalize_tool_result_payload("extra_mcp@db_query", payload);
+        let meta = normalized.meta.expect("meta");
+        assert_eq!(
+            meta.get("error_code").and_then(Value::as_str),
+            Some("PRECHECK_SQL_PUNCTUATION_NORMALIZED")
+        );
+        assert_eq!(
+            meta.get("error_retryable").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn successful_payload_with_only_stderr_does_not_backfill_error() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "stdout": "saved",
+                "stderr": "UserWarning: Glyph missing from font(s)"
+            }),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let normalized = normalize_tool_result_payload("ptc", payload);
+        assert!(normalized.ok);
+        assert!(normalized.error.trim().is_empty());
+        let meta = normalized.meta.expect("meta");
+        assert_eq!(
+            meta.get("normalized_final_ok").and_then(Value::as_bool),
+            Some(true)
         );
     }
 }

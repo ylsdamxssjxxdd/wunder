@@ -1949,9 +1949,10 @@ async fn ensure_preset_agents(
         }
         // Always restore missing preset agents when the preset list is available.
         // This recovers users that were bootstrapped while the preset config was empty.
-        let record =
-            crate::services::user_agent_presets::create_preset_agent_record(state, user, preset, now)
-                .await;
+        let record = crate::services::user_agent_presets::create_preset_agent_record(
+            state, user, preset, now,
+        )
+        .await;
         let _ = state.user_store.upsert_user_agent(&record);
         preset_agents_restored = true;
     }
@@ -1960,7 +1961,11 @@ async fn ensure_preset_agents(
         let _ = state.user_store.set_meta(&meta_key, "1");
         bootstrap_meta_written = true;
     }
-    if existing_mutated || preset_agents_restored || bootstrap_meta_written || !container_layout_seeded {
+    if existing_mutated
+        || preset_agents_restored
+        || bootstrap_meta_written
+        || !container_layout_seeded
+    {
         sync_inner_visible_after_user_change(state, &user.user_id).await;
     }
     Ok(())

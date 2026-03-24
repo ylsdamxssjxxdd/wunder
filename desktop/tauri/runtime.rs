@@ -1229,6 +1229,14 @@ fn apply_desktop_defaults(
     config.agent_queue.enabled = false;
     config.cron.enabled = true;
     config.sandbox.mode = "local".to_string();
+    if let Some(preset_worker_cards_root) = resolve_desktop_preset_worker_cards_root(
+        &config.user_agents.worker_cards_root,
+        repo_root,
+        workspace_root,
+    ) {
+        config.user_agents.worker_cards_root =
+            preset_worker_cards_root.to_string_lossy().to_string();
+    }
 
     if !defaults.desktop_token.trim().is_empty() {
         config.security.api_key = Some(defaults.desktop_token.to_string());
@@ -1290,6 +1298,67 @@ fn apply_desktop_defaults(
     allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
+}
+
+fn resolve_desktop_preset_worker_cards_root(
+    configured_root: &str,
+    repo_root: &Path,
+    workspace_root: &Path,
+) -> Option<PathBuf> {
+    let cleaned = configured_root.trim();
+    let configured_candidate = if cleaned.is_empty() {
+        None
+    } else {
+        Some(resolve_maybe_relative_path(
+            cleaned,
+            repo_root,
+            workspace_root,
+        ))
+    };
+    let bundled_candidates = [
+        repo_root.join("config/preset_worker_cards"),
+        repo_root.join("preset_worker_cards"),
+    ];
+    let bundled_best = bundled_candidates
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .map(|path| {
+            let count = count_preset_worker_card_files(&path);
+            (path, count)
+        })
+        .max_by_key(|(_, count)| *count);
+
+    const MIN_BUNDLED_PRESET_WORKER_CARD_FILES: usize = 3;
+    if let Some(configured_path) = configured_candidate.filter(|path| path.is_dir()) {
+        let configured_count = count_preset_worker_card_files(&configured_path);
+        if let Some((bundled_path, bundled_count)) = bundled_best.as_ref() {
+            let should_prefer_bundled = configured_path != *bundled_path
+                && *bundled_count >= MIN_BUNDLED_PRESET_WORKER_CARD_FILES
+                && configured_count < *bundled_count;
+            if should_prefer_bundled {
+                return Some(bundled_path.clone());
+            }
+        }
+        return Some(configured_path);
+    }
+
+    bundled_best.map(|(path, _)| path)
+}
+
+fn count_preset_worker_card_files(root: &Path) -> usize {
+    fs::read_dir(root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|file_type| file_type.is_file())
+                .map(|_| entry.file_name())
+        })
+        .filter(|name| name.to_string_lossy().ends_with(".worker-card.json"))
+        .count()
 }
 
 fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {
@@ -1544,6 +1613,95 @@ mod tests {
         assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
+    }
+
+    #[test]
+    fn apply_desktop_defaults_uses_bundled_preset_worker_cards_root() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-preset-root-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace_root = root.join("workspace");
+        let temp_root = root.join("temp");
+        let repo_root = root.join("repo");
+        let bundled_root = repo_root.join("config/preset_worker_cards");
+        fs::create_dir_all(&bundled_root).expect("create bundled preset root");
+
+        let mut config = Config::default();
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert_eq!(
+            PathBuf::from(&config.user_agents.worker_cards_root),
+            bundled_root
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn apply_desktop_defaults_prefers_complete_bundled_preset_worker_cards_root() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-preset-root-prefer-bundled-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let workspace_root = root.join("workspace");
+        let temp_root = root.join("temp");
+        let repo_root = root.join("repo");
+        let bundled_root = repo_root.join("config/preset_worker_cards");
+        let configured_sparse_root = workspace_root.join("custom-preset-cards");
+
+        fs::create_dir_all(&bundled_root).expect("create bundled preset root");
+        fs::create_dir_all(&configured_sparse_root).expect("create sparse preset root");
+        fs::write(bundled_root.join("preset-a.worker-card.json"), "{}")
+            .expect("write bundled preset a");
+        fs::write(bundled_root.join("preset-b.worker-card.json"), "{}")
+            .expect("write bundled preset b");
+        fs::write(bundled_root.join("preset-c.worker-card.json"), "{}")
+            .expect("write bundled preset c");
+        fs::write(
+            configured_sparse_root.join("preset-only.worker-card.json"),
+            "{}",
+        )
+        .expect("write sparse preset");
+
+        let mut config = Config::default();
+        config.user_agents.worker_cards_root = configured_sparse_root.to_string_lossy().to_string();
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert_eq!(
+            PathBuf::from(&config.user_agents.worker_cards_root),
+            bundled_root
+        );
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

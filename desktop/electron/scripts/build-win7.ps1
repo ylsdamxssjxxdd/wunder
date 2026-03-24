@@ -230,8 +230,18 @@ $env:WUNDER_EXTRA_RUNTIME_ROOTS = ''
 $win7SupplementReadme = Resolve-ExistingPath @(
   (Join-Path $repoRoot 'desktop\electron\assets\README-win7-supplement.txt')
 )
-$env:WUNDER_EXTRA_RUNTIME_FILES = if ($win7SupplementReadme) {
-  $win7SupplementReadme
+$win7DisableUpdaterFlag = Resolve-ExistingPath @(
+  (Join-Path $repoRoot 'desktop\electron\assets\win7-disable-updater.flag')
+)
+$extraRuntimeFiles = @()
+if ($win7SupplementReadme) {
+  $extraRuntimeFiles += $win7SupplementReadme
+}
+if ($win7DisableUpdaterFlag) {
+  $extraRuntimeFiles += $win7DisableUpdaterFlag
+}
+$env:WUNDER_EXTRA_RUNTIME_FILES = if ($extraRuntimeFiles.Count -gt 0) {
+  [string]::Join([System.IO.Path]::PathSeparator, $extraRuntimeFiles)
 } else {
   ''
 }
@@ -256,6 +266,17 @@ try {
   & node .\scripts\prepare-resources.js
   if ($LASTEXITCODE -ne 0) {
     throw "prepare-resources.js failed with exit code $LASTEXITCODE"
+  }
+
+  $stageResourcesDir = Join-Path $stageApp 'resources'
+  Ensure-Directory $stageResourcesDir
+  Write-Utf8NoBomFile -Path (Join-Path $stageResourcesDir 'disable-updater.flag') -Content 'disable updater for win7 desktop package'
+  Write-Utf8NoBomFile -Path (Join-Path $stageResourcesDir 'win7-disable-updater.flag') -Content 'disable updater for win7 desktop package'
+
+  $stageUpdaterModuleDir = Join-Path $stageApp 'node_modules\electron-updater'
+  if (Test-Path $stageUpdaterModuleDir) {
+    Remove-DirectoryTree -Path $stageUpdaterModuleDir
+    Write-Step "removed staged electron-updater module to keep win7 package updater-free"
   }
 
   Write-Step "building Electron $ElectronVersion NSIS package"

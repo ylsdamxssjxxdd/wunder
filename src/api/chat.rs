@@ -686,12 +686,10 @@ async fn submit_message_feedback(
         ));
     }
 
-    let outcome = state.monitor.set_message_feedback(
-        &session_id,
-        history_id,
-        vote,
-        &resolved.user.user_id,
-    );
+    let outcome =
+        state
+            .monitor
+            .set_message_feedback(&session_id, history_id, vote, &resolved.user.user_id);
     match outcome {
         crate::monitor::SetMessageFeedbackResult::Applied(item) => Ok(Json(json!({
             "data": {
@@ -1905,9 +1903,7 @@ fn extract_monitor_message_feedback_map(record: Option<&Value>) -> HashMap<i64, 
 
 fn normalize_monitor_message_feedback(raw: &Value) -> Option<Value> {
     let vote = normalize_message_feedback_vote(
-        raw.get("vote")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
+        raw.get("vote").and_then(Value::as_str).unwrap_or_default(),
     )?;
     let mut feedback = json!({
         "vote": vote,

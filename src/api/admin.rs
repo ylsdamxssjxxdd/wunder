@@ -7972,9 +7972,9 @@ async fn admin_channel_runtime_logs(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .into_iter()
         .filter(|record| {
-            account_filter.as_deref().is_none_or(|account_id| {
-                record.account_id.eq_ignore_ascii_case(account_id)
-            })
+            account_filter
+                .as_deref()
+                .is_none_or(|account_id| record.account_id.eq_ignore_ascii_case(account_id))
         })
         .count();
 
@@ -7995,7 +7995,9 @@ async fn admin_channel_runtime_probe(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase)
-        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "channel is required".to_string()))?;
+        .ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, "channel is required".to_string())
+        })?;
     let account_id = payload
         .account_id
         .as_deref()
@@ -8022,18 +8024,21 @@ async fn admin_channel_runtime_probe(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| "runtime probe ok: admin".to_string());
-    state
-        .channels
-        .record_runtime_info(&channel, account_id.as_deref(), "runtime_probe", message.clone());
+    state.channels.record_runtime_info(
+        &channel,
+        account_id.as_deref(),
+        "runtime_probe",
+        message.clone(),
+    );
     let owned_accounts = state
         .storage
         .list_channel_accounts(Some(&channel), None)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .into_iter()
         .filter(|record| {
-            account_id.as_deref().is_none_or(|value| {
-                record.account_id.eq_ignore_ascii_case(value)
-            })
+            account_id
+                .as_deref()
+                .is_none_or(|value| record.account_id.eq_ignore_ascii_case(value))
         })
         .count();
     Ok(Json(json!({ "data": {
