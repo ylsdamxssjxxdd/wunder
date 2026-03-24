@@ -54,13 +54,12 @@ const historyId = computed<number>(() => resolveMessageHistoryId(props.message))
 
 const visible = computed<boolean>(() => {
   const role = String(props.message?.role || '').trim().toLowerCase();
-  return role === 'assistant' && historyId.value > 0;
+  return role === 'assistant' && props.message?.isGreeting !== true;
 });
 
 const isDisabled = computed<boolean>(() => {
   if (submitting.value) return true;
   if (selectedVote.value) return true;
-  if (historyId.value <= 0) return true;
   return !String(chatStore.activeSessionId || '').trim();
 });
 
@@ -70,7 +69,18 @@ const submitVote = async (vote: MessageFeedbackVote) => {
   if (!sessionId) return;
   submitting.value = true;
   try {
-    const payload = await chatStore.submitMessageFeedback(sessionId, historyId.value, vote);
+    let targetHistoryId = historyId.value;
+    if (targetHistoryId <= 0) {
+      targetHistoryId = await chatStore.ensureAssistantMessageHistoryId(
+        sessionId,
+        props.message || null
+      );
+    }
+    if (!Number.isFinite(targetHistoryId) || targetHistoryId <= 0) {
+      ElMessage.warning(t('chat.message.feedbackFailed'));
+      return;
+    }
+    const payload = await chatStore.submitMessageFeedback(sessionId, targetHistoryId, vote);
     if (!payload) {
       ElMessage.warning(t('chat.message.feedbackFailed'));
       return;

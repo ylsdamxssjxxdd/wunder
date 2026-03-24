@@ -65,3 +65,4 @@ tmp
 docs/演示/
 target-*/
 docker-compose-x86+.yml
+frontend/dist.__docker_tmp/

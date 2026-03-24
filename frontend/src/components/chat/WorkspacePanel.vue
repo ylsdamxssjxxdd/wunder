@@ -172,10 +172,12 @@
       class="workspace-dialog"
       append-to-body
     >
-      <div class="workspace-preview-title">
-        {{ preview.entry?.name || t('workspace.preview.dialogTitle') }}
+      <div class="workspace-preview-head">
+        <div class="workspace-preview-title">
+          {{ preview.entry?.name || t('workspace.preview.dialogTitle') }}
+        </div>
+        <div class="workspace-preview-meta" :title="previewMeta">{{ previewMeta }}</div>
       </div>
-      <div class="workspace-preview-meta">{{ previewMeta }}</div>
       <div v-if="preview.hint" class="workspace-preview-hint">{{ preview.hint }}</div>
       <div class="workspace-preview" :class="{ embed: preview.embed, 'is-svg': preview.type === 'svg' }">
         <div v-if="preview.loading" class="workspace-empty">
@@ -209,10 +211,14 @@
       class="workspace-dialog"
       append-to-body
     >
-      <div class="workspace-preview-title">
-        {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+      <div class="workspace-preview-head">
+        <div class="workspace-preview-title">
+          {{ editor.entry?.name || t('workspace.editor.dialogTitle') }}
+        </div>
+        <div class="workspace-preview-meta" :title="editor.entry?.path || ''">
+          {{ editor.entry?.path || '' }}
+        </div>
       </div>
-      <div class="workspace-preview-meta">{{ editor.entry?.path || '' }}</div>
       <textarea
         v-model="editor.content"
         class="workspace-editor-text"

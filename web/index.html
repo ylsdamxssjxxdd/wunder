@@ -2307,15 +2307,14 @@
               </div>
             </div>
             <div class="modal-body">
-              <div class="muted">普通渠道继续绑定“渠道监控”中的现有账号；选择 Weixin iLink (New) 时可直接扫码创建并绑定。</div>
               <div class="settings-grid settings-grid--auto">
                 <div class="form-row">
                   <label for="bridgeCenterChannelFormChannel">渠道</label>
                   <select id="bridgeCenterChannelFormChannel"></select>
                 </div>
-                <div class="form-row">
-                  <label for="bridgeCenterChannelFormAccountId">账号 ID</label>
-                  <select id="bridgeCenterChannelFormAccountId"></select>
+                <div id="bridgeCenterChannelAutoBindSection" class="bridge-channel-autobind-panel" hidden>
+                  <div class="bridge-channel-autobind-title">自动绑定</div>
+                  <div id="bridgeCenterChannelAutoBindSummary" class="muted"></div>
                 </div>
                 <div id="bridgeCenterWeixinQrSection" class="bridge-weixin-qr-panel" hidden>
                   <div class="bridge-weixin-qr-header">
@@ -2352,6 +2351,22 @@
                     <div id="bridgeCenterWeixinQrMessage" class="muted"></div>
                   </div>
                 </div>
+              </div>
+              <div class="bridge-runtime-log-panel">
+                <div class="bridge-runtime-log-header">
+                  <div>
+                    <div class="bridge-runtime-log-title">运行日志</div>
+                    <div id="bridgeCenterChannelRuntimeStatus" class="muted"></div>
+                  </div>
+                  <div class="bridge-runtime-log-actions">
+                    <button id="bridgeCenterChannelRuntimeProbeBtn" class="secondary" type="button">写入探针</button>
+                    <button id="bridgeCenterChannelRuntimeRefreshBtn" class="secondary" type="button">刷新</button>
+                    <button id="bridgeCenterChannelRuntimeClearBtn" class="secondary" type="button">清空</button>
+                  </div>
+                </div>
+                <div id="bridgeCenterChannelRuntimeError" class="muted" hidden></div>
+                <div id="bridgeCenterChannelRuntimeEmpty" class="muted">暂无运行日志</div>
+                <div id="bridgeCenterChannelRuntimeList" class="bridge-runtime-log-list"></div>
               </div>
             </div>
             <div class="modal-actions">

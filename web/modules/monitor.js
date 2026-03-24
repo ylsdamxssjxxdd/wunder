@@ -2178,6 +2178,9 @@ const renderMonitorPagination = (type, pageData) => {
 
 const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
   const { emptyText = t("common.noData"), skipSort = false } = options;
+  if (!body || !emptyNode) {
+    return;
+  }
   body.textContent = "";
   if (!Array.isArray(sessions) || sessions.length === 0) {
     emptyNode.textContent = emptyText;
@@ -2252,6 +2255,9 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
 };
 
 const renderMonitorSessions = (sessions) => {
+  if (!elements.monitorTableBody || !elements.monitorEmpty) {
+    return;
+  }
   syncMonitorSessionFilterInputs();
   const filteredByUser = filterSessionsByUser(sessions || []);
   const filteredByStatus = filterSessionsByStatus(filteredByUser);
@@ -3442,7 +3448,7 @@ const sanitizeFilenamePart = (value, fallback) => {
 const buildMonitorDetailExportFilename = (sessionId) => {
   const safeSessionId = sanitizeFilenamePart(sessionId, "session");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `monitor-detail-${safeSessionId}-${timestamp}.json`;
+  return `monitor-detail-${safeSessionId}-${timestamp}.jsonl`;
 };
 
 const downloadBlob = (blob, filename) => {
@@ -3456,16 +3462,141 @@ const downloadBlob = (blob, filename) => {
   URL.revokeObjectURL(url);
 };
 
-const buildMonitorDetailExportPayload = () => {
+const MONITOR_EXPORT_MAX_STRING_CHARS = 1200;
+const MONITOR_EXPORT_MAX_ARRAY_ITEMS = 24;
+const MONITOR_EXPORT_MAX_OBJECT_KEYS = 24;
+const MONITOR_EXPORT_MAX_DEPTH = 6;
+
+const compactMonitorExportText = (value) => {
+  const text = String(value || "");
+  if (text.length <= MONITOR_EXPORT_MAX_STRING_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, MONITOR_EXPORT_MAX_STRING_CHARS)}...(truncated)`;
+};
+
+const compactMonitorExportValue = (value, depth = 0) => {
+  if (typeof value === "string") {
+    return compactMonitorExportText(value);
+  }
+  if (value === null || value === undefined) {
+    return value ?? null;
+  }
+  if (typeof value !== "object") {
+    return value;
+  }
+  if (depth >= MONITOR_EXPORT_MAX_DEPTH) {
+    return "[truncated depth]";
+  }
+  if (Array.isArray(value)) {
+    if (value.length <= MONITOR_EXPORT_MAX_ARRAY_ITEMS) {
+      return value.map((item) => compactMonitorExportValue(item, depth + 1));
+    }
+    const headCount = Math.max(1, Math.floor(MONITOR_EXPORT_MAX_ARRAY_ITEMS * 0.75));
+    const tailCount = Math.max(1, MONITOR_EXPORT_MAX_ARRAY_ITEMS - headCount);
+    const omitted = value.length - headCount - tailCount;
+    const head = value.slice(0, headCount).map((item) => compactMonitorExportValue(item, depth + 1));
+    const tail = value.slice(-tailCount).map((item) => compactMonitorExportValue(item, depth + 1));
+    return [...head, { __truncated: true, omitted_items: Math.max(0, omitted) }, ...tail];
+  }
+  const source = value || {};
+  const keys = Object.keys(source);
+  const output = {};
+  keys.slice(0, MONITOR_EXPORT_MAX_OBJECT_KEYS).forEach((key) => {
+    output[key] = compactMonitorExportValue(source[key], depth + 1);
+  });
+  if (keys.length > MONITOR_EXPORT_MAX_OBJECT_KEYS) {
+    output.__truncated = true;
+    output.__omitted_keys = keys.length - MONITOR_EXPORT_MAX_OBJECT_KEYS;
+  }
+  return output;
+};
+
+const normalizeMonitorExportTimestamp = (value) => {
+  const text = String(value || "").trim();
+  if (text) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+  const parsed = parseMonitorTimestamp(value);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return new Date(parsed).toISOString();
+  }
+  return "";
+};
+
+const buildMonitorDetailExportLines = () => {
   const detail = state.monitor?.detail;
   if (!detail) {
     return null;
   }
+  const session =
+    detail.session && typeof detail.session === "object" && !Array.isArray(detail.session)
+      ? detail.session
+      : {};
+  const events = Array.isArray(detail.events) ? detail.events : [];
+  const feedback = Array.isArray(detail.feedback) ? detail.feedback : [];
+  const eventTypes = Array.from(
+    new Set(
+      events.map((event) => {
+        const eventType = String(event?.type || event?.event || "unknown").trim();
+        return eventType || "unknown";
+      })
+    )
+  ).sort((left, right) => left.localeCompare(right));
+  const lines = [
+    {
+      record_type: "meta",
+      export_schema_version: 2,
+      export_format: "jsonl",
+      exported_at: new Date().toISOString(),
+      summary: {
+        event_count: events.length,
+        feedback_count: feedback.length,
+        event_types: eventTypes,
+      },
+      session: compactMonitorExportValue(session),
+      compact_policy: {
+        max_string_chars: MONITOR_EXPORT_MAX_STRING_CHARS,
+        max_array_items: MONITOR_EXPORT_MAX_ARRAY_ITEMS,
+        max_object_keys: MONITOR_EXPORT_MAX_OBJECT_KEYS,
+        max_depth: MONITOR_EXPORT_MAX_DEPTH,
+      },
+    },
+  ];
+  events.forEach((event, index) => {
+    const eventType = String(event?.type || event?.event || "unknown").trim() || "unknown";
+    lines.push({
+      record_type: "event",
+      order: index + 1,
+      event_id: Number.isFinite(Number(event?.event_id)) ? Number(event.event_id) : null,
+      round: resolveMonitorEventRound(event),
+      event: eventType,
+      timestamp: normalizeMonitorExportTimestamp(event?.timestamp),
+      title: resolveMonitorEventTitle(event),
+      data: compactMonitorExportValue(unwrapMonitorEventData(event?.data)),
+    });
+  });
+  feedback.forEach((item, index) => {
+    lines.push({
+      record_type: "feedback",
+      order: index + 1,
+      data: compactMonitorExportValue(item),
+    });
+  });
+  return lines;
+};
+
+const buildMonitorDetailExportPayload = () => {
+  const lines = buildMonitorDetailExportLines();
+  if (!lines || !lines.length) {
+    return null;
+  }
   return {
-    exported_at: new Date().toISOString(),
-    session: detail.session || {},
-    events: Array.isArray(detail.events) ? detail.events : [],
-    feedback: Array.isArray(detail.feedback) ? detail.feedback : [],
+    lines,
+    session_id: state.monitor?.detail?.session?.session_id || "",
   };
 };
 
@@ -3476,9 +3607,9 @@ const exportMonitorDetailLogs = () => {
       notify(t("monitor.detail.exportEmpty"), "warning");
       return;
     }
-    const json = JSON.stringify(payload, null, 2);
-    const blob = new Blob([json], { type: "application/json;charset=utf-8" });
-    const filename = buildMonitorDetailExportFilename(payload.session?.session_id);
+    const jsonl = payload.lines.map((item) => JSON.stringify(item)).join("\n");
+    const blob = new Blob([jsonl], { type: "application/x-ndjson;charset=utf-8" });
+    const filename = buildMonitorDetailExportFilename(payload.session_id);
     downloadBlob(blob, filename);
     notify(t("monitor.detail.exported"), "success");
   } catch (error) {

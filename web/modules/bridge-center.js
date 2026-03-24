@@ -1,4 +1,4 @@
-﻿import { elements } from "./elements.js?v=20260323-03";
+﻿import { elements } from "./elements.js?v=20260324-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
 import { formatTimestamp } from "./utils.js?v=20251229-02";
@@ -7,6 +7,7 @@ import { notify } from "./notify.js";
 const WEIXIN_CHANNEL = "weixin";
 const DEFAULT_WEIXIN_API_BASE = "https://ilinkai.weixin.qq.com";
 const DEFAULT_WEIXIN_BOT_TYPE = "1";
+const BRIDGE_RUNTIME_LOG_POLL_INTERVAL_MS = 5000;
 
 const emptyCenter = () => ({
   center_id: "",
@@ -40,6 +41,16 @@ const emptyWeixinQrState = () => ({
   message: "",
   loadingStart: false,
   loadingWait: false,
+  imageRetryCount: 0,
+});
+
+const emptyRuntimeState = () => ({
+  items: [],
+  status: null,
+  error: "",
+  loading: false,
+  probeLoading: false,
+  clearedAt: 0,
 });
 
 const ensureBridgeState = () => {
@@ -59,7 +70,11 @@ const ensureBridgeState = () => {
   state.bridgeCenter.configEditingCenterId ||= "";
   state.bridgeCenter.channelForm ||= emptyChannelForm();
   state.bridgeCenter.weixinQr ||= emptyWeixinQrState();
+  state.bridgeCenter.channelRuntime ||= emptyRuntimeState();
 };
+
+let bridgeRuntimeLogPollTimer = null;
+let bridgeRuntimeLogRequestId = 0;
 
 const channelMeta = (channel) =>
   (state.bridgeCenter.meta?.supported_channels || []).find((item) => item.channel === cleanText(channel).toLowerCase()) || null;
@@ -175,7 +190,24 @@ const resetWeixinQrState = () => {
 };
 
 const normalizeWeixinQrImageValue = (rawValue, apiBase = "") => {
-  const value = cleanText(rawValue);
+  let value = cleanText(rawValue);
+  if (!value) {
+    return "";
+  }
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  value = value
+    .replace(/\\r\\n/g, "")
+    .replace(/\\n/g, "")
+    .replace(/\\r/g, "")
+    .replace(/\r\n/g, "")
+    .replace(/\n/g, "")
+    .replace(/\r/g, "")
+    .trim();
   if (!value) {
     return "";
   }
@@ -223,8 +255,100 @@ const formatWeixinQrStatus = (status) => {
   return labels[normalized] || normalized;
 };
 
+const resolveSelectedChannel = () =>
+  cleanText(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel).toLowerCase();
+
+const findAutoBindCandidate = (channel) => {
+  const normalizedChannel = cleanText(channel).toLowerCase();
+  if (!normalizedChannel) {
+    return null;
+  }
+  const current = currentAccount();
+  if (current?.channel === normalizedChannel && cleanText(current.account_id)) {
+    return {
+      channel: normalizedChannel,
+      account_id: cleanText(current.account_id),
+      name: cleanText(current.name),
+      active: current.active !== false,
+      fromCurrent: true,
+    };
+  }
+  const activeItem =
+    state.bridgeCenter.availableAccounts.find(
+      (item) => item.channel === normalizedChannel && item.active
+    ) || null;
+  if (activeItem) {
+    return {
+      channel: normalizedChannel,
+      account_id: cleanText(activeItem.account_id),
+      name: cleanText(activeItem.name),
+      active: true,
+      fromCurrent: false,
+    };
+  }
+  const fallbackItem =
+    state.bridgeCenter.availableAccounts.find((item) => item.channel === normalizedChannel) || null;
+  if (!fallbackItem) {
+    return null;
+  }
+  return {
+    channel: normalizedChannel,
+    account_id: cleanText(fallbackItem.account_id),
+    name: cleanText(fallbackItem.name),
+    active: fallbackItem.active !== false,
+    fromCurrent: false,
+  };
+};
+
+const resolveChannelBindingAccountId = (channel) => {
+  const normalizedChannel = cleanText(channel).toLowerCase();
+  if (!normalizedChannel) {
+    return "";
+  }
+  if (isWeixinChannel(normalizedChannel)) {
+    const current = currentAccount();
+    if (current?.channel === WEIXIN_CHANNEL && cleanText(current.account_id)) {
+      state.bridgeCenter.channelForm.account_id = cleanText(current.account_id);
+      return state.bridgeCenter.channelForm.account_id;
+    }
+    state.bridgeCenter.channelForm.account_id = "";
+    return "";
+  }
+  const candidate = findAutoBindCandidate(normalizedChannel);
+  const accountId = cleanText(candidate?.account_id);
+  state.bridgeCenter.channelForm.account_id = accountId;
+  return accountId;
+};
+
+const renderChannelAutoBindSection = () => {
+  const channel = resolveSelectedChannel();
+  const show = Boolean(channel) && !isWeixinChannel(channel);
+  if (elements.bridgeCenterChannelAutoBindSection) {
+    elements.bridgeCenterChannelAutoBindSection.hidden = !show;
+  }
+  if (!show) {
+    return;
+  }
+  const candidate = findAutoBindCandidate(channel);
+  const channelLabel = resolveChannelLabel(channel);
+  if (!candidate?.account_id) {
+    if (elements.bridgeCenterChannelAutoBindSummary) {
+      elements.bridgeCenterChannelAutoBindSummary.textContent = `${channelLabel} 暂无可绑定账号，请先在“渠道监控”创建并启用账号。`;
+    }
+    state.bridgeCenter.channelForm.account_id = "";
+    return;
+  }
+  state.bridgeCenter.channelForm.account_id = candidate.account_id;
+  const base = `${channelLabel} 将绑定账号 ${candidate.account_id}`;
+  const named = candidate.name ? `（${candidate.name}）` : "";
+  const source = candidate.fromCurrent ? "（沿用当前绑定）" : "（自动选择可用账号）";
+  if (elements.bridgeCenterChannelAutoBindSummary) {
+    elements.bridgeCenterChannelAutoBindSummary.textContent = `${base}${named}${source}`;
+  }
+};
+
 const renderWeixinQrPanel = () => {
-  const show = isWeixinChannel(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel);
+  const show = isWeixinChannel(resolveSelectedChannel());
   const qrState = currentWeixinQrState();
   const previewUrl = resolveWeixinQrPreviewUrl(qrState);
   const canOpenPreview = /^https?:\/\//i.test(previewUrl) || previewUrl.startsWith("blob:");
@@ -310,36 +434,14 @@ const refreshMetaOptions = () => {
 };
 
 const refreshChannelAccountOptions = () => {
-  if (!elements.bridgeCenterChannelFormAccountId) {
-    return;
-  }
-  const channel = cleanText(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel).toLowerCase();
-  const current = currentAccount();
-  const items = state.bridgeCenter.availableAccounts
-    .filter((item) => item.channel === channel)
-    .map((item) => ({
-      value: item.account_id,
-      label: item.name ? `${item.account_id} (${item.name})` : item.account_id,
-    }));
-  if (
-    current?.account_id &&
-    current.channel === channel &&
-    !items.some((item) => item.value === current.account_id)
-  ) {
-    items.unshift({
-      value: current.account_id,
-      label: current.name ? `${current.account_id} (${current.name})` : current.account_id,
-    });
-  }
-  fillSelect(
-    elements.bridgeCenterChannelFormAccountId,
-    items,
-    isWeixinChannel(channel) ? "自动生成新账号" : "选择账号"
-  );
-  const nextValue = state.bridgeCenter.channelForm.account_id || current?.account_id || items[0]?.value || "";
-  elements.bridgeCenterChannelFormAccountId.value = nextValue;
-  state.bridgeCenter.channelForm.account_id = elements.bridgeCenterChannelFormAccountId.value || "";
+  const channel = resolveSelectedChannel();
+  state.bridgeCenter.channelForm.channel = channel;
+  resolveChannelBindingAccountId(channel);
+  renderChannelAutoBindSection();
   renderWeixinQrPanel();
+  if (isBridgeChannelModalOpen()) {
+    void refreshBridgeRuntimeLogs(true);
+  }
 };
 
 const confirmChannelReplacement = (channel, accountId) => {
@@ -366,11 +468,10 @@ const bindWeixinQrResult = async (result) => {
   if (!botToken || !ilinkBotId) {
     throw new Error("Weixin 扫码结果不完整，请重新生成二维码");
   }
+  const existingWeixinAccountId =
+    existing?.channel === WEIXIN_CHANNEL ? cleanText(existing.account_id) : "";
   const payload = {
-    account_id:
-      cleanText(elements.bridgeCenterChannelFormAccountId?.value) ||
-      (existing?.channel === WEIXIN_CHANNEL ? existing.account_id : "") ||
-      undefined,
+    account_id: existingWeixinAccountId || undefined,
     api_base: cleanText(result.api_base) || currentWeixinQrState().apiBase || DEFAULT_WEIXIN_API_BASE,
     bot_type: DEFAULT_WEIXIN_BOT_TYPE,
     bot_token: botToken,
@@ -384,6 +485,7 @@ const bindWeixinQrResult = async (result) => {
   });
   await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
   closeModal(elements.bridgeCenterChannelModal);
+  clearBridgeRuntimeLogTimer();
   notify("Weixin 渠道已扫码绑定", "success");
 };
 
@@ -433,11 +535,11 @@ const startWeixinQr = async (force = false) => {
     notify("请先保存舰桥节点，再配置渠道", "warning");
     return;
   }
-  if (!isWeixinChannel(elements.bridgeCenterChannelFormChannel?.value || state.bridgeCenter.channelForm.channel)) {
+  if (!isWeixinChannel(resolveSelectedChannel())) {
     return;
   }
-  const selectedAccountId = cleanText(elements.bridgeCenterChannelFormAccountId?.value);
-  if (!confirmChannelReplacement(WEIXIN_CHANNEL, selectedAccountId || currentAccount()?.account_id || "")) {
+  const currentWeixinAccountId = currentAccount()?.channel === WEIXIN_CHANNEL ? currentAccount()?.account_id || "" : "";
+  if (!confirmChannelReplacement(WEIXIN_CHANNEL, currentWeixinAccountId)) {
     return;
   }
   const qrState = currentWeixinQrState();
@@ -462,6 +564,7 @@ const startWeixinQr = async (force = false) => {
     qrState.apiBase = cleanText(result.api_base) || DEFAULT_WEIXIN_API_BASE;
     qrState.status = "wait";
     qrState.message = "二维码已生成，请扫码确认";
+    qrState.imageRetryCount = 0;
     renderWeixinQrPanel();
     if (!qrState.sessionKey || !resolveWeixinQrPreviewUrl(qrState)) {
       throw new Error("Weixin 二维码生成失败");
@@ -756,12 +859,10 @@ const applyChannelForm = (account) => {
     elements.bridgeCenterChannelFormChannel.value = form.channel || "";
     elements.bridgeCenterChannelFormChannel.disabled = false;
   }
-  if (elements.bridgeCenterChannelFormAccountId) {
-    elements.bridgeCenterChannelFormAccountId.value = form.account_id || "";
-  }
   if (elements.bridgeCenterChannelDeleteBtn) elements.bridgeCenterChannelDeleteBtn.disabled = form.mode !== "edit";
   refreshChannelAccountOptions();
   renderWeixinQrPanel();
+  renderBridgeRuntimeLogs();
 };
 
 const readCenterConfig = () => {
@@ -804,12 +905,12 @@ const saveChannelConfig = async () => {
   if (!channel) {
     throw new Error("请选择渠道");
   }
-  const accountId = cleanText(elements.bridgeCenterChannelFormAccountId?.value);
+  const accountId = resolveChannelBindingAccountId(channel);
   if (!accountId) {
     if (isWeixinChannel(channel)) {
-      throw new Error("请选择一个已有账号，或先完成 Weixin 扫码绑定");
+      throw new Error("请先完成 Weixin 扫码绑定");
     }
-    throw new Error("请选择一个已配置的渠道账号");
+    throw new Error("当前渠道暂无可绑定账号，请先在“渠道监控”创建账号");
   }
   if (!confirmChannelReplacement(channel, accountId)) {
     return;
@@ -842,6 +943,7 @@ const saveChannelConfig = async () => {
   }
   await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
   closeModal(elements.bridgeCenterChannelModal);
+  clearBridgeRuntimeLogTimer();
   notify("渠道设置已保存", "success");
 };
 
@@ -857,6 +959,7 @@ const removeChannelConfig = async () => {
   await fetchJson(`/admin/bridge/accounts/${encodeURIComponent(account.center_account_id)}`, { method: "DELETE" });
   await loadBridgeCenters({ silent: true, selectedCenterId: center.center_id });
   closeModal(elements.bridgeCenterChannelModal);
+  clearBridgeRuntimeLogTimer();
   notify("渠道绑定已移除", "success");
 };
 
@@ -872,6 +975,187 @@ const patchRouteStatus = async (status) => {
   });
   notify(`路由已切换为 ${status}`, "success");
   await Promise.all([loadBridgeRoutes(), loadBridgeLogs()]);
+};
+
+const clearBridgeRuntimeLogTimer = () => {
+  if (bridgeRuntimeLogPollTimer === null) {
+    return;
+  }
+  clearTimeout(bridgeRuntimeLogPollTimer);
+  bridgeRuntimeLogPollTimer = null;
+};
+
+const isBridgeChannelModalOpen = () =>
+  Boolean(elements.bridgeCenterChannelModal?.classList.contains("active"));
+
+const resolveRuntimeLogTarget = () => {
+  const channel = resolveSelectedChannel();
+  if (!channel) {
+    return null;
+  }
+  const accountId = resolveChannelBindingAccountId(channel);
+  return {
+    channel,
+    account_id: accountId,
+  };
+};
+
+const formatRuntimeLogTs = (ts) => {
+  const value = Number(ts);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "-";
+  }
+  return formatTimestamp(value * 1000);
+};
+
+const renderBridgeRuntimeLogs = () => {
+  const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
+  const visibleItems = runtime.items.filter((item) => Number(item.ts || 0) > Number(runtime.clearedAt || 0));
+  if (elements.bridgeCenterChannelRuntimeStatus) {
+    const status = runtime.status;
+    if (status && typeof status === "object") {
+      const ownedAccounts = Number(status.owned_accounts || 0);
+      const scannedTotal = Number(status.scanned_total || 0);
+      const tsText = formatRuntimeLogTs(status.server_ts);
+      elements.bridgeCenterChannelRuntimeStatus.textContent = `扫描 ${scannedTotal} 条 | 账号 ${ownedAccounts}${tsText !== "-" ? ` | ${tsText}` : ""}`;
+    } else {
+      elements.bridgeCenterChannelRuntimeStatus.textContent = "";
+    }
+  }
+  if (elements.bridgeCenterChannelRuntimeError) {
+    const hasError = Boolean(runtime.error);
+    elements.bridgeCenterChannelRuntimeError.hidden = !hasError;
+    elements.bridgeCenterChannelRuntimeError.textContent = runtime.error || "";
+  }
+  if (elements.bridgeCenterChannelRuntimeEmpty) {
+    elements.bridgeCenterChannelRuntimeEmpty.hidden = visibleItems.length > 0;
+  }
+  if (elements.bridgeCenterChannelRuntimeList) {
+    elements.bridgeCenterChannelRuntimeList.textContent = "";
+    visibleItems.forEach((item) => {
+      const row = document.createElement("div");
+      row.className = "bridge-runtime-log-item";
+      const level = cleanText(item.level).toLowerCase() || "info";
+      const levelClass =
+        level === "error" ? "is-error" : level === "warn" || level === "warning" ? "is-warn" : "is-info";
+      row.innerHTML = `
+        <div class="bridge-runtime-log-item-top">
+          <span class="bridge-runtime-log-item-level ${levelClass}">${level.toUpperCase()}</span>
+          <span class="bridge-runtime-log-item-meta">${cleanText(item.event) || "-"} | ${formatRuntimeLogTs(item.ts)}</span>
+        </div>
+        <div class="bridge-runtime-log-item-meta">${cleanText(item.channel)}/${cleanText(item.account_id) || "-"}</div>
+        <div class="bridge-runtime-log-item-message">${cleanText(item.message) || "-"}</div>
+      `;
+      elements.bridgeCenterChannelRuntimeList.appendChild(row);
+    });
+  }
+  if (elements.bridgeCenterChannelRuntimeRefreshBtn) {
+    elements.bridgeCenterChannelRuntimeRefreshBtn.disabled = runtime.loading;
+  }
+  if (elements.bridgeCenterChannelRuntimeProbeBtn) {
+    elements.bridgeCenterChannelRuntimeProbeBtn.disabled = runtime.probeLoading || runtime.loading;
+  }
+};
+
+const scheduleBridgeRuntimeLogPolling = () => {
+  clearBridgeRuntimeLogTimer();
+  if (!isBridgeChannelModalOpen()) {
+    return;
+  }
+  bridgeRuntimeLogPollTimer = setTimeout(() => {
+    if (!isBridgeChannelModalOpen()) {
+      return;
+    }
+    void refreshBridgeRuntimeLogs(true);
+  }, BRIDGE_RUNTIME_LOG_POLL_INTERVAL_MS);
+};
+
+const refreshBridgeRuntimeLogs = async (silent = false) => {
+  const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
+  const target = resolveRuntimeLogTarget();
+  if (!target?.channel) {
+    runtime.items = [];
+    runtime.status = null;
+    runtime.error = "";
+    state.bridgeCenter.channelRuntime = runtime;
+    renderBridgeRuntimeLogs();
+    return;
+  }
+  const requestId = ++bridgeRuntimeLogRequestId;
+  if (!silent) {
+    runtime.loading = true;
+    state.bridgeCenter.channelRuntime = runtime;
+    renderBridgeRuntimeLogs();
+  }
+  try {
+    const params = new URLSearchParams({
+      limit: "80",
+      channel: target.channel,
+    });
+    if (target.account_id) {
+      params.set("account_id", target.account_id);
+    }
+    const payload = await fetchJson(`/admin/channels/runtime_logs?${params.toString()}`);
+    if (requestId !== bridgeRuntimeLogRequestId) {
+      return;
+    }
+    const data = payload?.data || {};
+    runtime.items = Array.isArray(data.items) ? data.items : [];
+    runtime.status = isPlainObject(data.status) ? data.status : null;
+    runtime.error = "";
+  } catch (error) {
+    if (requestId !== bridgeRuntimeLogRequestId) {
+      return;
+    }
+    runtime.items = [];
+    runtime.status = null;
+    runtime.error = error.message || "运行日志加载失败";
+  } finally {
+    if (requestId === bridgeRuntimeLogRequestId) {
+      runtime.loading = false;
+      state.bridgeCenter.channelRuntime = runtime;
+      renderBridgeRuntimeLogs();
+      scheduleBridgeRuntimeLogPolling();
+    }
+  }
+};
+
+const writeBridgeRuntimeProbe = async () => {
+  const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
+  const target = resolveRuntimeLogTarget();
+  if (!target?.channel) {
+    notify("请先选择渠道", "warning");
+    return;
+  }
+  runtime.probeLoading = true;
+  state.bridgeCenter.channelRuntime = runtime;
+  renderBridgeRuntimeLogs();
+  try {
+    const payload = {
+      channel: target.channel,
+      account_id: target.account_id || undefined,
+    };
+    await fetchJson("/admin/channels/runtime_logs/probe", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    notify("运行日志探针已写入", "success");
+    await refreshBridgeRuntimeLogs(true);
+  } catch (error) {
+    notify(error.message || "运行日志探针写入失败", "error");
+  } finally {
+    runtime.probeLoading = false;
+    state.bridgeCenter.channelRuntime = runtime;
+    renderBridgeRuntimeLogs();
+  }
+};
+
+const clearBridgeRuntimeLogView = () => {
+  const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
+  runtime.clearedAt = Date.now() / 1000;
+  state.bridgeCenter.channelRuntime = runtime;
+  renderBridgeRuntimeLogs();
 };
 
 export const initBridgeCenterPanel = () => {
@@ -915,6 +1199,12 @@ export const initBridgeCenterPanel = () => {
     await Promise.all([loadAvailableChannelAccounts(), loadBridgeCenterAccounts()]);
     applyChannelForm(currentAccount());
     openModal(elements.bridgeCenterChannelModal);
+    const runtime = state.bridgeCenter.channelRuntime || emptyRuntimeState();
+    runtime.clearedAt = 0;
+    runtime.error = "";
+    state.bridgeCenter.channelRuntime = runtime;
+    renderBridgeRuntimeLogs();
+    void refreshBridgeRuntimeLogs(true);
   });
   elements.bridgeCenterConfigSaveBtn?.addEventListener("click", () => saveCenterConfig().catch((error) => notify(error.message, "error")));
   elements.bridgeCenterChannelSaveBtn?.addEventListener("click", () => saveChannelConfig().catch((error) => notify(error.message, "error")));
@@ -926,17 +1216,40 @@ export const initBridgeCenterPanel = () => {
     state.bridgeCenter.channelForm.account_id = "";
     refreshChannelAccountOptions();
   });
-  elements.bridgeCenterChannelFormAccountId?.addEventListener("change", () => {
-    resetWeixinQrState();
-    state.bridgeCenter.channelForm.account_id = cleanText(elements.bridgeCenterChannelFormAccountId.value);
-    renderWeixinQrPanel();
-  });
   elements.bridgeCenterWeixinQrStartBtn?.addEventListener("click", () => startWeixinQr(Boolean(currentWeixinQrState().sessionKey)).catch((error) => notify(error.message, "error")));
   elements.bridgeCenterWeixinQrImage?.addEventListener("click", () => startWeixinQr(true).catch((error) => notify(error.message, "error")));
+  elements.bridgeCenterWeixinQrImage?.addEventListener("error", () => {
+    const qrState = currentWeixinQrState();
+    if (!isWeixinChannel(resolveSelectedChannel())) {
+      return;
+    }
+    if (qrState.imageRetryCount >= 1 || qrState.loadingStart || qrState.loadingWait) {
+      return;
+    }
+    qrState.imageRetryCount += 1;
+    qrState.message = "二维码加载失败，正在刷新...";
+    renderWeixinQrPanel();
+    void startWeixinQr(true).catch((error) => notify(error.message, "error"));
+  });
+  elements.bridgeCenterChannelRuntimeRefreshBtn?.addEventListener("click", () => {
+    void refreshBridgeRuntimeLogs();
+  });
+  elements.bridgeCenterChannelRuntimeProbeBtn?.addEventListener("click", () => {
+    void writeBridgeRuntimeProbe();
+  });
+  elements.bridgeCenterChannelRuntimeClearBtn?.addEventListener("click", () => {
+    clearBridgeRuntimeLogView();
+  });
   elements.bridgeCenterConfigClose?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
   elements.bridgeCenterConfigCancel?.addEventListener("click", () => closeModal(elements.bridgeCenterConfigModal));
-  elements.bridgeCenterChannelClose?.addEventListener("click", () => closeModal(elements.bridgeCenterChannelModal));
-  elements.bridgeCenterChannelCancel?.addEventListener("click", () => closeModal(elements.bridgeCenterChannelModal));
+  elements.bridgeCenterChannelClose?.addEventListener("click", () => {
+    closeModal(elements.bridgeCenterChannelModal);
+    clearBridgeRuntimeLogTimer();
+  });
+  elements.bridgeCenterChannelCancel?.addEventListener("click", () => {
+    closeModal(elements.bridgeCenterChannelModal);
+    clearBridgeRuntimeLogTimer();
+  });
   elements.bridgeCenterRouteStatusFilter?.addEventListener("change", async () => {
     state.bridgeCenter.routeStatus = elements.bridgeCenterRouteStatusFilter.value || "";
     await loadBridgeRoutes();
@@ -947,12 +1260,18 @@ export const initBridgeCenterPanel = () => {
   elements.bridgeCenterRouteBlockBtn?.addEventListener("click", () => patchRouteStatus("blocked").catch((error) => notify(error.message, "error")));
   [elements.bridgeCenterConfigModal, elements.bridgeCenterChannelModal].forEach((modal) => {
     modal?.addEventListener("click", (event) => {
-      if (event.target === modal) closeModal(modal);
+      if (event.target === modal) {
+        closeModal(modal);
+        if (modal === elements.bridgeCenterChannelModal) {
+          clearBridgeRuntimeLogTimer();
+        }
+      }
     });
   });
 };
 
 export { loadBridgeCenters };
+
 
 
 

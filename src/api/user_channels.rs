@@ -201,6 +201,36 @@ fn build_weixin_qr_png_data_uri(raw_qrcode: &str) -> Option<String> {
     Some(format!("data:image/png;base64,{encoded}"))
 }
 
+fn push_weixin_qr_candidate(candidates: &mut Vec<String>, raw: &str) {
+    let candidate = normalize_weixin_qr_image_value(raw);
+    if candidate.is_empty() {
+        return;
+    }
+    if candidates.iter().any(|item| item == &candidate) {
+        return;
+    }
+    candidates.push(candidate);
+}
+
+fn extract_weixin_qrcode_query_value(raw: &str, api_base: &str) -> Option<String> {
+    let absolute_url = build_absolute_weixin_qr_url(raw, api_base)?;
+    let parsed = reqwest::Url::parse(&absolute_url).ok()?;
+    parsed
+        .query_pairs()
+        .find_map(|(key, value)| {
+            if key.eq_ignore_ascii_case("qrcode") {
+                let normalized = normalize_weixin_qr_image_value(value.as_ref());
+                if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized)
+                }
+            } else {
+                None
+            }
+        })
+}
+
 async fn resolve_weixin_qr_preview_url(
     http: &reqwest::Client,
     api_base: &str,
@@ -273,12 +303,30 @@ async fn resolve_weixin_qr_preview_image(
     qrcode_text: &str,
     raw_qrcode_url: &str,
 ) -> String {
-    if let Some(png_data_uri) = build_weixin_qr_png_data_uri(qrcode_text) {
+    let mut qr_candidates = Vec::with_capacity(6);
+    push_weixin_qr_candidate(&mut qr_candidates, qrcode_text);
+    if let Some(value) = extract_weixin_qrcode_query_value(qrcode_text, api_base) {
+        push_weixin_qr_candidate(&mut qr_candidates, &value);
+    }
+    push_weixin_qr_candidate(&mut qr_candidates, raw_qrcode_url);
+    if let Some(value) = extract_weixin_qrcode_query_value(raw_qrcode_url, api_base) {
+        push_weixin_qr_candidate(&mut qr_candidates, &value);
+    }
+    for candidate in &qr_candidates {
+        if let Some(png_data_uri) = build_weixin_qr_png_data_uri(candidate) {
+            return png_data_uri;
+        }
+    }
+    let resolved = resolve_weixin_qr_preview_url(http, api_base, raw_qrcode_url)
+        .await
+        .unwrap_or_else(|| normalize_weixin_qr_image_value(raw_qrcode_url));
+    if resolved.starts_with("data:image/") {
+        return resolved;
+    }
+    if let Some(png_data_uri) = build_weixin_qr_png_data_uri(&resolved) {
         return png_data_uri;
     }
-    resolve_weixin_qr_preview_url(http, api_base, raw_qrcode_url)
-        .await
-        .unwrap_or_else(|| raw_qrcode_url.to_string())
+    resolved
 }
 
 #[derive(Debug, Deserialize)]

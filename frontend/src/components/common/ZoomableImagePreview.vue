@@ -1,72 +1,79 @@
 <template>
   <div class="zoomable-image-preview">
-    <div v-if="imageUrl" class="zoomable-image-toolbar" role="toolbar" :aria-label="t('chat.imagePreview')">
-      <div class="zoomable-image-meta">
-        <span class="zoomable-image-scale" aria-live="polite">{{ scaleLabel }}</span>
-        <span v-if="imageResolutionLabel" class="zoomable-image-resolution">{{ imageResolutionLabel }}</span>
-      </div>
-      <div class="zoomable-image-actions">
-        <button
-          class="zoomable-image-btn"
-          type="button"
-          :title="t('common.zoomOut')"
-          :aria-label="t('common.zoomOut')"
-          :disabled="!canZoomOut"
-          @click="zoomOut"
-        >
-          <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
-        </button>
-        <button
-          class="zoomable-image-btn"
-          type="button"
-          :title="t('common.zoomIn')"
-          :aria-label="t('common.zoomIn')"
-          :disabled="!canZoomIn"
-          @click="zoomIn"
-        >
-          <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
-        </button>
-        <button
-          class="zoomable-image-btn"
-          type="button"
-          :title="t('common.fit')"
-          :aria-label="t('common.fit')"
-          @click="fitToView"
-        >
-          <i class="fa-solid fa-maximize" aria-hidden="true"></i>
-        </button>
-        <button
-          class="zoomable-image-btn zoomable-image-btn--label"
-          type="button"
-          :title="t('common.reset')"
-          :aria-label="t('common.reset')"
-          @click="resetZoom"
-        >
-          100%
-        </button>
-      </div>
-    </div>
-    <div
-      ref="stageRef"
-      class="zoomable-image-stage"
-      :class="{ 'is-pannable': canPan, 'is-dragging': isDragging }"
-      @pointerdown="handlePointerDown"
-      @pointermove="handlePointerMove"
-      @pointerup="stopDragging"
-      @pointercancel="stopDragging"
-      @wheel="handleWheel"
-      @dblclick="handleDoubleClick"
-    >
-      <img
+    <div class="zoomable-image-surface">
+      <div
         v-if="imageUrl"
-        :src="imageUrl"
-        :alt="alt"
-        class="zoomable-image"
-        :style="imageStyle"
-        draggable="false"
-        @dragstart.prevent
-        @load="handleImageLoad"
-      />
+        class="zoomable-image-toolbar"
+        role="toolbar"
+        :aria-label="t('chat.imagePreview')"
+      >
+        <div class="zoomable-image-meta">
+          <span class="zoomable-image-scale" aria-live="polite">{{ scaleLabel }}</span>
+          <span v-if="imageResolutionLabel" class="zoomable-image-resolution">{{ imageResolutionLabel }}</span>
+        </div>
+        <div class="zoomable-image-actions">
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.zoomOut')"
+            :aria-label="t('common.zoomOut')"
+            :disabled="!canZoomOut"
+            @click="zoomOut"
+          >
+            <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.zoomIn')"
+            :aria-label="t('common.zoomIn')"
+            :disabled="!canZoomIn"
+            @click="zoomIn"
+          >
+            <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn"
+            type="button"
+            :title="t('common.fit')"
+            :aria-label="t('common.fit')"
+            @click="fitToView"
+          >
+            <i class="fa-solid fa-maximize" aria-hidden="true"></i>
+          </button>
+          <button
+            class="zoomable-image-btn zoomable-image-btn--label"
+            type="button"
+            :title="t('common.reset')"
+            :aria-label="t('common.reset')"
+            @click="resetZoom"
+          >
+            100%
+          </button>
+        </div>
+      </div>
+      <div
+        ref="stageRef"
+        class="zoomable-image-stage"
+        :class="{ 'is-pannable': canPan, 'is-dragging': isDragging }"
+        @pointerdown="handlePointerDown"
+        @pointermove="handlePointerMove"
+        @pointerup="stopDragging"
+        @pointercancel="stopDragging"
+        @wheel="handleWheel"
+        @dblclick="handleDoubleClick"
+      >
+        <img
+          v-if="imageUrl"
+          :src="imageUrl"
+          :alt="alt"
+          class="zoomable-image"
+          :style="imageStyle"
+          draggable="false"
+          @dragstart.prevent
+          @load="handleImageLoad"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -330,14 +337,24 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .zoomable-image-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  position: relative;
   min-height: 0;
   width: 100%;
+  height: 100%;
+}
+
+.zoomable-image-surface {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .zoomable-image-toolbar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -346,11 +363,9 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.24);
-  background: linear-gradient(
-    180deg,
-    rgba(var(--ui-accent-rgb, 77, 216, 255), 0.08),
-    rgba(var(--ui-accent-rgb, 77, 216, 255), 0.02)
-  );
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22);
+  max-width: calc(100% - 24px);
 }
 
 .zoomable-image-meta {
@@ -429,6 +444,8 @@ onBeforeUnmount(() => {
 
 .zoomable-image-stage {
   position: relative;
+  width: 100%;
+  height: 100%;
   min-height: 280px;
   max-height: 64vh;
   overflow: auto;
@@ -491,7 +508,10 @@ onBeforeUnmount(() => {
 
 @media (max-width: 768px) {
   .zoomable-image-toolbar {
+    top: 10px;
+    right: 10px;
     padding: 8px;
+    max-width: calc(100% - 20px);
   }
 
   .zoomable-image-resolution {

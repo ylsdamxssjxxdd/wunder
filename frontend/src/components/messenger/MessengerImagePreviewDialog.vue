@@ -71,13 +71,23 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 
 <style scoped>
 .messenger-image-preview-head {
-  display: grid;
-  gap: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.messenger-image-preview-head .workspace-preview-title {
+  margin-bottom: 0;
 }
 
 .messenger-image-preview-head .workspace-preview-meta {
   margin-bottom: 0;
+  flex: 1 1 240px;
+  min-width: 0;
+  text-align: right;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -106,6 +116,10 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 }
 
 :deep(.messenger-image-preview-body .zoomable-image-preview) {
+  height: 100%;
+}
+
+:deep(.messenger-image-preview-body .zoomable-image-surface) {
   height: 100%;
 }
 

@@ -5629,13 +5629,30 @@ button.messenger-chat-header-model {
   color: var(--ui-accent);
 }
 
+.workspace-dialog .workspace-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
 .workspace-dialog .workspace-preview-title {
   color: #1f2937;
   font-weight: 700;
+  margin-bottom: 0;
 }
 
 .workspace-dialog .workspace-preview-meta {
   color: #64748b;
+  flex: 1 1 240px;
+  min-width: 0;
+  text-align: right;
+  margin-bottom: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-dialog .workspace-editor-text {

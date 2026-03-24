@@ -2303,6 +2303,118 @@ const applyMessageFeedbackByHistoryId = (messages, historyId, feedback) => {
   return updated;
 };
 
+const normalizeFeedbackMatchText = (value) =>
+  normalizeAssistantContent(String(value || ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const isAssistantFeedbackCandidate = (message) => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
+  if (resolveMessageHistoryId(message) > 0) return false;
+  const text = normalizeFeedbackMatchText(message.content);
+  return Boolean(text || message.created_at);
+};
+
+const scoreAssistantHistoryMatch = (localMessage, remoteMessage) => {
+  const localText = normalizeFeedbackMatchText(localMessage?.content);
+  const remoteText = normalizeFeedbackMatchText(remoteMessage?.content);
+  const localTime = resolveTimestampMs(localMessage?.created_at);
+  const remoteTime = resolveTimestampMs(remoteMessage?.created_at);
+  const hasTime = Number.isFinite(localTime) && Number.isFinite(remoteTime);
+  const timeDelta = hasTime ? Math.abs(localTime - remoteTime) : Number.POSITIVE_INFINITY;
+
+  let textScore = 0;
+  if (localText && remoteText) {
+    if (localText === remoteText) {
+      textScore = 100000;
+    } else if (localText.includes(remoteText) || remoteText.includes(localText)) {
+      textScore = 80000;
+    } else {
+      return 0;
+    }
+  } else if (!localText && !remoteText) {
+    if (!hasTime || timeDelta > 5000) {
+      return 0;
+    }
+    textScore = 1000;
+  } else {
+    return 0;
+  }
+
+  let timeScore = 0;
+  if (hasTime) {
+    if (timeDelta <= 1000) {
+      timeScore = 5000;
+    } else if (timeDelta <= 10000) {
+      timeScore = 4000;
+    } else if (timeDelta <= 60000) {
+      timeScore = 3000;
+    } else if (timeDelta <= 180000) {
+      timeScore = 1000;
+    } else if (textScore < 100000) {
+      return 0;
+    }
+  }
+  return textScore + timeScore;
+};
+
+const applyAssistantHistoryIdBackfill = (messages, historyMessages) => {
+  if (!Array.isArray(messages) || !Array.isArray(historyMessages)) {
+    return 0;
+  }
+  const localCandidates = [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!isAssistantFeedbackCandidate(message)) continue;
+    localCandidates.push(message);
+  }
+  if (!localCandidates.length) {
+    return 0;
+  }
+
+  const remoteCandidates = [];
+  for (let index = historyMessages.length - 1; index >= 0; index -= 1) {
+    const message = historyMessages[index];
+    if (!message || message.role !== 'assistant' || message.isGreeting) continue;
+    const historyId = resolveMessageHistoryId(message);
+    if (historyId <= 0) continue;
+    remoteCandidates.push(message);
+  }
+  if (!remoteCandidates.length) {
+    return 0;
+  }
+
+  const usedHistoryIds = new Set();
+  let updated = 0;
+  for (const localMessage of localCandidates) {
+    let bestMatch = null;
+    let bestScore = 0;
+    for (const remoteMessage of remoteCandidates) {
+      const historyId = resolveMessageHistoryId(remoteMessage);
+      if (historyId <= 0 || usedHistoryIds.has(historyId)) continue;
+      const score = scoreAssistantHistoryMatch(localMessage, remoteMessage);
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = remoteMessage;
+      }
+    }
+    if (!bestMatch || bestScore <= 0) continue;
+    const historyId = resolveMessageHistoryId(bestMatch);
+    if (historyId <= 0) continue;
+    usedHistoryIds.add(historyId);
+    localMessage.history_id = historyId;
+    const feedback = normalizeMessageFeedback(bestMatch.feedback);
+    if (feedback) {
+      localMessage.feedback = {
+        ...feedback,
+        locked: true
+      };
+    }
+    updated += 1;
+  }
+  return updated;
+};
+
 const applyMessageWindow = (store, sessionId, messages, options: { force?: boolean } = {}) => {
   if (!store || !isWindowingEnabled()) return;
   const key = resolveSessionKey(sessionId);
@@ -5545,6 +5657,40 @@ export const useChatStore = defineStore('chat', {
         selected: Array.isArray(patch.selected) ? patch.selected : panel.selected
       };
       this.scheduleSnapshot(true);
+    },
+    async ensureAssistantMessageHistoryId(sessionId, message = null) {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) return 0;
+      const directHistoryId = resolveMessageHistoryId(message);
+      if (directHistoryId > 0) return directHistoryId;
+
+      const isActiveSession = resolveSessionKey(this.activeSessionId) === targetSessionId;
+      const targetMessages = isActiveSession
+        ? this.messages
+        : getSessionMessages(targetSessionId) || [];
+      if (!Array.isArray(targetMessages) || targetMessages.length === 0) {
+        return 0;
+      }
+      if (!targetMessages.some((item) => isAssistantFeedbackCandidate(item))) {
+        return resolveMessageHistoryId(message);
+      }
+
+      try {
+        const { data } = await getSessionHistoryPage(targetSessionId, {
+          limit: Math.max(HISTORY_PAGE_LIMIT, 120)
+        });
+        const payload = data?.data || {};
+        const incoming = Array.isArray(payload.messages) ? payload.messages : [];
+        const updatedCount = applyAssistantHistoryIdBackfill(targetMessages, incoming);
+        if (updatedCount > 0) {
+          touchSessionUpdatedAt(this, targetSessionId, Date.now());
+          notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+        }
+      } catch (error) {
+        // Best effort only: feedback remains optional if history backfill fails.
+      }
+
+      return resolveMessageHistoryId(message);
     },
     async submitMessageFeedback(sessionId, historyId, vote) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);

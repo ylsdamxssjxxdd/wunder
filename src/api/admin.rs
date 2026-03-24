@@ -161,6 +161,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/channels/sessions",
             get(admin_channel_sessions),
         )
+        .route(
+            "/wunder/admin/channels/runtime_logs",
+            get(admin_channel_runtime_logs),
+        )
+        .route(
+            "/wunder/admin/channels/runtime_logs/probe",
+            post(admin_channel_runtime_probe),
+        )
         .route("/wunder/admin/gateway/status", get(admin_gateway_status))
         .route(
             "/wunder/admin/gateway/presence",
@@ -6974,6 +6982,26 @@ struct ChannelSessionQuery {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ChannelRuntimeLogsQuery {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelRuntimeLogsProbeRequest {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum LongConnectionRuntimeStatus {
     Running,
@@ -7870,6 +7898,152 @@ async fn admin_channel_sessions(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items, "total": total } })))
+}
+
+fn admin_channel_runtime_status_payload(owned_accounts: usize, scanned_total: usize) -> Value {
+    json!({
+        "collector_alive": true,
+        "server_ts": chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
+        "owned_accounts": owned_accounts,
+        "scanned_total": scanned_total,
+    })
+}
+
+async fn admin_channel_runtime_logs(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ChannelRuntimeLogsQuery>,
+) -> Result<Json<Value>, Response> {
+    let channel_filter = query
+        .channel
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
+    let account_filter = query
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let limit = query.limit.unwrap_or(80).clamp(1, 200);
+    let query_limit = (limit.saturating_mul(4)).clamp(limit, 400);
+
+    let runtime_logs = state.channels.list_runtime_logs(
+        channel_filter.as_deref(),
+        account_filter.as_deref(),
+        query_limit,
+    );
+    let scanned_total = runtime_logs.len();
+    let mut items = Vec::new();
+    for (index, item) in runtime_logs.into_iter().enumerate() {
+        let channel = item.channel.trim().to_ascii_lowercase();
+        let account_id = item.account_id.trim().to_string();
+        if channel.is_empty() {
+            continue;
+        }
+        if let Some(expected_channel) = channel_filter.as_deref() {
+            if !channel.eq_ignore_ascii_case(expected_channel) {
+                continue;
+            }
+        }
+        if let Some(expected_account_id) = account_filter.as_deref() {
+            if !account_id.eq_ignore_ascii_case(expected_account_id) {
+                continue;
+            }
+        }
+        items.push(json!({
+            "id": format!("{channel}:{account_id}:{:.3}:{index}", item.ts),
+            "ts": item.ts,
+            "level": item.level,
+            "channel": channel,
+            "account_id": account_id,
+            "event": item.event,
+            "message": item.message,
+            "repeat_count": item.repeat_count,
+        }));
+        if items.len() >= limit {
+            break;
+        }
+    }
+
+    let owned_accounts = state
+        .storage
+        .list_channel_accounts(channel_filter.as_deref(), None)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .into_iter()
+        .filter(|record| {
+            account_filter.as_deref().is_none_or(|account_id| {
+                record.account_id.eq_ignore_ascii_case(account_id)
+            })
+        })
+        .count();
+
+    Ok(Json(json!({ "data": {
+        "items": items,
+        "total": items.len(),
+        "status": admin_channel_runtime_status_payload(owned_accounts, scanned_total),
+    } })))
+}
+
+async fn admin_channel_runtime_probe(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ChannelRuntimeLogsProbeRequest>,
+) -> Result<Json<Value>, Response> {
+    let channel = payload
+        .channel
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "channel is required".to_string()))?;
+    let account_id = payload
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if let Some(account_id_ref) = account_id.as_deref() {
+        let exists = state
+            .storage
+            .get_channel_account(&channel, account_id_ref)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .is_some();
+        if !exists {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                format!("channel account not found: {channel}/{account_id_ref}"),
+            ));
+        }
+    }
+    let message = payload
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| "runtime probe ok: admin".to_string());
+    state
+        .channels
+        .record_runtime_info(&channel, account_id.as_deref(), "runtime_probe", message.clone());
+    let owned_accounts = state
+        .storage
+        .list_channel_accounts(Some(&channel), None)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .into_iter()
+        .filter(|record| {
+            account_id.as_deref().is_none_or(|value| {
+                record.account_id.eq_ignore_ascii_case(value)
+            })
+        })
+        .count();
+    Ok(Json(json!({ "data": {
+        "channel": channel,
+        "account_id": account_id,
+        "event": "runtime_probe",
+        "message": message,
+        "ts": chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
+        "status": admin_channel_runtime_status_payload(owned_accounts, 1),
+    } })))
 }
 
 #[derive(Debug, Deserialize)]

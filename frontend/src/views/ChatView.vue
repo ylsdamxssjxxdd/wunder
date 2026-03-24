@@ -303,6 +303,7 @@
                       <i class="fa-solid fa-rotate" aria-hidden="true"></i>
                       <span>{{ t('chat.message.resume') }}</span>
                     </button>
+                    <MessageFeedbackActions :message="message" />
                     <button
                       class="message-copy-btn"
                       type="button"
@@ -686,6 +687,7 @@ import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
 import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider.vue';
+import MessageFeedbackActions from '@/components/chat/MessageFeedbackActions.vue';
 import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
