@@ -224,7 +224,7 @@ const formatMeta = (entry: LocalFileSearchEntry): string => {
   if (!updated) return kind;
   const date = new Date(updated);
   if (Number.isNaN(date.getTime())) return kind;
-  return `${kind} 路 ${date.toLocaleString()}`;
+  return `${kind} · ${date.toLocaleString()}`;
 };
 
 const formatContainerLabel = (containerId: number): string =>

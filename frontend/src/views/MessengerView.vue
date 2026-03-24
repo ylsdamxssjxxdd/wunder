@@ -625,7 +625,7 @@
                     <span class="messenger-entity-value">
                       {{ formatContactPresence(selectedContact) }}
                       <template v-if="selectedContact.status">
-                        路 {{ selectedContact.status }}
+                        · {{ selectedContact.status }}
                       </template>
                     </span>
                   </div>
@@ -2276,7 +2276,7 @@ const isLeftRailMoreActive = computed(
     isHelperAppsMiddlePaneActive.value
 );
 const leftRailMoreToggleTitle = computed(() =>
-  `${t('common.more')} 路 ${t(leftRailMoreExpanded.value ? 'common.collapse' : 'common.expand')}`
+  `${t('common.more')} · ${t(leftRailMoreExpanded.value ? 'common.collapse' : 'common.expand')}`
 );
 
 const DEFAULT_BEEROOM_GROUP_ID = 'default';

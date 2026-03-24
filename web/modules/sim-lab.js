@@ -641,7 +641,8 @@ const formatChecks = (report) => {
   }
   const workerAllSuccess = boolLabel(Boolean(report.checks.all_worker_runs_success));
   const noActiveRunsLeft = boolLabel(Boolean(report.checks.no_active_runs_left));
-  return `${workerAllSuccess}/${noActiveRunsLeft}`;
+  const mockOnly = boolLabel(report.checks.mock_only_llm_requests !== false);
+  return `${workerAllSuccess}/${noActiveRunsLeft}/${mockOnly}`;
 };
 
 const normalizeRunStatus = (status) => {
@@ -869,6 +870,7 @@ const buildRunPayload = (runId, workersOverride) => {
         mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
         worker_task_rounds: workerTaskRounds,
+        strict_mock_only: true,
       },
     },
   };

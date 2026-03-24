@@ -21,18 +21,16 @@
 !macro customUnInstall
   Delete "$INSTDIR\wunder-cli.exe"
   Delete "$INSTDIR\README-win7-supplement.txt"
+  MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Delete temp cache (WUNDER_TEMPD only) under AppData?" IDNO +5
+  SetShellVarContext current
+  # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
+  RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"
+  RMDir /r "$APPDATA\wunder-desktop-electron-win7\WUNDER_TEMPD"
+  # Trim verified app-data roots only when they become empty after temp cleanup.
+  RMDir "$APPDATA\wunder-desktop-electron"
+  RMDir "$APPDATA\wunder-desktop-electron-win7"
 !macroend
 
 !macro customUnInstallSection
-  # Keep a static ASCII label here so NSIS language tables added by electron-builder
-  # do not require per-language LangString entries in CI.
-  Section /o "un.Delete temp cache (WUNDER_TEMPD only)"
-    SetShellVarContext current
-    # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
-    RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"
-    RMDir /r "$APPDATA\wunder-desktop-electron-win7\WUNDER_TEMPD"
-    # Trim verified app-data roots only when they become empty after temp cleanup.
-    RMDir "$APPDATA\wunder-desktop-electron"
-    RMDir "$APPDATA\wunder-desktop-electron-win7"
-  SectionEnd
+  # Keep macro for compatibility; cache cleanup option is now prompted explicitly in customUnInstall.
 !macroend

@@ -15,11 +15,11 @@ import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const DEFAULT_MONITOR_TIME_RANGE_HOURS = 3;
-// Token 瓒嬪娍榛樿灞曠ず鐨勬椂闂存《鏁伴噺锛岄伩鍏嶆姌绾垮浘浠庢渶鏃╄褰曞紑濮嬪鑷村崱椤?
+// Token 趋势默认展示的时间桶数量，避免折线图从最早记录开始导致卡顿
 const TOKEN_TREND_MAX_BUCKETS = 24;
-// Token 瓒嬪娍淇濈暀鐨勬渶澶ф椂闂存《鏁伴噺锛岄伩鍏嶉暱鏈熻繍琛岀疮绉繃澶氬巻鍙叉暟鎹?
+// Token 趋势保留的最大时间桶数量，避免长期运行后趋势数据膨胀
 const TOKEN_TREND_RETENTION_BUCKETS = 96;
-// 鐢ㄦ埛绠＄悊绾跨▼鍒楄〃鍒嗛〉灏哄锛岄伩鍏嶄竴娆℃覆鏌撹繃澶氳
+// 用户管理线程列表分页尺寸，避免一次渲染过多行
 const DEFAULT_MONITOR_SESSION_PAGE_SIZE = 100;
 let tokenTrendChart = null;
 let statusChart = null;
@@ -27,10 +27,10 @@ let statusChartClickBound = false;
 let tokenTrendZoomBound = false;
 let mcpToolNameSet = new Set();
 let userDashboardLoading = false;
-// 鐩戞帶杞閰嶇疆锛歠ull 涓哄畬鏁寸洃鎺ч潰鏉匡紝sessions 涓虹敤鎴风鐞嗛〉杞婚噺杞
+// 监控轮询配置：full 为完整监控面板，sessions 为用户管理页轻量轮询
 let monitorPollMode = "full";
 let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
-// 宸ュ叿鐑姏鍥炬寜鎬昏皟鐢ㄦ鏁版笎鍙橀厤鑹诧紙10/20/30/40 娆′负钃?缁?榛?绾級
+// 工具热力图按总调用次数渐变配色（10/20/30/40 次为蓝/绿/黄/红）
 const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
 const TOOL_HEATMAP_MAX_VALUE = 40;
 const TOOL_HEATMAP_MIN_LIGHTNESS = 46;
@@ -47,68 +47,64 @@ const TOOL_HEATMAP_TILE_SIZE = 68;
 const TOOL_HEATMAP_GAP = 8;
 const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 const USER_DASHBOARD_TTL_MS = 60 * 1000;
-// 鐑姏鍥鹃渶瑕佸尯鍒嗗父瑙佹枃浠舵搷浣滃伐鍏风殑鍥炬爣锛岄伩鍏嶅叏閮ㄦ樉绀轰负鍚屼竴鏂囦欢鏍峰紡
+// 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
-  { keyword: "妗岄潰鎺у埗鍣?, icon: "fa-computer-mouse" },
   { keyword: "desktop_controller", icon: "fa-computer-mouse" },
   { keyword: "desktop controller", icon: "fa-computer-mouse" },
-  { keyword: "妗岄潰鐩戣鍣?, icon: "fa-display" },
-  { keyword: "妗岄潰鐩戞帶", icon: "fa-display" },
+  { keyword: "桌面监控", icon: "fa-display" },
   { keyword: "desktop_monitor", icon: "fa-display" },
   { keyword: "desktop monitor", icon: "fa-display" },
-  { keyword: "璁″垝闈㈡澘", icon: "fa-table-columns" },
-  { keyword: "璁″垝鐪嬫澘", icon: "fa-table-columns" },
+  { keyword: "计划面板", icon: "fa-table-columns" },
+  { keyword: "计划看板", icon: "fa-table-columns" },
   { keyword: "update_plan", icon: "fa-table-columns" },
   { keyword: "plan board", icon: "fa-table-columns" },
-  { keyword: "闂闈㈡澘", icon: "fa-circle-question" },
+  { keyword: "问询面板", icon: "fa-circle-question" },
   { keyword: "question_panel", icon: "fa-circle-question" },
   { keyword: "ask_panel", icon: "fa-circle-question" },
   { keyword: "question panel", icon: "fa-circle-question" },
-  { keyword: "鑺傜偣璋冪敤", icon: "fa-diagram-project" },
+  { keyword: "节点调用", icon: "fa-diagram-project" },
   { keyword: "node.invoke", icon: "fa-diagram-project" },
   { keyword: "node_invoke", icon: "fa-diagram-project" },
   { keyword: "node invoke", icon: "fa-diagram-project" },
   { keyword: "gateway_invoke", icon: "fa-diagram-project" },
-  { keyword: "鎶€鑳借皟鐢?, icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_call", icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_get", icon: "fa-wand-magic-sparkles" },
-  { keyword: "瀛愭櫤鑳戒綋鎺у埗", icon: "fa-diagram-project" },
+  { keyword: "子智能体控制", icon: "fa-diagram-project" },
   { keyword: "subagent_control", icon: "fa-diagram-project" },
-  { keyword: "浼氳瘽绾跨▼鎺у埗", icon: "fa-code-branch" },
+  { keyword: "会话线程控制", icon: "fa-code-branch" },
   { keyword: "thread_control", icon: "fa-code-branch" },
   { keyword: "session_thread", icon: "fa-code-branch" },
-  { keyword: "鏅鸿兘浣撹渹缇?, icon: "fa-bee" },
   { keyword: "agent_swarm", icon: "fa-bee" },
   { keyword: "swarm_control", icon: "fa-bee" },
-  { keyword: "a2a瑙傚療", icon: "fa-glasses" },
+  { keyword: "a2a观察", icon: "fa-glasses" },
   { keyword: "a2a_observe", icon: "fa-glasses" },
-  { keyword: "a2a绛夊緟", icon: "fa-clock" },
+  { keyword: "a2a等待", icon: "fa-clock" },
   { keyword: "a2a_wait", icon: "fa-clock" },
-  { keyword: "浼戠湢绛夊緟", icon: "fa-hourglass-half" },
+  { keyword: "休眠等待", icon: "fa-hourglass-half" },
   { keyword: "sleep_wait", icon: "fa-hourglass-half" },
   { keyword: "sleep", icon: "fa-hourglass-half" },
   { keyword: "pause", icon: "fa-hourglass-half" },
-  { keyword: "璁板繂绠＄悊", icon: "fa-memory" },
+  { keyword: "记忆管理", icon: "fa-memory" },
   { keyword: "memory_manager", icon: "fa-memory" },
   { keyword: "memory_manage", icon: "fa-memory" },
   { keyword: "memory manager", icon: "fa-memory" },
   { keyword: "a2a@", icon: "fa-diagram-project" },
   { keyword: "a2ui", icon: "fa-image" },
-  { keyword: "鍒楀嚭鏂囦欢", icon: "fa-folder-open" },
+  { keyword: "列出文件", icon: "fa-folder-open" },
   { keyword: "list files", icon: "fa-folder-open" },
   { keyword: "list_file", icon: "fa-folder-open" },
   { keyword: "list_files", icon: "fa-folder-open" },
-  { keyword: "璇诲彇鏂囦欢", icon: "fa-file-lines" },
+  { keyword: "读取文件", icon: "fa-file-lines" },
   { keyword: "read file", icon: "fa-file-lines" },
   { keyword: "read_file", icon: "fa-file-lines" },
-  { keyword: "鍐欏叆鏂囦欢", icon: "fa-file-circle-plus" },
+  { keyword: "写入文件", icon: "fa-file-circle-plus" },
   { keyword: "write file", icon: "fa-file-circle-plus" },
   { keyword: "write_file", icon: "fa-file-circle-plus" },
-  { keyword: "搴旂敤琛ヤ竵", icon: "fa-pen-to-square" },
+  { keyword: "应用补丁", icon: "fa-pen-to-square" },
   { keyword: "apply patch", icon: "fa-pen-to-square" },
   { keyword: "apply_patch", icon: "fa-pen-to-square" },
 ];
-// 绾跨▼鐘舵€佺幆鍥鹃厤鑹蹭笌鍥句緥閰嶇疆
+// 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];
 const STATUS_CHART_EMPTY_COLOR = "#ffffff";
 const getStatusLegend = () => [
@@ -118,7 +114,7 @@ const getStatusLegend = () => [
   t("monitor.status.cancelled"),
 ];
 const STATUS_CHART_EMPTY_NAME = "__empty__";
-// 绾跨▼鐘舵€佸浘渚嬩笌鍚庣鐘舵€佸瓧娈电殑鏄犲皠锛屼究浜庣偣鍑诲悗杩囨护璁板綍
+// 线程状态图例与后端状态字段映射，便于点击后过滤记录
 const getStatusLabelToKey = () => ({
   [t("monitor.status.active")]: "active",
   [t("monitor.status.finished")]: "finished",
@@ -126,58 +122,58 @@ const getStatusLabelToKey = () => ({
   [t("monitor.status.cancelled")]: "cancelled",
 });
 
-// 鍏煎鏃х増鏈姸鎬佺粨鏋勶紝閬垮厤缂撳瓨鏃?state.js 鏃跺鑷寸洃鎺у浘琛ㄥ紓甯?
+// 兼容旧版状态结构，避免缓存 state.js 时导致监控图表异常
 const MONITOR_DETAIL_TEXT_FALLBACKS = {
   "monitor.detail.filter.allTypes": {
-    zh: "鍏ㄩ儴绫诲瀷",
+    zh: "全部类型",
     en: "All event types",
   },
   "monitor.detail.filter.keywordPlaceholder": {
-    zh: "杈撳叆浜嬩欢鍏抽敭璇?,
+    zh: "输入事件关键词",
     en: "Search event payload",
   },
   "monitor.detail.filter.stats": {
-    zh: "鏄剧ず {visible}/{total} 鏉?,
+    zh: "显示 {visible}/{total} 条",
     en: "Showing {visible}/{total}",
   },
   "monitor.detail.filter.profile.normal": {
-    zh: "鏅€氭棩蹇?,
+    zh: "普通日志",
     en: "Normal logs",
   },
   "monitor.detail.filter.profile.debug": {
-    zh: "璋冭瘯鏃ュ織",
+    zh: "调试日志",
     en: "Debug logs",
   },
   "monitor.detail.meta.trace": {
-    zh: "杩借釜 {traceId}",
+    zh: "追踪 {traceId}",
     en: "Trace {traceId}",
   },
   "monitor.detail.repair.badge": {
-    zh: "宸蹭慨澶?,
+    zh: "已修复",
     en: "Repaired",
   },
   "monitor.detail.repair.argsSummary": {
-    zh: "鍙傛暟宸蹭慨澶?,
+    zh: "参数已修复",
     en: "Args repaired",
   },
   "monitor.detail.repair.historySummary": {
-    zh: "宸叉竻娲?{count} 鏉″巻鍙插弬鏁?,
+    zh: "已清洗 {count} 条历史参数",
     en: "Sanitized {count} history args",
   },
   "monitor.detail.repair.lossyJson": {
-    zh: "宸插湪鎵ц鍓嶄慨澶嶆崯鍧忕殑 JSON 鍙傛暟",
+    zh: "已在执行前修复损坏的 JSON 参数",
     en: "Repaired malformed JSON arguments before execution",
   },
   "monitor.detail.repair.rawWrapped": {
-    zh: "宸插湪鎵ц鍓嶅寘瑁呭師濮嬪弬鏁帮紝閬垮厤涓婃父璇锋眰澶辫触",
+    zh: "已在执行前包装原始参数，避免上游请求失败",
     en: "Wrapped raw arguments before execution to avoid upstream failures",
   },
   "monitor.detail.repair.nonObjectWrapped": {
-    zh: "宸插湪鎵ц鍓嶅皢闈炲璞″弬鏁板寘瑁呬负 JSON",
+    zh: "已在执行前将非对象参数包装为 JSON",
     en: "Wrapped non-object arguments into JSON before execution",
   },
   "monitor.detail.repair.sanitizeBeforeRequest": {
-    zh: "宸插湪璇锋眰鍓嶆竻娲?{count} 鏉″伐鍏疯皟鐢ㄥ弬鏁?,
+    zh: "已在请求前清洗 {count} 条工具调用参数",
     en: "Sanitized {count} tool-call argument payloads before request",
   },
 };
@@ -368,7 +364,6 @@ const formatMonitorHours = (value) => {
   return hours.toFixed(2).replace(/\.?0+$/, "");
 };
 
-// 瑙ｆ瀽鐩戣鏃堕棿鑼冨洿锛堝皬鏃讹級锛屾敮鎸佺鐞嗗憳鑷畾涔?
 const resolveMonitorTimeRangeHours = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -377,14 +372,14 @@ const resolveMonitorTimeRangeHours = (value) => {
   return parsed;
 };
 
-// 鑾峰彇褰撳墠鐩戣鏃堕棿鑼冨洿锛堝皬鏃讹級
+// 获取当前监视时间范围（小时）
 const getMonitorTimeRangeHours = () => resolveMonitorTimeRangeHours(state.monitor.timeRangeHours);
 
-// 鑾峰彇褰撳墠鐩戣鏃堕棿鑼冨洿锛堟绉掞級锛岄伩鍏嶅皬鏁板鑷存椂闂存埑瀵归綈璇樊
+// 获取当前监视时间范围（毫秒），避免小数导致时间戳对齐误差
 const getMonitorTimeRangeMs = () =>
   Math.max(1, Math.round(getMonitorTimeRangeHours() * ONE_HOUR_MS));
 
-// 鑾峰彇 Token 瓒嬪娍鐨勪繚鐣欑獥鍙ｏ紝閬垮厤鍓嶇闀挎椂闂磋繍琛屽悗鍫嗙Н杩囧鍘嗗彶
+// 获取 Token 趋势的保留窗口，避免前端长时间运行后堆积过多历史
 const getTokenTrendRetentionMs = () => {
   const intervalMs = getMonitorTimeRangeMs();
   if (!intervalMs) {
@@ -393,7 +388,6 @@ const getTokenTrendRetentionMs = () => {
   return Math.max(intervalMs, intervalMs * TOKEN_TREND_RETENTION_BUCKETS);
 };
 
-// 瑙ｆ瀽绛涢€夋椂闂磋緭鍏ワ紝杩斿洖姣鏃堕棿鎴?
 const parseMonitorFilterTimestamp = (value) => {
   if (!value) {
     return null;
@@ -402,7 +396,6 @@ const parseMonitorFilterTimestamp = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-// 鑾峰彇绛涢€夋椂闂磋寖鍥达紝鏈惎鐢ㄦ垨鏃犳晥鏃惰繑鍥?null
 const resolveMonitorTimeFilterRange = () => {
   if (!state.monitor.timeFilter?.enabled) {
     return null;
@@ -418,7 +411,7 @@ const resolveMonitorTimeFilterRange = () => {
   return { start, end };
 };
 
-// 鏍煎紡鍖栫瓫閫夊尯闂存爣绛撅紝渚夸簬鍥捐〃鏍囬鎻愮ず
+// 格式化筛选区间标签，便于图表标题提示
 const formatMonitorFilterLabel = (range) => {
   const locale = getCurrentLanguage();
   const format = (timestamp) =>
@@ -431,13 +424,12 @@ const formatMonitorFilterLabel = (range) => {
   return t("monitor.filter.range", { start: format(range.start), end: format(range.end) });
 };
 
-// 鐢熸垚鐩戣鏃堕棿鑼冨洿鐨勬枃妗堟爣绛?
 const getMonitorTimeRangeLabel = () => {
   const hours = getMonitorTimeRangeHours();
   return t("monitor.window.everyHours", { hours: formatMonitorHours(hours) });
 };
 
-// 鐢熸垚鐩戣鏃堕棿绐楀彛鐨勬枃妗堟爣绛撅紝鐢ㄤ簬杩戝喌缁熻
+// 生成监视时间窗口的文案标签，用于近况统计
 const getMonitorTimeWindowLabel = () => {
   const range = resolveMonitorTimeFilterRange();
   if (range) {
@@ -447,7 +439,6 @@ const getMonitorTimeWindowLabel = () => {
   return t("monitor.window.recentHours", { hours: formatMonitorHours(hours) });
 };
 
-// 鍚屾鐩戣鏃堕棿鏍囬鏂囨锛屼繚鎸佸浘琛ㄦ弿杩颁竴鑷?
 const updateMonitorChartTitles = () => {
   const label = getMonitorTimeRangeLabel();
   if (elements.serviceTokenTitle) {
@@ -471,7 +462,7 @@ const updateMonitorChartTitles = () => {
   }
 };
 
-// 瑙勮寖鍖栫洃瑙嗘椂闂磋缃苟鍒锋柊鐩稿叧灞曠ず
+// 规范化监视时间设置并刷新相关展示
 const applyMonitorTimeRange = (value, options = {}) => {
   const { resetTrend = false } = options;
   const hours = resolveMonitorTimeRangeHours(value);
@@ -493,7 +484,6 @@ const applyMonitorTimeRange = (value, options = {}) => {
   }
 };
 
-// 鍚屾绛涢€夋椂闂磋緭鍏ユ鐘舵€?
 const syncMonitorTimeFilterInputs = () => {
   if (!elements.monitorTimeFilterToggle || !elements.monitorTimeStart || !elements.monitorTimeEnd) {
     return;
@@ -550,7 +540,7 @@ const applyMonitorTimeFilter = async (options = {}) => {
   }
 };
 
-// 鍒濆鍖栧浘琛ㄥ疄渚嬶紝閬垮厤閲嶅鍒涘缓瀵艰嚧鍐呭瓨鍗犵敤澧為暱
+// 初始化图表实例，避免重复创建导致内存占用增长
 const ensureMonitorCharts = () => {
   if (!window.echarts) {
     return false;
@@ -580,7 +570,7 @@ const handleStatusChartClick = (params) => {
   openMonitorStatusModal(label);
 };
 
-// 浠呯粦瀹氫竴娆＄偣鍑讳簨浠讹紝閬垮厤閲嶅娉ㄥ唽瀵艰嚧澶氭寮圭獥
+// 仅绑定一次点击事件，避免重复注册导致多次弹窗
 const bindStatusChartClick = () => {
   if (!statusChart || statusChartClickBound) {
     return;
@@ -589,7 +579,6 @@ const bindStatusChartClick = () => {
   statusChart.on("click", handleStatusChartClick);
 };
 
-// 鐩戝惉 Token 瓒嬪娍鍥剧缉鏀撅紝閬垮厤鍒锋柊鏃惰鐩栫敤鎴疯鍥?
 const bindTokenTrendZoom = () => {
   if (!tokenTrendChart || tokenTrendZoomBound) {
     return;
@@ -602,7 +591,6 @@ const bindTokenTrendZoom = () => {
   });
 };
 
-// 鏍煎紡鍖栬秼鍔垮浘鏃堕棿鏍囩锛屼繚鐣欐棩鏈熶究浜庤法澶╁姣?
 const formatTokenTrendLabel = (timestamp) =>
   new Date(timestamp).toLocaleString(getCurrentLanguage(), {
     month: "2-digit",
@@ -627,7 +615,7 @@ const formatTokenRate = (value, options = {}) => {
   } else if (scaled >= 10) {
     decimals = 1;
   }
-  const prefix = options.lowerBound ? "鈮? : "";
+  const prefix = options.lowerBound ? ">=" : "";
   return `${prefix}${scaled.toFixed(decimals)}${unit} ${t("monitor.detail.tokenRate.unit")}`;
 };
 
@@ -691,7 +679,6 @@ const buildSpeedMeta = (tokens, duration, options = {}) => {
   return parts.join(" 路 ");
 };
 
-// 鎸夌洃瑙嗘椂闂寸矑搴﹀榻愭椂闂存埑锛屼繚璇佸埢搴︿粠鏁寸偣寮€濮?
 const floorToIntervalBoundary = (timestamp, intervalMs) => {
   const date = new Date(timestamp);
   const midnight = new Date(date);
@@ -701,7 +688,7 @@ const floorToIntervalBoundary = (timestamp, intervalMs) => {
   return midnight.getTime() + index * intervalMs;
 };
 
-// 璁板綍 token 澧為噺锛屼究浜庢寜灏忔椂姹囨€?
+// 记录 token 澧為噺锛屼究浜庢寜灏忔椂姹囨€?
 const recordTokenDeltas = (sessions) => {
   const usageMap = state.monitor.tokenUsageBySession;
   (sessions || []).forEach((session) => {
@@ -721,7 +708,7 @@ const recordTokenDeltas = (sessions) => {
   pruneTokenDeltas(Date.now());
 };
 
-// 瑁佸壀杩囨棫鐨?token 澧為噺锛岄伩鍏嶉暱鏈熻繍琛屽悗瓒嬪娍鏁版嵁鑶ㄨ儉
+// 瑁佸壀杩囨棫鐨?token 增量，避免长期运行后趋势数据膨胀
 const pruneTokenDeltas = (nowMs) => {
   const deltas = state.monitor.tokenDeltas;
   if (!Array.isArray(deltas) || !deltas.length) {
@@ -749,7 +736,7 @@ const pruneTokenDeltas = (nowMs) => {
   }
 };
 
-// 姹囨€?token 澧為噺锛岀敓鎴愭寜鏃堕棿闂撮殧鐨勬姌绾垮浘鏁版嵁
+// 姹囨€?token 增量，生成按时间间隔的折线图数据
 const buildTokenSeries = (sessions) => {
   const deltas = state.monitor.tokenDeltas || [];
   const intervalMs = getMonitorTimeRangeMs();
@@ -815,7 +802,6 @@ const buildTokenSeries = (sessions) => {
     return { labels: [], values: [], latestValue: 0 };
   }
   const startBoundary = floorToIntervalBoundary(startBase, intervalMs);
-  // 浣跨敤鍖洪棿绱㈠紩鑱氬悎锛岄伩鍏嶅皬鏁伴棿闅斿鑷寸殑鏃堕棿鎴崇簿搴﹁宸?
   const totals = new Map();
   if (Array.isArray(deltas)) {
     deltas.forEach((item) => {
@@ -850,7 +836,7 @@ const buildTokenSeries = (sessions) => {
   return { labels, values, latestValue };
 };
 
-// 瑙勮寖鍖栧伐鍏峰垪琛紝淇濈暀绫诲埆鐢ㄤ簬鍥炬爣閫夋嫨
+// 规范化工具列表，保留类别用于图标选择
 const normalizeAvailableTools = (payload) => {
   const tools = [];
   mcpToolNameSet = new Set();
@@ -875,7 +861,6 @@ const normalizeAvailableTools = (payload) => {
   return tools;
 };
 
-// 鑾峰彇鎵€鏈夊彲鐢ㄥ伐鍏峰垪琛紝閬垮厤杞鏃堕噸澶嶈姹?
 const loadAvailableTools = async (options = {}) => {
   const { force = false } = options;
   const now = Date.now();
@@ -902,7 +887,7 @@ const loadAvailableTools = async (options = {}) => {
   return state.monitor.availableTools;
 };
 
-// 灏?HSL 杞负 RGB锛屼究浜庤绠楁枃瀛楀姣旇壊
+// 灏?HSL 转为 RGB，便于计算文字对比色
 const hslToRgb = (hue, saturation, lightness) => {
   const h = ((Number(hue) || 0) % 360) / 360;
   const s = Math.max(0, Math.min(1, (Number(saturation) || 0) / 100));
@@ -929,7 +914,6 @@ const hslToRgb = (hue, saturation, lightness) => {
   ];
 };
 
-// 璁＄畻鐑姏鍥鹃厤鑹茬殑鍩虹鑹茬浉锛屼繚璇佷粠钃濊繃娓″埌绾?
 const resolveHeatmapHue = (value) => {
   const anchors = TOOL_HEATMAP_HUE_ANCHORS;
   if (!anchors.length) {
@@ -950,7 +934,6 @@ const resolveHeatmapHue = (value) => {
   return anchors[anchors.length - 1].hue;
 };
 
-// 鐢熸垚鐑姏鍥鹃鑹诧紝鎸夋€绘鏁版笎鍙樹笖娆℃暟瓒婂瓒婃繁
 const resolveHeatmapColor = (totalCalls) => {
   const value = Math.max(0, Number(totalCalls) || 0);
   if (value <= 0) {
@@ -969,7 +952,6 @@ const resolveHeatmapColor = (totalCalls) => {
   return { color: `rgb(${rgb.join(", ")})`, rgb };
 };
 
-// 鎸変寒搴﹀姣旇皟鏁存枃瀛楅鑹诧紝淇濊瘉鍙鎬?
 const resolveHeatmapTextColor = (rgb) => {
   const [r, g, b] = rgb;
   const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
@@ -994,7 +976,7 @@ const matchesToolKeyword = (lowerName, normalizedName, keyword) => {
   return normalizedKeyword ? normalizedName.includes(normalizedKeyword) : false;
 };
 
-// 鏍规嵁宸ュ叿鍚嶇О閫夋嫨鏇磋创鍚堢殑鍥炬爣
+// 根据工具名称选择更贴合的图标
 const resolveToolIcon = (name, category) => {
   const toolName = String(name || "").trim();
   const lowerName = toolName.toLowerCase();
@@ -1030,7 +1012,7 @@ const resolveToolIcon = (name, category) => {
     return "fa-wrench";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "鎵ц鍛戒护") ||
+    matchesToolKeyword(lowerName, normalizedName, "执行命令") ||
     matchesToolKeyword(lowerName, normalizedName, "run command") ||
     matchesToolKeyword(lowerName, normalizedName, "execute command") ||
     matchesToolKeyword(lowerName, normalizedName, "execute_command") ||
@@ -1045,8 +1027,8 @@ const resolveToolIcon = (name, category) => {
     return "fa-code";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "瀹氭椂浠诲姟") ||
-    matchesToolKeyword(lowerName, normalizedName, "璁″垝浠诲姟") ||
+    matchesToolKeyword(lowerName, normalizedName, "定时任务") ||
+    matchesToolKeyword(lowerName, normalizedName, "计划任务") ||
     matchesToolKeyword(lowerName, normalizedName, "cron") ||
     matchesToolKeyword(lowerName, normalizedName, "schedule") ||
     matchesToolKeyword(lowerName, normalizedName, "scheduled") ||
@@ -1056,8 +1038,8 @@ const resolveToolIcon = (name, category) => {
     return "fa-clock";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "鎼滅储") ||
-    matchesToolKeyword(lowerName, normalizedName, "妫€绱?) ||
+    matchesToolKeyword(lowerName, normalizedName, "搜索") ||
+    matchesToolKeyword(lowerName, normalizedName, "检索") ||
     matchesToolKeyword(lowerName, normalizedName, "search") ||
     matchesToolKeyword(lowerName, normalizedName, "query") ||
     matchesToolKeyword(lowerName, normalizedName, "retrieve") ||
@@ -1066,11 +1048,11 @@ const resolveToolIcon = (name, category) => {
     return "fa-magnifying-glass";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "璇诲彇") ||
-    matchesToolKeyword(lowerName, normalizedName, "鍐欏叆") ||
-    matchesToolKeyword(lowerName, normalizedName, "缂栬緫") ||
-    matchesToolKeyword(lowerName, normalizedName, "鏇挎崲") ||
-    matchesToolKeyword(lowerName, normalizedName, "鍒楀嚭") ||
+    matchesToolKeyword(lowerName, normalizedName, "读取") ||
+    matchesToolKeyword(lowerName, normalizedName, "写入") ||
+    matchesToolKeyword(lowerName, normalizedName, "编辑") ||
+    matchesToolKeyword(lowerName, normalizedName, "替换") ||
+    matchesToolKeyword(lowerName, normalizedName, "列出") ||
     matchesToolKeyword(lowerName, normalizedName, "read") ||
     matchesToolKeyword(lowerName, normalizedName, "write") ||
     matchesToolKeyword(lowerName, normalizedName, "edit") ||
@@ -1080,13 +1062,13 @@ const resolveToolIcon = (name, category) => {
     return "fa-file-lines";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "鐭ヨ瘑") ||
+    matchesToolKeyword(lowerName, normalizedName, "知识") ||
     matchesToolKeyword(lowerName, normalizedName, "knowledge")
   ) {
     return "fa-book";
   }
   if (
-    matchesToolKeyword(lowerName, normalizedName, "鏈€缁堝洖澶?) ||
+    matchesToolKeyword(lowerName, normalizedName, "最终回复") ||
     matchesToolKeyword(lowerName, normalizedName, "final answer") ||
     matchesToolKeyword(lowerName, normalizedName, "final_response")
   ) {
@@ -1098,7 +1080,7 @@ const resolveToolIcon = (name, category) => {
   return "fa-toolbox";
 };
 
-// 瑙勮寖鍖栧伐鍏疯皟鐢ㄦ鏁帮紝閬垮厤浣跨敤 k 鍗曚綅
+// 规范化工具调用次数，避免使用 k 单位
 const formatHeatmapCount = (value) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
@@ -1107,7 +1089,7 @@ const formatHeatmapCount = (value) => {
   return String(Math.max(0, Math.round(parsed)));
 };
 
-// 瑙勬暣宸ュ叿缁熻缁撴瀯锛岄伩鍏嶇己瀛楁瀵艰嚧娓叉煋寮傚父
+// 规整工具统计结构，避免缺字段导致渲染异常
 const normalizeToolStats = (toolStats) =>
   (Array.isArray(toolStats) ? toolStats : [])
     .map((item) => ({
@@ -1116,7 +1098,7 @@ const normalizeToolStats = (toolStats) =>
     }))
     .filter((item) => item.name);
 
-// 鍚堝苟宸ュ叿鍒楄〃涓庤皟鐢ㄦ鏁帮紝纭繚鏈皟鐢ㄥ伐鍏蜂篃灞曠ず
+// 合并工具列表与调用次数，确保未调用工具也展示
 const buildHeatmapItems = (toolStats) => {
   const normalized = normalizeToolStats(toolStats);
   const callsMap = new Map(normalized.map((item) => [item.name, item.calls]));
@@ -1144,7 +1126,6 @@ const buildHeatmapItems = (toolStats) => {
   return items;
 };
 
-// 娓叉煋宸ュ叿璋冪敤鐑姏鍥?
 const renderToolHeatmap = (toolStats) => {
   if (!elements.toolHeatmapGrid || !elements.toolHeatmapEmpty) {
     return;
@@ -1182,7 +1163,6 @@ const renderToolHeatmap = (toolStats) => {
     name.textContent = item.name;
     tile.appendChild(icon);
     tile.appendChild(name);
-    // 鐐瑰嚮鐑姏鍥惧潡鏃跺脊鍑鸿宸ュ叿鐨勮皟鐢ㄧ嚎绋嬪垪琛?
     tile.addEventListener("click", () => {
       openMonitorToolModal(item.name);
     });
@@ -1190,7 +1170,7 @@ const renderToolHeatmap = (toolStats) => {
   });
 };
 
-// 娓叉煋绯荤粺鐩戣鎸囨爣
+// 渲染系统监视指标
 const renderMonitorMetrics = (system) => {
   if (!system) {
     elements.metricCpu.textContent = "-";
@@ -1240,7 +1220,6 @@ const renderMonitorMetrics = (system) => {
   elements.metricWorkspaceUsage.textContent = formatBytes(system.workspace_used);
 };
 
-// 娓叉煋鏈嶅姟灞傜嚎绋嬫寚鏍囷紝缁熶竴淇濇寔鏁板€间笌灞曠ず鏂囨鍒嗙
 const renderServiceMetrics = (service) => {
   if (!service) {
     elements.metricServiceActive.textContent = "-";
@@ -1282,7 +1261,7 @@ const renderServiceMetrics = (service) => {
   }
 };
 
-// 娓叉煋鐢ㄦ埛鐪嬫澘鎸囨爣锛屽鐢ㄧ敤鎴风鐞嗛〉缁熻骞跺姞 TTL 閬垮厤棰戠箒璇锋眰
+// 渲染用户看板指标，复用用户管理页统计并加 TTL 避免频繁请求
 const ensureUserDashboardState = () => {
   if (!state.users || typeof state.users !== "object") {
     state.users = { list: [], loaded: false, updatedAt: 0 };
@@ -1409,7 +1388,6 @@ const refreshUserDashboardSummary = async (options = {}) => {
       state.users.updatedAt = Date.now();
     }
   } catch (error) {
-    // 鐢ㄦ埛鐪嬫澘澶辫触鏃朵繚鐣欐棦鏈夋暟鎹紝閬垮厤骞叉壈涓荤洃鎺ф祦绋嬨€?
     state.users.updatedAt = Date.now();
   } finally {
     userDashboardLoading = false;
@@ -1419,11 +1397,10 @@ const refreshUserDashboardSummary = async (options = {}) => {
   return null;
 };
 
-// 璁＄畻鎵€鏈変細璇濈疮璁?token 鏁伴噺
+// 璁＄畻鎵€鏈変細璇濈疮璁?token 数量
 const resolveTotalTokens = (sessions) =>
   (sessions || []).reduce((sum, session) => sum + (resolveSessionContextTokens(session) || 0), 0);
 
-// 瑙ｆ瀽鐩戞帶鏃堕棿瀛楁锛岄伩鍏嶆牸寮忓紓甯稿鑷寸瓫閫夊け璐?
 const parseMonitorTimestamp = (value) => {
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -1653,15 +1630,6 @@ const buildMonitorDetailMeta = (session, events) => {
   if (decodeSummary) {
     metaParts.push(decodeSummary);
   }
-  const feedbackCounts = resolveSessionFeedbackCounts(session);
-  if (feedbackCounts.total > 0) {
-    metaParts.push(
-      t("monitor.session.feedback", {
-        up: feedbackCounts.up,
-        down: feedbackCounts.down,
-      })
-    );
-  }
   return metaParts.filter(Boolean).join(" 路 ");
 };
 
@@ -1675,7 +1643,6 @@ const resolveSessionTimestamp = (session) => {
   return started || null;
 };
 
-// 鏍规嵁鐩戣鏃堕棿鑼冨洿绛涢€変細璇濓紝鐢ㄤ簬褰撳墠鍖洪棿鐨勭姸鎬佺粺璁?
 const filterSessionsByInterval = (sessions) => {
   const timeRange = resolveMonitorTimeFilterRange();
   if (timeRange) {
@@ -1701,7 +1668,7 @@ const filterSessionsByInterval = (sessions) => {
   });
 };
 
-// 鏇存柊 token 瓒嬪娍鎶樼嚎鍥?
+// 更新 token 瓒嬪娍鎶樼嚎鍥?
 const renderTokenTrendChart = () => {
   if (!tokenTrendChart) {
     return;
@@ -1773,7 +1740,6 @@ const renderTokenTrendChart = () => {
       zoomConfig.startValue = labels[startIndex];
       zoomConfig.endValue = labels[labels.length - 1];
     }
-    // 鍚敤鍐呯疆缂╂斁锛岄粯璁よ仛鐒︽渶杩戠獥鍙?
     option.dataZoom = [zoomConfig];
   }
   tokenTrendChart.setOption(option, false);
@@ -1808,7 +1774,6 @@ const resolveStatusCounts = (sessions) => {
   return counts;
 };
 
-// 鐢熸垚鐘舵€佺幆鍥炬暟鎹紝绌烘暟鎹椂杩斿洖鐧借壊绌哄績鐜崰浣?
 const buildStatusChartData = (counts) => {
   const [activeLabel, finishedLabel, failedLabel, cancelledLabel] = getStatusLegend();
   const raw = [
@@ -1930,7 +1895,6 @@ const renderServiceStatusChart = (service, sessions) => {
   );
 };
 
-// 姹囨€绘湇鍔″浘琛ㄦ暟鎹苟鍒锋柊娓叉煋
 const renderServiceCharts = (service, sessions) => {
   updateMonitorChartTitles();
   const scopedSessions = filterSessionsByInterval(sessions);
@@ -1946,7 +1910,6 @@ const renderServiceCharts = (service, sessions) => {
   resizeMonitorCharts();
 };
 
-// 鍥捐〃灏哄闅忓鍣ㄥ彉鍖栬嚜鍔ㄩ€傞厤
 const resizeMonitorCharts = () => {
   if (tokenTrendChart) {
     renderTokenTrendChart();
@@ -1981,7 +1944,6 @@ const ACTIVE_STATUSES = new Set(["running", "cancelling"]);
 const sortSessionsByUpdate = (sessions) =>
   [...sessions].sort((a, b) => new Date(b.updated_time).getTime() - new Date(a.updated_time).getTime());
 
-// 鏍规嵁鐢ㄦ埛绛涢€夌嚎绋嬪垪琛紝绌哄€兼椂杩斿洖鍏ㄩ噺
 const filterSessionsByUser = (sessions) => {
   const userId = String(state.monitor.userFilter || "").trim();
   if (!userId) {
@@ -2101,7 +2063,6 @@ const resolveMonitorPageSize = () => {
   return rawValue;
 };
 
-// 缁熶竴绾︽潫椤电爜鑼冨洿锛岄伩鍏嶈秺鐣屽鑷村垎椤典负绌?
 const clampMonitorPage = (value, totalPages) => {
   const page = Number(value);
   if (!Number.isFinite(page) || page < 1) {
@@ -2113,7 +2074,6 @@ const clampMonitorPage = (value, totalPages) => {
   return Math.min(page, totalPages);
 };
 
-// 鏍规嵁鍒嗛〉鐘舵€佸垏鐗囩嚎绋嬪垪琛紝骞跺洖鍐欏悎娉曢〉鐮?
 const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
   const { sorted = false } = options;
   const pageSize = resolveMonitorPageSize();
@@ -2129,7 +2089,6 @@ const resolveMonitorPageSlice = (sessions, pageKey, options = {}) => {
   return { total, totalPages, currentPage, pageSize, sessions: pageSessions };
 };
 
-// 鍏煎鏃х増鏈?elements.js 鏈寘鍚垎椤靛厓绱犵殑鎯呭喌
 const resolveMonitorPaginationElement = (key, id) => {
   if (elements[key]) {
     return elements[key];
@@ -2141,7 +2100,6 @@ const resolveMonitorPaginationElement = (key, id) => {
   return node;
 };
 
-// 鑾峰彇鍒嗛〉鎺т欢 DOM锛屼究浜庡鐢ㄦ洿鏂伴€昏緫
 const getMonitorPaginationElements = (type) => {
   if (type !== "active") return null;
   return {
@@ -2155,7 +2113,6 @@ const getMonitorPaginationElements = (type) => {
   };
 };
 
-// 鍚屾鍒嗛〉鍖哄煙鏂囨涓庢寜閽姸鎬?
 const renderMonitorPagination = (type, pageData) => {
   const controls = getMonitorPaginationElements(type);
   if (!controls?.container || !controls.info || !controls.prev || !controls.next) {
@@ -2188,7 +2145,6 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     return;
   }
   emptyNode.style.display = "none";
-  // 鍒嗛〉閫昏緫宸叉帓搴忔椂璺宠繃浜屾鎺掑簭锛屽噺灏戞覆鏌撳紑閿€
   const sorted = skipSort ? sessions : sortSessionsByUpdate(sessions);
   sorted.forEach((session) => {
     const row = document.createElement("tr");
@@ -2320,10 +2276,8 @@ const bindMonitorSessionFilters = () => {
   }
 };
 
-// 鏍规嵁鍥句緥鏍囩瑙ｆ瀽瀵瑰簲鐨勭姸鎬?key
 const resolveStatusKey = (label) => getStatusLabelToKey()[label] || "";
 
-// 鍒ゆ柇浼氳瘽鏄惁灞炰簬鎸囧畾鐘舵€佸垎缁?
 const matchSessionByStatusKey = (session, key) => {
   const status = session?.status;
   if (key === "active") {
@@ -2341,7 +2295,6 @@ const matchSessionByStatusKey = (session, key) => {
   return false;
 };
 
-// 娓叉煋鐘舵€佽鎯呭垪琛紝鏀寔鐐瑰嚮鎵撳紑绾跨▼璇︽儏
 const renderMonitorStatusList = (sessions) => {
   if (!elements.monitorStatusList) {
     return;
@@ -2531,7 +2484,7 @@ const fetchMonitorToolSessions = async (toolName) => {
   };
 };
 
-// 鎵撳紑宸ュ叿璋冪敤鏄庣粏寮圭獥
+// 打开工具调用明细弹窗
 const openMonitorToolModal = async (toolName) => {
   if (!elements.monitorToolModal) {
     return;
@@ -2571,7 +2524,7 @@ const openMonitorToolModal = async (toolName) => {
   }
 };
 
-// 鍏抽棴宸ュ叿璋冪敤寮圭獥
+// 关闭工具调用弹窗
 const closeMonitorToolModal = () => {
   elements.monitorToolModal?.classList.remove("active");
 };
@@ -2608,10 +2561,8 @@ const closeMonitorStatusModal = () => {
 
 export const loadMonitorData = async (options = {}) => {
   ensureMonitorState();
-  // 鐢ㄦ埛绠＄悊椤典粎闇€浼氳瘽鍒楄〃锛屼娇鐢?sessions 妯″紡閬垮厤鏃犲叧鐨勫浘琛ㄤ笌鐑姏鍥惧埛鏂?
   const mode = options?.mode === "sessions" ? "sessions" : "full";
   const wunderBase = getWunderBase();
-  // 宸ュ叿鍒楄〃鍦ㄥ悗鍙板姞杞斤紝閬垮厤闃诲鍥捐〃棣栧睆娓叉煋銆?
   const toolListPromise =
     mode === "full"
       ? loadAvailableTools().catch((error) => {
@@ -2663,7 +2614,6 @@ export const loadMonitorData = async (options = {}) => {
 export const setMonitorUserFilter = (userId) => {
   ensureMonitorState();
   state.monitor.userFilter = String(userId || "").trim();
-  // 鍒囨崲鐢ㄦ埛鍚庨噸缃垎椤碉紝閬垮厤椤电爜钀藉湪绌洪〉闈?
   if (state.monitor.pagination) {
     state.monitor.pagination.activePage = 1;
   }
@@ -2694,7 +2644,6 @@ export const toggleMonitorPolling = (enabled, options = {}) => {
           appendLog(t("monitor.refreshFailed", { message: error.message }));
         });
       }
-      // 鐢ㄦ埛绠＄悊椤典娇鐢?sessions 妯″紡杞锛岄檷浣庡鍥捐〃娓叉煋鐨勫奖鍝?
       state.runtime.monitorPollTimer = setInterval(() => {
         loadMonitorData({ mode }).catch(() => {});
       }, intervalMs);
@@ -2705,7 +2654,6 @@ export const toggleMonitorPolling = (enabled, options = {}) => {
   }
 };
 
-// 杞箟 HTML锛岄伩鍏嶄簨浠惰鎯呬腑鐨勭敤鎴峰唴瀹规薄鏌撳睍绀?
 const escapeMonitorHtml = (value) =>
   String(value || "")
     .replace(/&/g, "&amp;")
@@ -2730,17 +2678,15 @@ const unwrapMonitorEventData = (payload) => {
 const MONITOR_TIMESTAMP_RE =
   /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})?)\]/g;
 
-// 楂樹寒浜嬩欢璇︽儏閲岀殑鏃堕棿鎴筹紝鏂逛究蹇€熷畾浣嶆潯鐩?
 const highlightMonitorTimestamps = (detailText) =>
   escapeMonitorHtml(detailText).replace(
     MONITOR_TIMESTAMP_RE,
     '<span class="log-timestamp">[$1]</span>'
   );
 
-// 缁熶竴瑙勬暣宸ュ叿鍚嶇О锛岄伩鍏嶅ぇ灏忓啓鎴栧浣欑┖鏍煎鑷村畾浣嶅け璐?
 const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCase();
 
-// 鏍煎紡鍖栦簨浠舵暟鎹负鍙睍绀烘枃鏈紝纭繚寮傚父鏁版嵁涓嶄細鎵撴柇娓叉煋
+// 格式化事件数据为可展示文本，确保异常数据不会打断渲染
 const stringifyMonitorEventData = (data) => {
   try {
     const resolved = unwrapMonitorEventData(data);
@@ -2761,7 +2707,7 @@ const truncateMonitorEventTitle = (value) => {
   if (text.length <= MONITOR_EVENT_TITLE_MAX_LENGTH) {
     return text;
   }
-  return `${text.slice(0, MONITOR_EVENT_TITLE_MAX_LENGTH)}鈥;
+  return `${text.slice(0, MONITOR_EVENT_TITLE_MAX_LENGTH)}...`;
 };
 
 const formatMonitorEventTimestamp = (value) => {
@@ -2831,7 +2777,6 @@ const buildMonitorEventLine = (event) => {
   return "[" + timestamp + "] " + prefix + eventType + ": " + dataText;
 };
 
-// 浠庝簨浠舵暟鎹腑鎻愬彇宸ュ叿鍚嶇О锛屼究浜庡畾浣嶅伐鍏疯皟鐢ㄤ綅缃?
 const resolveMonitorEventToolName = (event) => {
   const data = unwrapMonitorEventData(event?.data);
   if (!data || typeof data !== "object") {
@@ -3269,7 +3214,6 @@ const renderMonitorDetailWithFilters = (events, options = {}) => {
   return focusLine;
 };
 
-// 娓叉煋绾跨▼浜嬩欢鍒楄〃锛屽苟杩斿洖闇€瑕佸畾浣嶇殑鐩爣鑺傜偣
 const renderMonitorDetailEvents = (events, options = {}) => {
   if (!elements.monitorDetailEvents) {
     return null;
@@ -3371,8 +3315,8 @@ const renderMonitorDetailEvents = (events, options = {}) => {
   return focusNode;
 };
 
-// 婊氬姩浜嬩欢鍒楄〃鍒扮洰鏍囦綅缃紝閬垮厤鐢ㄦ埛鎵嬪姩鏌ユ壘
-// 鏌ユ壘鍙粴鍔ㄧ殑鐖跺鍣紝鍏煎寮圭獥鍐呴儴澶氱骇婊氬姩甯冨眬
+// 滚动事件列表到目标位置，避免用户手动查找
+// 查找可滚动的父容器，兼容弹窗内部多级滚动布局
 const resolveMonitorScrollContainer = (line) => {
   let current = line?.parentElement || null;
   while (current && current !== document.body) {
@@ -3389,7 +3333,7 @@ const resolveMonitorScrollContainer = (line) => {
   return elements.monitorDetailEvents || null;
 };
 
-// 婊氬姩浜嬩欢鍒楄〃鍒扮洰鏍囦綅缃紝閬垮厤鐢ㄦ埛鎵嬪姩鏌ユ壘
+// 滚动事件列表到目标位置，避免用户手动查找
 const scrollMonitorDetailToLine = (line) => {
   if (!line) {
     return;
@@ -3665,7 +3609,6 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
     resetMonitorDetailFilters();
     syncMonitorDetailRoundFilter();
     renderMonitorDetailQuestion();
-    renderMonitorDetailFeedback();
     setMonitorDetailExportEnabled(true);
     const focusTool =
       typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
@@ -3739,7 +3682,6 @@ const requestCancelSession = async (sessionId) => {
   }
 };
 
-// 鍒濆鍖栫洃鎺ч潰鏉夸氦浜?
 export const initMonitorPanel = () => {
   ensureMonitorState();
   ensureMonitorCharts();
@@ -3849,7 +3791,5 @@ export const initMonitorPanel = () => {
     });
   }
 };
-
-
 
 

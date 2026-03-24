@@ -2297,7 +2297,7 @@
             <div class="modal-header">
               <div>
                 <div id="bridgeCenterChannelModalTitle" class="detail-title">渠道设置</div>
-                <div id="bridgeCenterChannelEditorHint" class="muted">每个舰桥节点只绑定一个渠道账号。</div>
+                <div id="bridgeCenterChannelEditorHint" class="muted">为当前舰桥节点配置渠道连接参数。</div>
               </div>
               <div class="modal-header-actions">
                 <span id="bridgeCenterChannelOwnedBadge" class="status-chip">新渠道</span>
@@ -2312,43 +2312,12 @@
                   <label for="bridgeCenterChannelFormChannel">渠道</label>
                   <select id="bridgeCenterChannelFormChannel"></select>
                 </div>
-                <div id="bridgeCenterChannelAutoBindSection" class="bridge-channel-autobind-panel" hidden>
-                  <div class="bridge-channel-autobind-title">自动绑定</div>
-                  <div id="bridgeCenterChannelAutoBindSummary" class="muted"></div>
-                </div>
-                <div id="bridgeCenterWeixinQrSection" class="bridge-weixin-qr-panel" hidden>
-                  <div class="bridge-weixin-qr-header">
-                    <div>
-                      <div class="bridge-weixin-qr-title">Weixin iLink (New) 扫码</div>
-                      <div class="muted">扫码成功后会自动创建或更新当前节点的 Weixin 账号并完成绑定。</div>
-                    </div>
-                    <button id="bridgeCenterWeixinQrStartBtn" class="secondary btn-with-icon" type="button">
-                      <i class="fa-solid fa-qrcode"></i>
-                      <span>生成二维码</span>
-                    </button>
-                  </div>
-                  <div id="bridgeCenterWeixinQrPreview" class="bridge-weixin-qr-preview" hidden>
-                    <img
-                      id="bridgeCenterWeixinQrImage"
-                      class="bridge-weixin-qr-image"
-                      alt="Weixin QR Code"
-                      referrerpolicy="no-referrer"
-                    />
-                    <a
-                      id="bridgeCenterWeixinQrOpenLink"
-                      class="bridge-weixin-qr-link"
-                      href="#"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      hidden
-                    >
-                      新窗口打开
-                    </a>
-                  </div>
-                  <div class="bridge-weixin-qr-meta">
-                    <div id="bridgeCenterWeixinQrSession" class="muted"></div>
-                    <div id="bridgeCenterWeixinQrStatus" class="muted"></div>
-                    <div id="bridgeCenterWeixinQrMessage" class="muted"></div>
+                <input id="bridgeCenterChannelFormAccountId" type="hidden" />
+                <div id="bridgeCenterChannelConfigSection" class="bridge-channel-config-panel">
+                  <div class="bridge-channel-config-title">连接配置</div>
+                  <div id="bridgeCenterChannelConfigHint" class="muted">根据所选渠道填写连接参数，保存后绑定到当前舰桥节点。</div>
+                  <div id="bridgeCenterChannelFormDynamicFields" class="bridge-channel-config-grid">
+                    <div class="muted">请先选择渠道</div>
                   </div>
                 </div>
               </div>
@@ -4877,11 +4846,6 @@
               </div>
             </div>
             <div id="monitorDetailQuestion" class="log"></div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="monitor.detail.feedback">反馈</label>
-            <div id="monitorDetailFeedbackSummary" class="muted">-</div>
-            <div id="monitorDetailFeedback" class="monitor-detail-feedback-list"></div>
           </div>
           <div class="form-row">
             <label data-i18n="monitor.detail.events">事件详情</label>

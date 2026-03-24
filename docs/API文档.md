@@ -1383,6 +1383,17 @@
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
 
+### 4.1.24.4 `/wunder/admin/sim_lab/*`
+
+- `GET /wunder/admin/sim_lab/projects`：获取模拟项目列表与默认参数。
+- `POST /wunder/admin/sim_lab/runs`：执行模拟任务。
+  - 入参（JSON）：`run_id`、`projects[]`、`options`。
+  - `options.swarm_flow` 支持：`workers`、`max_wait_s`、`mother_wait_s`、`poll_ms`、`worker_task_rounds`、`keep_artifacts`、`strict_mock_only`。
+  - `strict_mock_only` 默认 `true`：若检测到非本地 mock LLM 请求，当前模拟运行会直接失败并返回错误。
+- `GET /wunder/admin/sim_lab/runs/{run_id}/status`：查询运行是否仍处于活动状态。
+- `POST /wunder/admin/sim_lab/runs/{run_id}/cancel`：取消运行。
+- 结果报告补充：`projects[].report.llm_request_audit` 与 `projects[].report.checks.mock_only_llm_requests`，用于判定是否全程仅命中 mock LLM 端点。
+
 ### 4.1.25 `/wunder/admin/tools`
 
 - 方法：`GET/POST`

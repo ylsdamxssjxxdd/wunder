@@ -23,11 +23,15 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use uuid::Uuid;
 
+mod audit;
+mod isolation;
+
 const DEFAULT_WORKERS: usize = 100;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
 const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
 const DEFAULT_POLL_MS: u64 = 120;
 const DEFAULT_WORKER_TASK_ROUNDS: usize = 3;
+const DEFAULT_STRICT_MOCK_ONLY: bool = true;
 const MAX_WORKER_TASK_ROUNDS: usize = 20;
 const MOCK_MODEL_NAME: &str = "__swarm_flow_mock__";
 const MOTHER_MARKER: &str = "MOTHER_SIM_START";
@@ -106,6 +110,7 @@ pub fn list_projects() -> Vec<SimLabProject> {
             "mother_wait_s": DEFAULT_MOTHER_WAIT_S,
             "poll_ms": DEFAULT_POLL_MS,
             "worker_task_rounds": DEFAULT_WORKER_TASK_ROUNDS,
+            "strict_mock_only": DEFAULT_STRICT_MOCK_ONLY,
             "keep_artifacts": false
         }),
     }]
@@ -341,6 +346,7 @@ struct SimArgs {
     mother_wait_s: f64,
     poll_ms: u64,
     worker_task_rounds: usize,
+    strict_mock_only: bool,
     keep_artifacts: bool,
 }
 
@@ -352,6 +358,7 @@ impl Default for SimArgs {
             mother_wait_s: DEFAULT_MOTHER_WAIT_S,
             poll_ms: DEFAULT_POLL_MS,
             worker_task_rounds: DEFAULT_WORKER_TASK_ROUNDS,
+            strict_mock_only: DEFAULT_STRICT_MOCK_ONLY,
             keep_artifacts: false,
         }
     }
@@ -380,6 +387,8 @@ impl SimArgs {
             .map(|value| value as usize)
             .unwrap_or(DEFAULT_WORKER_TASK_ROUNDS)
             .clamp(1, MAX_WORKER_TASK_ROUNDS);
+        args.strict_mock_only =
+            read_bool(map, "strict_mock_only").unwrap_or(DEFAULT_STRICT_MOCK_ONLY);
         args.keep_artifacts = read_bool(map, "keep_artifacts").unwrap_or(keep_artifacts);
         args
     }
@@ -436,6 +445,7 @@ struct FlowReport {
     worker_sessions: WorkerSessionStats,
     worker_latency: WorkerLatencyStats,
     monitor_events: BTreeMap<String, usize>,
+    llm_request_audit: audit::LlmRequestAudit,
     checks: FlowChecks,
 }
 
@@ -516,6 +526,7 @@ struct FlowChecks {
     all_worker_runs_success: bool,
     each_worker_has_two_tool_calls: bool,
     each_worker_has_expected_tool_calls: bool,
+    mock_only_llm_requests: bool,
     no_active_runs_left: bool,
 }
 
@@ -566,6 +577,12 @@ async fn run_swarm_flow(
         reset_swarm_sim_user_runtime(state.as_ref(), &user_id)?;
         let (mother_agent_id, worker_agent_ids) =
             seed_swarm_agents(state.as_ref(), &user_id, args.workers)?;
+        isolation::disable_auto_extract_for_agents(
+            state.as_ref(),
+            &user_id,
+            &mother_agent_id,
+            &worker_agent_ids,
+        )?;
 
         {
             let mut scenario = mock_state.scenario.write();
@@ -634,6 +651,28 @@ async fn run_swarm_flow(
             &mother_response,
             mock_state.as_ref(),
         )?;
+        if args.strict_mock_only && !report.checks.mock_only_llm_requests {
+            let sample = report
+                .llm_request_audit
+                .suspicious_samples
+                .first()
+                .map(|item| {
+                    format!(
+                        "session={} provider={} model={} base_url={}",
+                        item.session_id,
+                        item.provider.as_deref().unwrap_or("-"),
+                        item.model.as_deref().unwrap_or("-"),
+                        item.base_url.as_deref().unwrap_or("<missing>")
+                    )
+                })
+                .unwrap_or_else(|| "no suspicious sample".to_string());
+            return Err(anyhow!(
+                "strict_mock_only violated: suspicious_llm_requests={} (external={}, unknown={}); first={sample}",
+                report.llm_request_audit.suspicious_total(),
+                report.llm_request_audit.external_requests,
+                report.llm_request_audit.unknown_requests,
+            ));
+        }
 
         Ok(report)
     }
@@ -1748,6 +1787,7 @@ fn build_report(
 
     let worker_latency = build_worker_latency_stats(&run_rows, &worker_session_rows);
     let monitor_events = mother_event_counts(state, mother_session_id);
+    let llm_request_audit = audit::collect_llm_request_audit(state, user_id, llm_base_url)?;
 
     let active_left = run_rows.iter().any(|row| {
         matches!(
@@ -1802,11 +1842,13 @@ fn build_report(
         },
         worker_latency,
         monitor_events,
+        llm_request_audit: llm_request_audit.clone(),
         checks: FlowChecks {
             mother_finished: !mother_result.answer.trim().is_empty(),
             all_worker_runs_success: all_worker_success,
             each_worker_has_two_tool_calls: each_worker_two_tools,
             each_worker_has_expected_tool_calls: each_worker_expected_tools,
+            mock_only_llm_requests: llm_request_audit.is_mock_only(),
             no_active_runs_left: !active_left,
         },
     })
