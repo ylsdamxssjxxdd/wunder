@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
     let app = mount_simple_chat_disabled(app);
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt", "/wunder/ppt/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt-en", "/wunder/ppt-en/");
+    let app = mount_static(app, "frontend/src/assets/qq-avatars", "/assets/qq-avatars");
     let app = mount_static(app, "web", "/");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");

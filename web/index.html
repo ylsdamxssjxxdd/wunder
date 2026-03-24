@@ -656,7 +656,13 @@
                   </div>
                   <div class="form-row">
                     <label for="presetAgentFormModelName" data-i18n="presetAgents.form.modelName">启用模型</label>
-                    <select id="presetAgentFormModelName"></select>
+                    <div class="preset-agent-model-row">
+                      <select id="presetAgentFormModelName"></select>
+                      <button id="presetAgentAvatarTrigger" class="secondary btn-with-icon preset-agent-avatar-trigger" type="button">
+                        <span id="presetAgentAvatarPreview" class="preset-agent-avatar-preview" aria-hidden="true"></span>
+                        <span data-i18n="presetAgents.form.avatarPick">设置头像</span>
+                      </button>
+                    </div>
                     <div class="tips" data-i18n="presetAgents.form.modelHint">
                       为空时使用系统默认模型。
                     </div>
@@ -794,6 +800,61 @@
             </div>
           </div>
         </section>
+        <div id="presetAgentAvatarModal" class="modal">
+          <div class="modal-card preset-agent-avatar-modal-card">
+            <div class="modal-header">
+              <div class="detail-title" data-i18n="presetAgents.avatarModal.title">设置头像</div>
+              <button id="presetAgentAvatarModalClose" class="icon-btn" type="button">&times;</button>
+            </div>
+            <div class="modal-body preset-agent-avatar-modal-body">
+              <div class="preset-agent-avatar-modal-preview-wrap">
+                <span id="presetAgentAvatarModalPreview" class="preset-agent-avatar-modal-preview" aria-hidden="true"></span>
+                <span class="muted" data-i18n="presetAgents.avatarModal.previewHint">预览</span>
+              </div>
+              <div class="form-row">
+                <label data-i18n="presetAgents.avatarModal.icons">头像库</label>
+                <div
+                  id="presetAgentAvatarPicker"
+                  class="preset-agent-avatar-picker"
+                  role="listbox"
+                  aria-label="Preset agent avatar picker"
+                ></div>
+              </div>
+              <div id="presetAgentAvatarPager" class="preset-agent-avatar-pager">
+                <button id="presetAgentAvatarPagePrev" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-chevron-left"></i>
+                  <span data-i18n="presetAgents.avatarModal.pagePrev">上一页</span>
+                </button>
+                <span id="presetAgentAvatarPageIndicator" class="muted">1 / 1</span>
+                <button id="presetAgentAvatarPageNext" class="secondary btn-with-icon" type="button">
+                  <span data-i18n="presetAgents.avatarModal.pageNext">下一页</span>
+                  <i class="fa-solid fa-chevron-right"></i>
+                </button>
+              </div>
+              <div id="presetAgentAvatarColorRow" class="form-row">
+                <label for="presetAgentAvatarColorSelect" data-i18n="presetAgents.avatarModal.color">背景颜色</label>
+                <div class="preset-agent-avatar-color-wrap">
+                  <span id="presetAgentAvatarColorChip" class="preset-agent-avatar-color-chip" aria-hidden="true"></span>
+                  <select id="presetAgentAvatarColorSelect"></select>
+                </div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="presetAgentAvatarModalReset" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-rotate-left"></i>
+                <span data-i18n="presetAgents.avatarModal.reset">恢复默认</span>
+              </button>
+              <button id="presetAgentAvatarModalCancel" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-xmark"></i>
+                <span data-i18n="common.cancel">取消</span>
+              </button>
+              <button id="presetAgentAvatarModalApply" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-check"></i>
+                <span data-i18n="presetAgents.avatarModal.apply">应用头像</span>
+              </button>
+            </div>
+          </div>
+        </div>
         <section id="userAccountsPanel" class="panel">
           <div class="user-management user-account-management">
             <div class="list-header">

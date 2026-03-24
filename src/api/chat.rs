@@ -1628,16 +1628,22 @@ async fn session_system_prompt(
         .unwrap_or_else(|_| state.workspace.root().to_path_buf());
     let expected_public_workdir = state.workspace.display_path(&workspace_id, &workspace_root);
     let expected_local_workdir = workspace_root.to_string_lossy().replace('\\', "/");
+    let request_overrides = payload
+        .tool_overrides
+        .as_ref()
+        .map(|values| normalize_tool_overrides(values.clone()));
     let stored_prompt = state
         .workspace
         .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
         .await
         .unwrap_or(None);
-    if let Some(prompt) = stored_prompt {
-        if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
-            return Ok(Json(json!({
-                "data": build_system_prompt_preview_payload(prompt, "frozen"),
-            })));
+    if request_overrides.is_none() {
+        if let Some(prompt) = stored_prompt {
+            if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
+                return Ok(Json(json!({
+                    "data": build_system_prompt_preview_payload(prompt, "frozen"),
+                })));
+            }
         }
     }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
@@ -1649,12 +1655,10 @@ async fn session_system_prompt(
     )
     .await?;
     let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let overrides = if !record.tool_overrides.is_empty() {
-        normalize_tool_overrides(record.tool_overrides.clone())
-    } else if let Some(overrides) = payload.tool_overrides.as_ref() {
-        normalize_tool_overrides(overrides.clone())
+    let overrides = if let Some(overrides) = request_overrides {
+        overrides
     } else {
-        resolve_agent_tool_defaults(agent_record.as_ref())
+        resolve_session_tool_overrides(&record, agent_record.as_ref())
     };
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);

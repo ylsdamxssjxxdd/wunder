@@ -9,6 +9,45 @@ const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
 const TEMPLATE_USER_ID = "preset_template";
 const DEFAULT_HIVE_ID = "default";
+const AVATAR_PAGE_SIZE = 24;
+const PRESET_AVATAR_COLOR_OPTIONS = [
+  "#f97316",
+  "#ef4444",
+  "#ec4899",
+  "#8b5cf6",
+  "#6366f1",
+  "#3b82f6",
+  "#06b6d4",
+  "#14b8a6",
+  "#10b981",
+  "#84cc16",
+  "#f59e0b",
+  "#64748b",
+  "#94a3b8",
+];
+
+const PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", label: "initial" }].concat(
+  Array.from({ length: 120 }, (_unused, index) => {
+    const sequence = String(index + 1).padStart(4, "0");
+    return {
+      key: `qq-avatar-${sequence}`,
+      image: `/assets/qq-avatars/avatar-${sequence}.jpg`,
+      label: `QQ Avatar ${sequence}`,
+    };
+  })
+);
+
+const PRESET_AVATAR_IMAGE_MAP = new Map(PRESET_AVATAR_OPTIONS.filter((item) => item.image).map((item) => [item.key, item.image]));
+const PRESET_AVATAR_OPTION_KEYS = new Set(PRESET_AVATAR_OPTIONS.map((item) => item.key));
+const DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("qq-avatar-0119") ? "qq-avatar-0119" : "initial";
+const FALLBACK_PRESET_AVATAR_ICON_NAME = "initial";
+const LEGACY_DEFAULT_AVATAR_KEY = "qq-avatar-0199";
+
+const avatarModalState = {
+  iconName: DEFAULT_PRESET_AVATAR_ICON_NAME,
+  color: "#94a3b8",
+  page: 1,
+};
 
 const ensureState = () => {
   if (!state.presetAgents) {
@@ -71,6 +110,22 @@ const REQUIRED_KEYS = [
   "presetAgentFormDescription",
   "presetAgentFormPrompt",
   "presetAgentFormModelName",
+  "presetAgentAvatarTrigger",
+  "presetAgentAvatarPreview",
+  "presetAgentAvatarModal",
+  "presetAgentAvatarModalClose",
+  "presetAgentAvatarModalCancel",
+  "presetAgentAvatarModalApply",
+  "presetAgentAvatarModalReset",
+  "presetAgentAvatarModalPreview",
+  "presetAgentAvatarPicker",
+  "presetAgentAvatarPager",
+  "presetAgentAvatarPagePrev",
+  "presetAgentAvatarPageIndicator",
+  "presetAgentAvatarPageNext",
+  "presetAgentAvatarColorRow",
+  "presetAgentAvatarColorChip",
+  "presetAgentAvatarColorSelect",
   "presetAgentPresetQuestions",
   "presetAgentPresetQuestionsEmpty",
   "presetAgentPresetQuestionAddBtn",
@@ -148,7 +203,51 @@ const downloadJsonFile = (filename, value) => {
   window.URL.revokeObjectURL(url);
 };
 
-const normalizeIconName = (value) => String(value || "").trim() || "spark";
+const normalizeLegacyAvatarName = (value) => {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!text) {
+    return "";
+  }
+  const directAvatarMatch = text.match(/^avatar-(\d{1,4})$/);
+  if (directAvatarMatch) {
+    return `qq-avatar-${String(Number.parseInt(directAvatarMatch[1], 10)).padStart(4, "0")}`;
+  }
+  const qqAvatarMatch = text.match(/^qq-avatar-(\d{1,4})$/);
+  if (qqAvatarMatch) {
+    const normalized = `qq-avatar-${String(Number.parseInt(qqAvatarMatch[1], 10)).padStart(4, "0")}`;
+    return normalized === LEGACY_DEFAULT_AVATAR_KEY ? DEFAULT_PRESET_AVATAR_ICON_NAME : normalized;
+  }
+  if (text === "default") {
+    return DEFAULT_PRESET_AVATAR_ICON_NAME;
+  }
+  return text;
+};
+
+const normalizeIconName = (
+  value,
+  { fallbackWhenEmpty = DEFAULT_PRESET_AVATAR_ICON_NAME, fallbackWhenUnknown = FALLBACK_PRESET_AVATAR_ICON_NAME } = {}
+) => {
+  const normalizedLegacy = normalizeLegacyAvatarName(value);
+  if (!normalizedLegacy) {
+    return fallbackWhenEmpty;
+  }
+  if (normalizedLegacy === "initial") {
+    return "initial";
+  }
+  if (PRESET_AVATAR_OPTION_KEYS.has(normalizedLegacy)) {
+    return normalizedLegacy;
+  }
+  return fallbackWhenUnknown;
+};
+
+const resolveAvatarImageByKey = (value) => PRESET_AVATAR_IMAGE_MAP.get(String(value || "").trim()) || "";
+
+const resolveAvatarInitial = (value) => {
+  const cleaned = String(value || "").trim();
+  return cleaned ? cleaned.slice(0, 1).toUpperCase() : "?";
+};
 
 const normalizeIconColor = (value) => {
   const cleaned = String(value || "").trim();
@@ -649,6 +748,9 @@ const renderPresetActionState = () => {
   if (elements.presetAgentDeleteBtn) {
     elements.presetAgentDeleteBtn.disabled = !hasPreset || isDefaultPreset(preset) || saving;
   }
+  if (elements.presetAgentAvatarTrigger) {
+    elements.presetAgentAvatarTrigger.disabled = !hasPreset || saving;
+  }
 };
 
 const renderToolSelector = (selected) => {
@@ -820,6 +922,254 @@ const buildEffectivePreset = (preset) => {
 
 const effectiveSelectedPreset = () => buildEffectivePreset(selectedPreset());
 
+const resolveAvatarPageCount = () => Math.max(1, Math.ceil(PRESET_AVATAR_OPTIONS.length / AVATAR_PAGE_SIZE));
+
+const normalizeAvatarPage = (value) => {
+  const pageCount = resolveAvatarPageCount();
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return 1;
+  }
+  return Math.min(Math.max(parsed, 1), pageCount);
+};
+
+const resolveAvatarPageByKey = (key) => {
+  const normalized = normalizeIconName(key, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  const index = PRESET_AVATAR_OPTIONS.findIndex((item) => item.key === normalized);
+  if (index < 0) {
+    return 1;
+  }
+  return Math.floor(index / AVATAR_PAGE_SIZE) + 1;
+};
+
+const ensureAvatarFace = (container) => {
+  if (!container) {
+    return null;
+  }
+  return container;
+};
+
+const renderAvatarFace = (container, { iconName, color, initial, imageClass = "", initialClass = "" }) => {
+  const target = ensureAvatarFace(container);
+  if (!target) {
+    return;
+  }
+  const normalizedIcon = normalizeIconName(iconName, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  const normalizedColor = normalizeIconColor(color);
+  const normalizedInitial = resolveAvatarInitial(initial);
+  const imageUrl = resolveAvatarImageByKey(normalizedIcon);
+  target.textContent = "";
+  target.style.background = imageUrl ? "transparent" : normalizedColor;
+
+  if (imageUrl) {
+    const image = document.createElement("img");
+    if (imageClass) {
+      image.className = imageClass;
+    }
+    image.src = imageUrl;
+    image.alt = "";
+    image.addEventListener(
+      "error",
+      () => {
+        target.textContent = "";
+        target.style.background = normalizedColor;
+        const fallback = document.createElement("span");
+        fallback.className = initialClass;
+        fallback.textContent = normalizedInitial;
+        target.appendChild(fallback);
+      },
+      { once: true }
+    );
+    target.appendChild(image);
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = initialClass;
+  label.textContent = normalizedInitial;
+  target.appendChild(label);
+};
+
+const renderPresetAvatarTrigger = (preset) => {
+  const iconName = normalizeIconName(preset?.icon_name, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  const color = normalizeIconColor(preset?.icon_color);
+  const initial = resolveAvatarInitial(preset?.name);
+  renderAvatarFace(elements.presetAgentAvatarPreview, {
+    iconName,
+    color,
+    initial,
+    initialClass: "preset-agent-avatar-option-initial",
+  });
+  elements.presetAgentAvatarTrigger.disabled = !selectedPreset();
+};
+
+const renderPresetAvatarColorOptions = () => {
+  const select = elements.presetAgentAvatarColorSelect;
+  if (!select || select.dataset.rendered === "1") {
+    return;
+  }
+  select.textContent = "";
+  PRESET_AVATAR_COLOR_OPTIONS.forEach((color) => {
+    const option = document.createElement("option");
+    option.value = color;
+    option.textContent = color.toUpperCase();
+    select.appendChild(option);
+  });
+  select.dataset.rendered = "1";
+};
+
+const syncPresetAvatarColorControl = () => {
+  const color = normalizeIconColor(avatarModalState.color);
+  avatarModalState.color = color;
+  elements.presetAgentAvatarColorChip.style.setProperty("--avatar-color", color);
+  if (!Array.from(elements.presetAgentAvatarColorSelect.options).some((item) => item.value === color)) {
+    const option = document.createElement("option");
+    option.value = color;
+    option.textContent = color.toUpperCase();
+    elements.presetAgentAvatarColorSelect.appendChild(option);
+  }
+  elements.presetAgentAvatarColorSelect.value = color;
+};
+
+const renderPresetAvatarPicker = () => {
+  const picker = elements.presetAgentAvatarPicker;
+  if (!picker) {
+    return;
+  }
+  const pageCount = resolveAvatarPageCount();
+  avatarModalState.page = normalizeAvatarPage(avatarModalState.page);
+  const start = (avatarModalState.page - 1) * AVATAR_PAGE_SIZE;
+  const items = PRESET_AVATAR_OPTIONS.slice(start, start + AVATAR_PAGE_SIZE);
+  picker.textContent = "";
+  const fragment = document.createDocumentFragment();
+
+  items.forEach((item) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "preset-agent-avatar-option";
+    option.classList.toggle("is-active", item.key === avatarModalState.iconName);
+    option.dataset.avatarKey = item.key;
+    const label = item.key === "initial" ? t("presetAgents.avatarModal.initial") : item.label;
+    option.title = label;
+    option.setAttribute("aria-label", label);
+
+    if (item.image) {
+      const image = document.createElement("img");
+      image.className = "preset-agent-avatar-option-image";
+      image.src = item.image;
+      image.alt = "";
+      image.addEventListener(
+        "error",
+        () => {
+          option.textContent = "";
+          const fallback = document.createElement("span");
+          fallback.className = "preset-agent-avatar-option-initial";
+          fallback.textContent = resolveAvatarInitial(selectedPreset()?.name);
+          fallback.style.background = normalizeIconColor(avatarModalState.color);
+          option.appendChild(fallback);
+        },
+        { once: true }
+      );
+      option.appendChild(image);
+    } else {
+      const initial = document.createElement("span");
+      initial.className = "preset-agent-avatar-option-initial";
+      initial.textContent = resolveAvatarInitial(selectedPreset()?.name);
+      initial.style.background = normalizeIconColor(avatarModalState.color);
+      option.appendChild(initial);
+    }
+
+    option.addEventListener("click", () => {
+      avatarModalState.iconName = item.key;
+      avatarModalState.page = resolveAvatarPageByKey(item.key);
+      renderPresetAvatarModalState();
+    });
+    fragment.appendChild(option);
+  });
+
+  picker.appendChild(fragment);
+  elements.presetAgentAvatarPageIndicator.textContent = t("presetAgents.avatarModal.pageIndicator", {
+    current: avatarModalState.page,
+    total: pageCount,
+  });
+  elements.presetAgentAvatarPagePrev.disabled = avatarModalState.page <= 1;
+  elements.presetAgentAvatarPageNext.disabled = avatarModalState.page >= pageCount;
+  elements.presetAgentAvatarPager.style.display = pageCount > 1 ? "flex" : "none";
+};
+
+const renderPresetAvatarModalState = () => {
+  const iconName = normalizeIconName(avatarModalState.iconName, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  const color = normalizeIconColor(avatarModalState.color);
+  avatarModalState.iconName = iconName;
+  avatarModalState.color = color;
+
+  renderAvatarFace(elements.presetAgentAvatarModalPreview, {
+    iconName,
+    color,
+    initial: resolveAvatarInitial(selectedPreset()?.name),
+    initialClass: "preset-agent-avatar-option-initial",
+  });
+  const hasImage = Boolean(resolveAvatarImageByKey(iconName));
+  elements.presetAgentAvatarColorRow.style.display = hasImage ? "none" : "";
+  syncPresetAvatarColorControl();
+  renderPresetAvatarPicker();
+};
+
+const closePresetAvatarModal = () => {
+  elements.presetAgentAvatarModal.classList.remove("active");
+};
+
+const openPresetAvatarModal = () => {
+  const preset = selectedPreset();
+  if (!preset) {
+    return;
+  }
+  avatarModalState.iconName = normalizeIconName(preset.icon_name, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  avatarModalState.color = normalizeIconColor(preset.icon_color);
+  avatarModalState.page = resolveAvatarPageByKey(avatarModalState.iconName);
+  renderPresetAvatarColorOptions();
+  renderPresetAvatarModalState();
+  elements.presetAgentAvatarModal.classList.add("active");
+};
+
+const resetPresetAvatarModal = () => {
+  avatarModalState.iconName = DEFAULT_PRESET_AVATAR_ICON_NAME;
+  avatarModalState.color = normalizeIconColor("#94a3b8");
+  avatarModalState.page = resolveAvatarPageByKey(avatarModalState.iconName);
+  renderPresetAvatarModalState();
+};
+
+const applyPresetAvatarModal = () => {
+  const preset = selectedPreset();
+  if (!preset) {
+    closePresetAvatarModal();
+    return;
+  }
+  preset.icon_name = normalizeIconName(avatarModalState.iconName, {
+    fallbackWhenEmpty: DEFAULT_PRESET_AVATAR_ICON_NAME,
+    fallbackWhenUnknown: FALLBACK_PRESET_AVATAR_ICON_NAME,
+  });
+  preset.icon_color = normalizeIconColor(avatarModalState.color);
+  renderPresetAvatarTrigger(effectiveSelectedPreset() || preset);
+  markPresetDraftDirty();
+  closePresetAvatarModal();
+};
+
 const fillPresetForm = (preset) => {
   elements.presetAgentFormName.value = preset?.name || "";
   elements.presetAgentFormDescription.value = preset?.description || "";
@@ -829,6 +1179,7 @@ const fillPresetForm = (preset) => {
   elements.presetAgentFormContainerId.value = String(
     Number.isFinite(Number(preset?.sandbox_container_id)) ? Number(preset.sandbox_container_id) : 1
   );
+  renderPresetAvatarTrigger(preset);
 };
 
 const collectPresetQuestionDrafts = () => {
@@ -1008,6 +1359,7 @@ const renderPresetDetail = () => {
   if (!rawPreset || !preset) {
     elements.presetAgentDetailTitle.textContent = t("presetAgents.detail.empty");
     elements.presetAgentDetailMeta.textContent = "";
+    closePresetAvatarModal();
     fillPresetForm(null);
     fillAgentForm(null);
     renderPresetActionState();
@@ -1578,7 +1930,7 @@ const createPreset = () => {
     description: "",
     system_prompt: "",
     model_name: "",
-    icon_name: "spark",
+    icon_name: DEFAULT_PRESET_AVATAR_ICON_NAME,
     icon_color: "#94a3b8",
     sandbox_container_id: 1,
     tool_names: [],
@@ -1975,7 +2327,42 @@ const bindPresetDraftFields = () => {
   });
 };
 
+const bindPresetAvatarControls = () => {
+  if (elements.presetAgentAvatarTrigger.dataset.bound === "1") {
+    return;
+  }
+  elements.presetAgentAvatarTrigger.dataset.bound = "1";
+
+  elements.presetAgentAvatarTrigger.addEventListener("click", openPresetAvatarModal);
+  elements.presetAgentAvatarModalClose.addEventListener("click", closePresetAvatarModal);
+  elements.presetAgentAvatarModalCancel.addEventListener("click", closePresetAvatarModal);
+  elements.presetAgentAvatarModalApply.addEventListener("click", applyPresetAvatarModal);
+  elements.presetAgentAvatarModalReset.addEventListener("click", resetPresetAvatarModal);
+
+  elements.presetAgentAvatarModal.addEventListener("click", (event) => {
+    if (event.target === elements.presetAgentAvatarModal) {
+      closePresetAvatarModal();
+    }
+  });
+
+  elements.presetAgentAvatarPagePrev.addEventListener("click", () => {
+    avatarModalState.page = Math.max(1, normalizeAvatarPage(avatarModalState.page) - 1);
+    renderPresetAvatarModalState();
+  });
+
+  elements.presetAgentAvatarPageNext.addEventListener("click", () => {
+    avatarModalState.page = Math.min(resolveAvatarPageCount(), normalizeAvatarPage(avatarModalState.page) + 1);
+    renderPresetAvatarModalState();
+  });
+
+  elements.presetAgentAvatarColorSelect.addEventListener("change", () => {
+    avatarModalState.color = normalizeIconColor(elements.presetAgentAvatarColorSelect.value);
+    renderPresetAvatarModalState();
+  });
+};
+
 const bindActions = () => {
+  bindPresetAvatarControls();
   if (elements.presetUserAgentTools.dataset.scrollBound !== "1") {
     elements.presetUserAgentTools.dataset.scrollBound = "1";
     elements.presetUserAgentTools.addEventListener(

@@ -5,8 +5,8 @@
     "agent_id": "preset_1d929a95e8c25b74b74734888f019db1",
     "name": "科学绘图",
     "description": "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表",
-    "icon": "{\"color\":\"#22d3ee\",\"name\":\"chart\"}",
-    "exported_at": "2026-03-23T13:19:16.696707967+00:00"
+    "icon": "{\"color\":\"#94a3b8\",\"name\":\"qq-avatar-0119\"}",
+    "exported_at": "2026-03-24T22:07:57.319969575+00:00"
   },
   "extra_prompt": "你是科学绘图助手。根据研究问题与数据，绘制专业图表",
   "abilities": {
@@ -44,7 +44,7 @@
     "description": ""
   },
   "preset": {
-    "revision": 1,
+    "revision": 2,
     "status": "active"
   }
 }

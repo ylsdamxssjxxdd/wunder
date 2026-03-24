@@ -871,11 +871,19 @@ const resolveAgentConfiguredToolNames = (agent) => {
   if (declared.length > 0) {
     return declared;
   }
+  // tool_names is the persisted selection source; keep it ahead of legacy ability_items.
+  const selectedFromToolNames = normalizeToolNameList([
+    ...normalizeToolNameList(source.tool_names),
+    ...normalizeToolNameList(source.toolNames)
+  ]);
+  if (selectedFromToolNames.length > 0) {
+    return selectedFromToolNames;
+  }
   const selectedFromItems = resolveSelectedAbilityNamesFromProfile(source);
   if (selectedFromItems.length > 0) {
     return selectedFromItems;
   }
-  return normalizeToolNameList(source.tool_names);
+  return [];
 };
 
 const filterSummaryByNames = (summary, allowedSet) => {
@@ -887,15 +895,36 @@ const filterSummaryByNames = (summary, allowedSet) => {
           return name && allowedSet.has(name);
         })
       : [];
+  const filterUnifiedItems = (list) =>
+    Array.isArray(list)
+      ? list.filter((item) => {
+          if (!item || typeof item !== 'object') return false;
+          const source = item;
+          const name = String(
+            source.runtime_name ||
+              source.runtimeName ||
+              source.name ||
+              source.tool_name ||
+              source.toolName ||
+              source.id ||
+              ''
+          ).trim();
+          return name && allowedSet.has(name);
+        })
+      : [];
   return {
     ...summary,
     builtin_tools: filterList(summary.builtin_tools),
     mcp_tools: filterList(summary.mcp_tools),
     a2a_tools: filterList(summary.a2a_tools),
     skills: filterList(summary.skills),
+    skill_list: filterList(summary.skill_list),
+    skillList: filterList(summary.skillList),
     knowledge_tools: filterList(summary.knowledge_tools),
     user_tools: filterList(summary.user_tools),
-    shared_tools: filterList(summary.shared_tools)
+    shared_tools: filterList(summary.shared_tools),
+    items: filterUnifiedItems(summary.items),
+    itemList: filterUnifiedItems(summary.itemList)
   };
 };
 
@@ -993,19 +1022,11 @@ const greetingOverride = computed(() => {
   return desc;
 });
 const effectiveToolSummary = computed(() => {
-  const overrides = activeSession.value?.tool_overrides;
-  const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
-    ? chatStore.draftToolOverrides
-    : [];
   const activeProfile = activeAgentId.value
     ? (activeAgent.value as Record<string, unknown> | null)
     : (defaultAgent.value as Record<string, unknown> | null);
   const activeToolNames = resolveAgentConfiguredToolNames(activeProfile || {});
-  return applyToolOverridesToSummary(
-    promptToolSummary.value,
-    overrides && overrides.length > 0 ? overrides : draftOverrides,
-    activeToolNames
-  );
+  return applyToolOverridesToSummary(promptToolSummary.value, [], activeToolNames);
 });
 const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || t('chat.systemPrompt.empty');
@@ -2741,24 +2762,8 @@ const openPromptPreview = async () => {
       ? (activeAgent.value as Record<string, unknown> | null)
       : (defaultAgent.value as Record<string, unknown> | null);
     const previewAgentDefaults = resolveAgentConfiguredToolNames(previewAgentProfile || {});
-    const previewDefaultSet = new Set(previewAgentDefaults);
-    const rawOverrides =
-      activeSession.value?.tool_overrides && activeSession.value.tool_overrides.length > 0
-        ? activeSession.value.tool_overrides
-        : Array.isArray(chatStore.draftToolOverrides) && chatStore.draftToolOverrides.length > 0
-          ? chatStore.draftToolOverrides
-          : [];
-    let overrides = undefined;
-    if (Array.isArray(rawOverrides) && rawOverrides.includes(TOOL_OVERRIDE_NONE)) {
-      overrides = [TOOL_OVERRIDE_NONE];
-    } else {
-      const sanitized = normalizeToolNameList(rawOverrides).filter(
-        (name) => !previewDefaultSet.size || previewDefaultSet.has(name)
-      );
-      if (sanitized.length > 0) {
-        overrides = sanitized;
-      }
-    }
+    const overrides =
+      previewAgentDefaults.length > 0 ? previewAgentDefaults : [TOOL_OVERRIDE_NONE];
     const agentId =
       activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
     const requestPayload = {

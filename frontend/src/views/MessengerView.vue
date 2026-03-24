@@ -2489,6 +2489,17 @@ const activeAgentIcon = computed(() =>
     : (activeAgent.value as Record<string, unknown> | null)?.icon
 );
 
+const resolveAgentIconForDisplay = (
+  agentId: string,
+  fallback: Record<string, unknown> | null = null
+): unknown => {
+  const normalized = normalizeAgentId(agentId);
+  if (normalized === DEFAULT_AGENT_KEY) {
+    return (defaultAgentProfile.value as Record<string, unknown> | null)?.icon ?? fallback?.icon;
+  }
+  return fallback?.icon;
+};
+
 const loadDefaultAgentProfile = async () => {
   defaultAgentProfile.value =
     ((await agentStore.getAgent(DEFAULT_AGENT_KEY, { force: true }).catch(() => null)) as Record<
@@ -2935,11 +2946,19 @@ const resolveAgentConfiguredAbilityNames = (agent: Record<string, unknown> | nul
   if (declared.length > 0) {
     return declared;
   }
+  // tool_names is the persisted selection source; keep it ahead of legacy ability_items.
+  const selectedFromToolNames = normalizeAbilityNameList([
+    ...normalizeAbilityNameList(agent?.tool_names),
+    ...normalizeAbilityNameList(agent?.toolNames)
+  ]);
+  if (selectedFromToolNames.length > 0) {
+    return selectedFromToolNames;
+  }
   const selectedFromItems = resolveSelectedAbilityNamesFromAgentProfile(agent);
   if (selectedFromItems.length > 0) {
     return selectedFromItems;
   }
-  return normalizeAbilityNameList(agent?.tool_names);
+  return [];
 };
 
 const filterAbilitySummaryByNames = (
@@ -2953,6 +2972,23 @@ const filterAbilitySummaryByNames = (
           return Boolean(name) && selectedNames.has(name);
         })
       : [];
+  const filterUnifiedItems = (list: unknown) =>
+    Array.isArray(list)
+      ? list.filter((item) => {
+          if (!item || typeof item !== 'object') return false;
+          const source = item as Record<string, unknown>;
+          const name = String(
+            source.runtime_name ||
+              source.runtimeName ||
+              source.name ||
+              source.tool_name ||
+              source.toolName ||
+              source.id ||
+              ''
+          ).trim();
+          return Boolean(name) && selectedNames.has(name);
+        })
+      : [];
   return {
     ...summary,
     builtin_tools: filterList(summary.builtin_tools),
@@ -2961,7 +2997,11 @@ const filterAbilitySummaryByNames = (
     knowledge_tools: filterList(summary.knowledge_tools),
     user_tools: filterList(summary.user_tools),
     shared_tools: filterList(summary.shared_tools),
-    skills: filterList(summary.skills)
+    skills: filterList(summary.skills),
+    skill_list: filterList(summary.skill_list),
+    skillList: filterList(summary.skillList),
+    items: filterUnifiedItems(summary.items),
+    itemList: filterUnifiedItems(summary.itemList)
   };
 };
 
@@ -2970,29 +3010,13 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
   if (!summary) return null;
   const allowedSet = buildAbilityAllowedNameSet(summary);
   if (!allowedSet.size) return summary;
-  const session = activeAgentSession.value as Record<string, unknown> | null;
-  const sessionOverrides = normalizeAbilityNameList(
-    Array.isArray(session?.tool_overrides) ? (session?.tool_overrides as unknown[]) : []
-  );
-  const draftOverrides = normalizeAbilityNameList(
-    Array.isArray(chatStore.draftToolOverrides) ? (chatStore.draftToolOverrides as unknown[]) : []
-  );
   const activeAgentProfile =
     activeAgentId.value === DEFAULT_AGENT_KEY
       ? (defaultAgentProfile.value as Record<string, unknown> | null)
       : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
           (activeAgent.value as Record<string, unknown> | null));
   const agentDefaults = normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile));
-  const agentDefaultSet = new Set<string>(agentDefaults);
-  const normalizeScopedOverrides = (items: string[]): string[] =>
-    items.filter((name) => !agentDefaultSet.size || agentDefaultSet.has(name));
-  const hasSessionOverrides = sessionOverrides.length > 0;
-  const hasDraftOverrides = draftOverrides.length > 0;
-  const sourceOverrides = hasSessionOverrides
-    ? normalizeScopedOverrides(sessionOverrides)
-    : hasDraftOverrides
-      ? normalizeScopedOverrides(draftOverrides)
-      : agentDefaults;
+  const sourceOverrides = agentDefaults;
   if (sourceOverrides.some((item) => String(item || '').trim() === AGENT_TOOL_OVERRIDE_NONE)) {
     return filterAbilitySummaryByNames(summary, new Set<string>());
   }
@@ -3754,7 +3778,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
         kind: 'agent',
         sourceId: String(main?.session?.id || ''),
         agentId,
-        icon: (agent as Record<string, unknown> | null)?.icon,
+        icon: resolveAgentIconForDisplay(agentId, agent as Record<string, unknown> | null),
         title,
         preview,
         unread: Math.max(0, Math.floor(Number(agentMainUnreadCountMap.value[agentId] || 0))),
@@ -3778,7 +3802,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
         kind: 'agent',
         sourceId: '',
         agentId: draftAgentId,
-        icon: (agent as Record<string, unknown> | null)?.icon,
+        icon: resolveAgentIconForDisplay(draftAgentId, agent as Record<string, unknown> | null),
         title: String(
           (agent as Record<string, unknown> | null)?.name ||
             (draftAgentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : draftAgentId)
@@ -7589,12 +7613,6 @@ const openAgentPromptPreview = async () => {
   try {
     const session = activeAgentSession.value as Record<string, unknown> | null;
     const sessionId = String(chatStore.activeSessionId || '').trim();
-    const sessionOverrides = normalizeAbilityNameList(
-      Array.isArray(session?.tool_overrides) ? (session?.tool_overrides as unknown[]) : []
-    );
-    const draftOverrides = normalizeAbilityNameList(
-      Array.isArray(chatStore.draftToolOverrides) ? (chatStore.draftToolOverrides as unknown[]) : []
-    );
     const sourceAgentId = normalizeAgentId(
       session?.agent_id || chatStore.draftAgentId || activeAgentId.value
     );
@@ -7607,19 +7625,10 @@ const openAgentPromptPreview = async () => {
     const previewAgentDefaults = normalizeAbilityNameList(
       resolveAgentConfiguredAbilityNames(previewAgentProfile)
     );
-    const previewDefaultSet = new Set<string>(previewAgentDefaults);
-    const rawOverrides = sessionOverrides.length ? sessionOverrides : draftOverrides;
-    let overrides = undefined;
-    if (rawOverrides.includes(AGENT_TOOL_OVERRIDE_NONE)) {
-      overrides = [AGENT_TOOL_OVERRIDE_NONE];
-    } else {
-      const sanitized = rawOverrides.filter(
-        (name) => !previewDefaultSet.size || previewDefaultSet.has(name)
-      );
-      if (sanitized.length > 0) {
-        overrides = sanitized;
-      }
-    }
+    const overrides =
+      previewAgentDefaults.length > 0
+        ? previewAgentDefaults
+        : [AGENT_TOOL_OVERRIDE_NONE];
     const payload = {
       ...(agentId ? { agent_id: agentId } : {}),
       ...(overrides ? { tool_overrides: overrides } : {})

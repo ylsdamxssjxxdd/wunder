@@ -13,6 +13,7 @@ export type AgentAvatarIconConfig = {
 
 const DEFAULT_AGENT_AVATAR_ICON_NAME = DEFAULT_PROFILE_AVATAR_IMAGE_KEY;
 const FALLBACK_AGENT_AVATAR_ICON_NAME = 'initial';
+const LEGACY_DEFAULT_AVATAR_KEY = 'qq-avatar-0199';
 
 const normalizeLegacyAvatarName = (value: unknown): string => {
   const text = String(value || '')
@@ -25,7 +26,8 @@ const normalizeLegacyAvatarName = (value: unknown): string => {
   }
   const qqAvatarMatch = text.match(/^qq-avatar-(\d{1,4})$/);
   if (qqAvatarMatch) {
-    return `qq-avatar-${String(Number.parseInt(qqAvatarMatch[1], 10)).padStart(4, '0')}`;
+    const normalized = `qq-avatar-${String(Number.parseInt(qqAvatarMatch[1], 10)).padStart(4, '0')}`;
+    return normalized === LEGACY_DEFAULT_AVATAR_KEY ? DEFAULT_AGENT_AVATAR_ICON_NAME : normalized;
   }
   if (text === 'default') {
     return DEFAULT_AGENT_AVATAR_ICON_NAME;

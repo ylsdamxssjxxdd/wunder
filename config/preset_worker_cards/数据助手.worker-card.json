@@ -5,8 +5,8 @@
     "agent_id": "preset_726dceabaec657bd9d3ba1c79fd1cace",
     "name": "数据助手",
     "description": "数据助手",
-    "icon": "{\"color\":\"#94a3b8\",\"name\":\"spark\"}",
-    "exported_at": "2026-03-23T13:19:16.773243552+00:00"
+    "icon": "{\"color\":\"#94a3b8\",\"name\":\"qq-avatar-0120\"}",
+    "exported_at": "2026-03-24T22:07:57.341170433+00:00"
   },
   "extra_prompt": "你是数据助手，优先使用大数据处理技能和公司制度来完成数据分析任务",
   "abilities": {
@@ -25,14 +25,12 @@
       "应用补丁",
       "网页抓取",
       "extra_mcp@db_query",
-      "extra_mcp@db_export",
-      "公司制度知识库"
+      "extra_mcp@db_export"
     ],
     "skills": [
       "公文写作",
       "大数据处理",
-      "技能创建器",
-      "文稿校对"
+      "技能创建器"
     ]
   },
   "interaction": {
@@ -50,7 +48,7 @@
     "description": ""
   },
   "preset": {
-    "revision": 1,
+    "revision": 2,
     "status": "active"
   }
 }
