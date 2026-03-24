@@ -3213,9 +3213,28 @@ const startSessionWatcher = (store, sessionId) => {
     const candidateByUserRound = normalizedUserRound
       ? findAssistantMessageByUserRound(sessionMessagesRef, normalizedUserRound)
       : null;
+    const pendingCandidate = findPendingAssistantMessage(sessionMessagesRef);
+    const pendingRound = normalizeStreamRound(pendingCandidate?.stream_round);
+    const pendingCreatedAtMs = resolveTimestampMs(pendingCandidate?.created_at);
+    const pendingHasContent =
+      typeof pendingCandidate?.content === 'string' && pendingCandidate.content.trim().length > 0;
+    const pendingHasWorkflow =
+      Array.isArray(pendingCandidate?.workflowItems) && pendingCandidate.workflowItems.length > 0;
+    const pendingRoundMismatch =
+      pendingRound !== null &&
+      pendingRound !== normalizedRound &&
+      (normalizedUserRound === null || pendingRound !== normalizedUserRound);
+    const pendingLooksStale =
+      Boolean(pendingCandidate) &&
+      Number.isFinite(eventTimestampMs) &&
+      Number.isFinite(pendingCreatedAtMs) &&
+      eventTimestampMs > Number(pendingCreatedAtMs) + 1500 &&
+      (pendingHasContent || pendingHasWorkflow);
+    const reusablePending =
+      pendingCandidate && !pendingRoundMismatch && !pendingLooksStale ? pendingCandidate : null;
     const candidate =
       candidateByUserRound ||
-      findPendingAssistantMessage(sessionMessagesRef) ||
+      reusablePending ||
       findAssistantMessageByRound(sessionMessagesRef, normalizedRound);
     if (candidate) {
       const assignedRound = normalizeStreamRound(candidate.stream_round);
@@ -3236,12 +3255,21 @@ const startSessionWatcher = (store, sessionId) => {
       }
       const candidatePending =
         normalizeFlag(candidate.stream_incomplete) || normalizeFlag(candidate.workflowStreaming);
+      const candidateHasContent =
+        typeof candidate.content === 'string' && candidate.content.trim().length > 0;
+      const candidateHasWorkflow =
+        Array.isArray(candidate.workflowItems) && candidate.workflowItems.length > 0;
+      const placeholderCandidate =
+        assignedRound === normalizedRound &&
+        !candidatePending &&
+        !candidateHasContent &&
+        !candidateHasWorkflow;
       if (
         candidatePending ||
         assignedRound === null ||
-        assignedRound === normalizedRound ||
         (normalizedUserRound !== null && assignedRound === normalizedUserRound) ||
-        Boolean(candidateByUserRound)
+        Boolean(candidateByUserRound) ||
+        placeholderCandidate
       ) {
         if (assignedRound === null || assignedRound !== normalizedRound) {
           candidate.stream_round = normalizedRound;
