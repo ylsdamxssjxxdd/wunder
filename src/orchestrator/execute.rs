@@ -2404,13 +2404,15 @@ fn build_tool_failure_guard_answer(
 }
 
 fn should_request_tool_failure_reroute(reason: &str, reroute_notice_count: u32) -> bool {
-    if reroute_notice_count >= 2 {
-        return false;
+    match reason {
+        // Non-retryable identical failures should still get one explicit reroute chance
+        // before hard-stop, so the model can apply deterministic fixes.
+        "same_non_retryable_failure" => reroute_notice_count < 1,
+        "tool_failure_reroute_required" | "same_retryable_failure_exhausted" => {
+            reroute_notice_count < 2
+        }
+        _ => false,
     }
-    matches!(
-        reason,
-        "tool_failure_reroute_required" | "same_retryable_failure_exhausted"
-    )
 }
 
 fn encode_observation_prefixed_json(payload: &Value) -> String {
@@ -3009,9 +3011,13 @@ mod tests {
             "same_retryable_failure_exhausted",
             1
         ));
-        assert!(!should_request_tool_failure_reroute(
+        assert!(should_request_tool_failure_reroute(
             "same_non_retryable_failure",
             0
+        ));
+        assert!(!should_request_tool_failure_reroute(
+            "same_non_retryable_failure",
+            1
         ));
         assert!(!should_request_tool_failure_reroute(
             "tool_failure_reroute_required",

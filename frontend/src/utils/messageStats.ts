@@ -33,6 +33,7 @@ const formatSpeed = (value: unknown): string => {
 
 const MIN_SPEED_DURATION_S = 0.2;
 const MAX_REASONABLE_SPEED = 10000;
+const DIRECT_SPEED_OUTLIER_RATIO = 2.5;
 
 const normalizeSpeed = (speed: number, durationSeconds: number | null): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
@@ -81,6 +82,21 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     Number.isFinite(usageOutputTokens) && usageOutputTokens > 0
       ? usageOutputTokens
       : derivedOutputTokens;
+  const averageSpeedRaw = Number(
+    stats?.avg_model_round_speed_tps ??
+      stats?.avgModelRoundSpeedTps ??
+      stats?.average_speed_tps ??
+      stats?.averageSpeedTps
+  );
+  const averageRoundsRaw = Number(
+    stats?.avg_model_round_speed_rounds ??
+      stats?.avgModelRoundSpeedRounds ??
+      stats?.average_speed_rounds ??
+      stats?.averageSpeedRounds
+  );
+  const averageSpeed = normalizeSpeed(averageSpeedRaw, null);
+  const averageRounds = Number.isFinite(averageRoundsRaw) ? averageRoundsRaw : 0;
+  const hasMultiRoundAverage = averageSpeed !== null && averageRounds >= 2;
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_s ??
       stats?.decodeDurationS ??
@@ -90,25 +106,23 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
     const speed = normalizeSpeed(outputTokens / decode, decode);
-    if (speed !== null) return speed;
+    if (speed !== null) {
+      if (
+        hasMultiRoundAverage &&
+        speed > (averageSpeed as number) * DIRECT_SPEED_OUTLIER_RATIO
+      ) {
+        return averageSpeed;
+      }
+      return speed;
+    }
   }
-  const averageSpeed = Number(
-    stats?.avg_model_round_speed_tps ??
-      stats?.avgModelRoundSpeedTps ??
-      stats?.average_speed_tps ??
-      stats?.averageSpeedTps
-  );
-  const averageRounds = Number(
-    stats?.avg_model_round_speed_rounds ??
-      stats?.avgModelRoundSpeedRounds ??
-      stats?.average_speed_rounds ??
-      stats?.averageSpeedRounds
-  );
+  if (Number.isFinite(outputTokens) && outputTokens > 0 && hasMultiRoundAverage) {
+    return averageSpeed;
+  }
   const hasSingleAverageRound =
     !Number.isFinite(averageRounds) || averageRounds <= 0 || averageRounds === 1;
-  if (Number.isFinite(averageSpeed) && averageSpeed > 0 && hasSingleAverageRound) {
-    const speed = normalizeSpeed(averageSpeed, null);
-    if (speed !== null) return speed;
+  if (averageSpeed !== null && hasSingleAverageRound) {
+    return averageSpeed;
   }
   return null;
 };

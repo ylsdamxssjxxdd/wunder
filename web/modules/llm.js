@@ -15,6 +15,7 @@ const DEFAULT_PROVIDER_ID = "openai_compatible";
 const PROVIDER_PRESETS = [
   { id: "openai_compatible", label: "openai_compatible", baseUrl: "" },
   { id: "openai", label: "openai", baseUrl: "https://api.openai.com/v1" },
+  { id: "anthropic", label: "anthropic", baseUrl: "https://api.anthropic.com/v1" },
   { id: "openrouter", label: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
   { id: "siliconflow", label: "siliconflow", baseUrl: "https://api.siliconflow.cn/v1" },
   { id: "deepseek", label: "deepseek", baseUrl: "https://api.deepseek.com" },
@@ -42,6 +43,9 @@ const normalizeProviderId = (value) => {
       return "openai_compatible";
     case "openai_native":
       return "openai";
+    case "claude":
+    case "anthropic_api":
+      return "anthropic";
     case "silicon_flow":
       return "siliconflow";
     case "kimi":

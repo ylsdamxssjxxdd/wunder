@@ -846,6 +846,13 @@ const updateRuntimeLastEventId = (runtime, eventId) => {
   }
 };
 
+const setRuntimeLastEventId = (runtime, eventId) => {
+  if (!runtime) return;
+  const normalized = normalizeStreamEventId(eventId);
+  if (normalized === null) return;
+  runtime.lastEventId = normalized;
+};
+
 const normalizeStreamRound = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number.parseInt(value, 10);
@@ -2747,6 +2754,8 @@ const ensureRuntime = (sessionId) => {
       watchLastEventAt: 0,
       watchdogTimer: null,
       watchdogBusy: false,
+      watchReconcileTimer: null,
+      watchReconcileAt: 0,
       slowClientResumeTimer: null,
       slowClientResumeAfterEventId: 0,
       stopRequested: false,
@@ -2898,6 +2907,11 @@ const clearWatchdog = (runtime) => {
     clearTimeout(runtime.watchdogTimer);
     runtime.watchdogTimer = null;
   }
+  if (runtime.watchReconcileTimer) {
+    clearTimeout(runtime.watchReconcileTimer);
+    runtime.watchReconcileTimer = null;
+  }
+  runtime.watchReconcileAt = 0;
   runtime.watchdogBusy = false;
   runtime.watchLastEventAt = 0;
 };
@@ -2940,6 +2954,19 @@ const resolveMaxStreamEventId = (messages) => {
     }
   });
   return maxId > 0 ? maxId : null;
+};
+
+const resolveLastAssistantStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const eventId = normalizeStreamEventId(message.stream_event_id);
+    if (eventId !== null) {
+      return eventId;
+    }
+  }
+  return null;
 };
 
 const resolveMaxStreamRound = (messages) => {
@@ -3021,6 +3048,8 @@ const WATCHDOG_IDLE_MS_HIDDEN = 26000;
 const WATCHDOG_INTERVAL_MS_ACTIVE = 500;
 const WATCHDOG_INTERVAL_MS_BACKGROUND = 3500;
 const WATCHDOG_INTERVAL_MS_HIDDEN = 7000;
+const WATCH_RECONCILE_DELAY_MS = 150;
+const WATCH_RECONCILE_COOLDOWN_MS = 1800;
 const SLOW_CLIENT_RESUME_DELAY_MS = 120;
 const STREAM_FLUSH_BASE_MS = 20;
 const STREAM_FLUSH_MAX_MS = 160;
@@ -3143,11 +3172,19 @@ const startSessionWatcher = (store, sessionId) => {
   }
   sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
-  if (!runtime || runtime.sendController || runtime.resumeController) return;
+  if (!runtime) return;
+  if (runtime.sendController?.signal?.aborted) {
+    runtime.sendController = null;
+  }
+  if (runtime.resumeController?.signal?.aborted) {
+    runtime.resumeController = null;
+  }
+  if (runtime.sendController || runtime.resumeController) return;
   const perfEnabled = chatPerf.enabled();
   runtime.watchController = new AbortController();
   const controller = runtime.watchController;
   runtime.watchLastEventAt = Date.now();
+  runtime.watchReconcileAt = 0;
   const requestId = buildWsRequestId();
   runtime.watchRequestId = requestId;
   const sessionMessagesRef = getSessionMessages(key) || store.messages;
@@ -3156,10 +3193,12 @@ const startSessionWatcher = (store, sessionId) => {
   const roundStates = new Map();
   const completedRounds = new Set();
   let maxKnownRound = resolveMaxStreamRound(sessionMessagesRef) || 0;
-  let lastEventId = Math.max(
-    resolveMaxStreamEventId(sessionMessagesRef) || 0,
-    getRuntimeLastEventId(runtime)
-  );
+  const tailEventId =
+    resolveLastAssistantStreamEventId(sessionMessagesRef) ||
+    resolveMaxStreamEventId(sessionMessagesRef) ||
+    0;
+  const runtimeLastEventId = getRuntimeLastEventId(runtime);
+  let lastEventId = runtimeLastEventId > 0 ? runtimeLastEventId : tailEventId;
   const minEventTimestampMs =
     lastEventId > 0 ? null : resolveLastAssistantTimestampMs(sessionMessagesRef);
 
@@ -3347,8 +3386,76 @@ const startSessionWatcher = (store, sessionId) => {
     return fallbackRound;
   };
 
+  const isWatchWorkflowEventType = (normalizedEventType) =>
+    normalizedEventType === 'final' ||
+    normalizedEventType === 'error' ||
+    normalizedEventType === 'received' ||
+    normalizedEventType === 'round_start' ||
+    normalizedEventType === 'progress' ||
+    normalizedEventType === 'message' ||
+    normalizedEventType === 'delta' ||
+    normalizedEventType === 'think_delta' ||
+    normalizedEventType === 'reasoning_delta' ||
+    normalizedEventType === 'llm_output' ||
+    normalizedEventType === 'tool_call' ||
+    normalizedEventType === 'tool_result' ||
+    normalizedEventType === 'tool_output' ||
+    normalizedEventType === 'team_progress' ||
+    normalizedEventType === 'team_finish' ||
+    normalizedEventType === 'team_error';
+
+  const extractWatchUserContent = (normalizedEventType, payload, data) => {
+    const candidates = [
+      data?.question,
+      payload?.question,
+      data?.user_message,
+      payload?.user_message,
+      data?.user_content,
+      payload?.user_content,
+      data?.input,
+      payload?.input,
+      data?.prompt,
+      payload?.prompt
+    ];
+    if (normalizedEventType === 'round_start' || normalizedEventType === 'received') {
+      candidates.push(data?.message, payload?.message);
+    }
+    for (const item of candidates) {
+      if (typeof item === 'string' && item.trim()) {
+        return item.trim();
+      }
+    }
+    return '';
+  };
+
   const markWatchdogEvent = () => {
     runtime.watchLastEventAt = Date.now();
+  };
+
+  // Reconcile from server when watch events appear out-of-sync with stream state.
+  const scheduleWatchReconcile = (delayMs = WATCH_RECONCILE_DELAY_MS) => {
+    if (controller.signal.aborted) return;
+    if (store.activeSessionId !== key) return;
+    if (!hasKnownSessionInStore(store, key)) return;
+    if (runtime.sendController || runtime.resumeController) return;
+    const now = Date.now();
+    const nextAllowedAt = Number(runtime.watchReconcileAt) || 0;
+    if (nextAllowedAt > now) {
+      return;
+    }
+    runtime.watchReconcileAt = now + WATCH_RECONCILE_COOLDOWN_MS;
+    if (runtime.watchReconcileTimer) {
+      return;
+    }
+    runtime.watchReconcileTimer = setTimeout(() => {
+      runtime.watchReconcileTimer = null;
+      if (controller.signal.aborted) return;
+      if (runtime.watchController !== controller) return;
+      if (store.activeSessionId !== key) return;
+      if (!hasKnownSessionInStore(store, key)) return;
+      if (runtime.sendController || runtime.resumeController) return;
+      void store.loadSessionDetail(key).catch(() => {});
+    }, Math.max(0, Number(delayMs) || 0));
   };
 
   const startWatchdog = () => {
@@ -3405,6 +3512,14 @@ const startSessionWatcher = (store, sessionId) => {
           });
           return;
         }
+        if (
+          running === true &&
+          !pendingMessage &&
+          Number.isFinite(remoteLastEventId) &&
+          remoteLastEventId > lastEventId
+        ) {
+          scheduleWatchReconcile();
+        }
         if (running === false) {
           if (pendingMessage) {
             pendingMessage.stream_incomplete = false;
@@ -3432,6 +3547,12 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const onEvent = (eventType, dataText, eventId) => {
+    if (runtime.sendController?.signal?.aborted) {
+      runtime.sendController = null;
+    }
+    if (runtime.resumeController?.signal?.aborted) {
+      runtime.resumeController = null;
+    }
     if (runtime.sendController || runtime.resumeController) {
       return;
     }
@@ -3448,31 +3569,58 @@ const startSessionWatcher = (store, sessionId) => {
     if (eventType === 'slow_client' && !data) {
       return;
     }
+    const normalizedEventType = String(eventType || '').trim().toLowerCase();
     const stage = data?.stage ?? payload?.stage;
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
+    const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
+    const directRoundNumber = resolveEventRoundNumber(payload, data);
     const isRoundStart =
-      eventType === 'round_start' ||
-      eventType === 'received' ||
-      (eventType === 'progress' && stage === 'start');
+      normalizedEventType === 'round_start' ||
+      normalizedEventType === 'received' ||
+      (normalizedEventType === 'progress' && stage === 'start');
     const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventId !== null) {
       if (normalizedEventId <= lastEventId) {
         const latestAssistantTimestamp = resolveLastAssistantTimestampMs(sessionMessagesRef);
-        const canResetSequence =
+        const hasPendingAssistant = Boolean(findPendingAssistantMessage(sessionMessagesRef));
+        const highestActiveRound = Array.from(roundStates.keys()).reduce(
+          (maxValue, value) => (value > maxValue ? value : maxValue),
+          0
+        );
+        const knownRoundCeiling = Math.max(maxKnownRound, highestActiveRound);
+        const directRoundAdvanced =
+          directRoundNumber !== null && directRoundNumber > knownRoundCeiling;
+        const userRoundAdvanced =
+          userRoundNumber !== null && userRoundNumber > knownRoundCeiling;
+        const timestampLooksNew =
+          !Number.isFinite(eventTimestampMs) ||
+          !Number.isFinite(latestAssistantTimestamp) ||
+          eventTimestampMs > Number(latestAssistantTimestamp) + 200;
+        const canResetByStart =
           isRoundStart &&
           roundStates.size === 0 &&
-          !findPendingAssistantMessage(sessionMessagesRef) &&
-          Number.isFinite(eventTimestampMs) &&
-          (!Number.isFinite(latestAssistantTimestamp) ||
-            eventTimestampMs > Number(latestAssistantTimestamp) + 500);
-        if (!canResetSequence) {
+          !hasPendingAssistant &&
+          timestampLooksNew;
+        const canResetByRoundHint =
+          roundStates.size === 0 &&
+          !hasPendingAssistant &&
+          timestampLooksNew &&
+          isWatchWorkflowEventType(normalizedEventType) &&
+          (directRoundAdvanced || userRoundAdvanced);
+        if (!canResetByStart && !canResetByRoundHint) {
+          if (isWatchWorkflowEventType(normalizedEventType)) {
+            scheduleWatchReconcile();
+          }
           return;
         }
+        setRuntimeLastEventId(runtime, normalizedEventId);
+      } else {
+        updateRuntimeLastEventId(runtime, normalizedEventId);
       }
       lastEventId = normalizedEventId;
-      updateRuntimeLastEventId(runtime, normalizedEventId);
     }
     if (
+      normalizedEventId === null &&
       Number.isFinite(minEventTimestampMs) &&
       Number.isFinite(eventTimestampMs) &&
       eventTimestampMs <= minEventTimestampMs
@@ -3480,28 +3628,27 @@ const startSessionWatcher = (store, sessionId) => {
       return;
     }
     const roundNumber = resolveWatchRoundNumber(eventType, payload, data, isRoundStart);
-    const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
     const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber);
-    if (isRoundStart && state) {
-      const question =
-        data?.question ??
-        payload?.question ??
-        data?.message ??
-        payload?.message ??
-        '';
-      if (!state.userInserted && typeof question === 'string' && question.trim()) {
+    const userContent = extractWatchUserContent(normalizedEventType, payload, data);
+    if (state && (isRoundStart || normalizedEventType === 'received')) {
+      if (!state.userInserted && userContent) {
         insertWatchUserMessage(
           store,
           key,
           sessionMessagesRef,
-          question.trim(),
+          userContent,
           eventTimestampMs,
           state.message
         );
         state.userInserted = true;
       }
     }
-    if (!state) return;
+    if (!state) {
+      if (isWatchWorkflowEventType(normalizedEventType)) {
+        scheduleWatchReconcile();
+      }
+      return;
+    }
     state.message.workflowStreaming = true;
     state.message.stream_incomplete = true;
     assignStreamEventId(state.message, eventId);
@@ -4007,6 +4154,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
+  const MIN_ROUND_SPEED_DECODE_S = 0.2;
+  const MAX_ROUND_SPEED_TPS = 10000;
+
   const recomputeRoundAggregates = () => {
     if (!stats) return;
     let prefillTotal = 0;
@@ -4030,6 +4180,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       // Speed definition: model output phase only (from first generated token to end),
       // so prefill/tool time is excluded and decode duration is the only denominator.
       if (item.usage && item.usage.output > 0 && decode !== null && decode > 0) {
+        if (decode < MIN_ROUND_SPEED_DECODE_S) {
+          return;
+        }
+        const roundSpeed = item.usage.output / decode;
+        if (!Number.isFinite(roundSpeed) || roundSpeed <= 0 || roundSpeed > MAX_ROUND_SPEED_TPS) {
+          return;
+        }
         speedOutputTotal += item.usage.output;
         speedDecodeTotal += decode;
         speedCount += 1;

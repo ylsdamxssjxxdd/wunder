@@ -934,7 +934,8 @@
   - `llm.default`：默认模型配置名称
 - `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
-  - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
+  - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
+  - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
@@ -2083,7 +2084,7 @@
 - 新增二维码登录接口：
   - `POST /wunder/channels/weixin/qr/start`
     - 入参：`account_id?`、`api_base?`、`bot_type?`、`force?`
-    - 返回：`session_key`、`qrcode`、`qrcode_url`、`api_base`、`bot_type`
+    - 返回：`session_key`、`qrcode`、`qrcode_url`、`qrcode_open_url`、`api_base`、`bot_type`
   - `POST /wunder/channels/weixin/qr/wait`
     - 入参：`session_key`、`api_base?`、`timeout_ms?`
     - 返回：`connected`、`status`，若确认登录则附带 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`

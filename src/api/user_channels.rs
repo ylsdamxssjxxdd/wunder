@@ -518,6 +518,7 @@ struct WeixinQrSession {
     user_id: String,
     qrcode: String,
     qrcode_url: String,
+    qrcode_open_url: String,
     api_base: String,
     bot_type: String,
     route_tag: Option<String>,
@@ -1656,6 +1657,7 @@ async fn start_weixin_qr_login(
                     "session_key": existing.session_key,
                     "qrcode": existing.qrcode,
                     "qrcode_url": preview_qrcode_url,
+                    "qrcode_open_url": if existing.qrcode_open_url.is_empty() { existing.qrcode_url.clone() } else { existing.qrcode_open_url.clone() },
                     "api_base": existing.api_base,
                     "bot_type": existing.bot_type,
                     "cached": true,
@@ -1705,6 +1707,7 @@ async fn start_weixin_qr_login(
         user_id: user_id.clone(),
         qrcode: qrcode.clone(),
         qrcode_url: qrcode_url.clone(),
+        qrcode_open_url: raw_qrcode_url.clone(),
         api_base: api_base.clone(),
         bot_type: bot_type.clone(),
         route_tag,
@@ -1723,6 +1726,7 @@ async fn start_weixin_qr_login(
         "session_key": session_key,
         "qrcode": qrcode,
         "qrcode_url": qrcode_url,
+        "qrcode_open_url": raw_qrcode_url,
         "api_base": api_base,
         "bot_type": bot_type,
     }})))
@@ -3136,6 +3140,8 @@ mod tests {
             user_id: "u_test".to_string(),
             qrcode: "qrcode-text".to_string(),
             qrcode_url: "https://example.com/qr".to_string(),
+            qrcode_open_url: "https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=qrcode-text&bot_type=3"
+                .to_string(),
             api_base: "https://api.ilinknetwork.com".to_string(),
             bot_type: "2".to_string(),
             route_tag: Some("test-tag".to_string()),
@@ -3158,6 +3164,7 @@ mod tests {
         assert_eq!(loaded.user_id, session.user_id);
         assert_eq!(loaded.qrcode, session.qrcode);
         assert_eq!(loaded.qrcode_url, session.qrcode_url);
+        assert_eq!(loaded.qrcode_open_url, session.qrcode_open_url);
         assert_eq!(loaded.api_base, session.api_base);
         assert_eq!(loaded.bot_type, session.bot_type);
         assert_eq!(loaded.route_tag, session.route_tag);

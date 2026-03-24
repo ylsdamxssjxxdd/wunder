@@ -235,14 +235,6 @@
                   :alt="t('channels.form.weixin.qrImageAlt')"
                   referrerpolicy="no-referrer"
                 />
-                <a
-                  class="channel-weixin-qr-link"
-                  :href="editWeixinQrPreviewUrl"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {{ t('channels.form.weixin.qrOpenLink') }}
-                </a>
               </div>
               <div v-if="editWeixinQrState.sessionKey" class="channel-detail-hint">
                 {{ t('channels.form.weixin.qrSessionKey') }}: {{ editWeixinQrState.sessionKey }}
@@ -489,6 +481,8 @@ type WeixinQrState = {
   sessionKey: string;
   qrcode: string;
   qrcodeUrl: string;
+  qrcodeOpenUrl: string;
+  botType: string;
   status: string;
   message: string;
   apiBase: string;
@@ -986,6 +980,8 @@ const createWeixinQrState = reactive<WeixinQrState>({
   sessionKey: '',
   qrcode: '',
   qrcodeUrl: '',
+  qrcodeOpenUrl: '',
+  botType: DEFAULT_WEIXIN_BOT_TYPE,
   status: '',
   message: '',
   apiBase: '',
@@ -996,6 +992,8 @@ const editWeixinQrState = reactive<WeixinQrState>({
   sessionKey: '',
   qrcode: '',
   qrcodeUrl: '',
+  qrcodeOpenUrl: '',
+  botType: DEFAULT_WEIXIN_BOT_TYPE,
   status: '',
   message: '',
   apiBase: '',
@@ -1485,6 +1483,8 @@ const clearWeixinQrState = (target: WeixinQrState) => {
   target.sessionKey = '';
   target.qrcode = '';
   target.qrcodeUrl = '';
+  target.qrcodeOpenUrl = '';
+  target.botType = DEFAULT_WEIXIN_BOT_TYPE;
   target.status = '';
   target.message = '';
   target.apiBase = '';
@@ -1546,12 +1546,91 @@ const normalizeWeixinQrImageValue = (rawValue: unknown, apiBaseRaw?: unknown): s
   return '';
 };
 
+const buildWeixinQrRenderUrl = (rawValue: unknown, apiBaseRaw?: unknown): string => {
+  const text = trimmedText(rawValue);
+  if (!text) {
+    return '';
+  }
+  const params = new URLSearchParams({ text });
+  const apiBase = trimmedText(apiBaseRaw);
+  if (apiBase) {
+    params.set('api_base', apiBase);
+  }
+  return `/wunder/channels/weixin/qr/render?${params.toString()}`;
+};
+
+const buildWeixinQrPromptPageUrl = (qrcodeRaw: unknown, botTypeRaw: unknown): string => {
+  const qrcode = trimmedText(qrcodeRaw);
+  if (!qrcode) {
+    return '';
+  }
+  if (
+    qrcode.startsWith('http://') ||
+    qrcode.startsWith('https://') ||
+    qrcode.startsWith('blob:') ||
+    qrcode.startsWith('data:image/')
+  ) {
+    return '';
+  }
+  const botType = trimmedText(botTypeRaw) || DEFAULT_WEIXIN_BOT_TYPE;
+  const params = new URLSearchParams({
+    qrcode,
+    bot_type: botType
+  });
+  return `https://liteapp.weixin.qq.com/q/7GiQu1?${params.toString()}`;
+};
+
+const resolveWeixinQrOpenUrl = (state: WeixinQrState): string => {
+  const openRaw = normalizeWeixinQrImageValue(state.qrcodeOpenUrl, state.apiBase);
+  if (
+    openRaw.startsWith('http://') ||
+    openRaw.startsWith('https://') ||
+    openRaw.startsWith('blob:')
+  ) {
+    return openRaw;
+  }
+  const promptFromQrcode = buildWeixinQrPromptPageUrl(state.qrcode, state.botType);
+  if (promptFromQrcode) {
+    return promptFromQrcode;
+  }
+
+  const fromRaw = normalizeWeixinQrImageValue(state.qrcodeUrl, state.apiBase);
+  if (
+    fromRaw.startsWith('http://') ||
+    fromRaw.startsWith('https://') ||
+    fromRaw.startsWith('blob:')
+  ) {
+    return fromRaw;
+  }
+
+  const fromQrcode = normalizeWeixinQrImageValue(state.qrcode, state.apiBase);
+  if (
+    fromQrcode.startsWith('http://') ||
+    fromQrcode.startsWith('https://') ||
+    fromQrcode.startsWith('blob:')
+  ) {
+    return fromQrcode;
+  }
+  return '';
+};
+
 const resolveWeixinQrPreviewUrl = (state: WeixinQrState): string => {
+  const openUrl = resolveWeixinQrOpenUrl(state);
+  if (openUrl.startsWith('http://') || openUrl.startsWith('https://')) {
+    return buildWeixinQrRenderUrl(openUrl, state.apiBase);
+  }
+  if (openUrl.startsWith('blob:') || openUrl.startsWith('data:image/')) {
+    return openUrl;
+  }
   const fromUrl = normalizeWeixinQrImageValue(state.qrcodeUrl, state.apiBase);
   if (fromUrl) {
     return fromUrl;
   }
-  return normalizeWeixinQrImageValue(state.qrcode, state.apiBase);
+  const fromQrcode = normalizeWeixinQrImageValue(state.qrcode, state.apiBase);
+  if (fromQrcode) {
+    return fromQrcode;
+  }
+  return '';
 };
 const createWeixinQrPreviewUrl = computed(() => resolveWeixinQrPreviewUrl(createWeixinQrState));
 const editWeixinQrPreviewUrl = computed(() => resolveWeixinQrPreviewUrl(editWeixinQrState));
@@ -1619,6 +1698,8 @@ const startWeixinQrFlow = async (scope: 'create' | 'edit', force = false) => {
     state.sessionKey = trimmedText(result.session_key);
     state.qrcode = trimmedText(result.qrcode);
     state.qrcodeUrl = trimmedText(result.qrcode_url);
+    state.qrcodeOpenUrl = trimmedText(result.qrcode_open_url);
+    state.botType = trimmedText(result.bot_type) || botType;
     state.apiBase = trimmedText(result.api_base) || apiBase;
     state.status = 'wait';
     state.message = t('channels.form.weixin.qrStartSuccess');

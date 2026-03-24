@@ -21,6 +21,7 @@ use tracing::warn;
 use url::{form_urlencoded::byte_serialize, Url};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const DEFAULT_SILICONFLOW_BASE_URL: &str = "https://api.siliconflow.cn/v1";
 const DEFAULT_DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
@@ -33,7 +34,9 @@ const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
 const RESPONSES_RESOURCE: &str = "responses";
+const MESSAGES_RESOURCE: &str = "messages";
 const EMBEDDINGS_RESOURCE: &str = "embeddings";
+const ANTHROPIC_VERSION_HEADER_VALUE: &str = "2023-06-01";
 const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 4] = [
     &["chat", "completions"],
     &["responses"],
@@ -160,6 +163,10 @@ impl LlmClient {
         Self { http, config }
     }
 
+    fn is_anthropic_provider(&self) -> bool {
+        normalize_provider(self.config.provider.as_deref()) == "anthropic"
+    }
+
     pub async fn complete(&self, messages: &[ChatMessage]) -> Result<LlmResponse> {
         self.complete_with_tools(messages, None).await
     }
@@ -203,7 +210,9 @@ impl LlmClient {
                 truncate_text(&body_text, 2048)
             ));
         }
-        let (content, reasoning, tool_calls) = if matches!(api_mode, OpenAiApiMode::Responses)
+        let (content, reasoning, tool_calls) = if self.is_anthropic_provider() {
+            parse_anthropic_body(&body)
+        } else if matches!(api_mode, OpenAiApiMode::Responses)
             || body.get("output").is_some()
             || body.get("response").is_some()
         {
@@ -377,6 +386,10 @@ impl LlmClient {
     fn endpoint(&self) -> String {
         let base =
             resolve_base_url(&self.config).unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+        if self.is_anthropic_provider() {
+            return build_anthropic_messages_endpoint(&base)
+                .unwrap_or_else(|| format!("{DEFAULT_ANTHROPIC_BASE_URL}/{MESSAGES_RESOURCE}"));
+        }
         let resource = match self.api_mode() {
             OpenAiApiMode::Responses => RESPONSES_RESOURCE,
             OpenAiApiMode::ChatCompletions => CHAT_COMPLETIONS_RESOURCE,
@@ -387,13 +400,30 @@ impl LlmClient {
 
     fn headers(&self) -> reqwest::header::HeaderMap {
         let mut headers = reqwest::header::HeaderMap::new();
-        if let Some(api_key) = &self.config.api_key {
-            if !api_key.is_empty() {
-                let value = format!("Bearer {api_key}");
-                if let Ok(header_value) = value.parse() {
-                    headers.insert(reqwest::header::AUTHORIZATION, header_value);
-                }
+        let Some(api_key) = self
+            .config
+            .api_key
+            .as_deref()
+            .and_then(normalize_api_key_token)
+        else {
+            return headers;
+        };
+
+        if self.is_anthropic_provider() {
+            if let Ok(value) = api_key.parse() {
+                headers.insert(reqwest::header::HeaderName::from_static("x-api-key"), value);
             }
+            if let Ok(value) = ANTHROPIC_VERSION_HEADER_VALUE.parse() {
+                headers.insert(
+                    reqwest::header::HeaderName::from_static("anthropic-version"),
+                    value,
+                );
+            }
+        }
+
+        let value = format!("Bearer {api_key}");
+        if let Ok(header_value) = value.parse() {
+            headers.insert(reqwest::header::AUTHORIZATION, header_value);
         }
         headers
     }
@@ -428,6 +458,9 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
+        if self.is_anthropic_provider() {
+            return self.build_anthropic_payload(messages, stream, include_usage, tools);
+        }
         match self.api_mode() {
             OpenAiApiMode::Responses => {
                 self.build_responses_payload(messages, stream, include_usage, tools)
@@ -436,6 +469,53 @@ impl LlmClient {
                 self.build_chat_payload(messages, stream, include_usage, tools)
             }
         }
+    }
+
+    fn build_anthropic_payload(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        _include_usage: bool,
+        tools: Option<&[Value]>,
+    ) -> Value {
+        let (system_prompt, anthropic_messages) = build_anthropic_messages(messages);
+        let max_tokens = self
+            .config
+            .max_output
+            .filter(|value| *value > 0)
+            .unwrap_or(4096);
+        let mut payload = json!({
+            "model": self
+                .config
+                .model
+                .clone()
+                .unwrap_or_else(|| "claude-sonnet-4-5".to_string()),
+            "messages": anthropic_messages,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        });
+        if let Some(system_prompt) = system_prompt.filter(|value| !value.trim().is_empty()) {
+            payload["system"] = Value::String(system_prompt);
+        }
+        if let Some(temperature) = self.config.temperature {
+            payload["temperature"] = json!(round_f32(temperature));
+        }
+        if let Some(stop) = &self.config.stop {
+            if !stop.is_empty() {
+                payload["stop_sequences"] = json!(stop);
+            }
+        }
+        if let Some(tool_defs) = tools {
+            let anthropic_tools = tool_defs
+                .iter()
+                .filter_map(openai_tool_definition_to_anthropic_tool)
+                .collect::<Vec<_>>();
+            if !anthropic_tools.is_empty() {
+                payload["tools"] = Value::Array(anthropic_tools);
+                payload["tool_choice"] = json!({ "type": "auto" });
+            }
+        }
+        payload
     }
 
     fn build_chat_payload(
@@ -996,6 +1076,9 @@ pub fn normalize_provider(provider: Option<&str>) -> String {
         "openai_native" => "openai".to_string(),
         "openai" => "openai".to_string(),
         "openai_compatible" => "openai_compatible".to_string(),
+        "anthropic" => "anthropic".to_string(),
+        "claude" => "anthropic".to_string(),
+        "anthropic_api" => "anthropic".to_string(),
         "openrouter" => "openrouter".to_string(),
         "silicon_flow" => "siliconflow".to_string(),
         "siliconflow" => "siliconflow".to_string(),
@@ -1021,6 +1104,7 @@ fn should_strip_openai_tool_schema(provider: Option<&str>) -> bool {
 pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some(DEFAULT_OPENAI_BASE_URL),
+        "anthropic" => Some(DEFAULT_ANTHROPIC_BASE_URL),
         "openrouter" => Some(DEFAULT_OPENROUTER_BASE_URL),
         "siliconflow" => Some(DEFAULT_SILICONFLOW_BASE_URL),
         "deepseek" => Some(DEFAULT_DEEPSEEK_BASE_URL),
@@ -1037,6 +1121,9 @@ pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
 
 pub fn is_openai_compatible_provider(provider: &str) -> bool {
     let normalized = normalize_provider(Some(provider));
+    if normalized == "anthropic" {
+        return false;
+    }
     if normalized == "openai_compatible" {
         return true;
     }
@@ -1100,6 +1187,11 @@ fn build_openai_resource_endpoint(base_url: &str, resource: &str) -> Option<Stri
         return Some(normalized_base);
     }
     Some(format!("{normalized_base}/{trimmed}"))
+}
+
+fn build_anthropic_messages_endpoint(base_url: &str) -> Option<String> {
+    let normalized_base = normalize_anthropic_base_url(base_url)?;
+    Some(format!("{normalized_base}/{MESSAGES_RESOURCE}"))
 }
 
 fn parse_url_without_query_fragment(value: &str) -> Option<Url> {
@@ -1215,6 +1307,384 @@ fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
         output,
         total,
     })
+}
+
+fn build_anthropic_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<Value>) {
+    let mut system_parts = Vec::new();
+    let mut output = Vec::new();
+
+    for message in messages {
+        let role = message.role.trim().to_ascii_lowercase();
+        match role.as_str() {
+            "system" => {
+                let text = flatten_message_text(&message.content);
+                if !text.trim().is_empty() {
+                    system_parts.push(text);
+                }
+            }
+            "assistant" => {
+                let mut blocks = Vec::new();
+                let text = flatten_message_text(&message.content);
+                if !text.trim().is_empty() {
+                    blocks.push(json!({
+                        "type": "text",
+                        "text": text,
+                    }));
+                }
+                if let Some(tool_payload) = message.tool_calls.as_ref() {
+                    for (index, call) in extract_openai_tool_calls(tool_payload).iter().enumerate()
+                    {
+                        if let Some(tool_use) =
+                            openai_tool_call_to_anthropic_tool_use_block(call, index)
+                        {
+                            blocks.push(tool_use);
+                        }
+                    }
+                }
+                append_anthropic_message(&mut output, "assistant", blocks);
+            }
+            "tool" => {
+                let tool_use_id = message
+                    .tool_call_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let text = flatten_message_text(&message.content);
+                let blocks = if let Some(tool_use_id) = tool_use_id {
+                    vec![json!({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": text,
+                    })]
+                } else if text.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![json!({
+                        "type": "text",
+                        "text": text,
+                    })]
+                };
+                append_anthropic_message(&mut output, "user", blocks);
+            }
+            _ => {
+                let text = flatten_message_text(&message.content);
+                if text.trim().is_empty() {
+                    continue;
+                }
+                append_anthropic_message(
+                    &mut output,
+                    "user",
+                    vec![json!({
+                        "type": "text",
+                        "text": text,
+                    })],
+                );
+            }
+        }
+    }
+
+    if output.is_empty() {
+        output.push(json!({
+            "role": "user",
+            "content": [{
+                "type": "text",
+                "text": "",
+            }],
+        }));
+    }
+
+    let system = if system_parts.is_empty() {
+        None
+    } else {
+        Some(system_parts.join("\n\n"))
+    };
+    (system, output)
+}
+
+fn append_anthropic_message(messages: &mut Vec<Value>, role: &str, blocks: Vec<Value>) {
+    if blocks.is_empty() {
+        return;
+    }
+    if let Some(last) = messages.last_mut() {
+        let same_role = last
+            .get("role")
+            .and_then(Value::as_str)
+            .map(|value| value == role)
+            .unwrap_or(false);
+        if same_role {
+            if let Some(existing) = last.get_mut("content").and_then(Value::as_array_mut) {
+                existing.extend(blocks);
+                return;
+            }
+        }
+    }
+    messages.push(json!({
+        "role": role,
+        "content": blocks,
+    }));
+}
+
+fn flatten_message_text(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                if let Some(text) = item.as_str() {
+                    return Some(text.to_string());
+                }
+                if let Some(text) = item.get("text").and_then(Value::as_str) {
+                    return Some(text.to_string());
+                }
+                if let Some(text) = item.get("content").and_then(Value::as_str) {
+                    return Some(text.to_string());
+                }
+                None
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                return text.to_string();
+            }
+            if let Some(content) = map.get("content") {
+                return flatten_message_text(content);
+            }
+            String::new()
+        }
+        _ => String::new(),
+    }
+}
+
+fn extract_openai_tool_calls(value: &Value) -> Vec<Value> {
+    match value {
+        Value::Array(items) => items.clone(),
+        Value::Object(map) => {
+            if let Some(items) = map.get("tool_calls").and_then(Value::as_array) {
+                return items.clone();
+            }
+            if map.get("function").is_some() {
+                return vec![value.clone()];
+            }
+            if map.get("name").and_then(Value::as_str).is_some()
+                && (map.get("arguments").is_some() || map.get("input").is_some())
+            {
+                return vec![value.clone()];
+            }
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn openai_tool_call_to_anthropic_tool_use_block(
+    call: &Value,
+    fallback_index: usize,
+) -> Option<Value> {
+    let Value::Object(map) = call else {
+        return None;
+    };
+    let name = map
+        .get("function")
+        .and_then(|value| value.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let tool_use_id = map
+        .get("id")
+        .or_else(|| map.get("call_id"))
+        .or_else(|| map.get("tool_call_id"))
+        .or_else(|| map.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("toolu_{}", fallback_index + 1));
+
+    let args_value = map
+        .get("function")
+        .and_then(|value| value.get("arguments"))
+        .and_then(Value::as_str)
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .or_else(|| map.get("input").cloned())
+        .unwrap_or_else(|| json!({}));
+    let input = if args_value.is_object() {
+        args_value
+    } else {
+        json!({ "input": args_value })
+    };
+
+    Some(json!({
+        "type": "tool_use",
+        "id": tool_use_id,
+        "name": name,
+        "input": input,
+    }))
+}
+
+fn openai_tool_definition_to_anthropic_tool(tool: &Value) -> Option<Value> {
+    let Value::Object(map) = tool else {
+        return None;
+    };
+    if let Some(function) = map.get("function").and_then(Value::as_object) {
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())?;
+        let description = function
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+        let mut input_schema = normalize_tool_input_schema(function.get("parameters"));
+        if !input_schema.is_object() {
+            input_schema = json!({ "type": "object", "properties": {} });
+        }
+        let mut payload = json!({
+            "name": name,
+            "input_schema": input_schema,
+        });
+        if let Some(description) = description {
+            payload["description"] = Value::String(description);
+        }
+        return Some(payload);
+    }
+
+    if map.get("name").and_then(Value::as_str).is_some() && map.get("input_schema").is_some() {
+        return Some(tool.clone());
+    }
+    None
+}
+
+fn anthropic_tool_use_block_to_openai(block: &Value, fallback_index: usize) -> Option<Value> {
+    let Value::Object(map) = block else {
+        return None;
+    };
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let id = map
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
+    let arguments = map
+        .get("input")
+        .and_then(|value| serde_json::to_string(value).ok())
+        .unwrap_or_else(|| "{}".to_string());
+    Some(json!({
+        "type": "function",
+        "id": id,
+        "function": {
+            "name": name,
+            "arguments": normalize_tool_arguments_json(&arguments),
+        }
+    }))
+}
+
+fn parse_anthropic_body(body: &Value) -> (String, String, Option<Value>) {
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls = Vec::new();
+
+    if let Some(blocks) = body.get("content").and_then(Value::as_array) {
+        for (index, block) in blocks.iter().enumerate() {
+            let block_type = block
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match block_type.as_str() {
+                "text" => {
+                    let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+                    if !text.is_empty() {
+                        content.push_str(text);
+                    }
+                }
+                "thinking" => {
+                    let text = block
+                        .get("thinking")
+                        .or_else(|| block.get("text"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if !text.is_empty() {
+                        if !reasoning.is_empty() {
+                            reasoning.push('\n');
+                        }
+                        reasoning.push_str(text);
+                    }
+                }
+                "tool_use" => {
+                    if let Some(tool_call) = anthropic_tool_use_block_to_openai(block, index) {
+                        tool_calls.push(tool_call);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if content.trim().is_empty() {
+        if let Some(text) = body.get("completion").and_then(Value::as_str) {
+            content = text.to_string();
+        }
+    }
+
+    let tool_calls = if tool_calls.is_empty() {
+        None
+    } else {
+        Some(Value::Array(tool_calls))
+    };
+    (content, reasoning, tool_calls)
+}
+
+fn normalize_anthropic_base_url(base_url: &str) -> Option<String> {
+    let (parsed, cleaned_fallback) = parse_or_clean_base_url(base_url)?;
+    if let Some(mut parsed) = parsed {
+        let mut segments = collect_path_segments(parsed.path());
+        if segments
+            .last()
+            .is_some_and(|segment| segment.eq_ignore_ascii_case(MESSAGES_RESOURCE))
+        {
+            segments.pop();
+        }
+        if !segments
+            .last()
+            .is_some_and(|segment| is_version_segment(segment))
+        {
+            segments.push("v1".to_string());
+        }
+        parsed.set_path(&format!("/{}", segments.join("/")));
+        return Some(parsed.to_string().trim_end_matches('/').to_string());
+    }
+
+    let mut base = cleaned_fallback.trim_end_matches('/').to_string();
+    if let Some(stripped) = base.strip_suffix("/messages") {
+        base = stripped.trim_end_matches('/').to_string();
+    }
+    if base.is_empty() {
+        return None;
+    }
+    if base
+        .rsplit('/')
+        .next()
+        .is_none_or(|segment| !is_version_segment(segment))
+    {
+        base = format!("{base}/v1");
+    }
+    Some(base)
 }
 
 fn parse_chat_completion_body(body: &Value) -> (String, String, Option<Value>) {
@@ -1562,6 +2032,17 @@ where
             if let Some(error_message) = extract_stream_error_message(&payload) {
                 return Err(anyhow!(error_message));
             }
+            if is_anthropic_stream_payload(&payload) {
+                return process_anthropic_stream_payload(
+                    &payload,
+                    combined,
+                    reasoning_combined,
+                    usage,
+                    tool_calls_accumulator,
+                    on_delta,
+                )
+                .await;
+            }
             if is_responses_stream_payload(&payload) {
                 return process_responses_stream_payload(
                     &payload,
@@ -1642,6 +2123,174 @@ fn is_responses_stream_payload(payload: &Value) -> bool {
     payload.get("type").is_some()
         || payload.get("output").is_some()
         || payload.get("response").is_some()
+}
+
+fn is_anthropic_stream_payload(payload: &Value) -> bool {
+    let payload_type = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        payload_type.as_str(),
+        "message"
+            | "message_start"
+            | "message_delta"
+            | "message_stop"
+            | "content_block_start"
+            | "content_block_delta"
+            | "content_block_stop"
+            | "ping"
+            | "error"
+    )
+}
+
+async fn process_anthropic_stream_payload<F, Fut>(
+    payload: &Value,
+    combined: &mut String,
+    reasoning_combined: &mut String,
+    usage: &mut Option<TokenUsage>,
+    tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    on_delta: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let payload_type = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match payload_type.as_str() {
+        "message_start" => {
+            if let Some(new_usage) =
+                normalize_usage(payload.get("message").and_then(|value| value.get("usage")))
+            {
+                *usage = Some(new_usage);
+            }
+        }
+        "message_delta" => {
+            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+                *usage = Some(new_usage);
+            }
+        }
+        "content_block_start" => {
+            let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if let Some(block) = payload.get("content_block") {
+                let block_type = block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match block_type.as_str() {
+                    "text" => {
+                        let delta = block.get("text").and_then(Value::as_str).unwrap_or("");
+                        if !delta.is_empty() {
+                            combined.push_str(delta);
+                            on_delta(delta.to_string(), String::new()).await?;
+                        }
+                    }
+                    "thinking" => {
+                        let delta = block
+                            .get("thinking")
+                            .or_else(|| block.get("text"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !delta.is_empty() {
+                            reasoning_combined.push_str(delta);
+                            on_delta(String::new(), delta.to_string()).await?;
+                        }
+                    }
+                    "tool_use" => {
+                        let call = json!({
+                            "index": index,
+                            "id": block.get("id").cloned().unwrap_or(Value::Null),
+                            "function": {
+                                "name": block.get("name").cloned().unwrap_or(Value::Null),
+                                "arguments": block
+                                    .get("input")
+                                    .and_then(|value| serde_json::to_string(value).ok())
+                                    .unwrap_or_else(|| "{}".to_string()),
+                            }
+                        });
+                        merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "content_block_delta" => {
+            let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if let Some(delta) = payload.get("delta") {
+                let delta_type = delta
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                match delta_type.as_str() {
+                    "text_delta" => {
+                        let text = delta.get("text").and_then(Value::as_str).unwrap_or("");
+                        if !text.is_empty() {
+                            combined.push_str(text);
+                            on_delta(text.to_string(), String::new()).await?;
+                        }
+                    }
+                    "thinking_delta" => {
+                        let text = delta
+                            .get("thinking")
+                            .or_else(|| delta.get("text"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !text.is_empty() {
+                            reasoning_combined.push_str(text);
+                            on_delta(String::new(), text.to_string()).await?;
+                        }
+                    }
+                    "input_json_delta" => {
+                        let partial = delta
+                            .get("partial_json")
+                            .or_else(|| delta.get("text"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !partial.is_empty() {
+                            let call = json!({
+                                "index": index,
+                                "function": {
+                                    "arguments": partial,
+                                }
+                            });
+                            merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "message" => {
+            if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+                *usage = Some(new_usage);
+            }
+            let (text, reasoning, tool_calls) = parse_anthropic_body(payload);
+            if combined.is_empty() && !text.is_empty() {
+                combined.push_str(&text);
+                on_delta(text, String::new()).await?;
+            }
+            if reasoning_combined.is_empty() && !reasoning.is_empty() {
+                reasoning_combined.push_str(&reasoning);
+                on_delta(String::new(), reasoning).await?;
+            }
+            if let Some(Value::Array(items)) = tool_calls {
+                upsert_responses_tool_calls(tool_calls_accumulator, &items);
+            }
+            return Ok(true);
+        }
+        "message_stop" => {
+            return Ok(true);
+        }
+        _ => {}
+    }
+    Ok(false)
 }
 
 async fn process_responses_stream_payload<F, Fut>(
@@ -2337,13 +2986,39 @@ fn normalize_llama_props_url(base_url: &str) -> Option<String> {
     Some(format!("{root}/props"))
 }
 
+fn strip_ascii_prefix_case_insensitive<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = value.get(..prefix.len())?;
+    if !head.eq_ignore_ascii_case(prefix) {
+        return None;
+    }
+    value.get(prefix.len()..)
+}
+
+fn normalize_api_key_token(raw: &str) -> Option<&str> {
+    let mut token = raw.trim();
+    if token.is_empty() {
+        return None;
+    }
+    if let Some(rest) = strip_ascii_prefix_case_insensitive(token, "authorization:") {
+        token = rest.trim();
+    }
+    if let Some(rest) = strip_ascii_prefix_case_insensitive(token, "bearer ") {
+        token = rest.trim();
+    }
+    token = token.trim_matches(|ch| ch == '"' || ch == '\'').trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
+}
+
 fn build_headers(api_key: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    let api_key = api_key.trim();
-    if api_key.is_empty() {
+    let Some(token) = normalize_api_key_token(api_key) else {
         return headers;
-    }
-    if let Ok(value) = format!("Bearer {api_key}").parse() {
+    };
+    if let Ok(value) = format!("Bearer {token}").parse() {
         headers.insert(reqwest::header::AUTHORIZATION, value);
     }
     headers
@@ -2446,6 +3121,165 @@ mod tests {
             endpoint,
             "https://open.bigmodel.cn/api/paas/v4/chat/completions"
         );
+    }
+
+    #[test]
+    fn normalize_provider_maps_anthropic_aliases() {
+        assert_eq!(normalize_provider(Some("anthropic")), "anthropic");
+        assert_eq!(normalize_provider(Some("claude")), "anthropic");
+        assert_eq!(normalize_provider(Some("anthropic_api")), "anthropic");
+    }
+
+    #[test]
+    fn is_openai_compatible_provider_excludes_anthropic() {
+        assert!(!is_openai_compatible_provider("anthropic"));
+        assert!(!is_openai_compatible_provider("claude"));
+        assert!(is_openai_compatible_provider("openai_compatible"));
+    }
+
+    #[test]
+    fn normalize_anthropic_base_url_adds_v1_and_strips_messages_suffix() {
+        let normalized =
+            normalize_anthropic_base_url("https://aiproxy.xin/cosphere").expect("anthropic base");
+        assert_eq!(normalized, "https://aiproxy.xin/cosphere/v1");
+
+        let normalized = normalize_anthropic_base_url("https://api.anthropic.com/v1/messages")
+            .expect("anthropic messages endpoint");
+        assert_eq!(normalized, "https://api.anthropic.com/v1");
+    }
+
+    #[test]
+    fn build_anthropic_messages_converts_system_tools_and_tool_results() {
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: Value::String("You are a test assistant.".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("list files".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Value::String(String::new()),
+                reasoning_content: None,
+                tool_calls: Some(json!([{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "list_files",
+                        "arguments": "{\"path\":\".\"}"
+                    }
+                }])),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Value::String("[\"src\",\"Cargo.toml\"]".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+            },
+        ];
+
+        let (system, anthropic_messages) = build_anthropic_messages(&messages);
+        assert_eq!(system, Some("You are a test assistant.".to_string()));
+        assert_eq!(anthropic_messages[0]["role"], "user");
+        assert_eq!(anthropic_messages[1]["role"], "assistant");
+        assert_eq!(anthropic_messages[1]["content"][0]["type"], "tool_use");
+        assert_eq!(anthropic_messages[1]["content"][0]["name"], "list_files");
+        assert_eq!(anthropic_messages[2]["role"], "user");
+        assert_eq!(anthropic_messages[2]["content"][0]["type"], "tool_result");
+        assert_eq!(anthropic_messages[2]["content"][0]["tool_use_id"], "call_1");
+    }
+
+    #[test]
+    fn parse_anthropic_body_extracts_text_reasoning_and_tool_calls() {
+        let body = json!({
+            "content": [
+                { "type": "thinking", "thinking": "step 1" },
+                { "type": "text", "text": "done" },
+                { "type": "tool_use", "id": "toolu_1", "name": "read_file", "input": { "path": "README.md" } }
+            ]
+        });
+        let (content, reasoning, tool_calls) = parse_anthropic_body(&body);
+        assert_eq!(content, "done");
+        assert_eq!(reasoning, "step 1");
+        let tool_calls = tool_calls.expect("tool calls");
+        assert_eq!(tool_calls[0]["function"]["name"], "read_file");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                tool_calls[0]["function"]["arguments"]
+                    .as_str()
+                    .unwrap_or("")
+            )
+            .expect("tool arguments"),
+            json!({ "path": "README.md" })
+        );
+    }
+
+    #[test]
+    fn normalize_api_key_token_accepts_prefixed_values() {
+        assert_eq!(normalize_api_key_token("sk-test"), Some("sk-test"));
+        assert_eq!(normalize_api_key_token("Bearer sk-test"), Some("sk-test"));
+        assert_eq!(
+            normalize_api_key_token("Authorization: Bearer sk-test"),
+            Some("sk-test")
+        );
+        assert_eq!(normalize_api_key_token(""), None);
+    }
+
+    #[test]
+    fn build_headers_avoids_duplicate_bearer_prefix() {
+        let headers = build_headers("Bearer sk-test");
+        let auth = headers
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(auth, Some("Bearer sk-test"));
+    }
+
+    #[test]
+    fn anthropic_headers_include_x_api_key_and_normalized_authorization() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("anthropic".to_string()),
+            api_mode: None,
+            base_url: Some("https://api.anthropic.com/v1".to_string()),
+            api_key: Some("Bearer sk-test".to_string()),
+            model: Some("claude-sonnet-4-5-20250929".to_string()),
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("function_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let headers = LlmClient::new(Client::new(), config).headers();
+        let auth = headers
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok());
+        let x_api_key = headers
+            .get("x-api-key")
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(auth, Some("Bearer sk-test"));
+        assert_eq!(x_api_key, Some("sk-test"));
     }
 
     #[test]
@@ -2555,6 +3389,30 @@ mod tests {
 
         assert!(!done);
         assert_eq!(combined, "AB");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_supports_anthropic_message_payload() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"message\",\"content\":[{\"type\":\"text\",\"text\":\"anthropic-ok\"}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process anthropic message block");
+
+        assert!(done);
+        assert_eq!(combined, "anthropic-ok");
+        assert!(reasoning.is_empty());
     }
 
     #[tokio::test]

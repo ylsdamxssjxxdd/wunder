@@ -95,3 +95,24 @@ test('message stats context prefers usage.total_tokens over stale context_tokens
   );
   assert.equal(findEntryValue(entries, 'Context'), '7227');
 });
+
+test('message stats clamps direct outlier speed to multi-round average speed', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 19897,
+          output_tokens: 1218,
+          total_tokens: 21115
+        },
+        decode_duration_s: 0.23,
+        avg_model_round_speed_tps: 1800,
+        avg_model_round_speed_rounds: 4
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '1800.00 token/s');
+});

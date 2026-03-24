@@ -26,6 +26,13 @@ const PROVIDER_MODEL_PRESETS: Record<string, ProviderModelPreset[]> = {
     { id: 'gpt-5-chat', maxContext: 128000 },
     { id: 'gpt-image-1', maxContext: 32768 }
   ],
+  anthropic: [
+    { id: 'claude-opus-4-1-20250805', maxContext: 200000 },
+    { id: 'claude-sonnet-4-5-20250929', maxContext: 200000 },
+    { id: 'claude-3-7-sonnet-20250219', maxContext: 200000 },
+    { id: 'claude-3-5-sonnet-20241022', maxContext: 200000 },
+    { id: 'glm-5', maxContext: 128000 }
+  ],
   openrouter: [
     { id: 'google/gemini-2.5-flash-image-preview', maxContext: 1048576 },
     { id: 'google/gemini-2.5-flash-preview', maxContext: 1048576 },
@@ -105,11 +112,16 @@ const PROVIDER_MODEL_PRESETS: Record<string, ProviderModelPreset[]> = {
   ]
 };
 
-const normalizeProviderId = (value: unknown): string =>
-  String(value || '')
+const normalizeProviderId = (value: unknown): string => {
+  const normalized = String(value || '')
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, '_');
+  if (normalized === 'claude' || normalized === 'anthropic_api') {
+    return 'anthropic';
+  }
+  return normalized;
+};
 
 const normalizeModelId = (value: unknown): string =>
   String(value || '')
