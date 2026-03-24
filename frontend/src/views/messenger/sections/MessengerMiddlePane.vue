@@ -187,6 +187,8 @@
           v-if="item.kind === 'agent'"
           size="md"
           :state="resolveAgentRuntimeState(item.agentId)"
+          :icon="item.icon"
+          :name="item.title"
           :title="item.title"
         />
         <div v-else class="messenger-list-avatar">{{ avatarLabel(item.title) }}</div>
@@ -459,7 +461,12 @@
         @dblclick="openAgentById(defaultAgentKey)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, defaultAgentKey)"
       >
-        <AgentAvatar size="md" :state="resolveAgentRuntimeState(defaultAgentKey)" />
+        <AgentAvatar
+          size="md"
+          :state="resolveAgentRuntimeState(defaultAgentKey)"
+          :icon="defaultAgentIcon"
+          :name="t('messenger.defaultAgent')"
+        />
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ t('messenger.defaultAgent') }}</span>
@@ -479,7 +486,12 @@
         @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
-        <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
+        <AgentAvatar
+          size="md"
+          :state="resolveAgentRuntimeState(agent.id)"
+          :icon="agent.icon"
+          :name="agent.name || agent.id"
+        />
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
@@ -503,7 +515,12 @@
         @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
-        <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
+        <AgentAvatar
+          size="md"
+          :state="resolveAgentRuntimeState(agent.id)"
+          :icon="agent.icon"
+          :name="agent.name || agent.id"
+        />
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
@@ -922,6 +939,7 @@ const {
   showDefaultAgentEntry,
   selectedAgentId,
   defaultAgentKey,
+  defaultAgentIcon,
   selectAgentForSettings,
   openAgentById,
   normalizeAgentId,
@@ -1000,6 +1018,7 @@ const {
   showDefaultAgentEntry: boolean;
   selectedAgentId: string;
   defaultAgentKey: string;
+  defaultAgentIcon?: unknown;
   selectAgentForSettings: (agentId: any) => void;
   openAgentById: (agentId: any) => void | Promise<void>;
   normalizeAgentId: (value: unknown) => string;
@@ -1060,6 +1079,7 @@ const buildGuidedDefaultConversation = () => ({
   key: GUIDED_DEFAULT_CONVERSATION_KEY,
   kind: 'agent',
   agentId: normalizeAgentId(defaultAgentKey),
+  icon: defaultAgentIcon,
   title: t('messenger.defaultAgent'),
   preview: t('messenger.empty.listStartDefault'),
   lastAt: null,

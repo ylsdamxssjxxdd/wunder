@@ -121,6 +121,7 @@ export type MixedConversation = {
   kind: 'agent' | 'direct' | 'group';
   sourceId: string;
   agentId: string;
+  icon?: unknown;
   title: string;
   preview: string;
   unread: number;
@@ -145,6 +146,7 @@ export type AgentFileContainer = {
 export type AgentOverviewCard = {
   id: string;
   name: string;
+  icon?: unknown;
   description: string;
   shared: boolean;
   isDefault: boolean;

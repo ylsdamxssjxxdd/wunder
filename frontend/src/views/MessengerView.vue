@@ -173,6 +173,7 @@
           :show-default-agent-entry="showDefaultAgentEntry"
           :selected-agent-id="selectedAgentId"
           :default-agent-key="DEFAULT_AGENT_KEY"
+          :default-agent-icon="defaultAgentProfile?.icon"
           :select-agent-for-settings="selectAgentForSettings"
           :open-agent-by-id="openAgentById"
           :normalize-agent-id="normalizeAgentId"
@@ -226,22 +227,6 @@
         </div>
         <div class="messenger-chat-header-actions">
           <button
-            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
-            class="messenger-header-action-text"
-            type="button"
-            @click="enterSelectedAgentConversation"
-          >
-            {{ t('messenger.action.openConversation') }}
-          </button>
-          <button
-            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
-            class="messenger-header-action-text"
-            type="button"
-            @click="triggerAgentSettingsReload"
-          >
-            {{ t('common.refresh') }}
-          </button>
-          <button
             v-if="
               showChatSettingsView &&
               sessionHub.activeSection === 'agents' &&
@@ -253,7 +238,17 @@
             type="button"
             @click="triggerAgentSettingsDelete"
           >
-            {{ t('portal.agent.delete') }}
+            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+            <span>{{ t('portal.agent.delete') }}</span>
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerAgentSettingsReload"
+          >
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+            <span>{{ t('common.refresh') }}</span>
           </button>
           <button
             v-if="
@@ -267,7 +262,8 @@
             type="button"
             @click="triggerAgentSettingsSave"
           >
-            {{ t('portal.agent.save') }}
+            <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            <span>{{ t('portal.agent.save') }}</span>
           </button>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
@@ -275,7 +271,17 @@
             type="button"
             @click="triggerAgentSettingsExport"
           >
-            {{ t('portal.agent.exportWorkerCard') }}
+            <i class="fa-solid fa-file-export" aria-hidden="true"></i>
+            <span>{{ t('common.export') }}</span>
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
+            class="messenger-header-action-text"
+            type="button"
+            @click="enterSelectedAgentConversation"
+          >
+            <i class="fa-solid fa-comments" aria-hidden="true"></i>
+            <span>{{ t('messenger.action.openConversation') }}</span>
           </button>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'users' && selectedContact"
@@ -283,7 +289,8 @@
             type="button"
             @click="openSelectedContactConversation"
           >
-            {{ t('messenger.action.openConversation') }}
+            <i class="fa-solid fa-comments" aria-hidden="true"></i>
+            <span>{{ t('messenger.action.openConversation') }}</span>
           </button>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'groups' && selectedGroup && !showHelperAppsWorkspace"
@@ -291,7 +298,8 @@
             type="button"
             @click="openSelectedGroupConversation"
           >
-            {{ t('messenger.action.openConversation') }}
+            <i class="fa-solid fa-comments" aria-hidden="true"></i>
+            <span>{{ t('messenger.action.openConversation') }}</span>
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
@@ -417,7 +425,12 @@
                       @keydown.space.prevent="selectAgentForSettings(card.id)"
                     >
                       <div class="messenger-agent-grid-card-head">
-                        <AgentAvatar size="md" :state="card.runtimeState" />
+                        <AgentAvatar
+                          size="md"
+                          :state="card.runtimeState"
+                          :icon="card.icon"
+                          :name="card.name"
+                        />
                         <div class="messenger-agent-grid-main">
                           <div class="messenger-agent-grid-name">{{ card.name }}</div>
                         </div>
@@ -927,6 +940,8 @@
                 v-else-if="!isCompactionMarkerMessage(item.message)"
                 size="sm"
                 :state="resolveMessageAgentAvatarState(item.message)"
+                :icon="activeAgentIcon"
+                :name="activeAgentName"
                 :title="activeAgentName"
               />
               <div class="messenger-message-main">
@@ -1590,6 +1605,12 @@ import {
   type UserAppearancePreferences
 } from '@/utils/userPreferences';
 import {
+  PROFILE_AVATAR_COLORS,
+  PROFILE_AVATAR_IMAGE_MAP,
+  PROFILE_AVATAR_IMAGE_OPTIONS,
+  PROFILE_AVATAR_OPTION_KEYS
+} from '@/utils/avatarCatalog';
+import {
   classifyWorldHistoryMessage,
   normalizeWorldHistoryText,
   resolveWorldHistoryIcon
@@ -1674,49 +1695,6 @@ const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
 
 const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
-const PROFILE_AVATAR_IMAGE_FILES = import.meta.glob('../assets/qq-avatars/avatar-????.jpg', {
-  eager: true,
-  import: 'default'
-}) as Record<string, string>;
-const PROFILE_AVATAR_IMAGE_OPTIONS = Object.entries(PROFILE_AVATAR_IMAGE_FILES)
-  .map(([path, image]) => {
-    const fileName = path.split('/').pop() || '';
-    const stem = fileName.replace(/\.jpg$/i, '').trim();
-    const numericPart = stem.replace(/^avatar-/, '').trim();
-    const sequence = Number.parseInt(numericPart, 10);
-    const label = Number.isFinite(sequence)
-      ? `QQ Avatar ${String(sequence).padStart(4, '0')}`
-      : `QQ Avatar ${stem}`;
-    return {
-      key: `qq-${stem}`,
-      image,
-      label
-    };
-  })
-  .sort((left, right) =>
-    left.key.localeCompare(right.key, 'en', { numeric: true, sensitivity: 'base' })
-  );
-const PROFILE_AVATAR_IMAGE_MAP = new Map(
-  PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => [item.key, item.image])
-);
-const PROFILE_AVATAR_OPTION_KEYS = new Set<string>([
-  'initial',
-  ...PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => item.key)
-]);
-const PROFILE_AVATAR_COLORS = [
-  '#f97316',
-  '#ef4444',
-  '#ec4899',
-  '#8b5cf6',
-  '#6366f1',
-  '#3b82f6',
-  '#06b6d4',
-  '#14b8a6',
-  '#10b981',
-  '#84cc16',
-  '#f59e0b',
-  '#64748b'
-] as const;
 
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
@@ -2489,6 +2467,7 @@ const activeAgentId = computed(() => {
 });
 
 const activeAgent = computed(() => agentMap.value.get(activeAgentId.value) || null);
+const activeAgentDetailProfile = ref<Record<string, unknown> | null>(null);
 const defaultAgentProfile = ref<Record<string, unknown> | null>(null);
 const activeAgentIdForApi = computed(() =>
   activeAgentId.value === DEFAULT_AGENT_KEY ? '' : activeAgentId.value
@@ -2503,6 +2482,11 @@ const activeAgentName = computed(() =>
   String(
     (activeAgent.value as Record<string, unknown> | null)?.name || t('messenger.defaultAgent')
   )
+);
+const activeAgentIcon = computed(() =>
+  activeAgentId.value === DEFAULT_AGENT_KEY
+    ? (defaultAgentProfile.value as Record<string, unknown> | null)?.icon
+    : (activeAgent.value as Record<string, unknown> | null)?.icon
 );
 
 const loadDefaultAgentProfile = async () => {
@@ -2555,8 +2539,23 @@ watch(
   () => activeAgentId.value,
   (value) => {
     if (value === DEFAULT_AGENT_KEY) {
+      activeAgentDetailProfile.value = null;
       void loadDefaultAgentProfile();
+      return;
     }
+    const targetAgentId = normalizeAgentId(value);
+    if (!targetAgentId) {
+      activeAgentDetailProfile.value = null;
+      return;
+    }
+    void agentStore
+      .getAgent(targetAgentId, { force: true })
+      .then((profile) => {
+        if (normalizeAgentId(activeAgentId.value) !== targetAgentId) return;
+        activeAgentDetailProfile.value =
+          (profile as Record<string, unknown> | null) || null;
+      })
+      .catch(() => null);
   },
   { immediate: true }
 );
@@ -2893,9 +2892,54 @@ const buildAbilityAllowedNameSet = (summary: Record<string, unknown>): Set<strin
   return new Set<string>([...(names.tools || []), ...(names.skills || [])]);
 };
 
-const buildAbilitySkillNameSet = (summary: Record<string, unknown>): Set<string> => {
-  const names = collectAbilityNames(summary);
-  return new Set<string>(names.skills || []);
+const normalizeAbilityNameList = (values: unknown): string[] => {
+  if (!Array.isArray(values)) return [];
+  const output: string[] = [];
+  const seen = new Set<string>();
+  values.forEach((item) => {
+    const name = String(item || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push(name);
+  });
+  return output;
+};
+
+const resolveSelectedAbilityNamesFromAgentProfile = (agent: Record<string, unknown> | null): string[] => {
+  const source = agent || {};
+  const abilities = source.abilities as Record<string, unknown> | null | undefined;
+  const abilitySource = Array.isArray(source.ability_items)
+    ? source.ability_items
+    : Array.isArray(abilities?.items)
+      ? abilities.items
+      : [];
+  const output: string[] = [];
+  const seen = new Set<string>();
+  abilitySource.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const ability = item as Record<string, unknown>;
+    if (ability.selected === false) return;
+    const name = String(ability.runtime_name || ability.runtimeName || ability.name || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push(name);
+  });
+  return output;
+};
+
+const resolveAgentConfiguredAbilityNames = (agent: Record<string, unknown> | null): string[] => {
+  const declared = normalizeAbilityNameList([
+    ...normalizeAbilityNameList(agent?.declared_tool_names),
+    ...normalizeAbilityNameList(agent?.declared_skill_names)
+  ]);
+  if (declared.length > 0) {
+    return declared;
+  }
+  const selectedFromItems = resolveSelectedAbilityNamesFromAgentProfile(agent);
+  if (selectedFromItems.length > 0) {
+    return selectedFromItems;
+  }
+  return normalizeAbilityNameList(agent?.tool_names);
 };
 
 const filterAbilitySummaryByNames = (
@@ -2925,22 +2969,29 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
   const summary = agentPromptToolSummary.value;
   if (!summary) return null;
   const allowedSet = buildAbilityAllowedNameSet(summary);
-  const skillNameSet = buildAbilitySkillNameSet(summary);
   if (!allowedSet.size) return summary;
   const session = activeAgentSession.value as Record<string, unknown> | null;
-  const sessionOverrides = Array.isArray(session?.tool_overrides)
-    ? (session?.tool_overrides as unknown[])
-    : [];
-  const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
-    ? (chatStore.draftToolOverrides as unknown[])
-    : [];
-  const agentDefaults = Array.isArray((activeAgent.value as Record<string, unknown> | null)?.tool_names)
-    ? (((activeAgent.value as Record<string, unknown> | null)?.tool_names as unknown[]) || [])
-    : [];
-  const sourceOverrides = sessionOverrides.length
-    ? sessionOverrides
-    : draftOverrides.length
-      ? draftOverrides
+  const sessionOverrides = normalizeAbilityNameList(
+    Array.isArray(session?.tool_overrides) ? (session?.tool_overrides as unknown[]) : []
+  );
+  const draftOverrides = normalizeAbilityNameList(
+    Array.isArray(chatStore.draftToolOverrides) ? (chatStore.draftToolOverrides as unknown[]) : []
+  );
+  const activeAgentProfile =
+    activeAgentId.value === DEFAULT_AGENT_KEY
+      ? (defaultAgentProfile.value as Record<string, unknown> | null)
+      : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+          (activeAgent.value as Record<string, unknown> | null));
+  const agentDefaults = normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile));
+  const agentDefaultSet = new Set<string>(agentDefaults);
+  const normalizeScopedOverrides = (items: string[]): string[] =>
+    items.filter((name) => !agentDefaultSet.size || agentDefaultSet.has(name));
+  const hasSessionOverrides = sessionOverrides.length > 0;
+  const hasDraftOverrides = draftOverrides.length > 0;
+  const sourceOverrides = hasSessionOverrides
+    ? normalizeScopedOverrides(sessionOverrides)
+    : hasDraftOverrides
+      ? normalizeScopedOverrides(draftOverrides)
       : agentDefaults;
   if (sourceOverrides.some((item) => String(item || '').trim() === AGENT_TOOL_OVERRIDE_NONE)) {
     return filterAbilitySummaryByNames(summary, new Set<string>());
@@ -2952,16 +3003,6 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
       selectedNames.add(name);
     }
   });
-  if (desktopMode.value && skillNameSet.size > 0 && sourceOverrides.length > 0) {
-    skillNameSet.forEach((name) => {
-      if (allowedSet.has(name)) {
-        selectedNames.add(name);
-      }
-    });
-  }
-  if (!selectedNames.size && !sourceOverrides.length) {
-    allowedSet.forEach((name) => selectedNames.add(name));
-  }
   return filterAbilitySummaryByNames(summary, selectedNames);
 });
 const activeAgentPromptPreviewHtml = computed(() =>
@@ -3304,6 +3345,7 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     cards.push({
       id,
       name: String(agent?.name || id),
+      icon: agent?.icon,
       description: String(agent?.description || ''),
       shared: options.shared === true,
       isDefault: options.isDefault === true,
@@ -3321,6 +3363,7 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
         id: DEFAULT_AGENT_KEY,
         name: t('messenger.defaultAgent'),
         description: t('messenger.defaultAgentDesc'),
+        icon: (defaultAgentProfile.value as Record<string, unknown> | null)?.icon,
         sandbox_container_id: 1
       },
       { isDefault: true }
@@ -3711,6 +3754,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
         kind: 'agent',
         sourceId: String(main?.session?.id || ''),
         agentId,
+        icon: (agent as Record<string, unknown> | null)?.icon,
         title,
         preview,
         unread: Math.max(0, Math.floor(Number(agentMainUnreadCountMap.value[agentId] || 0))),
@@ -3734,6 +3778,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
         kind: 'agent',
         sourceId: '',
         agentId: draftAgentId,
+        icon: (agent as Record<string, unknown> | null)?.icon,
         title: String(
           (agent as Record<string, unknown> | null)?.name ||
             (draftAgentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : draftAgentId)
@@ -7361,6 +7406,16 @@ const openAgentById = async (agentId: unknown) => {
     await openAgentSession(String(targetSession.id), normalized);
     return;
   }
+  try {
+    const freshSessionId = await openOrReuseFreshAgentSession(normalized);
+    if (freshSessionId) {
+      await openAgentSession(freshSessionId, normalized);
+      return;
+    }
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+  // Keep navigation usable when the backend is temporarily unavailable.
   await openAgentDraftSessionWithScroll(normalized);
 };
 
@@ -7521,21 +7576,50 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewLoading.value = true;
   agentPromptPreviewContent.value = '';
   agentPromptPreviewMemoryMode.value = 'none';
+  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
+  if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
+    const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
+    if (profile) {
+      activeAgentDetailProfile.value = profile as Record<string, unknown>;
+    }
+  } else if (currentAgentId === DEFAULT_AGENT_KEY) {
+    await loadDefaultAgentProfile().catch(() => null);
+  }
   const summaryPromise = loadAgentToolSummary({ force: true });
   try {
     const session = activeAgentSession.value as Record<string, unknown> | null;
     const sessionId = String(chatStore.activeSessionId || '').trim();
-    const sessionOverrides = Array.isArray(session?.tool_overrides)
-      ? (session?.tool_overrides as unknown[])
-      : [];
-    const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
-      ? (chatStore.draftToolOverrides as unknown[])
-      : [];
-    const overrides = sessionOverrides.length ? sessionOverrides : draftOverrides.length ? draftOverrides : undefined;
+    const sessionOverrides = normalizeAbilityNameList(
+      Array.isArray(session?.tool_overrides) ? (session?.tool_overrides as unknown[]) : []
+    );
+    const draftOverrides = normalizeAbilityNameList(
+      Array.isArray(chatStore.draftToolOverrides) ? (chatStore.draftToolOverrides as unknown[]) : []
+    );
     const sourceAgentId = normalizeAgentId(
       session?.agent_id || chatStore.draftAgentId || activeAgentId.value
     );
     const agentId = sourceAgentId === DEFAULT_AGENT_KEY ? '' : sourceAgentId;
+    const previewAgentProfile =
+      sourceAgentId === DEFAULT_AGENT_KEY
+        ? (defaultAgentProfile.value as Record<string, unknown> | null)
+        : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+            (activeAgent.value as Record<string, unknown> | null));
+    const previewAgentDefaults = normalizeAbilityNameList(
+      resolveAgentConfiguredAbilityNames(previewAgentProfile)
+    );
+    const previewDefaultSet = new Set<string>(previewAgentDefaults);
+    const rawOverrides = sessionOverrides.length ? sessionOverrides : draftOverrides;
+    let overrides = undefined;
+    if (rawOverrides.includes(AGENT_TOOL_OVERRIDE_NONE)) {
+      overrides = [AGENT_TOOL_OVERRIDE_NONE];
+    } else {
+      const sanitized = rawOverrides.filter(
+        (name) => !previewDefaultSet.size || previewDefaultSet.has(name)
+      );
+      if (sanitized.length > 0) {
+        overrides = sanitized;
+      }
+    }
     const payload = {
       ...(agentId ? { agent_id: agentId } : {}),
       ...(overrides ? { tool_overrides: overrides } : {})

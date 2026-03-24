@@ -223,17 +223,108 @@ const unwrapEventData = (payload: unknown): unknown => {
   return payload;
 };
 
-const stringifyEventData = (payload: unknown, pretty = false): string => {
-  try {
-    const resolved = unwrapEventData(payload);
-    if (typeof resolved === 'string') {
-      return resolved;
-    }
-    const text = JSON.stringify(resolved ?? null, null, pretty ? 2 : undefined);
-    return typeof text === 'string' ? text : String(text);
-  } catch {
-    return String(payload ?? '');
+const fallbackEventDataText = (value: unknown): string => {
+  if (value === null || value === undefined) {
+    return '';
   }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `[array(${value.length})]`;
+  }
+  if (typeof value === 'object') {
+    try {
+      const source = value as Record<string, unknown>;
+      const keys = Object.keys(source);
+      if (keys.length === 0) {
+        return '{}';
+      }
+      const preview: Record<string, unknown> = {};
+      keys.slice(0, 8).forEach((key) => {
+        const field = source[key];
+        if (field === null || field === undefined) {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === 'string' || typeof field === 'number' || typeof field === 'boolean') {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === 'bigint') {
+          preview[key] = field.toString();
+          return;
+        }
+        if (Array.isArray(field)) {
+          preview[key] = `[array(${field.length})]`;
+          return;
+        }
+        preview[key] = '[object]';
+      });
+      if (keys.length > 8) {
+        preview.__extra_keys__ = keys.length - 8;
+      }
+      const text = JSON.stringify(preview);
+      return typeof text === 'string' ? text : '{...}';
+    } catch {
+      return '{...}';
+    }
+  }
+  return String(value);
+};
+
+// Keep timeline rendering readable even if payload has circular refs/BigInt.
+const safeStringifyEventData = (value: unknown, pretty = false): string => {
+  const seen = new WeakSet<object>();
+  try {
+    const text = JSON.stringify(
+      value ?? null,
+      (_key, current: unknown) => {
+        if (typeof current === 'bigint') {
+          return current.toString();
+        }
+        if (typeof current === 'function') {
+          return `[Function ${current.name || 'anonymous'}]`;
+        }
+        if (typeof current === 'symbol') {
+          return String(current);
+        }
+        if (current instanceof Error) {
+          return {
+            name: current.name,
+            message: current.message,
+            stack: current.stack
+          };
+        }
+        if (current && typeof current === 'object') {
+          const objectValue = current as object;
+          if (seen.has(objectValue)) {
+            return '[Circular]';
+          }
+          seen.add(objectValue);
+          if (current instanceof Map) {
+            return Object.fromEntries(current.entries());
+          }
+          if (current instanceof Set) {
+            return Array.from(current.values());
+          }
+        }
+        return current;
+      },
+      pretty ? 2 : undefined
+    );
+    return typeof text === 'string' ? text : fallbackEventDataText(value);
+  } catch {
+    return fallbackEventDataText(value);
+  }
+};
+
+const stringifyEventData = (payload: unknown, pretty = false): string => {
+  const resolved = unwrapEventData(payload);
+  if (typeof resolved === 'string') {
+    return resolved;
+  }
+  return safeStringifyEventData(resolved, pretty);
 };
 
 const truncateText = (value: unknown): string => {

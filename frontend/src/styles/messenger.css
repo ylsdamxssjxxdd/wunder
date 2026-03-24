@@ -1388,6 +1388,10 @@ button.messenger-chat-header-model {
   border-radius: 8px;
   background: var(--ui-accent-soft);
   color: var(--hula-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   cursor: pointer;
   padding: 0 10px;
   font-size: 12px;
@@ -1396,6 +1400,10 @@ button.messenger-chat-header-model {
     border-color var(--messenger-motion-fast) var(--messenger-ease-standard),
     background-color var(--messenger-motion-fast) var(--messenger-ease-standard),
     transform var(--messenger-motion-fast) var(--messenger-ease-standard);
+}
+
+.messenger-header-action-text i {
+  font-size: 11px;
 }
 
 .messenger-header-action-text:hover {
@@ -2712,6 +2720,16 @@ button.messenger-chat-header-model {
   z-index: 33;
 }
 
+.messenger-right-dock-toggle-hitbox {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -18px;
+  width: 28px;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .messenger-nav-toggle {
   left: calc(var(--messenger-left-rail-width) + var(--messenger-middle-pane-width) - 10px);
   z-index: 34;
@@ -2746,6 +2764,11 @@ button.messenger-chat-header-model {
   z-index: 2;
 }
 
+.messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle-hitbox {
+  pointer-events: auto;
+}
+
+.messenger-right-dock-toggle-hitbox:hover + .messenger-right-dock-toggle,
 .messenger-right-dock:hover .messenger-right-dock-toggle,
 .messenger-right-dock:focus-within .messenger-right-dock-toggle {
   opacity: 1;

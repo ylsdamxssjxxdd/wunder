@@ -1,5 +1,6 @@
 ﻿<template>
   <aside class="messenger-right-dock" :class="{ 'messenger-right-dock--collapsed': collapsed }">
+    <div class="messenger-right-dock-toggle-hitbox" aria-hidden="true"></div>
     <button
       class="messenger-right-dock-toggle"
       type="button"

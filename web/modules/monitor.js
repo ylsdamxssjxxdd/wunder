@@ -67,8 +67,10 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "node_invoke", icon: "fa-diagram-project" },
   { keyword: "node invoke", icon: "fa-diagram-project" },
   { keyword: "gateway_invoke", icon: "fa-diagram-project" },
+  { keyword: "技能调用", icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_call", icon: "fa-wand-magic-sparkles" },
   { keyword: "skill_get", icon: "fa-wand-magic-sparkles" },
+  { keyword: "智能体蜂群", icon: "fa-bee" },
   { keyword: "子智能体控制", icon: "fa-diagram-project" },
   { keyword: "subagent_control", icon: "fa-diagram-project" },
   { keyword: "会话线程控制", icon: "fa-code-branch" },
@@ -76,6 +78,10 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "session_thread", icon: "fa-code-branch" },
   { keyword: "agent_swarm", icon: "fa-bee" },
   { keyword: "swarm_control", icon: "fa-bee" },
+  { keyword: "网页抓取", icon: "fa-globe" },
+  { keyword: "web_fetch", icon: "fa-globe" },
+  { keyword: "web fetch", icon: "fa-globe" },
+  { keyword: "webfetch", icon: "fa-globe" },
   { keyword: "a2a观察", icon: "fa-glasses" },
   { keyword: "a2a_observe", icon: "fa-glasses" },
   { keyword: "a2a等待", icon: "fa-clock" },
@@ -2686,15 +2692,110 @@ const highlightMonitorTimestamps = (detailText) =>
 
 const normalizeMonitorToolName = (value) => String(value || "").trim().toLowerCase();
 
+const fallbackMonitorEventDataText = (value) => {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return `[array(${value.length})]`;
+  }
+  if (typeof value === "object") {
+    try {
+      const keys = Object.keys(value);
+      if (keys.length === 0) {
+        return "{}";
+      }
+      const preview = {};
+      keys.slice(0, 8).forEach((key) => {
+        const field = value[key];
+        if (field === null || field === undefined) {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === "string" || typeof field === "number" || typeof field === "boolean") {
+          preview[key] = field;
+          return;
+        }
+        if (typeof field === "bigint") {
+          preview[key] = field.toString();
+          return;
+        }
+        if (Array.isArray(field)) {
+          preview[key] = `[array(${field.length})]`;
+          return;
+        }
+        preview[key] = "[object]";
+      });
+      if (keys.length > 8) {
+        preview.__extra_keys__ = keys.length - 8;
+      }
+      const text = JSON.stringify(preview);
+      return typeof text === "string" ? text : "{...}";
+    } catch (_error) {
+      return "{...}";
+    }
+  }
+  return String(value);
+};
+
+// Safely serialize event payloads to avoid "[object Object]" in log title/detail.
+const safeStringifyMonitorEventData = (value, pretty = false) => {
+  const seen = new WeakSet();
+  try {
+    const text = JSON.stringify(
+      value,
+      (_key, current) => {
+        if (typeof current === "bigint") {
+          return current.toString();
+        }
+        if (typeof current === "function") {
+          return `[Function ${current.name || "anonymous"}]`;
+        }
+        if (typeof current === "symbol") {
+          return String(current);
+        }
+        if (current instanceof Error) {
+          return {
+            name: current.name,
+            message: current.message,
+            stack: current.stack,
+          };
+        }
+        if (current && typeof current === "object") {
+          if (seen.has(current)) {
+            return "[Circular]";
+          }
+          seen.add(current);
+          if (current instanceof Map) {
+            return Object.fromEntries(current);
+          }
+          if (current instanceof Set) {
+            return Array.from(current);
+          }
+        }
+        return current;
+      },
+      pretty ? 2 : undefined
+    );
+    if (typeof text === "string") {
+      return text;
+    }
+  } catch (_error) {
+    // Ignore and fallback to structured preview.
+  }
+  return fallbackMonitorEventDataText(value);
+};
+
 // 格式化事件数据为可展示文本，确保异常数据不会打断渲染
 const stringifyMonitorEventData = (data) => {
-  try {
-    const resolved = unwrapMonitorEventData(data);
-    const text = JSON.stringify(resolved);
-    return typeof text === "string" ? text : String(text);
-  } catch (error) {
-    return String(data);
+  const resolved = unwrapMonitorEventData(data);
+  if (typeof resolved === "string") {
+    return resolved;
   }
+  return safeStringifyMonitorEventData(resolved, false);
 };
 
 const MONITOR_EVENT_TITLE_MAX_LENGTH = 120;

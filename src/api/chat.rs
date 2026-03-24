@@ -1132,12 +1132,8 @@ pub(crate) async fn build_chat_request(
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
     let mut allowed = compute_allowed_tool_names(user, &user_context);
     let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    allowed = apply_tool_overrides(
-        allowed,
-        &overrides,
-        &user_context.config,
-        &user_context.skills,
-    );
+    let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
+    allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1568,12 +1564,8 @@ async fn system_prompt(
         .tool_overrides
         .map(normalize_tool_overrides)
         .unwrap_or_else(|| resolve_agent_tool_defaults(agent_record.as_ref()));
-    allowed = apply_tool_overrides(
-        allowed,
-        &overrides,
-        &user_context.config,
-        &user_context.skills,
-    );
+    let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
+    allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1664,12 +1656,8 @@ async fn session_system_prompt(
     } else {
         resolve_agent_tool_defaults(agent_record.as_ref())
     };
-    allowed = apply_tool_overrides(
-        allowed,
-        &overrides,
-        &user_context.config,
-        &user_context.skills,
-    );
+    let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
+    allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1736,12 +1724,9 @@ async fn update_session_tools(
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
     let mut effective_allowed = compute_allowed_tool_names(&resolved.user, &user_context);
     let effective_overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    effective_allowed = apply_tool_overrides(
-        effective_allowed,
-        &effective_overrides,
-        &user_context.config,
-        &user_context.skills,
-    );
+    let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
+    effective_allowed =
+        apply_tool_overrides(effective_allowed, &effective_overrides, &agent_defaults);
     let tool_names = finalize_tool_names(effective_allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -2371,9 +2356,29 @@ fn resolve_session_tool_overrides(
 }
 
 fn resolve_agent_tool_defaults(agent: Option<&crate::storage::UserAgentRecord>) -> Vec<String> {
-    agent
-        .map(|record| record.tool_names.clone())
-        .unwrap_or_default()
+    let Some(record) = agent else {
+        return Vec::new();
+    };
+    if !record.declared_tool_names.is_empty() || !record.declared_skill_names.is_empty() {
+        let mut merged = Vec::new();
+        let mut seen = HashSet::new();
+        for name in record
+            .declared_tool_names
+            .iter()
+            .chain(record.declared_skill_names.iter())
+        {
+            let cleaned = name.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            let owned = cleaned.to_string();
+            if seen.insert(owned.clone()) {
+                merged.push(owned);
+            }
+        }
+        return merged;
+    }
+    record.tool_names.clone()
 }
 
 fn resolve_agent_workspace_id(
@@ -2546,8 +2551,7 @@ fn filter_tool_overrides(values: Vec<String>, allowed: &HashSet<String>) -> Vec<
 fn apply_tool_overrides(
     allowed: HashSet<String>,
     overrides: &[String],
-    config: &crate::config::Config,
-    skills: &crate::skills::SkillRegistry,
+    agent_defaults: &[String],
 ) -> HashSet<String> {
     if overrides.is_empty() {
         return allowed;
@@ -2555,22 +2559,18 @@ fn apply_tool_overrides(
     if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
         return HashSet::new();
     }
+    let scoped_defaults: HashSet<String> = agent_defaults
+        .iter()
+        .map(String::as_str)
+        .filter_map(|name| resolve_override_name_with_allowed(name, &allowed))
+        .collect();
     let mut filtered = HashSet::new();
     for raw in overrides {
         if let Some(mapped) = resolve_override_name_with_allowed(raw, &allowed) {
-            filtered.insert(mapped);
-        }
-    }
-    if config.server.mode.trim().eq_ignore_ascii_case("desktop") {
-        let skill_names: HashSet<String> = skills
-            .list_specs()
-            .into_iter()
-            .map(|spec| spec.name)
-            .collect();
-        for name in &allowed {
-            if skill_names.contains(name) {
-                filtered.insert(name.clone());
+            if !scoped_defaults.is_empty() && !scoped_defaults.contains(&mapped) {
+                continue;
             }
+            filtered.insert(mapped);
         }
     }
     filtered

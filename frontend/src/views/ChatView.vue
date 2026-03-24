@@ -829,6 +829,55 @@ const buildAllowedToolSet = (summary) => {
   return new Set([...(names.tools || []), ...(names.skills || [])]);
 };
 
+const normalizeToolNameList = (values) => {
+  const output = [];
+  const seen = new Set();
+  if (!Array.isArray(values)) return output;
+  values.forEach((item) => {
+    const name = String(item || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push(name);
+  });
+  return output;
+};
+
+const resolveSelectedAbilityNamesFromProfile = (agent) => {
+  const source = agent && typeof agent === 'object' ? agent : {};
+  const abilitySource = Array.isArray(source.ability_items)
+    ? source.ability_items
+    : Array.isArray(source?.abilities?.items)
+      ? source.abilities.items
+      : [];
+  const selected = [];
+  const seen = new Set();
+  abilitySource.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    if (item.selected === false) return;
+    const name = String(item.runtime_name || item.runtimeName || item.name || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    selected.push(name);
+  });
+  return selected;
+};
+
+const resolveAgentConfiguredToolNames = (agent) => {
+  const source = agent && typeof agent === 'object' ? agent : {};
+  const declared = normalizeToolNameList([
+    ...normalizeToolNameList(source.declared_tool_names),
+    ...normalizeToolNameList(source.declared_skill_names)
+  ]);
+  if (declared.length > 0) {
+    return declared;
+  }
+  const selectedFromItems = resolveSelectedAbilityNamesFromProfile(source);
+  if (selectedFromItems.length > 0) {
+    return selectedFromItems;
+  }
+  return normalizeToolNameList(source.tool_names);
+};
+
 const filterSummaryByNames = (summary, allowedSet) => {
   if (!summary) return null;
   const filterList = (list) =>
@@ -853,28 +902,24 @@ const filterSummaryByNames = (summary, allowedSet) => {
 function applyToolOverridesToSummary(summary, overrides = [], agentDefaults = []) {
   if (!summary) return null;
   const allowedSet = buildAllowedToolSet(summary);
-  const defaultSet = new Set();
-  if (Array.isArray(agentDefaults) && agentDefaults.length > 0) {
-    agentDefaults.forEach((name) => {
-      if (allowedSet.has(name)) {
-        defaultSet.add(name);
-      }
-    });
-  } else {
-    allowedSet.forEach((name) => defaultSet.add(name));
+  if (!allowedSet.size) return summary;
+  const normalizedAgentDefaults = normalizeToolNameList(agentDefaults);
+  const agentDefaultSet = new Set(normalizedAgentDefaults);
+  const normalizedOverrides = normalizeToolNameList(overrides);
+  if (normalizedOverrides.includes(TOOL_OVERRIDE_NONE)) {
+    return filterSummaryByNames(summary, new Set());
   }
-  let effectiveSet = new Set();
-  if (Array.isArray(overrides) && overrides.includes(TOOL_OVERRIDE_NONE)) {
-    effectiveSet = new Set();
-  } else if (Array.isArray(overrides) && overrides.length > 0) {
-    overrides.forEach((name) => {
-      if (allowedSet.has(name)) {
-        effectiveSet.add(name);
-      }
-    });
-  } else {
-    effectiveSet = defaultSet;
-  }
+  const sourceNames = normalizedOverrides.length
+    ? normalizedOverrides.filter(
+        (name) => !agentDefaultSet.size || agentDefaultSet.has(name)
+      )
+    : normalizedAgentDefaults;
+  const effectiveSet = new Set();
+  sourceNames.forEach((name) => {
+    if (allowedSet.has(name)) {
+      effectiveSet.add(name);
+    }
+  });
   return filterSummaryByNames(summary, effectiveSet);
 }
 
@@ -952,9 +997,10 @@ const effectiveToolSummary = computed(() => {
   const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
     ? chatStore.draftToolOverrides
     : [];
-  const activeToolNames = Array.isArray((activeAgent.value as Record<string, unknown> | null)?.tool_names)
-    ? ((((activeAgent.value as Record<string, unknown> | null)?.tool_names as string[]) || []))
-    : [];
+  const activeProfile = activeAgentId.value
+    ? (activeAgent.value as Record<string, unknown> | null)
+    : (defaultAgent.value as Record<string, unknown> | null);
+  const activeToolNames = resolveAgentConfiguredToolNames(activeProfile || {});
   return applyToolOverridesToSummary(
     promptToolSummary.value,
     overrides && overrides.length > 0 ? overrides : draftOverrides,
@@ -2685,14 +2731,34 @@ const openPromptPreview = async () => {
   promptPreviewVisible.value = true;
   promptPreviewLoading.value = true;
   promptPreviewContent.value = '';
+  const normalizedAgentId = String(
+    activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || DEFAULT_AGENT_KEY
+  ).trim();
+  await agentStore.getAgent(normalizedAgentId || DEFAULT_AGENT_KEY, { force: true }).catch(() => null);
   const toolSummaryPromise = loadToolSummary();
   try {
-    const overrides =
+    const previewAgentProfile = activeAgentId.value
+      ? (activeAgent.value as Record<string, unknown> | null)
+      : (defaultAgent.value as Record<string, unknown> | null);
+    const previewAgentDefaults = resolveAgentConfiguredToolNames(previewAgentProfile || {});
+    const previewDefaultSet = new Set(previewAgentDefaults);
+    const rawOverrides =
       activeSession.value?.tool_overrides && activeSession.value.tool_overrides.length > 0
         ? activeSession.value.tool_overrides
         : Array.isArray(chatStore.draftToolOverrides) && chatStore.draftToolOverrides.length > 0
           ? chatStore.draftToolOverrides
-          : undefined;
+          : [];
+    let overrides = undefined;
+    if (Array.isArray(rawOverrides) && rawOverrides.includes(TOOL_OVERRIDE_NONE)) {
+      overrides = [TOOL_OVERRIDE_NONE];
+    } else {
+      const sanitized = normalizeToolNameList(rawOverrides).filter(
+        (name) => !previewDefaultSet.size || previewDefaultSet.has(name)
+      );
+      if (sanitized.length > 0) {
+        overrides = sanitized;
+      }
+    }
     const agentId =
       activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
     const requestPayload = {
@@ -3178,7 +3244,7 @@ watch(
 watch(
   () => activeAgentId.value,
   (value) => {
-    agentStore.getAgent(value || DEFAULT_AGENT_KEY).catch(() => null);
+    agentStore.getAgent(value || DEFAULT_AGENT_KEY, { force: true }).catch(() => null);
   },
   { immediate: true }
 );

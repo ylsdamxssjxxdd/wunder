@@ -1,7 +1,8 @@
 <template>
   <span class="messenger-agent-avatar" :class="[sizeClass, stateClass]" :title="title">
-    <span class="messenger-agent-avatar-image-shell" aria-hidden="true">
-      <img class="messenger-agent-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
+    <span class="messenger-agent-avatar-image-shell" :style="avatarFaceStyle" aria-hidden="true">
+      <img v-if="avatarImageUrl" class="messenger-agent-avatar-image" :src="avatarImageUrl" alt="" />
+      <span v-else class="messenger-agent-avatar-initial">{{ avatarInitial }}</span>
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
       <span
@@ -16,7 +17,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
+import {
+  parseAgentAvatarIconConfig,
+  resolveAgentAvatarImageByConfig,
+  resolveAgentAvatarInitial
+} from '@/utils/agentAvatar';
 
 type AgentAvatarSize = 'sm' | 'md' | 'lg';
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
@@ -26,17 +31,26 @@ const props = withDefaults(
     size?: AgentAvatarSize;
     state?: AgentRuntimeState;
     title?: string;
+    icon?: unknown;
+    name?: string;
   }>(),
   {
     size: 'md',
     state: 'idle',
-    title: ''
+    title: '',
+    name: ''
   }
 );
 
 const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
 const isRunning = computed(() => props.state === 'running');
+const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
+const avatarImageUrl = computed(() => resolveAgentAvatarImageByConfig(avatarConfig.value));
+const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
+const avatarFaceStyle = computed(() => ({
+  background: avatarImageUrl.value ? 'transparent' : avatarConfig.value.color
+}));
 const statusIconClass = computed(() => {
   switch (props.state) {
     case 'done':
@@ -101,6 +115,19 @@ const statusIconClass = computed(() => {
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.messenger-agent-avatar-initial {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .messenger-agent-avatar-status {

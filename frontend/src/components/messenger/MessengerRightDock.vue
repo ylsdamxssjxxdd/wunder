@@ -4,6 +4,7 @@
     :class="{ 'messenger-right-dock--collapsed': collapsed }"
     @pointerdown.right.stop="swallowRightDockRightPointer"
   >
+    <div class="messenger-right-dock-toggle-hitbox" aria-hidden="true"></div>
     <button
       class="messenger-right-dock-toggle"
       type="button"
