@@ -1,5 +1,11 @@
 ﻿<template>
-  <aside class="messenger-right-dock" :class="{ 'messenger-right-dock--collapsed': collapsed }">
+  <aside
+    class="messenger-right-dock"
+    :class="{
+      'messenger-right-dock--collapsed': collapsed,
+      'messenger-right-dock--edge-active': edgeActive
+    }"
+  >
     <div class="messenger-right-dock-toggle-hitbox" aria-hidden="true"></div>
     <button
       class="messenger-right-dock-toggle"
@@ -126,6 +132,7 @@ type GroupDetail = {
 
 const props = defineProps<{
   collapsed: boolean;
+  edgeActive: boolean;
   groupId: string;
 }>();
 

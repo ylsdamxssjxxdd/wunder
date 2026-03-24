@@ -1,7 +1,10 @@
 <template>
   <aside
     class="messenger-right-dock"
-    :class="{ 'messenger-right-dock--collapsed': collapsed }"
+    :class="{
+      'messenger-right-dock--collapsed': collapsed,
+      'messenger-right-dock--edge-active': edgeActive
+    }"
     @pointerdown.right.stop="swallowRightDockRightPointer"
   >
     <div class="messenger-right-dock-toggle-hitbox" aria-hidden="true"></div>
@@ -142,6 +145,7 @@ type TimelineSessionItem = {
 
 const props = defineProps<{
   collapsed: boolean;
+  edgeActive: boolean;
   showAgentPanels: boolean;
   agentIdForApi: string;
   containerId: number;

@@ -11,6 +11,12 @@
       'messenger-view--host-small': isMiddlePaneOverlay,
       'messenger-view--host-tight': viewportWidth <= 840
     }"
+    @pointerenter="handleMessengerRootPointerMove"
+    @pointermove="handleMessengerRootPointerMove"
+    @pointerleave="handleMessengerRootPointerLeave"
+    @mouseenter="handleMessengerRootPointerMove"
+    @mousemove="handleMessengerRootPointerMove"
+    @mouseleave="handleMessengerRootPointerLeave"
   >
     <aside
       ref="leftRailRef"
@@ -1379,6 +1385,7 @@
       ref="rightDockRef"
       v-if="showAgentRightDock"
       :collapsed="rightDockCollapsed"
+      :edge-active="rightDockEdgeHover"
       :show-agent-panels="showRightAgentPanels"
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
@@ -1397,6 +1404,7 @@
       ref="rightDockRef"
       v-else-if="showGroupRightDock"
       :collapsed="rightDockCollapsed"
+      :edge-active="rightDockEdgeHover"
       :group-id="activeWorldGroupId"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
     />
@@ -1821,6 +1829,7 @@ type SettingsPanelMode =
 
 const settingsPanelMode = ref<SettingsPanelMode>('general');
 const rightDockCollapsed = ref(false);
+const rightDockEdgeHover = ref(false);
 const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
 const desktopFirstLaunchDefaultAgentHintAt = ref(0);
@@ -4763,6 +4772,57 @@ const showGroupRightDock = computed(
 const showRightDock = computed(() => showAgentRightDock.value || showGroupRightDock.value);
 
 const showRightAgentPanels = computed(() => showAgentRightDock.value);
+
+const RIGHT_DOCK_EDGE_HOVER_THRESHOLD = 84;
+
+function resolveMessengerRootElement(): HTMLElement | null {
+  const root = messengerRootRef.value as unknown;
+  if (!root) return null;
+  if (root instanceof HTMLElement) return root;
+  const candidate = (root as { $el?: unknown }).$el;
+  return candidate instanceof HTMLElement ? candidate : null;
+}
+
+function setRightDockEdgeHover(next: boolean): void {
+  if (rightDockEdgeHover.value === next) return;
+  rightDockEdgeHover.value = next;
+}
+
+function handleMessengerRootPointerMove(event: PointerEvent | MouseEvent): void {
+  if (!showRightDock.value) {
+    setRightDockEdgeHover(false);
+    return;
+  }
+  const root = resolveMessengerRootElement();
+  if (!root) {
+    setRightDockEdgeHover(false);
+    return;
+  }
+  const rect = root.getBoundingClientRect();
+  if (!Number.isFinite(rect.right) || rect.width <= 0) {
+    setRightDockEdgeHover(false);
+    return;
+  }
+  const pointerX = Number(event.clientX);
+  if (!Number.isFinite(pointerX)) {
+    setRightDockEdgeHover(false);
+    return;
+  }
+  setRightDockEdgeHover(pointerX >= rect.right - RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
+}
+
+function handleMessengerRootPointerLeave(): void {
+  setRightDockEdgeHover(false);
+}
+
+watch(
+  () => showRightDock.value,
+  (visible) => {
+    if (!visible) {
+      setRightDockEdgeHover(false);
+    }
+  }
+);
 
 const rightPanelAgentId = computed(() => {
   if (!showRightAgentPanels.value) return '';
