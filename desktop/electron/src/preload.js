@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
     process.platform === 'win32'
       ? () => ipcRenderer.invoke('wunder:supplement-import')
       : undefined,
+  choosePythonInterpreter: (defaultPath) =>
+    ipcRenderer.invoke('wunder:choose-python-interpreter', { defaultPath }),
   startWindowDrag: () => ipcRenderer.invoke('wunder:window-start-drag'),
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),

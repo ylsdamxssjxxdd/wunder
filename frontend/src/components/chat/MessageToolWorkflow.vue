@@ -2819,7 +2819,8 @@ const handleEntryToggle = (key: string, event: Event) => {
 };
 
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
-const shouldRender = computed(() => props.visible && (props.loading || entries.value.length > 0));
+// Do not expose workflow shell during pure model streaming; show it only after the first tool run appears.
+const shouldRender = computed(() => props.visible && entries.value.length > 0);
 
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {

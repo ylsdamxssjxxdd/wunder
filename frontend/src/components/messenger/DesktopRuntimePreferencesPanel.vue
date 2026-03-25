@@ -24,53 +24,34 @@
       <label class="desktop-runtime-preferences-field">
         <span class="desktop-runtime-preferences-field-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
         <div class="desktop-runtime-preferences-editor">
-          <el-input
-            v-model="pythonPathDraft"
-            clearable
-            class="desktop-runtime-preferences-input"
-            :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
-          />
-          <div class="desktop-runtime-preferences-action-row">
-            <el-button
-              class="desktop-runtime-preferences-btn desktop-runtime-preferences-btn--primary"
-              :loading="savingPythonPath"
-              :disabled="!pythonPathDirty"
-              @click="savePythonPath()"
-            >
-              {{ t('desktop.common.save') }}
-            </el-button>
-            <el-button class="desktop-runtime-preferences-btn" @click="openPythonPathPicker">
-              {{ t('desktop.common.browse') }}
-            </el-button>
-            <el-button
-              v-if="supplementImportSupported"
-              class="desktop-runtime-preferences-btn"
-              :loading="importingSupplement"
-              @click="handleImportSupplementPackage"
-            >
-              {{ t('desktop.system.pythonSupplementImport') }}
-            </el-button>
-            <el-button
-              class="desktop-runtime-preferences-btn"
-              :disabled="!pythonPathDraft.trim() && !configuredPythonPath"
-              @click="resetPythonPath"
-            >
-              {{ t('desktop.system.pythonInterpreterReset') }}
-            </el-button>
+          <div class="desktop-runtime-preferences-input-row">
+            <el-input
+              v-model="pythonPathDraft"
+              clearable
+              class="desktop-runtime-preferences-input"
+              :placeholder="pythonPathPlaceholder"
+              @blur="handlePythonPathInputCommit"
+              @keyup.enter="handlePythonPathInputCommit"
+            />
+            <div class="desktop-runtime-preferences-inline-actions">
+              <el-button
+                class="desktop-runtime-preferences-btn"
+                :loading="pickingPythonPath"
+                @click="openPythonPathPicker"
+              >
+                {{ t('desktop.common.browse') }}
+              </el-button>
+              <el-button
+                v-if="supplementImportSupported"
+                class="desktop-runtime-preferences-btn"
+                :loading="importingSupplement"
+                @click="handleImportSupplementPackage"
+              >
+                {{ t('desktop.system.pythonSupplementImport') }}
+              </el-button>
+            </div>
           </div>
         </div>
-        <span class="desktop-runtime-preferences-field-hint">
-          {{ t('desktop.system.pythonInterpreterHint') }}
-        </span>
-        <span v-if="supplementImportSupported" class="desktop-runtime-preferences-field-hint">
-          {{ t('desktop.system.pythonSupplementImportHint') }}
-        </span>
-        <span
-          class="desktop-runtime-preferences-field-state"
-          :class="{ 'desktop-runtime-preferences-field-state--warning': showConfiguredPythonWarning }"
-        >
-          {{ pythonInterpreterStateHint }}
-        </span>
       </label>
     </div>
 
@@ -111,68 +92,6 @@
       </div>
     </div>
   </section>
-
-  <el-dialog
-    v-model="pathPickerVisible"
-    :title="t('desktop.system.pythonPathPickerTitle')"
-    width="720px"
-    append-to-body
-  >
-    <div class="desktop-runtime-preferences-picker">
-      <div class="desktop-runtime-preferences-picker-toolbar">
-        <el-button
-          size="small"
-          :disabled="!pathPickerParentPath"
-          @click="loadPythonPickerDirectory(pathPickerParentPath || undefined)"
-        >
-          {{ t('desktop.system.pythonPathPickerUp') }}
-        </el-button>
-      </div>
-      <div
-        v-if="pathPickerCurrentPath"
-        class="desktop-runtime-preferences-picker-current"
-        :title="pathPickerCurrentPath"
-      >
-        {{ pathPickerCurrentPath }}
-      </div>
-      <div class="desktop-runtime-preferences-picker-roots">
-        <button
-          v-for="root in pathPickerRoots"
-          :key="`desktop-runtime-root-${root}`"
-          class="desktop-runtime-preferences-picker-root"
-          type="button"
-          @click="loadPythonPickerDirectory(root)"
-        >
-          {{ root }}
-        </button>
-      </div>
-      <div class="desktop-runtime-preferences-picker-list" v-loading="pathPickerLoading">
-        <button
-          v-for="item in pathPickerItems"
-          :key="`desktop-runtime-item-${item.path}`"
-          class="desktop-runtime-preferences-picker-item"
-          type="button"
-          @click="handlePythonPickerItemClick(item)"
-        >
-          <i
-            class="fa-regular"
-            :class="item.entry_type === 'dir' ? 'fa-folder' : 'fa-file-lines'"
-            aria-hidden="true"
-          ></i>
-          <span class="desktop-runtime-preferences-picker-item-main">
-            <span class="desktop-runtime-preferences-picker-item-name">{{ item.name }}</span>
-            <span class="desktop-runtime-preferences-picker-item-path">{{ item.path }}</span>
-          </span>
-        </button>
-        <div
-          v-if="!pathPickerLoading && !pathPickerItems.length"
-          class="desktop-runtime-preferences-picker-empty"
-        >
-          {{ t('desktop.system.pythonPathPickerEmpty') }}
-        </div>
-      </div>
-    </div>
-  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -181,9 +100,7 @@ import { ElMessage } from 'element-plus';
 
 import {
   fetchDesktopSettings,
-  listDesktopDirectories,
   updateDesktopSettings,
-  type DesktopDirectoryEntry,
   type DesktopSettingsData
 } from '@/api/desktop';
 import { useI18n } from '@/i18n';
@@ -200,6 +117,7 @@ type DesktopRuntimeBridge = {
   getLaunchAtLogin?: () => Promise<unknown> | unknown;
   setLaunchAtLogin?: (enabled: boolean) => Promise<unknown> | unknown;
   importSupplementPackage?: () => Promise<unknown> | unknown;
+  choosePythonInterpreter?: (defaultPath?: string) => Promise<string | null> | string | null;
 };
 type DesktopSupplementImportResult = {
   supported?: boolean;
@@ -209,15 +127,6 @@ type DesktopSupplementImportResult = {
   package_path?: string;
   imported_paths?: string[];
 };
-
-const PYTHON_PICKER_FILE_NAMES = [
-  'python.exe',
-  'python3.exe',
-  'pythonw.exe',
-  'python',
-  'python3',
-  'pythonw'
-];
 
 withDefaults(
   defineProps<{
@@ -232,22 +141,19 @@ const { t } = useI18n();
 
 const loading = ref(false);
 const savingPythonPath = ref(false);
+const pickingPythonPath = ref(false);
 const importingSupplement = ref(false);
 const pythonPathDraft = ref('');
 const configuredPythonPath = ref('');
-const configuredPythonPathValid = ref(true);
 const pythonRuntimeBin = ref('');
+const bundledDefaultPythonPath = ref('');
+const bundledDefaultPythonExists = ref(false);
+const detectedPythonPaths = ref<string[]>([]);
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
 const launchAtLoginEnabled = ref(false);
 const launchAtLoginLoading = ref(false);
 const launchAtLoginSupported = ref(false);
-const pathPickerVisible = ref(false);
-const pathPickerLoading = ref(false);
-const pathPickerCurrentPath = ref('');
-const pathPickerParentPath = ref<string | null>(null);
-const pathPickerRoots = ref<string[]>([]);
-const pathPickerItems = ref<DesktopDirectoryEntry[]>([]);
 let disposed = false;
 
 const pythonPathDirty = computed(
@@ -263,21 +169,24 @@ const windowCloseBehaviorSupported = computed(() => {
       typeof bridge.setWindowCloseBehavior === 'function'
   );
 });
-const showConfiguredPythonWarning = computed(
-  () => Boolean(configuredPythonPath.value) && !configuredPythonPathValid.value
-);
 const supplementImportSupported = computed(() => {
   const bridge = getDesktopRuntimeBridge();
   return Boolean(bridge && typeof bridge.importSupplementPackage === 'function');
 });
-const pythonInterpreterStateHint = computed(() => {
-  if (showConfiguredPythonWarning.value) {
-    return t('desktop.system.pythonInterpreterInvalidHint');
+const pythonPathPlaceholder = computed(() => {
+  if (bundledDefaultPythonExists.value && bundledDefaultPythonPath.value) {
+    return bundledDefaultPythonPath.value;
   }
-  if (configuredPythonPath.value) {
-    return t('desktop.system.pythonInterpreterCustomHint');
+  if (detectedPythonPaths.value.length) {
+    return detectedPythonPaths.value[0];
   }
-  return t('desktop.system.pythonInterpreterBundledHint');
+  if (bundledDefaultPythonPath.value) {
+    return bundledDefaultPythonPath.value;
+  }
+  if (pythonRuntimeBin.value) {
+    return pythonRuntimeBin.value;
+  }
+  return t('desktop.system.pythonInterpreterPathPlaceholder');
 });
 
 function normalizePathForCompare(value: string): string {
@@ -340,16 +249,18 @@ function resolveErrorMessage(error: unknown, fallback: string): string {
 function applySettingsData(data: DesktopSettingsData | Record<string, unknown> | undefined) {
   const source = (data || {}) as Record<string, unknown>;
   configuredPythonPath.value = String(source.python_path || '').trim();
-  configuredPythonPathValid.value = source.python_path_valid !== false;
   pythonPathDraft.value = configuredPythonPath.value;
 }
 
 function applyFallbackPythonRuntimeInfo() {
   if (configuredPythonPath.value) {
     pythonRuntimeBin.value = configuredPythonPath.value;
-    return;
+  } else {
+    pythonRuntimeBin.value = '';
   }
-  pythonRuntimeBin.value = '';
+  bundledDefaultPythonPath.value = '';
+  bundledDefaultPythonExists.value = false;
+  detectedPythonPaths.value = pythonRuntimeBin.value ? [pythonRuntimeBin.value] : [];
 }
 
 function resolveInitialPickerPath(): string | undefined {
@@ -401,6 +312,14 @@ async function loadPythonRuntimeInfo() {
     if (disposed) return;
     const source = payload && typeof payload === 'object' ? payload : {};
     pythonRuntimeBin.value = String(source.bin || '').trim();
+    bundledDefaultPythonPath.value = String(source.bundled_default_bin || '').trim();
+    bundledDefaultPythonExists.value = source.bundled_default_exists === true;
+    detectedPythonPaths.value = Array.isArray(source.detected_bins)
+      ? source.detected_bins.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    if (pythonRuntimeBin.value && !detectedPythonPaths.value.includes(pythonRuntimeBin.value)) {
+      detectedPythonPaths.value = [pythonRuntimeBin.value, ...detectedPythonPaths.value];
+    }
     if (!pythonRuntimeBin.value) {
       applyFallbackPythonRuntimeInfo();
     }
@@ -514,7 +433,7 @@ async function handleWindowCloseBehaviorChange() {
   }
 }
 
-async function savePythonPath(nextPath = pythonPathDraft.value) {
+async function savePythonPath(nextPath = pythonPathDraft.value, silent = true) {
   if (savingPythonPath.value) {
     return;
   }
@@ -526,7 +445,9 @@ async function savePythonPath(nextPath = pythonPathDraft.value) {
     if (disposed) return;
     applySettingsData((response?.data?.data || {}) as DesktopSettingsData);
     await loadPythonRuntimeInfo();
-    ElMessage.success(t('desktop.common.saveSuccess'));
+    if (!silent) {
+      ElMessage.success(t('desktop.common.saveSuccess'));
+    }
   } catch (error) {
     if (disposed) return;
     console.error(error);
@@ -538,9 +459,11 @@ async function savePythonPath(nextPath = pythonPathDraft.value) {
   }
 }
 
-async function resetPythonPath() {
-  pythonPathDraft.value = '';
-  await savePythonPath('');
+async function handlePythonPathInputCommit() {
+  if (!pythonPathDirty.value || savingPythonPath.value) {
+    return;
+  }
+  await savePythonPath(pythonPathDraft.value, true);
 }
 
 async function handleImportSupplementPackage() {
@@ -576,64 +499,34 @@ async function handleImportSupplementPackage() {
   }
 }
 
-async function loadPythonPickerDirectory(
-  targetPath?: string,
-  silent = false
-): Promise<boolean> {
-  pathPickerLoading.value = true;
-  try {
-    const response = await listDesktopDirectories(targetPath, {
-      includeFiles: true,
-      fileNames: PYTHON_PICKER_FILE_NAMES
-    });
-    if (disposed) return false;
-    const data = (response?.data?.data || {}) as Record<string, unknown>;
-    pathPickerCurrentPath.value = String(data.current_path || '').trim();
-    pathPickerParentPath.value = data.parent_path ? String(data.parent_path) : null;
-    pathPickerRoots.value = Array.isArray(data.roots)
-      ? data.roots.map((item) => String(item || '').trim()).filter(Boolean)
-      : [];
-    pathPickerItems.value = Array.isArray(data.items)
-      ? (data.items as unknown[])
-          .map((item) => item as Record<string, unknown>)
-          .map((item) => ({
-            name: String(item.name || '').trim(),
-            path: String(item.path || '').trim(),
-            entry_type: String(item.entry_type || '').trim() as 'dir' | 'file'
-          }))
-          .filter((item) => item.name && item.path && (item.entry_type === 'dir' || item.entry_type === 'file'))
-      : [];
-    return true;
-  } catch (error) {
-    if (!silent && !disposed) {
-      console.error(error);
-      ElMessage.error(resolveErrorMessage(error, t('desktop.system.pythonPathPickerLoadFailed')));
-    }
-    return false;
-  } finally {
-    if (!disposed) {
-      pathPickerLoading.value = false;
-    }
-  }
-}
-
 async function openPythonPathPicker() {
-  pathPickerVisible.value = true;
-  const initialPath = resolveInitialPickerPath();
-  const loaded = await loadPythonPickerDirectory(initialPath, true);
-  if (!loaded) {
-    await loadPythonPickerDirectory(undefined);
-  }
-}
-
-async function handlePythonPickerItemClick(item: DesktopDirectoryEntry) {
-  if (item.entry_type === 'dir') {
-    await loadPythonPickerDirectory(item.path);
+  if (pickingPythonPath.value) {
     return;
   }
-  pythonPathDraft.value = item.path;
-  pathPickerVisible.value = false;
-  await savePythonPath(item.path);
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.choosePythonInterpreter !== 'function') {
+    ElMessage.error(t('desktop.system.pythonPathPickerLoadFailed'));
+    return;
+  }
+  pickingPythonPath.value = true;
+  try {
+    const picked = await bridge.choosePythonInterpreter(resolveInitialPickerPath());
+    if (disposed) return;
+    const nextPath = String(picked || '').trim();
+    if (!nextPath) {
+      return;
+    }
+    pythonPathDraft.value = nextPath;
+    await savePythonPath(nextPath, true);
+  } catch (error) {
+    if (disposed) return;
+    console.error(error);
+    ElMessage.error(resolveErrorMessage(error, t('desktop.system.pythonPathPickerLoadFailed')));
+  } finally {
+    if (!disposed) {
+      pickingPythonPath.value = false;
+    }
+  }
 }
 
 async function initializePanel() {
@@ -715,6 +608,20 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.desktop-runtime-preferences-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.desktop-runtime-preferences-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .desktop-runtime-preferences-input,
 .desktop-runtime-preferences-select {
   width: 100%;
@@ -722,27 +629,6 @@ onBeforeUnmount(() => {
 
 .desktop-runtime-preferences-select {
   min-width: 220px;
-}
-
-.desktop-runtime-preferences-action-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.desktop-runtime-preferences-field-hint {
-  color: var(--portal-muted, #6b7280);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.desktop-runtime-preferences-field-state {
-  color: var(--portal-text, #1f2937);
-  font-size: 12px;
-}
-
-.desktop-runtime-preferences-field-state--warning {
-  color: #b45309;
 }
 
 .desktop-runtime-preferences-row {
@@ -798,93 +684,6 @@ onBeforeUnmount(() => {
   min-height: 40px;
 }
 
-.desktop-runtime-preferences-picker {
-  display: grid;
-  gap: 12px;
-}
-
-.desktop-runtime-preferences-picker-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.desktop-runtime-preferences-picker-current {
-  color: var(--portal-text, #1f2937);
-  font-size: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--portal-border, #d8dee8);
-  border-radius: 12px;
-  background: var(--portal-surface, #f8fafc);
-  word-break: break-all;
-}
-
-.desktop-runtime-preferences-picker-roots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.desktop-runtime-preferences-picker-root {
-  border: 1px solid var(--portal-border, #d8dee8);
-  border-radius: 999px;
-  background: var(--portal-surface, #f8fafc);
-  color: var(--portal-text, #1f2937);
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.desktop-runtime-preferences-picker-list {
-  display: grid;
-  gap: 8px;
-  max-height: 340px;
-  overflow: auto;
-  padding: 8px;
-  border: 1px solid var(--portal-border, #d8dee8);
-  border-radius: 14px;
-  background: var(--portal-surface, #f8fafc);
-}
-
-.desktop-runtime-preferences-picker-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  color: var(--portal-text, #1f2937);
-  text-align: left;
-  cursor: pointer;
-}
-
-.desktop-runtime-preferences-picker-item-main {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.desktop-runtime-preferences-picker-item-name {
-  color: var(--portal-text, #1f2937);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.desktop-runtime-preferences-picker-item-path {
-  color: var(--portal-muted, #6b7280);
-  font-size: 12px;
-  word-break: break-all;
-}
-
-.desktop-runtime-preferences-picker-empty {
-  color: var(--portal-muted, #6b7280);
-  font-size: 12px;
-  padding: 16px 6px;
-}
-
 .desktop-runtime-preferences-btn {
   border-radius: 10px;
   border: 1px solid var(--portal-border, #d8dee8);
@@ -893,24 +692,10 @@ onBeforeUnmount(() => {
   box-shadow: none;
 }
 
-.desktop-runtime-preferences-btn--primary {
-  border-color: transparent;
-  background: var(--ui-accent, #2563eb);
-  color: #ffffff;
-}
-
-.desktop-runtime-preferences-picker-root:hover,
-.desktop-runtime-preferences-picker-item:hover,
 .desktop-runtime-preferences-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.45);
   background: var(--ui-accent-soft-2, rgba(var(--ui-accent-rgb), 0.08));
   color: var(--ui-accent-deep, #1d4ed8);
-}
-
-.desktop-runtime-preferences-btn--primary:hover:not(:disabled) {
-  border-color: transparent;
-  background: var(--ui-accent-hover, #1d4ed8);
-  color: #ffffff;
 }
 
 .desktop-runtime-preferences-panel :deep(.el-input__wrapper),
@@ -940,6 +725,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .desktop-runtime-preferences-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-runtime-preferences-inline-actions {
+    justify-content: flex-start;
+  }
+
   .desktop-runtime-preferences-row {
     grid-template-columns: 1fr;
   }

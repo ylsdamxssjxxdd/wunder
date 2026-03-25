@@ -2708,9 +2708,42 @@ const activeAgentProfileForModelResolution = computed(() =>
   activeAgentId.value === DEFAULT_AGENT_KEY ? defaultAgentProfile.value : activeAgent.value
 );
 
+const isDefaultModelSelectorValue = (value: unknown): boolean => {
+  const lowered = String(value || '').trim().toLowerCase();
+  return !lowered || lowered === 'default' || lowered === '__default__' || lowered === 'system';
+};
+
+const isSameModelName = (left: unknown, right: unknown): boolean => {
+  const leftValue = String(left || '').trim();
+  const rightValue = String(right || '').trim();
+  if (!leftValue || !rightValue) return false;
+  return leftValue.toLowerCase() === rightValue.toLowerCase();
+};
+
+const resolveExplicitAgentModelName = (profileValue: unknown): string => {
+  const profile = asObjectRecord(profileValue);
+  const configuredRaw = profile.configured_model_name ?? profile.configuredModelName;
+  const configuredResolved = resolveModelNameFromRecord(configuredRaw);
+  const configured = configuredResolved || String(configuredRaw || '').trim();
+  if (!isDefaultModelSelectorValue(configured)) {
+    return configured;
+  }
+
+  const fallback = resolveModelNameFromRecord(profile);
+  if (isDefaultModelSelectorValue(fallback)) return '';
+  // API fallback may contain effective default model_name when agent has no explicit model.
+  if (desktopLocalMode.value && isSameModelName(fallback, desktopDefaultModelDisplayName.value)) {
+    return '';
+  }
+  if (!desktopLocalMode.value && isSameModelName(fallback, serverDefaultModelDisplayName.value)) {
+    return '';
+  }
+  return fallback;
+};
+
 const activeAgentDirectConfiguredModelName = computed(() => {
   if (!isAgentConversationActive.value) return '';
-  return resolveModelNameFromRecord(activeAgentProfileForModelResolution.value);
+  return resolveExplicitAgentModelName(activeAgentProfileForModelResolution.value);
 });
 
 const activeAgentConfiguredModelName = computed(() => {

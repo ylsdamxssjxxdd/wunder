@@ -227,16 +227,10 @@ $env:WUNDER_INCLUDE_CLI = '0'
 $env:WUNDER_CLI_BIN = ''
 $env:WUNDER_SKIP_RUNTIME_DEPS_COPY = '1'
 $env:WUNDER_EXTRA_RUNTIME_ROOTS = ''
-$win7SupplementReadme = Resolve-ExistingPath @(
-  (Join-Path $repoRoot 'desktop\electron\assets\README-win7-supplement.txt')
-)
 $win7DisableUpdaterFlag = Resolve-ExistingPath @(
   (Join-Path $repoRoot 'desktop\electron\assets\win7-disable-updater.flag')
 )
 $extraRuntimeFiles = @()
-if ($win7SupplementReadme) {
-  $extraRuntimeFiles += $win7SupplementReadme
-}
 if ($win7DisableUpdaterFlag) {
   $extraRuntimeFiles += $win7DisableUpdaterFlag
 }
@@ -270,6 +264,13 @@ try {
 
   $stageResourcesDir = Join-Path $stageApp 'resources'
   Ensure-Directory $stageResourcesDir
+  foreach ($obsoleteName in @('README-win7-supplement.txt', 'wunder-win7-supplement.json')) {
+    $obsoletePath = Join-Path $stageResourcesDir $obsoleteName
+    if (Test-Path $obsoletePath) {
+      Remove-Item -Force $obsoletePath
+      Write-Step "removed obsolete win7 resource artifact: $obsoletePath"
+    }
+  }
   Write-Utf8NoBomFile -Path (Join-Path $stageResourcesDir 'disable-updater.flag') -Content 'disable updater for win7 desktop package'
   Write-Utf8NoBomFile -Path (Join-Path $stageResourcesDir 'win7-disable-updater.flag') -Content 'disable updater for win7 desktop package'
 

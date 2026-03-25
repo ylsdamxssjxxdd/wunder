@@ -747,6 +747,11 @@ const resolveBundledPythonBin = (appDir) => {
   return candidates.find((candidate) => fs.existsSync(candidate)) || ''
 }
 
+const resolveBundledPythonDefaultBin = (appDir) =>
+  process.platform === 'win32'
+    ? path.join(appDir, 'opt', 'python', 'python.exe')
+    : path.join(appDir, 'opt', 'python', 'bin', 'python3')
+
 const resolveBundledVenvPythonBin = (appDir) => {
   const candidates = process.platform === 'win32'
     ? [
@@ -760,15 +765,69 @@ const resolveBundledVenvPythonBin = (appDir) => {
   return candidates.find((candidate) => fs.existsSync(candidate)) || ''
 }
 
+const collectDetectedPythonBins = (preferred = []) => {
+  const output = []
+  const seen = new Set()
+  const pushCandidate = (value) => {
+    const candidate = String(value || '').trim()
+    if (!candidate || seen.has(candidate)) {
+      return
+    }
+    try {
+      if (!fs.statSync(candidate).isFile()) {
+        return
+      }
+    } catch {
+      return
+    }
+    seen.add(candidate)
+    output.push(candidate)
+  }
+  preferred.forEach((item) => pushCandidate(item))
+
+  const probeCommands = process.platform === 'win32'
+    ? [['where.exe', ['python']], ['where.exe', ['python3']]]
+    : [['which', ['python3']], ['which', ['python']]]
+  for (const [command, args] of probeCommands) {
+    try {
+      const result = spawnSync(command, args, {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 2000
+      })
+      if (result.error || result.status !== 0) {
+        continue
+      }
+      const lines = `${String(result.stdout || '')}\n${String(result.stderr || '')}`
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter((item) => item)
+      lines.forEach((item) => pushCandidate(item))
+    } catch {
+      // Keep fallback-only behavior when command probing is unavailable.
+    }
+  }
+  return output
+}
+
 const resolveDesktopPythonRuntimeInfo = () => {
   const appDir = resolveDesktopAppDir()
   const settings = readDesktopSettings()
   const settingsBin = resolveExistingFilePath(settings.python_path, appDir)
   const envBin = resolveExistingFilePath(process.env.WUNDER_PYTHON_BIN, appDir)
+  const bundledDefaultBin = resolveBundledPythonDefaultBin(appDir)
+  const bundledDefaultExists = fs.existsSync(bundledDefaultBin)
   const bundledBin = resolveBundledPythonBin(appDir)
   const venvBin = resolveBundledVenvPythonBin(appDir)
   const preferredBin = settingsBin || envBin || bundledBin || venvBin
   const normalizedBin = resolveExistingFilePath(preferredBin, appDir)
+  const detectedBins = collectDetectedPythonBins([
+    settingsBin,
+    envBin,
+    bundledBin,
+    venvBin,
+    normalizedBin
+  ])
   const normalizedAppDir = String(appDir || '')
     .trim()
     .replace(/\\/g, '/')
@@ -815,7 +874,10 @@ const resolveDesktopPythonRuntimeInfo = () => {
     bin: normalizedBin,
     version,
     source,
-    bundled
+    bundled,
+    bundled_default_bin: bundledDefaultBin,
+    bundled_default_exists: bundledDefaultExists,
+    detected_bins: detectedBins
   }
 }
 
@@ -854,8 +916,8 @@ const extractZipArchiveWithPowershell = (zipPath, destinationDir) => {
     `wunder-supplement-extract-${Date.now()}-${process.pid}.ps1`
   )
   const script = [
-    "$ErrorActionPreference = 'Stop'",
     'param([string]$ZipPath, [string]$Destination)',
+    "$ErrorActionPreference = 'Stop'",
     'Add-Type -AssemblyName System.IO.Compression.FileSystem',
     'if (Test-Path -LiteralPath $Destination) {',
     '  Remove-Item -LiteralPath $Destination -Recurse -Force',
@@ -916,6 +978,46 @@ const resolveSupplementExtractRoot = (stagingDir) => {
     }
   }
   return ''
+}
+
+const resolveDialogDefaultPath = (rawDefaultPath) => {
+  const candidate = String(rawDefaultPath || '').trim()
+  if (!candidate) {
+    return ''
+  }
+  try {
+    const stat = fs.statSync(candidate)
+    if (stat.isDirectory()) {
+      return candidate
+    }
+    if (stat.isFile()) {
+      return path.dirname(candidate)
+    }
+  } catch {
+    // Fallback to parent directory when input path does not exist.
+  }
+  const parent = path.dirname(candidate)
+  return parent && parent !== '.' ? parent : ''
+}
+
+const choosePythonInterpreter = async (defaultPath = '') => {
+  const normalizedDefaultPath = resolveDialogDefaultPath(defaultPath)
+  const openDialogOptions = {
+    title: 'Select Python Interpreter',
+    defaultPath: normalizedDefaultPath || undefined,
+    properties: ['openFile']
+  }
+  if (process.platform === 'win32') {
+    openDialogOptions.filters = [{ name: 'Python Executable', extensions: ['exe'] }]
+  }
+  const result = await withMainWindow(
+    (window) => dialog.showOpenDialog(window, openDialogOptions),
+    () => dialog.showOpenDialog(openDialogOptions)
+  )
+  if (result?.canceled || !Array.isArray(result?.filePaths) || !result.filePaths.length) {
+    return ''
+  }
+  return String(result.filePaths[0] || '').trim()
 }
 
 const importSupplementPackage = async () => {
@@ -2841,6 +2943,11 @@ if (!gotLock) {
             ? payload.region === true
             : false
         return captureDesktopScreenshot({ hideWindow, region })
+      })
+      ipcMain.handle('wunder:choose-python-interpreter', async (_event, payload) => {
+        const rawDefaultPath =
+          payload && typeof payload === 'object' ? String(payload.defaultPath || '').trim() : ''
+        return choosePythonInterpreter(rawDefaultPath)
       })
       ipcMain.handle('wunder:choose-directory', async (_event, payload) => {
         const rawDefaultPath =
