@@ -201,7 +201,7 @@ tools: # 内置工具配置
     runner: legacy
     max_active_team_runs: 256
     max_parallel_tasks_per_team: 256
-    default_timeout_s: 180
+    default_timeout_s: 300
     max_retry: 2
     max_depth: 2
 

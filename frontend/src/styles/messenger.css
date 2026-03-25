@@ -1040,6 +1040,11 @@
   margin: 2px 2px 6px;
 }
 
+/* Hide agent hive structure panel in middle pane to reduce vertical clutter. */
+.messenger-unit-structure--agents {
+  display: none;
+}
+
 .messenger-unit-structure-head {
   display: flex;
   flex-direction: column;
@@ -1730,7 +1735,8 @@ button.messenger-chat-header-model {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  contain: layout style paint;
+  /* Keep local layout/style containment but avoid paint clipping for avatar status badges. */
+  contain: layout style;
 }
 
 .messenger-message.messenger-message--compaction {
@@ -1754,11 +1760,16 @@ button.messenger-chat-header-model {
   height: 34px;
   position: relative;
   border-radius: 50%;
+  border: 0;
+  padding: 0;
+  appearance: none;
   overflow: hidden;
   background: #e7e7e7;
   color: #5b5b5b;
   font-size: 13px;
   font-weight: 700;
+  line-height: 1;
+  text-align: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1778,6 +1789,25 @@ button.messenger-chat-header-model {
 .messenger-message-avatar--mine-profile {
   color: #ffffff !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
+.messenger-message-avatar--clickable {
+  cursor: pointer;
+  transition:
+    transform var(--messenger-motion-fast) var(--messenger-ease-standard),
+    box-shadow var(--messenger-motion-fast) var(--messenger-ease-standard),
+    filter var(--messenger-motion-fast) var(--messenger-ease-standard);
+}
+
+.messenger-message-avatar--clickable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.22);
+  filter: saturate(1.06);
+}
+
+.messenger-message-avatar--clickable:focus-visible {
+  outline: 2px solid rgba(var(--ui-accent-rgb), 0.4);
+  outline-offset: 2px;
 }
 
 .messenger-message-main {

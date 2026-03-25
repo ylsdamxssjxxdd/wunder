@@ -12,6 +12,7 @@ use crate::services::default_agent_protocol::{
 };
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
+use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, HiveRecord, DEFAULT_HIVE_ID,
@@ -920,13 +921,21 @@ async fn create_agent(
         .filter(|value| !value.is_empty());
     let requested_model_name = normalize_request_model_name(payload.model_name.as_deref());
     let copy_source = if let Some(copy_id) = copy_from_agent_id {
-        let source = state
-            .user_store
-            .get_user_agent(&user_id, copy_id)
+        let source = if is_default_agent_alias_value(copy_id) {
+            build_default_agent_record_from_storage(
+                state.user_store.storage_backend().as_ref(),
+                &user_id,
+            )
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-            .ok_or_else(|| {
-                error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found"))
-            })?;
+        } else {
+            state
+                .user_store
+                .get_user_agent(&user_id, copy_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+                .ok_or_else(|| {
+                    error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found"))
+                })?
+        };
         Some(source)
     } else {
         None

@@ -733,6 +733,102 @@
   box-shadow: none;
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-avatar-trigger {
+  border-color: var(--tech-blue-border);
+  background: linear-gradient(180deg, rgba(16, 34, 57, 0.94), rgba(11, 22, 38, 0.96));
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-avatar-trigger:not(:disabled):hover {
+  border-color: var(--tech-blue-border-strong);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.18), rgba(var(--ui-accent-rgb), 0.1));
+  color: #f3faff;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-avatar-trigger:focus-visible {
+  outline-color: rgba(var(--ui-accent-rgb), 0.42);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select {
+  border-color: var(--tech-blue-border);
+  background: linear-gradient(180deg, rgba(16, 34, 57, 0.94), rgba(11, 22, 38, 0.96));
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select:hover:not(:disabled) {
+  border-color: var(--tech-blue-border-strong);
+  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.16), rgba(var(--ui-accent-rgb), 0.08));
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select:focus-visible {
+  border-color: var(--tech-blue-border-strong);
+  box-shadow:
+    0 0 0 2px rgba(var(--ui-accent-rgb), 0.2),
+    inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.22);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select:disabled {
+  border-color: rgba(132, 173, 255, 0.16);
+  color: rgba(230, 242, 255, 0.54);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select-caret {
+  color: var(--tech-blue-muted);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-quick-create-dialog .agent-quick-create-mode-btn {
+  border-color: var(--tech-blue-border);
+  background: linear-gradient(180deg, rgba(16, 34, 57, 0.94), rgba(11, 22, 38, 0.96));
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-quick-create-dialog .agent-quick-create-mode-btn:hover {
+  border-color: var(--tech-blue-border-strong);
+  background: rgba(var(--ui-accent-rgb), 0.14);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue']
+  .messenger-agent-quick-create-dialog
+  .agent-quick-create-mode-btn.active {
+  border-color: var(--tech-blue-border-strong);
+  background: linear-gradient(135deg, rgba(var(--ui-accent-rgb), 0.26), rgba(var(--ui-accent-secondary-rgb), 0.2));
+  color: #f2fbff;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue']
+  .messenger-agent-quick-create-dialog
+  .messenger-dialog-footer
+  .el-button:not(.el-button--primary) {
+  border-color: var(--tech-blue-border);
+  background: linear-gradient(180deg, rgba(16, 34, 57, 0.94), rgba(11, 22, 38, 0.96));
+  color: var(--tech-blue-text);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue']
+  .messenger-agent-quick-create-dialog
+  .messenger-dialog-footer
+  .el-button:not(.el-button--primary):hover:not(:disabled) {
+  border-color: var(--tech-blue-border-strong);
+  background: rgba(var(--ui-accent-rgb), 0.14);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue']
+  .messenger-agent-quick-create-dialog
+  .messenger-dialog-footer
+  .el-button--primary {
+  border-color: rgba(var(--ui-accent-rgb), 0.62);
+  background: linear-gradient(135deg, rgba(var(--ui-accent-rgb), 0.9), rgba(var(--ui-accent-secondary-rgb), 0.82));
+  color: #f8fcff;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue']
+  .messenger-agent-quick-create-dialog
+  .messenger-dialog-footer
+  .el-button--primary:hover:not(:disabled) {
+  border-color: rgba(var(--ui-accent-rgb), 0.74);
+  background: linear-gradient(135deg, rgba(var(--ui-accent-rgb), 0.96), rgba(var(--ui-accent-secondary-rgb), 0.88));
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .list-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .tool-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .skill-item,

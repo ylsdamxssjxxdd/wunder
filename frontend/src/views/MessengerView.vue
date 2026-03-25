@@ -930,11 +930,15 @@
               }"
               :data-virtual-key="item.key"
             >
-                <div
-                  v-if="!isCompactionMarkerMessage(item.message) && item.message.role === 'user'"
-                  class="messenger-message-avatar messenger-message-avatar--mine-profile"
-                  :style="currentUserAvatarStyle"
-                >
+              <button
+                v-if="!isCompactionMarkerMessage(item.message) && item.message.role === 'user'"
+                class="messenger-message-avatar messenger-message-avatar--mine-profile messenger-message-avatar--clickable"
+                :style="currentUserAvatarStyle"
+                type="button"
+                :title="t('user.profile.enter')"
+                :aria-label="t('user.profile.enter')"
+                @click="openProfilePage"
+              >
                 <img
                   v-if="currentUserAvatarImageUrl"
                   class="messenger-settings-profile-avatar-image"
@@ -942,14 +946,21 @@
                   alt=""
                 />
                 <span v-else>{{ avatarLabel(currentUsername) }}</span>
-              </div>
+              </button>
               <AgentAvatar
                 v-else-if="!isCompactionMarkerMessage(item.message)"
+                class="messenger-message-avatar--clickable"
                 size="sm"
                 :state="resolveMessageAgentAvatarState(item.message)"
                 :icon="activeAgentIcon"
                 :name="activeAgentName"
                 :title="activeAgentName"
+                role="button"
+                tabindex="0"
+                :aria-label="t('chat.features.agentSettings')"
+                @click="openActiveAgentSettings"
+                @keydown.enter.prevent="openActiveAgentSettings()"
+                @keydown.space.prevent="openActiveAgentSettings()"
               />
               <div class="messenger-message-main">
                 <template v-if="isCompactionMarkerMessage(item.message)">
@@ -1187,10 +1198,17 @@
               :class="{ mine: isOwnMessage(item.message) }"
               :data-virtual-key="item.key"
             >
-              <div
+              <button
                 class="messenger-message-avatar"
-                :class="{ 'messenger-message-avatar--mine-profile': isOwnMessage(item.message) }"
+                :class="{
+                  'messenger-message-avatar--mine-profile': isOwnMessage(item.message),
+                  'messenger-message-avatar--clickable': true
+                }"
                 :style="isOwnMessage(item.message) ? currentUserAvatarStyle : undefined"
+                type="button"
+                :title="t('user.profile.enter')"
+                :aria-label="t('user.profile.enter')"
+                @click="openProfilePage"
               >
                 <template v-if="isOwnMessage(item.message)">
                   <img
@@ -1204,7 +1222,7 @@
                 <template v-else>
                   {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
                 </template>
-              </div>
+              </button>
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
                   <span>{{ resolveWorldMessageSender(item.message) }}</span>
@@ -1460,12 +1478,11 @@
       :resolve-unit-label="resolveUnitLabel"
       :submit-group-create="submitGroupCreate"
     />
-    <AgentCreateDialog
-      v-model="agentCreateVisible"
-      :copy-from-agents="agentCreateCopyFromAgents"
-      :beeroom-groups="beeroomGroupOptions"
-      :default-beeroom-group-id="defaultAgentCreateBeeroomGroupId"
-      @submit="submitAgentCreate"
+    <AgentQuickCreateDialog
+      v-model="agentQuickCreateVisible"
+      :creating="quickCreatingAgent"
+      :copy-from-agents="agentQuickCreateCopyFromAgents"
+      @submit="submitAgentQuickCreate"
     />
     <input
       ref="workerCardImportInputRef"
@@ -1498,7 +1515,7 @@ import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
-import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
+import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialog.vue';
 import {
   scheduleMessengerBootstrapBackgroundTasks,
   settleMessengerBootstrapTasks,
@@ -1714,7 +1731,7 @@ const selectedAgentHiveGroupId = ref('');
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
-const agentCreateVisible = ref(false);
+const agentQuickCreateVisible = ref(false);
 const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
 const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | ''>('');
@@ -3733,13 +3750,6 @@ const preferredBeeroomGroupId = computed(() => {
   return String(defaultGroup?.group_id || defaultGroup?.hive_id || '').trim();
 });
 
-const defaultAgentCreateBeeroomGroupId = computed(() => {
-  if (sessionHub.activeSection === 'swarms') {
-    return String(beeroomStore.activeGroupId || '').trim();
-  }
-  return preferredBeeroomGroupId.value;
-});
-
 const beeroomCandidateAgents = computed(() => {
   const currentGroupId = String(beeroomStore.activeGroupId || '').trim();
   const memberIds = new Set(
@@ -3760,9 +3770,19 @@ const beeroomCandidateAgents = computed(() => {
     .filter((item) => item.id);
 });
 
-const agentCreateCopyFromAgents = computed(() => {
+const agentQuickCreateCopyFromAgents = computed(() => {
   const seen = new Set<string>();
-  return [...ownedAgents.value, ...sharedAgents.value]
+  const defaultAgentName =
+    String((defaultAgentProfile.value as Record<string, unknown> | null)?.name || '').trim() ||
+    t('messenger.defaultAgent');
+  return [
+    {
+      id: DEFAULT_AGENT_KEY,
+      name: defaultAgentName
+    },
+    ...ownedAgents.value,
+    ...sharedAgents.value
+  ]
     .map((item) => ({
       id: String(item?.id || '').trim(),
       name: String(item?.name || item?.id || '').trim()
@@ -7178,15 +7198,33 @@ const buildQuickAgentName = () => {
 };
 
 const createAgentQuickly = async () => {
-  agentCreateVisible.value = true;
+  if (quickCreatingAgent.value) return;
+  agentQuickCreateVisible.value = true;
 };
 
-const submitAgentCreate = async (payload: Record<string, unknown>) => {
-  if (quickCreatingAgent.value) return;
+const submitAgentQuickCreate = async (payload: { copy_from_agent_id?: string }) => {
+  const createPayload: Record<string, unknown> = {
+    name: buildQuickAgentName()
+  };
+  const targetHiveId = String(preferredBeeroomGroupId.value || '').trim();
+  if (targetHiveId) {
+    createPayload.hive_id = targetHiveId;
+  }
+  const copyFromAgentId = String(payload?.copy_from_agent_id || '').trim();
+  if (copyFromAgentId) {
+    createPayload.copy_from_agent_id = copyFromAgentId;
+  }
+  const created = await submitAgentCreate(createPayload);
+  if (created) {
+    agentQuickCreateVisible.value = false;
+  }
+};
+
+const submitAgentCreate = async (payload: Record<string, unknown>): Promise<boolean> => {
+  if (quickCreatingAgent.value) return false;
   quickCreatingAgent.value = true;
   try {
     const created = await agentStore.createAgent(payload);
-    agentCreateVisible.value = false;
     ElMessage.success(t('portal.agent.createSuccess'));
     const tasks: Promise<unknown>[] = [loadRunningAgents(), beeroomStore.loadGroups()];
     if (!cronPermissionDenied.value) {
@@ -7203,8 +7241,10 @@ const submitAgentCreate = async (payload: Record<string, unknown>) => {
     if (created?.id) {
       openCreatedAgentSettings(created.id);
     }
+    return true;
   } catch (error) {
     showApiError(error, t('portal.agent.saveFailed'));
+    return false;
   } finally {
     quickCreatingAgent.value = false;
   }

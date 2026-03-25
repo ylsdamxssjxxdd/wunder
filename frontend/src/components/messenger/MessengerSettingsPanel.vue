@@ -102,7 +102,7 @@
             <span>{{ quotaRemainingText }} / {{ quotaTotalText }}</span>
           </div>
           <div class="messenger-profile-quota-bar">
-            <span :style="{ width: `${quotaUsedPercent}%` }"></span>
+            <span :style="{ width: `${quotaRemainingPercent}%` }"></span>
           </div>
           <div class="messenger-profile-quota-meta">
             <span>{{ t('profile.quota.used') }}: {{ quotaUsedText }}</span>
@@ -770,11 +770,17 @@ const quotaSnapshot = computed(() => {
 const quotaTotal = computed(() => quotaSnapshot.value?.daily ?? null);
 const quotaUsed = computed(() => quotaSnapshot.value?.used ?? 0);
 const quotaRemaining = computed(() => quotaSnapshot.value?.remaining ?? null);
-const quotaUsedPercent = computed(() => {
+
+const quotaRemainingPercent = computed(() => {
   if (!Number.isFinite(quotaTotal.value) || (quotaTotal.value as number) <= 0) return 0;
   const total = quotaTotal.value as number;
   const used = Number.isFinite(quotaUsed.value) ? (quotaUsed.value as number) : 0;
-  return Math.max(0, Math.min(100, Math.round((used / total) * 100)));
+  const remaining = Number.isFinite(quotaRemaining.value)
+    ? (quotaRemaining.value as number)
+    : Math.max(total - used, 0);
+  const percent = Math.max(0, Math.min(100, (remaining / total) * 100));
+  if (percent > 0 && percent < 1) return 1;
+  return Number(percent.toFixed(2));
 });
 
 const formatNumber = (value: number | null): string => {

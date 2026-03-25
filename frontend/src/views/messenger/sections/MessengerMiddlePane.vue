@@ -451,7 +451,6 @@
         </div>
       </div>
 
-      <div class="messenger-block-title">{{ t('messenger.agent.owned') }}</div>
       <button
         v-if="showDefaultAgentEntry"
         class="messenger-list-item messenger-agent-item"

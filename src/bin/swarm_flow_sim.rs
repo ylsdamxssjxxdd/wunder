@@ -24,7 +24,7 @@ use wunder_server::storage::{ChatSessionRecord, UserAgentRecord, DEFAULT_HIVE_ID
 
 const DEFAULT_WORKERS: usize = 4;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
-const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
+const DEFAULT_MOTHER_WAIT_S: f64 = 300.0;
 const DEFAULT_POLL_MS: u64 = 120;
 const MOCK_MODEL_NAME: &str = "__swarm_flow_mock__";
 const MOTHER_MARKER: &str = "MOTHER_SIM_START";

@@ -2204,7 +2204,10 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         "items": items,
     });
 
-    let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
+    let wait_seconds = payload
+        .wait_seconds
+        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+        .max(0.0);
     if wait_seconds > 0.0 {
         let poll_interval_seconds = payload
             .poll_interval_seconds

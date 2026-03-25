@@ -1,8 +1,8 @@
 use crate::schemas::WunderRequest;
 use crate::state::AppState;
 use crate::storage::{
-    ChatSessionRecord, UserAgentRecord, DEFAULT_HIVE_ID, MAX_SANDBOX_CONTAINER_ID,
-    MIN_SANDBOX_CONTAINER_ID,
+    ChatSessionRecord, SessionRunRecord, UserAgentRecord, DEFAULT_HIVE_ID,
+    MAX_SANDBOX_CONTAINER_ID, MIN_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use axum::{extract::State, routing::post, Json, Router};
@@ -28,7 +28,7 @@ mod isolation;
 
 const DEFAULT_WORKERS: usize = 100;
 const DEFAULT_MAX_WAIT_S: u64 = 180;
-const DEFAULT_MOTHER_WAIT_S: f64 = 30.0;
+const DEFAULT_MOTHER_WAIT_S: f64 = 300.0;
 const DEFAULT_POLL_MS: u64 = 120;
 const DEFAULT_WORKER_TASK_ROUNDS: usize = 3;
 const DEFAULT_STRICT_MOCK_ONLY: bool = true;
@@ -1735,12 +1735,6 @@ fn build_report(
     mother_result: &crate::schemas::WunderResponse,
     mock_state: &MockLlmState,
 ) -> Result<FlowReport> {
-    let run_rows = load_session_runs(state, user_id)?;
-    let mut run_status = BTreeMap::new();
-    for row in &run_rows {
-        *run_status.entry(row.status.clone()).or_insert(0) += 1;
-    }
-
     let mut worker_session_rows =
         worker_sessions_from_mother_tool_result(state, mother_session_id, worker_agent_ids);
     if worker_session_rows.is_empty() {
@@ -1764,6 +1758,11 @@ fn build_report(
     }
 
     worker_session_rows.sort_by(|a, b| a.session_id.cmp(&b.session_id));
+    let run_rows = load_session_runs(state, user_id, mother_session_id)?;
+    let mut run_status = BTreeMap::new();
+    for row in &run_rows {
+        *run_status.entry(row.status.clone()).or_insert(0) += 1;
+    }
 
     let worker_session_ids = worker_session_rows
         .iter()
@@ -1874,7 +1873,62 @@ fn build_report(
     })
 }
 
-fn load_session_runs(state: &AppState, user_id: &str) -> Result<Vec<SessionRunRow>> {
+fn load_session_runs(
+    state: &AppState,
+    user_id: &str,
+    mother_session_id: &str,
+) -> Result<Vec<SessionRunRow>> {
+    let rows = load_session_runs_from_team_tasks(state, user_id, mother_session_id)?;
+    if !rows.is_empty() {
+        return Ok(rows);
+    }
+    load_session_runs_from_monitor(state, user_id)
+}
+
+fn load_session_runs_from_team_tasks(
+    state: &AppState,
+    user_id: &str,
+    mother_session_id: &str,
+) -> Result<Vec<SessionRunRow>> {
+    let (team_runs, _) = state
+        .user_store
+        .list_team_runs(user_id, None, Some(mother_session_id), 0, 4096)?;
+    if team_runs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut run_ids = Vec::new();
+    let mut seen = HashSet::new();
+    for run in team_runs {
+        let tasks = state.user_store.list_team_tasks(&run.team_run_id)?;
+        for task in tasks {
+            let Some(run_id) = task
+                .session_run_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if seen.insert(run_id.to_string()) {
+                run_ids.push(run_id.to_string());
+            }
+        }
+    }
+
+    let mut output = Vec::with_capacity(run_ids.len());
+    for run_id in run_ids {
+        if let Some(record) = state.user_store.get_session_run(&run_id)? {
+            if record.user_id == user_id {
+                output.push(session_run_row_from_record(record));
+            }
+        }
+    }
+    output.sort_by(|left, right| left.queued_time.total_cmp(&right.queued_time));
+    Ok(output)
+}
+
+fn load_session_runs_from_monitor(state: &AppState, user_id: &str) -> Result<Vec<SessionRunRow>> {
     let (sessions, _) = state
         .user_store
         .list_chat_sessions(user_id, None, None, 0, 4096)?;
@@ -1915,6 +1969,23 @@ fn load_session_runs(state: &AppState, user_id: &str) -> Result<Vec<SessionRunRo
 
     output.sort_by(|left, right| left.queued_time.total_cmp(&right.queued_time));
     Ok(output)
+}
+
+fn session_run_row_from_record(record: SessionRunRecord) -> SessionRunRow {
+    let queued_time = record.queued_time.max(0.0);
+    let started_time = record.started_time.max(0.0);
+    let finished_time = if record.finished_time > 0.0 {
+        record.finished_time
+    } else {
+        record.updated_time.max(started_time)
+    };
+    SessionRunRow {
+        session_id: record.session_id,
+        status: normalize_status(record.status),
+        queued_time,
+        started_time,
+        finished_time,
+    }
 }
 
 fn latest_status_by_session(rows: &[SessionRunRow]) -> HashMap<String, String> {
@@ -2162,7 +2233,7 @@ fn compute_peak_concurrency(
         events.push((row.started_time, 1));
         events.push((row.finished_time, -1));
     }
-    events.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    events.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
 
     let mut current = 0i32;
     let mut peak = 0i32;

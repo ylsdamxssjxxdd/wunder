@@ -482,7 +482,7 @@ const applyDefaults = () => {
     elements.simLabMaxWait.value = String(defaults.max_wait_s || 180);
   }
   if (elements.simLabMotherWait) {
-    elements.simLabMotherWait.value = String(defaults.mother_wait_s || 30);
+    elements.simLabMotherWait.value = String(defaults.mother_wait_s || 300);
   }
   if (elements.simLabPollMs) {
     elements.simLabPollMs.value = String(defaults.poll_ms || 120);
@@ -867,7 +867,7 @@ const buildRunPayload = (runId, workersOverride) => {
       swarm_flow: {
         workers: Math.max(1, Math.floor(workers)),
         max_wait_s: Math.max(10, Math.floor(numberValue(elements.simLabMaxWait, 180))),
-        mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 30)),
+        mother_wait_s: Math.max(1, numberValue(elements.simLabMotherWait, 300)),
         poll_ms: Math.max(40, Math.floor(numberValue(elements.simLabPollMs, 120))),
         worker_task_rounds: workerTaskRounds,
         strict_mock_only: true,

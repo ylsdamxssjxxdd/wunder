@@ -247,17 +247,21 @@
                 { 'message-compaction-marker': isCompactionMarkerMessage(message) }
               ]"
             >
-              <div
+              <button
                 v-if="!isCompactionMarkerMessage(message)"
                 class="avatar"
                 :class="[
                   message.role === 'user' ? 'user-avatar' : 'ai-avatar',
                   { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
                 ]"
+                type="button"
+                :title="resolveMessageAvatarActionLabel(message)"
+                :aria-label="resolveMessageAvatarActionLabel(message)"
                 :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
+                @click="handleMessageAvatarClick(message)"
               >
                 {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
-              </div>
+              </button>
               <div class="message-content">
                 <template v-if="isCompactionMarkerMessage(message)">
                   <MessageCompactionDivider
@@ -1351,6 +1355,22 @@ const handleCreateSession = async () => {
 
 const handleOpenProfile = () => {
   router.push(`${basePath.value}/profile`);
+};
+
+const resolveMessageAvatarActionLabel = (message) => {
+  const role = String(message?.role || '').trim().toLowerCase();
+  return role === 'assistant' ? t('chat.features.agentSettings') : t('user.profile.enter');
+};
+
+const handleMessageAvatarClick = async (message) => {
+  const role = String(message?.role || '').trim().toLowerCase();
+  if (role === 'assistant') {
+    await handleFeatureAction('agent-settings');
+    return;
+  }
+  if (role === 'user') {
+    handleOpenProfile();
+  }
 };
 
 const handleOpenPortal = () => {
