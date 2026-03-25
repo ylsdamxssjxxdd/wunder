@@ -225,7 +225,7 @@ knowledge: # 字面知识库配置
 
 vector_store: # 向量数据库配置
   weaviate:
-    url: ${WUNDER_WEAVIATE_URL:-http://weaviate:8080}
+    url: ${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
     api_key: ${WUNDER_WEAVIATE_API_KEY:-}
     timeout_s: 30
     batch_size: 64

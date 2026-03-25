@@ -1796,12 +1796,6 @@ fn round_f64(value: f64) -> f64 {
 }
 
 const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
-const LEGACY_EMAIL_PRESET_NAME: &str = "邮件写作";
-const LEGACY_MEETING_NAME: &str = "会议纪要";
-const LEGACY_PLAN_NAME: &str = "方案策划";
-const PRESET_CONTAINER_ID_SCI_DRAW: i32 = 4;
-const PRESET_CONTAINER_ID_POLICY_ANALYSIS: i32 = 5;
-const PRESET_CONTAINER_ID_OFFICIAL_WRITING: i32 = 6;
 const PRESET_CONTAINER_META_PREFIX: &str = "user_agent_presets_container_v1:";
 
 type PresetAgent = crate::services::user_agent_presets::PresetAgent;
@@ -1859,45 +1853,15 @@ async fn ensure_preset_agents(
     }
     let mut existing_mutated = false;
     for record in &existing {
-        let trimmed_name = record.name.trim();
         let mut updated = record.clone();
         let mut changed = false;
         let mut matched_preset = matched_preset_by_agent_id.get(&record.agent_id).cloned();
-        if trimmed_name == LEGACY_EMAIL_PRESET_NAME {
-            changed = apply_legacy_preset_upgrade(
-                &mut updated,
-                &preset_agents,
-                PRESET_CONTAINER_ID_OFFICIAL_WRITING,
-            );
-            matched_preset =
-                preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_OFFICIAL_WRITING);
-        } else if trimmed_name == LEGACY_MEETING_NAME {
-            changed = apply_legacy_preset_upgrade(
-                &mut updated,
-                &preset_agents,
-                PRESET_CONTAINER_ID_SCI_DRAW,
-            );
-            matched_preset = preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_SCI_DRAW);
-        } else if trimmed_name == LEGACY_PLAN_NAME {
-            changed = apply_legacy_preset_upgrade(
-                &mut updated,
-                &preset_agents,
-                PRESET_CONTAINER_ID_POLICY_ANALYSIS,
-            );
-            matched_preset =
-                preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_POLICY_ANALYSIS);
-        }
-
         if matched_preset.is_none() {
             matched_preset = preset_by_name(&preset_agents, updated.name.trim());
         }
 
         if !container_layout_seeded {
-            if let Some(container_id) = matched_preset
-                .as_ref()
-                .map(|preset| preset.sandbox_container_id)
-                .or_else(|| preset_sandbox_container_id(updated.name.trim(), &preset_agents))
-            {
+            if let Some(container_id) = matched_preset.as_ref().map(|preset| preset.sandbox_container_id) {
                 if updated.sandbox_container_id == DEFAULT_SANDBOX_CONTAINER_ID
                     && updated.sandbox_container_id != container_id
                 {
@@ -1973,59 +1937,6 @@ async fn ensure_preset_agents(
 
 async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
     crate::services::user_agent_presets::configured_preset_agents(state).await
-}
-
-fn apply_legacy_preset_upgrade(
-    record: &mut crate::storage::UserAgentRecord,
-    preset_agents: &[PresetAgent],
-    sandbox_container_id: i32,
-) -> bool {
-    let Some(preset) = preset_agents
-        .iter()
-        .find(|item| item.sandbox_container_id == sandbox_container_id)
-    else {
-        return false;
-    };
-    let mut changed = false;
-    if record.name != preset.name {
-        record.name = preset.name.clone();
-        changed = true;
-    }
-    if record.description != preset.description {
-        record.description = preset.description.clone();
-        changed = true;
-    }
-    if record.system_prompt != preset.system_prompt {
-        record.system_prompt = preset.system_prompt.clone();
-        changed = true;
-    }
-    let icon_payload = build_icon_payload(&preset.icon_name, &preset.icon_color);
-    if record.icon.as_deref() != Some(icon_payload.as_str()) {
-        record.icon = Some(icon_payload);
-        changed = true;
-    }
-    changed
-}
-
-fn preset_sandbox_container_id(name: &str, preset_agents: &[PresetAgent]) -> Option<i32> {
-    let cleaned = name.trim();
-    if cleaned.is_empty() {
-        return None;
-    }
-    preset_agents
-        .iter()
-        .find(|preset| preset.name == cleaned)
-        .map(|preset| preset.sandbox_container_id)
-}
-
-fn preset_by_container_id(
-    preset_agents: &[PresetAgent],
-    sandbox_container_id: i32,
-) -> Option<PresetAgent> {
-    preset_agents
-        .iter()
-        .find(|preset| preset.sandbox_container_id == sandbox_container_id)
-        .cloned()
 }
 
 fn preset_by_name(preset_agents: &[PresetAgent], name: &str) -> Option<PresetAgent> {
@@ -2321,10 +2232,6 @@ async fn sync_inner_visible_before_user_read(
             )
         })?;
     Ok(())
-}
-
-fn build_icon_payload(name: &str, color: &str) -> String {
-    serde_json::json!({ "name": name, "color": color }).to_string()
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

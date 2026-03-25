@@ -15,7 +15,6 @@ const AdminLayout = () => import('@/layouts/AdminLayout.vue');
 const LoginView = () => import('@/views/LoginView.vue');
 const RegisterView = () => import('@/views/RegisterView.vue');
 const MessengerView = () => import('@/views/MessengerView.vue');
-const EmbeddedChatView = () => import('@/views/EmbeddedChatView.vue');
 const ExternalAppView = () => import('@/views/ExternalAppView.vue');
 const AdminLoginView = () => import('@/views/AdminLoginView.vue');
 const AdminUsersView = () => import('@/views/AdminUsersView.vue');
@@ -63,14 +62,6 @@ const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wun
 const resolveExternalQueryToken = (query: LocationQuery): string => asQueryText(query.token);
 
 const resolveExternalQueryUserId = (query: LocationQuery): string => asQueryText(query.user_id);
-
-const resolveExternalQueryAgentName = (query: LocationQuery): string => {
-  const explicitAgentName = asQueryText(query.agent_name);
-  if (explicitAgentName) {
-    return explicitAgentName;
-  }
-  return asQueryText(query.agent);
-};
 
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
@@ -194,7 +185,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'desktop-cron', component: MessengerView },
       { path: 'channels', name: 'desktop-channels', component: MessengerView },
       { path: 'chat', name: 'desktop-chat', component: MessengerView },
-      { path: 'embed/chat', name: 'desktop-embed-chat', component: EmbeddedChatView },
+      {
+        path: 'embed/chat',
+        name: 'desktop-embed-chat',
+        redirect: (to) => ({ path: '/desktop/chat', query: to.query, hash: to.hash })
+      },
       { path: 'beeroom', name: 'desktop-beeroom', component: MessengerView },
       { path: 'user-world', name: 'desktop-user-world', component: MessengerView },
       { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
@@ -216,7 +211,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'cron', component: MessengerView },
       { path: 'channels', name: 'channels', component: MessengerView },
       { path: 'chat', name: 'chat', component: MessengerView },
-      { path: 'embed/chat', name: 'embed-chat', component: EmbeddedChatView },
+      {
+        path: 'embed/chat',
+        name: 'embed-chat',
+        redirect: (to) => ({ path: '/app/chat', query: to.query, hash: to.hash })
+      },
       { path: 'beeroom', name: 'beeroom', component: MessengerView },
       { path: 'user-world', name: 'user-world', component: MessengerView },
       { path: 'workspace', name: 'workspace', component: MessengerView },
@@ -236,7 +235,12 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'demo-cron', component: MessengerView, meta: { demo: true } },
       { path: 'channels', name: 'demo-channels', component: MessengerView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: MessengerView, meta: { demo: true } },
-      { path: 'embed/chat', name: 'demo-embed-chat', component: EmbeddedChatView, meta: { demo: true } },
+      {
+        path: 'embed/chat',
+        name: 'demo-embed-chat',
+        redirect: (to) => ({ path: '/demo/chat', query: to.query, hash: to.hash }),
+        meta: { demo: true }
+      },
       { path: 'beeroom', name: 'demo-beeroom', component: MessengerView, meta: { demo: true } },
       { path: 'user-world', name: 'demo-user-world', component: MessengerView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: MessengerView, meta: { demo: true } },
@@ -273,22 +277,15 @@ router.beforeEach(async (to) => {
   const query = to.query;
   const externalToken = resolveExternalQueryToken(query);
   const externalUserId = resolveExternalQueryUserId(query);
-  const externalAgentName = resolveExternalQueryAgentName(query);
   if (externalToken && externalUserId) {
     try {
-      const result = await loginWithExternalToken(
-        externalToken,
-        externalUserId,
-        externalAgentName || undefined
-      );
+      // Ignore inbound agent hints and always land on the default agent conversation in embed mode.
+      const result = await loginWithExternalToken(externalToken, externalUserId);
       authStore.token = result.accessToken;
       authStore.user = result.user;
       localStorage.setItem('access_token', result.accessToken);
-      const targetPath = isDesktopModeEnabled() ? '/desktop/embed/chat' : '/app/embed/chat';
-      const nextQuery: LocationQueryRaw = {};
-      if (result.agentId) {
-        nextQuery.agent_id = result.agentId;
-      }
+      const targetPath = isDesktopModeEnabled() ? '/desktop/chat' : '/app/chat';
+      const nextQuery: LocationQueryRaw = { section: 'messages', entry: 'default' };
       return {
         path: targetPath,
         query: nextQuery,

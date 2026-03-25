@@ -11,11 +11,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use tracing::{info, warn};
+use url::Url;
 use uuid::Uuid;
 
 const VECTOR_ROOT_DIR: &str = "vector_knowledge";
@@ -721,9 +723,83 @@ struct WeaviateClientCache {
 
 static WEAVIATE_CLIENT_CACHE: OnceLock<StdMutex<Option<WeaviateClientCache>>> = OnceLock::new();
 
+const LOCAL_WEAVIATE_FALLBACK_URL: &str = "http://127.0.0.1:18003";
+
+fn extract_host_and_port(base_url: &str) -> Option<(String, u16)> {
+    let parsed = Url::parse(base_url).ok()?;
+    let host = parsed.host_str()?.to_ascii_lowercase();
+    let port = parsed.port_or_known_default()?;
+    Some((host, port))
+}
+
+fn is_hostname_resolvable(host: &str, port: u16) -> bool {
+    (host, port)
+        .to_socket_addrs()
+        .map(|mut addresses| addresses.next().is_some())
+        .unwrap_or(false)
+}
+
+fn is_probably_container_runtime() -> bool {
+    if std::env::var_os("KUBERNETES_SERVICE_HOST").is_some() {
+        return true;
+    }
+    if cfg!(target_family = "unix") {
+        if Path::new("/.dockerenv").exists() {
+            return true;
+        }
+        if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+            let lowered = cgroup.to_ascii_lowercase();
+            if lowered.contains("docker")
+                || lowered.contains("containerd")
+                || lowered.contains("kubepods")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn should_use_local_weaviate_fallback(
+    base_url: &str,
+    runtime_in_container: bool,
+    host_resolvable: bool,
+) -> bool {
+    if runtime_in_container || host_resolvable {
+        return false;
+    }
+    let Some((host, port)) = extract_host_and_port(base_url) else {
+        return false;
+    };
+    if port != 8080 {
+        return false;
+    }
+    matches!(host.as_str(), "weaviate" | "wunder-weaviate")
+}
+
+fn resolve_runtime_weaviate_url(raw_url: &str) -> String {
+    let normalized = raw_url.trim().trim_end_matches('/').to_string();
+    if normalized.is_empty() {
+        return normalized;
+    }
+    let (host, port) = match extract_host_and_port(&normalized) {
+        Some(value) => value,
+        None => return normalized,
+    };
+    let runtime_in_container = is_probably_container_runtime();
+    let host_resolvable = is_hostname_resolvable(&host, port);
+    if should_use_local_weaviate_fallback(&normalized, runtime_in_container, host_resolvable) {
+        warn!(
+            "Weaviate url {normalized} is not resolvable outside container runtime; fallback to {LOCAL_WEAVIATE_FALLBACK_URL}. Set WUNDER_WEAVIATE_URL to override."
+        );
+        return LOCAL_WEAVIATE_FALLBACK_URL.to_string();
+    }
+    normalized
+}
+
 impl WeaviateClient {
     pub fn from_config(config: &WeaviateConfig) -> Option<Self> {
-        let url = config.url.trim().trim_end_matches('/').to_string();
+        let url = resolve_runtime_weaviate_url(&config.url);
         if url.is_empty() {
             return None;
         }
@@ -1631,6 +1707,65 @@ pub fn ensure_unique_doc_name(name: &str, existing: &[VectorDocumentSummary]) ->
         index += 1;
         if index > 1000 {
             return Err(anyhow!(i18n::t("error.knowledge_name_invalid_path")));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn weaviate_fallback_enabled_for_unresolvable_docker_alias_on_host() {
+        assert!(should_use_local_weaviate_fallback(
+            "http://weaviate:8080",
+            false,
+            false
+        ));
+        assert!(should_use_local_weaviate_fallback(
+            "http://wunder-weaviate:8080",
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn weaviate_fallback_disabled_inside_container() {
+        assert!(!should_use_local_weaviate_fallback(
+            "http://weaviate:8080",
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn weaviate_fallback_disabled_when_hostname_resolves() {
+        assert!(!should_use_local_weaviate_fallback(
+            "http://weaviate:8080",
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn weaviate_fallback_disabled_for_non_docker_alias_or_port() {
+        assert!(!should_use_local_weaviate_fallback(
+            "http://127.0.0.1:18003",
+            false,
+            false
+        ));
+        assert!(!should_use_local_weaviate_fallback(
+            "http://weaviate:18003",
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn resolve_runtime_weaviate_url_uses_local_fallback() {
+        let resolved = resolve_runtime_weaviate_url("http://weaviate:8080");
+        if !is_probably_container_runtime() && !is_hostname_resolvable("weaviate", 8080) {
+            assert_eq!(resolved, LOCAL_WEAVIATE_FALLBACK_URL);
         }
     }
 }

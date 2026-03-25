@@ -201,8 +201,9 @@
       />
     </section>
 
-    <div class="messenger-nav-toggle-hitbox" aria-hidden="true"></div>
+    <div v-if="allowNavigationCollapse" class="messenger-nav-toggle-hitbox" aria-hidden="true"></div>
     <button
+      v-if="allowNavigationCollapse"
       class="messenger-nav-toggle"
       type="button"
       :title="navigationPaneToggleTitle"
@@ -2101,19 +2102,25 @@ const basePrefix = computed(() => {
 });
 
 const isEmbeddedChatRoute = computed(() => /\/embed\/chat$/.test(String(route.path || '').trim()));
-const navigationPaneCollapsed = computed(() =>
-  isEmbeddedChatRoute.value ? embeddedNavigationCollapsed.value : standardNavigationCollapsed.value
-);
+const allowNavigationCollapse = computed(() => !isEmbeddedChatRoute.value);
+const navigationPaneCollapsed = computed(() => {
+  // Embedded chat must keep left/middle panes visible for stable host layout.
+  if (!allowNavigationCollapse.value) {
+    return false;
+  }
+  return standardNavigationCollapsed.value;
+});
 const navigationPaneToggleTitle = computed(() =>
   navigationPaneCollapsed.value ? t('common.expand') : t('common.collapse')
 );
 
 function setNavigationPaneCollapsed(collapsed: boolean): void {
-  if (isEmbeddedChatRoute.value) {
-    embeddedNavigationCollapsed.value = collapsed;
-  } else {
-    standardNavigationCollapsed.value = collapsed;
+  if (!allowNavigationCollapse.value) {
+    standardNavigationCollapsed.value = false;
+    embeddedNavigationCollapsed.value = false;
+    return;
   }
+  standardNavigationCollapsed.value = collapsed;
   if (collapsed) {
     leftRailMoreExpanded.value = false;
     clearMiddlePaneOverlayHide();
@@ -2241,9 +2248,13 @@ const isSearchableMiddlePaneSection = (section: string): boolean =>
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
-const showMiddlePane = computed(
-  () => !navigationPaneCollapsed.value && (!isMiddlePaneOverlay.value || middlePaneOverlayVisible.value)
-);
+const showMiddlePane = computed(() => {
+  // Embedded route always shows middle pane, regardless of overlay state.
+  if (isEmbeddedChatRoute.value) {
+    return true;
+  }
+  return !navigationPaneCollapsed.value && (!isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
+});
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
 const {

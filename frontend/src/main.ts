@@ -34,6 +34,14 @@ useThemeStore(pinia);
 installElementPlus(app);
 app.use(router);
 
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  // Recover from stale Vite optimized-deps/chunk URLs after hot updates or server cache invalidation.
+  window.addEventListener('vite:preloadError', (event) => {
+    event.preventDefault();
+    window.location.reload();
+  });
+}
+
 const bootstrap = async () => {
   await initDesktopRuntime();
   await loadRuntimeConfig();

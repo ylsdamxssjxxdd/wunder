@@ -159,7 +159,13 @@
                 type="button"
                 @click="emit('open-agent', message.senderAgentId)"
               >
-                {{ avatarLabel(message.senderName) }}
+                <img
+                  v-if="resolveAgentAvatarImageByAgentId(message.senderAgentId)"
+                  class="beeroom-canvas-chat-avatar-img"
+                  :src="resolveAgentAvatarImageByAgentId(message.senderAgentId)"
+                  alt=""
+                />
+                <span v-else>{{ avatarLabel(message.senderName) }}</span>
               </button>
               <div v-else class="beeroom-canvas-chat-avatar" :class="message.tone === 'user' ? 'is-user' : 'is-system'">
                 <i
@@ -329,6 +335,11 @@ import {
 } from '@/stores/beeroom';
 import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
+import {
+  parseAgentAvatarIconConfig,
+  resolveAgentAvatarImageByConfig,
+  resolveAgentAvatarInitial
+} from '@/utils/agentAvatar';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import {
   getBeeroomMissionCanvasState,
@@ -647,7 +658,9 @@ const resolveNodeAccent = (agentId: string, isMother: boolean) => {
   return CARD_ACCENT_PALETTE[hashText(agentId) % CARD_ACCENT_PALETTE.length] || '#3b82f6';
 };
 
-const avatarLabel = (value: unknown) => String(value || '?').trim().slice(0, 1).toUpperCase() || '?';
+const avatarLabel = (value: unknown) => resolveAgentAvatarInitial(value);
+const resolveAgentAvatarImage = (icon: unknown): string =>
+  resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(icon));
 
 const resolveStatusLabel = (value: unknown) => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -724,7 +737,8 @@ const buildCanvasNodeCardHtml = (options: {
   isMother: boolean;
   selected: boolean;
   accentColor: string;
-  avatar: string;
+  avatarInitial: string;
+  avatarImageUrl: string;
   fullName: string;
   displayName: string;
   roleLabel: string;
@@ -737,7 +751,11 @@ const buildCanvasNodeCardHtml = (options: {
   const fullName = escapeHtml(options.fullName);
   const roleLabel = escapeHtml(trimNodeTitle(options.roleLabel, 6));
   const statusLabel = escapeHtml(trimNodeTitle(options.statusLabel, 7));
-  const avatar = escapeHtml(options.avatar);
+  const avatarInitial = escapeHtml(options.avatarInitial);
+  const avatarImageUrl = escapeHtml(options.avatarImageUrl);
+  const avatarHtml = avatarImageUrl
+    ? `<img class="beeroom-node-avatar-img" src="${avatarImageUrl}" alt="" />`
+    : `<span class="beeroom-node-avatar-text">${avatarInitial}</span>`;
   const ariaLabel = escapeHtml(`${options.fullName} ${options.roleLabel} ${options.statusLabel}`);
   const accentColor = String(options.accentColor || '#64748b').replace(/[^#a-zA-Z0-9(),.\s-]/g, '');
 
@@ -746,7 +764,7 @@ const buildCanvasNodeCardHtml = (options: {
     <div class="beeroom-node-card ${statusClass} ${options.isMother ? 'is-mother' : ''} ${options.selected ? 'is-selected' : ''}" role="group" aria-label="${ariaLabel}" style="--node-accent:${accentColor};">
       <div class="beeroom-node-card-body">
         <div class="beeroom-node-card-head">
-          <span class="beeroom-node-avatar">${avatar}</span>
+          <span class="beeroom-node-avatar">${avatarHtml}</span>
           <div class="beeroom-node-title-group">
             <div class="beeroom-node-title" title="${fullName}">${title}</div>
             <div class="beeroom-node-role-chip">${roleLabel}</div>
@@ -913,7 +931,8 @@ const projection = computed(() => {
         .find((item) => String(item || '').trim()) || member?.description || ''
     ).trim();
     const sessionTotal = Number(member?.active_session_total || 0);
-    const avatar = avatarLabel(name);
+    const avatarInitial = avatarLabel(name);
+    const avatarImageUrl = resolveAgentAvatarImage(member?.icon);
     const slot = slots[index] || { q: 0, r: 0 };
     const position = nodePositionOverrides.value[nodeId] || resolveHoneycombPosition(slot);
     const width = isMother ? MOTHER_NODE_WIDTH : NODE_WIDTH;
@@ -935,7 +954,8 @@ const projection = computed(() => {
       isMother,
       selected,
       accentColor,
-      avatar,
+      avatarInitial,
+      avatarImageUrl,
       fullName: name,
       displayName,
       roleLabel,
@@ -1243,6 +1263,24 @@ const canvasStatusSummary = computed(() => {
   });
   return summary;
 });
+
+const agentAvatarImageMap = computed(() => {
+  const map = new Map<string, string>();
+  projection.value.memberMap.forEach((member, agentId) => {
+    const normalizedAgentId = String(agentId || '').trim();
+    if (!normalizedAgentId) {
+      return;
+    }
+    const imageUrl = resolveAgentAvatarImage(member?.icon);
+    if (imageUrl) {
+      map.set(normalizedAgentId, imageUrl);
+    }
+  });
+  return map;
+});
+
+const resolveAgentAvatarImageByAgentId = (agentId: unknown): string =>
+  agentAvatarImageMap.value.get(String(agentId || '').trim()) || '';
 
 const hoveredNodeMeta = computed(() => projection.value.nodeMetaMap.get(hoveredNodeId.value) || null);
 const hoveredNodeMember = computed(() => {
@@ -3592,6 +3630,22 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.26);
 }
 
+.beeroom-canvas-surface :deep(.beeroom-node-avatar-img) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-avatar-text) {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .beeroom-canvas-surface :deep(.beeroom-node-title-group) {
   min-width: 0;
   display: grid;
@@ -4425,6 +4479,14 @@ onBeforeUnmount(() => {
     border-color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
     background var(--beeroom-motion-fast) var(--beeroom-ease-standard),
     box-shadow var(--beeroom-motion-fast) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-chat-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
 }
 
 .beeroom-canvas-chat-avatar.is-system {

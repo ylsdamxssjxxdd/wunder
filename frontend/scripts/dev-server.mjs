@@ -81,6 +81,7 @@ const host = args.host || process.env.FRONTEND_HOST || '0.0.0.0';
 const port = parsePort(args.port || process.env.FRONTEND_PORT, 18001);
 const strictPort = args.strictPort || parseBoolean(process.env.FRONTEND_STRICT_PORT, false);
 const proxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
+const forceOptimizeDeps = parseBoolean(process.env.FRONTEND_VITE_FORCE_OPTIMIZE, true);
 
 let viteServer;
 
@@ -107,6 +108,9 @@ const main = async () => {
   // Keep readiness output explicit because Vite can stay silent under Docker/QEMU.
   viteServer = await createServer({
     configFile: path.resolve(__dirname, '..', 'vite.config.ts'),
+    optimizeDeps: {
+      force: forceOptimizeDeps
+    },
     server: {
       host,
       port,
@@ -124,6 +128,7 @@ const main = async () => {
     console.log(`[frontend] vite network: ${networkUrl}`);
   }
   console.log(`[frontend] proxy target: ${proxyTarget}`);
+  console.log(`[frontend] optimize deps force: ${forceOptimizeDeps ? 'on' : 'off'}`);
 };
 
 main().catch((error) => {

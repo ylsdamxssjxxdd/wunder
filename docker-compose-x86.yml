@@ -24,6 +24,8 @@ services:
       - TZ=Asia/Shanghai
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://wunder-sandbox:9001}
       - WUNDER_POSTGRES_DSN=${WUNDER_POSTGRES_DSN:-postgresql://wunder:wunder@wunder-postgres:5432/wunder}
+      - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
+      - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
@@ -76,6 +78,8 @@ services:
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
+      - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
+      - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
       - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/data/config/wunder.override.yaml}
       - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/data/user_tools}

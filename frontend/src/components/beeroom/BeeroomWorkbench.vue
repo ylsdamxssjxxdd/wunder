@@ -73,7 +73,13 @@
             >
               <div class="beeroom-member-head">
                 <div class="beeroom-member-avatar">
-                  {{ avatarLabel(resolveDisplayAgentName(member.agent_id, member.name)) }}
+                  <img
+                    v-if="resolveMemberAvatarImage(member)"
+                    class="beeroom-member-avatar-image"
+                    :src="resolveMemberAvatarImage(member)"
+                    alt=""
+                  />
+                  <span v-else>{{ avatarLabel(resolveDisplayAgentName(member.agent_id, member.name)) }}</span>
                 </div>
                 <div class="beeroom-member-main">
                   <div class="beeroom-member-name-row">
@@ -261,6 +267,11 @@ import { computed, ref, watch } from 'vue';
 import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
 import { useI18n } from '@/i18n';
 import {
+  parseAgentAvatarIconConfig,
+  resolveAgentAvatarImageByConfig,
+  resolveAgentAvatarInitial
+} from '@/utils/agentAvatar';
+import {
   type BeeroomGroup,
   type BeeroomMember,
   type BeeroomMission
@@ -330,7 +341,9 @@ const resolveDisplayAgentName = (agentId: unknown, fallbackName?: unknown) => {
   return String(fallbackName || agentId || '-').trim() || '-';
 };
 
-const avatarLabel = (value: unknown) => String(value || '?').trim().slice(0, 1).toUpperCase() || '?';
+const avatarLabel = (value: unknown) => resolveAgentAvatarInitial(value);
+const resolveMemberAvatarImage = (member: BeeroomMember): string =>
+  resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(member?.icon));
 
 const resolveGroupTone = (value: unknown) => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -818,6 +831,14 @@ watch(selectedMissionId, (value) => {
   background: var(--hula-accent-soft);
   color: var(--hula-accent);
   font-weight: 700;
+}
+
+.beeroom-member-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
 }
 
 .beeroom-member-main {

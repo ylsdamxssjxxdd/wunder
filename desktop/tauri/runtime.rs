@@ -1306,59 +1306,15 @@ fn resolve_desktop_preset_worker_cards_root(
     workspace_root: &Path,
 ) -> Option<PathBuf> {
     let cleaned = configured_root.trim();
-    let configured_candidate = if cleaned.is_empty() {
-        None
-    } else {
-        Some(resolve_maybe_relative_path(
-            cleaned,
-            repo_root,
-            workspace_root,
-        ))
-    };
-    let bundled_candidates = [
-        repo_root.join("config/preset_worker_cards"),
-        repo_root.join("preset_worker_cards"),
-    ];
-    let bundled_best = bundled_candidates
-        .into_iter()
-        .filter(|path| path.is_dir())
-        .map(|path| {
-            let count = count_preset_worker_card_files(&path);
-            (path, count)
-        })
-        .max_by_key(|(_, count)| *count);
-
-    const MIN_BUNDLED_PRESET_WORKER_CARD_FILES: usize = 3;
-    if let Some(configured_path) = configured_candidate.filter(|path| path.is_dir()) {
-        let configured_count = count_preset_worker_card_files(&configured_path);
-        if let Some((bundled_path, bundled_count)) = bundled_best.as_ref() {
-            let should_prefer_bundled = configured_path != *bundled_path
-                && *bundled_count >= MIN_BUNDLED_PRESET_WORKER_CARD_FILES
-                && configured_count < *bundled_count;
-            if should_prefer_bundled {
-                return Some(bundled_path.clone());
-            }
-        }
-        return Some(configured_path);
+    if cleaned.is_empty() {
+        return None;
     }
-
-    bundled_best.map(|(path, _)| path)
-}
-
-fn count_preset_worker_card_files(root: &Path) -> usize {
-    fs::read_dir(root)
-        .ok()
-        .into_iter()
-        .flat_map(|entries| entries.filter_map(Result::ok))
-        .filter_map(|entry| {
-            entry
-                .file_type()
-                .ok()
-                .filter(|file_type| file_type.is_file())
-                .map(|_| entry.file_name())
-        })
-        .filter(|name| name.to_string_lossy().ends_with(".worker-card.json"))
-        .count()
+    let configured_path = resolve_maybe_relative_path(cleaned, repo_root, workspace_root);
+    if configured_path.is_dir() {
+        Some(configured_path)
+    } else {
+        None
+    }
 }
 
 fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {
@@ -1616,7 +1572,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_desktop_defaults_uses_bundled_preset_worker_cards_root() {
+    fn apply_desktop_defaults_keeps_worker_cards_root_empty_without_explicit_config() {
         let root = std::env::temp_dir().join(format!(
             "wunder-desktop-preset-root-{}",
             uuid::Uuid::new_v4().simple()
@@ -1644,16 +1600,13 @@ mod tests {
             defaults,
         );
 
-        assert_eq!(
-            PathBuf::from(&config.user_agents.worker_cards_root),
-            bundled_root
-        );
+        assert!(config.user_agents.worker_cards_root.trim().is_empty());
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn apply_desktop_defaults_prefers_complete_bundled_preset_worker_cards_root() {
+    fn apply_desktop_defaults_respects_explicit_worker_cards_root() {
         let root = std::env::temp_dir().join(format!(
             "wunder-desktop-preset-root-prefer-bundled-{}",
             uuid::Uuid::new_v4().simple()
@@ -1698,7 +1651,7 @@ mod tests {
 
         assert_eq!(
             PathBuf::from(&config.user_agents.worker_cards_root),
-            bundled_root
+            configured_sparse_root
         );
 
         let _ = fs::remove_dir_all(&root);
