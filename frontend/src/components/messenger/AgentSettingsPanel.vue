@@ -38,25 +38,25 @@
                 />
                 <span v-else>{{ agentAvatarInitial }}</span>
               </span>
-              <span class="messenger-agent-avatar-trigger-text">{{ t('portal.agent.avatarToggle') }}</span>
+              <span class="messenger-agent-avatar-trigger-text">{{ t('portal.agent.avatarTitle') }}</span>
             </button>
           </div>
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.description')" class="messenger-agent-form-item">
+        <el-form-item :label="t('portal.agent.form.greeting')" class="messenger-agent-form-item">
           <el-input
             v-model="form.description"
             class="messenger-agent-field"
-            :placeholder="t('portal.agent.form.placeholder.description')"
+            :placeholder="t('portal.agent.form.placeholder.greeting')"
             :disabled="isReadonlyMode"
           />
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.prompt')" class="messenger-agent-form-item">
+        <el-form-item :label="t('portal.agent.form.extraPrompt')" class="messenger-agent-form-item">
           <el-input
             v-model="form.system_prompt"
             class="messenger-agent-field messenger-agent-field--prompt"
             type="textarea"
             :rows="6"
-            :placeholder="t('portal.agent.form.placeholder.prompt')"
+            :placeholder="t('portal.agent.form.placeholder.extraPrompt')"
             :disabled="isReadonlyMode"
           />
         </el-form-item>

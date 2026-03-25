@@ -2530,6 +2530,15 @@ const activeAgentIcon = computed(() =>
     ? (defaultAgentProfile.value as Record<string, unknown> | null)?.icon
     : (activeAgent.value as Record<string, unknown> | null)?.icon
 );
+const activeAgentGreetingOverride = computed(() => {
+  if (activeAgentId.value === DEFAULT_AGENT_KEY) {
+    return String((defaultAgentProfile.value as Record<string, unknown> | null)?.description || '').trim();
+  }
+  const profile =
+    (activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+    (activeAgent.value as Record<string, unknown> | null);
+  return String(profile?.description || '').trim();
+});
 
 const resolveAgentIconForDisplay = (
   agentId: string,
@@ -2612,6 +2621,16 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => activeAgentGreetingOverride.value,
+  (value, oldValue) => {
+    if (value === oldValue) return;
+    chatStore.setGreetingOverride(value);
+  },
+  { immediate: true }
+);
+
 const activeAgentPromptPreviewText = computed(() =>
   String(agentPromptPreviewContent.value || '').trim() || t('chat.systemPrompt.empty')
 );
