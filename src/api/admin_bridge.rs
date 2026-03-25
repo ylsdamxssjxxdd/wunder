@@ -9,6 +9,9 @@ use crate::services::bridge::{
     normalize_bridge_username_policy, BRIDGE_FALLBACK_POLICY_FORBID_OWNER,
     BRIDGE_ROUTE_STATUS_ACTIVE,
 };
+use crate::services::default_agent_sync::{
+    load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
+};
 use crate::services::user_agent_presets::configured_preset_agents;
 use crate::state::AppState;
 use crate::storage::{
@@ -77,7 +80,7 @@ async fn admin_bridge_metadata(
     headers: HeaderMap,
 ) -> Result<Json<Value>, Response> {
     ensure_admin_user(&state, &headers)?;
-    let preset_agents = configured_preset_agents(state.as_ref()).await;
+    let preset_agents = bridge_preset_agents_payload(&state).await?;
     let units = state
         .user_store
         .list_org_units()
@@ -90,14 +93,7 @@ async fn admin_bridge_metadata(
         "data": {
             "default_password": crate::services::external::DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
             "supported_channels": supported_channel_payload(&state),
-            "preset_agents": preset_agents
-                .iter()
-                .map(|preset| json!({
-                    "preset_id": preset.preset_id,
-                    "name": preset.name,
-                    "description": preset.description,
-                }))
-                .collect::<Vec<_>>(),
+            "preset_agents": preset_agents,
             "channel_accounts": channel_accounts
                 .into_iter()
                 .map(|record| json!({
@@ -117,6 +113,41 @@ async fn admin_bridge_metadata(
                 .collect::<Vec<_>>(),
         }
     })))
+}
+
+async fn bridge_preset_agents_payload(state: &Arc<AppState>) -> Result<Vec<Value>, Response> {
+    let mut items = Vec::new();
+    let mut seen_names = HashSet::new();
+
+    let default_record = load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let default_name = default_record.name.trim();
+    if !default_name.is_empty() {
+        seen_names.insert(default_name.to_string());
+        items.push(json!({
+            "preset_id": DEFAULT_AGENT_ID_ALIAS,
+            "name": default_name,
+            "description": default_record.description.trim(),
+            "is_default_agent": true,
+        }));
+    }
+
+    for preset in configured_preset_agents(state.as_ref()).await {
+        let name = preset.name.trim();
+        if name.is_empty() || seen_names.contains(name) {
+            continue;
+        }
+        seen_names.insert(name.to_string());
+        items.push(json!({
+            "preset_id": preset.preset_id,
+            "name": name,
+            "description": preset.description.trim(),
+            "is_default_agent": false,
+        }));
+    }
+
+    Ok(items)
 }
 
 async fn admin_bridge_supported_channels(
@@ -1458,10 +1489,21 @@ fn ensure_org_unit_exists(state: &Arc<AppState>, unit_id: &str) -> Result<(), Re
 
 async fn ensure_preset_exists(state: &Arc<AppState>, preset_name: &str) -> Result<(), Response> {
     let cleaned = required_text(preset_name, "preset_name")?;
+    let default_record = load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let default_name = default_record.name.trim();
+    if (!default_name.is_empty() && default_name == cleaned)
+        || cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+    {
+        return Ok(());
+    }
     let exists = configured_preset_agents(state.as_ref())
         .await
         .iter()
-        .any(|item| item.name.trim() == cleaned);
+        .any(|item| {
+            item.name.trim() == cleaned || item.preset_id.trim().eq_ignore_ascii_case(&cleaned)
+        });
     if exists {
         return Ok(());
     }

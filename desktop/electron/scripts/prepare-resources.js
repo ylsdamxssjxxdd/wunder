@@ -79,6 +79,9 @@ const copyRuntimeNodeModules = () => {
     if (normalized === 'wunder-workspace' || normalized.startsWith('wunder-workspace/')) {
       return false
     }
+    if (normalized === 'electron-updater' || normalized.startsWith('electron-updater/')) {
+      return false
+    }
     return true
   })
   console.log(`[prepare] copied runtime deps to: ${runtimeDepsOutputRoot}`)
