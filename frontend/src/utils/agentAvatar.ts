@@ -1,9 +1,9 @@
-import defaultAgentAvatarImage from '@/assets/qq-avatars/avatar-0119.jpg';
+import defaultAgentAvatarImage from '@/assets/agent-avatars/avatar-000.jpg';
 import {
-  DEFAULT_PROFILE_AVATAR_IMAGE_KEY,
-  PROFILE_AVATAR_IMAGE_MAP,
-  PROFILE_AVATAR_OPTION_KEYS
-} from '@/utils/avatarCatalog';
+  AGENT_AVATAR_IMAGE_MAP,
+  AGENT_AVATAR_OPTION_KEYS,
+  DEFAULT_AGENT_AVATAR_IMAGE_KEY
+} from '@/utils/agentAvatarCatalog';
 import { DEFAULT_AVATAR_COLOR, normalizeAvatarColor, normalizeAvatarIcon } from '@/utils/userPreferences';
 
 export type AgentAvatarIconConfig = {
@@ -11,23 +11,34 @@ export type AgentAvatarIconConfig = {
   color: string;
 };
 
-const DEFAULT_AGENT_AVATAR_ICON_NAME = DEFAULT_PROFILE_AVATAR_IMAGE_KEY;
+const DEFAULT_AGENT_AVATAR_ICON_NAME = DEFAULT_AGENT_AVATAR_IMAGE_KEY;
 const FALLBACK_AGENT_AVATAR_ICON_NAME = 'initial';
-const LEGACY_DEFAULT_AVATAR_KEY = 'qq-avatar-0199';
+
+const normalizeAgentAvatarSequenceKey = (rawValue: string): string => {
+  const sequence = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(sequence) || sequence < 0) {
+    return DEFAULT_AGENT_AVATAR_ICON_NAME;
+  }
+  const candidate = `avatar-${String(sequence).padStart(3, '0')}`;
+  return AGENT_AVATAR_IMAGE_MAP.has(candidate) ? candidate : DEFAULT_AGENT_AVATAR_ICON_NAME;
+};
 
 const normalizeLegacyAvatarName = (value: unknown): string => {
   const text = String(value || '')
     .trim()
     .toLowerCase();
   if (!text) return '';
-  const directAvatarMatch = text.match(/^avatar-(\d{1,4})$/);
-  if (directAvatarMatch) {
-    return `qq-avatar-${String(Number.parseInt(directAvatarMatch[1], 10)).padStart(4, '0')}`;
+  const agentAvatarMatch = text.match(/^agent-avatar-(\d{1,4})$/);
+  if (agentAvatarMatch) {
+    return normalizeAgentAvatarSequenceKey(agentAvatarMatch[1]);
+  }
+  const nextAvatarMatch = text.match(/^avatar-(\d{1,4})$/);
+  if (nextAvatarMatch) {
+    return normalizeAgentAvatarSequenceKey(nextAvatarMatch[1]);
   }
   const qqAvatarMatch = text.match(/^qq-avatar-(\d{1,4})$/);
   if (qqAvatarMatch) {
-    const normalized = `qq-avatar-${String(Number.parseInt(qqAvatarMatch[1], 10)).padStart(4, '0')}`;
-    return normalized === LEGACY_DEFAULT_AVATAR_KEY ? DEFAULT_AGENT_AVATAR_ICON_NAME : normalized;
+    return normalizeAgentAvatarSequenceKey(qqAvatarMatch[1]);
   }
   if (text === 'default') {
     return DEFAULT_AGENT_AVATAR_ICON_NAME;
@@ -93,7 +104,7 @@ const normalizeAgentAvatarName = (
   if (normalizedLegacy === 'initial') {
     return 'initial';
   }
-  const normalized = normalizeAvatarIcon(normalizedLegacy, PROFILE_AVATAR_OPTION_KEYS);
+  const normalized = normalizeAvatarIcon(normalizedLegacy, AGENT_AVATAR_OPTION_KEYS);
   if (normalized === 'initial') {
     return options.fallbackWhenUnknown;
   }
@@ -125,7 +136,7 @@ export const stringifyAgentAvatarIconConfig = (
 };
 
 export const resolveAgentAvatarImageByConfig = (config: Partial<AgentAvatarIconConfig>): string =>
-  PROFILE_AVATAR_IMAGE_MAP.get(String(config?.name || '').trim()) || '';
+  AGENT_AVATAR_IMAGE_MAP.get(String(config?.name || '').trim()) || '';
 
 export const resolveAgentAvatarInitial = (value: unknown): string => {
   const text = String(value || '').trim();
@@ -134,4 +145,4 @@ export const resolveAgentAvatarInitial = (value: unknown): string => {
 };
 
 export const DEFAULT_AGENT_AVATAR_IMAGE =
-  PROFILE_AVATAR_IMAGE_MAP.get(DEFAULT_AGENT_AVATAR_ICON_NAME) || defaultAgentAvatarImage;
+  AGENT_AVATAR_IMAGE_MAP.get(DEFAULT_AGENT_AVATAR_ICON_NAME) || defaultAgentAvatarImage;

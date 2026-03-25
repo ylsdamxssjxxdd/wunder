@@ -10,7 +10,7 @@ use crate::orchestrator_constants::{
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::services::agent_runtime::AgentSubmitOutcome;
-use crate::services::llm::is_llm_model;
+use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
@@ -1566,7 +1566,13 @@ async fn system_prompt(
         .unwrap_or_else(|| resolve_agent_tool_defaults(agent_record.as_ref()));
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
-    let tool_names = finalize_tool_names(allowed);
+    let tool_names = finalize_tool_names(allowed.clone());
+    let tooling_preview = build_prompt_tooling_preview_payload(
+        &state,
+        &user_context,
+        &allowed,
+        agent_record.as_ref(),
+    );
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -1593,7 +1599,7 @@ async fn system_prompt(
         )
         .await;
     Ok(Json(json!({
-        "data": build_system_prompt_preview_payload(prompt, "pending"),
+        "data": build_system_prompt_preview_payload(prompt, "pending", Some(tooling_preview)),
     })))
 }
 
@@ -1637,15 +1643,6 @@ async fn session_system_prompt(
         .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
         .await
         .unwrap_or(None);
-    if request_overrides.is_none() {
-        if let Some(prompt) = stored_prompt {
-            if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
-                return Ok(Json(json!({
-                    "data": build_system_prompt_preview_payload(prompt, "frozen"),
-                })));
-            }
-        }
-    }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
     let agent_record = fetch_agent_record(
         &state,
@@ -1655,14 +1652,31 @@ async fn session_system_prompt(
     )
     .await?;
     let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let overrides = if let Some(overrides) = request_overrides {
-        overrides
-    } else {
-        resolve_session_tool_overrides(&record, agent_record.as_ref())
-    };
+    let overrides = request_overrides
+        .clone()
+        .unwrap_or_else(|| resolve_session_tool_overrides(&record, agent_record.as_ref()));
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
-    let tool_names = finalize_tool_names(allowed);
+    let tool_names = finalize_tool_names(allowed.clone());
+    let tooling_preview = build_prompt_tooling_preview_payload(
+        &state,
+        &user_context,
+        &allowed,
+        agent_record.as_ref(),
+    );
+    if request_overrides.is_none() {
+        if let Some(prompt) = stored_prompt {
+            if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
+                return Ok(Json(json!({
+                    "data": build_system_prompt_preview_payload(
+                        prompt,
+                        "frozen",
+                        Some(tooling_preview.clone()),
+                    ),
+                })));
+            }
+        }
+    }
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -1689,7 +1703,7 @@ async fn session_system_prompt(
         )
         .await;
     Ok(Json(json!({
-        "data": build_system_prompt_preview_payload(prompt, "pending"),
+        "data": build_system_prompt_preview_payload(prompt, "pending", Some(tooling_preview)),
     })))
 }
 
@@ -2495,7 +2509,65 @@ fn extract_system_prompt_memory_total_count(memory_preview: &str) -> Option<usiz
         .and_then(|value| value.parse::<usize>().ok())
 }
 
-fn build_system_prompt_preview_payload(prompt: String, memory_mode_hint: &str) -> Value {
+fn tool_call_mode_key(mode: ToolCallMode) -> &'static str {
+    match mode {
+        ToolCallMode::FunctionCall => "function_call",
+        ToolCallMode::ToolCall => "tool_call",
+        ToolCallMode::FreeformCall => "freeform_call",
+    }
+}
+
+fn resolve_system_prompt_tool_call_mode(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+) -> ToolCallMode {
+    let Some(model_name) = resolve_chat_model_name(config, agent_record) else {
+        return ToolCallMode::FunctionCall;
+    };
+    config
+        .llm
+        .models
+        .get(&model_name)
+        .filter(|model| is_llm_model(model))
+        .map(resolve_tool_call_mode)
+        .unwrap_or(ToolCallMode::FunctionCall)
+}
+
+fn build_prompt_tooling_preview_payload(
+    state: &Arc<AppState>,
+    user_context: &crate::user_access::UserToolContext,
+    allowed_tool_names: &HashSet<String>,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+) -> Value {
+    let tool_call_mode = resolve_system_prompt_tool_call_mode(&user_context.config, agent_record);
+    let selected_tool_names = finalize_tool_names(allowed_tool_names.clone());
+    let tooling = state.orchestrator.build_function_tooling(
+        &user_context.config,
+        &user_context.skills,
+        allowed_tool_names,
+        Some(&user_context.bindings),
+        tool_call_mode,
+    );
+    let llm_tools = tooling
+        .as_ref()
+        .map(|resolved| resolved.tools.clone())
+        .unwrap_or_default();
+    let llm_tool_name_map = tooling
+        .map(|resolved| resolved.name_map)
+        .unwrap_or_default();
+    json!({
+        "tool_call_mode": tool_call_mode_key(tool_call_mode),
+        "selected_tool_names": selected_tool_names,
+        "llm_tools": llm_tools,
+        "llm_tool_name_map": llm_tool_name_map,
+    })
+}
+
+fn build_system_prompt_preview_payload(
+    prompt: String,
+    memory_mode_hint: &str,
+    tooling_preview: Option<Value>,
+) -> Value {
     let memory_preview = extract_system_prompt_memory_preview(&prompt);
     let memory_preview_count = count_system_prompt_memory_items(&memory_preview);
     let memory_preview_total_count =
@@ -2505,13 +2577,19 @@ fn build_system_prompt_preview_payload(prompt: String, memory_mode_hint: &str) -
     } else {
         memory_mode_hint
     };
-    json!({
+    let mut payload = json!({
         "prompt": sanitize_system_prompt_preview(prompt),
         "memory_preview": memory_preview,
         "memory_preview_mode": memory_preview_mode,
         "memory_preview_count": memory_preview_count,
         "memory_preview_total_count": memory_preview_total_count,
-    })
+    });
+    if let Some(tooling_preview) = tooling_preview {
+        if let Some(map) = payload.as_object_mut() {
+            map.insert("tooling_preview".to_string(), tooling_preview);
+        }
+    }
+    payload
 }
 
 fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {

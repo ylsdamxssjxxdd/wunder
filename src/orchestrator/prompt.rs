@@ -7,9 +7,9 @@ const THREAD_AGENTS_MD_BLOCK_BEGIN: &str = "<!-- WUNDER_THREAD_AGENTS_MD_BEGIN -
 const THREAD_AGENTS_MD_BLOCK_END: &str = "<!-- WUNDER_THREAD_AGENTS_MD_END -->";
 const MAX_THREAD_AGENTS_MD_TOKENS: i64 = 3_000;
 
-pub(super) struct FunctionTooling {
-    pub(super) tools: Vec<Value>,
-    pub(super) name_map: HashMap<String, String>,
+pub(crate) struct FunctionTooling {
+    pub(crate) tools: Vec<Value>,
+    pub(crate) name_map: HashMap<String, String>,
 }
 
 impl Orchestrator {
@@ -58,7 +58,7 @@ impl Orchestrator {
         filter_tool_names_by_model_capability(allowed_tool_names, support_vision)
     }
 
-    pub(super) fn build_function_tooling(
+    pub(crate) fn build_function_tooling(
         &self,
         config: &Config,
         skills: &SkillRegistry,

@@ -10,25 +10,46 @@
     <div v-if="loading" class="messenger-list-empty">{{ t('chat.systemPrompt.loading') }}</div>
     <template v-else>
       <section class="system-prompt-full-panel" :class="`system-prompt-full-panel--${memoryMode}`">
-        <div class="system-prompt-section-head">
-          <div class="system-prompt-section-title">{{ t('chat.systemPrompt.fullPromptTitle') }}</div>
-          <div v-if="memoryMode !== 'none'" class="system-prompt-section-badges">
-            <span class="system-prompt-badge">
-              {{ memoryMode === 'frozen' ? t('chat.systemPrompt.memoryFrozen') : t('chat.systemPrompt.memoryPending') }}
-            </span>
-          </div>
-        </div>
         <div v-if="statusHint" class="system-prompt-memory-hint muted">
           {{ statusHint }}
         </div>
-        <pre class="workflow-dialog-detail system-prompt-content" v-html="htmlContent"></pre>
+        <div v-if="hasToolingContent" class="system-prompt-view-switch">
+          <button
+            class="system-prompt-view-btn"
+            :class="{ 'is-active': activeView === 'prompt' }"
+            type="button"
+            @click="activeView = 'prompt'"
+          >
+            {{ t('chat.systemPrompt.viewPrompt') }}
+          </button>
+          <button
+            class="system-prompt-view-btn"
+            :class="{ 'is-active': activeView === 'tooling' }"
+            type="button"
+            @click="activeView = 'tooling'"
+          >
+            {{ t('chat.systemPrompt.viewTooling') }}
+          </button>
+          <span class="system-prompt-tooling-mode">
+            {{ t('chat.systemPrompt.toolingMode', { mode: toolingModeLabel }) }}
+          </span>
+        </div>
+        <pre
+          v-if="!hasToolingContent || activeView === 'prompt'"
+          class="workflow-dialog-detail system-prompt-content"
+          v-html="htmlContent"
+        ></pre>
+        <pre
+          v-else
+          class="workflow-dialog-detail system-prompt-tooling-content"
+        >{{ toolingContent }}</pre>
       </section>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 
 const props = defineProps<{
@@ -36,6 +57,8 @@ const props = defineProps<{
   loading: boolean;
   htmlContent: string;
   memoryMode: 'none' | 'pending' | 'frozen';
+  toolingMode?: string;
+  toolingContent?: string;
 }>();
 
 const emit = defineEmits<{
@@ -54,6 +77,35 @@ const statusHint = computed(() => {
   return '';
 });
 
+const hasToolingContent = computed(() => String(props.toolingContent || '').trim().length > 0);
+const activeView = ref<'prompt' | 'tooling'>('prompt');
+
+const toolingModeLabel = computed(() => {
+  const mode = String(props.toolingMode || '').trim().toLowerCase();
+  if (!mode) {
+    return '-';
+  }
+  const key = `chat.systemPrompt.toolCallMode.${mode}`;
+  const translated = t(key);
+  return translated === key ? mode : translated;
+});
+
+watch(
+  () => props.visible,
+  (visible) => {
+    if (!visible) {
+      activeView.value = 'prompt';
+    }
+  }
+);
+
+watch(
+  () => props.toolingContent,
+  () => {
+    activeView.value = 'prompt';
+  }
+);
+
 const handleVisibleChange = (nextVisible: boolean) => {
   emit('update:visible', Boolean(nextVisible));
 };
@@ -65,6 +117,8 @@ const handleVisibleChange = (nextVisible: boolean) => {
   border-radius: 14px;
   background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
   padding: 14px;
+  max-height: 72vh;
+  overflow: auto;
 }
 
 .system-prompt-full-panel--frozen {
@@ -75,40 +129,58 @@ const handleVisibleChange = (nextVisible: boolean) => {
   border-color: rgba(245, 158, 11, 0.32);
 }
 
-.system-prompt-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.system-prompt-section-title {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--app-text-color, #0f172a);
-}
-
-.system-prompt-section-badges {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.system-prompt-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-  background: rgba(148, 163, 184, 0.12);
-  color: var(--app-text-muted, #64748b);
-}
-
 .system-prompt-memory-hint {
   margin-bottom: 12px;
   line-height: 1.7;
+}
+
+.system-prompt-content {
+  margin: 0;
+  max-height: 46vh;
+  overflow: auto;
+}
+
+.system-prompt-view-switch {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.system-prompt-view-btn {
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
+  background: var(--app-panel-bg, rgba(148, 163, 184, 0.1));
+  color: var(--app-text-color, #0f172a);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.system-prompt-view-btn.is-active {
+  border-color: rgba(59, 130, 246, 0.36);
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--app-text-color, #0f172a);
+}
+
+.system-prompt-tooling-mode {
+  margin-left: auto;
+  border-radius: 999px;
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--app-text-color, #0f172a);
+}
+
+.system-prompt-tooling-content {
+  margin: 0;
+  max-height: 46vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

@@ -333,12 +333,12 @@ import {
   resolveBeeroomGroupDraftForAgent
 } from '@/utils/beeroomGroupDraft';
 import {
-  DEFAULT_PROFILE_AVATAR_IMAGE_KEY,
-  PROFILE_AVATAR_COLORS,
-  PROFILE_AVATAR_IMAGE_OPTIONS,
-  PROFILE_AVATAR_OPTION_KEYS,
-  resolveProfileAvatarImageByKey
-} from '@/utils/avatarCatalog';
+  AGENT_AVATAR_COLORS,
+  AGENT_AVATAR_IMAGE_OPTIONS,
+  AGENT_AVATAR_OPTION_KEYS,
+  DEFAULT_AGENT_AVATAR_IMAGE_KEY,
+  resolveAgentAvatarImageByKey
+} from '@/utils/agentAvatarCatalog';
 import {
   parseAgentAvatarIconConfig,
   resolveAgentAvatarInitial,
@@ -466,7 +466,7 @@ const form = reactive({
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode(),
-  icon_name: DEFAULT_PROFILE_AVATAR_IMAGE_KEY,
+  icon_name: DEFAULT_AGENT_AVATAR_IMAGE_KEY,
   icon_color: DEFAULT_AVATAR_COLOR
 });
 
@@ -491,7 +491,7 @@ const presetQuestionsFieldRef = ref<{ addQuestion: () => void } | null>(null);
 const panelMounted = ref(false);
 const loadedSnapshot = ref<AgentFormSnapshot | null>(null);
 const avatarDialogVisible = ref(false);
-const avatarDialogIcon = ref(DEFAULT_PROFILE_AVATAR_IMAGE_KEY);
+const avatarDialogIcon = ref(DEFAULT_AGENT_AVATAR_IMAGE_KEY);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 const avatarPage = ref(1);
 let panelDisposed = false;
@@ -577,8 +577,8 @@ const normalizeApprovalMode = (value: unknown): string => {
 
 const normalizeAgentAvatarName = (value: unknown): string => {
   const text = String(value || '').trim();
-  if (!text) return DEFAULT_PROFILE_AVATAR_IMAGE_KEY;
-  const normalized = normalizeAvatarIcon(text, PROFILE_AVATAR_OPTION_KEYS);
+  if (!text) return DEFAULT_AGENT_AVATAR_IMAGE_KEY;
+  const normalized = normalizeAvatarIcon(text, AGENT_AVATAR_OPTION_KEYS);
   if (normalized === 'initial') {
     return 'initial';
   }
@@ -592,11 +592,11 @@ const avatarOptions = computed<ProfileAvatarOption[]>(() => [
     key: 'initial',
     label: t('portal.agent.avatar.icon.initial')
   },
-  ...PROFILE_AVATAR_IMAGE_OPTIONS
+  ...AGENT_AVATAR_IMAGE_OPTIONS
 ]);
 
 const resolveAvatarOptionImage = (key: unknown): string =>
-  resolveProfileAvatarImageByKey(normalizeAgentAvatarName(key));
+  resolveAgentAvatarImageByKey(normalizeAgentAvatarName(key));
 
 const agentAvatarPreviewImageUrl = computed(() => resolveAvatarOptionImage(form.icon_name));
 const avatarDialogImageUrl = computed(() => resolveAvatarOptionImage(avatarDialogIcon.value));
@@ -621,7 +621,7 @@ const pagedAvatarOptions = computed(() => {
 });
 
 const avatarColorOptions = computed<AvatarColorOption[]>(() =>
-  PROFILE_AVATAR_COLORS.map((color) => {
+  AGENT_AVATAR_COLORS.map((color) => {
     const normalized = String(color || '')
       .trim()
       .toLowerCase();
@@ -653,7 +653,7 @@ const closeAvatarDialog = () => {
 };
 
 const resetAvatarDialog = () => {
-  avatarDialogIcon.value = DEFAULT_PROFILE_AVATAR_IMAGE_KEY;
+  avatarDialogIcon.value = DEFAULT_AGENT_AVATAR_IMAGE_KEY;
   avatarDialogColor.value = DEFAULT_AVATAR_COLOR;
   avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
 };

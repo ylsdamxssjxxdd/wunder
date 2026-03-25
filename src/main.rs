@@ -82,6 +82,21 @@ async fn main() -> anyhow::Result<()> {
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt", "/wunder/ppt/");
     let app = mount_trailing_slash_redirect(app, "/wunder/ppt-en", "/wunder/ppt-en/");
     let app = mount_static(app, "frontend/src/assets/qq-avatars", "/assets/qq-avatars");
+    let app = mount_static(
+        app,
+        "frontend/src/assets/qq-avatars",
+        "/wunder/assets/qq-avatars",
+    );
+    let app = mount_static(
+        app,
+        "frontend/src/assets/agent-avatars",
+        "/assets/agent-avatars",
+    );
+    let app = mount_static(
+        app,
+        "frontend/src/assets/agent-avatars",
+        "/wunder/assets/agent-avatars",
+    );
     let app = mount_static(app, "web", "/");
     let app = mount_static(app, "docs/ppt", "/wunder/ppt");
     let app = mount_static(app, "docs/ppt-en", "/wunder/ppt-en");
@@ -149,7 +164,13 @@ fn mount_static<S>(app: Router<S>, dir: &str, route: &str) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let path = PathBuf::from(dir);
+    let mut path = PathBuf::from(dir);
+    if !path.exists() && path.is_relative() {
+        let manifest_fallback = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(dir);
+        if manifest_fallback.exists() {
+            path = manifest_fallback;
+        }
+    }
     if path.exists() {
         // 目录存在时才挂载，避免容器裁剪后启动报错。
         let service = ServeDir::new(path).append_index_html_on_directories(true);

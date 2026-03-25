@@ -1295,6 +1295,54 @@
   border-radius: 4px;
 }
 
+.system-prompt-view-switch {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.system-prompt-view-btn {
+  border: 1px solid var(--chat-border);
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--chat-text, #f1f5f9);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.system-prompt-view-btn.is-active {
+  border-color: rgba(106, 217, 255, 0.55);
+  background: rgba(106, 217, 255, 0.18);
+  color: var(--chat-text, #f1f5f9);
+}
+
+.system-prompt-tooling-mode {
+  margin-left: auto;
+  border-radius: 999px;
+  border: 1px solid var(--chat-border);
+  color: var(--chat-text, #f1f5f9);
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.system-prompt-tooling-content {
+  margin: 0;
+  padding: 0;
+  color: var(--chat-text, #f1f5f9);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 46vh;
+  overflow: auto;
+}
+
 .system-prompt-footer-btn {
   background: #1e2d4d;
   border: 1px solid var(--chat-border);

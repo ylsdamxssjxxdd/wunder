@@ -26,22 +26,98 @@ const PRESET_AVATAR_COLOR_OPTIONS = [
   "#94a3b8",
 ];
 
+const PRESET_AVATAR_BASE_URL = (() => {
+  try {
+    return new URL("../assets/agent-avatars/", import.meta.url).toString();
+  } catch (_error) {
+    return "/assets/agent-avatars/";
+  }
+})();
+
+const PRESET_AGENT_AVATAR_KEYS = [
+  "avatar-000",
+  "avatar-001",
+  "avatar-003",
+  "avatar-004",
+  "avatar-007",
+  "avatar-010",
+  "avatar-011",
+  "avatar-012",
+  "avatar-013",
+  "avatar-014",
+  "avatar-015",
+  "avatar-016",
+  "avatar-017",
+  "avatar-018",
+  "avatar-019",
+  "avatar-020",
+  "avatar-021",
+  "avatar-022",
+  "avatar-023",
+  "avatar-024",
+  "avatar-025",
+  "avatar-027",
+  "avatar-028",
+  "avatar-029",
+  "avatar-032",
+  "avatar-034",
+  "avatar-036",
+  "avatar-040",
+  "avatar-041",
+  "avatar-043",
+  "avatar-044",
+  "avatar-046",
+  "avatar-048",
+  "avatar-049",
+  "avatar-050",
+  "avatar-051",
+  "avatar-052",
+  "avatar-054",
+  "avatar-055",
+  "avatar-056",
+  "avatar-057",
+  "avatar-058",
+  "avatar-059",
+  "avatar-060",
+  "avatar-061",
+  "avatar-062",
+  "avatar-063",
+  "avatar-065",
+  "avatar-066",
+  "avatar-067",
+  "avatar-069",
+  "avatar-070",
+  "avatar-072",
+  "avatar-073",
+  "avatar-075",
+  "avatar-076",
+  "avatar-077",
+];
+
 const PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", label: "initial" }].concat(
-  Array.from({ length: 120 }, (_unused, index) => {
-    const sequence = String(index + 1).padStart(4, "0");
-    return {
-      key: `qq-avatar-${sequence}`,
-      image: `/assets/qq-avatars/avatar-${sequence}.jpg`,
-      label: `QQ Avatar ${sequence}`,
-    };
-  })
+  PRESET_AGENT_AVATAR_KEYS.map((key) => ({
+    key,
+    image: `${PRESET_AVATAR_BASE_URL}${key}.jpg`,
+    label: `Agent Avatar ${key.slice("avatar-".length)}`,
+  }))
 );
 
 const PRESET_AVATAR_IMAGE_MAP = new Map(PRESET_AVATAR_OPTIONS.filter((item) => item.image).map((item) => [item.key, item.image]));
 const PRESET_AVATAR_OPTION_KEYS = new Set(PRESET_AVATAR_OPTIONS.map((item) => item.key));
-const DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("qq-avatar-0119") ? "qq-avatar-0119" : "initial";
+const DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("avatar-000")
+  ? "avatar-000"
+  : PRESET_AGENT_AVATAR_KEYS[0] || "initial";
 const FALLBACK_PRESET_AVATAR_ICON_NAME = "initial";
 const LEGACY_DEFAULT_AVATAR_KEY = "qq-avatar-0199";
+
+const normalizeAgentAvatarSequenceKey = (rawValue) => {
+  const sequence = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(sequence) || sequence < 0) {
+    return DEFAULT_PRESET_AVATAR_ICON_NAME;
+  }
+  const candidate = `avatar-${String(sequence).padStart(3, "0")}`;
+  return PRESET_AVATAR_OPTION_KEYS.has(candidate) ? candidate : DEFAULT_PRESET_AVATAR_ICON_NAME;
+};
 
 const avatarModalState = {
   iconName: DEFAULT_PRESET_AVATAR_ICON_NAME,
@@ -210,14 +286,21 @@ const normalizeLegacyAvatarName = (value) => {
   if (!text) {
     return "";
   }
+  const agentAvatarMatch = text.match(/^agent-avatar-(\d{1,4})$/);
+  if (agentAvatarMatch) {
+    return normalizeAgentAvatarSequenceKey(agentAvatarMatch[1]);
+  }
   const directAvatarMatch = text.match(/^avatar-(\d{1,4})$/);
   if (directAvatarMatch) {
-    return `qq-avatar-${String(Number.parseInt(directAvatarMatch[1], 10)).padStart(4, "0")}`;
+    return normalizeAgentAvatarSequenceKey(directAvatarMatch[1]);
   }
   const qqAvatarMatch = text.match(/^qq-avatar-(\d{1,4})$/);
   if (qqAvatarMatch) {
     const normalized = `qq-avatar-${String(Number.parseInt(qqAvatarMatch[1], 10)).padStart(4, "0")}`;
-    return normalized === LEGACY_DEFAULT_AVATAR_KEY ? DEFAULT_PRESET_AVATAR_ICON_NAME : normalized;
+    if (normalized === LEGACY_DEFAULT_AVATAR_KEY) {
+      return DEFAULT_PRESET_AVATAR_ICON_NAME;
+    }
+    return normalizeAgentAvatarSequenceKey(qqAvatarMatch[1]);
   }
   if (text === "default") {
     return DEFAULT_PRESET_AVATAR_ICON_NAME;

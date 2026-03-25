@@ -1432,6 +1432,10 @@ async fn user_knowledge_upload(
             base = field.text().await.unwrap_or_default();
             continue;
         }
+        let is_upload_field = matches!(field_name, "file" | "files") || field.file_name().is_some();
+        if !is_upload_field {
+            continue;
+        }
         if let Some(previous) = upload.take() {
             let _ = tokio::fs::remove_dir_all(&previous.temp_dir).await;
         }

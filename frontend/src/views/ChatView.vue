@@ -511,7 +511,38 @@
       </template>
       <div class="system-prompt-body">
         <div v-if="promptPreviewLoading" class="muted">{{ t('chat.systemPrompt.loading') }}</div>
-        <pre v-else class="system-prompt-content" v-html="promptPreviewHtml"></pre>
+        <template v-else>
+          <div v-if="promptPreviewToolingContent" class="system-prompt-view-switch">
+            <button
+              class="system-prompt-view-btn"
+              :class="{ 'is-active': promptPreviewView === 'prompt' }"
+              type="button"
+              @click="promptPreviewView = 'prompt'"
+            >
+              {{ t('chat.systemPrompt.viewPrompt') }}
+            </button>
+            <button
+              class="system-prompt-view-btn"
+              :class="{ 'is-active': promptPreviewView === 'tooling' }"
+              type="button"
+              @click="promptPreviewView = 'tooling'"
+            >
+              {{ t('chat.systemPrompt.viewTooling') }}
+            </button>
+            <span class="system-prompt-tooling-mode">
+              {{ t('chat.systemPrompt.toolingMode', { mode: promptPreviewToolingModeLabel }) }}
+            </span>
+          </div>
+          <pre
+            v-if="!promptPreviewToolingContent || promptPreviewView === 'prompt'"
+            class="system-prompt-content"
+            v-html="promptPreviewHtml"
+          ></pre>
+          <pre
+            v-else
+            class="system-prompt-tooling-content"
+          >{{ promptPreviewToolingContent }}</pre>
+        </template>
       </div>
       <template #footer>
         <el-button class="system-prompt-footer-btn" @click="closePromptPreview">
@@ -729,6 +760,7 @@ import {
 } from '@/utils/chatCompactionWorkflow';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
+import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
 import { isDemoMode } from '@/utils/demo';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
@@ -778,6 +810,9 @@ const messagesContainerRef = ref(null);
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
 const promptPreviewContent = ref('');
+const promptPreviewToolingMode = ref('');
+const promptPreviewToolingContent = ref('');
+const promptPreviewView = ref<'prompt' | 'tooling'>('prompt');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -1031,6 +1066,13 @@ const effectiveToolSummary = computed(() => {
 const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || t('chat.systemPrompt.empty');
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
+});
+const promptPreviewToolingModeLabel = computed(() => {
+  const mode = String(promptPreviewToolingMode.value || '').trim().toLowerCase();
+  if (!mode) return '-';
+  const key = `chat.systemPrompt.toolCallMode.${mode}`;
+  const translated = t(key);
+  return translated === key ? mode : translated;
 });
 // Ability tooltip sections share the same tool and skill summary payload.
 const abilitySections = computed(() => {
@@ -2752,6 +2794,9 @@ const openPromptPreview = async () => {
   promptPreviewVisible.value = true;
   promptPreviewLoading.value = true;
   promptPreviewContent.value = '';
+  promptPreviewToolingMode.value = '';
+  promptPreviewToolingContent.value = '';
+  promptPreviewView.value = 'prompt';
   const normalizedAgentId = String(
     activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || DEFAULT_AGENT_KEY
   ).trim();
@@ -2777,9 +2822,16 @@ const openPromptPreview = async () => {
     await toolSummaryPromise;
     const responsePayload = promptResult?.data?.data || {};
     promptPreviewContent.value = responsePayload.prompt || '';
+    const toolingPreview = extractPromptToolingPreview(responsePayload);
+    promptPreviewToolingMode.value = toolingPreview.mode;
+    promptPreviewToolingContent.value = toolingPreview.text;
+    promptPreviewView.value = 'prompt';
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     promptPreviewContent.value = '';
+    promptPreviewToolingMode.value = '';
+    promptPreviewToolingContent.value = '';
+    promptPreviewView.value = 'prompt';
   } finally {
     promptPreviewLoading.value = false;
   }
@@ -2787,6 +2839,7 @@ const openPromptPreview = async () => {
 
 const closePromptPreview = () => {
   promptPreviewVisible.value = false;
+  promptPreviewView.value = 'prompt';
 };
 
 const parseTimeValue = (value) => {

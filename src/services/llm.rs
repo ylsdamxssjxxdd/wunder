@@ -1000,30 +1000,44 @@ pub async fn embed_texts(
         .ok_or_else(|| anyhow!("embedding base_url is required"))?;
     let timeout = Duration::from_secs(timeout_s.max(5));
     let client = Client::builder().timeout(timeout).build()?;
-    let payload = json!({
-        "model": model,
-        "input": inputs,
-    });
-    let response = client
-        .post(endpoint)
-        .headers(build_headers(config.api_key.as_deref().unwrap_or("")))
-        .json(&payload)
-        .send()
-        .await?;
-    let status = response.status();
-    let body_text = response
-        .text()
-        .await
-        .context("read embedding response body")?;
-    let body = match serde_json::from_str::<Value>(&body_text) {
-        Ok(value) => value,
-        Err(err) => {
-            warn!(
-                "Embedding response json parse failed: {err}, body={}",
-                truncate_text(&body_text, 2048)
-            );
-            Value::Null
+    let headers = build_headers(config.api_key.as_deref().unwrap_or(""));
+    let mut include_encoding_format = true;
+    let (status, body_text, body) = loop {
+        let payload = if include_encoding_format {
+            json!({
+                "model": model,
+                "input": inputs,
+                "encoding_format": "float",
+            })
+        } else {
+            json!({
+                "model": model,
+                "input": inputs,
+            })
+        };
+        let response = client
+            .post(&endpoint)
+            .headers(headers.clone())
+            .json(&payload)
+            .send()
+            .await?;
+        let status = response.status();
+        let body_text = response
+            .text()
+            .await
+            .context("read embedding response body")?;
+        let body = parse_embedding_response_json(&body_text);
+        if status.is_success() {
+            break (status, body_text, body);
         }
+        if include_encoding_format
+            && should_retry_embedding_without_encoding_format(status, &body, &body_text)
+        {
+            warn!("Embedding endpoint rejected encoding_format; retrying without this field");
+            include_encoding_format = false;
+            continue;
+        }
+        break (status, body_text, body);
     };
     if !status.is_success() {
         let detail = if body == Value::Null {
@@ -1063,6 +1077,35 @@ pub async fn embed_texts(
         }
     }
     Ok(outputs)
+}
+
+fn parse_embedding_response_json(body_text: &str) -> Value {
+    match serde_json::from_str::<Value>(body_text) {
+        Ok(value) => value,
+        Err(err) => {
+            warn!(
+                "Embedding response json parse failed: {err}, body={}",
+                truncate_text(body_text, 2048)
+            );
+            Value::Null
+        }
+    }
+}
+
+fn should_retry_embedding_without_encoding_format(
+    status: reqwest::StatusCode,
+    body: &Value,
+    body_text: &str,
+) -> bool {
+    if status != reqwest::StatusCode::BAD_REQUEST {
+        return false;
+    }
+    let mut combined = body_text.to_ascii_lowercase();
+    if body != &Value::Null {
+        combined.push(' ');
+        combined.push_str(&body.to_string().to_ascii_lowercase());
+    }
+    combined.contains("encoding_format")
 }
 
 pub fn normalize_provider(provider: Option<&str>) -> String {
@@ -3287,6 +3330,73 @@ mod tests {
         let root =
             normalize_root_url("https://open.bigmodel.cn/api/paas/v4/").expect("normalized root");
         assert_eq!(root, "https://open.bigmodel.cn/api/paas");
+    }
+
+    #[tokio::test]
+    async fn embed_texts_retries_without_encoding_format_when_rejected() {
+        use axum::routing::post;
+        use axum::Router;
+        use tokio::net::TcpListener;
+
+        let app = Router::new().route(
+            "/v1/embeddings",
+            post(
+                |axum::extract::Json(payload): axum::extract::Json<Value>| async move {
+                    if payload.get("encoding_format").is_some() {
+                        return (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            axum::Json(json!({
+                                "error": { "message": "unknown field encoding_format" }
+                            })),
+                        );
+                    }
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(json!({
+                            "data": [{ "index": 0, "embedding": [0.1, 0.2, 0.3] }]
+                        })),
+                    )
+                },
+            ),
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve test app");
+        });
+
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: None,
+            base_url: Some(format!("http://{addr}/v1")),
+            api_key: Some("test-key".to_string()),
+            model: Some("test-embed-model".to_string()),
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("function_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("embedding".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let outputs = embed_texts(&config, &["hello".to_string()], 10)
+            .await
+            .expect("embed should succeed after retry");
+        assert_eq!(outputs, vec![vec![0.1_f32, 0.2_f32, 0.3_f32]]);
     }
 
     #[tokio::test]

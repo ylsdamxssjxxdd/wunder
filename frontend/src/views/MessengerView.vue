@@ -1442,6 +1442,8 @@
       :agent-prompt-preview-loading="agentPromptPreviewLoading"
       :active-agent-prompt-preview-html="activeAgentPromptPreviewHtml"
       :agent-prompt-preview-memory-mode="agentPromptPreviewMemoryMode"
+      :agent-prompt-preview-tooling-mode="agentPromptPreviewToolingMode"
+      :agent-prompt-preview-tooling-content="agentPromptPreviewToolingContent"
       :image-preview-visible="imagePreviewVisible"
       :image-preview-url="imagePreviewUrl"
       :image-preview-title="imagePreviewTitle"
@@ -1588,6 +1590,7 @@ import {
   type AudioRecordingSession
 } from '@/utils/audioRecorder';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
+import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
 import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
   buildWorkspaceImagePersistentCacheKey,
@@ -1774,6 +1777,8 @@ const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
 const agentPromptPreviewMemoryMode = ref<'none' | 'pending' | 'frozen'>('none');
+const agentPromptPreviewToolingMode = ref('');
+const agentPromptPreviewToolingContent = ref('');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -2688,17 +2693,31 @@ const activeAgentRuntimeModelName = computed(() => {
   return '';
 });
 
+const activeAgentProfileForModelResolution = computed(() =>
+  activeAgentId.value === DEFAULT_AGENT_KEY ? defaultAgentProfile.value : activeAgent.value
+);
+
+const activeAgentDirectConfiguredModelName = computed(() => {
+  if (!isAgentConversationActive.value) return '';
+  return resolveModelNameFromRecord(activeAgentProfileForModelResolution.value);
+});
+
 const activeAgentConfiguredModelName = computed(() => {
   if (!isAgentConversationActive.value) return '';
-  const currentAgentProfile =
-    activeAgentId.value === DEFAULT_AGENT_KEY ? defaultAgentProfile.value : activeAgent.value;
-  const directModelName = resolveModelNameFromRecord(currentAgentProfile);
+  const directModelName = activeAgentDirectConfiguredModelName.value;
   if (directModelName) return directModelName;
   if (desktopMode.value) {
     return String(desktopDefaultModelDisplayName.value || '').trim();
   }
   return String(serverDefaultModelDisplayName.value || '').trim();
 });
+
+const activeAgentUsingDesktopDefaultModel = computed(
+  () =>
+    desktopLocalMode.value &&
+    isAgentConversationActive.value &&
+    !String(activeAgentDirectConfiguredModelName.value || '').trim()
+);
 
 const agentHeaderModelDisplayName = computed(() => {
   if (!isAgentConversationActive.value) return '';
@@ -6893,6 +6912,10 @@ const handleAgentSettingsFocusConsumed = (target: string) => {
 
 const openDesktopModelSettingsFromHeader = () => {
   if (!agentHeaderModelJumpEnabled.value) return;
+  if (activeAgentUsingDesktopDefaultModel.value) {
+    activateSettingsPanel('desktop-models');
+    return;
+  }
   openActiveAgentSettings({ focusSection: 'model' });
 };
 
@@ -7660,6 +7683,8 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewLoading.value = true;
   agentPromptPreviewContent.value = '';
   agentPromptPreviewMemoryMode.value = 'none';
+  agentPromptPreviewToolingMode.value = '';
+  agentPromptPreviewToolingContent.value = '';
   const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
   if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
     const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
@@ -7706,10 +7731,15 @@ const openAgentPromptPreview = async () => {
     const nextMode = String(promptPayload.memory_preview_mode || 'none').trim().toLowerCase();
     agentPromptPreviewMemoryMode.value =
       nextMode === 'frozen' || nextMode === 'pending' ? nextMode : 'none';
+    const toolingPreview = extractPromptToolingPreview(promptPayload);
+    agentPromptPreviewToolingMode.value = toolingPreview.mode;
+    agentPromptPreviewToolingContent.value = toolingPreview.text;
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewContent.value = '';
     agentPromptPreviewMemoryMode.value = 'none';
+    agentPromptPreviewToolingMode.value = '';
+    agentPromptPreviewToolingContent.value = '';
   } finally {
     agentPromptPreviewLoading.value = false;
   }

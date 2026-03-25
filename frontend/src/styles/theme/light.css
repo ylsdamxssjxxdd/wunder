@@ -544,6 +544,27 @@
   border-radius: 4px;
 }
 
+:root[data-user-theme='light'] .system-prompt-view-btn {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:root[data-user-theme='light'] .system-prompt-view-btn.is-active {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.42);
+  color: #1d4ed8;
+}
+
+:root[data-user-theme='light'] .system-prompt-tooling-mode {
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:root[data-user-theme='light'] .system-prompt-tooling-content {
+  color: #0f172a;
+}
+
 :root[data-user-theme='light'] .system-prompt-footer-btn {
   background: #f1f5f9;
   border-color: rgba(15, 23, 42, 0.12);
