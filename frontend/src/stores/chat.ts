@@ -4001,6 +4001,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   let lastRound = null;
   let activeCompactionWorkflowRef = null;
   let compactionAnonymousRefSeq = 0;
+  let compactionTerminalStatusHint: 'completed' | 'failed' | null = null;
   const initialRound = normalizeStreamRound(assistantMessage.stream_round);
   let visibleRound = initialRound;
   // 参照调试面板：记录模型输出轮次与内容，方便还原事件日志
@@ -4626,6 +4627,114 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return true;
   };
 
+  const isPendingCompactionStatus = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return (
+      !normalized
+      || normalized === 'loading'
+      || normalized === 'pending'
+      || normalized === 'running'
+      || normalized === 'in_progress'
+    );
+  };
+
+  const resolveLingeringCompactionProgressItemIds = () => {
+    const ids = new Set<string>();
+    compactionProgressItemMap.forEach((itemId) => {
+      const normalized = String(itemId || '').trim();
+      if (normalized) {
+        ids.add(normalized);
+      }
+    });
+    assistantMessage.workflowItems.forEach((item) => {
+      const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
+      if (eventType !== 'compaction_progress') return;
+      if (!isPendingCompactionStatus(item?.status)) return;
+      const itemId = String(item?.id || '').trim();
+      if (itemId) {
+        ids.add(itemId);
+      }
+    });
+    return Array.from(ids);
+  };
+
+  const finalizeLingeringCompactionProgressItems = (detailPayload, status) => {
+    const itemIds = resolveLingeringCompactionProgressItemIds();
+    if (!itemIds.length) {
+      if (compactionProgressItemMap.size > 0 || activeCompactionWorkflowRef) {
+        compactionProgressItemMap.clear();
+        activeCompactionWorkflowRef = null;
+      }
+      return false;
+    }
+    const normalizedDetailPayload =
+      detailPayload && typeof detailPayload === 'object'
+        ? (detailPayload as Record<string, unknown>)
+        : {};
+    let finalized = false;
+    // Reconcile orphaned compaction progress entries when compaction/final events arrive out of order.
+    itemIds.forEach((itemId) => {
+      const existingItem = assistantMessage.workflowItems.find((item) => item.id === itemId) || null;
+      if (!existingItem || !isPendingCompactionStatus(existingItem.status)) {
+        return;
+      }
+      const existingDetail = safeJsonParse(existingItem.detail);
+      const mergedDetail = {
+        ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
+        ...normalizedDetailPayload,
+        status:
+          normalizedDetailPayload?.status
+          ?? (status === 'failed' ? 'failed' : 'done')
+      };
+      updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+        title: t('chat.toolWorkflow.compaction.title'),
+        status,
+        detail: buildDetail(mergedDetail),
+        isTool: true,
+        eventType: 'compaction'
+      });
+      finalized = true;
+    });
+    compactionProgressItemMap.clear();
+    activeCompactionWorkflowRef = null;
+    return finalized;
+  };
+
+  const isCompactionWorkflowEventItem = (item) => {
+    const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
+    return eventType === 'compaction' || eventType === 'compaction_progress';
+  };
+
+  const shouldKeepCompactionMarkerLayout = () => {
+    if (String(assistantMessage.content || '').trim()) return false;
+    if (String(resolveReasoningOutput() || '').trim()) return false;
+    if (hasPlanSteps(assistantMessage.plan)) return false;
+    const panelStatus = String(assistantMessage?.questionPanel?.status || '').trim().toLowerCase();
+    if (panelStatus === 'pending') return false;
+    if (!Array.isArray(assistantMessage.workflowItems) || assistantMessage.workflowItems.length === 0) {
+      return false;
+    }
+    return assistantMessage.workflowItems.every((item) => isCompactionWorkflowEventItem(item));
+  };
+
+  const resolveCompactionFallbackStatus = (): 'completed' | 'failed' => {
+    if (compactionTerminalStatusHint) {
+      return compactionTerminalStatusHint;
+    }
+    for (let cursor = assistantMessage.workflowItems.length - 1; cursor >= 0; cursor -= 1) {
+      const item = assistantMessage.workflowItems[cursor];
+      const status = String(item?.status || '').trim().toLowerCase();
+      if (status === 'failed') {
+        return 'failed';
+      }
+      const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
+      if (eventType === 'error' || eventType === 'request_failed' || eventType === 'team_error') {
+        return 'failed';
+      }
+    }
+    return 'completed';
+  };
+
   const resolveCompactionWorkflowRef = (round) => {
     if (Number.isFinite(round)) {
       return `compaction:${round}`;
@@ -4951,6 +5060,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           || normalizedStage === 'context_overflow_recovery'
           || normalizedStage === 'context_guard'
         ) {
+          // Ignore delayed compaction progress events after terminal state to avoid re-opening "running" UI.
+          if (compactionTerminalStatusHint) {
+            break;
+          }
           summary = resolveCompactionProgressTitle(stage, summary, t) ?? summary;
           const round = resolveRound(payload, data);
           const workflowRef = resolveCompactionWorkflowRef(round);
@@ -5398,6 +5511,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'final': {
         flushStream(true);
+        compactionTerminalStatusHint = 'completed';
+        const finalPayload =
+          (data && typeof data === 'object' ? data : null)
+          ?? (payload && typeof payload === 'object' ? payload : null)
+          ?? {};
+        finalizeLingeringCompactionProgressItems(finalPayload, 'completed');
         const answer =
           data?.answer ??
           payload?.answer ??
@@ -5435,17 +5554,26 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         outputState.streaming = false;
         outputState.reasoningStreaming = false;
         syncReasoningToMessage();
-        const outputId = ensureOutputItem();
-        updateWorkflowItem(assistantMessage.workflowItems, outputId, {
-          status: 'completed',
-          detail: buildOutputDetail()
-        });
-        assistantMessage.workflowItems.push(
-          buildWorkflowItem('最终回复', buildDetail(data || answer))
+        const keepMarkerLayout = shouldKeepCompactionMarkerLayout();
+        const hasOutputTrace = Boolean(
+          String(outputContent || '').trim() || String(resolveReasoningOutput() || '').trim()
         );
+        if (!keepMarkerLayout || outputItemId || hasOutputTrace) {
+          const outputId = ensureOutputItem();
+          updateWorkflowItem(assistantMessage.workflowItems, outputId, {
+            status: 'completed',
+            detail: buildOutputDetail()
+          });
+        }
+        if (!keepMarkerLayout) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem('最终回复', buildDetail(data || answer))
+          );
+        }
         break;
       }
       case 'error': {
+        compactionTerminalStatusHint = 'failed';
         const detail = data?.message ?? payload?.message ?? raw ?? t('chat.error.generic');
         const errorPayload = data && typeof data === 'object'
           ? data
@@ -5460,6 +5588,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             error_message: String(detail || '')
           });
         }
+        finalizeLingeringCompactionProgressItems(errorPayload, 'failed');
         assistantMessage.workflowItems.push(
           buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed', {
             eventType: 'error'
@@ -5501,6 +5630,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();
+    if (
+      !normalizeFlag(assistantMessage.workflowStreaming)
+      && !normalizeFlag(assistantMessage.stream_incomplete)
+      && !normalizeFlag(assistantMessage.reasoningStreaming)
+    ) {
+      finalizeLingeringCompactionProgressItems({}, resolveCompactionFallbackStatus());
+    }
     if (outputItemId) {
       updateWorkflowItem(assistantMessage.workflowItems, outputItemId, {
         status: 'completed'
