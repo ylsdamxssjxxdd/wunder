@@ -125,6 +125,17 @@ impl ThreadRuntimeRegistry {
         )
     }
 
+    pub(super) fn snapshot(&self, session_id: &str) -> Option<ThreadRuntimeSnapshot> {
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return None;
+        }
+        self.inner
+            .lock()
+            .get(cleaned_session)
+            .map(|entry| snapshot_from_entry(cleaned_session, entry))
+    }
+
     pub(super) fn set_status(
         &self,
         session_id: &str,
@@ -322,6 +333,18 @@ mod tests {
         assert_eq!(payload["status"], "running");
         assert_eq!(payload["loaded"], true);
         assert_eq!(payload["subscriber_count"], 1);
+    }
+
+    #[test]
+    fn snapshot_returns_current_runtime_state() {
+        let registry = ThreadRuntimeRegistry::new();
+        let _ = registry.attach_subscriber("sess_1");
+        let _ = registry.begin_turn("sess_1", "turn_1");
+
+        let snapshot = registry.snapshot("sess_1").expect("runtime snapshot");
+        assert_eq!(snapshot.status, ThreadRuntimeStatus::Running);
+        assert_eq!(snapshot.subscriber_count, 1);
+        assert_eq!(snapshot.active_turn_id.as_deref(), Some("turn_1"));
     }
 
     #[test]

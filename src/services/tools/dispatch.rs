@@ -7,8 +7,8 @@ use super::{
     execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
     execute_node_invoke, execute_plan_tool, execute_ptc, execute_question_panel_tool,
     execute_skill_call, execute_thread_control_tool, execute_user_tool, find_knowledge_base,
-    is_a2a_service_tool, is_mcp_tool_name, list_files, lsp_query, read_files, subagent_control,
-    user_world_tool, write_file,
+    is_a2a_service_tool, is_mcp_tool_name, list_files, lsp_query, read_files, self_status_tool,
+    subagent_control, user_world_tool, write_file,
 };
 use super::{
     apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool, web_fetch_tool,
@@ -55,6 +55,9 @@ pub async fn execute_builtin_tool(
 ) -> Result<Value> {
     let canonical = resolve_tool_name(name);
     match canonical.as_str() {
+        self_status_tool::TOOL_SELF_STATUS => {
+            self_status_tool::execute_self_status_tool(context, args).await
+        }
         "最终回复" => Ok(json!({
             "answer": args.get("content").and_then(Value::as_str).unwrap_or("").to_string()
         })),

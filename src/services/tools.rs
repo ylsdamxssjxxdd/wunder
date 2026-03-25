@@ -19,6 +19,7 @@ mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
 mod search_content_tool;
+mod self_status_tool;
 mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;

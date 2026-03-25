@@ -79,6 +79,7 @@ const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
 const CHANNEL_RUNTIME_LOG_CAPACITY: usize = 300;
 const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
 const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
+const CHANNEL_COMPACTION_NOTICE_TEXT: &str = "上下文较长，正在整理对话上下文，请稍候。";
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
 
@@ -1030,7 +1031,14 @@ impl ChannelHub {
             }))
         };
         let response = match self
-            .run_channel_request(request, &session_info.user_id, &session_info.session_id)
+            .run_channel_request(
+                request,
+                &session_info.user_id,
+                &session_info.session_id,
+                &message,
+                &session_info,
+                resolved_binding.as_ref(),
+            )
             .await?
         {
             ChannelModelResult::Answer(answer) => answer,
@@ -1656,10 +1664,14 @@ impl ChannelHub {
         request: WunderRequest,
         user_id: &str,
         session_id: &str,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
     ) -> Result<ChannelModelResult> {
         let session_id_owned = session_id.to_string();
         let mut stream = self.orchestrator.stream(request).await?;
         let mut final_answer: Option<String> = None;
+        let mut compaction_notice_sent = false;
         while let Some(event) = stream.next().await {
             let event = match event {
                 Ok(item) => item,
@@ -1670,6 +1682,20 @@ impl ChannelHub {
                 .get("data")
                 .cloned()
                 .unwrap_or_else(|| event.data.clone());
+            if !compaction_notice_sent
+                && is_compacting_progress_event(&event.event, &event_payload, &event.data)
+            {
+                if let Err(err) = self
+                    .send_channel_compaction_notice(message, session_info, resolved_binding)
+                    .await
+                {
+                    warn!(
+                        "send channel compaction notice failed: channel={}, account_id={}, session_id={}, error={err}",
+                        message.channel, message.account_id, session_info.session_id
+                    );
+                }
+                compaction_notice_sent = true;
+            }
             if event.event == "error" {
                 let code = event_payload
                     .get("code")
@@ -1715,6 +1741,28 @@ impl ChannelHub {
             answer = "Model returned an empty response. Please try again shortly.".to_string();
         }
         Ok(ChannelModelResult::Answer(answer))
+    }
+
+    async fn send_channel_compaction_notice(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+    ) -> Result<()> {
+        let extra_meta = Some(json!({
+            "progress_notice": true,
+            "progress_stage": "compacting",
+            "compaction_notice": true,
+        }));
+        self.enqueue_channel_text_reply(
+            message,
+            session_info,
+            resolved_binding,
+            CHANNEL_COMPACTION_NOTICE_TEXT,
+            extra_meta,
+        )
+        .await?;
+        Ok(())
     }
 
     async fn load_latest_assistant_message(
@@ -4421,6 +4469,25 @@ fn extract_session_id(payload: &Value) -> Option<String> {
         .map(|value| value.to_string())
 }
 
+fn is_compacting_progress_event(
+    event_name: &str,
+    event_payload: &Value,
+    raw_event_data: &Value,
+) -> bool {
+    if !event_name.eq_ignore_ascii_case("progress") {
+        return false;
+    }
+    progress_stage_is_compacting(event_payload) || progress_stage_is_compacting(raw_event_data)
+}
+
+fn progress_stage_is_compacting(payload: &Value) -> bool {
+    payload
+        .get("stage")
+        .and_then(Value::as_str)
+        .map(|stage| stage.trim().eq_ignore_ascii_case("compacting"))
+        .unwrap_or(false)
+}
+
 fn truncate_text(text: &str, max: usize) -> String {
     if text.len() <= max {
         return text.to_string();
@@ -4470,6 +4537,24 @@ mod tests {
             Some(ApprovalResponse::Deny)
         );
         assert_eq!(parse_channel_approval_decision(Some("继续")), None);
+    }
+
+    #[test]
+    fn compacting_progress_event_detects_stage_in_payload() {
+        let payload = json!({ "stage": "compacting" });
+        assert!(is_compacting_progress_event(
+            "progress",
+            &payload,
+            &json!({})
+        ));
+    }
+
+    #[test]
+    fn compacting_progress_event_detects_stage_in_raw_event() {
+        let payload = json!({});
+        let raw = json!({ "stage": "compacting" });
+        assert!(is_compacting_progress_event("progress", &payload, &raw));
+        assert!(!is_compacting_progress_event("final", &raw, &raw));
     }
 
     #[test]

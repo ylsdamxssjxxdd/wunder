@@ -61,3 +61,28 @@ pub fn curated_default_tool_names(allowed_tool_names: &HashSet<String>) -> Vec<S
         .filter(|name| allowed_tool_names.contains(name))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{curated_default_tool_candidates, curated_default_tool_names};
+    use crate::tools::resolve_tool_name;
+    use std::collections::HashSet;
+
+    #[test]
+    fn self_status_is_not_enabled_by_default() {
+        let canonical = resolve_tool_name("self_status");
+        let defaults = curated_default_tool_candidates();
+        assert!(!defaults.contains(&canonical));
+    }
+
+    #[test]
+    fn curated_default_selection_keeps_self_status_disabled() {
+        let canonical = resolve_tool_name("self_status");
+        let mut allowed = curated_default_tool_candidates()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        allowed.insert(canonical.clone());
+        let selected = curated_default_tool_names(&allowed);
+        assert!(!selected.contains(&canonical));
+    }
+}

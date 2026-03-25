@@ -78,6 +78,7 @@ mod prompt;
 mod request;
 mod result_normalizer;
 mod retry_governor;
+mod runtime_snapshot;
 mod stream_persist;
 mod thread_runtime;
 mod tool_calls;

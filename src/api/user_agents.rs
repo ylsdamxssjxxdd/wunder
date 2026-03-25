@@ -1861,7 +1861,10 @@ async fn ensure_preset_agents(
         }
 
         if !container_layout_seeded {
-            if let Some(container_id) = matched_preset.as_ref().map(|preset| preset.sandbox_container_id) {
+            if let Some(container_id) = matched_preset
+                .as_ref()
+                .map(|preset| preset.sandbox_container_id)
+            {
                 if updated.sandbox_container_id == DEFAULT_SANDBOX_CONTAINER_ID
                     && updated.sandbox_container_id != container_id
                 {

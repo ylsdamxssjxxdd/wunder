@@ -45,6 +45,18 @@ impl ActiveTurnRegistry {
         snapshot
     }
 
+    pub(super) fn snapshot(&self, session_id: &str) -> Option<ActiveTurnSnapshot> {
+        let cleaned_session = session_id.trim();
+        if cleaned_session.is_empty() {
+            return None;
+        }
+        self.inner
+            .lock()
+            .get(cleaned_session)
+            .cloned()
+            .map(|entry| snapshot_from_entry(cleaned_session, entry))
+    }
+
     pub(super) fn add_pending_approval(
         &self,
         session_id: &str,
@@ -184,5 +196,20 @@ mod tests {
         assert!(registry
             .add_pending_approval("sess_1", &next_turn.turn_id, "approval_2")
             .is_some());
+    }
+
+    #[test]
+    fn snapshot_reflects_current_turn_state() {
+        let registry = ActiveTurnRegistry::new();
+        let turn = registry.begin_turn("sess_1");
+        let snapshot = registry
+            .add_pending_approval("sess_1", &turn.turn_id, "approval_1")
+            .expect("turn snapshot");
+        assert_eq!(snapshot.pending_approval_ids.len(), 1);
+
+        let state = registry.snapshot("sess_1").expect("active turn snapshot");
+        assert_eq!(state.turn_id, turn.turn_id);
+        assert_eq!(state.pending_approval_ids, vec!["approval_1".to_string()]);
+        assert!(!state.waiting_for_user_input);
     }
 }

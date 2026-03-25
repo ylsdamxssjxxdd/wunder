@@ -119,9 +119,10 @@ async fn bridge_preset_agents_payload(state: &Arc<AppState>) -> Result<Vec<Value
     let mut items = Vec::new();
     let mut seen_names = HashSet::new();
 
-    let default_record = load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let default_record =
+        load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let default_name = default_record.name.trim();
     if !default_name.is_empty() {
         seen_names.insert(default_name.to_string());
@@ -1489,9 +1490,10 @@ fn ensure_org_unit_exists(state: &Arc<AppState>, unit_id: &str) -> Result<(), Re
 
 async fn ensure_preset_exists(state: &Arc<AppState>, preset_name: &str) -> Result<(), Response> {
     let cleaned = required_text(preset_name, "preset_name")?;
-    let default_record = load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let default_record =
+        load_effective_default_agent_record(state.as_ref(), PRESET_TEMPLATE_USER_ID)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let default_name = default_record.name.trim();
     if (!default_name.is_empty() && default_name == cleaned)
         || cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)

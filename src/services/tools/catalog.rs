@@ -1,6 +1,6 @@
 use super::{
-    browser_tool, channel_tool, desktop_control, read_image_tool, sleep_tool, thread_control_tool,
-    web_fetch_tool,
+    browser_tool, channel_tool, desktop_control, read_image_tool, self_status_tool, sleep_tool,
+    thread_control_tool, web_fetch_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -831,6 +831,35 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "additionalProperties": false
             }),
         },
+        ToolSpec {
+            name: self_status_tool::TOOL_SELF_STATUS.to_string(),
+            description: t("tool.spec.self_status.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "detail_level": {
+                        "type": "string",
+                        "description": t("tool.spec.self_status.args.detail_level"),
+                        "enum": ["basic", "standard", "full"]
+                    },
+                    "include_events": {
+                        "type": "boolean",
+                        "description": t("tool.spec.self_status.args.include_events")
+                    },
+                    "events_limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "description": t("tool.spec.self_status.args.events_limit")
+                    },
+                    "include_system_metrics": {
+                        "type": "boolean",
+                        "description": t("tool.spec.self_status.args.include_system_metrics")
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -841,6 +870,10 @@ pub fn builtin_tool_specs() -> Vec<ToolSpec> {
 
 pub fn builtin_aliases() -> HashMap<String, String> {
     let mut map = HashMap::new();
+    map.insert(
+        self_status_tool::TOOL_SELF_STATUS_ALIAS.to_string(),
+        self_status_tool::TOOL_SELF_STATUS.to_string(),
+    );
     map.insert("final_response".to_string(), "最终回复".to_string());
     map.insert("update_plan".to_string(), "计划面板".to_string());
     map.insert("question_panel".to_string(), "问询面板".to_string());
@@ -1079,6 +1112,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         browser_tool::TOOL_BROWSER => Some("browser"),
         desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
         desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
+        self_status_tool::TOOL_SELF_STATUS => Some(self_status_tool::TOOL_SELF_STATUS_ALIAS),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
         _ => None,
@@ -1365,7 +1399,9 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{builtin_tool_specs_with_language, collect_available_tool_names};
+    use super::{
+        builtin_tool_specs_with_language, collect_available_tool_names, resolve_tool_name,
+    };
     use crate::config::Config;
     use crate::skills::SkillRegistry;
 
@@ -1432,5 +1468,13 @@ mod tests {
         assert!(available.contains("read_file"));
         assert!(!available.contains("写入文件"));
         assert!(!available.contains("write_file"));
+    }
+
+    #[test]
+    fn self_status_alias_resolves_to_builtin_tool_name() {
+        assert_eq!(
+            resolve_tool_name(super::self_status_tool::TOOL_SELF_STATUS_ALIAS),
+            super::self_status_tool::TOOL_SELF_STATUS
+        );
     }
 }

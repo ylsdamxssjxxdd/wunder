@@ -2335,6 +2335,26 @@
     "en-US": "Whether to bind the target thread as the agent's main thread.",
     "zh-CN": "是否将目标线程绑定为该智能体的主线程。"
   },
+  "tool.spec.self_status.description": {
+    "en-US": "Inspect current runtime self-status, including model identity, context occupancy, and thread/session statistics.",
+    "zh-CN": "查看当前运行时的自我状态，包括模型信息、上下文占用和线程/会话统计。"
+  },
+  "tool.spec.self_status.args.detail_level": {
+    "en-US": "Detail level for output: basic, standard, or full.",
+    "zh-CN": "输出详情级别：basic、standard 或 full。"
+  },
+  "tool.spec.self_status.args.include_events": {
+    "en-US": "Whether to include recent event items.",
+    "zh-CN": "是否包含最近事件明细。"
+  },
+  "tool.spec.self_status.args.events_limit": {
+    "en-US": "Maximum number of recent events to return (1-200).",
+    "zh-CN": "返回最近事件的最大条数（1-200）。"
+  },
+  "tool.spec.self_status.args.include_system_metrics": {
+    "en-US": "Whether to include system resource metrics.",
+    "zh-CN": "是否包含系统资源指标。"
+  },
   "workspace.error.batch_action_unsupported": {
     "en-US": "Unsupported batch action",
     "zh-CN": "不支持的批量操作"
