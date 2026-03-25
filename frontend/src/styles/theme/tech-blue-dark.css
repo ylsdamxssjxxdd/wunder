@@ -753,6 +753,7 @@
   border-color: var(--tech-blue-border);
   background: linear-gradient(180deg, rgba(16, 34, 57, 0.94), rgba(11, 22, 38, 0.96));
   color: var(--tech-blue-text);
+  color-scheme: dark;
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select:hover:not(:disabled) {
@@ -774,6 +775,12 @@
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select-caret {
   color: var(--tech-blue-muted);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select option,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-approval-select optgroup {
+  background: #0d1728;
+  color: var(--tech-blue-text);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-quick-create-dialog .agent-quick-create-mode-btn {
