@@ -1428,11 +1428,12 @@ mod tests {
         localize_register_error_message, localize_update_profile_error_message,
         normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
         normalize_theme_palette, provision_external_launch_session,
-        resolve_external_embed_target_agent_name, validate_external_embed_jwt,
+        resolve_external_embed_target_agent_name,
+        resolve_external_token_login_target_from_candidates, validate_external_embed_jwt,
         DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
     use crate::services::user_store::UserStore;
-    use crate::storage::{SqliteStorage, StorageBackend};
+    use crate::storage::{SqliteStorage, StorageBackend, UserAgentRecord};
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use hmac::{Hmac, Mac};
@@ -1451,6 +1452,38 @@ mod tests {
         mac.update(signing_input.as_bytes());
         let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
         format!("{signing_input}.{signature_segment}")
+    }
+
+    fn sample_agent(
+        agent_id: &str,
+        user_id: &str,
+        name: &str,
+        is_shared: bool,
+        updated_at: f64,
+    ) -> UserAgentRecord {
+        UserAgentRecord {
+            agent_id: agent_id.to_string(),
+            user_id: user_id.to_string(),
+            hive_id: "default".to_string(),
+            name: name.to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: updated_at,
+            updated_at,
+            preset_binding: None,
+        }
     }
 
     #[test]
@@ -1527,6 +1560,57 @@ mod tests {
                 .expect("default preset agent should be used");
 
         assert_eq!(resolved, "鏂囩鏍″");
+    }
+
+    #[test]
+    fn resolve_external_token_login_target_prefers_owned_agent_name_match() {
+        let default_agent = sample_agent("__default__", "u1", "Default Agent", false, 1.0);
+        let owned_agents = vec![
+            sample_agent("agent_owned_new", "u1", "Focused Agent", false, 3.0),
+            sample_agent("agent_owned_old", "u1", "Focused Agent", false, 2.0),
+        ];
+        let shared_agents = vec![sample_agent(
+            "agent_shared",
+            "u2",
+            "Focused Agent",
+            true,
+            4.0,
+        )];
+
+        let resolved = resolve_external_token_login_target_from_candidates(
+            Some(" focused agent "),
+            &default_agent,
+            &owned_agents,
+            &shared_agents,
+        );
+
+        assert_eq!(resolved.agent_id, "agent_owned_new");
+        assert_eq!(resolved.agent_name, "Focused Agent");
+        assert!(resolved.focus_mode);
+    }
+
+    #[test]
+    fn resolve_external_token_login_target_falls_back_to_default_when_name_not_found() {
+        let default_agent = sample_agent("__default__", "u1", "Default Agent", false, 1.0);
+        let owned_agents = vec![sample_agent("agent_owned", "u1", "Known Agent", false, 2.0)];
+        let shared_agents = vec![sample_agent(
+            "agent_shared",
+            "u2",
+            "Shared Agent",
+            true,
+            3.0,
+        )];
+
+        let resolved = resolve_external_token_login_target_from_candidates(
+            Some("missing agent"),
+            &default_agent,
+            &owned_agents,
+            &shared_agents,
+        );
+
+        assert_eq!(resolved.agent_id, "__default__");
+        assert_eq!(resolved.agent_name, "Default Agent");
+        assert!(!resolved.focus_mode);
     }
 
     #[test]

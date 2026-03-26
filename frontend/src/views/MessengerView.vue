@@ -2010,7 +2010,6 @@ const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
 const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
 const middlePaneOverlayVisible = ref(false);
-const embeddedNavigationCollapsed = ref(true);
 const standardNavigationCollapsed = ref(false);
 const leftRailMoreExpanded = ref(false);
 const quickCreatingAgent = ref(false);
@@ -2216,9 +2215,8 @@ const basePrefix = computed(() => {
 const isEmbeddedChatRoute = computed(() => /\/embed\/chat$/.test(String(route.path || '').trim()));
 const allowNavigationCollapse = computed(() => !isEmbeddedChatRoute.value);
 const navigationPaneCollapsed = computed(() => {
-  // Embedded chat must keep left/middle panes visible for stable host layout.
-  if (!allowNavigationCollapse.value) {
-    return false;
+  if (isEmbeddedChatRoute.value) {
+    return true;
   }
   return standardNavigationCollapsed.value;
 });
@@ -2229,7 +2227,6 @@ const navigationPaneToggleTitle = computed(() =>
 function setNavigationPaneCollapsed(collapsed: boolean): void {
   if (!allowNavigationCollapse.value) {
     standardNavigationCollapsed.value = false;
-    embeddedNavigationCollapsed.value = false;
     return;
   }
   standardNavigationCollapsed.value = collapsed;
@@ -2361,9 +2358,8 @@ const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.active
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(() => {
-  // Embedded route always shows middle pane, regardless of overlay state.
   if (isEmbeddedChatRoute.value) {
-    return true;
+    return false;
   }
   return !navigationPaneCollapsed.value && (!isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
 });

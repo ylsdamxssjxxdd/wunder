@@ -456,38 +456,20 @@ async fn get_session(
             .map(|value| value.to_string())
     });
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
-    let session_running = is_session_stream_active_or_queued(
-        &state.user_store,
-        session_status.as_deref(),
-        &session_id,
-    );
+    let monitor_active = session_status
+        .as_deref()
+        .map(is_session_stream_active)
+        .unwrap_or(false);
+    let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
+    let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
+    let session_running = monitor_active || !active_queue_tasks.is_empty();
     let filtered_history = filter_history_messages(history, session_running);
     let mut messages = filtered_history
         .into_iter()
         .filter_map(|item| map_history_message(item, &message_feedback))
         .collect::<Vec<_>>();
-
-    if session_running {
-        let last_role = messages
-            .last()
-            .and_then(|item| item.get("role").and_then(Value::as_str))
-            .unwrap_or("");
-        if last_role == "user" || messages.is_empty() {
-            messages.push(json!({
-                "role": "assistant",
-                "content": "",
-                "created_at": format_ts(now_ts()),
-                "stream_incomplete": true,
-            }));
-        } else if let Some(Value::Object(map)) = messages.iter_mut().rev().find(|item| {
-            item.get("role")
-                .and_then(Value::as_str)
-                .map(|value| value == "assistant")
-                .unwrap_or(false)
-        }) {
-            map.insert("stream_incomplete".to_string(), json!(true));
-        }
-    }
+    project_queued_session_messages(&mut messages, &active_queue_tasks, pure_queue_phase);
+    apply_session_running_state(&mut messages, session_running);
 
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
@@ -1296,20 +1278,44 @@ fn is_session_stream_active(status: &str) -> bool {
     )
 }
 
-fn has_active_queue_task(user_store: &UserStore, session_id: &str) -> bool {
+fn is_active_queue_task_status(status: &str) -> bool {
+    matches!(status, "pending" | "retry" | "running")
+}
+
+fn list_active_queue_tasks(
+    user_store: &UserStore,
+    session_id: &str,
+) -> Vec<crate::storage::AgentTaskRecord> {
     let cleaned_session = session_id.trim();
     if cleaned_session.is_empty() {
-        return false;
+        return Vec::new();
     }
     let thread_id = format!("thread_{cleaned_session}");
-    user_store
-        .list_agent_tasks_by_thread(&thread_id, None, 8)
-        .map(|tasks| {
-            tasks.iter().any(|task| {
-                task.status == "pending" || task.status == "retry" || task.status == "running"
-            })
+    let mut tasks = user_store
+        .list_agent_tasks_by_thread(&thread_id, None, 16)
+        .map(|items| {
+            items
+                .into_iter()
+                .filter(|task| is_active_queue_task_status(task.status.as_str()))
+                .collect::<Vec<_>>()
         })
-        .unwrap_or(false)
+        .unwrap_or_default();
+    tasks.sort_by(|left, right| {
+        left.created_at
+            .partial_cmp(&right.created_at)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                left.updated_at
+                    .partial_cmp(&right.updated_at)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| left.task_id.cmp(&right.task_id))
+    });
+    tasks
+}
+
+fn has_active_queue_task(user_store: &UserStore, session_id: &str) -> bool {
+    !list_active_queue_tasks(user_store, session_id).is_empty()
 }
 
 fn is_session_stream_active_or_queued(
@@ -1321,6 +1327,119 @@ fn is_session_stream_active_or_queued(
         .map(is_session_stream_active)
         .unwrap_or(false)
         || has_active_queue_task(user_store, session_id)
+}
+
+fn normalize_queue_task_attachments(value: Option<&Value>) -> Option<Value> {
+    match value {
+        Some(Value::Array(items)) if items.is_empty() => None,
+        Some(Value::Null) | None => None,
+        Some(other) => Some(other.clone()),
+    }
+}
+
+fn latest_trailing_user_matches_queue_task(
+    messages: &[Value],
+    task: &crate::storage::AgentTaskRecord,
+) -> bool {
+    let Some(last_message) = messages.last() else {
+        return false;
+    };
+    if last_message.get("role").and_then(Value::as_str) != Some("user") {
+        return false;
+    }
+    let task_question = task
+        .request_payload
+        .get("question")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let message_content = last_message
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if task_question != Some(message_content) {
+        return false;
+    }
+    normalize_queue_task_attachments(last_message.get("attachments"))
+        == normalize_queue_task_attachments(task.request_payload.get("attachments"))
+}
+
+fn build_projected_queue_user_message(task: &crate::storage::AgentTaskRecord) -> Option<Value> {
+    let content = task
+        .request_payload
+        .get("question")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let mut message = json!({
+        "role": "user",
+        "content": content,
+        "created_at": format_ts(task.created_at),
+    });
+    if let Some(attachments) =
+        normalize_queue_task_attachments(task.request_payload.get("attachments"))
+    {
+        if let Value::Object(ref mut map) = message {
+            map.insert("attachments".to_string(), attachments);
+        }
+    }
+    Some(message)
+}
+
+fn build_projected_queue_assistant_message(task: &crate::storage::AgentTaskRecord) -> Value {
+    json!({
+        "role": "assistant",
+        "content": "",
+        "created_at": format_ts(task.created_at),
+        "stream_incomplete": true,
+    })
+}
+
+fn project_queued_session_messages(
+    messages: &mut Vec<Value>,
+    active_queue_tasks: &[crate::storage::AgentTaskRecord],
+    pure_queue_phase: bool,
+) {
+    if !pure_queue_phase || active_queue_tasks.is_empty() {
+        return;
+    }
+    for task in active_queue_tasks {
+        if latest_trailing_user_matches_queue_task(messages, task) {
+            messages.push(build_projected_queue_assistant_message(task));
+            continue;
+        }
+        let Some(user_message) = build_projected_queue_user_message(task) else {
+            continue;
+        };
+        messages.push(user_message);
+        messages.push(build_projected_queue_assistant_message(task));
+    }
+}
+
+fn apply_session_running_state(messages: &mut Vec<Value>, session_running: bool) {
+    if !session_running {
+        return;
+    }
+    let last_role = messages
+        .last()
+        .and_then(|item| item.get("role").and_then(Value::as_str))
+        .unwrap_or("");
+    if last_role == "user" || messages.is_empty() {
+        messages.push(json!({
+            "role": "assistant",
+            "content": "",
+            "created_at": format_ts(now_ts()),
+            "stream_incomplete": true,
+        }));
+    } else if let Some(Value::Object(map)) = messages.iter_mut().rev().find(|item| {
+        item.get("role")
+            .and_then(Value::as_str)
+            .map(|value| value == "assistant")
+            .unwrap_or(false)
+    }) {
+        map.insert("stream_incomplete".to_string(), json!(true));
+    }
 }
 
 async fn resume_session(
@@ -3036,9 +3155,11 @@ fn error_response(status: StatusCode, message: String) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
+        apply_session_running_state, build_projected_queue_user_message,
         collect_session_event_rounds, count_system_prompt_memory_items,
         extract_system_prompt_memory_preview, extract_system_prompt_memory_total_count,
-        has_active_queue_task, is_session_stream_active_or_queued, should_merge_round_event,
+        has_active_queue_task, is_session_stream_active_or_queued, project_queued_session_messages,
+        should_merge_round_event,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -3115,6 +3236,137 @@ mod tests {
             None,
             "sess_done"
         ));
+    }
+
+    fn build_queue_task(
+        task_id: &str,
+        session_id: &str,
+        status: &str,
+        question: &str,
+        created_at: f64,
+    ) -> AgentTaskRecord {
+        AgentTaskRecord {
+            task_id: task_id.to_string(),
+            thread_id: format!("thread_{session_id}"),
+            user_id: "user_queue".to_string(),
+            agent_id: "agent_queue".to_string(),
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+            request_payload: json!({
+                "question": question,
+                "attachments": [
+                    {
+                        "name": "note.txt",
+                        "content": "hello"
+                    }
+                ]
+            }),
+            request_id: None,
+            retry_count: 0,
+            retry_at: created_at,
+            created_at,
+            updated_at: created_at,
+            started_at: None,
+            finished_at: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn pure_queue_projection_appends_pending_turn_without_touching_previous_assistant() {
+        let task = build_queue_task(
+            "task_proj_1",
+            "sess_proj_1",
+            "pending",
+            "new queued turn",
+            3.0,
+        );
+        let mut messages = vec![
+            json!({
+                "role": "user",
+                "content": "old question",
+                "created_at": "2026-03-26T10:00:00+08:00"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "old answer",
+                "created_at": "2026-03-26T10:00:01+08:00"
+            }),
+        ];
+
+        project_queued_session_messages(&mut messages, &[task], true);
+        apply_session_running_state(&mut messages, true);
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1]["role"], json!("assistant"));
+        assert_ne!(messages[1]["stream_incomplete"], json!(true));
+        assert_eq!(messages[2]["role"], json!("user"));
+        assert_eq!(messages[2]["content"], json!("new queued turn"));
+        assert_eq!(
+            messages[2]["attachments"],
+            json!([
+                {
+                    "name": "note.txt",
+                    "content": "hello"
+                }
+            ])
+        );
+        assert_eq!(messages[3]["role"], json!("assistant"));
+        assert_eq!(messages[3]["stream_incomplete"], json!(true));
+    }
+
+    #[test]
+    fn pure_queue_projection_reuses_trailing_user_message() {
+        let task = build_queue_task(
+            "task_proj_2",
+            "sess_proj_2",
+            "retry",
+            "already persisted",
+            5.0,
+        );
+        let mut messages = vec![json!({
+            "role": "user",
+            "content": "already persisted",
+            "created_at": "2026-03-26T10:00:05+08:00",
+            "attachments": [
+                {
+                    "name": "note.txt",
+                    "content": "hello"
+                }
+            ]
+        })];
+
+        project_queued_session_messages(&mut messages, &[task], true);
+        apply_session_running_state(&mut messages, true);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["role"], json!("user"));
+        assert_eq!(messages[1]["role"], json!("assistant"));
+        assert_eq!(messages[1]["stream_incomplete"], json!(true));
+    }
+
+    #[test]
+    fn projected_queue_user_message_keeps_attachment_payload() {
+        let task = build_queue_task(
+            "task_proj_3",
+            "sess_proj_3",
+            "pending",
+            "queued with file",
+            7.0,
+        );
+        let message = build_projected_queue_user_message(&task).expect("projected user message");
+
+        assert_eq!(message["role"], json!("user"));
+        assert_eq!(message["content"], json!("queued with file"));
+        assert_eq!(
+            message["attachments"],
+            json!([
+                {
+                    "name": "note.txt",
+                    "content": "hello"
+                }
+            ])
+        );
     }
 
     #[test]

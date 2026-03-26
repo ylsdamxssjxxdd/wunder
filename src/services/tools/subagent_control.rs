@@ -495,13 +495,15 @@ fn resolve_targets(
     if let Some(session_id) = payload.session_id.clone() {
         session_ids.push(session_id);
     }
-    let parent_id = normalize_optional_string(payload.parent_id.clone()).or_else(|| {
-        default_parent_session_id
-            .and_then(|value| normalize_optional_string(Some(value.to_string())))
-    });
     let dispatch_id = normalize_optional_string(payload.dispatch_id.clone());
     let run_ids = dedupe_non_empty_strings(run_ids);
     let session_ids = dedupe_non_empty_strings(session_ids);
+    let mut parent_id = normalize_optional_string(payload.parent_id.clone());
+    if run_ids.is_empty() && session_ids.is_empty() && dispatch_id.is_none() && parent_id.is_none()
+    {
+        parent_id = default_parent_session_id
+            .and_then(|value| normalize_optional_string(Some(value.to_string())));
+    }
     if run_ids.is_empty() && session_ids.is_empty() && dispatch_id.is_none() && parent_id.is_none()
     {
         return Err(anyhow!("subagent target is required"));
@@ -1096,5 +1098,95 @@ mod tests {
         );
         assert_eq!(resolve_effective_status("", None, "closed"), "closed");
         assert_eq!(resolve_effective_status("", None, "active"), "idle");
+    }
+
+    #[test]
+    fn resolve_targets_uses_default_parent_only_when_needed() {
+        let fallback = resolve_targets(&SubagentTargetArgs::default(), Some(" parent_session "))
+            .expect("default parent should be accepted");
+        assert!(fallback.run_ids.is_empty());
+        assert!(fallback.session_ids.is_empty());
+        assert_eq!(fallback.dispatch_id.as_deref(), None);
+        assert_eq!(fallback.parent_id.as_deref(), Some("parent_session"));
+        assert_eq!(fallback.limit, 50);
+
+        let explicit = resolve_targets(
+            &SubagentTargetArgs {
+                run_ids: Some(vec![" run_1 ".to_string(), "run_1".to_string()]),
+                dispatch_id: Some(" dispatch_1 ".to_string()),
+                limit: Some(MAX_SESSION_LIST_ITEMS + 100),
+                ..SubagentTargetArgs::default()
+            },
+            Some("parent_session"),
+        )
+        .expect("explicit selectors should not inject parent");
+        assert_eq!(explicit.run_ids, vec!["run_1".to_string()]);
+        assert_eq!(explicit.dispatch_id.as_deref(), Some("dispatch_1"));
+        assert_eq!(explicit.parent_id, None);
+        assert_eq!(explicit.limit, MAX_SESSION_LIST_ITEMS);
+    }
+
+    #[test]
+    fn resolve_targets_requires_any_selector_or_default_parent() {
+        let error = resolve_targets(&SubagentTargetArgs::default(), None)
+            .expect_err("empty selector should fail");
+        assert!(error.to_string().contains("target is required"));
+    }
+
+    #[test]
+    fn normalize_poll_interval_clamps_to_supported_range() {
+        assert_eq!(
+            normalize_poll_interval(f64::NAN),
+            SUBAGENT_WAIT_DEFAULT_POLL_S
+        );
+        assert_eq!(normalize_poll_interval(-1.0), SUBAGENT_WAIT_DEFAULT_POLL_S);
+        assert_eq!(normalize_poll_interval(0.1), SUBAGENT_WAIT_MIN_POLL_S);
+        assert_eq!(normalize_poll_interval(10.0), SUBAGENT_WAIT_MAX_POLL_S);
+        assert_eq!(normalize_poll_interval(1.5), 1.5);
+    }
+
+    #[test]
+    fn merge_wait_result_preserves_dispatch_totals_and_partial_status() {
+        let merged = merge_wait_result(
+            json!({
+                "status": "ok",
+                "total": 2,
+                "failed_total": 0,
+                "items": [
+                    { "run_id": "run_1", "status": "success" },
+                    { "run_id": "run_2", "status": "success" }
+                ]
+            }),
+            "dispatch_1",
+            3,
+            2,
+            vec![json!({ "status": "error", "task": "failed at startup" })],
+        );
+        assert_eq!(
+            merged.get("dispatch_id").and_then(Value::as_str),
+            Some("dispatch_1")
+        );
+        assert_eq!(
+            merged.get("requested_total").and_then(Value::as_i64),
+            Some(3)
+        );
+        assert_eq!(
+            merged.get("accepted_total").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert_eq!(
+            merged.get("startup_failed_total").and_then(Value::as_i64),
+            Some(1)
+        );
+        assert_eq!(merged.get("failed_total").and_then(Value::as_i64), Some(1));
+        assert_eq!(merged.get("total").and_then(Value::as_i64), Some(3));
+        assert_eq!(
+            merged.get("status").and_then(Value::as_str),
+            Some("partial")
+        );
+        assert_eq!(
+            merged.get("items").and_then(Value::as_array).map(Vec::len),
+            Some(3)
+        );
     }
 }
