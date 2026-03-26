@@ -100,8 +100,6 @@ struct ExternalTokenLaunchRequest {
     username: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
-    #[serde(default)]
-    agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,20 +472,13 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let target_agent_name = resolve_external_embed_target_agent_name(
-        payload.agent_name.as_deref(),
-        config.external_embed_preset_agent_name(),
-    )
-    .map_err(|err| error_response(StatusCode::FORBIDDEN, err.to_string()))?;
-    let target_agent =
-        resolve_or_create_external_embed_agent(&state, &session.user, &target_agent_name).await?;
     let profile = build_user_profile(&state, &session.user)?;
     Ok(Json(json!({
         "data": {
             "access_token": session.token.token,
             "user": profile,
-            "agent_id": target_agent.agent_id,
-            "agent_name": target_agent.name,
+            "agent_id": "__default__",
+            "agent_name": "default",
             "created": created,
             "updated": updated,
         }

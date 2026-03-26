@@ -1,6 +1,6 @@
-const PRE_SAMPLING_OCCUPANCY_RATIO: f64 = 0.92;
-const PRE_SAMPLING_MIN_HEADROOM_TOKENS: i64 = 128;
-const PRE_SAMPLING_MAX_HEADROOM_TOKENS: i64 = 1024;
+const PRE_SAMPLING_OCCUPANCY_RATIO: f64 = 0.9;
+const PRE_SAMPLING_MIN_HEADROOM_TOKENS: i64 = 256;
+const PRE_SAMPLING_MAX_HEADROOM_TOKENS: i64 = 8192;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct CompactionDecision {
@@ -32,7 +32,7 @@ pub(super) fn resolve_pre_sampling_trigger_limit(limit: i64) -> i64 {
     let limit = limit.max(1);
     let max_headroom = (limit / 2).max(1);
     let occupancy_trigger = ((limit as f64) * PRE_SAMPLING_OCCUPANCY_RATIO).round() as i64;
-    let adaptive_headroom = (limit / 16)
+    let adaptive_headroom = (limit / 8)
         .clamp(
             PRE_SAMPLING_MIN_HEADROOM_TOKENS,
             PRE_SAMPLING_MAX_HEADROOM_TOKENS,

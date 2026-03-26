@@ -19,6 +19,7 @@ mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
 mod search_content_tool;
+mod session_run_stream;
 mod self_status_tool;
 mod skill_call;
 mod sleep_tool;
@@ -2862,7 +2863,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         question: message,
         tool_names,
         skip_tool_calls: false,
-        stream: false,
+        stream: true,
         debug_payload: false,
         session_id: Some(session_id.clone()),
         agent_id: record.agent_id.clone(),
@@ -3014,7 +3015,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         question: task,
         tool_names: parent_tool_names,
         skip_tool_calls: false,
-        stream: false,
+        stream: true,
         debug_payload: false,
         session_id: Some(child_session_id.clone()),
         agent_id: child_agent_id.clone(),
@@ -3244,8 +3245,10 @@ async fn spawn_session_run(
         }
 
         // Use a dedicated runtime so high fan-out runs do not contend with the main runtime worker pool.
+        let mut run_request = request;
+        run_request.stream = true;
         let mut run_handle = tokio::task::spawn_blocking(move || {
-            session_run_runtime().block_on(orchestrator.run(request))
+            session_run_runtime().block_on(session_run_stream::run_request(orchestrator, run_request))
         });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
@@ -3274,7 +3277,10 @@ async fn spawn_session_run(
         let elapsed = (finished - started).max(0.0);
         let (status, answer, error) = match run_result {
             Ok(response) => {
-                let answer = truncate_text(&response.answer, SESSION_RESULT_MAX_CHARS);
+                let answer = truncate_text(
+                    response.answer.as_deref().unwrap_or_default(),
+                    SESSION_RESULT_MAX_CHARS,
+                );
                 ("success".to_string(), Some(answer), None)
             }
             Err(err) => {

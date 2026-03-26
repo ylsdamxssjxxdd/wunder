@@ -30,8 +30,12 @@ const EMBED_AUTH_QUERY_KEYS = new Set([
   'wunder_code',
   'token',
   'user_id',
+  'wunder_user_id',
+  'userId',
+  'uid',
   'agent_name',
-  'agent'
+  'agent',
+  'wunder_agent_name'
 ]);
 EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
 
@@ -59,9 +63,23 @@ const resolveQueryToken = (query: LocationQuery): string => {
 
 const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wunder_code);
 
-const resolveExternalQueryToken = (query: LocationQuery): string => asQueryText(query.token);
+const resolveExternalQueryToken = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.token);
+  if (explicit) return explicit;
+  const wunderToken = asQueryText(query.wunder_token);
+  if (wunderToken) return wunderToken;
+  return asQueryText(query.access_token);
+};
 
-const resolveExternalQueryUserId = (query: LocationQuery): string => asQueryText(query.user_id);
+const resolveExternalQueryUserId = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.user_id);
+  if (explicit) return explicit;
+  const wunderUserId = asQueryText(query.wunder_user_id);
+  if (wunderUserId) return wunderUserId;
+  const camelUserId = asQueryText(query.userId);
+  if (camelUserId) return camelUserId;
+  return asQueryText(query.uid);
+};
 
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
@@ -106,13 +124,12 @@ const exchangeEmbedCode = async (code: string): Promise<string> => {
 
 const loginWithExternalToken = async (
   token: string,
-  userId: string,
-  agentName?: string
+  userId: string
 ): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string }> => {
   const response = await fetch(resolveApiEndpoint('/auth/external/token_login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
+    body: JSON.stringify({ token, user_id: userId })
   });
 
   const payload = asRecord(await response.json().catch(() => ({})));
@@ -279,7 +296,6 @@ router.beforeEach(async (to) => {
   const externalUserId = resolveExternalQueryUserId(query);
   if (externalToken && externalUserId) {
     try {
-      // Ignore inbound agent hints and always land on the default agent conversation in embed mode.
       const result = await loginWithExternalToken(externalToken, externalUserId);
       authStore.token = result.accessToken;
       authStore.user = result.user;

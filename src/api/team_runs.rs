@@ -1,5 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::services::stream_events::StreamEventService;
 use crate::services::swarm::beeroom::{claim_mother_agent, snapshot_team_run};
 use crate::services::swarm::events::{
     TEAM_FINISH, TEAM_START, TEAM_TASK_DISPATCH, TEAM_TASK_UPDATE,
@@ -13,6 +14,7 @@ use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -477,16 +479,39 @@ fn emit_team_event(
     payload: Value,
 ) {
     let cleaned_session_id = session_id.trim();
-    if cleaned_session_id.is_empty() {
+    let cleaned_user = user_id.trim();
+    let cleaned_event = event_type.trim();
+    if cleaned_session_id.is_empty() || cleaned_event.is_empty() {
         return;
     }
     state
         .monitor
-        .record_event(cleaned_session_id, event_type, &payload);
+        .record_event(cleaned_session_id, cleaned_event, &payload);
 
-    let cleaned_user = user_id.trim();
+    if !cleaned_user.is_empty() {
+        let stream_events = StreamEventService::new(state.storage.clone());
+        let session_id = cleaned_session_id.to_string();
+        let user_id = cleaned_user.to_string();
+        let event_name = cleaned_event.to_string();
+        let stream_payload = json!({
+            "event": event_name.clone(),
+            "data": payload.clone(),
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        });
+        tokio::spawn(async move {
+            if let Err(err) = stream_events
+                .append_event(&session_id, &user_id, stream_payload)
+                .await
+            {
+                warn!(
+                    "append team stream event failed: session_id={}, event_type={}, error={err}",
+                    session_id, event_name
+                );
+            }
+        });
+    }
+
     let cleaned_hive = hive_id.trim();
-    let cleaned_event = event_type.trim();
     if cleaned_user.is_empty() || cleaned_hive.is_empty() || cleaned_event.is_empty() {
         return;
     }

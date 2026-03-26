@@ -1103,6 +1103,7 @@ export default {
   'chat.history.restoreSuccess': 'Thread restored',
   'chat.history.restoreFailed': 'Failed to restore thread',
   
+  'chat.toTop': 'Scroll to top',
   'chat.toBottom': 'Scroll to bottom',
   'chat.message.user': 'You',
   'chat.message.assistant': 'Agent',

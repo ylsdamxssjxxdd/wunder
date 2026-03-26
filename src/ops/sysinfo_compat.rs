@@ -1,8 +1,8 @@
+use std::path::Path;
 #[cfg(target_vendor = "win7")]
 use sysinfo::{DiskExt, LoadAvg, ProcessRefreshKind, System, SystemExt};
 #[cfg(not(target_vendor = "win7"))]
 use sysinfo::{Disks, LoadAvg, ProcessRefreshKind, System};
-use std::path::Path;
 
 pub type MonitorSystem = System;
 
@@ -78,7 +78,10 @@ fn target_path_for_disk_match(path: &Path) -> String {
         // std::fs::canonicalize may return verbatim paths (`\\?\C:\...` / `\\?\UNC\...`),
         // while sysinfo mount points are usually regular drive/UNC paths.
         // Strip the verbatim prefix so mount matching works reliably.
-        let mut normalized = path.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+        let mut normalized = path
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase();
         if let Some(stripped) = normalized.strip_prefix(r"\\?\unc\") {
             normalized = format!(r"\\{stripped}");
         } else if let Some(stripped) = normalized.strip_prefix(r"\\?\") {

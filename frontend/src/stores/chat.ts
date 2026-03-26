@@ -3398,6 +3398,11 @@ const startSessionWatcher = (store, sessionId) => {
       normalizedEventType === 'tool_call' ||
       normalizedEventType === 'tool_result' ||
       normalizedEventType === 'tool_output' ||
+      normalizedEventType === 'team_start' ||
+      normalizedEventType === 'team_task_dispatch' ||
+      normalizedEventType === 'team_task_update' ||
+      normalizedEventType === 'team_task_result' ||
+      normalizedEventType === 'team_merge' ||
       normalizedEventType === 'team_progress' ||
       normalizedEventType === 'team_finish' ||
       normalizedEventType === 'team_error';
@@ -3428,9 +3433,17 @@ const startSessionWatcher = (store, sessionId) => {
     normalizedEventType === 'tool_call' ||
     normalizedEventType === 'tool_result' ||
     normalizedEventType === 'tool_output' ||
+    normalizedEventType === 'team_start' ||
+    normalizedEventType === 'team_task_dispatch' ||
+    normalizedEventType === 'team_task_update' ||
+    normalizedEventType === 'team_task_result' ||
+    normalizedEventType === 'team_merge' ||
     normalizedEventType === 'team_progress' ||
     normalizedEventType === 'team_finish' ||
     normalizedEventType === 'team_error';
+
+  const isWatchSidebandEventType = (normalizedEventType) =>
+    normalizedEventType === 'channel_message' || normalizedEventType.startsWith('team_');
 
   const extractWatchUserContent = (normalizedEventType, payload, data) => {
     const candidates = [
@@ -3587,7 +3600,7 @@ const startSessionWatcher = (store, sessionId) => {
     const normalizedEventType = String(eventType || '').trim().toLowerCase();
     if (
       (runtime.sendController || runtime.resumeController) &&
-      normalizedEventType !== 'channel_message'
+      !isWatchSidebandEventType(normalizedEventType)
     ) {
       return;
     }
@@ -3619,6 +3632,25 @@ const startSessionWatcher = (store, sessionId) => {
         return;
       }
       if (role === 'user') {
+        if (normalizedEventId !== null) {
+          const duplicateByEventId = sessionMessagesRef.some(
+            (message) =>
+              message?.role === 'user' &&
+              normalizeStreamEventId(message?.stream_event_id) === normalizedEventId
+          );
+          if (duplicateByEventId) {
+            return;
+          }
+          const createdAt = Number.isFinite(eventTimestampMs)
+            ? new Date(eventTimestampMs).toISOString()
+            : undefined;
+          const userMessage = buildMessage('user', content, createdAt);
+          assignStreamEventId(userMessage, eventId);
+          sessionMessagesRef.push(userMessage);
+          touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
+          notifySessionSnapshot(store, key, sessionMessagesRef, true);
+          return;
+        }
         insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null);
         return;
       }
@@ -3635,6 +3667,7 @@ const startSessionWatcher = (store, sessionId) => {
       const lastMessage = sessionMessagesRef[sessionMessagesRef.length - 1];
       const lastTimestamp = resolveTimestampMs(lastMessage?.created_at);
       const duplicateAssistant =
+        normalizedEventId === null &&
         lastMessage?.role === 'assistant' &&
         String(lastMessage?.content || '') === content &&
         (!Number.isFinite(eventTimestampMs) ||

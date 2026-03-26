@@ -584,19 +584,90 @@ pub(super) fn is_context_window_error_text(message: &str) -> bool {
         "prompt token count",
         "maximum number of tokens",
         "requested tokens",
+        "requested token count",
+        "context overflow",
+        "token limit exceeded",
         "reduce the length",
         "exceeds the model's context window",
         "exceeds the available context size",
         "this model's maximum context length is",
         "requested tokens exceed",
+        "maximum input length",
+        "input too large",
+        "prompt exceeds",
+        "上下文窗口",
+        "上下文长度",
+        "超出模型上下文",
+        "超过模型上下文",
+        "超出最大上下文",
+        "超过最大上下文",
+        "提示词过长",
+        "输入太长",
+        "输入长度应在",
+        "长度范围",
+        "最大输入长度",
+        "最大上下文长度",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
 }
 
+pub(super) fn extract_context_window_limit_hint(message: &str) -> Option<i64> {
+    let text = message.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let regexes = context_window_limit_hint_regexes();
+    for regex in regexes {
+        if let Some(captures) = regex.captures(text) {
+            let raw = captures.get(1).map(|matched| matched.as_str());
+            if let Some(raw) = raw {
+                if let Some(value) = parse_context_limit_number(raw) {
+                    return Some(value);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn context_window_limit_hint_regexes() -> &'static Vec<Regex> {
+    static REGEXES: OnceLock<Vec<Regex>> = OnceLock::new();
+    REGEXES.get_or_init(|| {
+        let patterns = [
+            r"(?i)this model['’]s maximum context length is\s*([0-9][0-9_,]*)",
+            r"(?i)maximum\s+context(?:\s+window)?\s+length\s+is\s*([0-9][0-9_,]*)",
+            r"(?i)context window(?: of this model)?(?: is|:)?\s*([0-9][0-9_,]*)",
+            r"(?i)input length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)range of input length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)range of prompt length should be\s*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+            r"(?i)tokens?\s*\+\s*max_new_tokens\s*must\s*be\s*<=\s*([0-9][0-9_,]*)",
+            r"(?i)at most\s*([0-9][0-9_,]*)\s*tokens",
+            r"最大(?:上下文|输入)(?:长度|窗口)?[^0-9]{0,12}([0-9][0-9_,]*)",
+            r"上下文(?:长度|窗口)[^0-9]{0,12}([0-9][0-9_,]*)",
+            r"长度范围[^\[]*\[\s*\d+\s*[,，]\s*([0-9][0-9_,]*)\s*\]",
+        ];
+        patterns
+            .iter()
+            .filter_map(|pattern| compile_regex(pattern, "context_window_limit_hint"))
+            .collect()
+    })
+}
+
+fn parse_context_limit_number(raw: &str) -> Option<i64> {
+    let digits = raw
+        .chars()
+        .filter(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok().filter(|value| *value > 0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_context_window_error_text;
+    use super::{extract_context_window_limit_hint, is_context_window_error_text};
 
     #[test]
     fn detects_context_window_error_from_common_phrases() {
@@ -629,5 +700,44 @@ mod tests {
             "LLM call failed: invalid api key"
         ));
         assert!(!is_context_window_error_text("network timeout"));
+    }
+
+    #[test]
+    fn detects_context_window_error_from_chinese_phrases() {
+        assert!(is_context_window_error_text(
+            "模型调用失败：超过模型上下文窗口，请缩短输入后重试。"
+        ));
+        assert!(is_context_window_error_text(
+            "提示词过长，超出最大上下文长度。"
+        ));
+    }
+
+    #[test]
+    fn extracts_context_window_limit_hint_from_common_errors() {
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "This model's maximum context length is 16384 tokens, but you requested 19000 tokens."
+            ),
+            Some(16384)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "InternalError.Algo.InvalidParameter: Range of input length should be [1, 258048]"
+            ),
+            Some(258048)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "MindIE request failed: Range of prompt length should be [1, 12288]"
+            ),
+            Some(12288)
+        );
+        assert_eq!(
+            extract_context_window_limit_hint(
+                "提示词过长：最大上下文长度为 32768，当前请求 40012。"
+            ),
+            Some(32768)
+        );
+        assert_eq!(extract_context_window_limit_hint("network timeout"), None);
     }
 }

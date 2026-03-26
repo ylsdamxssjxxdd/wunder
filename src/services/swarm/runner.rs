@@ -2,13 +2,14 @@ use crate::config_store::ConfigStore;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
-use crate::orchestrator::OrchestratorError;
 use crate::schemas::WunderRequest;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::stream_events::StreamEventService;
 use crate::storage::{SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord};
 use crate::user_store::UserStore;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
+use futures::StreamExt;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
@@ -65,6 +66,7 @@ pub struct TeamRunRunner {
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
     beeroom_realtime: Arc<BeeroomRealtimeService>,
+    stream_events: Arc<StreamEventService>,
     queue_tx: mpsc::Sender<String>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRunControl>>>,
@@ -80,6 +82,7 @@ impl TeamRunRunner {
         beeroom_realtime: Arc<BeeroomRealtimeService>,
     ) -> Arc<Self> {
         let (queue_tx, queue_rx) = mpsc::channel(RUNNER_CHANNEL_CAPACITY);
+        let stream_events = Arc::new(StreamEventService::new(user_store.storage_backend()));
         Arc::new(Self {
             config_store,
             user_store,
@@ -87,6 +90,7 @@ impl TeamRunRunner {
             monitor,
             orchestrator,
             beeroom_realtime,
+            stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -608,10 +612,12 @@ impl TeamRunRunner {
             guard.insert(session_id.to_string());
         }
 
+        let mut stream_request = request;
+        stream_request.stream = true;
         let run_result = if timeout_s > 0.0 {
             match timeout(
                 Duration::from_secs_f64(timeout_s),
-                self.orchestrator.run(request),
+                run_stream_request(self.orchestrator.clone(), stream_request),
             )
             .await
             {
@@ -622,7 +628,7 @@ impl TeamRunRunner {
                 }
             }
         } else {
-            self.orchestrator.run(request).await
+            run_stream_request(self.orchestrator.clone(), stream_request).await
         };
 
         {
@@ -633,8 +639,8 @@ impl TeamRunRunner {
         let finished = now_ts();
         let elapsed_s = (finished - started).max(0.0);
         let (status, answer, error, outcome) = match run_result {
-            Ok(response) => {
-                let answer = truncate_text(&response.answer, TEAM_TASK_RESULT_MAX_CHARS);
+            Ok(response_answer) => {
+                let answer = truncate_text(&response_answer, TEAM_TASK_RESULT_MAX_CHARS);
                 (
                     TEAM_RUN_STATUS_SUCCESS.to_string(),
                     Some(answer.clone()),
@@ -643,10 +649,11 @@ impl TeamRunRunner {
                 )
             }
             Err(err) => {
-                let cancelled = err
-                    .downcast_ref::<OrchestratorError>()
-                    .map(|inner| inner.code() == "CANCELLED")
-                    .unwrap_or(false);
+                let message = err.to_string();
+                let normalized = message.to_ascii_lowercase();
+                let cancelled = normalized.contains("cancelled")
+                    || normalized.contains("canceled")
+                    || normalized.contains("code=cancelled");
                 if cancelled {
                     (
                         TEAM_TASK_STATUS_CANCELLED.to_string(),
@@ -654,7 +661,7 @@ impl TeamRunRunner {
                         Some("cancelled".to_string()),
                         SessionExecutionOutcome::Cancelled { elapsed_s },
                     )
-                } else if err.to_string().to_ascii_lowercase().contains("timeout") {
+                } else if normalized.contains("timeout") {
                     (
                         TEAM_TASK_STATUS_TIMEOUT.to_string(),
                         None,
@@ -662,7 +669,6 @@ impl TeamRunRunner {
                         SessionExecutionOutcome::Timeout { elapsed_s },
                     )
                 } else {
-                    let message = err.to_string();
                     (
                         TEAM_TASK_STATUS_FAILED.to_string(),
                         None,
@@ -1051,15 +1057,36 @@ impl TeamRunRunner {
 
     fn emit_team_event(&self, run: &TeamRunRecord, event_type: &str, payload: Value) {
         let cleaned_session = run.parent_session_id.trim();
+        let cleaned_event_type = event_type.trim();
+        if cleaned_event_type.is_empty() {
+            return;
+        }
         if !cleaned_session.is_empty() {
             self.monitor
-                .record_event(cleaned_session, event_type, &payload);
+                .record_event(cleaned_session, cleaned_event_type, &payload);
         }
 
         let cleaned_user = run.user_id.trim();
+        if !cleaned_session.is_empty() && !cleaned_user.is_empty() {
+            let stream_events = self.stream_events.clone();
+            let session_id = cleaned_session.to_string();
+            let user_id = cleaned_user.to_string();
+            let event_name = cleaned_event_type.to_string();
+            let stream_payload = payload.clone();
+            tokio::spawn(async move {
+                let envelope = build_parent_session_stream_event(&event_name, stream_payload);
+                if let Err(err) = stream_events.append_event(&session_id, &user_id, envelope).await
+                {
+                    warn!(
+                        "append team stream event failed: session_id={}, event_type={}, error={err}",
+                        session_id, event_name
+                    );
+                }
+            });
+        }
+
         let cleaned_hive = run.hive_id.trim();
-        let cleaned_event_type = event_type.trim();
-        if cleaned_user.is_empty() || cleaned_hive.is_empty() || cleaned_event_type.is_empty() {
+        if cleaned_user.is_empty() || cleaned_hive.is_empty() {
             return;
         }
 
@@ -1110,6 +1137,14 @@ fn build_realtime_event_payload(run: &TeamRunRecord, payload: Value) -> Value {
     realtime_payload
 }
 
+fn build_parent_session_stream_event(event_type: &str, payload: Value) -> Value {
+    json!({
+        "event": event_type,
+        "data": payload,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+    })
+}
+
 fn build_team_task_event_payload(task: &TeamTaskRecord) -> Value {
     json!({
         "team_run_id": task.team_run_id,
@@ -1155,6 +1190,68 @@ fn build_team_task_result_payload(
     payload
 }
 
+async fn run_stream_request(
+    orchestrator: Arc<Orchestrator>,
+    request: WunderRequest,
+) -> Result<String> {
+    let mut stream = Box::pin(orchestrator.stream(request).await?);
+    let mut final_answer: Option<String> = None;
+    while let Some(event) = stream.next().await {
+        let event = match event {
+            Ok(item) => item,
+            Err(_) => continue,
+        };
+        let payload = event
+            .data
+            .get("data")
+            .cloned()
+            .unwrap_or_else(|| event.data.clone());
+        let event_name = event.event.trim().to_ascii_lowercase();
+        if event_name == "error" {
+            let code = payload
+                .get("code")
+                .and_then(Value::as_str)
+                .or_else(|| event.data.get("code").and_then(Value::as_str))
+                .map(str::trim)
+                .unwrap_or("");
+            let message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .or_else(|| event.data.get("message").and_then(Value::as_str))
+                .map(str::trim)
+                .unwrap_or("");
+            let detail = if message.is_empty() {
+                serde_json::to_string(&payload).unwrap_or_default()
+            } else {
+                message.to_string()
+            };
+            let error_text = if code.is_empty() {
+                detail
+            } else {
+                format!("code={code}, message={detail}")
+            };
+            return Err(anyhow::anyhow!(error_text));
+        }
+        if event_name != "final" {
+            continue;
+        }
+        let answer = payload
+            .get("answer")
+            .or_else(|| payload.get("content"))
+            .or_else(|| payload.get("message"))
+            .or_else(|| event.data.get("answer"))
+            .or_else(|| event.data.get("content"))
+            .or_else(|| event.data.get("message"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        final_answer = Some(answer);
+        break;
+    }
+    Ok(final_answer.unwrap_or_default())
+}
+
 fn build_task_request(
     run: &TeamRunRecord,
     agent: &UserAgentRecord,
@@ -1180,7 +1277,7 @@ fn build_task_request(
         question,
         tool_names,
         skip_tool_calls: false,
-        stream: false,
+        stream: true,
         debug_payload: false,
         session_id: Some(session_id.to_string()),
         agent_id: Some(agent.agent_id.clone()),

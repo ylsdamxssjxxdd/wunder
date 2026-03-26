@@ -113,8 +113,10 @@ const normalizeOwners = (owners) => {
     .map((item) => ({
       user_id: String(item?.user_id || "").trim(),
       username: String(item?.username || "").trim(),
+      agent_id: String(item?.agent_id || "").trim(),
+      agent_name: String(item?.agent_name || "").trim(),
     }))
-    .filter((item) => item.user_id || item.username);
+    .filter((item) => item.user_id || item.username || item.agent_id || item.agent_name);
 };
 
 const normalizeChannelAccount = (record) => {
@@ -126,7 +128,10 @@ const normalizeChannelAccount = (record) => {
   const owners = normalizeOwners(record?.owners);
   const ownerUserId = String(record?.owner_user_id || owners[0]?.user_id || "").trim();
   const ownerUsername = String(record?.owner_username || owners[0]?.username || "").trim();
-  const ownerCount = toSafeInt(record?.owner_count, owners.length || (ownerUsername ? 1 : 0));
+  const ownerCount = toSafeInt(
+    record?.owner_count,
+    owners.length || (ownerUsername || ownerUserId ? 1 : 0)
+  );
   const inboundCount = toSafeInt(record?.inbound_message_count ?? record?.message_count, 0);
   const outboundTotal = toSafeInt(record?.outbound_total_count, 0);
   return {
@@ -220,11 +225,7 @@ const formatFeishuLongConnectionRuntime = (runtime) => {
   }
   const status = String(runtime.status || "").trim().toLowerCase() || "unknown";
   const statusKey = FEISHU_LONG_CONNECTION_STATUS_KEYS[status] || FEISHU_LONG_CONNECTION_STATUS_KEYS.unknown;
-  const segments = [t(statusKey)];
-  if (Number.isFinite(runtime.binding_count)) {
-    segments.push(t("channels.runtime.bindingCount", { count: runtime.binding_count }));
-  }
-  return `${t("channels.runtime.feishu.longConnection")}: ${segments.join(" | ")}`;
+  return `${t("channels.runtime.feishu.longConnection")}: ${t(statusKey)}`;
 };
 
 const formatWeixinLongConnectionRuntime = (runtime) => {
@@ -233,11 +234,7 @@ const formatWeixinLongConnectionRuntime = (runtime) => {
   }
   const status = String(runtime.status || "").trim().toLowerCase() || "unknown";
   const statusKey = WEIXIN_LONG_CONNECTION_STATUS_KEYS[status] || WEIXIN_LONG_CONNECTION_STATUS_KEYS.unknown;
-  const segments = [t(statusKey)];
-  if (Number.isFinite(runtime.binding_count)) {
-    segments.push(t("channels.runtime.bindingCount", { count: runtime.binding_count }));
-  }
-  return `${t("channels.runtime.weixin.longConnection")}: ${segments.join(" | ")}`;
+  return `${t("channels.runtime.weixin.longConnection")}: ${t(statusKey)}`;
 };
 
 const formatChannelRuntime = (account) => {
@@ -253,14 +250,20 @@ const formatChannelRuntime = (account) => {
 
 const resolveSelectedChannelAccount = () => state.channels.accounts[state.channels.selectedIndex] || null;
 
+const formatOwnerEntry = (owner) => {
+  const userLabel = String(owner?.username || owner?.user_id || "").trim() || t("channels.owner.none");
+  const agentLabel = String(owner?.agent_name || owner?.agent_id || "").trim() || t("llm.default");
+  return `${userLabel} / ${agentLabel}`;
+};
+
 const resolvePrimaryOwnerName = (account) => {
-  const direct = String(account?.owner_username || "").trim();
-  if (direct) {
-    return direct;
+  const firstOwner = Array.isArray(account?.owners) ? account.owners[0] : null;
+  if (firstOwner) {
+    return formatOwnerEntry(firstOwner);
   }
-  const fromOwners = String(account?.owners?.[0]?.username || account?.owners?.[0]?.user_id || "").trim();
-  if (fromOwners) {
-    return fromOwners;
+  const directUser = String(account?.owner_username || account?.owner_user_id || "").trim();
+  if (directUser) {
+    return `${directUser} / ${t("llm.default")}`;
   }
   return t("channels.owner.none");
 };
@@ -278,10 +281,13 @@ const formatOwnerExtra = (account) => {
   const owners = Array.isArray(account?.owners) ? account.owners : [];
   if (!owners.length) {
     const ownerUserId = String(account?.owner_user_id || "").trim();
-    return ownerUserId || t("channels.owner.unbound");
+    if (ownerUserId) {
+      return `${ownerUserId} / ${t("llm.default")}`;
+    }
+    return t("channels.owner.unbound");
   }
   return owners
-    .map((item) => String(item.username || item.user_id || "").trim())
+    .map((item) => formatOwnerEntry(item))
     .filter(Boolean)
     .join(", ");
 };
@@ -307,8 +313,6 @@ const renderChannelAccountDetail = () => {
     !elements.channelAccountOutboundFailed ||
     !elements.channelAccountOutboundRetry ||
     !elements.channelAccountSuccessRate ||
-    !elements.channelAccountSessionCount ||
-    !elements.channelAccountBindingCount ||
     !elements.channelAccountLastCommunication ||
     !elements.channelAccountUpdatedAt
   ) {
@@ -327,8 +331,6 @@ const renderChannelAccountDetail = () => {
     elements.channelAccountOutboundFailed.textContent = "0";
     elements.channelAccountOutboundRetry.textContent = "0";
     elements.channelAccountSuccessRate.textContent = "0%";
-    elements.channelAccountSessionCount.textContent = "0";
-    elements.channelAccountBindingCount.textContent = "0";
     elements.channelAccountLastCommunication.textContent = "-";
     elements.channelAccountUpdatedAt.textContent = "-";
     elements.channelAccountDetailConfig.textContent = "{}";
@@ -356,8 +358,6 @@ const renderChannelAccountDetail = () => {
   elements.channelAccountOutboundFailed.textContent = String(toSafeInt(account.outbound_failed_count, 0));
   elements.channelAccountOutboundRetry.textContent = String(toSafeInt(account.outbound_retry_count, 0));
   elements.channelAccountSuccessRate.textContent = formatRate(account.outbound_success_rate);
-  elements.channelAccountSessionCount.textContent = String(toSafeInt(account.session_count, 0));
-  elements.channelAccountBindingCount.textContent = String(toSafeInt(account.binding_count, 0));
   elements.channelAccountLastCommunication.textContent = formatEpochSeconds(account.last_communication_at);
   elements.channelAccountUpdatedAt.textContent = formatEpochSeconds(account.updated_at);
 

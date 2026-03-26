@@ -849,8 +849,6 @@ export const elements = {
   channelAccountOutboundFailed: document.getElementById("channelAccountOutboundFailed"),
   channelAccountOutboundRetry: document.getElementById("channelAccountOutboundRetry"),
   channelAccountSuccessRate: document.getElementById("channelAccountSuccessRate"),
-  channelAccountSessionCount: document.getElementById("channelAccountSessionCount"),
-  channelAccountBindingCount: document.getElementById("channelAccountBindingCount"),
   channelAccountLastCommunication: document.getElementById("channelAccountLastCommunication"),
   channelAccountUpdatedAt: document.getElementById("channelAccountUpdatedAt"),
   channelAccountDetailConfig: document.getElementById("channelAccountDetailConfig"),

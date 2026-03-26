@@ -1860,6 +1860,9 @@ fn resolve_compaction_limit(
     let configured_limit =
         HistoryManager::get_auto_compact_limit(llm_config).map(|limit| limit.max(1));
     if let Some(limit) = configured_limit {
+        if force {
+            return Some(resolve_force_compaction_limit(context_tokens, limit));
+        }
         return Some(limit.max(1));
     }
     if !force {
@@ -1870,6 +1873,16 @@ fn resolve_compaction_limit(
         COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS,
         COMPACTION_FORCE_FALLBACK_LIMIT,
     ))
+}
+
+fn resolve_force_compaction_limit(context_tokens: i64, configured_limit: i64) -> i64 {
+    if configured_limit <= 0 {
+        return COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS.max(1);
+    }
+    let adaptive_limit = (context_tokens / 2).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    adaptive_limit
+        .clamp(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, configured_limit)
+        .max(1)
 }
 
 fn is_image_attachment(attachment: &AttachmentPayload, content: &str) -> bool {
@@ -2043,6 +2056,19 @@ mod tests {
         let limit = resolve_compaction_limit(&cfg, 48000, true).unwrap_or_default();
         assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
         assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
+    }
+
+    #[test]
+    fn test_resolve_compaction_limit_force_uses_adaptive_limit_with_configured_cap() {
+        let cfg = llm_config(json!({
+            "max_context": 64000,
+            "max_output": 1024
+        }));
+        let configured = resolve_compaction_limit(&cfg, 80_000, false).unwrap_or_default();
+        let forced = resolve_compaction_limit(&cfg, 80_000, true).unwrap_or_default();
+        assert!(configured > 0);
+        assert!(forced > 0);
+        assert!(forced <= configured);
     }
 
     #[test]

@@ -255,14 +255,8 @@ pub(crate) fn emit_swarm_team_event(
         }
     }
 
-    let cleaned_user = run.user_id.trim();
-    let cleaned_hive = run.hive_id.trim();
-    if cleaned_user.is_empty() || cleaned_hive.is_empty() {
-        return;
-    }
-
-    let mut realtime_payload = payload;
-    if let Value::Object(ref mut map) = realtime_payload {
+    let mut normalized_payload = payload;
+    if let Value::Object(ref mut map) = normalized_payload {
         map.entry("team_run_id".to_string())
             .or_insert_with(|| Value::String(run.team_run_id.clone()));
         map.entry("hive_id".to_string())
@@ -273,6 +267,20 @@ pub(crate) fn emit_swarm_team_event(
             .or_insert_with(|| json!(run.updated_time));
     }
 
+    if let Some(emitter) = context
+        .event_emitter
+        .as_ref()
+        .filter(|item| item.stream_enabled())
+    {
+        emitter.emit(cleaned_event, normalized_payload.clone());
+    }
+
+    let cleaned_user = run.user_id.trim();
+    let cleaned_hive = run.hive_id.trim();
+    if cleaned_user.is_empty() || cleaned_hive.is_empty() {
+        return;
+    }
+
     let Some(realtime) = context.beeroom_realtime.as_ref().cloned() else {
         return;
     };
@@ -281,7 +289,7 @@ pub(crate) fn emit_swarm_team_event(
     let event_name = cleaned_event.to_string();
     tokio::spawn(async move {
         realtime
-            .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
+            .publish_group_event(&user_id, &hive_id, &event_name, normalized_payload)
             .await;
     });
 }

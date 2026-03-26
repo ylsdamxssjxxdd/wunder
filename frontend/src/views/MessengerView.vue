@@ -324,6 +324,16 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
+            :title="t('chat.history')"
+            :aria-label="t('chat.history')"
+            @click="timelineDialogVisible = true"
+          >
+            <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+          </button>
+          <button
+            v-if="!showChatSettingsView && isAgentConversationActive"
+            class="messenger-header-btn"
+            type="button"
             :title="t('common.setting')"
             :aria-label="t('common.setting')"
             @click="openActiveAgentSettings"
@@ -1310,6 +1320,16 @@
         class="messenger-chat-footer"
       >
         <button
+          v-if="showScrollTopButton"
+          class="messenger-scroll-top-btn"
+          type="button"
+          :title="t('chat.toTop')"
+          :aria-label="t('chat.toTop')"
+          @click="jumpToMessageTop"
+        >
+          <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
+        </button>
+        <button
           v-if="showScrollBottomButton"
           class="messenger-scroll-bottom-btn"
           type="button"
@@ -1408,14 +1428,12 @@
       :show-agent-panels="showRightAgentPanels"
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
-      :active-session-id="String(chatStore.activeSessionId || '')"
-      :session-history="rightPanelSessionHistory"
+      :skills-loading="agentToolSummaryLoading"
+      :skills-uploading="skillDockUploading"
+      :enabled-skills="rightDockEnabledSkills"
+      :disabled-skills="rightDockDisabledSkills"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
-      @restore-session="restoreTimelineSession"
-      @set-main="setTimelineSessionMain"
-      @open-session-detail="openTimelineSessionDetail"
-      @archive-session="archiveTimelineSession"
-      @rename-session="renameTimelineSession"
+      @upload-skill-archive="handleRightDockSkillArchiveUpload"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
     />
@@ -1478,6 +1496,16 @@
       :resolve-unit-label="resolveUnitLabel"
       :submit-group-create="submitGroupCreate"
     />
+    <MessengerTimelineDialog
+      v-model:visible="timelineDialogVisible"
+      :active-session-id="String(chatStore.activeSessionId || '')"
+      :session-history="rightPanelSessionHistory"
+      @restore-session="handleTimelineDialogRestoreSession"
+      @set-main="setTimelineSessionMain"
+      @open-session-detail="openTimelineSessionDetail"
+      @archive-session="archiveTimelineSession"
+      @rename-session="renameTimelineSession"
+    />
     <AgentQuickCreateDialog
       v-model="agentQuickCreateVisible"
       :creating="quickCreatingAgent"
@@ -1511,7 +1539,7 @@ import { fetchCronJobs } from '@/api/cron';
 import { fetchDesktopSettings } from '@/api/desktop';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
-import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
+import { fetchUserToolsCatalog, fetchUserToolsSummary, uploadUserSkillZip } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
@@ -1543,7 +1571,8 @@ import {
 import {
   MessengerFileContainerMenu,
   MessengerGroupDock,
-  MessengerRightDock
+  MessengerRightDock,
+  MessengerTimelineDialog
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
@@ -1625,6 +1654,7 @@ import {
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import {
   normalizeAvatarColor,
   normalizeAvatarIcon,
@@ -1896,14 +1926,22 @@ const fileContainerContextMenu = ref<{
 const desktopContainerRootMap = ref<Record<number, string>>({});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
+type RightDockSkillItem = {
+  name: string;
+  description: string;
+  enabled: boolean;
+};
+const timelineDialogVisible = ref(false);
 const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
+const skillDockUploading = ref(false);
 const approvalResponding = ref(false);
 const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
 const contactUnitExpandedIds = ref<Set<string>>(new Set());
+const showScrollTopButton = ref(false);
 const showScrollBottomButton = ref(false);
 const autoStickToBottom = ref(true);
 const agentInquirySelection = ref<number[]>([]);
@@ -2019,6 +2057,7 @@ const userAttachmentResourceCache = ref(new Map<string, AttachmentResourceState>
 let workspaceResourceHydrationFrame: number | null = null;
 let workspaceResourceHydrationPending = false;
 let stopWorkspaceRefreshListener: (() => void) | null = null;
+let stopUserToolsUpdatedListener: (() => void) | null = null;
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
 const MESSENGER_PERF_TRACE_ENABLED = (() => {
@@ -3203,6 +3242,75 @@ const agentAbilitySections = computed(() => {
 const hasAgentAbilitySummary = computed(() =>
   agentAbilitySections.value.some((section) => section.items.length > 0)
 );
+
+const normalizeRightDockSkillDetails = (
+  list: unknown
+): Array<{ name: string; description: string }> => {
+  if (!Array.isArray(list)) return [];
+  const output: Array<{ name: string; description: string }> = [];
+  const seen = new Set<string>();
+  list.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const source = item as Record<string, unknown>;
+    const name = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push({
+      name,
+      description: String(source.description || source.desc || source.summary || '').trim()
+    });
+  });
+  return output;
+};
+
+const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
+  const allGroups = collectAbilityGroupDetails(
+    (agentPromptToolSummary.value || {}) as Record<string, unknown>
+  );
+  const enabledGroups = collectAbilityGroupDetails(
+    (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
+  );
+  const enabledDetails = normalizeRightDockSkillDetails(enabledGroups.skills);
+  const enabledSet = new Set<string>(enabledDetails.map((item) => item.name));
+  const merged = new Map<string, RightDockSkillItem>();
+
+  normalizeRightDockSkillDetails(allGroups.skills).forEach((item) => {
+    merged.set(item.name, {
+      name: item.name,
+      description: item.description,
+      enabled: enabledSet.has(item.name)
+    });
+  });
+
+  enabledDetails.forEach((item) => {
+    const existing = merged.get(item.name);
+    if (existing) {
+      if (!existing.description && item.description) {
+        existing.description = item.description;
+      }
+      existing.enabled = true;
+      return;
+    }
+    merged.set(item.name, {
+      name: item.name,
+      description: item.description,
+      enabled: true
+    });
+  });
+
+  return Array.from(merged.values()).sort((left, right) =>
+    left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
+});
+
+const rightDockEnabledSkills = computed<RightDockSkillItem[]>(() =>
+  rightDockSkillItems.value.filter((item) => item.enabled)
+);
+
+const rightDockDisabledSkills = computed<RightDockSkillItem[]>(() =>
+  rightDockSkillItems.value.filter((item) => !item.enabled)
+);
+
 const currentContainerId = computed(() => {
   const source = activeAgent.value as Record<string, unknown> | null;
   const parsed = Number.parseInt(String(source?.sandbox_container_id ?? 1), 10);
@@ -7367,6 +7475,7 @@ const handleWorkerCardImportInput = async (event) => {
       }
     }
     await refreshAgentMutationState();
+    await loadAgentToolSummary({ force: true });
     if (createdItems[0]?.id) {
       openCreatedAgentSettings(createdItems[0].id);
     }
@@ -7771,6 +7880,42 @@ const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
   }
 };
 
+const isUserToolsScopeForAgentSummary = (scope: unknown): boolean => {
+  const normalized = String(scope || '').trim().toLowerCase();
+  if (!normalized || normalized === 'all') return true;
+  return normalized === 'skills' || normalized === 'mcp' || normalized === 'knowledge';
+};
+
+const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action?: string }>) => {
+  const scope = event?.detail?.scope;
+  if (!isUserToolsScopeForAgentSummary(scope)) {
+    return;
+  }
+  void loadAgentToolSummary({ force: true });
+  if (sessionHub.activeSection === 'tools') {
+    void loadToolsCatalog();
+  }
+};
+
+const handleRightDockSkillArchiveUpload = async (file: File) => {
+  if (!file || skillDockUploading.value) return;
+  const filename = String(file.name || '').trim().toLowerCase();
+  if (!filename.endsWith('.zip') && !filename.endsWith('.skill')) {
+    ElMessage.warning(t('userTools.skills.upload.zipOnly'));
+    return;
+  }
+  skillDockUploading.value = true;
+  try {
+    await uploadUserSkillZip(file);
+    emitUserToolsUpdated({ scope: 'skills', action: 'upload' });
+    ElMessage.success(t('userTools.skills.upload.success'));
+  } catch (error) {
+    showApiError(error, t('userTools.skills.upload.failed'));
+  } finally {
+    skillDockUploading.value = false;
+  }
+};
+
 const handleAgentAbilityTooltipShow = () => {
   agentAbilityTooltipVisible.value = true;
   void loadAgentToolSummary({ force: true });
@@ -8026,6 +8171,11 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
 const restoreTimelineSession = async (sessionId: string) => {
   if (!sessionId) return;
   await openAgentSession(sessionId);
+};
+
+const handleTimelineDialogRestoreSession = async (sessionId: string) => {
+  timelineDialogVisible.value = false;
+  await restoreTimelineSession(sessionId);
 };
 
 const openTimelineSessionDetail = (sessionId: string) => {
@@ -8409,12 +8559,22 @@ const handleAgentSettingsSaved = async () => {
     loadDefaultAgentProfile(),
     loadRunningAgents(),
     loadAgentUserRounds(),
-    loadChannelBoundAgentIds()
+    loadChannelBoundAgentIds(),
+    loadAgentToolSummary({ force: true })
   ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
   }
   await Promise.allSettled(tasks);
+  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
+    const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
+    if (normalizeAgentId(activeAgentId.value || selectedAgentId.value) === currentAgentId) {
+      activeAgentDetailProfile.value = (profile as Record<string, unknown> | null) || null;
+    }
+  } else {
+    activeAgentDetailProfile.value = null;
+  }
 };
 
 const handleAgentDeleted = async () => {
@@ -10081,15 +10241,18 @@ const updateMessageScrollState = () => {
   syncMessageVirtualMetrics();
   const container = messageListRef.value;
   if (!container || showChatSettingsView.value) {
+    showScrollTopButton.value = false;
     showScrollBottomButton.value = false;
     autoStickToBottom.value = true;
     return;
   }
+  const nearTop = container.scrollTop <= 72;
   const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
   const shouldStick = remaining <= 72;
+  const isConversation = isAgentConversationActive.value || isWorldConversationActive.value;
   autoStickToBottom.value = shouldStick;
-  showScrollBottomButton.value =
-    !shouldStick && (isAgentConversationActive.value || isWorldConversationActive.value);
+  showScrollTopButton.value = !nearTop && isConversation;
+  showScrollBottomButton.value = !shouldStick && isConversation;
 };
 
 const handleMessageListScroll = () => {
@@ -10122,6 +10285,16 @@ const scrollMessagesToBottom = async (force = false) => {
 const jumpToMessageBottom = async () => {
   autoStickToBottom.value = true;
   await scrollMessagesToBottom(true);
+};
+
+const jumpToMessageTop = async () => {
+  await nextTick();
+  const container = messageListRef.value;
+  if (!container) return;
+  autoStickToBottom.value = false;
+  container.scrollTop = 0;
+  updateMessageScrollState();
+  scheduleMessageVirtualMeasure();
 };
 
 const scrollVirtualMessageToIndex = (keys: string[], index: number, align: 'center' | 'start' = 'center') => {
@@ -10432,10 +10605,14 @@ watch(
     void hydrateCurrentUserAppearance();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
+    timelineDialogVisible.value = false;
+    skillDockUploading.value = false;
+    agentPromptToolSummary.value = null;
     clearWorkspaceResourceCache();
     ensureDismissedAgentConversationState(true);
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
+    void loadAgentToolSummary({ force: true });
     scheduleWorkspaceResourceHydration();
   },
   { immediate: true }
@@ -10711,9 +10888,15 @@ watch(
 );
 
 watch(
-  () => rightPanelSessionHistory.value.map((item) => item.id).join('|'),
-  (value) => {
-    if (!value) return;
+  () => [timelineDialogVisible.value, rightPanelSessionHistory.value.map((item) => item.id).join('|')] as const,
+  ([visible, value]) => {
+    if (!visible || !value) {
+      if (typeof window !== 'undefined' && timelinePrefetchTimer) {
+        window.clearTimeout(timelinePrefetchTimer);
+        timelinePrefetchTimer = null;
+      }
+      return;
+    }
     if (typeof window !== 'undefined' && timelinePrefetchTimer) {
       window.clearTimeout(timelinePrefetchTimer);
       timelinePrefetchTimer = null;
@@ -10951,7 +11134,9 @@ onMounted(async () => {
   syncMessageVirtualMetrics();
   scheduleMessageVirtualMeasure();
   scheduleWorkspaceResourceHydration();
+  void loadAgentToolSummary({ force: true });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
+  stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
   }, 60_000);
@@ -11054,6 +11239,10 @@ onBeforeUnmount(() => {
   if (stopWorkspaceRefreshListener) {
     stopWorkspaceRefreshListener();
     stopWorkspaceRefreshListener = null;
+  }
+  if (stopUserToolsUpdatedListener) {
+    stopUserToolsUpdatedListener();
+    stopUserToolsUpdatedListener = null;
   }
   clearWorkspaceResourceCache();
   timelinePreviewMap.value.clear();

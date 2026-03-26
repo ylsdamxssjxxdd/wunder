@@ -566,6 +566,27 @@ impl WorkspaceManager {
         format!("session_context_overflow:{safe_user}:{safe_session}")
     }
 
+    fn session_context_limit_hint_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_context_limit_hint:{safe_user}:{safe_session}")
+    }
+
     fn maybe_schedule_retention_cleanup(&self) {
         if self.retention_days <= 0 {
             return;
@@ -970,6 +991,51 @@ impl WorkspaceManager {
         .unwrap_or(0)
     }
 
+    pub async fn load_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> Option<i64> {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_session_context_limit_hint(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(None)
+    }
+
+    pub async fn save_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        limit_hint: Option<i64>,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = tokio::task::spawn_blocking(move || {
+            workspace.save_session_context_limit_hint(&user_id, &session_id, limit_hint);
+        })
+        .await;
+    }
+
+    pub async fn delete_session_context_limit_hint_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.delete_session_context_limit_hint(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(0)
+    }
+
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.write_queue.enqueue(StorageWrite::Chat {
             user_id: user_id.to_string(),
@@ -1099,6 +1165,33 @@ impl WorkspaceManager {
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
+    pub fn load_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> Option<i64> {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        let Ok(value) = self.storage.get_meta(&key) else {
+            return None;
+        };
+        value.and_then(|raw| raw.trim().parse::<i64>().ok().filter(|limit| *limit > 0))
+    }
+
+    pub fn save_session_context_limit_hint(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit_hint: Option<i64>,
+    ) {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        if let Some(limit_hint) = limit_hint.filter(|value| *value > 0) {
+            let _ = self.storage.set_meta(&key, &limit_hint.to_string());
+        } else {
+            let _ = self.storage.delete_meta_prefix(&key);
+        }
+    }
+
+    pub fn delete_session_context_limit_hint(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_limit_hint_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
     pub fn save_session_system_prompt(
         &self,
         user_id: &str,
@@ -1211,6 +1304,7 @@ impl WorkspaceManager {
         let _ = self.storage.release_session_lock(cleaned_session);
         let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
         let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_limit_hint(cleaned_user, cleaned_session);
     }
 
     pub fn purge_user_data(&self, user_id: &str) -> PurgeResult {
@@ -1257,6 +1351,9 @@ impl WorkspaceManager {
         let _ = self
             .storage
             .delete_meta_prefix(&format!("session_context_overflow:{safe_id}:"));
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_context_limit_hint:{safe_id}:"));
         let _ = self.storage.delete_session_locks_by_user(cleaned);
         let _ = self.storage.delete_stream_events_by_user(cleaned);
         PurgeResult {
@@ -2026,6 +2123,29 @@ mod tests {
     }
 
     #[test]
+    fn session_context_limit_hint_roundtrip_and_manual_clear() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u-limit";
+        let session_id = "s-limit";
+
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
+        );
+        workspace.save_session_context_limit_hint(user_id, session_id, Some(8192));
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            Some(8192)
+        );
+
+        workspace.save_session_context_limit_hint(user_id, session_id, None);
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
+        );
+    }
+
+    #[test]
     fn purge_session_data_clears_context_overflow_and_tokens_meta() {
         let (workspace, _dir) = build_workspace_manager();
         let user_id = "u2";
@@ -2033,10 +2153,15 @@ mod tests {
 
         workspace.save_session_context_overflow(user_id, session_id, true);
         workspace.save_session_context_tokens(user_id, session_id, 98765);
+        workspace.save_session_context_limit_hint(user_id, session_id, Some(4096));
         assert!(workspace.load_session_context_overflow(user_id, session_id));
         assert_eq!(
             workspace.load_session_context_tokens(user_id, session_id),
             98765
+        );
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            Some(4096)
         );
 
         workspace.purge_session_data(user_id, session_id);
@@ -2044,6 +2169,10 @@ mod tests {
         assert_eq!(
             workspace.load_session_context_tokens(user_id, session_id),
             0
+        );
+        assert_eq!(
+            workspace.load_session_context_limit_hint(user_id, session_id),
+            None
         );
     }
 }

@@ -1088,6 +1088,7 @@ export default {
   'chat.history.restore': '恢复线程',
   'chat.history.restoreSuccess': '线程已恢复',
   'chat.history.restoreFailed': '恢复线程失败',
+  'chat.toTop': '回到顶部',
   'chat.toBottom': '回到底部',
   'chat.message.user': '你',
   'chat.message.assistant': '智能体',

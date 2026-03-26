@@ -33,72 +33,100 @@
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
       </div>
 
-      <div class="messenger-right-panel messenger-right-panel--timeline">
+      <div
+        class="messenger-right-panel messenger-right-panel--skills"
+        :class="{ 'is-drop-active': skillDropActive }"
+        @dragenter.prevent="handleSkillDragEnter"
+        @dragover.prevent="handleSkillDragOver"
+        @dragleave.prevent="handleSkillDragLeave"
+        @drop.prevent="handleSkillDrop"
+      >
         <div class="messenger-right-section-title">
-          <i class="fa-solid fa-timeline" aria-hidden="true"></i>
-          <span>{{ t('messenger.right.timeline') }}</span>
-        </div>
-        <div v-if="!sessionHistory.length" class="messenger-list-empty">{{ t('messenger.empty.timeline') }}</div>
-        <div v-else class="messenger-timeline">
-          <div
-            v-for="item in sessionHistory"
-            :key="item.id"
-            class="messenger-timeline-item"
-            :class="{ active: activeSessionId === item.id, 'is-main': item.isMain }"
-            role="button"
-            tabindex="0"
-            @click="$emit('restore-session', item.id)"
-            @keydown.enter.prevent="$emit('restore-session', item.id)"
-            @keydown.space.prevent="$emit('restore-session', item.id)"
+          <span class="messenger-right-section-title-main">
+            <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
+            <span>{{ t('toolManager.system.skills') }}</span>
+          </span>
+          <button
+            class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-upload-btn"
+            type="button"
+            :disabled="skillsUploading"
+            :title="t('userTools.skills.action.upload')"
+            :aria-label="t('userTools.skills.action.upload')"
+            @click="openSkillArchivePicker"
           >
-            <div class="messenger-timeline-title-row">
-              <div class="messenger-timeline-title">{{ item.title }}</div>
-              <div class="messenger-timeline-actions" :class="{ 'messenger-timeline-actions--main': item.isMain }">
-                <button
-                  class="messenger-timeline-main-btn"
-                  :class="{ active: item.isMain }"
-                  type="button"
-                  :title="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
-                  :aria-label="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
-                  :disabled="item.isMain"
-                  @click.stop="$emit('set-main', item.id)"
-                >
-                  <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
-                </button>
-                <button
-                  v-if="!item.isMain"
-                  class="messenger-timeline-rename-btn"
-                  type="button"
-                  :title="t('chat.history.rename')"
-                  :aria-label="t('chat.history.rename')"
-                  @click.stop="$emit('rename-session', item.id)"
-                >
-                  <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
-                </button>
-                <button
-                  class="messenger-timeline-detail-btn"
-                  type="button"
-                  :title="t('messenger.timeline.detail.open')"
-                  :aria-label="t('messenger.timeline.detail.open')"
-                  @click.stop="$emit('open-session-detail', item.id)"
-                >
-                  <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-                </button>
-                <button
-                  v-if="!item.isMain"
-                  class="messenger-timeline-archive-btn"
-                  type="button"
-                  :title="t('chat.history.archive')"
-                  :aria-label="t('chat.history.archive')"
-                  @click.stop="$emit('archive-session', item.id)"
-                >
-                  <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-                </button>
+            <i class="fa-solid fa-upload" aria-hidden="true"></i>
+          </button>
+          <input
+            ref="skillArchiveInputRef"
+            type="file"
+            accept=".zip,.skill"
+            hidden
+            @change="handleSkillArchiveInputChange"
+          />
+        </div>
+        <div class="messenger-skill-drop-hint" :class="{ 'is-active': skillDropActive, 'is-uploading': skillsUploading }">
+          <i
+            class="fa-solid"
+            :class="skillsUploading ? 'fa-spinner fa-spin' : skillDropActive ? 'fa-file-zipper' : 'fa-cloud-arrow-up'"
+            aria-hidden="true"
+          ></i>
+          <span>
+            {{
+              skillsUploading
+                ? t('common.loading')
+                : skillDropActive
+                  ? t('userTools.skills.action.upload')
+                  : t('userTools.skills.upload.zipOnly')
+            }}
+          </span>
+        </div>
+        <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
+          {{ t('chat.ability.loading') }}
+        </div>
+        <div v-else class="messenger-skill-groups">
+          <div class="messenger-skill-group">
+            <div class="messenger-skill-group-header">
+              <span>{{ t('common.enabled') }}</span>
+              <span class="messenger-skill-group-count">{{ enabledSkills.length }}</span>
+            </div>
+            <div v-if="!enabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
+            <div v-else class="messenger-skill-list">
+              <div
+                v-for="item in enabledSkills"
+                :key="`enabled-${item.name}`"
+                class="messenger-skill-item is-enabled"
+              >
+                <div class="messenger-skill-item-title-row">
+                  <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
+                  <span class="messenger-skill-status-tag">{{ t('common.enabled') }}</span>
+                </div>
+                <div class="messenger-skill-item-desc">
+                  {{ item.description || t('chat.ability.noDesc') }}
+                </div>
               </div>
             </div>
-            <div class="messenger-timeline-detail-row">
-              <div class="messenger-timeline-detail">{{ item.preview || t('messenger.preview.empty') }}</div>
-              <span class="messenger-timeline-time">{{ formatTime(item.lastAt) }}</span>
+          </div>
+
+          <div class="messenger-skill-group">
+            <div class="messenger-skill-group-header">
+              <span>{{ t('common.disabled') }}</span>
+              <span class="messenger-skill-group-count">{{ disabledSkills.length }}</span>
+            </div>
+            <div v-if="!disabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
+            <div v-else class="messenger-skill-list">
+              <div
+                v-for="item in disabledSkills"
+                :key="`disabled-${item.name}`"
+                class="messenger-skill-item is-disabled"
+              >
+                <div class="messenger-skill-item-title-row">
+                  <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
+                  <span class="messenger-skill-status-tag">{{ t('common.disabled') }}</span>
+                </div>
+                <div class="messenger-skill-item-desc">
+                  {{ item.description || t('chat.ability.noDesc') }}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -135,12 +163,10 @@ import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { useI18n } from '@/i18n';
 import { copyText } from '@/utils/clipboard';
 
-type TimelineSessionItem = {
-  id: string;
-  title: string;
-  preview: string;
-  lastAt: unknown;
-  isMain: boolean;
+type SkillItem = {
+  name: string;
+  description: string;
+  enabled: boolean;
 };
 
 const props = defineProps<{
@@ -149,23 +175,24 @@ const props = defineProps<{
   showAgentPanels: boolean;
   agentIdForApi: string;
   containerId: number;
-  activeSessionId: string;
-  sessionHistory: TimelineSessionItem[];
+  skillsLoading: boolean;
+  skillsUploading: boolean;
+  enabledSkills: SkillItem[];
+  disabledSkills: SkillItem[];
 }>();
 
 const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
-  (event: 'restore-session', sessionId: string): void;
-  (event: 'set-main', sessionId: string): void;
-  (event: 'open-session-detail', sessionId: string): void;
-  (event: 'archive-session', sessionId: string): void;
-  (event: 'rename-session', sessionId: string): void;
+  (event: 'upload-skill-archive', file: File): void;
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;
 }>();
 
 const { t } = useI18n();
 const sandboxMenuRef = ref<HTMLElement | null>(null);
+const skillArchiveInputRef = ref<HTMLInputElement | null>(null);
+const skillDropDepth = ref(0);
+const skillDropActive = ref(false);
 const sandboxContextMenu = ref({
   visible: false,
   x: 0,
@@ -182,6 +209,70 @@ const closeSandboxContextMenu = () => {
 
 const swallowRightDockRightPointer = () => {
   // Stop bubbling right-click pointer events so overlay auto-hide logic does not collapse the dock.
+};
+
+const isSkillArchiveFilename = (name: string): boolean => {
+  const lower = String(name || '').trim().toLowerCase();
+  return lower.endsWith('.zip') || lower.endsWith('.skill');
+};
+
+const emitSkillArchive = (file: File | null | undefined) => {
+  if (!file || props.skillsUploading) return;
+  if (!isSkillArchiveFilename(file.name)) {
+    ElMessage.warning(t('userTools.skills.upload.zipOnly'));
+    return;
+  }
+  emit('upload-skill-archive', file);
+};
+
+const openSkillArchivePicker = () => {
+  if (props.skillsUploading || !skillArchiveInputRef.value) return;
+  skillArchiveInputRef.value.value = '';
+  skillArchiveInputRef.value.click();
+};
+
+const handleSkillArchiveInputChange = (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  emitSkillArchive(file);
+  if (input) {
+    input.value = '';
+  }
+};
+
+const hasFilePayload = (event: DragEvent): boolean => {
+  const transfer = event.dataTransfer;
+  if (!transfer) return false;
+  if (transfer.files && transfer.files.length > 0) return true;
+  const types = Array.from(transfer.types || []);
+  return types.includes('Files');
+};
+
+const handleSkillDragEnter = (event: DragEvent) => {
+  if (props.skillsUploading || !hasFilePayload(event)) return;
+  skillDropDepth.value += 1;
+  skillDropActive.value = true;
+};
+
+const handleSkillDragOver = (event: DragEvent) => {
+  if (props.skillsUploading || !hasFilePayload(event)) return;
+  event.preventDefault();
+  skillDropActive.value = true;
+};
+
+const handleSkillDragLeave = () => {
+  skillDropDepth.value = Math.max(0, skillDropDepth.value - 1);
+  if (!skillDropDepth.value) {
+    skillDropActive.value = false;
+  }
+};
+
+const handleSkillDrop = (event: DragEvent) => {
+  skillDropDepth.value = 0;
+  skillDropActive.value = false;
+  if (props.skillsUploading) return;
+  const file = event.dataTransfer?.files?.[0];
+  emitSkillArchive(file);
 };
 
 const openSandboxContainerMenu = async (event: MouseEvent) => {
@@ -265,47 +356,8 @@ watch(
   () => props.collapsed,
   () => {
     closeSandboxContextMenu();
+    skillDropDepth.value = 0;
+    skillDropActive.value = false;
   }
 );
-
-const normalizeTimestamp = (value: unknown): number => {
-  if (value === null || value === undefined) return 0;
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? 0 : value.getTime();
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return 0;
-    return value < 1_000_000_000_000 ? value * 1000 : value;
-  }
-  const text = String(value).trim();
-  if (!text) return 0;
-  if (/^-?\d+(\.\d+)?$/.test(text)) {
-    const numeric = Number(text);
-    if (!Number.isFinite(numeric)) return 0;
-    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-  }
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-};
-
-const formatTime = (value: unknown): string => {
-  const ts = normalizeTimestamp(value);
-  if (!ts) return '';
-  const date = new Date(ts);
-  const now = new Date();
-  const sameYear = date.getFullYear() === now.getFullYear();
-  const sameDay =
-    sameYear && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
-  const hour = String(date.getHours()).padStart(2, '0');
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  if (sameDay) {
-    return `${hour}:${minute}`;
-  }
-  if (sameYear) {
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${month}-${day}`;
-  }
-  return String(date.getFullYear());
-};
 </script>

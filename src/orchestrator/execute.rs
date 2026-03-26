@@ -109,7 +109,7 @@ enum TerminalTool {
 const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 1000;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = MIN_NON_ADMIN_MAX_ROUNDS;
-const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
+const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 8;
 const DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD: u32 = 5;
 const DEFAULT_TOOL_CALL_BUDGET_PER_TURN: u32 = 10_000;
 const DEFAULT_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 2_000;
@@ -426,6 +426,10 @@ impl Orchestrator {
                 .workspace
                 .load_session_context_tokens_async(&user_id, &session_id)
                 .await;
+            let mut context_window_limit_hint = self
+                .workspace
+                .load_session_context_limit_hint_async(&user_id, &session_id)
+                .await;
             loop {
                 if let Some(max_rounds) = max_rounds {
                     if model_round >= max_rounds {
@@ -436,13 +440,21 @@ impl Orchestrator {
                 model_round += 1;
                 let round_info = RoundInfo::new(user_round, model_round);
                 last_round_info = round_info;
+                let mut adaptive_recovery_limit_hint: Option<i64> = None;
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 messages = context_compactor.compact_messages(messages);
+                let compaction_llm_config = apply_context_window_limit_hint(
+                    &llm_config,
+                    merge_context_window_limit_hint(
+                        context_window_limit_hint,
+                        adaptive_recovery_limit_hint,
+                    ),
+                );
                 messages = self
                     .maybe_compact_messages(
                         &config,
-                        &llm_config,
+                        &compaction_llm_config,
                         &user_id,
                         prepared.agent_id.as_deref(),
                         &session_id,
@@ -483,7 +495,10 @@ impl Orchestrator {
                     "message_count": messages.len(),
                 });
                 if let Value::Object(ref mut map) = context_payload {
-                    if let Some(max_context) = llm_config.max_context.filter(|value| *value > 0) {
+                    if let Some(max_context) = merge_context_window_limit_hint(
+                        llm_config.max_context.map(i64::from),
+                        context_window_limit_hint,
+                    ) {
                         map.insert("max_context".to_string(), json!(max_context));
                     }
                     round_info.insert_into(map);
@@ -548,6 +563,37 @@ impl Orchestrator {
                                     < MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS =>
                         {
                             overflow_recovery_attempts += 1;
+                            let parsed_limit_hint =
+                                super::llm::extract_context_window_limit_hint(err.message());
+                            if let Some(limit_hint) = parsed_limit_hint {
+                                let merged_limit_hint = merge_context_window_limit_hint(
+                                    context_window_limit_hint,
+                                    Some(limit_hint),
+                                );
+                                if merged_limit_hint != context_window_limit_hint {
+                                    context_window_limit_hint = merged_limit_hint;
+                                    self.workspace
+                                        .save_session_context_limit_hint_async(
+                                            &user_id,
+                                            &session_id,
+                                            context_window_limit_hint,
+                                        )
+                                        .await;
+                                }
+                            } else {
+                                let overflow_projected_tokens = context_manager
+                                    .estimate_context_tokens(&messages)
+                                    .saturating_add(request_overhead_tokens);
+                                let fallback_limit_hint =
+                                    derive_recovery_context_window_limit_hint(
+                                        overflow_projected_tokens,
+                                        overflow_recovery_attempts,
+                                    );
+                                adaptive_recovery_limit_hint = merge_context_window_limit_hint(
+                                    adaptive_recovery_limit_hint,
+                                    Some(fallback_limit_hint),
+                                );
+                            }
                             let mut recovery_payload = json!({
                                 "stage": "context_overflow_recovery",
                                 "summary": i18n::t("compaction.reason.context_too_long"),
@@ -559,10 +605,17 @@ impl Orchestrator {
                             }
                             emitter.emit("progress", recovery_payload).await;
 
+                            let compaction_llm_config = apply_context_window_limit_hint(
+                                &llm_config,
+                                merge_context_window_limit_hint(
+                                    context_window_limit_hint,
+                                    adaptive_recovery_limit_hint,
+                                ),
+                            );
                             messages = self
                                 .maybe_compact_messages(
                                     &config,
-                                    &llm_config,
+                                    &compaction_llm_config,
                                     &user_id,
                                     prepared.agent_id.as_deref(),
                                     &session_id,
@@ -593,6 +646,7 @@ impl Orchestrator {
                                     recovered_tokens,
                                 )
                                 .await;
+                            persisted_context_tokens = recovered_tokens;
                             let mut compaction_payload = json!({
                                 "reason": "overflow_recovery",
                                 "status": "done",
@@ -609,6 +663,24 @@ impl Orchestrator {
                         }
                         Err(err) => {
                             if should_recover_from_context_overflow(&err) {
+                                if let Some(limit_hint) =
+                                    super::llm::extract_context_window_limit_hint(err.message())
+                                {
+                                    let merged_limit_hint = merge_context_window_limit_hint(
+                                        context_window_limit_hint,
+                                        Some(limit_hint),
+                                    );
+                                    if merged_limit_hint != context_window_limit_hint {
+                                        context_window_limit_hint = merged_limit_hint;
+                                        self.workspace
+                                            .save_session_context_limit_hint_async(
+                                                &user_id,
+                                                &session_id,
+                                                context_window_limit_hint,
+                                            )
+                                            .await;
+                                    }
+                                }
                                 self.workspace
                                     .save_session_context_overflow_async(
                                         &user_id,
@@ -616,14 +688,7 @@ impl Orchestrator {
                                         true,
                                     )
                                     .await;
-                                let overflow_tokens = llm_config
-                                    .max_context
-                                    .map(i64::from)
-                                    .unwrap_or_else(|| {
-                                        context_manager
-                                            .estimate_context_tokens(&messages)
-                                            .saturating_add(request_overhead_tokens)
-                                    });
+                                let overflow_tokens = context_manager.estimate_context_tokens(&messages);
                                 self.workspace
                                     .save_session_context_tokens_async(
                                         &user_id,
@@ -2384,6 +2449,45 @@ fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
         || super::llm::is_context_window_error_text(err.message())
 }
 
+fn merge_context_window_limit_hint(current: Option<i64>, next: Option<i64>) -> Option<i64> {
+    let current = current.filter(|value| *value > 0);
+    let next = next.filter(|value| *value > 0);
+    match (current, next) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+fn apply_context_window_limit_hint(
+    llm_config: &LlmModelConfig,
+    limit_hint: Option<i64>,
+) -> LlmModelConfig {
+    let Some(limit_hint) = limit_hint.filter(|value| *value > 0) else {
+        return llm_config.clone();
+    };
+    let Ok(limit_hint_u32) = u32::try_from(limit_hint) else {
+        return llm_config.clone();
+    };
+    let mut config = llm_config.clone();
+    config.max_context = Some(
+        config
+            .max_context
+            .map_or(limit_hint_u32, |current| current.min(limit_hint_u32)),
+    );
+    config
+}
+
+fn derive_recovery_context_window_limit_hint(projected_request_tokens: i64, attempt: u32) -> i64 {
+    let mut hint = projected_request_tokens.max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    let rounds = attempt.clamp(1, 8);
+    for _ in 0..rounds {
+        hint = (hint / 2).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    }
+    hint
+}
+
 fn estimate_request_overhead_tokens(tools: Option<&[Value]>) -> i64 {
     let Some(tools) = tools else {
         return 0;
@@ -2996,6 +3100,45 @@ mod tests {
     fn skip_context_overflow_recovery_for_other_errors() {
         let err = OrchestratorError::internal("LLM call failed: invalid api key".to_string());
         assert!(!should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn merge_context_window_limit_hint_prefers_smaller_positive_limit() {
+        assert_eq!(merge_context_window_limit_hint(None, None), None);
+        assert_eq!(
+            merge_context_window_limit_hint(Some(8192), None),
+            Some(8192)
+        );
+        assert_eq!(
+            merge_context_window_limit_hint(None, Some(4096)),
+            Some(4096)
+        );
+        assert_eq!(
+            merge_context_window_limit_hint(Some(8192), Some(4096)),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn apply_context_window_limit_hint_caps_max_context() {
+        let llm_config: LlmModelConfig = serde_json::from_value(json!({
+            "provider": "openai",
+            "model": "gpt-4.1",
+            "max_context": 64000
+        }))
+        .expect("llm config");
+        let hinted = apply_context_window_limit_hint(&llm_config, Some(8192));
+        assert_eq!(hinted.max_context, Some(8192));
+    }
+
+    #[test]
+    fn derive_recovery_context_window_limit_hint_halves_with_attempts() {
+        let first = derive_recovery_context_window_limit_hint(64000, 1);
+        let second = derive_recovery_context_window_limit_hint(64000, 2);
+        let third = derive_recovery_context_window_limit_hint(64000, 3);
+        assert!(first > second);
+        assert!(second > third);
+        assert!(third >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
     }
 
     #[test]

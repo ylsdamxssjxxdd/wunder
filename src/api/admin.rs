@@ -7100,6 +7100,7 @@ fn resolve_channel_binding_count(
 
 const ADMIN_CHANNEL_OWNER_PREVIEW_LIMIT: i64 = 200;
 const ADMIN_CHANNEL_BATCH_LIMIT: usize = 500;
+const ADMIN_CHANNEL_WILDCARD_PEER_ID: &str = "*";
 
 fn normalize_channel_event_ts(raw: Option<f64>) -> Option<f64> {
     raw.filter(|value| value.is_finite() && *value > 0.0)
@@ -7110,6 +7111,42 @@ fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
         return true;
     }
     haystack.to_ascii_lowercase().contains(needle_lower)
+}
+
+fn make_channel_user_binding_id(
+    user_id: &str,
+    channel: &str,
+    account_id: &str,
+    peer_kind: &str,
+    peer_id: &str,
+) -> String {
+    let key = format!(
+        "user:{user_id}|{channel}|{account_id}|{peer_kind}|{peer_id}",
+        user_id = user_id.trim().to_ascii_lowercase(),
+        channel = channel.trim().to_ascii_lowercase(),
+        account_id = account_id.trim().to_ascii_lowercase(),
+        peer_kind = peer_kind.trim().to_ascii_lowercase(),
+        peer_id = peer_id.trim()
+    );
+    format!(
+        "ubind_{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_OID, key.as_bytes()).simple()
+    )
+}
+
+fn build_channel_peer_key(
+    channel: &str,
+    account_id: &str,
+    peer_kind: &str,
+    peer_id: &str,
+) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        channel.trim().to_ascii_lowercase(),
+        account_id.trim().to_ascii_lowercase(),
+        peer_kind.trim().to_ascii_lowercase(),
+        peer_id.trim()
+    )
 }
 
 fn runtime_connection_status_not_running(runtime: &Value, key: &str) -> bool {
@@ -7273,6 +7310,7 @@ fn resolve_channel_owner_preview(
     channel: &str,
     account_id: &str,
     username_cache: &mut HashMap<String, String>,
+    agent_name_cache: &mut HashMap<String, Option<String>>,
 ) -> Result<(Vec<Value>, i64), Response> {
     let (bindings, binding_total) = state
         .storage
@@ -7286,11 +7324,90 @@ fn resolve_channel_owner_preview(
             limit: ADMIN_CHANNEL_OWNER_PREVIEW_LIMIT,
         })
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let channel_bindings = state
+        .storage
+        .list_channel_bindings(Some(channel))
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut binding_by_id: HashMap<String, crate::storage::ChannelBindingRecord> = HashMap::new();
+    let mut binding_by_peer: HashMap<String, crate::storage::ChannelBindingRecord> = HashMap::new();
+    let mut wildcard_binding_by_kind: HashMap<String, crate::storage::ChannelBindingRecord> =
+        HashMap::new();
+    for binding in channel_bindings
+        .into_iter()
+        .filter(|item| item.account_id.eq_ignore_ascii_case(account_id))
+    {
+        binding_by_id.insert(binding.binding_id.clone(), binding.clone());
+        if let (Some(peer_kind), Some(peer_id)) =
+            (binding.peer_kind.as_ref(), binding.peer_id.as_ref())
+        {
+            let exact_key = build_channel_peer_key(channel, account_id, peer_kind, peer_id);
+            let should_replace = binding_by_peer
+                .get(&exact_key)
+                .map(|existing| binding.priority > existing.priority)
+                .unwrap_or(true);
+            if should_replace {
+                binding_by_peer.insert(exact_key, binding.clone());
+            }
+            if peer_id.trim() == ADMIN_CHANNEL_WILDCARD_PEER_ID {
+                let wildcard_key = build_channel_peer_key(
+                    channel,
+                    account_id,
+                    peer_kind,
+                    ADMIN_CHANNEL_WILDCARD_PEER_ID,
+                );
+                let should_replace = wildcard_binding_by_kind
+                    .get(&wildcard_key)
+                    .map(|existing| binding.priority > existing.priority)
+                    .unwrap_or(true);
+                if should_replace {
+                    wildcard_binding_by_kind.insert(wildcard_key, binding.clone());
+                }
+            }
+        }
+    }
     let mut owners = Vec::new();
     let mut seen = HashSet::new();
     for record in bindings {
         let user_id = record.user_id.trim();
-        if user_id.is_empty() || !seen.insert(user_id.to_string()) {
+        if user_id.is_empty() {
+            continue;
+        }
+        let binding_id = make_channel_user_binding_id(
+            user_id,
+            &record.channel,
+            &record.account_id,
+            &record.peer_kind,
+            &record.peer_id,
+        );
+        let exact_key = build_channel_peer_key(
+            &record.channel,
+            &record.account_id,
+            &record.peer_kind,
+            &record.peer_id,
+        );
+        let wildcard_key = build_channel_peer_key(
+            &record.channel,
+            &record.account_id,
+            &record.peer_kind,
+            ADMIN_CHANNEL_WILDCARD_PEER_ID,
+        );
+        let matched_binding = binding_by_id
+            .get(&binding_id)
+            .or_else(|| binding_by_peer.get(&exact_key))
+            .or_else(|| wildcard_binding_by_kind.get(&wildcard_key));
+        let agent_id = matched_binding
+            .and_then(|item| item.agent_id.as_ref())
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let dedup_key = format!(
+            "{}::{}",
+            user_id.to_ascii_lowercase(),
+            agent_id
+                .as_deref()
+                .unwrap_or(DEFAULT_AGENT_ID_ALIAS)
+                .to_ascii_lowercase()
+        );
+        if !seen.insert(dedup_key) {
             continue;
         }
         let username = if let Some(cached) = username_cache.get(user_id) {
@@ -7312,9 +7429,30 @@ fn resolve_channel_owner_preview(
             username_cache.insert(user_id.to_string(), resolved.clone());
             resolved
         };
+        let agent_cache_key = format!(
+            "{}::{}",
+            user_id.to_ascii_lowercase(),
+            agent_id
+                .as_deref()
+                .unwrap_or(DEFAULT_AGENT_ID_ALIAS)
+                .to_ascii_lowercase()
+        );
+        let agent_name = if let Some(cached) = agent_name_cache.get(&agent_cache_key) {
+            cached.clone()
+        } else {
+            let resolved = resolve_monitor_session_agent_name(
+                state.as_ref(),
+                user_id,
+                agent_id.as_deref().unwrap_or(""),
+            )?;
+            agent_name_cache.insert(agent_cache_key, resolved.clone());
+            resolved
+        };
         owners.push(json!({
             "user_id": user_id,
             "username": username,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
         }));
     }
     Ok((owners, binding_total))
@@ -7464,6 +7602,7 @@ async fn admin_channel_accounts(
         .list_channel_accounts(channel, status)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut username_cache: HashMap<String, String> = HashMap::new();
+    let mut agent_name_cache: HashMap<String, Option<String>> = HashMap::new();
     let mut items = Vec::with_capacity(records.len());
     for record in records {
         let (owners, binding_count) = resolve_channel_owner_preview(
@@ -7471,6 +7610,7 @@ async fn admin_channel_accounts(
             &record.channel,
             &record.account_id,
             &mut username_cache,
+            &mut agent_name_cache,
         )?;
         let (sessions_preview, session_count) = state
             .storage
@@ -7558,8 +7698,12 @@ async fn admin_channel_accounts(
                 || owners.iter().any(|item| {
                     let user_id = item.get("user_id").and_then(Value::as_str).unwrap_or("");
                     let username = item.get("username").and_then(Value::as_str).unwrap_or("");
+                    let agent_id = item.get("agent_id").and_then(Value::as_str).unwrap_or("");
+                    let agent_name = item.get("agent_name").and_then(Value::as_str).unwrap_or("");
                     contains_ignore_ascii_case(user_id, keyword)
                         || contains_ignore_ascii_case(username, keyword)
+                        || contains_ignore_ascii_case(agent_id, keyword)
+                        || contains_ignore_ascii_case(agent_name, keyword)
                 });
             if !keyword_matched {
                 continue;
