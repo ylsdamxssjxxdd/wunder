@@ -6,6 +6,7 @@ use super::thread_runtime::{
     ThreadRuntimeUpdate,
 };
 use super::tool_calls::ToolCall;
+use super::tool_parallel::tool_call_supports_parallel;
 use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
@@ -1667,10 +1668,12 @@ impl Orchestrator {
             return Ok(Vec::new());
         }
         let parallelism = resolve_tool_parallelism(calls.len());
+        let execution_lock = Arc::new(tokio::sync::RwLock::new(()));
         let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
             let orchestrator = self;
             let approval_tx = approval_tx.clone();
             let emitter = emitter.clone();
+            let execution_lock = Arc::clone(&execution_lock);
             async move {
                 let PlannedToolCall { mut call, name } = planned;
                 let recovered_args =
@@ -1770,6 +1773,7 @@ impl Orchestrator {
                 let started_at = Instant::now();
                 let tool_timeout =
                     orchestrator.resolve_tool_timeout(tool_context.config, &name, &args, is_admin);
+                let supports_parallel_execution = tool_call_supports_parallel(&name, &args);
                 let mut result = if !allowed_tool_names.contains(&name) {
                     ToolResultPayload::error(
                         i18n::t("error.tool_disabled_or_unavailable"),
@@ -1942,7 +1946,14 @@ impl Orchestrator {
 
                         if let Some(approval_choice) = approved {
                             let result = tokio::select! {
-                                res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                                res = orchestrator.execute_tool_with_parallel_guard(
+                                    Arc::clone(&execution_lock),
+                                    tool_context,
+                                    &name,
+                                    &args,
+                                    tool_timeout,
+                                    supports_parallel_execution,
+                                ) => res,
                                 err = orchestrator.wait_for_cancelled(session_id) => {
                                     return Err(err);
                                 }
@@ -1991,7 +2002,14 @@ impl Orchestrator {
                         }
                     } else {
                         let result = tokio::select! {
-                            res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                            res = orchestrator.execute_tool_with_parallel_guard(
+                                Arc::clone(&execution_lock),
+                                tool_context,
+                                &name,
+                                &args,
+                                tool_timeout,
+                                supports_parallel_execution,
+                            ) => res,
                             err = orchestrator.wait_for_cancelled(session_id) => {
                                 return Err(err);
                             }
@@ -2020,7 +2038,14 @@ impl Orchestrator {
                     }
                 } else {
                     let result = tokio::select! {
-                        res = orchestrator.execute_tool_with_timeout(tool_context, &name, &args, tool_timeout) => res,
+                        res = orchestrator.execute_tool_with_parallel_guard(
+                            Arc::clone(&execution_lock),
+                            tool_context,
+                            &name,
+                            &args,
+                            tool_timeout,
+                            supports_parallel_execution,
+                        ) => res,
                         err = orchestrator.wait_for_cancelled(session_id) => {
                             return Err(err);
                         }
@@ -2049,6 +2074,16 @@ impl Orchestrator {
                     result.insert_meta("workspace_version", json!(workspace_version_after));
                     result.insert_meta("workspace_changed", Value::Bool(true));
                 }
+                result.insert_meta(
+                    "parallel_execution",
+                    json!({
+                        "mode": if supports_parallel_execution {
+                            "parallel_read"
+                        } else {
+                            "exclusive_write"
+                        },
+                    }),
+                );
                 if let Some(preflight) = preflight_meta {
                     result.insert_meta("preflight", preflight);
                 }
@@ -2067,6 +2102,26 @@ impl Orchestrator {
             outcomes.push(outcome?);
         }
         Ok(outcomes)
+    }
+
+    async fn execute_tool_with_parallel_guard(
+        &self,
+        execution_lock: Arc<tokio::sync::RwLock<()>>,
+        tool_context: &ToolContext<'_>,
+        name: &str,
+        args: &Value,
+        timeout: Option<Duration>,
+        supports_parallel_execution: bool,
+    ) -> Result<Value, anyhow::Error> {
+        if supports_parallel_execution {
+            let _guard = execution_lock.read().await;
+            self.execute_tool_with_timeout(tool_context, name, args, timeout)
+                .await
+        } else {
+            let _guard = execution_lock.write().await;
+            self.execute_tool_with_timeout(tool_context, name, args, timeout)
+                .await
+        }
     }
 
     async fn finish_active_turn(

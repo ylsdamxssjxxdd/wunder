@@ -63,6 +63,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, warn};
 use uuid::Uuid;
 
+mod compaction_policy;
 mod config;
 pub mod constants;
 mod context;
@@ -83,6 +84,7 @@ mod stream_persist;
 mod thread_runtime;
 mod tool_calls;
 mod tool_exec;
+mod tool_parallel;
 mod turn_state;
 mod types;
 

@@ -160,14 +160,24 @@ impl Orchestrator {
         } else {
             None
         };
-        let (mut should_compact_by_history, mut should_compact) =
-            should_compact_by_context(projected_request_tokens, limit, history_threshold);
+        let compaction_decision = super::compaction_policy::should_compact_by_context(
+            projected_request_tokens,
+            limit,
+            history_threshold,
+        );
+        let mut should_compact_by_history = compaction_decision.by_history;
+        let mut should_compact = compaction_decision.should_compact();
         if force && !should_compact {
             should_compact = true;
             if !should_compact_by_history {
                 should_compact_by_history = true;
             }
         }
+        let compaction_trigger = if force && !compaction_decision.should_compact() {
+            "force"
+        } else {
+            compaction_decision.trigger()
+        };
         let total_tokens = projected_request_tokens;
         let history_usage = context_tokens;
         if !should_compact {
@@ -202,6 +212,8 @@ impl Orchestrator {
         let mut compacting_payload = json!({
             "stage": "compacting",
             "summary": summary_text,
+            "trigger": compaction_trigger,
+            "presampling_limit": compaction_decision.presampling_limit,
         });
         if let Value::Object(ref mut map) = compacting_payload {
             compaction_round.insert_into(map);
@@ -308,6 +320,7 @@ impl Orchestrator {
             }
             let mut compaction_payload = json!({
                 "reason": if should_compact_by_history { "history" } else { "overflow" },
+                "trigger": compaction_trigger,
                 "status": if guard_stats.applied { "guard_only" } else { "skipped" },
                 "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
                 "fresh_memory_injected": false,
@@ -319,6 +332,7 @@ impl Orchestrator {
                 "request_overhead_tokens": request_overhead_tokens,
                 "history_threshold": history_threshold,
                 "limit": limit,
+                "presampling_limit": compaction_decision.presampling_limit,
                 "message_budget": message_budget,
                 "total_tokens": total_tokens,
                 "reset_mode": reset_mode,
@@ -684,6 +698,7 @@ impl Orchestrator {
 
         let mut compaction_payload = json!({
             "reason": if should_compact_by_history { "history" } else { "overflow" },
+            "trigger": compaction_trigger,
             "status": if summary_fallback { "fallback" } else { "done" },
             "summary_fallback": summary_fallback,
             "fresh_memory_injected": fresh_memory_injected,
@@ -704,6 +719,7 @@ impl Orchestrator {
             "request_overhead_tokens": request_overhead_tokens,
             "history_threshold": history_threshold,
             "limit": limit,
+            "presampling_limit": compaction_decision.presampling_limit,
             "message_budget": message_budget,
             "reset_mode": reset_mode,
             "context_guard_applied": guard_stats.applied,
@@ -1808,19 +1824,18 @@ fn collect_recent_user_messages_for_compaction(messages: &[Value], token_limit: 
     selected_rev
 }
 
+#[cfg(test)]
 fn should_compact_by_context(
     context_tokens: i64,
     limit: i64,
     history_threshold: Option<i64>,
 ) -> (bool, bool) {
-    let should_compact_by_history = history_threshold
-        .map(|threshold| context_tokens >= threshold)
-        .unwrap_or(false);
-    let should_compact_by_overflow = context_tokens >= limit;
-    (
-        should_compact_by_history,
-        should_compact_by_history || should_compact_by_overflow,
-    )
+    let decision = super::compaction_policy::should_compact_by_context(
+        context_tokens,
+        limit,
+        history_threshold,
+    );
+    (decision.by_history, decision.should_compact())
 }
 
 fn resolve_message_budget(limit: i64, request_overhead_tokens: i64) -> i64 {

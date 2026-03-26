@@ -759,6 +759,18 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
                     index += 1;
                     continue;
                 }
+                if raw.is_empty() {
+                    // Treat accidental blank separator lines between hunks as non-semantic whitespace.
+                    let has_upcoming_chunk_header = lines[index + 1..end]
+                        .iter()
+                        .find(|line| !line.is_empty())
+                        .is_some_and(|line| line.as_str() == "@@" || line.starts_with("@@ "));
+                    if has_upcoming_chunk_header {
+                        index += 1;
+                        continue;
+                    }
+                    return Err(patch_empty_update_line_error(index + 1));
+                }
                 let mut chars = raw.chars();
                 let Some(marker) = chars.next() else {
                     return Err(patch_empty_update_line_error(index + 1));
@@ -1997,6 +2009,34 @@ mod tests {
         assert_eq!(chunks[0].lines.len(), 5);
         assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Context));
         assert_eq!(chunks[0].lines[3].text, "");
+    }
+
+    #[test]
+    fn parse_patch_ignores_blank_separators_between_update_chunks() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+-line1
++line1x
+@@
+
+@@
+ line2
+*** End Patch"#;
+        let ops =
+            parse_patch(patch).expect("blank separators between chunk headers should be ignored");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].lines.len(), 2);
+        assert_eq!(chunks[1].lines.len(), 1);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[0].text, "line1");
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[1].text, "line1x");
+        assert!(matches!(chunks[1].lines[0].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[1].lines[0].text, "line2");
     }
 
     #[test]

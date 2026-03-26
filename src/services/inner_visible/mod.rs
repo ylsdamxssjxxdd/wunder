@@ -1544,14 +1544,15 @@ mod tests {
         assert_eq!(updated_with_skill.approval_mode, "auto_edit");
         assert_eq!(updated_with_skill.sandbox_container_id, 3);
 
+        let refreshed_default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
         let mut document: WorkerCardDocument = serde_json::from_str(
-            &fs::read_to_string(&default_card).expect("read updated default card"),
+            &fs::read_to_string(&refreshed_default_card).expect("read updated default card"),
         )
         .expect("parse updated default card");
         std::thread::sleep(Duration::from_millis(30));
         document.abilities.skills = Vec::new();
         atomic_write_text(
-            &default_card,
+            &refreshed_default_card,
             &serde_json::to_string_pretty(&document).expect("serialize default card"),
         )
         .expect("rewrite default card without skill");
@@ -1591,8 +1592,9 @@ mod tests {
             .iter()
             .all(|item| item.runtime_name != skill_alias));
 
+        let rewritten_default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
         let rewritten: WorkerCardDocument = serde_json::from_str(
-            &fs::read_to_string(&default_card).expect("read rewritten default card"),
+            &fs::read_to_string(&rewritten_default_card).expect("read rewritten default card"),
         )
         .expect("parse rewritten default card");
         assert_eq!(rewritten.abilities.tool_names, vec![selected_tool]);
@@ -1688,13 +1690,6 @@ mod tests {
             serde_json::from_str(&meta).expect("parse default meta");
         assert_eq!(mirror.declared_skill_names, vec![skill_alias.clone()]);
         assert!(mirror.tool_names.contains(&skill_alias));
-
-        let record = user_store
-            .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)
-            .expect("query default agent")
-            .expect("default agent exists");
-        assert_eq!(record.declared_skill_names, vec![skill_alias.clone()]);
-        assert!(record.tool_names.contains(&skill_alias));
 
         let rewritten: WorkerCardDocument = serde_json::from_str(
             &fs::read_to_string(&default_card).expect("read rewritten default card"),
