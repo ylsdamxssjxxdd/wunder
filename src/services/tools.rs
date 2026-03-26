@@ -23,6 +23,7 @@ mod self_status_tool;
 mod session_run_stream;
 mod skill_call;
 mod sleep_tool;
+mod subagent_control;
 mod swarm_realtime;
 mod thread_control_tool;
 pub(crate) mod tool_error;
@@ -1157,24 +1158,46 @@ struct SessionRunOutcome {
     elapsed_s: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+struct SessionRunMeta {
+    dispatch_id: Option<String>,
+    run_kind: Option<String>,
+    requested_by: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedChildSession {
+    child_session_id: String,
+    child_agent_id: Option<String>,
+    model_name: Option<String>,
+    request: WunderRequest,
+    announce: AnnounceConfig,
+}
+
 #[derive(Clone, Copy)]
 enum SessionCleanup {
     Keep,
     Delete,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AnnounceConfig {
     parent_session_id: String,
     label: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct SubagentControlArgs {
     action: String,
 }
 
 async fn subagent_control(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    self::subagent_control::execute(context, args).await
+}
+
+#[allow(dead_code)]
+async fn subagent_control_legacy(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentControlArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let action = payload.action.trim();
@@ -1391,6 +1414,11 @@ async fn dispatch_swarm_batch_task(
         Some(context.session_id.to_string()),
         Some(task.agent_id.clone()),
         model_name,
+        SessionRunMeta {
+            run_kind: Some("swarm".to_string()),
+            requested_by: Some("agent_swarm".to_string()),
+            ..SessionRunMeta::default()
+        },
         announce,
         SessionCleanup::Keep,
         None,
@@ -2893,6 +2921,11 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         Some(context.session_id.to_string()),
         record.agent_id.clone(),
         model_name,
+        SessionRunMeta {
+            run_kind: Some("subagent".to_string()),
+            requested_by: Some("subagent_control".to_string()),
+            ..SessionRunMeta::default()
+        },
         announce,
         SessionCleanup::Keep,
         None,
@@ -2939,28 +2972,33 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     }
 }
 
-async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: SessionSpawnArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let task = payload.task.trim().to_string();
-    if task.is_empty() {
+fn prepare_child_session(
+    context: &ToolContext<'_>,
+    parent_session_id: &str,
+    task: &str,
+    label: Option<String>,
+    agent_id: Option<String>,
+    model_name: Option<String>,
+) -> Result<PreparedChildSession> {
+    let cleaned_task = task.trim();
+    if cleaned_task.is_empty() {
         return Err(anyhow!(i18n::t("error.content_required")));
     }
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
-    let parent_session_id = context.session_id.trim().to_string();
-    if parent_session_id.is_empty() {
+    let cleaned_parent_session_id = parent_session_id.trim();
+    if cleaned_parent_session_id.is_empty() {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
-    let label = normalize_optional_string(payload.label);
-    let agent_id = normalize_optional_string(payload.agent_id);
-    let model_name = normalize_optional_string(payload.model);
 
+    let label = normalize_optional_string(label);
+    let agent_id = normalize_optional_string(agent_id);
+    let model_name = normalize_optional_string(model_name);
     let parent_record = context
         .storage
-        .get_chat_session(user_id, &parent_session_id)
+        .get_chat_session(user_id, cleaned_parent_session_id)
         .unwrap_or(None);
     let parent_agent_id = parent_record
         .as_ref()
@@ -3003,37 +3041,63 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         last_message_at: now,
         agent_id: child_agent_id.clone(),
         tool_overrides: parent_tool_names.clone(),
-        parent_session_id: Some(parent_session_id.clone()),
+        parent_session_id: Some(cleaned_parent_session_id.to_string()),
         parent_message_id: None,
         spawn_label: label.clone(),
         spawned_by: Some("model".to_string()),
     };
     context.storage.upsert_chat_session(&child_record)?;
 
-    let request = WunderRequest {
-        user_id: user_id.to_string(),
-        question: task,
-        tool_names: parent_tool_names,
-        skip_tool_calls: false,
-        stream: true,
-        debug_payload: false,
-        session_id: Some(child_session_id.clone()),
-        agent_id: child_agent_id.clone(),
+    Ok(PreparedChildSession {
+        child_session_id: child_session_id.clone(),
+        child_agent_id: child_agent_id.clone(),
         model_name: model_name.clone(),
-        language: Some(i18n::get_language()),
-        config_overrides: context.request_config_overrides.cloned(),
-        agent_prompt,
-        attachments: None,
-        allow_queue: true,
-        is_admin: context.is_admin,
-        approval_tx: None,
-    };
+        request: WunderRequest {
+            user_id: user_id.to_string(),
+            question: cleaned_task.to_string(),
+            tool_names: parent_tool_names,
+            skip_tool_calls: false,
+            stream: true,
+            debug_payload: false,
+            session_id: Some(child_session_id),
+            agent_id: child_agent_id,
+            model_name,
+            language: Some(i18n::get_language()),
+            config_overrides: context.request_config_overrides.cloned(),
+            agent_prompt,
+            attachments: None,
+            allow_queue: true,
+            is_admin: context.is_admin,
+            approval_tx: None,
+        },
+        announce: AnnounceConfig {
+            parent_session_id: cleaned_parent_session_id.to_string(),
+            label,
+        },
+    })
+}
+
+async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: SessionSpawnArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let parent_session_id = context.session_id.trim().to_string();
+    let prepared = prepare_child_session(
+        context,
+        &parent_session_id,
+        &payload.task,
+        payload.label.clone(),
+        payload.agent_id.clone(),
+        payload.model.clone(),
+    )?;
+    let PreparedChildSession {
+        child_session_id,
+        child_agent_id,
+        model_name,
+        request,
+        announce,
+    } = prepared;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());
-    let announce = AnnounceConfig {
-        parent_session_id: parent_session_id.clone(),
-        label,
-    };
     let mut receiver = spawn_session_run(
         context,
         request,
@@ -3041,6 +3105,11 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         Some(parent_session_id),
         child_agent_id,
         model_name,
+        SessionRunMeta {
+            run_kind: Some("subagent".to_string()),
+            requested_by: Some("subagent_control".to_string()),
+            ..SessionRunMeta::default()
+        },
         Some(announce),
         cleanup,
         payload.run_timeout_seconds,
@@ -3051,7 +3120,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         return Ok(json!({
             "status": "accepted",
             "run_id": run_id,
-            "child_session_id": child_session_id
+            "child_session_id": child_session_id.clone()
         }));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
@@ -3059,7 +3128,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         "stage": "subagent_wait",
         "summary": summary,
         "run_id": run_id,
-        "child_session_id": child_session_id
+        "child_session_id": child_session_id.clone()
     });
     if let Some(emitter) = context.event_emitter.as_ref() {
         emitter.emit("progress", wait_payload);
@@ -3082,7 +3151,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                         "stage": "subagent_wait",
                         "summary": i18n::t("monitor.summary.subagent_wait"),
                         "run_id": run_id,
-                        "child_session_id": child_session_id,
+                        "child_session_id": child_session_id.clone(),
                         "elapsed_s": start_wait.elapsed().as_secs_f64()
                     }));
                 }
@@ -3098,7 +3167,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                 Ok(json!({
                     "status": "ok",
                     "run_id": run_id,
-                    "child_session_id": child_session_id,
+                    "child_session_id": child_session_id.clone(),
                     "reply": outcome.answer.unwrap_or_default(),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3106,7 +3175,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                 Ok(json!({
                     "status": outcome.status,
                     "run_id": run_id,
-                    "child_session_id": child_session_id,
+                    "child_session_id": child_session_id.clone(),
                     "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3115,7 +3184,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         Ok(Err(err)) => Ok(json!({
             "status": "error",
             "run_id": run_id,
-            "child_session_id": child_session_id,
+            "child_session_id": child_session_id.clone(),
             "error": err.to_string()
         })),
         Err(_) => Ok(json!({
@@ -3176,6 +3245,7 @@ async fn spawn_session_run(
     parent_session_id: Option<String>,
     agent_id: Option<String>,
     model_name: Option<String>,
+    run_meta: SessionRunMeta,
     announce: Option<AnnounceConfig>,
     cleanup: SessionCleanup,
     run_timeout_s: Option<f64>,
@@ -3196,6 +3266,9 @@ async fn spawn_session_run(
         session_id: session_id.clone(),
         parent_session_id: parent_session_id.clone(),
         user_id: user_id.clone(),
+        dispatch_id: run_meta.dispatch_id.clone(),
+        run_kind: run_meta.run_kind.clone(),
+        requested_by: run_meta.requested_by.clone(),
         agent_id: agent_id.clone(),
         model_name: model_name.clone(),
         status: "queued".to_string(),
@@ -5297,6 +5370,20 @@ struct ReadBudget {
     max_files: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadFailureKind {
+    PathInvalid,
+    NotFound,
+    TooLarge,
+    Binary,
+}
+
+#[derive(Clone, Debug)]
+struct ReadFailure {
+    kind: ReadFailureKind,
+    detail: String,
+}
+
 impl ReadBudget {
     fn to_json(self) -> Value {
         json!({
@@ -5485,13 +5572,39 @@ fn normalize_read_path_hint(path: String) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
+    trimmed.to_string()
+}
 
-    for prefix in ["/workspaces/", "\\workspaces\\", "/workspace/"] {
-        if let Some(value) = trimmed.strip_prefix(prefix) {
-            let candidate = value.trim_matches(|ch| matches!(ch, '/' | '\\')).trim();
-            if !candidate.is_empty() {
-                return candidate.to_string();
+fn normalize_read_path_for_workspace(raw_path: &str, workspace_id: &str) -> String {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+
+    for prefix in ["/workspaces/", "workspaces/"] {
+        if let Some(value) = normalized.strip_prefix(prefix) {
+            let candidate = value.trim_matches('/').trim();
+            if candidate.is_empty() {
+                return String::new();
             }
+            let mut segments = candidate.splitn(2, '/');
+            let owner = segments.next().unwrap_or("").trim();
+            let rest = segments.next().unwrap_or("").trim();
+            if rest.is_empty() {
+                return owner.to_string();
+            }
+            if owner == workspace_id {
+                return rest.to_string();
+            }
+            return format!("/workspaces/{candidate}");
+        }
+    }
+
+    for prefix in ["/workspace/", "workspace/"] {
+        if let Some(value) = normalized.strip_prefix(prefix) {
+            return value.trim_matches('/').trim().to_string();
         }
     }
 
@@ -5605,6 +5718,10 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             ));
         }
     };
+    let user_id = context.workspace_id.to_string();
+    for spec in &mut specs {
+        spec.path = normalize_read_path_for_workspace(&spec.path, &user_id);
+    }
     let requested_files = specs.len();
     let mut budget_file_limit_hit = false;
     if let Some(max_files) = read_budget.max_files {
@@ -5616,7 +5733,6 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 
     let specs_for_lsp = specs.clone();
     let workspace = context.workspace.clone();
-    let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
     let budget_for_task = read_budget;
     let result = tokio::task::spawn_blocking(move || {
@@ -5659,6 +5775,8 @@ fn read_files_inner(
     let started_at = Instant::now();
     let mut outputs = Vec::new();
     let mut summaries = Vec::new();
+    let mut failures = Vec::new();
+    let mut successful_reads = 0usize;
     let mut timeout_hit = false;
     let mut output_budget_hit = false;
     let mut output_budget_omitted_bytes = 0usize;
@@ -5683,7 +5801,15 @@ fn read_files_inner(
                 if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
                     Some(resolved)
                 } else {
-                    outputs.push(format!(">>> {}\n{}", raw_path, err));
+                    let message = err.to_string();
+                    outputs.push(format!(">>> {}\n{}", raw_path, message));
+                    failures.push(ReadFailure {
+                        kind: ReadFailureKind::PathInvalid,
+                        detail: format!("{raw_path}: {message}"),
+                    });
+                    if let Value::Object(ref mut map) = summary {
+                        map.insert("error".to_string(), Value::String(message));
+                    }
                     None
                 }
             }
@@ -5693,11 +5819,16 @@ fn read_files_inner(
             continue;
         };
         if !target.exists() {
-            outputs.push(format!(
-                ">>> {}\n{}",
-                raw_path,
-                i18n::t("tool.read.not_found")
-            ));
+            let message = i18n::t("tool.read.not_found");
+            outputs.push(format!(">>> {}\n{}", raw_path, message));
+            failures.push(ReadFailure {
+                kind: ReadFailureKind::NotFound,
+                detail: format!("{raw_path}: {message}"),
+            });
+            if let Value::Object(ref mut map) = summary {
+                map.insert("exists".to_string(), Value::Bool(false));
+                map.insert("error".to_string(), Value::String(message));
+            }
             summaries.push(summary);
             continue;
         }
@@ -5723,15 +5854,21 @@ fn read_files_inner(
                     ReadFileMode::Indentation => "indentation",
                 }
             ));
+            successful_reads += 1;
             summaries.push(summary);
             continue;
         }
         if size > MAX_READ_BYTES as u64 {
-            outputs.push(format!(
-                ">>> {}\n{}",
-                raw_path,
-                i18n::t("tool.read.too_large")
-            ));
+            let message = i18n::t("tool.read.too_large");
+            outputs.push(format!(">>> {}\n{}", raw_path, message));
+            failures.push(ReadFailure {
+                kind: ReadFailureKind::TooLarge,
+                detail: format!("{raw_path}: {message}"),
+            });
+            if let Value::Object(ref mut map) = summary {
+                map.insert("size_bytes".to_string(), Value::from(size));
+                map.insert("error".to_string(), Value::String(message));
+            }
             summaries.push(summary);
             continue;
         }
@@ -5753,10 +5890,15 @@ fn read_files_inner(
                     map.insert("size_bytes".to_string(), Value::from(size));
                 }
                 outputs.push(format!(">>> {}\n{}", raw_path, message));
+                failures.push(ReadFailure {
+                    kind: ReadFailureKind::Binary,
+                    detail: format!("{raw_path}: {message}"),
+                });
                 summaries.push(summary);
                 continue;
             }
         };
+        successful_reads += 1;
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
         match spec.mode {
@@ -5843,7 +5985,7 @@ fn read_files_inner(
         result = truncated;
     }
     let processed_files = summaries.len();
-    Ok(json!({
+    let data = json!({
         "content": result,
         "meta": {
             "files": summaries,
@@ -5859,7 +6001,54 @@ fn read_files_inner(
                 "budget": budget.to_json(),
             }
         }
-    }))
+    });
+    if successful_reads == 0 && !failures.is_empty() {
+        let (code, hint) = classify_read_failure(&failures);
+        let error = failures
+            .first()
+            .map(|failure| failure.detail.clone())
+            .unwrap_or_else(|| i18n::t("tool.read.empty_result"));
+        return Ok(build_failed_tool_result(
+            error,
+            data,
+            ToolErrorMeta::new(code, Some(hint), false, None),
+            false,
+        ));
+    }
+    Ok(data)
+}
+
+fn classify_read_failure(failures: &[ReadFailure]) -> (&'static str, String) {
+    let all_are = |kind| failures.iter().all(|failure| failure.kind == kind);
+    if all_are(ReadFailureKind::NotFound) {
+        return (
+            "TOOL_READ_NOT_FOUND",
+            "请先调用列出文件确认真实路径；若目标是技能正文，优先使用技能调用，不要猜测 SKILL.md 路径。".to_string(),
+        );
+    }
+    if all_are(ReadFailureKind::PathInvalid) {
+        return (
+            "TOOL_READ_PATH_INVALID",
+            "请使用相对路径，或直接传入当前工作区的 /workspaces/{user_id}/... 公共路径；不要越界到其他工作区。".to_string(),
+        );
+    }
+    if all_are(ReadFailureKind::Binary) {
+        return (
+            "TOOL_READ_BINARY_FILE",
+            "该工具只适合纯文本文件；图片请改用读图工具，Office/PDF/压缩包请改用对应工具。"
+                .to_string(),
+        );
+    }
+    if all_are(ReadFailureKind::TooLarge) {
+        return (
+            "TOOL_READ_TOO_LARGE",
+            "请改为读取更具体的文件，或配合搜索内容、行号范围、分块读取来缩小结果。".to_string(),
+        );
+    }
+    (
+        "TOOL_READ_NO_USABLE_TEXT",
+        "请先列出文件或搜索内容定位更精确的文本文件，再读取所需片段。".to_string(),
+    )
 }
 
 fn truncate_utf8_output(text: &str, budget_bytes: usize) -> (String, usize) {
@@ -5905,41 +6094,42 @@ async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<V
         return Err(anyhow!(i18n::t("tool.skill_call.name_required")));
     }
 
-    let mut selected: Option<SkillSpec> = context.skills.get(&raw_name);
-    if selected.is_none() {
-        if let Some(bindings) = context.user_tool_bindings {
-            if let Some(spec) = bindings
+    let mut selected: Option<SkillSpec> = None;
+    if let Some(bindings) = context.user_tool_bindings {
+        if let Some(spec) = bindings
+            .skill_specs
+            .iter()
+            .find(|spec| spec.name == raw_name)
+        {
+            selected = Some(spec.clone());
+        } else {
+            let suffix = format!("@{raw_name}");
+            let matches: Vec<SkillSpec> = bindings
                 .skill_specs
                 .iter()
-                .find(|spec| spec.name == raw_name)
-            {
-                selected = Some(spec.clone());
-            } else {
-                let suffix = format!("@{raw_name}");
-                let matches: Vec<SkillSpec> = bindings
-                    .skill_specs
+                .filter(|spec| spec.name.ends_with(&suffix))
+                .cloned()
+                .collect();
+            if matches.len() == 1 {
+                selected = Some(matches[0].clone());
+            } else if matches.len() > 1 {
+                let candidates = matches
                     .iter()
-                    .filter(|spec| spec.name.ends_with(&suffix))
-                    .cloned()
-                    .collect();
-                if matches.len() == 1 {
-                    selected = Some(matches[0].clone());
-                } else if matches.len() > 1 {
-                    let candidates = matches
-                        .iter()
-                        .map(|spec| spec.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(anyhow!(i18n::t_with_params(
-                        "tool.skill_call.ambiguous",
-                        &HashMap::from([
-                            ("name".to_string(), raw_name.clone()),
-                            ("candidates".to_string(), candidates),
-                        ]),
-                    )));
-                }
+                    .map(|spec| spec.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(anyhow!(i18n::t_with_params(
+                    "tool.skill_call.ambiguous",
+                    &HashMap::from([
+                        ("name".to_string(), raw_name.clone()),
+                        ("candidates".to_string(), candidates),
+                    ]),
+                )));
             }
         }
+    }
+    if selected.is_none() {
+        selected = context.skills.get(&raw_name);
     }
 
     let Some(spec) = selected else {
@@ -7204,14 +7394,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_read_file_specs_normalizes_workspace_prefixed_path() {
-        let specs = parse_read_file_specs(&json!({
-            "path": "/workspaces/Cargo.toml",
-        }))
-        .expect("workspace-prefixed path should parse");
+    fn normalize_read_path_for_workspace_strips_matching_workspace_id() {
+        let normalized = normalize_read_path_for_workspace(
+            "/workspaces/admin/agents/demo.worker-card.json",
+            "admin",
+        );
+        assert_eq!(normalized, "agents/demo.worker-card.json");
+    }
 
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].path, "Cargo.toml");
+    #[test]
+    fn normalize_read_path_for_workspace_keeps_mismatched_workspace_id() {
+        let normalized =
+            normalize_read_path_for_workspace("/workspaces/another_owner/demo.txt", "admin");
+        assert_eq!(normalized, "/workspaces/another_owner/demo.txt");
+    }
+
+    #[test]
+    fn normalize_read_path_for_workspace_accepts_legacy_workspace_prefix() {
+        let normalized = normalize_read_path_for_workspace("/workspaces/Cargo.toml", "admin");
+        assert_eq!(normalized, "Cargo.toml");
     }
 
     #[test]
@@ -7250,6 +7451,43 @@ mod tests {
         assert_eq!(budget.time_budget_ms, Some(9000));
         assert_eq!(budget.output_budget_bytes, Some(4096));
         assert_eq!(budget.max_files, Some(3));
+    }
+
+    #[test]
+    fn read_files_inner_returns_failed_result_when_all_files_missing() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-files-missing.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let value = read_files_inner(
+            &workspace,
+            "admin",
+            &[],
+            vec![ReadFileSpec {
+                path: "missing.txt".to_string(),
+                ranges: vec![(1, 20)],
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
+            }],
+            ReadBudget::default(),
+            false,
+            1,
+            false,
+        )
+        .expect("read files result");
+
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            value.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("TOOL_READ_NOT_FOUND")
+        );
     }
 
     #[test]

@@ -633,6 +633,9 @@ pub struct SessionRunRecord {
     pub session_id: String,
     pub parent_session_id: Option<String>,
     pub user_id: String,
+    pub dispatch_id: Option<String>,
+    pub run_kind: Option<String>,
+    pub requested_by: Option<String>,
     pub agent_id: Option<String>,
     pub model_name: Option<String>,
     pub status: String,
@@ -1465,6 +1468,24 @@ pub trait StorageBackend: Send + Sync {
 
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()>;
     fn get_session_run(&self, run_id: &str) -> Result<Option<SessionRunRecord>>;
+    fn list_session_runs_by_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>>;
+    fn list_session_runs_by_parent(
+        &self,
+        user_id: &str,
+        parent_session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>>;
+    fn list_session_runs_by_dispatch(
+        &self,
+        user_id: &str,
+        dispatch_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>>;
 
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()>;
     fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>>;

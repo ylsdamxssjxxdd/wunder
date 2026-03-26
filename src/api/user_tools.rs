@@ -815,7 +815,14 @@ async fn user_skills_content(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    let spec = match resolve_user_skill_spec(&config, &skill_root, name) {
+        Ok(spec) => spec,
+        Err(_) => load_skills(&config, false, false, false)
+            .get(name)
+            .ok_or_else(|| {
+                error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found"))
+            })?,
+    };
     let skill_path = PathBuf::from(&spec.path);
     if !skill_path.exists() || !skill_path.is_file() {
         return Err(error_response(
@@ -2429,6 +2436,22 @@ fn build_user_tools_summary(
             });
     }
 
+    let mut selected_current_user_skill_names = HashSet::new();
+    for allowed_name in allowed {
+        let Some(alias_info) = context.bindings.alias_map.get(allowed_name) else {
+            continue;
+        };
+        if !matches!(alias_info.kind, crate::user_tools::UserToolKind::Skill)
+            || alias_info.owner_id != user_id
+        {
+            continue;
+        }
+        let target_name = alias_info.target.trim();
+        if !target_name.is_empty() {
+            selected_current_user_skill_names.insert(target_name.to_string());
+        }
+    }
+
     let mut user_tools = Vec::new();
     let mut user_mcp_tools = Vec::new();
     let mut user_skills = Vec::new();
@@ -2440,10 +2463,17 @@ fn build_user_tools_summary(
         let Some(alias_info) = context.bindings.alias_map.get(&alias) else {
             continue;
         };
-        let is_allowed = allowed.contains(&alias);
+        let target_name = alias_info.target.trim();
         let is_current_user_skill =
             matches!(alias_info.kind, crate::user_tools::UserToolKind::Skill)
                 && alias_info.owner_id == user_id;
+        let is_primary_current_user_skill = is_current_user_skill && alias == target_name;
+        if is_current_user_skill && !is_primary_current_user_skill {
+            continue;
+        }
+        let is_allowed = allowed.contains(&alias)
+            || (is_primary_current_user_skill
+                && selected_current_user_skill_names.contains(target_name));
         if !is_allowed && !(include_unavailable_user_skills && is_current_user_skill) {
             continue;
         }
@@ -3294,15 +3324,15 @@ mod tests {
     fn catalog_can_expose_user_custom_skills_even_when_not_allowed() {
         let mut bindings = UserToolBindings::default();
         bindings.alias_specs.insert(
-            "alice@custom_skill".to_string(),
+            "custom_skill".to_string(),
             ToolSpec {
-                name: "alice@custom_skill".to_string(),
+                name: "custom_skill".to_string(),
                 description: "custom skill".to_string(),
                 input_schema: json!({ "type": "object" }),
             },
         );
         bindings.alias_map.insert(
-            "alice@custom_skill".to_string(),
+            "custom_skill".to_string(),
             UserToolAlias {
                 kind: UserToolKind::Skill,
                 owner_id: "alice".to_string(),
@@ -3341,10 +3371,7 @@ mod tests {
 
         let summary_with_catalog = build_user_tools_summary("alice", &allowed, &context, true);
         assert_eq!(summary_with_catalog.user_skills.len(), 1);
-        assert_eq!(
-            summary_with_catalog.user_skills[0].name,
-            "alice@custom_skill"
-        );
+        assert_eq!(summary_with_catalog.user_skills[0].name, "custom_skill");
         assert!(
             summary_with_catalog
                 .user_mcp_tools

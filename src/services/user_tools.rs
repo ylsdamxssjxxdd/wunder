@@ -161,6 +161,22 @@ impl UserToolStore {
         format!("{}@{}", owner_id, tool_name)
     }
 
+    pub fn build_user_skill_name(
+        &self,
+        current_user_id: &str,
+        owner_id: &str,
+        skill_name: &str,
+    ) -> String {
+        let normalized_owner_id = owner_id.trim();
+        let normalized_current_user_id = current_user_id.trim();
+        let normalized_skill_name = skill_name.trim();
+        if normalized_owner_id == normalized_current_user_id {
+            normalized_skill_name.to_string()
+        } else {
+            self.build_alias_name(normalized_owner_id, normalized_skill_name)
+        }
+    }
+
     /// 获取共享工具版本号，用于提示词缓存判断。
     pub fn shared_version(&self) -> f64 {
         0.0
@@ -626,7 +642,7 @@ impl UserToolManager {
         let mut mcp_servers: HashMap<String, HashMap<String, McpServerConfig>> = HashMap::new();
         let knowledge_schema = build_knowledge_schema();
 
-        let owner_id = if user_payload.user_id.trim().is_empty() {
+        let current_owner_id = if user_payload.user_id.trim().is_empty() {
             user_id.to_string()
         } else {
             user_payload.user_id.clone()
@@ -725,7 +741,7 @@ impl UserToolManager {
                     }
                 };
 
-            collect_mcp_tools(&owner_id, &user_payload.mcp_servers, false);
+            collect_mcp_tools(&current_owner_id, &user_payload.mcp_servers, false);
             for shared_payload in &shared_payloads {
                 let shared_owner = if shared_payload.user_id.trim().is_empty() {
                     user_id.to_string()
@@ -754,74 +770,90 @@ impl UserToolManager {
             };
 
             let shared_tools_filter = shared_tools_filter.cloned();
-            let mut collect_skill_tools = |owner_id: &str, names: &[String], shared_only: bool| {
-                let skill_root = self.store.get_skill_root(owner_id);
-                if !skill_root.exists() {
-                    return;
-                }
-                let requested_names: HashSet<String> = names
-                    .iter()
-                    .map(|name| name.trim().to_string())
-                    .filter(|name| !name.is_empty())
-                    .collect();
-                let specs =
-                    self.load_cached_skill_specs(config, owner_id, &skill_root, &requested_names);
-                if specs.is_empty() {
-                    return;
-                }
-                // Keep user skill aliases even when the underlying skill name matches a
-                // global skill. The alias is namespaced by owner_id, so it remains distinct
-                // and must stay visible in the agent mount catalog.
-                let mut enabled: HashSet<String> =
-                    specs.iter().map(|spec| spec.name.clone()).collect();
-                if shared_only {
-                    enabled.retain(|name| requested_names.contains(name));
-                }
-                if enabled.is_empty() {
-                    return;
-                }
-                register_skill_source(
-                    owner_id,
-                    skill_root.clone(),
-                    enabled.iter().cloned().collect(),
-                );
-                for spec in specs {
-                    if shared_only && !enabled.contains(&spec.name) {
-                        continue;
+            let mut collect_skill_tools =
+                |skill_owner_id: &str, names: &[String], shared_only: bool| {
+                    let skill_root = self.store.get_skill_root(skill_owner_id);
+                    if !skill_root.exists() {
+                        return;
                     }
-                    let alias_name = self.store.build_alias_name(owner_id, &spec.name);
+                    let requested_names: HashSet<String> = names
+                        .iter()
+                        .map(|name| name.trim().to_string())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    let specs = self.load_cached_skill_specs(
+                        config,
+                        skill_owner_id,
+                        &skill_root,
+                        &requested_names,
+                    );
+                    if specs.is_empty() {
+                        return;
+                    }
+                    let mut enabled: HashSet<String> =
+                        specs.iter().map(|spec| spec.name.clone()).collect();
                     if shared_only {
-                        if let Some(filter) = shared_tools_filter.as_ref() {
-                            if !filter.contains(&alias_name) {
-                                continue;
+                        enabled.retain(|name| requested_names.contains(name));
+                    }
+                    if enabled.is_empty() {
+                        return;
+                    }
+                    register_skill_source(
+                        skill_owner_id,
+                        skill_root.clone(),
+                        enabled.iter().cloned().collect(),
+                    );
+                    let allow_bare_name = !shared_only && skill_owner_id == current_owner_id;
+                    for spec in specs {
+                        if shared_only && !enabled.contains(&spec.name) {
+                            continue;
+                        }
+                        let alias_name = self.store.build_user_skill_name(
+                            &current_owner_id,
+                            skill_owner_id,
+                            &spec.name,
+                        );
+                        let legacy_alias = allow_bare_name
+                            .then(|| self.store.build_alias_name(skill_owner_id, &spec.name))
+                            .filter(|legacy_name| legacy_name != &alias_name);
+                        if shared_only {
+                            if let Some(filter) = shared_tools_filter.as_ref() {
+                                if !filter.contains(&alias_name) {
+                                    continue;
+                                }
                             }
                         }
-                    }
-                    if blocked_names.contains(&alias_name) || alias_map.contains_key(&alias_name) {
-                        continue;
-                    }
-                    blocked_names.insert(alias_name.clone());
-                    alias_map.insert(
-                        alias_name.clone(),
-                        UserToolAlias {
+                        let allow_global_skill_override =
+                            allow_bare_name && skill_names.contains(&alias_name);
+                        if (blocked_names.contains(&alias_name)
+                            || alias_map.contains_key(&alias_name))
+                            && !allow_global_skill_override
+                        {
+                            continue;
+                        }
+                        let alias_info = UserToolAlias {
                             kind: UserToolKind::Skill,
-                            owner_id: owner_id.to_string(),
+                            owner_id: skill_owner_id.to_string(),
                             target: spec.name.clone(),
-                        },
-                    );
-                    skill_specs.push(SkillSpec {
-                        name: alias_name,
-                        description: spec.description.clone(),
-                        path: spec.path.clone(),
-                        input_schema: spec.input_schema.clone(),
-                        frontmatter: spec.frontmatter.clone(),
-                        root: spec.root.clone(),
-                        entrypoint: None,
-                    });
-                }
-            };
+                        };
+                        blocked_names.insert(alias_name.clone());
+                        alias_map.insert(alias_name.clone(), alias_info.clone());
+                        if let Some(legacy_alias) = legacy_alias {
+                            alias_map.entry(legacy_alias).or_insert(alias_info.clone());
+                        }
+                        skill_specs.push(SkillSpec {
+                            name: alias_name,
+                            description: spec.description.clone(),
+                            path: spec.path.clone(),
+                            input_schema: spec.input_schema.clone(),
+                            frontmatter: spec.frontmatter.clone(),
+                            root: spec.root.clone(),
+                            entrypoint: None,
+                        });
+                    }
+                };
 
-            collect_skill_tools(&owner_id, &user_payload.skills.enabled, false);
+            collect_skill_tools(&current_owner_id, &user_payload.skills.enabled, false);
             for shared_payload in &shared_payloads {
                 let shared_owner = if shared_payload.user_id.trim().is_empty() {
                     user_id.to_string()
@@ -894,7 +926,7 @@ impl UserToolManager {
                     }
                 };
 
-            collect_knowledge_tools(&owner_id, &user_payload.knowledge_bases, false);
+            collect_knowledge_tools(&current_owner_id, &user_payload.knowledge_bases, false);
             for shared_payload in &shared_payloads {
                 let shared_owner = if shared_payload.user_id.trim().is_empty() {
                     user_id.to_string()
@@ -1533,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn build_bindings_for_catalog_keeps_user_skill_alias_when_name_matches_global_skill() {
+    fn build_bindings_for_catalog_keeps_current_user_skill_name_when_name_matches_global_skill() {
         let root = tempdir().expect("tempdir");
         let db_path = root.path().join("user-tools.db");
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
@@ -1573,7 +1605,7 @@ mod tests {
         let bindings = manager.build_bindings_for_catalog(&config, &global_skills, "alice");
 
         assert!(
-            bindings.alias_map.contains_key("alice@summary_skill"),
+            bindings.alias_map.contains_key("summary_skill"),
             "custom user skills should stay mountable even if they share a name with a global skill"
         );
     }

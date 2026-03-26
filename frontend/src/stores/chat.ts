@@ -3424,6 +3424,10 @@ const startSessionWatcher = (store, sessionId) => {
       hasContentDelta ||
       normalizedEventType === 'final' ||
       normalizedEventType === 'error' ||
+      normalizedEventType === 'queue_enter' ||
+      normalizedEventType === 'queue_start' ||
+      normalizedEventType === 'queue_finish' ||
+      normalizedEventType === 'queue_fail' ||
       normalizedEventType === 'received' ||
       normalizedEventType === 'round_start' ||
       normalizedEventType === 'progress' ||
@@ -3459,6 +3463,10 @@ const startSessionWatcher = (store, sessionId) => {
   const isWatchWorkflowEventType = (normalizedEventType) =>
     normalizedEventType === 'final' ||
     normalizedEventType === 'error' ||
+    normalizedEventType === 'queue_enter' ||
+    normalizedEventType === 'queue_start' ||
+    normalizedEventType === 'queue_finish' ||
+    normalizedEventType === 'queue_fail' ||
     normalizedEventType === 'received' ||
     normalizedEventType === 'round_start' ||
     normalizedEventType === 'progress' ||
@@ -3816,7 +3824,7 @@ const startSessionWatcher = (store, sessionId) => {
     } else {
       state.processor.handleEvent(eventType, dataText);
     }
-    if (eventType === 'final' || eventType === 'error') {
+    if (eventType === 'final' || eventType === 'error' || eventType === 'queue_fail') {
       finalizeRound(roundNumber, false);
       setSessionLoading(store, key, false);
       if (perfEnabled) {
@@ -5160,7 +5168,59 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
 
     // 基于事件类型生成工作流条目并更新回复内容
-    switch (eventType) {
+      switch (eventType) {
+      case 'queue_enter': {
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.workflow.queued'),
+            buildDetail(data ?? payload),
+            'pending',
+            { eventType: 'queue_enter' }
+          )
+        );
+        break;
+      }
+      case 'queue_start': {
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.workflow.queueStart'),
+            buildDetail(data ?? payload),
+            'loading',
+            { eventType: 'queue_start' }
+          )
+        );
+        break;
+      }
+      case 'queue_finish': {
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.workflow.queueFinish'),
+            buildDetail(data ?? payload),
+            'completed',
+            { eventType: 'queue_finish' }
+          )
+        );
+        break;
+      }
+      case 'queue_fail': {
+        const detailPayload = data ?? payload;
+        const detailText = pickText(
+          data?.error ?? payload?.error ?? data?.message ?? payload?.message,
+          t('chat.workflow.requestFailedDetail')
+        );
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.workflow.queueFail'),
+            buildDetail(detailPayload),
+            'failed',
+            { eventType: 'queue_fail' }
+          )
+        );
+        if (!assistantMessage.content) {
+          assistantMessage.content = detailText;
+        }
+        break;
+      }
       case 'desktop_controller_hint':
       case 'desktop_controller_hint_done':
       case 'desktop_monitor_countdown':
@@ -7095,7 +7155,8 @@ export const useChatStore = defineStore('chat', {
             },
             onEvent,
             signal: runtime?.sendController?.signal,
-            closeOnFinal: true
+            closeOnFinal: true,
+            resolveOnQueued: true
           });
         };
         await this.refreshStreamTransportPolicy();

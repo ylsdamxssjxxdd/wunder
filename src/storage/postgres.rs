@@ -294,6 +294,32 @@ impl PostgresStorage {
         "job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at"
     }
 
+    fn session_run_select_fields() -> &'static str {
+        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time"
+    }
+
+    fn map_session_run_row(row: &tokio_postgres::Row) -> SessionRunRecord {
+        SessionRunRecord {
+            run_id: row.get(0),
+            session_id: row.get(1),
+            parent_session_id: row.get(2),
+            user_id: row.get(3),
+            dispatch_id: row.get(4),
+            run_kind: row.get(5),
+            requested_by: row.get(6),
+            agent_id: row.get(7),
+            model_name: row.get(8),
+            status: row.get(9),
+            queued_time: row.get::<_, Option<f64>>(10).unwrap_or(0.0),
+            started_time: row.get::<_, Option<f64>>(11).unwrap_or(0.0),
+            finished_time: row.get::<_, Option<f64>>(12).unwrap_or(0.0),
+            elapsed_s: row.get::<_, Option<f64>>(13).unwrap_or(0.0),
+            result: row.get(14),
+            error: row.get(15),
+            updated_time: row.get::<_, Option<f64>>(16).unwrap_or(0.0),
+        }
+    }
+
     fn map_cron_job_row(row: &tokio_postgres::Row) -> CronJobRecord {
         let payload_text: Option<String> = row.get(6);
         let deliver_text: Option<String> = row.get(7);
@@ -845,6 +871,33 @@ impl PostgresStorage {
              ON session_locks (user_id, agent_id)",
             &[],
         )?;
+        Ok(())
+    }
+
+    fn ensure_session_run_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'session_runs'",
+            &[],
+        )?;
+        let mut columns = HashSet::new();
+        for row in rows {
+            let name: String = row.get(0);
+            columns.insert(name);
+        }
+        if !columns.contains("dispatch_id") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN dispatch_id TEXT", &[])?;
+        }
+        if !columns.contains("run_kind") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN run_kind TEXT", &[])?;
+        }
+        if !columns.contains("requested_by") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN requested_by TEXT", &[])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch \
+             ON session_runs (user_id, dispatch_id, updated_time)",
+            &[],
+        );
         Ok(())
     }
 
@@ -1711,6 +1764,9 @@ impl StorageBackend for PostgresStorage {
                   session_id TEXT NOT NULL,
                   parent_session_id TEXT,
                   user_id TEXT NOT NULL,
+                  dispatch_id TEXT,
+                  run_kind TEXT,
+                  requested_by TEXT,
                   agent_id TEXT,
                   model_name TEXT,
                   status TEXT NOT NULL,
@@ -1728,6 +1784,8 @@ impl StorageBackend for PostgresStorage {
                   ON session_runs (user_id, updated_time);
                 CREATE INDEX IF NOT EXISTS idx_session_runs_parent
                   ON session_runs (parent_session_id, updated_time);
+                CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch
+                  ON session_runs (user_id, dispatch_id, updated_time);
                 CREATE TABLE IF NOT EXISTS cron_jobs (
                   job_id TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
@@ -2189,6 +2247,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
+                    self.ensure_session_run_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_team_run_columns(&mut conn)?;
                     self.ensure_team_task_columns(&mut conn)?;
@@ -8493,11 +8552,12 @@ impl StorageBackend for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, \
+            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
              started_time, finished_time, elapsed_s, result, error, updated_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
              ON CONFLICT(run_id) DO UPDATE SET session_id = EXCLUDED.session_id, parent_session_id = EXCLUDED.parent_session_id, \
-             user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id, model_name = EXCLUDED.model_name, status = EXCLUDED.status, \
+             user_id = EXCLUDED.user_id, dispatch_id = EXCLUDED.dispatch_id, run_kind = EXCLUDED.run_kind, requested_by = EXCLUDED.requested_by, \
+             agent_id = EXCLUDED.agent_id, model_name = EXCLUDED.model_name, status = EXCLUDED.status, \
              queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, \
              elapsed_s = EXCLUDED.elapsed_s, result = EXCLUDED.result, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
             &[
@@ -8505,6 +8565,9 @@ impl StorageBackend for PostgresStorage {
                 &record.session_id,
                 &record.parent_session_id,
                 &record.user_id,
+                &record.dispatch_id,
+                &record.run_kind,
+                &record.requested_by,
                 &record.agent_id,
                 &record.model_name,
                 &record.status,
@@ -8528,26 +8591,94 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, started_time, \
-             finished_time, elapsed_s, result, error, updated_time FROM session_runs WHERE run_id = $1",
+            &format!(
+                "SELECT {} FROM session_runs WHERE run_id = $1",
+                Self::session_run_select_fields()
+            ),
             &[&cleaned],
         )?;
-        Ok(row.map(|row| SessionRunRecord {
-            run_id: row.get(0),
-            session_id: row.get(1),
-            parent_session_id: row.get(2),
-            user_id: row.get(3),
-            agent_id: row.get(4),
-            model_name: row.get(5),
-            status: row.get(6),
-            queued_time: row.get::<_, Option<f64>>(7).unwrap_or(0.0),
-            started_time: row.get::<_, Option<f64>>(8).unwrap_or(0.0),
-            finished_time: row.get::<_, Option<f64>>(9).unwrap_or(0.0),
-            elapsed_s: row.get::<_, Option<f64>>(10).unwrap_or(0.0),
-            result: row.get(11),
-            error: row.get(12),
-            updated_time: row.get::<_, Option<f64>>(13).unwrap_or(0.0),
-        }))
+        Ok(row.map(|row| Self::map_session_run_row(&row)))
+    }
+
+    fn list_session_runs_by_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            &format!(
+                "SELECT {} FROM session_runs WHERE user_id = $1 AND session_id = $2 \
+                 ORDER BY updated_time DESC, queued_time DESC LIMIT $3",
+                Self::session_run_select_fields()
+            ),
+            &[&cleaned_user, &cleaned_session, &limit],
+        )?;
+        Ok(rows
+            .iter()
+            .map(Self::map_session_run_row)
+            .collect::<Vec<_>>())
+    }
+
+    fn list_session_runs_by_parent(
+        &self,
+        user_id: &str,
+        parent_session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_parent = parent_session_id.trim();
+        if cleaned_user.is_empty() || cleaned_parent.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            &format!(
+                "SELECT {} FROM session_runs WHERE user_id = $1 AND parent_session_id = $2 \
+                 ORDER BY updated_time DESC, queued_time DESC LIMIT $3",
+                Self::session_run_select_fields()
+            ),
+            &[&cleaned_user, &cleaned_parent, &limit],
+        )?;
+        Ok(rows
+            .iter()
+            .map(Self::map_session_run_row)
+            .collect::<Vec<_>>())
+    }
+
+    fn list_session_runs_by_dispatch(
+        &self,
+        user_id: &str,
+        dispatch_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_dispatch = dispatch_id.trim();
+        if cleaned_user.is_empty() || cleaned_dispatch.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            &format!(
+                "SELECT {} FROM session_runs WHERE user_id = $1 AND dispatch_id = $2 \
+                 ORDER BY updated_time DESC, queued_time DESC LIMIT $3",
+                Self::session_run_select_fields()
+            ),
+            &[&cleaned_user, &cleaned_dispatch, &limit],
+        )?;
+        Ok(rows
+            .iter()
+            .map(Self::map_session_run_row)
+            .collect::<Vec<_>>())
     }
 
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()> {

@@ -30,6 +30,7 @@ type WsRequestPayload = {
   requestId?: string;
   onEvent?: StreamEventHandler;
   closeOnFinal?: boolean;
+  resolveOnQueued?: boolean;
   signal?: AbortSignal;
   cancelOnAbort?: boolean;
   sessionId?: string;
@@ -41,6 +42,7 @@ type PendingEntry = {
   resolve: () => void;
   reject: (error: unknown) => void;
   closeOnFinal: boolean;
+  resolveOnQueued: boolean;
   signal?: AbortSignal;
   abortHandler: (() => void) | null;
 };
@@ -392,6 +394,12 @@ export const createWsMultiplexer = (
       const eventId = String(eventPayload.id || '');
       const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
+      const queuedFlag =
+        eventType === 'queued' || eventPayload.queued === true || asPayloadRecord(eventPayload.data).queued === true;
+      if (entry.resolveOnQueued && queuedFlag) {
+        resolveRequest(requestId);
+        return;
+      }
       if (isResumeRequiredSlowClientEvent(eventPayload)) {
         rejectRequest(requestId, buildSlowClientError(eventPayload));
         return;
@@ -497,6 +505,7 @@ export const createWsMultiplexer = (
         resolve,
         reject,
         closeOnFinal: payload?.closeOnFinal !== false,
+        resolveOnQueued: payload?.resolveOnQueued === true,
         signal: payload?.signal,
         abortHandler: null
       };

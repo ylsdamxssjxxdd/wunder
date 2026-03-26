@@ -341,6 +341,16 @@
             <i class="fa-solid fa-gear" aria-hidden="true"></i>
           </button>
         </div>
+        <button
+          v-if="showScrollTopButton"
+          class="messenger-scroll-top-btn"
+          type="button"
+          :title="t('chat.toTop')"
+          :aria-label="t('chat.toTop')"
+          @click="jumpToMessageTop"
+        >
+          <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
+        </button>
       </header>
 
       <div
@@ -1320,16 +1330,6 @@
         class="messenger-chat-footer"
       >
         <button
-          v-if="showScrollTopButton"
-          class="messenger-scroll-top-btn"
-          type="button"
-          :title="t('chat.toTop')"
-          :aria-label="t('chat.toTop')"
-          @click="jumpToMessageTop"
-        >
-          <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
-        </button>
-        <button
           v-if="showScrollBottomButton"
           class="messenger-scroll-bottom-btn"
           type="button"
@@ -1676,7 +1676,7 @@ import {
 } from '@/utils/audioRecorder';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
-import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
+import { collectAbilityDetails, collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
@@ -1983,6 +1983,7 @@ const rightDockSkillDialogVisible = ref(false);
 const rightDockSelectedSkillName = ref('');
 const rightDockSkillContentLoading = ref(false);
 const rightDockSkillContent = ref('');
+const rightDockSkillContentPath = ref('');
 const rightDockSkillToggleSaving = ref(false);
 const timelineDialogVisible = ref(false);
 const timelineDetailDialogVisible = ref(false);
@@ -3307,7 +3308,9 @@ const normalizeRightDockSkillDetails = (
   list.forEach((item) => {
     if (!item || typeof item !== 'object') return;
     const source = item as Record<string, unknown>;
-    const name = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
+    const name = normalizeRightDockSkillRuntimeName(
+      String(source.name || source.tool_name || source.toolName || source.id || '')
+    );
     if (!name || seen.has(name)) return;
     seen.add(name);
     output.push({
@@ -3317,6 +3320,39 @@ const normalizeRightDockSkillDetails = (
   });
   return output;
 };
+
+function normalizeRightDockSkillRuntimeName(value: unknown): string {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  if (rightDockSkillCatalog.value.some((item) => item.name === normalized)) {
+    return normalized;
+  }
+  const separatorIndex = normalized.indexOf('@');
+  if (separatorIndex <= 0 || separatorIndex >= normalized.length - 1) {
+    return normalized;
+  }
+  const legacyName = normalized.slice(separatorIndex + 1).trim();
+  if (!legacyName) {
+    return normalized;
+  }
+  return rightDockSkillCatalog.value.some((item) => item.name === legacyName)
+    ? legacyName
+    : normalized;
+}
+
+function normalizeRightDockSkillNameList(values: string[]): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  values.forEach((value) => {
+    const normalized = normalizeRightDockSkillRuntimeName(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    output.push(normalized);
+  });
+  return output;
+}
 
 const normalizeRightDockSkillCatalog = (list: unknown): RightDockSkillCatalogItem[] => {
   if (!Array.isArray(list)) return [];
@@ -3346,21 +3382,23 @@ const rightDockSkillEnabledNameSet = computed<Set<string>>(() => {
       ? (defaultAgentProfile.value as Record<string, unknown> | null)
       : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
           (activeAgent.value as Record<string, unknown> | null));
-  const selectedByProfile = normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile));
+  const selectedByProfile = normalizeRightDockSkillNameList(
+    normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile))
+  );
   if (!agentPromptToolSummary.value) {
     return new Set(selectedByProfile);
   }
-  const enabledGroups = collectAbilityGroupDetails(
+  const enabledSkills = collectAbilityDetails(
     (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
   );
-  const enabledDetails = normalizeRightDockSkillDetails(enabledGroups.skills);
-  return new Set<string>(enabledDetails.map((item) => item.name));
+  const enabledDetails = normalizeRightDockSkillDetails(enabledSkills.skills);
+  return new Set<string>([...selectedByProfile, ...enabledDetails.map((item) => item.name)]);
 });
 
 const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
   const enabledSet = rightDockSkillEnabledNameSet.value;
   const merged = new Map<string, RightDockSkillItem>();
-  const allGroups = collectAbilityGroupDetails(
+  const allSkills = collectAbilityDetails(
     (agentPromptToolSummary.value || {}) as Record<string, unknown>
   );
 
@@ -3372,7 +3410,7 @@ const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
     });
   });
 
-  normalizeRightDockSkillDetails(allGroups.skills).forEach((item) => {
+  normalizeRightDockSkillDetails(allSkills.skills).forEach((item) => {
     const existing = merged.get(item.name);
     if (existing) {
       if (!existing.description && item.description) {
@@ -3413,7 +3451,7 @@ const rightDockSkillDialogTitle = computed(() => {
   return name ? `技能 skill · ${name}` : '技能 skill';
 });
 const rightDockSkillDialogPath = computed(() => {
-  const path = String(rightDockSelectedSkill.value?.path || '').trim();
+  const path = String(rightDockSkillContentPath.value || rightDockSelectedSkill.value?.path || '').trim();
   return path || 'SKILL.md';
 });
 const rightDockSelectedSkillEnabled = computed(() => {
@@ -8029,6 +8067,9 @@ const openRightDockSkillDetail = async (name: unknown) => {
   rightDockSelectedSkillName.value = normalized;
   rightDockSkillDialogVisible.value = true;
   rightDockSkillContent.value = '';
+  rightDockSkillContentPath.value = String(
+    rightDockSkillCatalog.value.find((item) => item.name === normalized)?.path || ''
+  ).trim();
   const currentVersion = ++rightDockSkillContentLoadVersion;
   rightDockSkillContentLoading.value = true;
   try {
@@ -8036,9 +8077,11 @@ const openRightDockSkillDetail = async (name: unknown) => {
     if (currentVersion !== rightDockSkillContentLoadVersion) return;
     const payload = (result?.data?.data || {}) as Record<string, unknown>;
     rightDockSkillContent.value = String(payload.content || '');
+    rightDockSkillContentPath.value = String(payload.path || rightDockSkillContentPath.value || '').trim();
   } catch (error) {
     if (currentVersion !== rightDockSkillContentLoadVersion) return;
     rightDockSkillContent.value = '';
+    rightDockSkillContentPath.value = '';
     showApiError(
       error,
       t('userTools.skills.file.readFailed', { message: t('common.requestFailed') })
@@ -8072,7 +8115,11 @@ const handleRightDockSkillEnabledToggle = async (value: unknown) => {
     ElMessage.warning(t('chat.features.agentMissing'));
     return;
   }
-  const nextToolNameSet = new Set<string>(normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(sourceProfile)));
+  const nextToolNameSet = new Set<string>(
+    normalizeRightDockSkillNameList(
+      normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(sourceProfile))
+    )
+  );
   if (Boolean(value)) {
     nextToolNameSet.add(targetName);
   } else {
@@ -10850,6 +10897,7 @@ watch(
     rightDockSkillDialogVisible.value = false;
     rightDockSelectedSkillName.value = '';
     rightDockSkillContent.value = '';
+    rightDockSkillContentPath.value = '';
     rightDockSkillContentLoading.value = false;
     rightDockSkillToggleSaving.value = false;
     rightDockSkillCatalogLoadVersion += 1;
@@ -11174,6 +11222,7 @@ watch(
     rightDockSkillContentLoading.value = false;
     rightDockSkillToggleSaving.value = false;
     rightDockSkillContent.value = '';
+    rightDockSkillContentPath.value = '';
   }
 );
 

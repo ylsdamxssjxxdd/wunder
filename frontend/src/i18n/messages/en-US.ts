@@ -1419,6 +1419,9 @@ export default {
   'chat.workflow.slowClient': 'Slow connection',
   'chat.workflow.queued': 'Queued',
   'chat.workflow.queuedDetail': 'This session is busy. Your request is queued and will run when idle.',
+  'chat.workflow.queueStart': 'Queued request started',
+  'chat.workflow.queueFinish': 'Queued request finished',
+  'chat.workflow.queueFail': 'Queued request failed',
   'chat.workflow.slowClientDetail':
     'Connection is slow. Some incremental output may be dropped. The app will try to resume automatically, and you can still click 鈥淩esume鈥?if needed. Queue remaining: {capacity}',
   'chat.workflow.compactionRunning': 'Compacting context to make room for the reply',

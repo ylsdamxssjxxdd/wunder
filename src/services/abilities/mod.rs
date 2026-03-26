@@ -234,7 +234,7 @@ mod tests {
             admin_skills: vec![],
             admin_knowledge_tools: vec![],
             user_mcp_tools: vec![sample_spec("alice@server@tool")],
-            user_skills: vec![sample_spec("alice@writer_skill")],
+            user_skills: vec![sample_spec("writer_skill")],
             user_knowledge_tools: vec![sample_spec("alice@kb_search")],
             default_agent_tool_names: vec![],
             shared_tools: vec![SharedToolSpec {
@@ -261,7 +261,7 @@ mod tests {
                 && item.kind == AbilityKind::Skill
         }));
         assert!(items.iter().any(|item| {
-            item.runtime_name == "alice@writer_skill"
+            item.runtime_name == "writer_skill"
                 && item.group == AbilityGroupKey::User
                 && item.source == AbilitySourceKey::UserSkill
                 && item.kind == AbilityKind::Skill

@@ -2698,7 +2698,7 @@ button.messenger-chat-header-model {
 }
 
 .messenger-scroll-top-btn {
-  top: -82px;
+  top: calc(100% + 12px);
 }
 
 .messenger-scroll-bottom-btn {
@@ -7002,7 +7002,7 @@ button.messenger-chat-header-model {
 
   .messenger-scroll-top-btn {
     right: 10px;
-    top: -80px;
+    top: calc(100% + 10px);
   }
 
   .messenger-scroll-bottom-btn {
@@ -7045,7 +7045,7 @@ button.messenger-chat-header-model {
 
   .messenger-scroll-top-btn {
     right: 8px;
-    top: -76px;
+    top: calc(100% + 8px);
   }
 
   .messenger-scroll-bottom-btn {

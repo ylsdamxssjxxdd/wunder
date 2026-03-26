@@ -669,11 +669,13 @@ async fn run_import_job_inner(
                 .collect::<Vec<_>>()
         };
         for skill_name in &snapshot.installed_skills {
-            let alias = state
-                .user_tool_store
-                .build_alias_name(&user.user_id, skill_name);
-            if allowed.contains(&alias) {
-                tool_names.push(alias);
+            let runtime_name = state.user_tool_store.build_user_skill_name(
+                &user.user_id,
+                &user.user_id,
+                skill_name,
+            );
+            if allowed.contains(&runtime_name) {
+                tool_names.push(runtime_name);
             }
         }
         tool_names.sort();

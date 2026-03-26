@@ -91,6 +91,32 @@ impl SqliteStorage {
         "job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at"
     }
 
+    fn session_run_select_fields() -> &'static str {
+        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time"
+    }
+
+    fn map_session_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRunRecord> {
+        Ok(SessionRunRecord {
+            run_id: row.get(0)?,
+            session_id: row.get(1)?,
+            parent_session_id: row.get(2)?,
+            user_id: row.get(3)?,
+            dispatch_id: row.get(4)?,
+            run_kind: row.get(5)?,
+            requested_by: row.get(6)?,
+            agent_id: row.get(7)?,
+            model_name: row.get(8)?,
+            status: row.get(9)?,
+            queued_time: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+            started_time: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
+            finished_time: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
+            elapsed_s: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+            result: row.get(14)?,
+            error: row.get(15)?,
+            updated_time: row.get::<_, Option<f64>>(16)?.unwrap_or(0.0),
+        })
+    }
+
     fn map_cron_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CronJobRecord> {
         let payload_text: Option<String> = row.get(6)?;
         let deliver_text: Option<String> = row.get(7)?;
@@ -434,6 +460,28 @@ impl SqliteStorage {
     }
 
     fn ensure_session_lock_columns(&self, _conn: &Connection) -> Result<()> {
+        Ok(())
+    }
+
+    fn ensure_session_run_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "session_runs")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns.contains("dispatch_id") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN dispatch_id TEXT", [])?;
+        }
+        if !columns.contains("run_kind") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN run_kind TEXT", [])?;
+        }
+        if !columns.contains("requested_by") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN requested_by TEXT", [])?;
+        }
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch \
+             ON session_runs (user_id, dispatch_id, updated_time)",
+            [],
+        );
         Ok(())
     }
 
@@ -1122,6 +1170,9 @@ impl StorageBackend for SqliteStorage {
               session_id TEXT NOT NULL,
               parent_session_id TEXT,
               user_id TEXT NOT NULL,
+              dispatch_id TEXT,
+              run_kind TEXT,
+              requested_by TEXT,
               agent_id TEXT,
               model_name TEXT,
               status TEXT NOT NULL,
@@ -1139,6 +1190,8 @@ impl StorageBackend for SqliteStorage {
               ON session_runs (user_id, updated_time);
             CREATE INDEX IF NOT EXISTS idx_session_runs_parent
               ON session_runs (parent_session_id, updated_time);
+            CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch
+              ON session_runs (user_id, dispatch_id, updated_time);
             CREATE TABLE IF NOT EXISTS cron_jobs (
               job_id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
@@ -1598,6 +1651,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_chat_session_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
+        self.ensure_session_run_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
         self.ensure_team_run_columns(&conn)?;
         self.ensure_team_task_columns(&conn)?;
@@ -8227,11 +8281,12 @@ impl StorageBackend for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, \
+            "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
              started_time, finished_time, elapsed_s, result, error, updated_time) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(run_id) DO UPDATE SET session_id = excluded.session_id, parent_session_id = excluded.parent_session_id, \
-             user_id = excluded.user_id, agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
+             user_id = excluded.user_id, dispatch_id = excluded.dispatch_id, run_kind = excluded.run_kind, requested_by = excluded.requested_by, \
+             agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
              queued_time = excluded.queued_time, started_time = excluded.started_time, finished_time = excluded.finished_time, \
              elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time",
             params![
@@ -8239,6 +8294,9 @@ impl StorageBackend for SqliteStorage {
                 record.session_id,
                 record.parent_session_id,
                 record.user_id,
+                record.dispatch_id,
+                record.run_kind,
+                record.requested_by,
                 record.agent_id,
                 record.model_name,
                 record.status,
@@ -8263,30 +8321,102 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT run_id, session_id, parent_session_id, user_id, agent_id, model_name, status, queued_time, started_time, \
-                 finished_time, elapsed_s, result, error, updated_time FROM session_runs WHERE run_id = ?",
+                &format!(
+                    "SELECT {} FROM session_runs WHERE run_id = ?",
+                    Self::session_run_select_fields()
+                ),
                 params![cleaned],
-                |row| {
-                    Ok(SessionRunRecord {
-                        run_id: row.get(0)?,
-                        session_id: row.get(1)?,
-                        parent_session_id: row.get(2)?,
-                        user_id: row.get(3)?,
-                        agent_id: row.get(4)?,
-                        model_name: row.get(5)?,
-                        status: row.get(6)?,
-                        queued_time: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
-                        started_time: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
-                        finished_time: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
-                        elapsed_s: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
-                        result: row.get(11)?,
-                        error: row.get(12)?,
-                        updated_time: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
-                    })
-                },
+                Self::map_session_run_row,
             )
             .optional()?;
         Ok(row)
+    }
+
+    fn list_session_runs_by_session(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM session_runs WHERE user_id = ? AND session_id = ? \
+             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
+            Self::session_run_select_fields()
+        ))?;
+        let rows = stmt.query_map(
+            params![cleaned_user, cleaned_session, limit],
+            Self::map_session_run_row,
+        )?;
+        let mut output = Vec::new();
+        for record in rows.flatten() {
+            output.push(record);
+        }
+        Ok(output)
+    }
+
+    fn list_session_runs_by_parent(
+        &self,
+        user_id: &str,
+        parent_session_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_parent = parent_session_id.trim();
+        if cleaned_user.is_empty() || cleaned_parent.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM session_runs WHERE user_id = ? AND parent_session_id = ? \
+             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
+            Self::session_run_select_fields()
+        ))?;
+        let rows = stmt.query_map(
+            params![cleaned_user, cleaned_parent, limit],
+            Self::map_session_run_row,
+        )?;
+        let mut output = Vec::new();
+        for record in rows.flatten() {
+            output.push(record);
+        }
+        Ok(output)
+    }
+
+    fn list_session_runs_by_dispatch(
+        &self,
+        user_id: &str,
+        dispatch_id: &str,
+        limit: i64,
+    ) -> Result<Vec<SessionRunRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_dispatch = dispatch_id.trim();
+        if cleaned_user.is_empty() || cleaned_dispatch.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {} FROM session_runs WHERE user_id = ? AND dispatch_id = ? \
+             ORDER BY updated_time DESC, queued_time DESC LIMIT ?",
+            Self::session_run_select_fields()
+        ))?;
+        let rows = stmt.query_map(
+            params![cleaned_user, cleaned_dispatch, limit],
+            Self::map_session_run_row,
+        )?;
+        let mut output = Vec::new();
+        for record in rows.flatten() {
+            output.push(record);
+        }
+        Ok(output)
     }
 
     fn upsert_cron_job(&self, record: &CronJobRecord) -> Result<()> {

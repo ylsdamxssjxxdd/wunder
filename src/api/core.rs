@@ -341,17 +341,15 @@ async fn wunder_tools(
         {
             let mut append_user_tool =
                 |bucket: &mut Vec<ToolSpec>,
-                 owner_id: &str,
-                 tool_name: &str,
+                 runtime_name: String,
                  description: String,
                  input_schema: Value| {
-                    let alias = state.user_tool_store.build_alias_name(owner_id, tool_name);
-                    if used_names.contains(&alias) {
+                    if used_names.contains(&runtime_name) {
                         return;
                     }
-                    used_names.insert(alias.clone());
+                    used_names.insert(runtime_name.clone());
                     bucket.push(ToolSpec {
-                        name: alias,
+                        name: runtime_name,
                         description,
                         input_schema,
                     });
@@ -369,8 +367,7 @@ async fn wunder_tools(
                 &mut |owner_id, tool_name, description, input_schema| {
                     append_user_tool(
                         &mut user_mcp_tools,
-                        owner_id,
-                        tool_name,
+                        state.user_tool_store.build_alias_name(owner_id, tool_name),
                         description,
                         input_schema,
                     );
@@ -383,8 +380,9 @@ async fn wunder_tools(
                 &mut |owner_id, tool_name, description, input_schema| {
                     append_user_tool(
                         &mut user_skills,
-                        owner_id,
-                        tool_name,
+                        state
+                            .user_tool_store
+                            .build_user_skill_name(owner_id, owner_id, tool_name),
                         description,
                         input_schema,
                     );
@@ -399,8 +397,7 @@ async fn wunder_tools(
                 &mut |owner_id, tool_name, description, input_schema| {
                     append_user_tool(
                         &mut user_knowledge_tools,
-                        owner_id,
-                        tool_name,
+                        state.user_tool_store.build_alias_name(owner_id, tool_name),
                         description,
                         input_schema,
                     );
