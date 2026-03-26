@@ -278,12 +278,14 @@ impl PromptComposer {
                 workspace.display_path(workspace_id, workdir)
             };
             let base_skill_specs = skills.list_specs();
-            let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
+            let builtin_skills_for_prompt =
+                filter_skill_specs(&base_skill_specs, allowed_tool_names);
+            let mut user_skills_for_prompt = Vec::new();
             if let Some(bindings) = user_tool_bindings {
                 if !bindings.skill_specs.is_empty() {
                     let user_skills = filter_skill_specs(&bindings.skill_specs, allowed_tool_names);
                     if !user_skills.is_empty() {
-                        skills_for_prompt = merge_skill_specs(skills_for_prompt, user_skills);
+                        user_skills_for_prompt = user_skills;
                     }
                 }
             }
@@ -297,7 +299,8 @@ impl PromptComposer {
                 include_ptc,
                 &workdir_display,
                 &workspace_tree,
-                &skills_for_prompt,
+                &builtin_skills_for_prompt,
+                &user_skills_for_prompt,
                 agent_prompt,
                 &build_inner_visible_prompt_mapping(
                     workspace,
@@ -513,7 +516,8 @@ fn build_system_prompt_skeleton(
     include_ptc: bool,
     workdir_display: &str,
     workspace_tree: &str,
-    skills: &[SkillSpec],
+    builtin_skills: &[SkillSpec],
+    user_skills: &[SkillSpec],
     agent_prompt: Option<&str>,
     inner_visible_mapping: &HashMap<String, String>,
 ) -> String {
@@ -604,10 +608,11 @@ fn build_system_prompt_skeleton(
         String::new()
     };
 
-    let skills_block = if skills.is_empty() {
+    let skills_block = if builtin_skills.is_empty() && user_skills.is_empty() {
         String::new()
     } else {
-        let skills_list = render_skill_list(skills);
+        let builtin_skills_list = render_skill_list_or_placeholder(builtin_skills);
+        let user_skills_list = render_skill_list_or_placeholder(user_skills);
         let skills_template = read_prompt_template_from_scope(
             config,
             template_scope,
@@ -617,7 +622,8 @@ fn build_system_prompt_skeleton(
             &skills_template,
             &HashMap::from([
                 ("WORKDIR".to_string(), workdir_display.to_string()),
-                ("SKILLS_LIST".to_string(), skills_list),
+                ("BUILTIN_SKILLS_LIST".to_string(), builtin_skills_list),
+                ("USER_SKILLS_LIST".to_string(), user_skills_list),
             ]),
         )
     };
@@ -815,6 +821,14 @@ fn render_skill_list(skills: &[SkillSpec]) -> String {
         }
     }
     lines.join("\n").trim().to_string()
+}
+
+fn render_skill_list_or_placeholder(skills: &[SkillSpec]) -> String {
+    if skills.is_empty() {
+        "- (none)".to_string()
+    } else {
+        render_skill_list(skills)
+    }
 }
 
 fn apply_prompt_flags(template: &str, flags: &HashMap<String, bool>) -> String {
@@ -1131,17 +1145,6 @@ fn filter_skill_specs(
         .filter(|spec| allowed_tool_names.contains(&spec.name))
         .cloned()
         .collect()
-}
-
-fn merge_skill_specs(base: Vec<SkillSpec>, extra: Vec<SkillSpec>) -> Vec<SkillSpec> {
-    let mut merged = Vec::new();
-    let mut seen = HashSet::new();
-    for spec in base.into_iter().chain(extra.into_iter()) {
-        if seen.insert(spec.name.clone()) {
-            merged.push(spec);
-        }
-    }
-    merged
 }
 
 fn system_name() -> String {

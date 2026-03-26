@@ -517,6 +517,7 @@ pub(crate) async fn resume_stream_events(
 ) {
     let workspace = state.workspace.clone();
     let monitor = state.monitor.clone();
+    let user_store = state.user_store.clone();
     let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
     let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
     let mut idle_rounds: usize = 0;
@@ -537,13 +538,11 @@ pub(crate) async fn resume_stream_events(
                 record
                     .get("status")
                     .and_then(Value::as_str)
-                    .map(|status| {
-                        status == MonitorState::STATUS_RUNNING
-                            || status == MonitorState::STATUS_CANCELLING
-                    })
+                    .map(is_stream_active_status)
                     .unwrap_or(false)
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+            || has_active_queue_task(user_store.as_ref(), &session_id);
 
         let session_id_snapshot = session_id.clone();
         let workspace_snapshot = workspace.clone();
@@ -614,6 +613,31 @@ pub(crate) async fn resume_stream_events(
             poll_interval = base_interval;
         }
     }
+}
+
+fn is_stream_active_status(status: &str) -> bool {
+    matches!(
+        status,
+        MonitorState::STATUS_RUNNING
+            | MonitorState::STATUS_CANCELLING
+            | MonitorState::STATUS_WAITING
+    )
+}
+
+fn has_active_queue_task(user_store: &crate::user_store::UserStore, session_id: &str) -> bool {
+    let cleaned_session = session_id.trim();
+    if cleaned_session.is_empty() {
+        return false;
+    }
+    let thread_id = format!("thread_{cleaned_session}");
+    user_store
+        .list_agent_tasks_by_thread(&thread_id, None, 8)
+        .map(|tasks| {
+            tasks.iter().any(|task| {
+                task.status == "pending" || task.status == "retry" || task.status == "running"
+            })
+        })
+        .unwrap_or(false)
 }
 
 pub(crate) fn has_ws_protocol_token(headers: &HeaderMap) -> bool {

@@ -243,7 +243,7 @@ llm:
       support_vision: false
       stream: false
       stream_include_usage: true
-      history_compaction_ratio: 0.8
+      history_compaction_ratio: 0.9
       history_compaction_reset: zero
       stop:
         - </tool_call>

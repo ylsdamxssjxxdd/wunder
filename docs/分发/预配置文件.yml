@@ -30,7 +30,7 @@ llm:
       stream_include_usage: true
       support_vision: true
       support_hearing: false
-      history_compaction_ratio: 0.8
+      history_compaction_ratio: 0.9
       history_compaction_reset: zero
       mock_if_unconfigured: false
 

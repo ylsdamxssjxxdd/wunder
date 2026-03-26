@@ -15,6 +15,7 @@ use wunder_server::{
     build_desktop_router,
     config::{Config, LlmModelConfig},
     config_store::ConfigStore,
+    history::HistoryManager,
     state::{AppState, AppStateInitOptions},
 };
 
@@ -72,7 +73,7 @@ async fn build_test_context(username: &str) -> TestContext {
             support_hearing: Some(false),
             stream: Some(false),
             stream_include_usage: Some(false),
-            history_compaction_ratio: Some(0.92),
+            history_compaction_ratio: Some(0.9),
             history_compaction_reset: None,
             tool_call_mode: Some("tool_call".to_string()),
             reasoning_effort: None,
@@ -378,6 +379,41 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
             .workspace
             .load_session_context_overflow(&context.user_id, session_id),
         "context overflow marker should be cleared after successful recovery"
+    );
+
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, session_id, 0)
+        .expect("load raw history");
+    assert!(
+        raw_history
+            .iter()
+            .any(HistoryManager::is_compaction_summary_item),
+        "expected compaction summary item in raw history"
+    );
+
+    let replay_messages = HistoryManager.load_history_messages(
+        context.state.workspace.as_ref(),
+        &context.user_id,
+        session_id,
+        0,
+    );
+    let replay_contents = replay_messages
+        .iter()
+        .filter_map(|item| item.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(
+        replay_contents
+            .iter()
+            .any(|text| text.contains("[mindie-overflow-regression] round=12")),
+        "expected latest round to remain in replay history"
+    );
+    assert!(
+        !replay_contents
+            .iter()
+            .any(|text| text.contains("[mindie-overflow-regression] round=1")),
+        "expected compacted early rounds to be excluded from replay history"
     );
 }
 

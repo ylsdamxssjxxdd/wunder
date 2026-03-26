@@ -535,23 +535,48 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.subagent_control.args.action"),
-                        "enum": ["list", "history", "send", "spawn"]
+                        "enum": ["list", "history", "send", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
                     "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
                     "messageLimit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
                     "parentId": {"type": "string", "description": t("tool.spec.sessions_list.args.parent_id")},
                     "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "sessionId": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "sessionIds": {"type": "array", "description": "Target child session ids.", "items": {"type": "string"}},
                     "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "runId": {"type": "string", "description": "Target run id."},
+                    "runIds": {"type": "array", "description": "Target run ids.", "items": {"type": "string"}},
+                    "dispatchId": {"type": "string", "description": "Dispatch id returned by batch_spawn."},
                     "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
                     "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
                     "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
                     "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
+                    "tasks": {
+                        "type": "array",
+                        "description": "Batch child tasks.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
+                                "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
+                                "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                                "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
+                                "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                                "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
+                            },
+                            "required": ["task"]
+                        }
+                    },
                     "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
                     "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
                     "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
                     "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
-                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
+                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
+                    "waitSeconds": {"type": "number", "description": "Wait time for batch/status polling."},
+                    "pollIntervalSeconds": {"type": "number", "description": "Polling interval for wait."},
+                    "dispatchLabel": {"type": "string", "description": "Optional label for the dispatch batch."},
+                    "cascade": {"type": "boolean", "description": "Apply close/resume recursively to descendants."}
                 },
                 "required": ["action"]
             }),

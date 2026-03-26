@@ -456,13 +456,11 @@ async fn get_session(
             .map(|value| value.to_string())
     });
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
-    let session_running = session_status
-        .as_deref()
-        .map(|status| {
-            status == crate::monitor::MonitorState::STATUS_RUNNING
-                || status == crate::monitor::MonitorState::STATUS_CANCELLING
-        })
-        .unwrap_or(false);
+    let session_running = is_session_stream_active_or_queued(
+        &state.user_store,
+        session_status.as_deref(),
+        &session_id,
+    );
     let filtered_history = filter_history_messages(history, session_running);
     let mut messages = filtered_history
         .into_iter()
@@ -540,20 +538,17 @@ async fn get_session_events(
         .get_record(&session_id)
         .map(|record| collect_session_event_rounds(&record))
         .unwrap_or_default();
-    let running = state
-        .monitor
-        .get_record(&session_id)
-        .map(|record| {
-            record
-                .get("status")
-                .and_then(Value::as_str)
-                .map(|status| {
-                    status == MonitorState::STATUS_RUNNING
-                        || status == MonitorState::STATUS_CANCELLING
-                })
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
+    let monitor_status = state.monitor.get_record(&session_id).and_then(|record| {
+        record
+            .get("status")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    });
+    let running = is_session_stream_active_or_queued(
+        &state.user_store,
+        monitor_status.as_deref(),
+        &session_id,
+    );
     let last_event_id = {
         let storage = state.storage.clone();
         let session_id = session_id.clone();
@@ -1292,6 +1287,42 @@ fn normalize_history_page_limit(raw: Option<i64>) -> i64 {
     }
 }
 
+fn is_session_stream_active(status: &str) -> bool {
+    matches!(
+        status,
+        MonitorState::STATUS_RUNNING
+            | MonitorState::STATUS_CANCELLING
+            | MonitorState::STATUS_WAITING
+    )
+}
+
+fn has_active_queue_task(user_store: &UserStore, session_id: &str) -> bool {
+    let cleaned_session = session_id.trim();
+    if cleaned_session.is_empty() {
+        return false;
+    }
+    let thread_id = format!("thread_{cleaned_session}");
+    user_store
+        .list_agent_tasks_by_thread(&thread_id, None, 8)
+        .map(|tasks| {
+            tasks.iter().any(|task| {
+                task.status == "pending" || task.status == "retry" || task.status == "running"
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn is_session_stream_active_or_queued(
+    user_store: &UserStore,
+    monitor_status: Option<&str>,
+    session_id: &str,
+) -> bool {
+    monitor_status
+        .map(is_session_stream_active)
+        .unwrap_or(false)
+        || has_active_queue_task(user_store, session_id)
+}
+
 async fn resume_session(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1315,6 +1346,7 @@ async fn resume_session(
     if let Some(after_event_id) = query.after_event_id {
         let workspace = state.workspace.clone();
         let monitor = state.monitor.clone();
+        let user_store = state.user_store.clone();
         let session_id = session_id.clone();
         let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
         tokio::spawn(async move {
@@ -1361,19 +1393,17 @@ async fn resume_session(
                     progressed = true;
                 }
                 if !progressed {
-                    let running = monitor
-                        .get_record(&session_id)
-                        .map(|record| {
-                            record
-                                .get("status")
-                                .and_then(Value::as_str)
-                                .map(|status| {
-                                    status == MonitorState::STATUS_RUNNING
-                                        || status == MonitorState::STATUS_CANCELLING
-                                })
-                                .unwrap_or(false)
-                        })
-                        .unwrap_or(false);
+                    let monitor_status = monitor.get_record(&session_id).and_then(|record| {
+                        record
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string)
+                    });
+                    let running = is_session_stream_active_or_queued(
+                        user_store.as_ref(),
+                        monitor_status.as_deref(),
+                        &session_id,
+                    );
                     if !running {
                         break;
                     }
@@ -1403,6 +1433,7 @@ async fn resume_session(
     }
 
     let monitor = state.monitor.clone();
+    let user_store = state.user_store.clone();
     let session_id = session_id.clone();
     let (event_tx, event_rx) = mpsc::channel::<Event>(STREAM_EVENT_QUEUE_SIZE);
     tokio::spawn(async move {
@@ -1413,14 +1444,19 @@ async fn resume_session(
             std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
         let mut last_heartbeat = std::time::Instant::now();
         loop {
-            let Some(record) = monitor.get_record(&session_id) else {
-                break;
-            };
-            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            let record = monitor.get_record(&session_id);
+            let status = record
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str);
             let running =
-                status == MonitorState::STATUS_RUNNING || status == MonitorState::STATUS_CANCELLING;
+                is_session_stream_active_or_queued(user_store.as_ref(), status, &session_id);
+            if record.is_none() && !running {
+                break;
+            }
             let events = record
-                .get("events")
+                .as_ref()
+                .and_then(|value| value.get("events"))
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
@@ -1516,17 +1552,18 @@ async fn compact_session(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
 
-    if let Some(record) = state.monitor.get_record(&session_id) {
-        let status = record.get("status").and_then(Value::as_str).unwrap_or("");
-        if status == MonitorState::STATUS_RUNNING
-            || status == MonitorState::STATUS_CANCELLING
-            || status == MonitorState::STATUS_WAITING
-        {
-            return Err(error_response(
-                StatusCode::CONFLICT,
-                i18n::t("error.session_not_found_or_running"),
-            ));
-        }
+    let monitor_status = state.monitor.get_record(&session_id).and_then(|record| {
+        record
+            .get("status")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    });
+    if is_session_stream_active_or_queued(&state.user_store, monitor_status.as_deref(), &session_id)
+    {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            i18n::t("error.session_not_found_or_running"),
+        ));
     }
 
     let agent_id = session_record.agent_id.clone();
@@ -2929,6 +2966,18 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "team_merge"
             | "team_finish"
             | "team_error"
+            | "subagent_status"
+            | "subagent_interrupt"
+            | "subagent_close"
+            | "subagent_resume"
+            | "subagent_dispatch_start"
+            | "subagent_dispatch_item_update"
+            | "subagent_dispatch_finish"
+            | "subagent_announce"
+            | "queue_enter"
+            | "queue_start"
+            | "queue_finish"
+            | "queue_fail"
             | "final"
             | "turn_terminal"
             | "thread_status"
@@ -2989,9 +3038,84 @@ mod tests {
     use super::{
         collect_session_event_rounds, count_system_prompt_memory_items,
         extract_system_prompt_memory_preview, extract_system_prompt_memory_total_count,
-        should_merge_round_event,
+        has_active_queue_task, is_session_stream_active_or_queued, should_merge_round_event,
     };
+    use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
+    use crate::user_store::UserStore;
     use serde_json::json;
+    use std::sync::Arc;
+
+    fn build_user_store() -> UserStore {
+        let db_path = std::env::temp_dir().join(format!(
+            "wunder_chat_queue_active_{}.db",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        UserStore::new(storage)
+    }
+
+    #[test]
+    fn queue_task_counts_as_active_stream_state() {
+        let store = build_user_store();
+        store
+            .insert_agent_task(&AgentTaskRecord {
+                task_id: "task_1".to_string(),
+                thread_id: "thread_sess_active".to_string(),
+                user_id: "user_a".to_string(),
+                agent_id: "agent_a".to_string(),
+                session_id: "sess_active".to_string(),
+                status: "pending".to_string(),
+                request_payload: json!({}),
+                request_id: None,
+                retry_count: 0,
+                retry_at: 1.0,
+                created_at: 1.0,
+                updated_at: 1.0,
+                started_at: None,
+                finished_at: None,
+                last_error: None,
+            })
+            .expect("insert agent task");
+
+        assert!(has_active_queue_task(&store, "sess_active"));
+        assert!(is_session_stream_active_or_queued(
+            &store,
+            None,
+            "sess_active"
+        ));
+    }
+
+    #[test]
+    fn finished_queue_task_does_not_keep_stream_active() {
+        let store = build_user_store();
+        store
+            .insert_agent_task(&AgentTaskRecord {
+                task_id: "task_2".to_string(),
+                thread_id: "thread_sess_done".to_string(),
+                user_id: "user_b".to_string(),
+                agent_id: "agent_b".to_string(),
+                session_id: "sess_done".to_string(),
+                status: "success".to_string(),
+                request_payload: json!({}),
+                request_id: None,
+                retry_count: 0,
+                retry_at: 1.0,
+                created_at: 1.0,
+                updated_at: 1.0,
+                started_at: Some(1.0),
+                finished_at: Some(2.0),
+                last_error: None,
+            })
+            .expect("insert completed agent task");
+
+        assert!(!has_active_queue_task(&store, "sess_done"));
+        assert!(!is_session_stream_active_or_queued(
+            &store,
+            None,
+            "sess_done"
+        ));
+    }
 
     #[test]
     fn merges_duplicate_round_error_pair_by_trace() {

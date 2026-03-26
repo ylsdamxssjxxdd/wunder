@@ -2,9 +2,10 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::org_units;
 use crate::services::external as external_service;
+use crate::services::user_access::filter_user_agents_by_access;
 use crate::state::AppState;
 use crate::storage::{OrgUnitRecord, UserAccountRecord, UserAgentRecord};
-use crate::user_store::UserStore;
+use crate::user_store::{build_default_agent_record_from_storage, UserStore};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -100,6 +101,8 @@ struct ExternalTokenLaunchRequest {
     username: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
+    #[serde(default)]
+    agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +165,13 @@ struct ExternalLaunchResult {
     agent_name: String,
     created: bool,
     updated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalTokenLoginTarget {
+    agent_id: String,
+    agent_name: String,
+    focus_mode: bool,
 }
 
 async fn register(
@@ -472,17 +482,101 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    let target_agent =
+        resolve_external_token_login_target(&state, &session.user, payload.agent_name.as_deref())
+            .await?;
     let profile = build_user_profile(&state, &session.user)?;
     Ok(Json(json!({
         "data": {
             "access_token": session.token.token,
             "user": profile,
-            "agent_id": "__default__",
-            "agent_name": "default",
+            "agent_id": target_agent.agent_id,
+            "agent_name": target_agent.agent_name,
+            "focus_mode": target_agent.focus_mode,
             "created": created,
             "updated": updated,
         }
     })))
+}
+
+fn normalize_agent_name_lookup_key(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn build_external_token_login_target(
+    agent: &UserAgentRecord,
+    focus_mode: bool,
+) -> ExternalTokenLoginTarget {
+    ExternalTokenLoginTarget {
+        agent_id: agent.agent_id.clone(),
+        agent_name: agent.name.clone(),
+        focus_mode,
+    }
+}
+
+fn resolve_external_token_login_target_from_candidates(
+    requested_agent_name: Option<&str>,
+    default_agent: &UserAgentRecord,
+    owned_agents: &[UserAgentRecord],
+    shared_agents: &[UserAgentRecord],
+) -> ExternalTokenLoginTarget {
+    let fallback = || build_external_token_login_target(default_agent, false);
+    let requested_key = requested_agent_name
+        .map(normalize_agent_name_lookup_key)
+        .filter(|value| !value.is_empty());
+    let Some(requested_key) = requested_key else {
+        return fallback();
+    };
+
+    if let Some(agent) = owned_agents
+        .iter()
+        .find(|item| normalize_agent_name_lookup_key(&item.name) == requested_key)
+    {
+        return build_external_token_login_target(agent, true);
+    }
+    if let Some(agent) = shared_agents
+        .iter()
+        .find(|item| normalize_agent_name_lookup_key(&item.name) == requested_key)
+    {
+        return build_external_token_login_target(agent, true);
+    }
+    if normalize_agent_name_lookup_key(&default_agent.name) == requested_key {
+        return build_external_token_login_target(default_agent, true);
+    }
+
+    fallback()
+}
+
+async fn resolve_external_token_login_target(
+    state: &Arc<AppState>,
+    user: &UserAccountRecord,
+    requested_agent_name: Option<&str>,
+) -> Result<ExternalTokenLoginTarget, Response> {
+    let access = state
+        .user_store
+        .get_user_agent_access(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let owned_agents = state
+        .user_store
+        .list_user_agents(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let shared_agents = state
+        .user_store
+        .list_shared_user_agents(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let storage = state.user_store.storage_backend();
+    let default_agent = build_default_agent_record_from_storage(storage.as_ref(), &user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let owned_agents = filter_user_agents_by_access(user, access.as_ref(), owned_agents);
+    let shared_agents = filter_user_agents_by_access(user, access.as_ref(), shared_agents);
+
+    Ok(resolve_external_token_login_target_from_candidates(
+        requested_agent_name,
+        &default_agent,
+        &owned_agents,
+        &shared_agents,
+    ))
 }
 
 async fn me(

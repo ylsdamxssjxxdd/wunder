@@ -833,7 +833,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     stream_include_usage: raw.stream_include_usage !== false,
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
     reasoning_effort: normalizeReasoningEffort(raw.reasoning_effort),
-    history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.8),
+    history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.9),
     history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
   }));
@@ -935,7 +935,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     stream_include_usage: true,
     tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
     reasoning_effort: '',
-    history_compaction_ratio: modelType === 'llm' ? '0.8' : '',
+    history_compaction_ratio: modelType === 'llm' ? '0.9' : '',
     history_compaction_reset: 'zero',
     raw: {}
   };

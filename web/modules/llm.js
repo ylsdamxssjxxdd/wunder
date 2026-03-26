@@ -280,7 +280,7 @@ const normalizeLlmConfig = (raw) => {
   history_compaction_ratio:
     typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
       ? raw.history_compaction_ratio
-      : 0.8,
+      : 0.9,
   history_compaction_reset: ["zero", "current", "keep"].includes(
     String(raw?.history_compaction_reset || "zero").trim()
   )
@@ -351,7 +351,7 @@ const clearLlmForm = () => {
   if (elements.llmReasoningEffort) {
     elements.llmReasoningEffort.value = "";
   }
-  elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
+  elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.9, 0.9);
   elements.llmHistoryCompactionReset.value = "zero";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
   lastProviderSelection = DEFAULT_PROVIDER_ID;
@@ -409,8 +409,8 @@ const applyLlmConfigToForm = (name, config) => {
     elements.llmReasoningEffort.value = normalizeReasoningEffort(llm.reasoning_effort);
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(
-    llm.history_compaction_ratio ?? 0.8,
-    0.8
+    llm.history_compaction_ratio ?? 0.9,
+    0.9
   );
   elements.llmHistoryCompactionReset.value = llm.history_compaction_reset || "zero";
   updateLlmTypeVisibility(llm.model_type);
@@ -534,7 +534,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const maxRounds = Number.parseInt(elements.llmMaxRounds.value, 10);
   const maxContext = Number.parseInt(elements.llmMaxContext.value, 10);
   const maxOutput = Number.parseInt(elements.llmMaxOutput.value, 10);
-  const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.8);
+  const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.9);
   const historyCompactionReset = String(
     elements.llmHistoryCompactionReset.value || ""
   ).trim();
@@ -598,7 +598,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
     history_compaction_ratio:
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio
-        : base.history_compaction_ratio ?? 0.8,
+        : base.history_compaction_ratio ?? 0.9,
     history_compaction_reset: ["zero", "current", "keep"].includes(historyCompactionReset)
       ? historyCompactionReset
       : base.history_compaction_reset ?? "zero",

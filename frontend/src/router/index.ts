@@ -15,6 +15,7 @@ const AdminLayout = () => import('@/layouts/AdminLayout.vue');
 const LoginView = () => import('@/views/LoginView.vue');
 const RegisterView = () => import('@/views/RegisterView.vue');
 const MessengerView = () => import('@/views/MessengerView.vue');
+const EmbeddedChatView = () => import('@/views/EmbeddedChatView.vue');
 const ExternalAppView = () => import('@/views/ExternalAppView.vue');
 const AdminLoginView = () => import('@/views/AdminLoginView.vue');
 const AdminUsersView = () => import('@/views/AdminUsersView.vue');
@@ -81,6 +82,14 @@ const resolveExternalQueryUserId = (query: LocationQuery): string => {
   return asQueryText(query.uid);
 };
 
+const resolveExternalQueryAgentName = (query: LocationQuery): string => {
+  const explicit = asQueryText(query.agent_name);
+  if (explicit) return explicit;
+  const wunderAgentName = asQueryText(query.wunder_agent_name);
+  if (wunderAgentName) return wunderAgentName;
+  return asQueryText(query.agent);
+};
+
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
   Object.entries(query).forEach(([key, value]) => {
@@ -124,12 +133,13 @@ const exchangeEmbedCode = async (code: string): Promise<string> => {
 
 const loginWithExternalToken = async (
   token: string,
-  userId: string
-): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string }> => {
+  userId: string,
+  agentName = ''
+): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string; focusMode: boolean }> => {
   const response = await fetch(resolveApiEndpoint('/auth/external/token_login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, user_id: userId })
+    body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
   });
 
   const payload = asRecord(await response.json().catch(() => ({})));
@@ -146,10 +156,12 @@ const loginWithExternalToken = async (
   }
   const user = asRecord(data.user);
   const agentId = String(data.agent_id || '').trim();
+  const focusMode = data.focus_mode === true || String(data.focus_mode || '').trim().toLowerCase() === 'true';
   return {
     accessToken,
     user: Object.keys(user).length > 0 ? user : null,
-    agentId
+    agentId,
+    focusMode
   };
 };
 
@@ -202,11 +214,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'desktop-cron', component: MessengerView },
       { path: 'channels', name: 'desktop-channels', component: MessengerView },
       { path: 'chat', name: 'desktop-chat', component: MessengerView },
-      {
-        path: 'embed/chat',
-        name: 'desktop-embed-chat',
-        redirect: (to) => ({ path: '/desktop/chat', query: to.query, hash: to.hash })
-      },
+      { path: 'embed/chat', name: 'desktop-embed-chat', component: EmbeddedChatView },
       { path: 'beeroom', name: 'desktop-beeroom', component: MessengerView },
       { path: 'user-world', name: 'desktop-user-world', component: MessengerView },
       { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
@@ -228,11 +236,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'cron', component: MessengerView },
       { path: 'channels', name: 'channels', component: MessengerView },
       { path: 'chat', name: 'chat', component: MessengerView },
-      {
-        path: 'embed/chat',
-        name: 'embed-chat',
-        redirect: (to) => ({ path: '/app/chat', query: to.query, hash: to.hash })
-      },
+      { path: 'embed/chat', name: 'embed-chat', component: EmbeddedChatView },
       { path: 'beeroom', name: 'beeroom', component: MessengerView },
       { path: 'user-world', name: 'user-world', component: MessengerView },
       { path: 'workspace', name: 'workspace', component: MessengerView },
@@ -252,12 +256,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'demo-cron', component: MessengerView, meta: { demo: true } },
       { path: 'channels', name: 'demo-channels', component: MessengerView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: MessengerView, meta: { demo: true } },
-      {
-        path: 'embed/chat',
-        name: 'demo-embed-chat',
-        redirect: (to) => ({ path: '/demo/chat', query: to.query, hash: to.hash }),
-        meta: { demo: true }
-      },
+      { path: 'embed/chat', name: 'demo-embed-chat', component: EmbeddedChatView, meta: { demo: true } },
       { path: 'beeroom', name: 'demo-beeroom', component: MessengerView, meta: { demo: true } },
       { path: 'user-world', name: 'demo-user-world', component: MessengerView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: MessengerView, meta: { demo: true } },
@@ -294,14 +293,26 @@ router.beforeEach(async (to) => {
   const query = to.query;
   const externalToken = resolveExternalQueryToken(query);
   const externalUserId = resolveExternalQueryUserId(query);
+  const externalAgentName = resolveExternalQueryAgentName(query);
   if (externalToken && externalUserId) {
     try {
-      const result = await loginWithExternalToken(externalToken, externalUserId);
+      const result = await loginWithExternalToken(externalToken, externalUserId, externalAgentName);
       authStore.token = result.accessToken;
       authStore.user = result.user;
       localStorage.setItem('access_token', result.accessToken);
-      const targetPath = isDesktopModeEnabled() ? '/desktop/chat' : '/app/chat';
-      const nextQuery: LocationQueryRaw = { section: 'messages', entry: 'default' };
+      const targetPath = isDesktopModeEnabled()
+        ? result.focusMode
+          ? '/desktop/embed/chat'
+          : '/desktop/chat'
+        : result.focusMode
+          ? '/app/embed/chat'
+          : '/app/chat';
+      const nextQuery: LocationQueryRaw = { section: 'messages' };
+      if (result.agentId && result.agentId !== '__default__') {
+        nextQuery.agent_id = result.agentId;
+      } else {
+        nextQuery.entry = 'default';
+      }
       return {
         path: targetPath,
         query: nextQuery,

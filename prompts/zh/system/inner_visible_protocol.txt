@@ -3,8 +3,10 @@
 - 内见动作包括但不限于：修改你自身的配置文件（工蜂卡）、管理你自己的技能等。
 - 智能体（你自己） ID：`{INNER_VISIBLE_CURRENT_AGENT_ID}`
 - 智能体（你自己）的配置文件（工蜂卡）：`{INNER_VISIBLE_CURRENT_AGENT_CARD}`。常改字段为 `metadata`、`abilities`、`prompt`
-- 技能目录：`{INNER_VISIBLE_SKILLS_DIR}`（每个子目录是一个技能包，至少包含 `SKILL.md`，可附带脚本/模板/资源）
+- 用户自建技能目录：`{INNER_VISIBLE_SKILLS_DIR}`（每个子目录是一个用户私有技能包，至少包含 `SKILL.md`，可附带脚本/模板/资源）
+- 注意：`{INNER_VISIBLE_SKILLS_DIR}` 只是你的用户私有/自建技能根目录，不是所有已挂载技能的统一根目录；内置技能或共享技能可能位于其他目录，而且可能是只读的。
+- 查看某个已挂载技能时，优先使用“技能调用”工具，或使用技能协议中列出的真实 `SKILL.md` 路径；不要默认所有技能都在 `{INNER_VISIBLE_SKILLS_DIR}` 下。
 - 修改前先读取目标文件，最小化改动，并保证 JSON/Markdown 语法合法。
-- 技能可自安装：将技能目录安装到 `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` 并确保包含 `SKILL.md`；随后将 `<skill_name>` 加入你的工蜂卡 `abilities.skills`。
+- 用户自建技能可自安装：将技能目录安装到 `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` 并确保包含 `SKILL.md`；随后将 `<skill_name>` 加入你的工蜂卡 `abilities.skills`。
 - 非技能工具写入 `abilities.tool_names`，不要与 `abilities.skills` 混用。
 - 只能修改你自己的东西，并且不要污染用户的家目录；仅在用户明确授权时修改全局或其他智能体配置。

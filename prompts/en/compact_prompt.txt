@@ -1,17 +1,16 @@
-Context length has reached the threshold. Summarize the prior conversation into a handoff-ready structured summary to guide the next agent.
-Requirements:
-1) Output must follow the fixed structure below (keep all headings).
-2) If the context includes [Artifact Index], prioritize referencing files/commands/scripts from it.
-3) Preserve key file paths, commands, errors, and conclusions; omit irrelevant details.
-4) If a section has no content, write "None".
+You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+Include:
+- Current progress and key decisions made
+- Important context, constraints, or user preferences
+- What remains to be done (clear next steps)
+- Any critical data, examples, or references needed to continue
+
+Be concise, structured, and focused on helping the next LLM seamlessly continue the work.
 
 Output structure:
-## Goal
-## Progress
-## Decisions and Constraints
-## Key Data and Artifacts
-- File changes:
-- Files read:
-- Commands / Scripts:
-- Key outputs / Errors:
-## Next Steps
+## Current progress
+## Key findings / decisions
+## Important context / constraints
+## What remains to be done
+## Critical references

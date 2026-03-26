@@ -547,3 +547,105 @@ fn extract_compacted_until_ts(item: Option<&Value>) -> Option<f64> {
         .or_else(|| meta.get("compacted_until"));
     parse_timestamp(raw)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n;
+    use serde_json::json;
+    use tokio::runtime::Builder;
+
+    fn with_language<T>(language: &str, f: impl FnOnce() -> T) -> T {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime")
+            .block_on(i18n::with_language(
+                language.to_string(),
+                async move { f() },
+            ))
+    }
+
+    #[test]
+    fn load_compaction_prompt_uses_localized_template() {
+        let zh_prompt = with_language("zh-CN", HistoryManager::load_compaction_prompt);
+        assert!(zh_prompt.contains("## 当前进展"));
+        assert!(zh_prompt.contains("## 剩余待办"));
+
+        let en_prompt = with_language("en-US", HistoryManager::load_compaction_prompt);
+        assert!(en_prompt.contains("## Current progress"));
+        assert!(en_prompt.contains("## Critical references"));
+    }
+
+    #[test]
+    fn filter_history_items_discards_pre_summary_history_by_timestamp_boundary() {
+        let summary = json!({
+            "role": "user",
+            "content": "summary",
+            "timestamp": "2026-03-26T10:00:02Z",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                "compacted_until": "2026-03-26T10:00:01Z"
+            }
+        });
+        let current_user = json!({
+            "role": "user",
+            "content": "current question",
+            "timestamp": "2026-03-26T10:00:03Z"
+        });
+        let current_assistant = json!({
+            "role": "assistant",
+            "content": "current answer",
+            "timestamp": "2026-03-26T10:00:04Z"
+        });
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "old question",
+                "timestamp": "2026-03-26T10:00:00Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "old answer",
+                "timestamp": "2026-03-26T10:00:01Z"
+            }),
+            summary.clone(),
+            current_user.clone(),
+            current_assistant.clone(),
+        ];
+
+        let (filtered, summary_item, compacted_until_ts, summary_index) =
+            filter_history_items(&history);
+
+        assert_eq!(summary_item, Some(summary));
+        assert!(compacted_until_ts.is_some());
+        assert_eq!(summary_index, 2);
+        assert_eq!(filtered, vec![current_user, current_assistant]);
+    }
+
+    #[test]
+    fn filter_history_items_uses_summary_index_fallback_without_timestamps() {
+        let summary = json!({
+            "role": "user",
+            "content": "summary",
+            "meta": {
+                "type": COMPACTION_META_TYPE
+            }
+        });
+        let history = vec![
+            json!({ "role": "user", "content": "old question" }),
+            json!({ "role": "assistant", "content": "old answer" }),
+            summary.clone(),
+            json!({ "role": "user", "content": "current question" }),
+        ];
+
+        let (filtered, summary_item, compacted_until_ts, summary_index) =
+            filter_history_items(&history);
+
+        assert_eq!(summary_item, Some(summary));
+        assert_eq!(compacted_until_ts, None);
+        assert_eq!(summary_index, 2);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0]["content"], json!("current question"));
+    }
+}

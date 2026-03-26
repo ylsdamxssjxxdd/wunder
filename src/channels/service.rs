@@ -824,12 +824,31 @@ impl ChannelHub {
                         &message,
                         &session_info,
                         resolved_binding.as_ref(),
+                        true,
                         Some(agent_display_name.as_str()),
                         None,
                     )
                     .await;
             }
         };
+        let display_question = message
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if let Some(content) = display_question.as_deref() {
+            // Push the inbound user turn to the live session stream before model execution
+            // starts so channel-originated messages render immediately in the active thread.
+            let _ = self
+                .append_channel_stream_event_message(
+                    &session_info.user_id,
+                    &session_info.session_id,
+                    "user",
+                    content,
+                )
+                .await;
+        }
 
         let mut processing_ack_message_id = None;
         if message
@@ -1065,12 +1084,6 @@ impl ChannelHub {
         }
 
         let question = build_channel_question_with_files(message.text.as_deref(), &pending_files);
-        let display_question = message
-            .text
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
         let config_overrides = merge_channel_request_overrides(
             channel_test_request_overrides(),
             display_question.as_deref(),
@@ -1172,6 +1185,7 @@ impl ChannelHub {
                         &message,
                         &session_info,
                         resolved_binding.as_ref(),
+                        false,
                         Some(agent_display_name.as_str()),
                         processing_ack_message_id.as_deref(),
                     )
@@ -3402,6 +3416,30 @@ impl ChannelHub {
                 content,
             )
             .await;
+        self.append_channel_chat_history(
+            cleaned_user,
+            cleaned_session,
+            cleaned_role,
+            content,
+            stream_event_id,
+        )
+        .await;
+    }
+
+    async fn append_channel_chat_history(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        stream_event_id: Option<i64>,
+    ) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        let cleaned_role = role.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_role.is_empty() {
+            return;
+        }
         let mut payload = json!({
             "role": cleaned_role,
             "content": content,
@@ -3420,10 +3458,9 @@ impl ChannelHub {
             .unwrap_or_else(|err| Err(anyhow!(err)));
         if let Err(err) = outcome {
             warn!(
-                "append channel chat failed: user_id={}, session_id={}, role={}, error={err}",
+                "append channel chat history failed: user_id={}, session_id={}, role={}, error={err}",
                 cleaned_user, cleaned_session, cleaned_role
             );
-            return;
         }
     }
 
@@ -3527,6 +3564,7 @@ impl ChannelHub {
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
+        append_user_turn: bool,
         agent_display_name: Option<&str>,
         processing_ack_message_id: Option<&str>,
     ) -> Result<ChannelInboundResult> {
@@ -3545,13 +3583,24 @@ impl ChannelHub {
             format!("正在忙：{preview}（{agent_display_name}）。")
         };
         let user_text = message_preview_text(message);
-        self.append_channel_chat(
-            &session_info.user_id,
-            &session_info.session_id,
-            "user",
-            &user_text,
-        )
-        .await;
+        if append_user_turn {
+            self.append_channel_chat(
+                &session_info.user_id,
+                &session_info.session_id,
+                "user",
+                &user_text,
+            )
+            .await;
+        } else {
+            self.append_channel_chat_history(
+                &session_info.user_id,
+                &session_info.session_id,
+                "user",
+                &user_text,
+                None,
+            )
+            .await;
+        }
         self.append_channel_chat(
             &session_info.user_id,
             &session_info.session_id,

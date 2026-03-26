@@ -2115,9 +2115,14 @@ mod tests {
     fn test_apply_rebuilt_context_guard_preserves_current_question_before_trimming_it() {
         let current_question =
             "Please analyze team size and salaries by department, draw a chart, and summarize in 3 points.";
+        let summary = format!(
+            "{}\n{}",
+            i18n::t("history.compaction_prefix"),
+            "S".repeat(48_000)
+        );
         let mut messages = vec![
             json!({ "role": "system", "content": "system prompt" }),
-            json!({ "role": "user", "content": "S".repeat(48_000) }),
+            json!({ "role": "user", "content": summary }),
             json!({ "role": "user", "content": current_question }),
         ];
         let limit = 256;
@@ -2163,7 +2168,7 @@ mod tests {
         let limit = 900;
         let stats = apply_rebuilt_context_guard(&mut messages, limit);
         assert!(stats.applied);
-        assert!(stats.summary_trimmed || stats.fallback_trim_applied);
+        assert!(stats.current_user_trimmed || stats.fallback_trim_applied);
         assert!(estimate_messages_tokens(&messages) <= limit);
     }
 

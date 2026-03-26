@@ -3,6 +3,7 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
+use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
 };
@@ -75,6 +76,7 @@ pub struct AgentRuntime {
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
+    stream_events: StreamEventService,
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
     running_threads: Arc<Mutex<HashSet<String>>>,
@@ -88,12 +90,14 @@ impl AgentRuntime {
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
     ) -> Arc<Self> {
+        let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
         Arc::new(Self {
             config_store,
             user_store,
             monitor,
             orchestrator,
+            stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             running_threads: Arc::new(Mutex::new(HashSet::new())),
@@ -154,7 +158,10 @@ impl AgentRuntime {
         let config = self.config_store.get().await;
         if !explicit_session && set_as_main {
             if let Some(current_session_id) = session_id.as_deref() {
-                if !self.is_session_idle(&user_id, current_session_id).await {
+                if !self
+                    .is_session_available_for_submit(&user_id, current_session_id)
+                    .await
+                {
                     // For implicit session requests, fork when main is busy so concurrent app calls stay parallel.
                     let forked = self.create_isolated_session(&user_id, &agent_id)?;
                     session_id = Some(forked);
@@ -177,12 +184,16 @@ impl AgentRuntime {
         if config.agent_queue.enabled {
             if let Some(session_id) = session_id.as_deref() {
                 if self.should_queue(&user_id, Some(session_id)).await {
-                    let info = self.enqueue_task(&request, &agent_id, Some(session_id))?;
+                    let info = self
+                        .enqueue_task(&request, &agent_id, Some(session_id))
+                        .await?;
                     return Ok(AgentSubmitOutcome::Queued(info));
                 }
                 lease = self.try_acquire_session_lease(session_id).await;
                 if lease.is_none() {
-                    let info = self.enqueue_task(&request, &agent_id, Some(session_id))?;
+                    let info = self
+                        .enqueue_task(&request, &agent_id, Some(session_id))
+                        .await?;
                     return Ok(AgentSubmitOutcome::Queued(info));
                 }
             }
@@ -467,7 +478,9 @@ impl AgentRuntime {
         if !config.agent_queue.enabled {
             return false;
         }
-        !self.is_session_idle(user_id, session_id).await
+        !self
+            .is_session_available_for_submit(user_id, session_id)
+            .await
     }
 
     async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionLease> {
@@ -486,7 +499,7 @@ impl AgentRuntime {
         ))
     }
 
-    fn enqueue_task(
+    async fn enqueue_task(
         &self,
         request: &WunderRequest,
         agent_id: &str,
@@ -525,22 +538,63 @@ impl AgentRuntime {
             &record.session_id,
             THREAD_STATUS_WAITING,
         );
-        self.monitor.record_event(
+        self.emit_queue_event(
             &record.session_id,
+            &record.user_id,
             "queue_enter",
-            &json!({
+            json!({
                 "queue_id": record.task_id,
                 "thread_id": record.thread_id,
                 "session_id": record.session_id,
                 "agent_id": record.agent_id,
                 "user_id": record.user_id,
             }),
-        );
+        )
+        .await;
         Ok(QueueInfo {
             task_id: record.task_id,
             thread_id: record.thread_id,
             session_id: record.session_id,
         })
+    }
+
+    async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return false;
+        }
+        if let Some(record) = self.monitor.get_record(cleaned_session) {
+            let status = record.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == crate::monitor::MonitorState::STATUS_RUNNING
+                || status == crate::monitor::MonitorState::STATUS_CANCELLING
+                || status == crate::monitor::MonitorState::STATUS_WAITING
+            {
+                return false;
+            }
+        }
+        if let Ok(locks) = self.user_store.list_session_locks_by_user(cleaned_user) {
+            if locks
+                .iter()
+                .any(|lock| lock.session_id.trim() == cleaned_session)
+            {
+                return false;
+            }
+        }
+        let thread_id = format!("thread_{cleaned_session}");
+        if let Ok(tasks) = self
+            .user_store
+            .list_agent_tasks_by_thread(&thread_id, None, 8)
+        {
+            if tasks.iter().any(|task| {
+                task.status == TASK_STATUS_PENDING
+                    || task.status == TASK_STATUS_RETRY
+                    || task.status == TASK_STATUS_RUNNING
+            }) {
+                return false;
+            }
+        }
+        true
     }
 
     async fn is_session_idle(&self, user_id: &str, session_id: &str) -> bool {
@@ -566,6 +620,41 @@ impl AgentRuntime {
             }
         }
         true
+    }
+
+    async fn emit_queue_event(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        event_type: &str,
+        payload: Value,
+    ) {
+        let cleaned_session = session_id.trim();
+        let cleaned_user = user_id.trim();
+        let cleaned_event = event_type.trim();
+        if cleaned_session.is_empty() || cleaned_event.is_empty() {
+            return;
+        }
+        self.monitor
+            .record_event(cleaned_session, cleaned_event, &payload);
+        if cleaned_user.is_empty() {
+            return;
+        }
+        let stream_payload = json!({
+            "event": cleaned_event,
+            "data": payload,
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+        if let Err(err) = self
+            .stream_events
+            .append_event(cleaned_session, cleaned_user, stream_payload)
+            .await
+        {
+            warn!(
+                "append queue stream event failed: session_id={}, event_type={}, error={err}",
+                cleaned_session, cleaned_event
+            );
+        }
     }
 
     async fn run_loop(self: Arc<Self>) {
@@ -617,7 +706,9 @@ impl AgentRuntime {
             if ttl_s > 0.0 {
                 let age = now_ts() - task.created_at;
                 if age > ttl_s {
-                    let _ = self.fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD);
+                    let _ = self
+                        .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
+                        .await;
                     continue;
                 }
             }
@@ -668,27 +759,31 @@ impl AgentRuntime {
             &task.session_id,
             THREAD_STATUS_BUSY,
         );
-        self.monitor.record_event(
+        self.emit_queue_event(
             &task.session_id,
+            &task.user_id,
             "queue_start",
-            &json!({
+            json!({
                 "queue_id": task.task_id,
                 "thread_id": task.thread_id,
                 "session_id": task.session_id,
                 "agent_id": task.agent_id,
                 "user_id": task.user_id,
             }),
-        );
+        )
+        .await;
 
         let mut request: WunderRequest = match serde_json::from_value(task.request_payload.clone())
         {
             Ok(value) => value,
             Err(err) => {
-                let _ = self.fail_task(
-                    &task,
-                    format!("payload decode failed: {err}"),
-                    TASK_STATUS_FAILED,
-                );
+                let _ = self
+                    .fail_task(
+                        &task,
+                        format!("payload decode failed: {err}"),
+                        TASK_STATUS_FAILED,
+                    )
+                    .await;
                 self.finish_thread(&task.thread_id).await;
                 return;
             }
@@ -727,17 +822,19 @@ impl AgentRuntime {
                     &task.session_id,
                     THREAD_STATUS_IDLE,
                 );
-                self.monitor.record_event(
+                self.emit_queue_event(
                     &task.session_id,
+                    &task.user_id,
                     "queue_finish",
-                    &json!({
+                    json!({
                         "queue_id": task.task_id,
                         "thread_id": task.thread_id,
                         "session_id": task.session_id,
                         "agent_id": task.agent_id,
                         "user_id": task.user_id,
                     }),
-                );
+                )
+                .await;
             }
             Err(err) => {
                 let is_busy = err
@@ -753,19 +850,9 @@ impl AgentRuntime {
                         THREAD_STATUS_WAITING,
                     );
                 } else {
-                    let _ = self.fail_task(&task, err.to_string(), TASK_STATUS_FAILED);
-                    self.monitor.record_event(
-                        &task.session_id,
-                        "queue_fail",
-                        &json!({
-                            "queue_id": task.task_id,
-                            "thread_id": task.thread_id,
-                            "session_id": task.session_id,
-                            "agent_id": task.agent_id,
-                            "user_id": task.user_id,
-                            "error": err.to_string(),
-                        }),
-                    );
+                    let _ = self
+                        .fail_task(&task, err.to_string(), TASK_STATUS_FAILED)
+                        .await;
                 }
             }
         }
@@ -778,7 +865,7 @@ impl AgentRuntime {
         let max_retries = config.agent_queue.max_retries as i64;
         let next_retry = task.retry_count.saturating_add(1);
         if next_retry > max_retries {
-            return self.fail_task(task, message, TASK_STATUS_DEAD);
+            return self.fail_task(task, message, TASK_STATUS_DEAD).await;
         }
         let delay = 1.5_f64.powi(next_retry as i32).clamp(1.0, 30.0);
         let now = now_ts();
@@ -796,7 +883,7 @@ impl AgentRuntime {
         Ok(())
     }
 
-    fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
+    async fn fail_task(&self, task: &AgentTaskRecord, message: String, status: &str) -> Result<()> {
         let now = now_ts();
         self.user_store
             .update_agent_task_status(UpdateAgentTaskStatusParams {
@@ -815,6 +902,21 @@ impl AgentRuntime {
             &task.session_id,
             THREAD_STATUS_IDLE,
         )?;
+        self.emit_queue_event(
+            &task.session_id,
+            &task.user_id,
+            "queue_fail",
+            json!({
+                "queue_id": task.task_id,
+                "thread_id": task.thread_id,
+                "session_id": task.session_id,
+                "agent_id": task.agent_id,
+                "user_id": task.user_id,
+                "status": status,
+                "error": message,
+            }),
+        )
+        .await;
         Ok(())
     }
 

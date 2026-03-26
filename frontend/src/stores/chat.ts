@@ -1278,43 +1278,6 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   return -1;
 };
 
-const hasMatchingSnapshotAssistant = (messages, snapshotAssistant) => {
-  if (!snapshotAssistant || !Array.isArray(messages)) return false;
-  const snapshotEventId = normalizeStreamEventId(snapshotAssistant.stream_event_id);
-  const snapshotRound = normalizeStreamRound(snapshotAssistant.stream_round);
-  const snapshotTime = resolveTimestampMs(snapshotAssistant.created_at);
-  const snapshotContent = normalizeAssistantContent(snapshotAssistant.content || '');
-  return messages.some((message) => {
-    if (!message || message.role !== 'assistant') return false;
-    const messageEventId = normalizeStreamEventId(message.stream_event_id);
-    if (snapshotEventId !== null && messageEventId !== null && snapshotEventId === messageEventId) {
-      return true;
-    }
-    const messageRound = normalizeStreamRound(message.stream_round);
-    if (snapshotRound !== null && messageRound !== null && snapshotRound === messageRound) {
-      return true;
-    }
-    const messageTime = resolveTimestampMs(message.created_at);
-    if (
-      Number.isFinite(snapshotTime) &&
-      Number.isFinite(messageTime) &&
-      Math.abs(snapshotTime - messageTime) <= SNAPSHOT_MATCH_WINDOW_MS
-    ) {
-      return true;
-    }
-    if (snapshotContent) {
-      const messageContent = normalizeAssistantContent(message.content || '');
-      if (
-        messageContent &&
-        (messageContent.includes(snapshotContent) || snapshotContent.includes(messageContent))
-      ) {
-        return true;
-      }
-    }
-    return false;
-  });
-};
-
 const mergeSnapshotIntoMessages = (messages, snapshot) => {
   if (!snapshot || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
     return messages;
@@ -1344,16 +1307,6 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
     }
     mergeSnapshotAssistant(target, snapshotAssistants[matchIndex]);
     cursor = matchIndex - 1;
-  }
-  const snapshotLastMessage = snapshotMessages[snapshotMessages.length - 1];
-  const serverLastMessage = messages[messages.length - 1];
-  if (
-    serverLastMessage?.role === 'user' &&
-    snapshotLastMessage?.role === 'assistant' &&
-    normalizeFlag(snapshotLastMessage.stream_incomplete) &&
-    !hasMatchingSnapshotAssistant(messages, snapshotLastMessage)
-  ) {
-    return [...messages, { ...snapshotLastMessage }];
   }
   return messages;
 };
@@ -3446,7 +3399,8 @@ const startSessionWatcher = (store, sessionId) => {
       normalizedEventType === 'team_merge' ||
       normalizedEventType === 'team_progress' ||
       normalizedEventType === 'team_finish' ||
-      normalizedEventType === 'team_error';
+      normalizedEventType === 'team_error' ||
+      normalizedEventType.startsWith('subagent_');
     if (!eventHasWorkflowHint) {
       return null;
     }
@@ -3485,7 +3439,8 @@ const startSessionWatcher = (store, sessionId) => {
     normalizedEventType === 'team_merge' ||
     normalizedEventType === 'team_progress' ||
     normalizedEventType === 'team_finish' ||
-    normalizedEventType === 'team_error';
+    normalizedEventType === 'team_error' ||
+    normalizedEventType.startsWith('subagent_');
 
   const isWatchSidebandEventType = (normalizedEventType) =>
     normalizedEventType === 'channel_message' || normalizedEventType.startsWith('team_');
@@ -3789,10 +3744,19 @@ const startSessionWatcher = (store, sessionId) => {
     }
     const roundNumber = resolveWatchRoundNumber(eventType, payload, data, isRoundStart);
     const userContent = extractWatchUserContent(normalizedEventType, payload, data);
+    const shouldPreinsertUserMessage =
+      (isRoundStart || normalizedEventType === 'received') && Boolean(userContent);
+    if (shouldPreinsertUserMessage) {
+      // Insert the new user turn before allocating the assistant round so stale pending
+      // assistant content from the previous turn cannot be reused as the current response shell.
+      insertWatchUserMessage(store, key, sessionMessagesRef, userContent, eventTimestampMs, null);
+    }
     const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber, {
       preferFreshRound: isRoundStart || Boolean(userContent)
     });
-    if (state && (isRoundStart || normalizedEventType === 'received')) {
+    if (state && shouldPreinsertUserMessage) {
+      state.userInserted = true;
+    } else if (state && (isRoundStart || normalizedEventType === 'received')) {
       if (!state.userInserted && userContent) {
         insertWatchUserMessage(
           store,
@@ -4124,6 +4088,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const toolOutputBufferMap = new Map();
   const toolOutputFlushTimerMap = new Map();
   const compactionProgressItemMap = new Map();
+  const subagentDispatchItemMap = new Map();
+  const subagentRunItemMap = new Map();
   const roundMetricsMap = new Map<
     number,
     { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
@@ -4923,6 +4889,82 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (!workflowRef || activeCompactionWorkflowRef === workflowRef) {
       activeCompactionWorkflowRef = null;
     }
+  };
+
+  const normalizeSubagentWorkflowStatus = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (
+      normalized === 'error' ||
+      normalized === 'failed' ||
+      normalized === 'timeout' ||
+      normalized === 'cancelled' ||
+      normalized === 'closed' ||
+      normalized === 'partial' ||
+      normalized === 'not_found'
+    ) {
+      return 'failed';
+    }
+    if (
+      normalized === 'running' ||
+      normalized === 'waiting' ||
+      normalized === 'queued' ||
+      normalized === 'accepted' ||
+      normalized === 'cancelling'
+    ) {
+      return 'loading';
+    }
+    return 'completed';
+  };
+
+  const ensureSubagentDispatchItem = (dispatchId, title, detail, status = 'loading') => {
+    const key = String(dispatchId || '').trim();
+    if (!key) return null;
+    const existing = subagentDispatchItemMap.get(key);
+    if (existing) {
+      updateWorkflowItem(assistantMessage.workflowItems, existing, {
+        title,
+        detail,
+        status,
+        eventType: 'subagent_dispatch'
+      });
+      return existing;
+    }
+    const item = buildWorkflowItem(title, detail, status, {
+      eventType: 'subagent_dispatch'
+    });
+    assistantMessage.workflowItems.push(item);
+    subagentDispatchItemMap.set(key, item.id);
+    return item.id;
+  };
+
+  const upsertSubagentRunItem = (runKey, title, detail, status, meta = {}) => {
+    const key = String(runKey || '').trim();
+    if (!key) {
+      assistantMessage.workflowItems.push(
+        buildWorkflowItem(title, detail, status, {
+          eventType: 'subagent_dispatch_item_update',
+          ...meta
+        })
+      );
+      return;
+    }
+    const existing = subagentRunItemMap.get(key);
+    if (existing) {
+      updateWorkflowItem(assistantMessage.workflowItems, existing, {
+        title,
+        detail,
+        status,
+        eventType: 'subagent_dispatch_item_update',
+        ...meta
+      });
+      return;
+    }
+    const item = buildWorkflowItem(title, detail, status, {
+      eventType: 'subagent_dispatch_item_update',
+      ...meta
+    });
+    assistantMessage.workflowItems.push(item);
+    subagentRunItemMap.set(key, item.id);
   };
 
   const updateRoundState = (roundNumber) => {
@@ -5795,6 +5837,73 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (!assistantMessage.content) {
           assistantMessage.content = pickText(detail, t('chat.error.retry'));
         }
+        break;
+      }
+      case 'subagent_dispatch_start': {
+        const source = data ?? payload ?? {};
+        const dispatchId = String(source?.dispatch_id ?? source?.dispatchId ?? '').trim();
+        const label = String(source?.label ?? '').trim();
+        const title = label ? `子智能体调度：${label}` : '子智能体调度';
+        const detail = buildDetail(source);
+        const itemId = ensureSubagentDispatchItem(dispatchId, title, detail, 'loading');
+        if (!itemId) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(title, detail, 'loading', { eventType: 'subagent_dispatch_start' })
+          );
+        }
+        break;
+      }
+      case 'subagent_dispatch_item_update': {
+        const source = data ?? payload ?? {};
+        const runId = String(source?.run_id ?? source?.runId ?? '').trim();
+        const sessionId = String(source?.session_id ?? source?.sessionId ?? '').trim();
+        const label = String(source?.label ?? source?.spawn_label ?? source?.title ?? '').trim();
+        const titleBase = label || sessionId || runId || '任务';
+        const title = `子智能体：${titleBase}`;
+        upsertSubagentRunItem(
+          runId || sessionId,
+          title,
+          buildDetail(source),
+          normalizeSubagentWorkflowStatus(source?.status),
+          { eventType: 'subagent_dispatch_item_update' }
+        );
+        break;
+      }
+      case 'subagent_dispatch_finish': {
+        const source = data ?? payload ?? {};
+        const dispatchId = String(source?.dispatch_id ?? source?.dispatchId ?? '').trim();
+        const title = '子智能体调度结果';
+        const detail = buildDetail(source);
+        const status = normalizeSubagentWorkflowStatus(source?.status);
+        const itemId = ensureSubagentDispatchItem(dispatchId, title, detail, status);
+        if (!itemId) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(title, detail, status, { eventType: 'subagent_dispatch_finish' })
+          );
+        }
+        break;
+      }
+      case 'subagent_status':
+      case 'subagent_interrupt':
+      case 'subagent_close':
+      case 'subagent_resume':
+      case 'subagent_announce': {
+        const source = data ?? payload ?? raw;
+        const titleMap = {
+          subagent_status: '子智能体状态',
+          subagent_interrupt: '子智能体中断',
+          subagent_close: '子智能体关闭',
+          subagent_resume: '子智能体恢复',
+          subagent_announce: '子智能体回执'
+        };
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            titleMap[eventType] || '子智能体事件',
+            buildDetail(source),
+            normalizeSubagentWorkflowStatus((data ?? payload ?? {})?.status),
+            { eventType }
+          )
+        );
         break;
       }
       case 'team_start':
