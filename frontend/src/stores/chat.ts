@@ -103,6 +103,7 @@ type WorkflowProcessorOptions = {
 
 type UsageStatsOptions = {
   updateUsage?: boolean;
+  updateContextFromUsage?: boolean;
   round?: number | null;
   accumulateDurations?: boolean;
   includeInRoundAverage?: boolean;
@@ -384,11 +385,11 @@ const normalizeUsagePayload = (payload) => {
 
 const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number | null => {
   if (!usage) return null;
-  if (Number.isFinite(usage.input) && usage.input > 0) {
-    return usage.input;
-  }
   if (Number.isFinite(usage.total) && usage.total > 0) {
     return usage.total;
+  }
+  if (Number.isFinite(usage.input) && usage.input > 0) {
+    return usage.input;
   }
   return null;
 };
@@ -426,18 +427,21 @@ const normalizeMessageStats = (stats) => {
   }
   const normalizedUsage = normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage);
   const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
-  const quotaSnapshot = normalizeQuotaSnapshot(
-    stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
-  );
-  const contextTokens = normalizeContextTokens(
+  const hasUsageTotalTokens = Boolean(normalizedUsage && normalizedUsage.total > 0);
+  const explicitContextTokens = normalizeContextTokens(
     stats.contextTokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       stats.contextUsage ??
       stats.context_usage?.context_tokens ??
-      stats.context_usage?.contextTokens ??
-      usageContextTokens
+      stats.context_usage?.contextTokens
   );
+  const quotaSnapshot = normalizeQuotaSnapshot(
+    stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
+  );
+  const contextTokens = hasUsageTotalTokens
+    ? usageContextTokens
+    : explicitContextTokens ?? usageContextTokens;
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -917,7 +921,7 @@ const resolveEventRoundNumber = (payload, data) => {
 };
 
 const assignStreamEventId = (message, eventId) => {
-  if (!message || message.role !== 'assistant') return;
+  if (!message || typeof message !== 'object') return;
   const normalized = normalizeStreamEventId(eventId);
   if (normalized === null) return;
   const current = normalizeStreamEventId(message.stream_event_id);
@@ -2947,13 +2951,24 @@ const resolveMaxStreamEventId = (messages) => {
   if (!Array.isArray(messages)) return null;
   let maxId = 0;
   messages.forEach((message) => {
-    if (message?.role !== 'assistant') return;
     const eventId = normalizeStreamEventId(message.stream_event_id);
     if (eventId && eventId > maxId) {
       maxId = eventId;
     }
   });
   return maxId > 0 ? maxId : null;
+};
+
+const resolveLastStreamEventId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    const eventId = normalizeStreamEventId(message?.stream_event_id);
+    if (eventId !== null) {
+      return eventId;
+    }
+  }
+  return null;
 };
 
 const resolveLastAssistantStreamEventId = (messages) => {
@@ -3158,6 +3173,8 @@ const insertWatchUserMessage = (store, sessionId, messages, content, eventTimest
   } else {
     messages.push(userMessage);
   }
+  clearSupersededPendingAssistantMessages(messages);
+  dismissStaleInquiryPanels(messages);
   touchSessionUpdatedAt(store, sessionId, eventTimestampMs ?? Date.now());
   notifySessionSnapshot(store, sessionId, messages, true);
 };
@@ -3194,6 +3211,7 @@ const startSessionWatcher = (store, sessionId) => {
   const completedRounds = new Set();
   let maxKnownRound = resolveMaxStreamRound(sessionMessagesRef) || 0;
   const tailEventId =
+    resolveLastStreamEventId(sessionMessagesRef) ||
     resolveLastAssistantStreamEventId(sessionMessagesRef) ||
     resolveMaxStreamEventId(sessionMessagesRef) ||
     0;
@@ -3202,7 +3220,12 @@ const startSessionWatcher = (store, sessionId) => {
   const minEventTimestampMs =
     lastEventId > 0 ? null : resolveLastAssistantTimestampMs(sessionMessagesRef);
 
-  const ensureRoundState = (roundNumber, eventTimestampMs, userRoundNumber = null) => {
+  const ensureRoundState = (
+    roundNumber,
+    eventTimestampMs,
+    userRoundNumber = null,
+    options: { preferFreshRound?: boolean } = {}
+  ) => {
     const normalizedRound = normalizeStreamRound(roundNumber);
     if (normalizedRound === null || normalizedRound <= 0) return null;
     maxKnownRound = Math.max(maxKnownRound, normalizedRound);
@@ -3224,6 +3247,18 @@ const startSessionWatcher = (store, sessionId) => {
       pendingRound !== null &&
       pendingRound !== normalizedRound &&
       (normalizedUserRound === null || pendingRound !== normalizedUserRound);
+    const preferFreshRound = options?.preferFreshRound === true;
+    const pendingNeedsReset =
+      Boolean(pendingCandidate) &&
+      preferFreshRound &&
+      (pendingHasContent || pendingHasWorkflow) &&
+      (pendingRound === null || pendingRoundMismatch);
+    if (pendingNeedsReset && stopPendingAssistantMessage(pendingCandidate)) {
+      const panel = normalizeInquiryPanelState(pendingCandidate?.questionPanel);
+      if (panel?.status === 'pending') {
+        pendingCandidate.questionPanel = { ...panel, status: 'dismissed' };
+      }
+    }
     const pendingLooksStale =
       Boolean(pendingCandidate) &&
       Number.isFinite(eventTimestampMs) &&
@@ -3231,7 +3266,9 @@ const startSessionWatcher = (store, sessionId) => {
       eventTimestampMs > Number(pendingCreatedAtMs) + 1500 &&
       (pendingHasContent || pendingHasWorkflow);
     const reusablePending =
-      pendingCandidate && !pendingRoundMismatch && !pendingLooksStale ? pendingCandidate : null;
+      pendingCandidate && !pendingNeedsReset && !pendingRoundMismatch && !pendingLooksStale
+        ? pendingCandidate
+        : null;
     const candidate =
       candidateByUserRound ||
       reusablePending ||
@@ -3647,6 +3684,8 @@ const startSessionWatcher = (store, sessionId) => {
           const userMessage = buildMessage('user', content, createdAt);
           assignStreamEventId(userMessage, eventId);
           sessionMessagesRef.push(userMessage);
+          clearSupersededPendingAssistantMessages(sessionMessagesRef);
+          dismissStaleInquiryPanels(sessionMessagesRef);
           touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
           notifySessionSnapshot(store, key, sessionMessagesRef, true);
           return;
@@ -3741,8 +3780,10 @@ const startSessionWatcher = (store, sessionId) => {
       return;
     }
     const roundNumber = resolveWatchRoundNumber(eventType, payload, data, isRoundStart);
-    const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber);
     const userContent = extractWatchUserContent(normalizedEventType, payload, data);
+    const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber, {
+      preferFreshRound: isRoundStart || Boolean(userContent)
+    });
     if (state && (isRoundStart || normalizedEventType === 'received')) {
       if (!state.userInserted && userContent) {
         insertWatchUserMessage(
@@ -4324,18 +4365,19 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
+    const shouldUpdateContextFromUsage = usageOptions.updateContextFromUsage !== false;
     const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
     const existingContextTokens = normalizeContextTokens(stats.contextTokens);
     if (shouldUpdateUsage) {
       stats.usage = normalizedUsage;
     }
-    if (
-      usageContextTokens !== null &&
-      (existingContextTokens === null || existingContextTokens <= 0)
-    ) {
+    if (shouldUpdateContextFromUsage && usageContextTokens !== null) {
+      const changed = existingContextTokens !== usageContextTokens;
       stats.contextTokens = usageContextTokens;
       contextEstimateBaseTokens = usageContextTokens;
-      options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
+      if (changed) {
+        options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
+      }
     } else if (existingContextTokens !== null && existingContextTokens > 0) {
       contextEstimateBaseTokens = existingContextTokens;
     }
@@ -5558,7 +5600,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           null,
           null,
           // round_usage is whole-turn aggregate; keep final llm_output usage as primary speed source.
-          { round, updateUsage: !stats?.usage, includeInRoundAverage: false }
+          {
+            round,
+            updateUsage: !stats?.usage,
+            updateContextFromUsage: false,
+            includeInRoundAverage: false
+          }
         );
         fallbackQuotaUsageFromRound(round);
         break;
@@ -6254,7 +6301,9 @@ export const useChatStore = defineStore('chat', {
       const { data } = await createSession(payload);
       const session = data.data;
       this.sessions.unshift(session);
-      this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
+      if (session?.is_main === true) {
+        this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
+      }
       writeSessionListCache(session.agent_id, filterSessionsByAgent(session.agent_id, this.sessions));
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
@@ -6272,6 +6321,13 @@ export const useChatStore = defineStore('chat', {
         sessionId: this.activeSessionId,
         messages: this.messages
       });
+      if (session?.is_main !== true) {
+        try {
+          await this.setMainSession(session.id);
+        } catch (error) {
+          // Keep local session state when explicit main-session sync fails.
+        }
+      }
       startSessionWatcher(this, session.id);
       return session;
     },

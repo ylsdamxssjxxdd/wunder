@@ -652,15 +652,13 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (!stats) {
     return null;
   }
-  const explicitContext = normalizePositiveTokenCount(
-    stats.contextTokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
-      (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
-      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+  const usageTotal = normalizePositiveTokenCount(
+    (stats.usage as Record<string, unknown> | undefined)?.total ??
+      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
   );
-  if (explicitContext !== null) {
-    return explicitContext;
+  if (usageTotal !== null) {
+    return usageTotal;
   }
   const usageInput = normalizePositiveTokenCount(
     (stats.usage as Record<string, unknown> | undefined)?.input ??
@@ -670,13 +668,15 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (usageInput !== null) {
     return usageInput;
   }
-  const usageTotal = normalizePositiveTokenCount(
-    (stats.usage as Record<string, unknown> | undefined)?.total ??
-      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
-      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
+  const explicitContext = normalizePositiveTokenCount(
+    stats.contextTokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );
-  if (usageTotal !== null) {
-    return usageTotal;
+  if (explicitContext !== null) {
+    return explicitContext;
   }
   return normalizePositiveTokenCount(
     (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??

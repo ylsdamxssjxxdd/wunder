@@ -1075,7 +1075,9 @@ impl TeamRunRunner {
             let stream_payload = payload.clone();
             tokio::spawn(async move {
                 let envelope = build_parent_session_stream_event(&event_name, stream_payload);
-                if let Err(err) = stream_events.append_event(&session_id, &user_id, envelope).await
+                if let Err(err) = stream_events
+                    .append_event(&session_id, &user_id, envelope)
+                    .await
                 {
                     warn!(
                         "append team stream event failed: session_id={}, event_type={}, error={err}",

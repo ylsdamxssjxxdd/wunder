@@ -3394,12 +3394,25 @@ impl ChannelHub {
         if cleaned_user.is_empty() || cleaned_session.is_empty() || cleaned_role.is_empty() {
             return;
         }
-        let payload = json!({
+        let stream_event_id = self
+            .append_channel_stream_event_message(
+                cleaned_user,
+                cleaned_session,
+                cleaned_role,
+                content,
+            )
+            .await;
+        let mut payload = json!({
             "role": cleaned_role,
             "content": content,
             "session_id": cleaned_session,
             "timestamp": Local::now().to_rfc3339(),
         });
+        if let Some(event_id) = stream_event_id {
+            if let Some(payload_obj) = payload.as_object_mut() {
+                payload_obj.insert("stream_event_id".to_string(), json!(event_id));
+            }
+        }
         let storage = self.storage.clone();
         let user_id = cleaned_user.to_string();
         let outcome = tokio::task::spawn_blocking(move || storage.append_chat(&user_id, &payload))
@@ -3412,13 +3425,6 @@ impl ChannelHub {
             );
             return;
         }
-        self.append_channel_stream_event_message(
-            cleaned_user,
-            cleaned_session,
-            cleaned_role,
-            content,
-        )
-        .await;
     }
 
     async fn append_channel_stream_event_message(
@@ -3427,7 +3433,7 @@ impl ChannelHub {
         session_id: &str,
         role: &str,
         content: &str,
-    ) {
+    ) -> Option<i64> {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
         let cleaned_role = role.trim().to_ascii_lowercase();
@@ -3437,7 +3443,7 @@ impl ChannelHub {
             || cleaned_content.is_empty()
             || cleaned_role.is_empty()
         {
-            return;
+            return None;
         }
         let payload = json!({
             "event": "channel_message",
@@ -3454,11 +3460,15 @@ impl ChannelHub {
         let outcome = stream_events
             .append_event(&session_id, &user_id, payload)
             .await;
-        if let Err(err) = outcome {
-            warn!(
-                "append channel stream event failed: user_id={}, session_id={}, role={}, error={err}",
-                cleaned_user, cleaned_session, cleaned_role
-            );
+        match outcome {
+            Ok(event_id) => Some(event_id),
+            Err(err) => {
+                warn!(
+                    "append channel stream event failed: user_id={}, session_id={}, role={}, error={err}",
+                    cleaned_user, cleaned_session, cleaned_role
+                );
+                None
+            }
         }
     }
 

@@ -703,6 +703,22 @@ impl Orchestrator {
                 };
                 last_response = Some((content.clone(), reasoning.clone()));
                 accumulate_usage(&mut round_usage, &usage);
+                let usage_context_tokens = if usage.total > 0 {
+                    usage.total
+                } else {
+                    usage.input
+                };
+                if usage_context_tokens > 0 {
+                    let usage_context_tokens = usage_context_tokens.min(i64::MAX as u64) as i64;
+                    self.workspace
+                        .save_session_context_tokens_async(
+                            &user_id,
+                            &session_id,
+                            usage_context_tokens,
+                        )
+                        .await;
+                    persisted_context_tokens = usage_context_tokens;
+                }
 
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()

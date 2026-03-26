@@ -1428,12 +1428,13 @@
       :show-agent-panels="showRightAgentPanels"
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
-      :skills-loading="agentToolSummaryLoading"
+      :skills-loading="rightDockSkillsLoading"
       :skills-uploading="skillDockUploading"
       :enabled-skills="rightDockEnabledSkills"
       :disabled-skills="rightDockDisabledSkills"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
       @upload-skill-archive="handleRightDockSkillArchiveUpload"
+      @open-skill-detail="openRightDockSkillDetail"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
     />
@@ -1500,12 +1501,43 @@
       v-model:visible="timelineDialogVisible"
       :active-session-id="String(chatStore.activeSessionId || '')"
       :session-history="rightPanelSessionHistory"
-      @restore-session="handleTimelineDialogRestoreSession"
-      @set-main="setTimelineSessionMain"
+      @activate-session="handleTimelineDialogActivateSession"
       @open-session-detail="openTimelineSessionDetail"
       @archive-session="archiveTimelineSession"
       @rename-session="renameTimelineSession"
     />
+    <el-dialog
+      v-model="rightDockSkillDialogVisible"
+      class="messenger-dialog messenger-skill-detail-dialog"
+      :title="rightDockSkillDialogTitle"
+      width="760px"
+      :close-on-click-modal="false"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="messenger-skill-detail-body">
+        <div class="messenger-skill-detail-toolbar">
+          <div class="messenger-skill-detail-path" :title="rightDockSkillDialogPath || undefined">
+            {{ rightDockSkillDialogPath }}
+          </div>
+          <div class="messenger-skill-detail-toggle">
+            <span>{{ t('common.enabled') }}</span>
+            <el-switch
+              :model-value="rightDockSelectedSkillEnabled"
+              :disabled="rightDockSkillToggleSaving || !rightDockSelectedSkillName"
+              :loading="rightDockSkillToggleSaving"
+              @change="handleRightDockSkillEnabledToggle"
+            />
+          </div>
+        </div>
+        <div v-if="rightDockSkillContentLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+        <pre
+          v-else-if="rightDockSkillContent"
+          class="messenger-skill-detail-content"
+        ><code>{{ rightDockSkillContent }}</code></pre>
+        <div v-else class="messenger-list-empty">{{ t('chat.ability.noDesc') }}</div>
+      </div>
+    </el-dialog>
     <AgentQuickCreateDialog
       v-model="agentQuickCreateVisible"
       :creating="quickCreatingAgent"
@@ -1539,7 +1571,13 @@ import { fetchCronJobs } from '@/api/cron';
 import { fetchDesktopSettings } from '@/api/desktop';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
-import { fetchUserToolsCatalog, fetchUserToolsSummary, uploadUserSkillZip } from '@/api/userTools';
+import {
+  fetchUserSkillContent,
+  fetchUserSkills,
+  fetchUserToolsCatalog,
+  fetchUserToolsSummary,
+  uploadUserSkillZip
+} from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
@@ -1616,7 +1654,7 @@ import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown'
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
-import { resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
 import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
@@ -1931,6 +1969,21 @@ type RightDockSkillItem = {
   description: string;
   enabled: boolean;
 };
+type RightDockSkillCatalogItem = {
+  name: string;
+  description: string;
+  path: string;
+  source: string;
+  builtin: boolean;
+  readonly: boolean;
+};
+const rightDockSkillCatalog = ref<RightDockSkillCatalogItem[]>([]);
+const rightDockSkillCatalogLoading = ref(false);
+const rightDockSkillDialogVisible = ref(false);
+const rightDockSelectedSkillName = ref('');
+const rightDockSkillContentLoading = ref(false);
+const rightDockSkillContent = ref('');
+const rightDockSkillToggleSaving = ref(false);
 const timelineDialogVisible = ref(false);
 const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
@@ -2016,6 +2069,8 @@ let agentUserRoundsLoadVersion = 0;
 let cronAgentIdsLoadVersion = 0;
 let channelBoundAgentIdsLoadVersion = 0;
 let toolsCatalogLoadVersion = 0;
+let rightDockSkillCatalogLoadVersion = 0;
+let rightDockSkillContentLoadVersion = 0;
 let desktopDefaultModelMetaFetchPromise: Promise<{
   hearingSupported: boolean;
   modelDisplayName: string;
@@ -3263,18 +3318,53 @@ const normalizeRightDockSkillDetails = (
   return output;
 };
 
-const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
-  const allGroups = collectAbilityGroupDetails(
-    (agentPromptToolSummary.value || {}) as Record<string, unknown>
-  );
+const normalizeRightDockSkillCatalog = (list: unknown): RightDockSkillCatalogItem[] => {
+  if (!Array.isArray(list)) return [];
+  const output: RightDockSkillCatalogItem[] = [];
+  const seen = new Set<string>();
+  list.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const source = item as Record<string, unknown>;
+    const name = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push({
+      name,
+      description: String(source.description || source.desc || source.summary || '').trim(),
+      path: String(source.path || '').trim(),
+      source: String(source.source || '').trim().toLowerCase(),
+      builtin: Boolean(source.builtin),
+      readonly: Boolean(source.readonly)
+    });
+  });
+  return output;
+};
+
+const rightDockSkillEnabledNameSet = computed<Set<string>>(() => {
+  const activeAgentProfile =
+    activeAgentId.value === DEFAULT_AGENT_KEY
+      ? (defaultAgentProfile.value as Record<string, unknown> | null)
+      : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+          (activeAgent.value as Record<string, unknown> | null));
+  const selectedByProfile = normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile));
+  if (!agentPromptToolSummary.value) {
+    return new Set(selectedByProfile);
+  }
   const enabledGroups = collectAbilityGroupDetails(
     (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
   );
   const enabledDetails = normalizeRightDockSkillDetails(enabledGroups.skills);
-  const enabledSet = new Set<string>(enabledDetails.map((item) => item.name));
-  const merged = new Map<string, RightDockSkillItem>();
+  return new Set<string>(enabledDetails.map((item) => item.name));
+});
 
-  normalizeRightDockSkillDetails(allGroups.skills).forEach((item) => {
+const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
+  const enabledSet = rightDockSkillEnabledNameSet.value;
+  const merged = new Map<string, RightDockSkillItem>();
+  const allGroups = collectAbilityGroupDetails(
+    (agentPromptToolSummary.value || {}) as Record<string, unknown>
+  );
+
+  rightDockSkillCatalog.value.forEach((item) => {
     merged.set(item.name, {
       name: item.name,
       description: item.description,
@@ -3282,19 +3372,19 @@ const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
     });
   });
 
-  enabledDetails.forEach((item) => {
+  normalizeRightDockSkillDetails(allGroups.skills).forEach((item) => {
     const existing = merged.get(item.name);
     if (existing) {
       if (!existing.description && item.description) {
         existing.description = item.description;
       }
-      existing.enabled = true;
+      existing.enabled = enabledSet.has(item.name);
       return;
     }
     merged.set(item.name, {
       name: item.name,
       description: item.description,
-      enabled: true
+      enabled: enabledSet.has(item.name)
     });
   });
 
@@ -3310,6 +3400,27 @@ const rightDockEnabledSkills = computed<RightDockSkillItem[]>(() =>
 const rightDockDisabledSkills = computed<RightDockSkillItem[]>(() =>
   rightDockSkillItems.value.filter((item) => !item.enabled)
 );
+const rightDockSkillsLoading = computed(
+  () => agentToolSummaryLoading.value || rightDockSkillCatalogLoading.value
+);
+const rightDockSelectedSkill = computed<RightDockSkillCatalogItem | null>(() => {
+  const name = String(rightDockSelectedSkillName.value || '').trim();
+  if (!name) return null;
+  return rightDockSkillCatalog.value.find((item) => item.name === name) || null;
+});
+const rightDockSkillDialogTitle = computed(() => {
+  const name = String(rightDockSelectedSkillName.value || '').trim();
+  return name ? `技能 skill · ${name}` : '技能 skill';
+});
+const rightDockSkillDialogPath = computed(() => {
+  const path = String(rightDockSelectedSkill.value?.path || '').trim();
+  return path || 'SKILL.md';
+});
+const rightDockSelectedSkillEnabled = computed(() => {
+  const name = String(rightDockSelectedSkillName.value || '').trim();
+  if (!name) return false;
+  return rightDockSkillEnabledNameSet.value.has(name);
+});
 
 const currentContainerId = computed(() => {
   const source = activeAgent.value as Record<string, unknown> | null;
@@ -5097,7 +5208,12 @@ const rightPanelSessionHistory = computed(() => {
       isMain: Boolean(session?.is_main)
     }))
     .filter((item) => item.id)
-    .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt))
+    .sort((left, right) => {
+      if (left.isMain !== right.isMain) {
+        return left.isMain ? -1 : 1;
+      }
+      return normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt);
+    })
     .filter((item) => {
       if (seenIds.has(item.id)) {
         return false;
@@ -7880,6 +7996,116 @@ const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
   }
 };
 
+const loadRightDockSkills = async (
+  options: { force?: boolean; silent?: boolean } = {}
+) => {
+  const force = options.force === true;
+  const silent = options.silent !== false;
+  if (rightDockSkillCatalogLoading.value && !force) {
+    return;
+  }
+  const currentVersion = ++rightDockSkillCatalogLoadVersion;
+  rightDockSkillCatalogLoading.value = true;
+  try {
+    const result = await fetchUserSkills();
+    if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
+    const payload = (result?.data?.data || {}) as Record<string, unknown>;
+    rightDockSkillCatalog.value = normalizeRightDockSkillCatalog(payload.skills);
+  } catch (error) {
+    if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
+    if (!silent) {
+      showApiError(error, t('userTools.skills.loadFailed'));
+    }
+  } finally {
+    if (currentVersion === rightDockSkillCatalogLoadVersion) {
+      rightDockSkillCatalogLoading.value = false;
+    }
+  }
+};
+
+const openRightDockSkillDetail = async (name: unknown) => {
+  const normalized = String(name || '').trim();
+  if (!normalized) return;
+  rightDockSelectedSkillName.value = normalized;
+  rightDockSkillDialogVisible.value = true;
+  rightDockSkillContent.value = '';
+  const currentVersion = ++rightDockSkillContentLoadVersion;
+  rightDockSkillContentLoading.value = true;
+  try {
+    const result = await fetchUserSkillContent(normalized);
+    if (currentVersion !== rightDockSkillContentLoadVersion) return;
+    const payload = (result?.data?.data || {}) as Record<string, unknown>;
+    rightDockSkillContent.value = String(payload.content || '');
+  } catch (error) {
+    if (currentVersion !== rightDockSkillContentLoadVersion) return;
+    rightDockSkillContent.value = '';
+    showApiError(
+      error,
+      t('userTools.skills.file.readFailed', { message: t('common.requestFailed') })
+    );
+  } finally {
+    if (currentVersion === rightDockSkillContentLoadVersion) {
+      rightDockSkillContentLoading.value = false;
+    }
+  }
+};
+
+const handleRightDockSkillEnabledToggle = async (value: unknown) => {
+  const targetName = String(rightDockSelectedSkillName.value || '').trim();
+  if (!targetName || rightDockSkillToggleSaving.value) return;
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
+  if (!targetAgentId) return;
+  const sourceProfile =
+    targetAgentId === DEFAULT_AGENT_KEY
+      ? ((defaultAgentProfile.value as Record<string, unknown> | null) ||
+          ((await agentStore.getAgent(DEFAULT_AGENT_KEY, { force: true }).catch(() => null)) as Record<
+            string,
+            unknown
+          > | null))
+      : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+          (activeAgent.value as Record<string, unknown> | null) ||
+          ((await agentStore.getAgent(targetAgentId, { force: true }).catch(() => null)) as Record<
+            string,
+            unknown
+          > | null));
+  if (!sourceProfile) {
+    ElMessage.warning(t('chat.features.agentMissing'));
+    return;
+  }
+  const nextToolNameSet = new Set<string>(normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(sourceProfile)));
+  if (Boolean(value)) {
+    nextToolNameSet.add(targetName);
+  } else {
+    nextToolNameSet.delete(targetName);
+  }
+  const nextToolNames = Array.from(nextToolNameSet).sort((left, right) =>
+    left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
+  );
+  const dependencyPayload = buildDeclaredDependencyPayload(
+    nextToolNames,
+    sourceProfile,
+    (agentPromptToolSummary.value || {}) as Record<string, unknown>
+  );
+  rightDockSkillToggleSaving.value = true;
+  try {
+    const updated = (await agentStore.updateAgent(targetAgentId, {
+      tool_names: dependencyPayload.tool_names,
+      declared_tool_names: dependencyPayload.declared_tool_names,
+      declared_skill_names: dependencyPayload.declared_skill_names
+    })) as Record<string, unknown> | null;
+    if (targetAgentId === DEFAULT_AGENT_KEY) {
+      defaultAgentProfile.value = updated;
+    } else if (targetAgentId === activeAgentId.value) {
+      activeAgentDetailProfile.value = updated;
+    }
+    await loadAgentToolSummary({ force: true });
+  } catch (error) {
+    showApiError(error, t('portal.agent.saveFailed'));
+  } finally {
+    rightDockSkillToggleSaving.value = false;
+  }
+};
+
 const isUserToolsScopeForAgentSummary = (scope: unknown): boolean => {
   const normalized = String(scope || '').trim().toLowerCase();
   if (!normalized || normalized === 'all') return true;
@@ -7892,6 +8118,7 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
     return;
   }
   void loadAgentToolSummary({ force: true });
+  void loadRightDockSkills({ force: true, silent: true });
   if (sessionHub.activeSection === 'tools') {
     void loadToolsCatalog();
   }
@@ -7907,6 +8134,8 @@ const handleRightDockSkillArchiveUpload = async (file: File) => {
   skillDockUploading.value = true;
   try {
     await uploadUserSkillZip(file);
+    await loadRightDockSkills({ force: true, silent: true });
+    void loadAgentToolSummary({ force: true });
     emitUserToolsUpdated({ scope: 'skills', action: 'upload' });
     ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
@@ -8173,11 +8402,6 @@ const restoreTimelineSession = async (sessionId: string) => {
   await openAgentSession(sessionId);
 };
 
-const handleTimelineDialogRestoreSession = async (sessionId: string) => {
-  timelineDialogVisible.value = false;
-  await restoreTimelineSession(sessionId);
-};
-
 const openTimelineSessionDetail = (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return;
@@ -8195,13 +8419,27 @@ watch(
 );
 
 const setTimelineSessionMain = async (sessionId: string) => {
-  if (!sessionId) return;
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return false;
+  const targetSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
+  if (targetSession?.is_main) {
+    return true;
+  }
   try {
-    await chatStore.setMainSession(sessionId);
-    ElMessage.success(t('chat.history.setMainSuccess'));
+    await chatStore.setMainSession(targetId);
+    return true;
   } catch (error) {
     showApiError(error, t('chat.history.setMainFailed'));
+    return false;
   }
+};
+
+const handleTimelineDialogActivateSession = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  timelineDialogVisible.value = false;
+  await setTimelineSessionMain(targetId);
+  await restoreTimelineSession(targetId);
 };
 
 const renameTimelineSession = async (sessionId: string) => {
@@ -10608,11 +10846,20 @@ watch(
     timelineDialogVisible.value = false;
     skillDockUploading.value = false;
     agentPromptToolSummary.value = null;
+    rightDockSkillCatalog.value = [];
+    rightDockSkillDialogVisible.value = false;
+    rightDockSelectedSkillName.value = '';
+    rightDockSkillContent.value = '';
+    rightDockSkillContentLoading.value = false;
+    rightDockSkillToggleSaving.value = false;
+    rightDockSkillCatalogLoadVersion += 1;
+    rightDockSkillContentLoadVersion += 1;
     clearWorkspaceResourceCache();
     ensureDismissedAgentConversationState(true);
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
     void loadAgentToolSummary({ force: true });
+    void loadRightDockSkills({ force: true, silent: true });
     scheduleWorkspaceResourceHydration();
   },
   { immediate: true }
@@ -10920,6 +11167,17 @@ watch(
 );
 
 watch(
+  () => rightDockSkillDialogVisible.value,
+  (visible) => {
+    if (visible) return;
+    rightDockSkillContentLoadVersion += 1;
+    rightDockSkillContentLoading.value = false;
+    rightDockSkillToggleSaving.value = false;
+    rightDockSkillContent.value = '';
+  }
+);
+
+watch(
   () => [chatStore.activeSessionId, chatStore.messages.length],
   () => {
     const sessionId = String(chatStore.activeSessionId || '').trim();
@@ -11135,6 +11393,7 @@ onMounted(async () => {
   scheduleMessageVirtualMeasure();
   scheduleWorkspaceResourceHydration();
   void loadAgentToolSummary({ force: true });
+  void loadRightDockSkills({ force: true, silent: true });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
   stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
   lifecycleTimer = window.setInterval(() => {

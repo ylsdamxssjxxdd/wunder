@@ -19,24 +19,21 @@
         :class="{ active: activeSessionId === item.id, 'is-main': item.isMain }"
         role="button"
         tabindex="0"
-        @click="emit('restore-session', item.id)"
-        @keydown.enter.prevent="emit('restore-session', item.id)"
-        @keydown.space.prevent="emit('restore-session', item.id)"
+        @click="emit('activate-session', item.id)"
+        @keydown.enter.prevent="emit('activate-session', item.id)"
+        @keydown.space.prevent="emit('activate-session', item.id)"
       >
         <div class="messenger-timeline-title-row">
           <div class="messenger-timeline-title">{{ item.title }}</div>
           <div class="messenger-timeline-actions" :class="{ 'messenger-timeline-actions--main': item.isMain }">
-            <button
-              class="messenger-timeline-main-btn"
-              :class="{ active: item.isMain }"
-              type="button"
-              :title="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
-              :aria-label="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
-              :disabled="item.isMain"
-              @click.stop="emit('set-main', item.id)"
+            <span
+              v-if="item.isMain"
+              class="messenger-timeline-main-badge"
+              :title="t('chat.history.main')"
             >
               <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
-            </button>
+              <span>{{ t('chat.history.main') }}</span>
+            </span>
             <button
               v-if="!item.isMain"
               class="messenger-timeline-rename-btn"
@@ -96,8 +93,7 @@ defineProps<{
 
 const emit = defineEmits<{
   (event: 'update:visible', value: boolean): void;
-  (event: 'restore-session', sessionId: string): void;
-  (event: 'set-main', sessionId: string): void;
+  (event: 'activate-session', sessionId: string): void;
   (event: 'open-session-detail', sessionId: string): void;
   (event: 'archive-session', sessionId: string): void;
   (event: 'rename-session', sessionId: string): void;

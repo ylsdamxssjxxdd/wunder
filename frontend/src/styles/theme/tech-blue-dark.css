@@ -392,7 +392,7 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-profile-edit-input,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-avatar-icon-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-inline-btn,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-main-btn,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-main-badge,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-rename-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-archive-btn,
@@ -482,7 +482,6 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-action:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-btn:hover:not(:disabled),
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-inline-btn:hover,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-main-btn:hover:not(:disabled),
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-rename-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-archive-btn:hover,
@@ -537,18 +536,6 @@
   background: rgba(var(--ui-accent-rgb), 0.12);
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-drop-hint {
-  border-color: rgba(var(--ui-accent-rgb), 0.25);
-  background: rgba(var(--ui-accent-rgb), 0.08);
-  color: var(--tech-blue-muted);
-}
-
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-drop-hint.is-active {
-  border-color: rgba(var(--ui-accent-rgb), 0.5);
-  background: rgba(var(--ui-accent-rgb), 0.16);
-  color: #d6ecff;
-}
-
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-group-header,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item-desc {
   color: var(--tech-blue-muted);
@@ -573,6 +560,29 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled {
   border-color: var(--tech-blue-border);
   background: var(--tech-blue-surface-2);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
+  background: rgba(var(--ui-accent-rgb), 0.2);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
+  background: rgba(var(--ui-accent-rgb), 0.1);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-detail-path,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-detail-toggle {
+  color: var(--tech-blue-muted);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-detail-content {
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
+  background: linear-gradient(180deg, rgba(12, 22, 38, 0.96), rgba(8, 15, 28, 0.98));
+  color: var(--tech-blue-text);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-message-avatar {

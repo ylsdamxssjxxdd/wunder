@@ -41,10 +41,10 @@
         @dragleave.prevent="handleSkillDragLeave"
         @drop.prevent="handleSkillDrop"
       >
-        <div class="messenger-right-section-title">
+        <div class="messenger-right-section-title messenger-right-section-title--with-actions">
           <span class="messenger-right-section-title-main">
             <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
-            <span>{{ t('toolManager.system.skills') }}</span>
+            <span>技能 skill</span>
           </span>
           <button
             class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-upload-btn"
@@ -64,22 +64,6 @@
             @change="handleSkillArchiveInputChange"
           />
         </div>
-        <div class="messenger-skill-drop-hint" :class="{ 'is-active': skillDropActive, 'is-uploading': skillsUploading }">
-          <i
-            class="fa-solid"
-            :class="skillsUploading ? 'fa-spinner fa-spin' : skillDropActive ? 'fa-file-zipper' : 'fa-cloud-arrow-up'"
-            aria-hidden="true"
-          ></i>
-          <span>
-            {{
-              skillsUploading
-                ? t('common.loading')
-                : skillDropActive
-                  ? t('userTools.skills.action.upload')
-                  : t('userTools.skills.upload.zipOnly')
-            }}
-          </span>
-        </div>
         <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
           {{ t('chat.ability.loading') }}
         </div>
@@ -95,6 +79,11 @@
                 v-for="item in enabledSkills"
                 :key="`enabled-${item.name}`"
                 class="messenger-skill-item is-enabled"
+                role="button"
+                tabindex="0"
+                @click="openSkillDetail(item.name)"
+                @keydown.enter.prevent="openSkillDetail(item.name)"
+                @keydown.space.prevent="openSkillDetail(item.name)"
               >
                 <div class="messenger-skill-item-title-row">
                   <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
@@ -118,6 +107,11 @@
                 v-for="item in disabledSkills"
                 :key="`disabled-${item.name}`"
                 class="messenger-skill-item is-disabled"
+                role="button"
+                tabindex="0"
+                @click="openSkillDetail(item.name)"
+                @keydown.enter.prevent="openSkillDetail(item.name)"
+                @keydown.space.prevent="openSkillDetail(item.name)"
               >
                 <div class="messenger-skill-item-title-row">
                   <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
@@ -184,6 +178,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
   (event: 'upload-skill-archive', file: File): void;
+  (event: 'open-skill-detail', skillName: string): void;
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;
 }>();
@@ -223,6 +218,12 @@ const emitSkillArchive = (file: File | null | undefined) => {
     return;
   }
   emit('upload-skill-archive', file);
+};
+
+const openSkillDetail = (name: unknown) => {
+  const normalized = String(name || '').trim();
+  if (!normalized) return;
+  emit('open-skill-detail', normalized);
 };
 
 const openSkillArchivePicker = () => {

@@ -248,13 +248,6 @@ pub(crate) fn emit_swarm_team_event(
         return;
     }
 
-    let session_id = run.parent_session_id.trim();
-    if !session_id.is_empty() {
-        if let Some(monitor) = context.monitor.as_ref() {
-            monitor.record_event(session_id, cleaned_event, &payload);
-        }
-    }
-
     let mut normalized_payload = payload;
     if let Value::Object(ref mut map) = normalized_payload {
         map.entry("team_run_id".to_string())
@@ -267,12 +260,27 @@ pub(crate) fn emit_swarm_team_event(
             .or_insert_with(|| json!(run.updated_time));
     }
 
-    if let Some(emitter) = context
+    let streamed = if let Some(emitter) = context
         .event_emitter
         .as_ref()
         .filter(|item| item.stream_enabled())
     {
         emitter.emit(cleaned_event, normalized_payload.clone());
+        true
+    } else {
+        false
+    };
+
+    // Streamed tool events already go through the shared event emitter, which
+    // records them into monitor detail. Avoid writing the same swarm event into
+    // monitor twice when streaming is enabled.
+    if !streamed {
+        let session_id = run.parent_session_id.trim();
+        if !session_id.is_empty() {
+            if let Some(monitor) = context.monitor.as_ref() {
+                monitor.record_event(session_id, cleaned_event, &normalized_payload);
+            }
+        }
     }
 
     let cleaned_user = run.user_id.trim();
@@ -363,8 +371,21 @@ fn now_ts() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::build_tool_managed_summary;
-    use crate::storage::TeamTaskRecord;
+    use super::{build_tool_managed_summary, emit_swarm_run_started};
+    use crate::a2a_store::A2aStore;
+    use crate::config::{Config, ObservabilityConfig, SandboxConfig};
+    use crate::lsp::LspManager;
+    use crate::monitor::MonitorState;
+    use crate::services::swarm::events::TEAM_START;
+    use crate::services::tools::context::{ToolContext, ToolEventEmitter};
+    use crate::skills::SkillRegistry;
+    use crate::storage::{SqliteStorage, StorageBackend, TeamRunRecord, TeamTaskRecord};
+    use crate::workspace::WorkspaceManager;
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     fn make_task(
         task_id: &str,
@@ -439,5 +460,196 @@ mod tests {
             build_tool_managed_summary(&tasks),
             Some("[agent_a][success] alpha result\n[agent_b][failed] beta error".to_string())
         );
+    }
+
+    struct TestHarness {
+        _dir: tempfile::TempDir,
+        config: Config,
+        storage: Arc<dyn StorageBackend>,
+        workspace: Arc<WorkspaceManager>,
+        lsp_manager: Arc<LspManager>,
+        monitor: Arc<MonitorState>,
+        a2a_store: A2aStore,
+        skills: SkillRegistry,
+        http: reqwest::Client,
+    }
+
+    impl TestHarness {
+        fn new() -> Self {
+            let dir = tempdir().expect("tempdir");
+            let db_path = dir.path().join("swarm-realtime.db");
+            let workspace_root = dir.path().join("workspace");
+            let storage: Arc<dyn StorageBackend> =
+                Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+            storage.ensure_initialized().expect("init storage");
+            let config = Config::default();
+            let workspace = Arc::new(WorkspaceManager::new(
+                workspace_root.to_string_lossy().as_ref(),
+                storage.clone(),
+                0,
+                &HashMap::new(),
+            ));
+            let lsp_manager = LspManager::new(workspace.clone());
+            let monitor = Arc::new(MonitorState::new(
+                storage.clone(),
+                ObservabilityConfig {
+                    log_level: String::new(),
+                    monitor_event_limit: 1000,
+                    monitor_payload_max_chars: 4000,
+                    monitor_drop_event_types: Vec::new(),
+                },
+                SandboxConfig::default(),
+                workspace_root.to_string_lossy().to_string(),
+            ));
+            Self {
+                _dir: dir,
+                config,
+                storage,
+                workspace,
+                lsp_manager,
+                monitor,
+                a2a_store: A2aStore::default(),
+                skills: SkillRegistry::default(),
+                http: reqwest::Client::new(),
+            }
+        }
+
+        fn context<'a>(
+            &'a self,
+            user_id: &'a str,
+            session_id: &'a str,
+            event_emitter: Option<ToolEventEmitter>,
+        ) -> ToolContext<'a> {
+            ToolContext {
+                user_id,
+                session_id,
+                workspace_id: "workspace-test",
+                agent_id: Some("agent_parent"),
+                is_admin: false,
+                storage: self.storage.clone(),
+                orchestrator: None,
+                monitor: Some(self.monitor.clone()),
+                beeroom_realtime: None,
+                workspace: self.workspace.clone(),
+                lsp_manager: self.lsp_manager.clone(),
+                config: &self.config,
+                a2a_store: &self.a2a_store,
+                skills: &self.skills,
+                gateway: None,
+                user_world: None,
+                cron_wake_signal: None,
+                user_tool_manager: None,
+                user_tool_bindings: None,
+                user_tool_store: None,
+                request_config_overrides: None,
+                allow_roots: None,
+                read_roots: None,
+                event_emitter,
+                http: &self.http,
+            }
+        }
+
+        fn make_run(&self, user_id: &str, session_id: &str) -> TeamRunRecord {
+            TeamRunRecord {
+                team_run_id: "team_demo".to_string(),
+                user_id: user_id.to_string(),
+                hive_id: "default".to_string(),
+                parent_session_id: session_id.to_string(),
+                parent_agent_id: Some("agent_parent".to_string()),
+                mother_agent_id: Some("agent_mother".to_string()),
+                strategy: "batch_send".to_string(),
+                status: "queued".to_string(),
+                task_total: 2,
+                task_success: 0,
+                task_failed: 0,
+                context_tokens_total: 0,
+                context_tokens_peak: 0,
+                model_round_total: 0,
+                started_time: None,
+                finished_time: None,
+                elapsed_s: None,
+                summary: None,
+                error: None,
+                updated_time: 1234.0,
+            }
+        }
+    }
+
+    fn team_events<'a>(detail: &'a Value, event_type: &str) -> Vec<&'a Value> {
+        detail["events"]
+            .as_array()
+            .expect("events should be an array")
+            .iter()
+            .filter(|event| event["type"].as_str() == Some(event_type))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn swarm_stream_events_use_single_monitor_write_path() {
+        let harness = TestHarness::new();
+        let session_id = "sess_swarm_stream";
+        let user_id = "user_stream";
+        harness
+            .monitor
+            .register(session_id, user_id, "agent_parent", "", false, false);
+
+        let monitor = harness.monitor.clone();
+        let session = session_id.to_string();
+        let emitter = ToolEventEmitter::new(
+            move |event_type, mut data| {
+                if let Value::Object(ref mut map) = data {
+                    map.insert("user_round".to_string(), json!(4));
+                    map.insert("model_round".to_string(), json!(2));
+                }
+                monitor.record_event(&session, event_type, &data);
+            },
+            true,
+        );
+        let context = harness.context(user_id, session_id, Some(emitter));
+        let run = harness.make_run(user_id, session_id);
+
+        emit_swarm_run_started(&context, &run);
+
+        let detail = harness
+            .monitor
+            .get_detail(session_id)
+            .expect("detail should exist");
+        let team_start = team_events(&detail, TEAM_START);
+        assert_eq!(team_start.len(), 1);
+        assert_eq!(team_start[0]["data"]["user_round"], json!(4));
+        assert_eq!(team_start[0]["data"]["model_round"], json!(2));
+    }
+
+    #[tokio::test]
+    async fn swarm_non_stream_events_still_write_monitor_directly() {
+        let harness = TestHarness::new();
+        let session_id = "sess_swarm_non_stream";
+        let user_id = "user_non_stream";
+        harness
+            .monitor
+            .register(session_id, user_id, "agent_parent", "", false, false);
+
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let callback_counter = callback_count.clone();
+        let emitter = ToolEventEmitter::new(
+            move |_event_type, _data| {
+                callback_counter.fetch_add(1, Ordering::Relaxed);
+            },
+            false,
+        );
+        let context = harness.context(user_id, session_id, Some(emitter));
+        let run = harness.make_run(user_id, session_id);
+
+        emit_swarm_run_started(&context, &run);
+
+        assert_eq!(callback_count.load(Ordering::Relaxed), 0);
+        let detail = harness
+            .monitor
+            .get_detail(session_id)
+            .expect("detail should exist");
+        let team_start = team_events(&detail, TEAM_START);
+        assert_eq!(team_start.len(), 1);
+        assert!(team_start[0]["data"].get("user_round").is_none());
+        assert!(team_start[0]["data"].get("model_round").is_none());
     }
 }

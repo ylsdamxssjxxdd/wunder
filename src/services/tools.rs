@@ -19,8 +19,8 @@ mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
 mod search_content_tool;
-mod session_run_stream;
 mod self_status_tool;
+mod session_run_stream;
 mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;
@@ -3248,7 +3248,8 @@ async fn spawn_session_run(
         let mut run_request = request;
         run_request.stream = true;
         let mut run_handle = tokio::task::spawn_blocking(move || {
-            session_run_runtime().block_on(session_run_stream::run_request(orchestrator, run_request))
+            session_run_runtime()
+                .block_on(session_run_stream::run_request(orchestrator, run_request))
         });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
