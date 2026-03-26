@@ -1326,8 +1326,11 @@ mod tests {
 
         let config = service.config_store.get().await;
         let skills = service.skills.read().await.clone();
+        let bindings = service
+            .user_tool_manager
+            .build_bindings(&config, &skills, user_id);
         let allowed = service
-            .allowed_tool_names(user_id, &config, &skills)
+            .allowed_tool_names(user_id, &config, &skills, &bindings)
             .expect("allowed tools");
         let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
 
@@ -1486,8 +1489,11 @@ mod tests {
 
         let config = service.config_store.get().await;
         let skills = service.skills.read().await.clone();
+        let bindings = service
+            .user_tool_manager
+            .build_bindings(&config, &skills, user_id);
         let allowed = service
-            .allowed_tool_names(user_id, &config, &skills)
+            .allowed_tool_names(user_id, &config, &skills, &bindings)
             .expect("allowed tools");
         let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
 
@@ -1630,5 +1636,70 @@ mod tests {
             serde_json::from_str(&meta).expect("parse default meta");
         assert_eq!(mirror.name, "Unsaved Default Updated");
         assert_eq!(mirror.system_prompt, "prompt from worker card");
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_auto_enables_declared_local_skill_and_maps_alias() {
+        let (_temp, user_store, service, _workspace) = build_service().await;
+        let user_id = "dave";
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("initial sync for default files");
+
+        let private_root = service.private_root(user_id);
+        let skill_name = "weather";
+        let skill_alias = format!("{user_id}@{skill_name}");
+        write_test_skill(&private_root.join("skills"), skill_name);
+
+        let default_card = find_worker_card_file(&private_root, DEFAULT_AGENT_ID_ALIAS);
+        let mut document: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(&default_card).expect("read default card"))
+                .expect("parse default card");
+        std::thread::sleep(Duration::from_millis(30));
+        document.abilities.tool_names = Vec::new();
+        document.abilities.skills = vec![skill_name.to_string()];
+        atomic_write_text(
+            &default_card,
+            &serde_json::to_string_pretty(&document).expect("serialize worker card"),
+        )
+        .expect("write worker card with declared local skill");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync local skill declaration");
+
+        let payload = service.user_tool_store.load_user_tools(user_id);
+        assert!(
+            payload
+                .skills
+                .enabled
+                .iter()
+                .any(|name| name == skill_name),
+            "declared local skill should be auto-enabled"
+        );
+
+        let meta = user_store
+            .get_meta(&default_agent_meta_key(user_id))
+            .expect("read default meta")
+            .expect("meta should exist");
+        let mirror: DefaultAgentConfigMirror =
+            serde_json::from_str(&meta).expect("parse default meta");
+        assert_eq!(mirror.declared_skill_names, vec![skill_alias.clone()]);
+        assert!(mirror.tool_names.contains(&skill_alias));
+
+        let record = user_store
+            .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)
+            .expect("query default agent")
+            .expect("default agent exists");
+        assert_eq!(record.declared_skill_names, vec![skill_alias.clone()]);
+        assert!(record.tool_names.contains(&skill_alias));
+
+        let rewritten: WorkerCardDocument = serde_json::from_str(
+            &fs::read_to_string(&default_card).expect("read rewritten default card"),
+        )
+        .expect("parse rewritten default card");
+        assert_eq!(rewritten.abilities.skills, vec![skill_alias]);
     }
 }
