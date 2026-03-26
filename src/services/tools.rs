@@ -149,6 +149,7 @@ const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
 const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
 const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
+const SWARM_TASK_RESULT_MAX_CHARS: usize = 2000;
 
 fn compact_cron_tool_result(value: Value) -> Value {
     let action = value
@@ -1376,16 +1377,10 @@ async fn dispatch_swarm_batch_task(
         approval_tx: None,
     };
 
-    let parent_session_id = context.session_id.trim();
-    let announce = if parent_session_id.is_empty() || parent_session_id == task.session_id.as_str()
-    {
-        None
-    } else {
-        Some(AnnounceConfig {
-            parent_session_id: parent_session_id.to_string(),
-            label: task.label,
-        })
-    };
+    // Swarm tasks are reported via team_* realtime/timeline events.
+    // Avoid injecting child session replies into the parent chat transcript.
+    let _task_label = task.label.as_deref();
+    let announce = None;
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let _receiver = spawn_session_run(
@@ -1647,6 +1642,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
 async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: AgentSwarmSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let _label = normalize_optional_string(payload.label.clone());
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
@@ -1753,13 +1749,6 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if let Some(timeout_seconds) = payload.timeout_seconds {
         send_args["timeoutSeconds"] = json!(timeout_seconds);
     }
-    let parent_session_id = context.session_id.trim();
-    if !parent_session_id.is_empty() && parent_session_id != target_session_id {
-        send_args["announceParentSessionId"] = json!(parent_session_id);
-        if let Some(label) = normalize_optional_string(payload.label.clone()) {
-            send_args["label"] = json!(label);
-        }
-    }
     let mut result = sessions_send(context, &send_args).await?;
     let status = result
         .get("status")
@@ -1788,7 +1777,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        task_record.result_summary = Some(reply.to_string());
+        task_record.result_summary = Some(truncate_text(reply, SWARM_TASK_RESULT_MAX_CHARS));
     }
     if let Some(error) = result
         .get("error")
@@ -1796,8 +1785,12 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        task_record.error = Some(error.to_string());
+        task_record.error = Some(truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
     }
+    task_record.elapsed_s = result
+        .get("elapsed_s")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0);
     task_record.updated_time = now_ts();
     if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
         task_record.finished_time = Some(task_record.updated_time);
@@ -2100,7 +2093,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                     {
-                        task_record.result_summary = Some(reply.to_string());
+                        task_record.result_summary =
+                            Some(truncate_text(reply, SWARM_TASK_RESULT_MAX_CHARS));
                     }
                     if let Some(error) = result
                         .get("error")
@@ -2108,8 +2102,12 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         .map(str::trim)
                         .filter(|value| !value.is_empty())
                     {
-                        task_record.error = Some(error.to_string());
+                        task_record.error = Some(truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
                     }
+                    task_record.elapsed_s = result
+                        .get("elapsed_s")
+                        .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite() && *value >= 0.0);
                     task_record.updated_time = now_ts();
                     if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
                         task_record.finished_time = Some(task_record.updated_time);
@@ -2254,23 +2252,40 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     "queued" | "running" => "queued".to_string(),
                     _ => "error".to_string(),
                 };
+                task_record.started_time = snapshot
+                    .get("started_time")
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite() && *value > 0.0);
+                task_record.finished_time = snapshot
+                    .get("finished_time")
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite() && *value > 0.0);
+                task_record.elapsed_s = snapshot
+                    .get("elapsed_s")
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite() && *value >= 0.0);
                 task_record.result_summary = snapshot
                     .get("result")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(ToString::to_string);
+                    .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
                 task_record.error = snapshot
                     .get("error")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(ToString::to_string);
-                task_record.updated_time = now_ts();
+                    .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
+                task_record.updated_time = snapshot
+                    .get("updated_time")
+                    .and_then(Value::as_f64)
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .unwrap_or_else(now_ts);
                 if matches!(
                     task_record.status.as_str(),
                     "success" | "timeout" | "error" | "cancelled"
-                ) {
+                ) && task_record.finished_time.is_none()
+                {
                     task_record.finished_time = Some(task_record.updated_time);
                 }
                 context.storage.upsert_team_task(task_record)?;

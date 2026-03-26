@@ -8,6 +8,9 @@ use crate::channels::inbound_queue::{
     CHANNEL_INBOUND_MAX_IN_FLIGHT, CHANNEL_INBOUND_QUEUE_CAPACITY,
 };
 use crate::channels::media::MediaProcessor;
+use crate::channels::outbound_attachments::{
+    merge_attachments_with_text_links, OutboundLinkExtractionMode,
+};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::pending_files::{
     build_channel_question_with_files, build_pending_files_from_attachments,
@@ -51,7 +54,7 @@ use crate::user_store::UserStore;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use axum::http::{HeaderMap, HeaderValue as AxumHeaderValue};
-use chrono::Local;
+use chrono::{Local, Utc};
 use futures::FutureExt;
 use parking_lot::Mutex;
 use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
@@ -84,6 +87,7 @@ const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
 const CHANNEL_RUNTIME_LOG_CAPACITY: usize = 300;
 const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
 const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
+const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
 const CHANNEL_COMPACTION_NOTICE_TEXT: &str = "上下文较长，正在整理对话上下文，请稍候。";
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
@@ -171,6 +175,32 @@ fn channel_test_request_overrides() -> Option<Value> {
             "exec_policy_mode": "allow"
         }
     }))
+}
+
+fn merge_channel_request_overrides(
+    base: Option<Value>,
+    display_question: Option<&str>,
+) -> Option<Value> {
+    let display_question = display_question
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let Some(display_question) = display_question else {
+        return base;
+    };
+    match base {
+        Some(Value::Object(mut map)) => {
+            map.insert(
+                CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY.to_string(),
+                Value::String(display_question),
+            );
+            Some(Value::Object(map))
+        }
+        Some(value) => Some(value),
+        None => Some(json!({
+            CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: display_question
+        })),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -732,6 +762,8 @@ impl ChannelHub {
                     .unwrap_or_default()
             );
         }
+        let agent_display_name =
+            resolve_channel_agent_display_name(agent_record.as_ref(), resolved_agent_id.as_deref());
 
         if let Err(err) = self
             .insert_channel_message(&message, &session_info.session_id, raw_payload.clone())
@@ -776,6 +808,7 @@ impl ChannelHub {
         {
             return Ok(result);
         }
+        let inbound_has_meaningful_text = has_meaningful_channel_text(message.text.as_deref());
 
         let limiter_key = format!("{}:{}", message.channel, message.account_id);
         let rate_cfg = resolve_rate_limit(&config.channels.rate_limit, &message.channel);
@@ -783,7 +816,13 @@ impl ChannelHub {
             Some(guard) => guard,
             None => {
                 return self
-                    .respond_busy(&message, &session_info, resolved_binding.as_ref(), None)
+                    .respond_busy(
+                        &message,
+                        &session_info,
+                        resolved_binding.as_ref(),
+                        Some(agent_display_name.as_str()),
+                        None,
+                    )
                     .await;
             }
         };
@@ -824,6 +863,25 @@ impl ChannelHub {
             .eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
         {
             if let Some(weixin_cfg) = account_cfg.weixin.as_ref() {
+                if inbound_has_meaningful_text {
+                    if let Err(err) = self
+                        .send_weixin_processing_ack(
+                            &message,
+                            &session_info,
+                            resolved_binding.as_ref(),
+                            weixin_cfg,
+                            agent_display_name.as_str(),
+                        )
+                        .await
+                    {
+                        warn!(
+                            "send channel processing ack failed: channel={}, account_id={}, session_id={}, error={err}",
+                            message.channel,
+                            message.account_id,
+                            session_info.session_id
+                        );
+                    }
+                }
                 if let Err(err) = weixin_files::download_weixin_attachments_to_workspace(
                     &self.http,
                     &self.workspace,
@@ -974,11 +1032,18 @@ impl ChannelHub {
             }
         }
 
-        let has_user_text = has_meaningful_channel_text(message.text.as_deref());
+        let has_user_text = inbound_has_meaningful_text;
         if !has_user_text {
             if !incoming_files.is_empty() {
                 let user_text = format_pending_upload_preview(&incoming_files);
                 self.append_channel_chat(
+                    &session_info.user_id,
+                    &session_info.session_id,
+                    "user",
+                    &user_text,
+                )
+                .await;
+                self.append_channel_stream_event_message(
                     &session_info.user_id,
                     &session_info.session_id,
                     "user",
@@ -1003,6 +1068,16 @@ impl ChannelHub {
         }
 
         let question = build_channel_question_with_files(message.text.as_deref(), &pending_files);
+        let display_question = message
+            .text
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let config_overrides = merge_channel_request_overrides(
+            channel_test_request_overrides(),
+            display_question.as_deref(),
+        );
         let mut meta_probe_message = message.clone();
         meta_probe_message.attachments.clear();
         meta_probe_message.location = None;
@@ -1034,7 +1109,7 @@ impl ChannelHub {
             agent_id: resolved_agent_id.clone(),
             model_name: None,
             language: Some(crate::i18n::get_language()),
-            config_overrides: channel_test_request_overrides(),
+            config_overrides,
             agent_prompt,
             attachments: None,
             allow_queue: false,
@@ -1100,6 +1175,7 @@ impl ChannelHub {
                         &message,
                         &session_info,
                         resolved_binding.as_ref(),
+                        Some(agent_display_name.as_str()),
                         processing_ack_message_id.as_deref(),
                     )
                     .await;
@@ -1950,11 +2026,19 @@ impl ChannelHub {
                 None
             }
         };
-        if !record
+        if record
             .channel
             .trim()
             .eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
         {
+            let rewritten = self.rewrite_weixin_workspace_paths_to_local(&mut outbound);
+            if rewritten > 0 {
+                debug!(
+                    "rewrite weixin workspace paths to local: outbox_id={}, rewritten={}",
+                    record.outbox_id, rewritten
+                );
+            }
+        } else {
             if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
                 &self.workspace,
                 &self.user_store,
@@ -2057,6 +2141,53 @@ impl ChannelHub {
             .await;
             Err(error)
         }
+    }
+
+    fn rewrite_weixin_workspace_paths_to_local(
+        &self,
+        outbound: &mut ChannelOutboundMessage,
+    ) -> usize {
+        let mut rewritten_count = 0usize;
+        let mut replacements: HashMap<String, String> = HashMap::new();
+        let mut merged = merge_attachments_with_text_links(
+            &outbound.attachments,
+            outbound.text.as_deref(),
+            OutboundLinkExtractionMode::WorkspaceResource,
+        );
+        for attachment in &mut merged {
+            let source = attachment.url.trim();
+            if source.is_empty() {
+                continue;
+            }
+            let replacement = replacements
+                .entry(source.to_string())
+                .or_insert_with(|| {
+                    resolve_weixin_workspace_public_source_to_local(&self.workspace, source)
+                        .unwrap_or_else(|| source.to_string())
+                })
+                .clone();
+            if replacement != source {
+                attachment.url = replacement;
+                rewritten_count = rewritten_count.saturating_add(1);
+            }
+        }
+        if !merged.is_empty() {
+            outbound.attachments = merged;
+        }
+        if let Some(text) = outbound.text.as_ref() {
+            let mut rewritten = text.to_string();
+            for (source, target) in &replacements {
+                if source == target || !rewritten.contains(source) {
+                    continue;
+                }
+                rewritten = rewritten.replace(source, target);
+            }
+            if rewritten != *text {
+                outbound.text = Some(rewritten);
+                rewritten_count = rewritten_count.saturating_add(1);
+            }
+        }
+        rewritten_count
     }
 
     async fn update_outbox_status(
@@ -3285,6 +3416,50 @@ impl ChannelHub {
         }
     }
 
+    async fn append_channel_stream_event_message(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        role: &str,
+        content: &str,
+    ) {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        let cleaned_role = role.trim().to_ascii_lowercase();
+        let cleaned_content = content.trim();
+        if cleaned_user.is_empty()
+            || cleaned_session.is_empty()
+            || cleaned_content.is_empty()
+            || cleaned_role.is_empty()
+        {
+            return;
+        }
+        let payload = json!({
+            "event": "channel_message",
+            "data": {
+                "role": cleaned_role,
+                "content": cleaned_content,
+                "source": "channel_inbound",
+            },
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+        let storage = self.storage.clone();
+        let user_id = cleaned_user.to_string();
+        let session_id = cleaned_session.to_string();
+        let outcome = tokio::task::spawn_blocking(move || -> Result<()> {
+            let next_event_id = storage.get_max_stream_event_id(&session_id)?.max(0) + 1;
+            storage.append_stream_event(&session_id, &user_id, next_event_id, &payload)
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)));
+        if let Err(err) = outcome {
+            warn!(
+                "append channel stream event failed: user_id={}, session_id={}, role={}, error={err}",
+                cleaned_user, cleaned_session, cleaned_role
+            );
+        }
+    }
+
     async fn touch_chat_session_activity(&self, user_id: &str, session_id: &str) {
         let cleaned_user = user_id.trim();
         let cleaned_session = session_id.trim();
@@ -3340,17 +3515,22 @@ impl ChannelHub {
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
         resolved_binding: Option<&BindingResolution>,
+        agent_display_name: Option<&str>,
         processing_ack_message_id: Option<&str>,
     ) -> Result<ChannelInboundResult> {
         let last_message = self
             .load_latest_user_message(&session_info.user_id, &session_info.session_id)
             .await
             .unwrap_or_default();
+        let agent_display_name = agent_display_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("智能体");
         let busy_text = if last_message.trim().is_empty() {
-            "智能体在忙，请稍后再试。".to_string()
+            format!("{agent_display_name}正在忙，请稍后再试。")
         } else {
             let preview = truncate_text(last_message.trim(), 120);
-            format!("智能体在忙：{preview}")
+            format!("{agent_display_name}正在忙：{preview}")
         };
         let user_text = message_preview_text(message);
         self.append_channel_chat(
@@ -3432,6 +3612,43 @@ impl ChannelHub {
         };
         let result = feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
         Ok(result.message_id)
+    }
+
+    async fn send_weixin_processing_ack(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+        weixin_cfg: &WeixinConfig,
+        agent_display_name: &str,
+    ) -> Result<()> {
+        let cleaned_agent_name = agent_display_name.trim();
+        let ack_text = if cleaned_agent_name.is_empty() {
+            "已收到消息，正在处理中，请稍后。".to_string()
+        } else {
+            format!("已收到消息，{cleaned_agent_name}正在处理中，请稍后。")
+        };
+        let mut meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+            "message_id": message.message_id,
+            "processing_ack": true,
+        });
+        if let Some(bridge_meta) = self.load_channel_session_bridge_metadata(message).await? {
+            merge_object_value_into(&mut meta, bridge_meta);
+        }
+        append_weixin_context_token_from_message(&mut meta, message);
+        let outbound = ChannelOutboundMessage {
+            channel: message.channel.clone(),
+            account_id: message.account_id.clone(),
+            peer: message.peer.clone(),
+            thread: message.thread.clone(),
+            text: Some(ack_text),
+            attachments: Vec::new(),
+            meta: Some(meta),
+        };
+        weixin::send_outbound(&self.http, &outbound, weixin_cfg).await?;
+        Ok(())
     }
 
     async fn send_xmpp_processing_ack(
@@ -4103,6 +4320,21 @@ fn append_weixin_context_token(meta: &mut Value, context_token: Option<&str>) {
     }
 }
 
+fn resolve_weixin_workspace_public_source_to_local(
+    workspace: &WorkspaceManager,
+    source: &str,
+) -> Option<String> {
+    let trimmed = source.trim();
+    let workspace_path = trimmed.strip_prefix("/workspaces/")?;
+    let workspace_id = workspace_path
+        .split('/')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let local = workspace.resolve_path(workspace_id, trimmed).ok()?;
+    Some(local.to_string_lossy().replace('\\', "/"))
+}
+
 fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()> {
     if message.channel.trim().is_empty() {
         message.channel = provider.trim().to_string();
@@ -4253,6 +4485,26 @@ fn outbound_preview_text(outbound: &ChannelOutboundMessage) -> String {
         return "[attachment]".to_string();
     }
     "[empty message]".to_string()
+}
+
+fn resolve_channel_agent_display_name(
+    agent: Option<&UserAgentRecord>,
+    agent_id: Option<&str>,
+) -> String {
+    if let Some(record) = agent {
+        let name = record.name.trim();
+        if !name.is_empty() {
+            return name.to_string();
+        }
+    }
+    if let Some(agent_id) = agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+    {
+        return agent_id;
+    }
+    "智能体".to_string()
 }
 
 fn resolve_agent_id_by_account(
@@ -4827,5 +5079,57 @@ mod tests {
         )
         .expect("merged");
         assert_eq!(merged, json!({ "a": 1, "b": 3, "c": 4 }));
+    }
+
+    #[test]
+    fn merge_channel_request_overrides_injects_display_question() {
+        let merged = merge_channel_request_overrides(
+            Some(json!({ "security": { "approval_mode": "full_auto" } })),
+            Some("  压缩这张图  "),
+        )
+        .expect("merged");
+        assert_eq!(
+            merged
+                .get(CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY)
+                .and_then(Value::as_str),
+            Some("压缩这张图")
+        );
+        assert!(merged.get("security").is_some());
+    }
+
+    #[test]
+    fn resolve_channel_agent_display_name_prefers_agent_name() {
+        let record = UserAgentRecord {
+            agent_id: "agent_1".to_string(),
+            user_id: "u_1".to_string(),
+            hive_id: "hive_1".to_string(),
+            name: "数据助手".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "private".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 0.0,
+            updated_at: 0.0,
+            preset_binding: None,
+        };
+        assert_eq!(
+            resolve_channel_agent_display_name(Some(&record), Some("agent_fallback")),
+            "数据助手"
+        );
+        assert_eq!(
+            resolve_channel_agent_display_name(None, Some("agent_fallback")),
+            "agent_fallback"
+        );
+        assert_eq!(resolve_channel_agent_display_name(None, None), "智能体");
     }
 }

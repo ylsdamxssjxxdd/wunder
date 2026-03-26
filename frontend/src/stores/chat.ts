@@ -3600,6 +3600,36 @@ const startSessionWatcher = (store, sessionId) => {
     const normalizedEventType = String(eventType || '').trim().toLowerCase();
     const stage = data?.stage ?? payload?.stage;
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
+    if (normalizedEventType === 'channel_message') {
+      const roleRaw = String(data?.role ?? payload?.role ?? '').trim().toLowerCase();
+      const content = String(data?.content ?? payload?.content ?? '').trim();
+      const role = roleRaw === 'user' || roleRaw === 'assistant' ? roleRaw : '';
+      if (!role || !content) {
+        return;
+      }
+      if (role === 'user') {
+        insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null);
+        return;
+      }
+      const lastMessage = sessionMessagesRef[sessionMessagesRef.length - 1];
+      const lastTimestamp = resolveTimestampMs(lastMessage?.created_at);
+      const duplicateAssistant =
+        lastMessage?.role === 'assistant' &&
+        String(lastMessage?.content || '') === content &&
+        (!Number.isFinite(eventTimestampMs) ||
+          !Number.isFinite(lastTimestamp) ||
+          Math.abs(eventTimestampMs - lastTimestamp) <= WATCH_USER_MESSAGE_DEDUP_MS);
+      if (duplicateAssistant) {
+        return;
+      }
+      const createdAt = Number.isFinite(eventTimestampMs)
+        ? new Date(eventTimestampMs).toISOString()
+        : undefined;
+      sessionMessagesRef.push(buildMessage('assistant', content, createdAt));
+      touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
+      notifySessionSnapshot(store, key, sessionMessagesRef, true);
+      return;
+    }
     const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
     const directRoundNumber = resolveEventRoundNumber(payload, data);
     const isRoundStart =

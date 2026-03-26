@@ -98,7 +98,7 @@ pub async fn download_weixin_attachments_to_workspace(
             display_name = format!("file_{}", Uuid::new_v4().simple());
         }
 
-        let mime = attachment
+        let mut mime = attachment
             .mime
             .as_deref()
             .map(str::trim)
@@ -106,12 +106,28 @@ pub async fn download_weixin_attachments_to_workspace(
             .map(str::to_string)
             .or_else(|| entry.mime_hint.clone())
             .or_else(|| infer_mime_from_filename(&display_name));
+        let sniffed_mime = infer_mime_from_magic_bytes(&decrypted).map(str::to_string);
+        if mime
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.is_empty() || value.ends_with("/*"))
+            .unwrap_or(true)
+        {
+            if let Some(sniffed) = sniffed_mime.clone() {
+                mime = Some(sniffed);
+            }
+        }
 
         if !has_extension(&display_name) {
-            if let Some(ext) = extension_from_mime(mime.as_deref()) {
+            if let Some(ext) =
+                extension_from_mime(mime.as_deref()).or_else(|| extension_from_kind(&entry.kind))
+            {
                 display_name.push('.');
                 display_name.push_str(ext);
             }
+        }
+        if mime.is_none() {
+            mime = infer_mime_from_filename(&display_name);
         }
 
         let relative_path = format!("{base_dir}/{display_name}");
@@ -161,7 +177,7 @@ fn resolve_workspace_id(
 
 fn default_filename(kind: &str) -> String {
     match kind.trim().to_ascii_lowercase().as_str() {
-        "image" => format!("image_{}.img", Uuid::new_v4().simple()),
+        "image" => format!("image_{}.jpg", Uuid::new_v4().simple()),
         "video" => format!("video_{}.mp4", Uuid::new_v4().simple()),
         "audio" => format!("audio_{}.silk", Uuid::new_v4().simple()),
         _ => format!("file_{}.bin", Uuid::new_v4().simple()),
@@ -201,6 +217,15 @@ fn infer_mime_from_filename(name: &str) -> Option<String> {
 
 fn extension_from_mime(mime: Option<&str>) -> Option<&'static str> {
     let mime = mime?.trim().to_ascii_lowercase();
+    if mime == "image/*" {
+        return Some("jpg");
+    }
+    if mime == "video/*" {
+        return Some("mp4");
+    }
+    if mime == "audio/*" {
+        return Some("silk");
+    }
     match mime.as_str() {
         "image/png" => Some("png"),
         "image/jpeg" => Some("jpg"),
@@ -218,17 +243,56 @@ fn extension_from_mime(mime: Option<&str>) -> Option<&'static str> {
     }
 }
 
+fn extension_from_kind(kind: &str) -> Option<&'static str> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "image" => Some("jpg"),
+        "video" => Some("mp4"),
+        "audio" => Some("silk"),
+        "file" => Some("bin"),
+        _ => None,
+    }
+}
+
+fn infer_mime_from_magic_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"%PDF-") {
+        return Some("application/pdf");
+    }
+    if bytes.len() >= 12 && &bytes[4..8] == b"ftyp" {
+        return Some("video/mp4");
+    }
+    None
+}
+
 fn sanitize_filename(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
+    let mut sanitized = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            sanitized.push('_');
+        } else {
+            sanitized.push(ch);
+        }
+    }
+    let mut normalized = sanitized.trim().to_string();
+    while normalized.ends_with('.') || normalized.ends_with(' ') {
+        normalized.pop();
+    }
+    if normalized == "." || normalized == ".." {
+        String::new()
+    } else {
+        normalized
+    }
 }
 
 async fn ensure_unique_path(path: PathBuf) -> Result<PathBuf> {
@@ -286,10 +350,10 @@ mod tests {
     #[test]
     fn sanitize_filename_replaces_unsafe_characters() {
         let value = sanitize_filename("report 2026/03?.pdf");
-        assert_eq!(value, "report_2026_03_.pdf");
+        assert_eq!(value, "report 2026_03_.pdf");
 
-        let chinese = sanitize_filename("测试文档.doc");
-        assert_eq!(chinese, "____.doc");
+        let chinese = sanitize_filename("\u{6D4B}\u{8BD5}\u{6587}\u{6863}.doc");
+        assert_eq!(chinese, "\u{6D4B}\u{8BD5}\u{6587}\u{6863}.doc");
     }
 
     #[test]
@@ -319,9 +383,16 @@ mod tests {
     #[test]
     fn extension_from_mime_maps_known_types() {
         assert_eq!(extension_from_mime(Some(" image/jpeg ")), Some("jpg"));
+        assert_eq!(extension_from_mime(Some("image/*")), Some("jpg"));
         assert_eq!(extension_from_mime(Some("application/pdf")), Some("pdf"));
         assert_eq!(extension_from_mime(Some("application/x-custom")), None);
         assert_eq!(extension_from_mime(None), None);
+    }
+
+    #[test]
+    fn infer_mime_from_magic_bytes_detects_png() {
+        let bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+        assert_eq!(infer_mime_from_magic_bytes(&bytes), Some("image/png"));
     }
 
     #[test]

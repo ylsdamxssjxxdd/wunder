@@ -116,6 +116,7 @@ const EXTENDED_DB_QUERY_TOOL_BUDGET_PER_TURN: u32 = 10_000;
 const DEFAULT_MEMORY_RECALL_BUDGET_PER_TURN: u32 = 2_000;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
+const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
 const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
     "path",
     "paths",
@@ -165,6 +166,11 @@ impl Orchestrator {
         let session_id = prepared.session_id.clone();
         let user_id = prepared.user_id.clone();
         let question = prepared.question.clone();
+        let display_question_override =
+            extract_channel_display_question_override(prepared.config_overrides.as_ref());
+        let display_question = display_question_override
+            .clone()
+            .unwrap_or_else(|| question.clone());
         let is_admin = prepared.is_admin;
         let mut active_turn_id: Option<String> = None;
         let mut active_turn_round = RoundInfo::default();
@@ -252,7 +258,7 @@ impl Orchestrator {
                 &session_id,
                 &user_id,
                 prepared.agent_id.as_deref().unwrap_or(""),
-                &question,
+                &display_question,
                 is_admin,
                 monitor_debug_payload,
             );
@@ -270,7 +276,7 @@ impl Orchestrator {
             let mut start_payload = json!({
                 "stage": "start",
                 "summary": i18n::t("monitor.summary.received"),
-                "question": question
+                "question": display_question.clone()
             });
             if let Value::Object(ref mut map) = start_payload {
                 request_round.insert_into(map);
@@ -493,7 +499,13 @@ impl Orchestrator {
                 emitter.emit("progress", llm_call_payload).await;
 
                 if !user_message_appended {
-                    let user_content = resolve_user_content_for_persist(&messages, &user_message);
+                    let user_content = if let Some(display_override) =
+                        display_question_override.as_ref()
+                    {
+                        Some(Value::String(display_override.clone()))
+                    } else {
+                        resolve_user_content_for_persist(&messages, &user_message)
+                    };
                     self.append_chat(
                         &user_id,
                         &session_id,
@@ -1558,7 +1570,7 @@ impl Orchestrator {
                     prepared.agent_id.as_deref(),
                     &session_id,
                     Some(user_round_id.as_str()),
-                    &question,
+                    &display_question,
                     &answer,
                     llm_config.clone(),
                 );
@@ -2328,6 +2340,16 @@ fn estimate_request_overhead_tokens(tools: Option<&[Value]>) -> i64 {
     approx_token_count(&payload).max(0)
 }
 
+fn extract_channel_display_question_override(config_overrides: Option<&Value>) -> Option<String> {
+    let config_overrides = config_overrides?;
+    config_overrides
+        .get(CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn resolve_user_content_for_persist(
     messages: &[Value],
     fallback_user_message: &Value,
@@ -2965,6 +2987,18 @@ mod tests {
             .and_then(|value| value.as_str().map(ToString::to_string))
             .unwrap_or_default();
         assert_eq!(content, "raw question");
+    }
+
+    #[test]
+    fn extract_channel_display_question_override_reads_trimmed_value() {
+        let overrides = json!({
+            CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: "  please compress this image  "
+        });
+        assert_eq!(
+            extract_channel_display_question_override(Some(&overrides)).as_deref(),
+            Some("please compress this image")
+        );
+        assert_eq!(extract_channel_display_question_override(None), None);
     }
 
     #[test]

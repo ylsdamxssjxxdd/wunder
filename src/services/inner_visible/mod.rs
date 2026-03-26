@@ -25,7 +25,8 @@ use crate::services::user_agent_presets::{
     normalize_preset_questions, normalize_tool_list,
 };
 use crate::services::worker_card_files::worker_card_file_name as canonical_worker_card_file_name;
-use crate::skills::SkillRegistry;
+use crate::skills::{load_skills, SkillRegistry};
+use crate::schemas::AbilityKind;
 use crate::storage::{
     normalize_hive_id, UserAccountRecord, UserAgentRecord, DEFAULT_HIVE_ID,
     DEFAULT_SANDBOX_CONTAINER_ID,
@@ -122,26 +123,27 @@ impl InnerVisibleService {
         );
 
         let config = self.config_store.get().await;
+        self.ensure_declared_skills_enabled_from_worker_cards(user_id, &paths, &config)?;
         let skills = self.skills.read().await.clone();
-        let allowed_tool_names = self.allowed_tool_names(user_id, &config, &skills)?;
-        let worker_card_skill_names = collect_worker_card_skill_names(
-            &skills,
-            &self
-                .user_tool_manager
-                .build_bindings(&config, &skills, user_id),
-        );
+        let bindings = self
+            .user_tool_manager
+            .build_bindings(&config, &skills, user_id);
+        let allowed_tool_names = self.allowed_tool_names(user_id, &config, &skills, &bindings)?;
+        let worker_card_skill_names = collect_worker_card_skill_names(&skills, &bindings);
 
         self.sync_default_agent(
             user_id,
             &paths,
             &allowed_tool_names,
             &worker_card_skill_names,
+            &bindings,
         )?;
         self.sync_regular_agents(
             user_id,
             &paths,
             &allowed_tool_names,
             &worker_card_skill_names,
+            &bindings,
         )?;
         Ok(())
     }
@@ -160,21 +162,76 @@ impl InnerVisibleService {
         user_id: &str,
         config: &Config,
         skills: &SkillRegistry,
+        bindings: &UserToolBindings,
     ) -> Result<HashSet<String>> {
         let user = self
             .user_store
             .get_user_by_id(user_id)?
             .unwrap_or_else(|| synthetic_user(user_id));
-        let bindings = self
-            .user_tool_manager
-            .build_bindings(config, skills, user_id);
         let context = UserToolContext {
             config: config.clone(),
             skills: skills.clone(),
-            bindings,
+            bindings: bindings.clone(),
             tool_access: self.user_store.get_user_tool_access(user_id)?,
         };
         Ok(compute_allowed_tool_names(&user, &context))
+    }
+
+    fn ensure_declared_skills_enabled_from_worker_cards(
+        &self,
+        user_id: &str,
+        paths: &InnerVisiblePaths,
+        config: &Config,
+    ) -> Result<()> {
+        let declared_skill_names = collect_declared_skill_names_from_worker_cards(paths)?;
+        if declared_skill_names.is_empty() {
+            return Ok(());
+        }
+
+        let payload = self.user_tool_store.load_user_tools(user_id);
+        let mut enabled_set: HashSet<String> = payload.skills.enabled.iter().cloned().collect();
+        let candidates = declared_skill_names
+            .into_iter()
+            .filter_map(|name| resolve_local_declared_skill_name(user_id, &name))
+            .filter(|name| !enabled_set.contains(name))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(());
+        }
+
+        let skill_root = self.user_tool_store.get_skill_root(user_id);
+        if !skill_root.exists() || !skill_root.is_dir() {
+            return Ok(());
+        }
+        let mut scan_config = config.clone();
+        scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+        scan_config.skills.enabled = Vec::new();
+        let registry = load_skills(&scan_config, false, false, false);
+        let available: HashSet<String> = registry
+            .list_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        if available.is_empty() {
+            return Ok(());
+        }
+
+        let mut changed = false;
+        for name in candidates {
+            if available.contains(&name) {
+                changed |= enabled_set.insert(name);
+            }
+        }
+        if !changed {
+            return Ok(());
+        }
+
+        let mut next_enabled = enabled_set.into_iter().collect::<Vec<_>>();
+        next_enabled.sort();
+        self.user_tool_store
+            .update_skills(user_id, next_enabled, payload.skills.shared.clone())?;
+        self.user_tool_manager.clear_skill_cache(Some(user_id));
+        Ok(())
     }
 
     fn sync_default_agent(
@@ -183,6 +240,7 @@ impl InnerVisibleService {
         paths: &InnerVisiblePaths,
         allowed_tool_names: &HashSet<String>,
         worker_card_skill_names: &HashSet<String>,
+        bindings: &UserToolBindings,
     ) -> Result<()> {
         let mut config = self.load_default_agent_config(user_id, allowed_tool_names)?;
         let has_persisted_state = self.has_persisted_default_agent_state(user_id)?;
@@ -203,6 +261,7 @@ impl InnerVisibleService {
                     .ok_or_else(|| anyhow!("default agent worker-card path missing during sync"))?,
                 allowed_tool_names,
                 &config,
+                bindings,
             ) {
                 Ok(updated) => {
                     config = updated;
@@ -237,6 +296,7 @@ impl InnerVisibleService {
         paths: &InnerVisiblePaths,
         allowed_tool_names: &HashSet<String>,
         worker_card_skill_names: &HashSet<String>,
+        bindings: &UserToolBindings,
     ) -> Result<()> {
         let mut by_id: HashMap<String, UserAgentRecord> = self
             .user_store
@@ -271,6 +331,7 @@ impl InnerVisibleService {
                     record.as_ref(),
                     worker_card_file,
                     allowed_tool_names,
+                    bindings,
                 ) {
                     Ok(updated) => updated,
                     Err(err) => {
@@ -300,9 +361,26 @@ impl InnerVisibleService {
         existing: Option<&UserAgentRecord>,
         worker_card_file: &Path,
         allowed_tool_names: &HashSet<String>,
+        bindings: &UserToolBindings,
     ) -> Result<UserAgentRecord> {
         let document = load_worker_card_document(worker_card_file)?;
-        let parsed = parse_worker_card(document, None);
+        let mut parsed = parse_worker_card(document, None);
+        let (resolved_declared_skill_names, renamed_skills) = resolve_runtime_declared_skill_names(
+            user_id,
+            &parsed.declared_skill_names,
+            allowed_tool_names,
+            bindings,
+        );
+        parsed.declared_skill_names = resolved_declared_skill_names.clone();
+        if !renamed_skills.is_empty() {
+            parsed.ability_items =
+                remap_skill_ability_items(parsed.ability_items, &renamed_skills);
+        }
+        let mut runtime_tool_names = parsed.declared_tool_names.clone();
+        runtime_tool_names.extend(resolved_declared_skill_names.iter().cloned());
+        if runtime_tool_names.is_empty() {
+            runtime_tool_names = parsed.tool_names.clone();
+        }
         let now = now_ts();
         let mut record = existing.cloned().unwrap_or(UserAgentRecord {
             agent_id: agent_id.trim().to_string(),
@@ -338,8 +416,8 @@ impl InnerVisibleService {
         record.model_name = parsed.model_name;
         record.ability_items = parsed.ability_items;
         record.declared_tool_names = parsed.declared_tool_names;
-        record.declared_skill_names = parsed.declared_skill_names;
-        record.tool_names = filter_allowed_tools(&parsed.tool_names, allowed_tool_names);
+        record.declared_skill_names = resolved_declared_skill_names;
+        record.tool_names = filter_allowed_tools(&runtime_tool_names, allowed_tool_names);
         record.preset_questions = normalize_preset_questions(parsed.preset_questions);
         record.approval_mode = normalize_agent_approval_mode(Some(&parsed.approval_mode));
         record.is_shared = parsed.is_shared;
@@ -442,9 +520,26 @@ impl InnerVisibleService {
         worker_card_file: &Path,
         allowed_tool_names: &HashSet<String>,
         current: &DefaultAgentConfigMirror,
+        bindings: &UserToolBindings,
     ) -> Result<DefaultAgentConfigMirror> {
         let document = load_worker_card_document(worker_card_file)?;
-        let parsed = parse_worker_card(document, None);
+        let mut parsed = parse_worker_card(document, None);
+        let (resolved_declared_skill_names, renamed_skills) = resolve_runtime_declared_skill_names(
+            user_id,
+            &parsed.declared_skill_names,
+            allowed_tool_names,
+            bindings,
+        );
+        parsed.declared_skill_names = resolved_declared_skill_names.clone();
+        if !renamed_skills.is_empty() {
+            parsed.ability_items =
+                remap_skill_ability_items(parsed.ability_items, &renamed_skills);
+        }
+        let mut runtime_tool_names = parsed.declared_tool_names.clone();
+        runtime_tool_names.extend(resolved_declared_skill_names.iter().cloned());
+        if runtime_tool_names.is_empty() {
+            runtime_tool_names = parsed.tool_names.clone();
+        }
         let now = now_ts();
         let mut config = current.clone();
         if !parsed.name.is_empty() {
@@ -453,9 +548,9 @@ impl InnerVisibleService {
         config.description = parsed.description;
         config.system_prompt = parsed.system_prompt;
         config.ability_items = parsed.ability_items;
-        config.tool_names = filter_allowed_tools(&parsed.tool_names, allowed_tool_names);
+        config.tool_names = filter_allowed_tools(&runtime_tool_names, allowed_tool_names);
         config.declared_tool_names = parsed.declared_tool_names;
-        config.declared_skill_names = parsed.declared_skill_names;
+        config.declared_skill_names = resolved_declared_skill_names;
         config.preset_questions = normalize_preset_questions(parsed.preset_questions);
         config.approval_mode = normalize_agent_approval_mode(Some(&parsed.approval_mode));
         config.status = normalize_agent_status(Some(DEFAULT_AGENT_STATUS));
@@ -730,6 +825,177 @@ fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(output)
+}
+
+fn collect_declared_skill_names_from_worker_cards(paths: &InnerVisiblePaths) -> Result<Vec<String>> {
+    let mut files = Vec::new();
+    let default_worker_card = defaults_worker_card_path(paths);
+    if default_worker_card.exists() {
+        files.push(default_worker_card);
+    }
+    if let Some(path) = resolve_latest_worker_card_file(paths, Some(DEFAULT_AGENT_ID_ALIAS)) {
+        files.push(path);
+    }
+    for agent_id in discover_agent_ids(&paths.agents_dir)? {
+        if let Some(path) = resolve_latest_worker_card_file(paths, Some(&agent_id)) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for file in files {
+        match load_worker_card_document(&file) {
+            Ok(document) => {
+                let parsed = parse_worker_card(document, None);
+                for raw_name in parsed.declared_skill_names {
+                    let cleaned = raw_name.trim();
+                    if cleaned.is_empty() {
+                        continue;
+                    }
+                    let owned = cleaned.to_string();
+                    if seen.insert(owned.clone()) {
+                        output.push(owned);
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "skip worker-card skill extraction due to parse error {}: {err}",
+                    file.display()
+                );
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn resolve_local_declared_skill_name(user_id: &str, skill_name: &str) -> Option<String> {
+    let cleaned = skill_name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let owned_prefix = format!("{}@", user_id.trim());
+    if let Some(target) = cleaned.strip_prefix(&owned_prefix) {
+        let normalized_target = target.trim();
+        return (!normalized_target.is_empty()).then(|| normalized_target.to_string());
+    }
+    if cleaned.contains('@') {
+        return None;
+    }
+    Some(cleaned.to_string())
+}
+
+fn resolve_runtime_declared_skill_names(
+    user_id: &str,
+    declared_skill_names: &[String],
+    allowed_tool_names: &HashSet<String>,
+    bindings: &UserToolBindings,
+) -> (Vec<String>, HashMap<String, String>) {
+    let normalized_user_id = user_id.trim();
+    let mut owned_alias_by_target = HashMap::new();
+    let mut aliases_by_target: HashMap<String, Vec<String>> = HashMap::new();
+    for (alias, info) in &bindings.alias_map {
+        if !matches!(info.kind, UserToolKind::Skill) {
+            continue;
+        }
+        let alias_name = alias.trim();
+        if alias_name.is_empty() || !allowed_tool_names.contains(alias_name) {
+            continue;
+        }
+        let target_name = info.target.trim();
+        if target_name.is_empty() {
+            continue;
+        }
+        aliases_by_target
+            .entry(target_name.to_string())
+            .or_default()
+            .push(alias_name.to_string());
+        if info.owner_id.trim() == normalized_user_id {
+            owned_alias_by_target
+                .entry(target_name.to_string())
+                .or_insert_with(|| alias_name.to_string());
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut resolved = Vec::new();
+    let mut renamed = HashMap::new();
+    for raw_name in declared_skill_names {
+        let cleaned = raw_name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let mut runtime_name = cleaned.to_string();
+        if !allowed_tool_names.contains(cleaned) {
+            if let Some(alias) = owned_alias_by_target.get(cleaned) {
+                runtime_name = alias.clone();
+            } else if let Some(candidates) = aliases_by_target.get(cleaned) {
+                let mut unique_candidates = candidates.clone();
+                unique_candidates.sort();
+                unique_candidates.dedup();
+                if unique_candidates.len() == 1 {
+                    runtime_name = unique_candidates[0].clone();
+                }
+            }
+        }
+        if seen.insert(runtime_name.clone()) {
+            resolved.push(runtime_name.clone());
+        }
+        if runtime_name != cleaned {
+            renamed.insert(cleaned.to_string(), runtime_name);
+        }
+    }
+    (resolved, renamed)
+}
+
+fn remap_skill_ability_items(
+    items: Vec<crate::schemas::AbilityDescriptor>,
+    renamed_skill_names: &HashMap<String, String>,
+) -> Vec<crate::schemas::AbilityDescriptor> {
+    if renamed_skill_names.is_empty() {
+        return items;
+    }
+    let mut output = Vec::with_capacity(items.len());
+    for mut item in items {
+        if item.kind != AbilityKind::Skill {
+            output.push(item);
+            continue;
+        }
+        let runtime_name = item.runtime_name.trim().to_string();
+        let fallback_name = item.name.trim().to_string();
+        let resolved_name = if runtime_name.is_empty() {
+            fallback_name.clone()
+        } else {
+            runtime_name.clone()
+        };
+        let replacement = renamed_skill_names
+            .get(&resolved_name)
+            .or_else(|| renamed_skill_names.get(&runtime_name))
+            .or_else(|| renamed_skill_names.get(&fallback_name))
+            .cloned();
+        let Some(replacement) = replacement else {
+            output.push(item);
+            continue;
+        };
+        item.runtime_name = replacement.clone();
+        if fallback_name.is_empty() || fallback_name == resolved_name {
+            item.name = replacement.clone();
+        }
+        if item.display_name.trim().is_empty() || item.display_name.trim() == resolved_name {
+            item.display_name = replacement.clone();
+        }
+        if item.id.trim().is_empty()
+            || item.id.starts_with("skill:")
+            || item.id.starts_with("user_skill:")
+        {
+            item.id = format!("skill:{replacement}");
+        }
+        output.push(item);
+    }
+    normalize_ability_items(output)
 }
 
 fn collect_worker_card_skill_names(
