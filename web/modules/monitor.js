@@ -1563,9 +1563,27 @@ const buildMonitorDetailSpeedSummary = (
   return summary;
 };
 
+const resolveMonitorSessionAgentDisplay = (session) => {
+  const agentName = String(session?.agent_name || "").trim();
+  const agentId = String(session?.agent_id || "").trim();
+  if (agentName && agentId && agentName !== agentId) {
+    return `${agentName} (${agentId})`;
+  }
+  if (agentName) {
+    return agentName;
+  }
+  if (agentId) {
+    return agentId;
+  }
+  return "-";
+};
+
 const buildMonitorDetailMeta = (session, events) => {
   const metaParts = [];
   metaParts.push(session?.user_id || "-");
+  metaParts.push(
+    t("monitor.session.agent", { agent: resolveMonitorSessionAgentDisplay(session) })
+  );
   metaParts.push(getSessionStatusLabel(session?.status));
   const logProfile = String(session?.log_profile || "").trim().toLowerCase();
   if (logProfile) {

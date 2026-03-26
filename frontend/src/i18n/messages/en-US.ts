@@ -2078,6 +2078,7 @@ export default {
   'messenger.timeline.detail.filterStats': 'Showing {visible}/{total}',
   'messenger.timeline.detail.noEvents': 'No events yet',
   'messenger.timeline.detail.metaSessionId': 'Session: {id}',
+  'messenger.timeline.detail.metaAgent': 'Agent: {agent}',
   'messenger.timeline.detail.metaCreatedAt': 'Created: {time}',
   'messenger.timeline.detail.metaUpdatedAt': 'Updated: {time}',
   'messenger.timeline.detail.metaMessageCount': 'Messages: {count}',

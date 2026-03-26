@@ -512,6 +512,14 @@
                   </button>
                   <button
                     class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'memory' }"
+                    type="button"
+                    @click="agentSettingMode = 'memory'"
+                  >
+                    {{ t('messenger.memory.button') }}
+                  </button>
+                  <button
+                    class="messenger-inline-btn"
                     :class="{ active: agentSettingMode === 'channel' }"
                     type="button"
                     @click="agentSettingMode = 'channel'"
@@ -525,14 +533,6 @@
                     @click="agentSettingMode = 'runtime'"
                   >
                     {{ t('chat.features.runtimeRecords') }}
-                  </button>
-                  <button
-                    class="messenger-inline-btn"
-                    :class="{ active: agentSettingMode === 'memory' }"
-                    type="button"
-                    @click="agentSettingMode = 'memory'"
-                  >
-                    {{ t('messenger.memory.button') }}
                   </button>
                   <button
                     class="messenger-inline-btn"

@@ -1890,9 +1890,10 @@ fn load_session_runs_from_team_tasks(
     user_id: &str,
     mother_session_id: &str,
 ) -> Result<Vec<SessionRunRow>> {
-    let (team_runs, _) = state
-        .user_store
-        .list_team_runs(user_id, None, Some(mother_session_id), 0, 4096)?;
+    let (team_runs, _) =
+        state
+            .user_store
+            .list_team_runs(user_id, None, Some(mother_session_id), 0, 4096)?;
     if team_runs.is_empty() {
         return Ok(Vec::new());
     }

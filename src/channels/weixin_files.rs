@@ -1,5 +1,6 @@
 use crate::channels::types::{ChannelMessage, WeixinConfig};
 use crate::channels::weixin;
+use crate::channels::workspace_routing::resolve_channel_workspace_id;
 use crate::user_store::UserStore;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -37,8 +38,7 @@ pub async fn download_weixin_attachments_to_workspace(
     let base_dir = build_channel_inbound_dir(weixin::WEIXIN_CHANNEL, message_id);
 
     let total = std::cmp::min(message.attachments.len(), entries.len());
-    for index in 0..total {
-        let entry = &entries[index];
+    for (index, entry) in entries.iter().enumerate().take(total) {
         let attachment = &mut message.attachments[index];
 
         let encrypted_url = if attachment.url.trim().is_empty() {
@@ -156,10 +156,7 @@ fn resolve_workspace_id(
     user_id: &str,
     agent_id: Option<&str>,
 ) -> String {
-    if let Some(container_id) = user_store.resolve_agent_sandbox_container_id(agent_id) {
-        return workspace.scoped_user_id_by_container(user_id, container_id);
-    }
-    workspace.scoped_user_id(user_id, agent_id)
+    resolve_channel_workspace_id(workspace, user_store, user_id, agent_id)
 }
 
 fn default_filename(kind: &str) -> String {

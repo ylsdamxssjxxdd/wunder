@@ -1,4 +1,7 @@
 use crate::channels::adapter::{ChannelAdapter, OutboundContext};
+use crate::channels::outbound_attachments::{
+    merge_attachments_with_text_links, OutboundLinkExtractionMode,
+};
 use crate::channels::types::{
     ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
     WeixinConfig,
@@ -8,6 +11,7 @@ use aes::Aes128;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
+use regex::Regex;
 use reqwest::header::{
     HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE,
 };
@@ -571,27 +575,91 @@ pub async fn send_outbound(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
+    let outbound_attachments = collect_outbound_attachments(&outbound.attachments, text.as_deref());
 
-    if outbound.attachments.is_empty() {
+    if outbound_attachments.is_empty() {
         let text = text.unwrap_or_else(|| "(empty message)".to_string());
         send_text_message(http, config, to_user_id, &context_token, &text).await?;
         return Ok(());
     }
 
     if !media_enabled(config) {
-        let fallback = render_attachment_fallback(text.as_deref(), &outbound.attachments);
+        let fallback = render_attachment_fallback(text.as_deref(), &outbound_attachments);
         send_text_message(http, config, to_user_id, &context_token, &fallback).await?;
         return Ok(());
     }
 
-    if let Some(text) = text.as_deref() {
-        send_text_message(http, config, to_user_id, &context_token, text).await?;
+    let mut item_list = Vec::new();
+    if let Some(text_item) =
+        text_item_for_outbound_with_attachments(text.as_deref(), &outbound_attachments)
+    {
+        item_list.push(build_text_message_item(&text_item));
+    }
+    for attachment in &outbound_attachments {
+        let item = build_attachment_message_item(http, config, to_user_id, attachment).await?;
+        item_list.push(item);
+    }
+    if item_list.is_empty() {
+        item_list.push(build_text_message_item("(empty message)"));
+    }
+    send_message_items(http, config, to_user_id, &context_token, item_list).await?;
+    Ok(())
+}
+
+fn collect_outbound_attachments(
+    outbound_attachments: &[ChannelAttachment],
+    text: Option<&str>,
+) -> Vec<ChannelAttachment> {
+    merge_attachments_with_text_links(
+        outbound_attachments,
+        text,
+        OutboundLinkExtractionMode::WorkspaceResource,
+    )
+}
+
+fn text_item_for_outbound_with_attachments(
+    text: Option<&str>,
+    attachments: &[ChannelAttachment],
+) -> Option<String> {
+    let trimmed = text.map(str::trim).filter(|value| !value.is_empty())?;
+    if attachments.is_empty() {
+        return Some(trimmed.to_string());
     }
 
-    for attachment in &outbound.attachments {
-        send_attachment_message(http, config, to_user_id, &context_token, attachment).await?;
+    let mut cleaned = trimmed.to_string();
+    for attachment in attachments {
+        let source = attachment.url.trim();
+        if source.is_empty() {
+            continue;
+        }
+        cleaned = strip_markdown_link_for_source(&cleaned, source);
+        cleaned = cleaned.replace(source, "");
     }
-    Ok(())
+
+    let normalized_lines = cleaned
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if normalized_lines.is_empty() {
+        None
+    } else {
+        Some(normalized_lines.join("\n"))
+    }
+}
+
+fn strip_markdown_link_for_source(text: &str, source: &str) -> String {
+    let escaped = regex::escape(source);
+    let image_pattern = format!(r#"!\[[^\]]*]\(\s*{escaped}\s*(?:\"[^\"]*\")?\)"#);
+    let link_pattern = format!(r#"\[[^\]]+]\(\s*{escaped}\s*(?:\"[^\"]*\")?\)"#);
+    let mut rewritten = text.to_string();
+    if let Ok(image_re) = Regex::new(&image_pattern) {
+        rewritten = image_re.replace_all(&rewritten, "").into_owned();
+    }
+    if let Ok(link_re) = Regex::new(&link_pattern) {
+        rewritten = link_re.replace_all(&rewritten, "").into_owned();
+    }
+    rewritten
 }
 
 pub fn extract_context_token_from_meta(meta: Option<&Value>) -> Option<String> {
@@ -840,26 +908,28 @@ async fn send_text_message(
     context_token: &str,
     text: &str,
 ) -> Result<()> {
-    let item = json!({
+    let item = build_text_message_item(text);
+    send_message_items(http, config, to_user_id, context_token, vec![item]).await
+}
+
+async fn build_attachment_message_item(
+    http: &Client,
+    config: &WeixinConfig,
+    to_user_id: &str,
+    attachment: &ChannelAttachment,
+) -> Result<Value> {
+    let loaded = load_attachment(http, attachment, resolve_api_timeout_ms(config)).await?;
+    let uploaded = upload_media_to_cdn(http, config, to_user_id, &loaded).await?;
+    Ok(build_outbound_media_item(&loaded, &uploaded))
+}
+
+fn build_text_message_item(text: &str) -> Value {
+    json!({
         "type": 1,
         "text_item": {
             "text": text,
         }
-    });
-    send_message_items(http, config, to_user_id, context_token, vec![item]).await
-}
-
-async fn send_attachment_message(
-    http: &Client,
-    config: &WeixinConfig,
-    to_user_id: &str,
-    context_token: &str,
-    attachment: &ChannelAttachment,
-) -> Result<()> {
-    let loaded = load_attachment(http, attachment, resolve_api_timeout_ms(config)).await?;
-    let uploaded = upload_media_to_cdn(http, config, to_user_id, &loaded).await?;
-    let item = build_outbound_media_item(&loaded, &uploaded);
-    send_message_items(http, config, to_user_id, context_token, vec![item]).await
+    })
 }
 
 fn build_outbound_media_item(loaded: &LoadedAttachment, uploaded: &UploadedMediaRef) -> Value {
@@ -1497,7 +1567,7 @@ fn build_request_headers(config: &WeixinConfig, body: &str) -> Result<HeaderMap>
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
         CONTENT_LENGTH,
-        HeaderValue::from_str(&body.as_bytes().len().to_string())
+        HeaderValue::from_str(&body.len().to_string())
             .map_err(|err| anyhow!("invalid content-length header: {err}"))?,
     );
     headers.insert(
@@ -1871,6 +1941,87 @@ mod tests {
         assert_eq!(
             messages[0].message_id.as_deref(),
             Some("wxilink:acc_fb:u_fallback:1710000000321")
+        );
+    }
+
+    #[test]
+    fn collect_outbound_attachments_extracts_workspace_markdown_links() {
+        let text = "![chart](/workspaces/user__c__0/reports/chart.png)\n[report](/workspaces/user__c__0/reports/result.pdf)";
+        let attachments = collect_outbound_attachments(&[], Some(text));
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].kind, "image");
+        assert_eq!(
+            attachments[0].url,
+            "/workspaces/user__c__0/reports/chart.png"
+        );
+        assert_eq!(attachments[1].kind, "file");
+        assert_eq!(
+            attachments[1].url,
+            "/workspaces/user__c__0/reports/result.pdf"
+        );
+    }
+
+    #[test]
+    fn collect_outbound_attachments_infers_kind_from_temp_download_filename() {
+        let text = "![preview](https://example.com/wunder/temp_dir/download?filename=channels%2Fweixin%2Fu1%2Fabc_image.jpg)";
+        let attachments = collect_outbound_attachments(&[], Some(text));
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].kind, "image");
+        assert_eq!(
+            attachments[0].url,
+            "https://example.com/wunder/temp_dir/download?filename=channels%2Fweixin%2Fu1%2Fabc_image.jpg"
+        );
+    }
+
+    #[test]
+    fn collect_outbound_attachments_deduplicates_existing_and_text_extracted_sources() {
+        let existing = ChannelAttachment {
+            kind: "file".to_string(),
+            url: "/workspaces/user__c__0/reports/result.pdf".to_string(),
+            mime: Some("application/pdf".to_string()),
+            size: Some(128),
+            name: Some("result.pdf".to_string()),
+        };
+        let text = "[report](/workspaces/user__c__0/reports/result.pdf)";
+        let attachments = collect_outbound_attachments(&[existing], Some(text));
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].kind, "file");
+        assert_eq!(
+            attachments[0].url,
+            "/workspaces/user__c__0/reports/result.pdf"
+        );
+        assert_eq!(attachments[0].name.as_deref(), Some("result.pdf"));
+    }
+
+    #[test]
+    fn text_item_for_outbound_with_attachments_drops_attachment_only_markdown() {
+        let attachments = vec![ChannelAttachment {
+            kind: "image".to_string(),
+            url: "/workspaces/admin__c__1/heart.png".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        }];
+        let text = "![爱心](/workspaces/admin__c__1/heart.png)";
+        assert_eq!(
+            text_item_for_outbound_with_attachments(Some(text), &attachments),
+            None
+        );
+    }
+
+    #[test]
+    fn text_item_for_outbound_with_attachments_keeps_non_attachment_text() {
+        let attachments = vec![ChannelAttachment {
+            kind: "image".to_string(),
+            url: "/workspaces/admin__c__1/heart.png".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        }];
+        let text = "爱心图片已生成成功！\n![爱心](/workspaces/admin__c__1/heart.png)";
+        assert_eq!(
+            text_item_for_outbound_with_attachments(Some(text), &attachments).as_deref(),
+            Some("爱心图片已生成成功！")
         );
     }
 }

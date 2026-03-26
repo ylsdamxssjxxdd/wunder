@@ -130,6 +130,8 @@ type TimelineRoundOption = {
 type TimelineDetailSession = {
   id: string;
   title: string;
+  agentId: string;
+  agentName: string;
   createdAt: unknown;
   updatedAt: unknown;
   lastMessageAt: unknown;
@@ -445,6 +447,8 @@ const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSess
   return {
     id: String(source.id || sessionId),
     title: String(source.title || ''),
+    agentId: String(source.agent_id || ''),
+    agentName: String(source.agent_name || ''),
     createdAt: source.created_at,
     updatedAt: source.updated_at,
     lastMessageAt: source.last_message_at,
@@ -629,6 +633,21 @@ const detailQuestion = computed(() => {
   return resolveQuestion(sessionDetail.value);
 });
 
+const resolveSessionAgentDisplay = (session: TimelineDetailSession): string => {
+  const name = String(session.agentName || '').trim();
+  const id = String(session.agentId || '').trim();
+  if (name && id && name !== id) {
+    return `${name} (${id})`;
+  }
+  if (name) {
+    return name;
+  }
+  if (id) {
+    return id;
+  }
+  return '-';
+};
+
 const detailMeta = computed(() => {
   const session = sessionDetail.value;
   if (!session) {
@@ -636,6 +655,7 @@ const detailMeta = computed(() => {
   }
   const parts = [
     t('messenger.timeline.detail.metaSessionId', { id: session.id || '-' }),
+    t('messenger.timeline.detail.metaAgent', { agent: resolveSessionAgentDisplay(session) }),
     t('messenger.timeline.detail.metaCreatedAt', { time: formatMetaTime(session.createdAt) }),
     t('messenger.timeline.detail.metaUpdatedAt', {
       time: formatMetaTime(session.updatedAt || session.lastMessageAt)

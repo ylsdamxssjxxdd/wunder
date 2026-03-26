@@ -3455,14 +3455,68 @@ async fn admin_monitor_detail(
     State(state): State<Arc<AppState>>,
     AxumPath(session_id): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let detail = state.monitor.get_detail(&session_id);
-    match detail {
-        Some(value) => Ok(Json(value)),
-        None => Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.session_not_found"),
-        )),
+    let mut detail = state
+        .monitor
+        .get_detail(&session_id)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    if let Some(session) = detail.get_mut("session").and_then(Value::as_object_mut) {
+        let user_id = session
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let agent_id = session
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if let Some(agent_name) = resolve_monitor_session_agent_name(&state, &user_id, &agent_id)? {
+            session.insert("agent_name".to_string(), Value::String(agent_name));
+        }
     }
+    Ok(Json(detail))
+}
+
+fn resolve_monitor_session_agent_name(
+    state: &AppState,
+    user_id: &str,
+    agent_id: &str,
+) -> Result<Option<String>, Response> {
+    let cleaned_user = user_id.trim();
+    if cleaned_user.is_empty() {
+        return Ok(None);
+    }
+    let cleaned_agent = agent_id.trim();
+    let is_default_agent = cleaned_agent.is_empty()
+        || cleaned_agent.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+        || cleaned_agent.eq_ignore_ascii_case("default");
+    if is_default_agent {
+        let record = crate::user_store::build_default_agent_record_from_storage(
+            state.storage.as_ref(),
+            cleaned_user,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let name = record.name.trim();
+        return if name.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(name.to_string()))
+        };
+    }
+    let record = state
+        .user_store
+        .get_user_agent(cleaned_user, cleaned_agent)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(record.and_then(|item| {
+        let name = item.name.trim();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }))
 }
 
 async fn admin_monitor_cancel(

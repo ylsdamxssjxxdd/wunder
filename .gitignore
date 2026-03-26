@@ -67,3 +67,4 @@ target-*/
 docker-compose-x86+.yml
 frontend/dist.__docker_tmp/
 knowledge/中小教师职称评定法规知识库
+config/data

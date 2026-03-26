@@ -1,4 +1,8 @@
 use crate::channels::adapter::{ChannelAdapter, OutboundContext};
+use crate::channels::outbound_attachments::{
+    infer_attachment_media_type_from_source, merge_attachments_with_text_links,
+    AttachmentMediaType, OutboundLinkExtractionMode,
+};
 use crate::channels::types::{
     ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
     QqBotConfig,
@@ -7,15 +11,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use ed25519_dalek::{Signer, SigningKey};
 use futures::{SinkExt, StreamExt};
-use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::OnceLock;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
-use url::Url;
 
 pub const QQBOT_CHANNEL: &str = "qqbot";
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
@@ -468,87 +469,11 @@ fn collect_outbound_attachments(
     outbound_attachments: &[ChannelAttachment],
     text: &str,
 ) -> Vec<ChannelAttachment> {
-    let mut merged = Vec::new();
-    let mut seen_urls: HashSet<String> = HashSet::new();
-    for attachment in outbound_attachments {
-        add_unique_attachment(&mut merged, &mut seen_urls, attachment.clone());
-    }
-    for url in extract_http_urls_from_text(text) {
-        add_unique_attachment(
-            &mut merged,
-            &mut seen_urls,
-            ChannelAttachment {
-                kind: inferred_attachment_kind_from_url(url.as_str()).to_string(),
-                url,
-                mime: None,
-                size: None,
-                name: None,
-            },
-        );
-    }
-    merged
-}
-
-fn add_unique_attachment(
-    attachments: &mut Vec<ChannelAttachment>,
-    seen_urls: &mut HashSet<String>,
-    mut attachment: ChannelAttachment,
-) {
-    let Some(url) = trimmed_non_empty(Some(attachment.url.as_str())) else {
-        return;
-    };
-    if !seen_urls.insert(url.clone()) {
-        return;
-    }
-    attachment.url = url;
-    attachments.push(attachment);
-}
-
-fn inferred_attachment_kind_from_url(url: &str) -> &'static str {
-    match infer_rich_media_type_from_url(url) {
-        Some(QQBOT_RICH_MEDIA_IMAGE) => "image",
-        Some(QQBOT_RICH_MEDIA_VIDEO) => "video",
-        Some(QQBOT_RICH_MEDIA_AUDIO) => "audio",
-        _ => "file",
-    }
-}
-
-fn extract_http_urls_from_text(text: &str) -> Vec<String> {
-    static HTTP_URL_RE: OnceLock<Regex> = OnceLock::new();
-    let regex = HTTP_URL_RE
-        .get_or_init(|| Regex::new(r#"https?://[^\s<>"']+"#).expect("http url regex is valid"));
-    let mut output = Vec::new();
-    let mut seen_urls: HashSet<String> = HashSet::new();
-    for matched in regex.find_iter(text) {
-        let Some(url) = sanitize_extracted_url(matched.as_str()) else {
-            continue;
-        };
-        if seen_urls.insert(url.clone()) {
-            output.push(url);
-        }
-    }
-    output
-}
-
-fn sanitize_extracted_url(value: &str) -> Option<String> {
-    let mut sanitized = value.trim();
-    if sanitized.is_empty() {
-        return None;
-    }
-    while let Some(ch) = sanitized.chars().last() {
-        if !matches!(
-            ch,
-            ')' | ']' | '}' | ',' | '.' | '!' | '?' | ';' | ':' | '"' | '\''
-        ) {
-            break;
-        }
-        let next_len = sanitized.len().saturating_sub(ch.len_utf8());
-        sanitized = &sanitized[..next_len];
-    }
-    if is_http_url(sanitized) {
-        return Some(sanitized.to_string());
-    }
-    None
+    merge_attachments_with_text_links(
+        outbound_attachments,
+        Some(text),
+        OutboundLinkExtractionMode::AnyHttp,
+    )
 }
 
 fn build_rich_media_payload(attachment: &ChannelAttachment) -> Option<Value> {
@@ -605,56 +530,12 @@ fn qq_rich_media_type(attachment: &ChannelAttachment) -> Option<u64> {
 }
 
 fn infer_rich_media_type_from_url(value: &str) -> Option<u64> {
-    let path_or_filename = value
-        .split('#')
-        .next()
-        .unwrap_or(value)
-        .split('?')
-        .next()
-        .unwrap_or(value);
-    if let Some(file_type) = infer_rich_media_type_from_candidate(path_or_filename) {
-        return Some(file_type);
+    match infer_attachment_media_type_from_source(value) {
+        Some(AttachmentMediaType::Image) => Some(QQBOT_RICH_MEDIA_IMAGE),
+        Some(AttachmentMediaType::Video) => Some(QQBOT_RICH_MEDIA_VIDEO),
+        Some(AttachmentMediaType::Audio) => Some(QQBOT_RICH_MEDIA_AUDIO),
+        None => None,
     }
-    let parsed = Url::parse(value).ok()?;
-    for (key, query_value) in parsed.query_pairs() {
-        if !key.as_ref().eq_ignore_ascii_case("filename") {
-            continue;
-        }
-        if let Some(file_type) = infer_rich_media_type_from_candidate(query_value.as_ref()) {
-            return Some(file_type);
-        }
-    }
-    None
-}
-
-fn infer_rich_media_type_from_candidate(value: &str) -> Option<u64> {
-    let lowered = value.to_ascii_lowercase();
-    if lowered.ends_with(".png")
-        || lowered.ends_with(".jpg")
-        || lowered.ends_with(".jpeg")
-        || lowered.ends_with(".gif")
-        || lowered.ends_with(".webp")
-        || lowered.ends_with(".bmp")
-    {
-        return Some(QQBOT_RICH_MEDIA_IMAGE);
-    }
-    if lowered.ends_with(".mp4")
-        || lowered.ends_with(".mov")
-        || lowered.ends_with(".avi")
-        || lowered.ends_with(".mkv")
-        || lowered.ends_with(".webm")
-    {
-        return Some(QQBOT_RICH_MEDIA_VIDEO);
-    }
-    if lowered.ends_with(".silk")
-        || lowered.ends_with(".mp3")
-        || lowered.ends_with(".wav")
-        || lowered.ends_with(".ogg")
-        || lowered.ends_with(".opus")
-    {
-        return Some(QQBOT_RICH_MEDIA_AUDIO);
-    }
-    None
 }
 
 fn outbound_attachment_line(attachment: &ChannelAttachment) -> Option<String> {
@@ -1329,7 +1210,7 @@ mod tests {
     fn extract_http_urls_from_text_supports_markdown_and_plain_urls() {
         let text = "img ![preview](https://example.com/a.png), doc [file](https://example.com/a.pdf), raw https://example.com/b.mp4.";
         assert_eq!(
-            extract_http_urls_from_text(text),
+            crate::channels::outbound_attachments::extract_http_urls(text),
             vec![
                 "https://example.com/a.png".to_string(),
                 "https://example.com/a.pdf".to_string(),

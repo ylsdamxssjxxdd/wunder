@@ -388,6 +388,13 @@ async fn get_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
+    let agent_name = agent_record
+        .as_ref()
+        .map(|item| item.name.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
 
     let limit = query
         .limit
@@ -498,6 +505,7 @@ async fn get_session(
             "updated_at": format_ts(record.updated_at),
             "last_message_at": format_ts(record.last_message_at),
             "agent_id": record.agent_id,
+            "agent_name": agent_name,
             "tool_overrides": record.tool_overrides,
             "history_incomplete": history_incomplete,
             "messages": messages,

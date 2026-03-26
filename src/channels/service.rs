@@ -7,8 +7,13 @@ use crate::channels::inbound_queue::{
     ChannelInboundEnvelope, ChannelInboundProcessor, CHANNEL_INBOUND_ENQUEUE_TIMEOUT_MS,
     CHANNEL_INBOUND_MAX_IN_FLIGHT, CHANNEL_INBOUND_QUEUE_CAPACITY,
 };
-use crate::channels::media::{MediaProcessingResult, MediaProcessor};
+use crate::channels::media::MediaProcessor;
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
+use crate::channels::pending_files::{
+    build_channel_question_with_files, build_pending_files_from_attachments,
+    format_pending_upload_preview, has_meaningful_channel_text, merge_pending_files,
+    read_pending_files_from_metadata, write_pending_files_to_metadata, PendingChannelFile,
+};
 use crate::channels::qqbot;
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::registry::{build_default_channel_adapter_registry, ChannelAdapterRegistry};
@@ -945,37 +950,73 @@ impl ChannelHub {
         }
 
         let media_processor = MediaProcessor::new(config.channels.media.clone());
-        let allow_vision = resolve_allow_vision(&config, None);
-        let MediaProcessingResult {
-            text,
-            attachments,
-            meta,
-        } = media_processor
-            .process_inbound(&message, allow_vision)
-            .await;
-        if meta.get("asr").is_some() {
-            self.monitor.record_event(
-                &session_info.session_id,
-                "asr_done",
-                &json!({ "channel": message.channel, "account_id": message.account_id }),
-            );
-        }
-        if meta.get("ocr").is_some() {
-            self.monitor.record_event(
-                &session_info.session_id,
-                "ocr_done",
-                &json!({ "channel": message.channel, "account_id": message.account_id }),
-            );
+        let mut pending_files = match self.load_pending_channel_files(&message).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "load pending channel files failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel, message.account_id, session_info.session_id
+                );
+                Vec::new()
+            }
+        };
+        let incoming_files = build_pending_files_from_attachments(&message.attachments, now_ts());
+        if !incoming_files.is_empty() {
+            pending_files = merge_pending_files(pending_files, incoming_files.clone());
+            if let Err(err) = self
+                .save_pending_channel_files(&message, &pending_files)
+                .await
+            {
+                warn!(
+                    "save pending channel files failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel, message.account_id, session_info.session_id
+                );
+            }
         }
 
-        let question = if text.trim().is_empty() {
-            message
-                .text
-                .clone()
-                .unwrap_or_else(|| "[empty message]".to_string())
-        } else {
-            text
-        };
+        let has_user_text = has_meaningful_channel_text(message.text.as_deref());
+        if !has_user_text {
+            if !incoming_files.is_empty() {
+                let user_text = format_pending_upload_preview(&incoming_files);
+                self.append_channel_chat(
+                    &session_info.user_id,
+                    &session_info.session_id,
+                    "user",
+                    &user_text,
+                )
+                .await;
+                self.monitor.record_event(
+                    &session_info.session_id,
+                    "channel_file_buffered",
+                    &json!({
+                        "channel": message.channel,
+                        "account_id": message.account_id,
+                        "count": incoming_files.len(),
+                        "pending_total": pending_files.len(),
+                    }),
+                );
+            }
+            return Ok(ChannelInboundResult {
+                session_id: session_info.session_id.clone(),
+                outbox_id: None,
+            });
+        }
+
+        let question = build_channel_question_with_files(message.text.as_deref(), &pending_files);
+        let mut meta_probe_message = message.clone();
+        meta_probe_message.attachments.clear();
+        meta_probe_message.location = None;
+        let media_probe = media_processor
+            .process_inbound(&meta_probe_message, false)
+            .await;
+        let _probe_text_len = media_probe.text.len();
+        let _probe_attachment_count = media_probe.attachments.len();
+        let media_meta = media_probe.meta;
+        let mut meta = json!({
+            "pending_files_total": pending_files.len(),
+            "incoming_files": incoming_files.len(),
+        });
+        merge_object_value_into(&mut meta, media_meta);
 
         let agent_prompt = agent_record
             .as_ref()
@@ -995,11 +1036,7 @@ impl ChannelHub {
             language: Some(crate::i18n::get_language()),
             config_overrides: channel_test_request_overrides(),
             agent_prompt,
-            attachments: if attachments.is_empty() {
-                None
-            } else {
-                Some(attachments)
-            },
+            attachments: None,
             allow_queue: false,
             is_admin: false,
             approval_tx: None,
@@ -1041,7 +1078,19 @@ impl ChannelHub {
             )
             .await?
         {
-            ChannelModelResult::Answer(answer) => answer,
+            ChannelModelResult::Answer(answer) => {
+                if !pending_files.is_empty() {
+                    if let Err(err) = self.save_pending_channel_files(&message, &[]).await {
+                        warn!(
+                            "clear pending channel files failed: channel={}, account_id={}, session_id={}, error={err}",
+                            message.channel, message.account_id, session_info.session_id
+                        );
+                    } else {
+                        pending_files.clear();
+                    }
+                }
+                answer
+            }
             ChannelModelResult::Busy => {
                 if let Some(task) = approval_task.as_ref() {
                     task.abort();
@@ -1901,19 +1950,25 @@ impl ChannelHub {
                 None
             }
         };
-        if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
-            &self.workspace,
-            &self.user_store,
-            &config,
-            &record.channel,
-            &mut outbound,
-        )
-        .await
+        if !record
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
         {
-            warn!(
-                "rewrite outbound workspace links failed: channel={}, account_id={}, outbox_id={}, error={err}",
-                record.channel, record.account_id, record.outbox_id
-            );
+            if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
+                &self.workspace,
+                &self.user_store,
+                &config,
+                &record.channel,
+                &mut outbound,
+            )
+            .await
+            {
+                warn!(
+                    "rewrite outbound workspace links failed: channel={}, account_id={}, outbox_id={}, error={err}",
+                    record.channel, record.account_id, record.outbox_id
+                );
+            }
         }
         if let Some(adapter) = self.adapter_registry.get(&record.channel) {
             let context = OutboundContext {
@@ -3539,6 +3594,48 @@ impl ChannelHub {
         .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
+    async fn load_pending_channel_files(
+        &self,
+        message: &ChannelMessage,
+    ) -> Result<Vec<PendingChannelFile>> {
+        let session = self
+            .get_channel_session(
+                &message.channel,
+                &message.account_id,
+                &message.peer.kind,
+                &message.peer.id,
+                message.thread.as_ref().map(|thread| thread.id.as_str()),
+            )
+            .await?;
+        Ok(read_pending_files_from_metadata(
+            session.as_ref().and_then(|record| record.metadata.as_ref()),
+        ))
+    }
+
+    async fn save_pending_channel_files(
+        &self,
+        message: &ChannelMessage,
+        files: &[PendingChannelFile],
+    ) -> Result<()> {
+        let Some(mut record) = self
+            .get_channel_session(
+                &message.channel,
+                &message.account_id,
+                &message.peer.kind,
+                &message.peer.id,
+                message.thread.as_ref().map(|thread| thread.id.as_str()),
+            )
+            .await?
+        else {
+            return Ok(());
+        };
+        record.metadata = write_pending_files_to_metadata(record.metadata, files);
+        let now = now_ts();
+        record.updated_at = now;
+        record.last_message_at = now;
+        self.upsert_channel_session(&record).await
+    }
+
     async fn get_chat_session(
         &self,
         user_id: &str,
@@ -4351,23 +4448,6 @@ fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
     } else {
         output
     }
-}
-
-fn resolve_allow_vision(config: &Config, model_name: Option<&str>) -> bool {
-    let fallback = config.llm.default.as_str();
-    let model = model_name
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback);
-    if model.trim().is_empty() {
-        return false;
-    }
-    config
-        .llm
-        .models
-        .get(model)
-        .and_then(|model| model.support_vision)
-        .unwrap_or(false)
 }
 
 fn resolve_channel_actor_id(message: &ChannelMessage) -> String {
