@@ -652,6 +652,24 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (!stats) {
     return null;
   }
+  const explicitContext = normalizePositiveTokenCount(
+    stats.contextTokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+  );
+  if (explicitContext !== null) {
+    return explicitContext;
+  }
+  const usageInput = normalizePositiveTokenCount(
+    (stats.usage as Record<string, unknown> | undefined)?.input ??
+      (stats.usage as Record<string, unknown> | undefined)?.input_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.inputTokens
+  );
+  if (usageInput !== null) {
+    return usageInput;
+  }
   const usageTotal = normalizePositiveTokenCount(
     (stats.usage as Record<string, unknown> | undefined)?.total ??
       (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
@@ -661,14 +679,11 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
     return usageTotal;
   }
   return normalizePositiveTokenCount(
-    stats.contextTokens ??
-      stats.context_tokens ??
-      stats.context_tokens_total ??
-      (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+    (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
       (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens ??
-      (stats.usage as Record<string, unknown> | undefined)?.input ??
-      (stats.usage as Record<string, unknown> | undefined)?.input_tokens ??
-      (stats.usage as Record<string, unknown> | undefined)?.inputTokens
+      (stats.usage as Record<string, unknown> | undefined)?.total ??
+      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
   );
 };
 const resolveAssistantContextTotalTokens = (stats: Record<string, unknown> | null): number | null => {

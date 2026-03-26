@@ -282,7 +282,7 @@ struct LoadedAttachment {
 #[derive(Debug)]
 struct UploadedMediaRef {
     download_encrypted_query_param: String,
-    aes_key_b64: String,
+    aes_key_hex: String,
     raw_size: usize,
     cipher_size: usize,
 }
@@ -935,7 +935,7 @@ fn build_text_message_item(text: &str) -> Value {
 fn build_outbound_media_item(loaded: &LoadedAttachment, uploaded: &UploadedMediaRef) -> Value {
     let media_payload = json!({
         "encrypt_query_param": uploaded.download_encrypted_query_param,
-        "aes_key": uploaded.aes_key_b64,
+        "aes_key": encode_weixin_media_aes_key(uploaded.aes_key_hex.as_str()),
         "encrypt_type": 1,
     });
 
@@ -981,27 +981,32 @@ async fn send_message_items(
     context_token: &str,
     item_list: Vec<Value>,
 ) -> Result<()> {
-    let payload = post_json(
-        http,
-        config,
-        "ilink/bot/sendmessage",
-        json!({
-            "msg": {
-                "from_user_id": "",
-                "to_user_id": to_user_id,
-                "client_id": format!("wunder-weixin-{}", Uuid::new_v4().simple()),
-                "message_type": 2,
-                "message_state": 2,
-                "item_list": item_list,
-                "context_token": context_token,
-            },
-            "base_info": build_base_info(),
-        }),
-        resolve_api_timeout_ms(config),
-    )
-    .await?;
+    // Align with openclaw behavior: send each item in an isolated request.
+    // Mixed item_list payloads can be accepted by API but unstable in some Weixin clients.
+    for item in item_list {
+        let payload = post_json(
+            http,
+            config,
+            "ilink/bot/sendmessage",
+            json!({
+                "msg": {
+                    "from_user_id": "",
+                    "to_user_id": to_user_id,
+                    "client_id": format!("wunder-weixin-{}", Uuid::new_v4().simple()),
+                    "message_type": 2,
+                    "message_state": 2,
+                    "item_list": [item],
+                    "context_token": context_token,
+                },
+                "base_info": build_base_info(),
+            }),
+            resolve_api_timeout_ms(config),
+        )
+        .await?;
 
-    ensure_weixin_ret_ok(&payload, "weixin outbound sendmessage")
+        ensure_weixin_ret_ok(&payload, "weixin outbound sendmessage")?;
+    }
+    Ok(())
 }
 
 fn render_attachment_fallback(text: Option<&str>, attachments: &[ChannelAttachment]) -> String {
@@ -1040,6 +1045,7 @@ async fn upload_media_to_cdn(
     let filekey = Uuid::new_v4().simple().to_string();
     let mut aes_key = [0_u8; 16];
     aes_key.copy_from_slice(&Uuid::new_v4().as_bytes()[..16]);
+    let aes_key_hex = hex::encode(aes_key);
 
     let ciphertext = encrypt_aes_128_ecb_pkcs7(&loaded.bytes, &aes_key)?;
     let cipher_size = ciphertext.len();
@@ -1057,7 +1063,7 @@ async fn upload_media_to_cdn(
             "rawfilemd5": rawfilemd5,
             "filesize": cipher_size,
             "no_need_thumb": true,
-            "aeskey": hex::encode(aes_key),
+            "aeskey": aes_key_hex,
             "base_info": build_base_info(),
         }),
         resolve_api_timeout_ms(config),
@@ -1078,10 +1084,16 @@ async fn upload_media_to_cdn(
 
     Ok(UploadedMediaRef {
         download_encrypted_query_param,
-        aes_key_b64: base64::engine::general_purpose::STANDARD.encode(aes_key),
+        aes_key_hex: hex::encode(aes_key),
         raw_size,
         cipher_size,
     })
+}
+
+fn encode_weixin_media_aes_key(aes_key_hex: &str) -> String {
+    // Keep compatibility with openclaw-weixin-cli and existing client behavior:
+    // encode hex-text bytes as base64 (instead of raw 16-byte key).
+    base64::engine::general_purpose::STANDARD.encode(aes_key_hex.as_bytes())
 }
 
 async fn upload_ciphertext_to_cdn(

@@ -452,18 +452,7 @@ impl TeamRunRunner {
         task.started_time = Some(now);
         task.updated_time = now;
         self.user_store.upsert_team_task(&task)?;
-        self.emit_team_event(
-            &run,
-            TEAM_TASK_UPDATE,
-            json!({
-                "team_run_id": task.team_run_id,
-                "task_id": task.task_id,
-                "hive_id": run.hive_id,
-                "agent_id": task.agent_id,
-                "status": task.status,
-                "updated_time": task.updated_time,
-            }),
-        );
+        self.emit_task_update_event(&run, &task);
 
         let agent = self
             .user_store
@@ -474,6 +463,7 @@ impl TeamRunRunner {
             task.spawned_session_id = Some(session_id.clone());
             task.updated_time = now_ts();
             self.user_store.upsert_team_task(&task)?;
+            self.emit_task_update_event(&run, &task);
         }
 
         let mut retry_count = task.retry_count.max(0) as u32;
@@ -489,6 +479,10 @@ impl TeamRunRunner {
             }
 
             let run_id = format!("run_{}", Uuid::new_v4().simple());
+            task.session_run_id = Some(run_id.clone());
+            task.updated_time = now_ts();
+            self.user_store.upsert_team_task(&task)?;
+            self.emit_task_update_event(&run, &task);
             let request = build_task_request(&run, &agent, &session_id, question.clone());
             let outcome = self
                 .execute_session_run(
@@ -524,6 +518,7 @@ impl TeamRunRunner {
                         task.retry_count = retry_count as i64;
                         task.updated_time = now_ts();
                         self.user_store.upsert_team_task(&task)?;
+                        self.emit_task_update_event(&run, &task);
                         continue;
                     }
                     break (
@@ -539,6 +534,7 @@ impl TeamRunRunner {
                         task.retry_count = retry_count as i64;
                         task.updated_time = now_ts();
                         self.user_store.upsert_team_task(&task)?;
+                        self.emit_task_update_event(&run, &task);
                         continue;
                     }
                     break (
@@ -566,25 +562,7 @@ impl TeamRunRunner {
             .map(|value| truncate_text(value, TEAM_TASK_RESULT_MAX_CHARS));
         task.error = final_error.clone();
         self.user_store.upsert_team_task(&task)?;
-
-        self.emit_team_event(
-            &run,
-            TEAM_TASK_RESULT,
-            json!({
-                "team_run_id": task.team_run_id,
-                "task_id": task.task_id,
-                "hive_id": run.hive_id,
-                "agent_id": task.agent_id,
-                "session_id": session_id,
-                "created_session": created_session,
-                "status": task.status,
-                "retry_count": task.retry_count,
-                "elapsed_s": task.elapsed_s,
-                "result_summary": task.result_summary,
-                "error": task.error,
-                "updated_time": task.updated_time,
-            }),
-        );
+        self.emit_task_result_event(&run, &task, &session_id, created_session);
         Ok(())
     }
 
@@ -750,18 +728,7 @@ impl TeamRunRunner {
         task.updated_time = now;
         task.error = Some("cancelled".to_string());
         self.user_store.upsert_team_task(task)?;
-        self.emit_team_event(
-            run,
-            TEAM_TASK_UPDATE,
-            json!({
-                "team_run_id": task.team_run_id,
-                "task_id": task.task_id,
-                "hive_id": run.hive_id,
-                "agent_id": task.agent_id,
-                "status": task.status,
-                "updated_time": task.updated_time,
-            }),
-        );
+        self.emit_task_update_event(run, task);
         Ok(())
     }
 
@@ -796,18 +763,7 @@ impl TeamRunRunner {
             task.error = Some(truncate_text(cleaned, TEAM_TASK_RESULT_MAX_CHARS));
         }
         self.user_store.upsert_team_task(&task)?;
-        self.emit_team_event(
-            run,
-            TEAM_TASK_UPDATE,
-            json!({
-                "team_run_id": task.team_run_id,
-                "task_id": task.task_id,
-                "hive_id": run.hive_id,
-                "agent_id": task.agent_id,
-                "status": task.status,
-                "updated_time": task.updated_time,
-            }),
-        );
+        self.emit_task_update_event(run, &task);
         Ok(())
     }
 
@@ -856,18 +812,7 @@ impl TeamRunRunner {
             task.updated_time = now;
             task.error = Some(truncate_text(error, TEAM_TASK_RESULT_MAX_CHARS));
             self.user_store.upsert_team_task(&task)?;
-            self.emit_team_event(
-                run,
-                TEAM_TASK_UPDATE,
-                json!({
-                    "team_run_id": task.team_run_id,
-                    "task_id": task.task_id,
-                    "hive_id": run.hive_id,
-                    "agent_id": task.agent_id,
-                    "status": task.status,
-                    "updated_time": task.updated_time,
-                }),
-            );
+            self.emit_task_update_event(run, &task);
         }
         Ok(())
     }
@@ -1130,6 +1075,24 @@ impl TeamRunRunner {
                 .await;
         });
     }
+
+    fn emit_task_update_event(&self, run: &TeamRunRecord, task: &TeamTaskRecord) {
+        self.emit_team_event(run, TEAM_TASK_UPDATE, build_team_task_event_payload(task));
+    }
+
+    fn emit_task_result_event(
+        &self,
+        run: &TeamRunRecord,
+        task: &TeamTaskRecord,
+        session_id: &str,
+        created_session: bool,
+    ) {
+        self.emit_team_event(
+            run,
+            TEAM_TASK_RESULT,
+            build_team_task_result_payload(task, session_id, created_session),
+        );
+    }
 }
 
 fn build_realtime_event_payload(run: &TeamRunRecord, payload: Value) -> Value {
@@ -1145,6 +1108,51 @@ fn build_realtime_event_payload(run: &TeamRunRecord, payload: Value) -> Value {
             .or_insert_with(|| json!(run.updated_time));
     }
     realtime_payload
+}
+
+fn build_team_task_event_payload(task: &TeamTaskRecord) -> Value {
+    json!({
+        "team_run_id": task.team_run_id,
+        "task_id": task.task_id,
+        "hive_id": task.hive_id,
+        "agent_id": task.agent_id,
+        "target_session_id": task.target_session_id,
+        "spawned_session_id": task.spawned_session_id,
+        "session_id": task.spawned_session_id,
+        "session_run_id": task.session_run_id,
+        "status": task.status,
+        "retry_count": task.retry_count,
+        "priority": task.priority,
+        "started_time": task.started_time,
+        "finished_time": task.finished_time,
+        "elapsed_s": task.elapsed_s,
+        "result_summary": task.result_summary,
+        "error": task.error,
+        "updated_time": task.updated_time,
+    })
+}
+
+fn build_team_task_result_payload(
+    task: &TeamTaskRecord,
+    session_id: &str,
+    created_session: bool,
+) -> Value {
+    let mut payload = build_team_task_event_payload(task);
+    let normalized_session_id = session_id.trim();
+    if let Value::Object(ref mut map) = payload {
+        if !normalized_session_id.is_empty() {
+            map.insert(
+                "session_id".to_string(),
+                Value::String(normalized_session_id.to_string()),
+            );
+            map.insert(
+                "spawned_session_id".to_string(),
+                Value::String(normalized_session_id.to_string()),
+            );
+        }
+        map.insert("created_session".to_string(), json!(created_session));
+    }
+    payload
 }
 
 fn build_task_request(
@@ -1392,8 +1400,8 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_merge_summary, build_realtime_event_payload, TeamProgress, TeamRunRecord,
-        TeamTaskRecord,
+        build_merge_summary, build_realtime_event_payload, build_team_task_event_payload,
+        build_team_task_result_payload, TeamProgress, TeamRunRecord, TeamTaskRecord,
     };
     use serde_json::json;
 
@@ -1550,5 +1558,66 @@ mod tests {
         let payload = json!("raw-event");
         let normalized = build_realtime_event_payload(&run, payload.clone());
         assert_eq!(normalized, payload);
+    }
+
+    #[test]
+    fn team_task_payload_includes_realtime_session_linkage() {
+        let mut task = sample_task("task-1", "running", 3, 123.0, None, None);
+        task.target_session_id = Some("session-target".to_string());
+        task.spawned_session_id = Some("session-spawned".to_string());
+        task.session_run_id = Some("run-123".to_string());
+        let payload = build_team_task_event_payload(&task);
+        assert_eq!(
+            payload,
+            json!({
+                "team_run_id": "run-1",
+                "task_id": "task-1",
+                "hive_id": "hive-1",
+                "agent_id": "agent-task-1",
+                "target_session_id": "session-target",
+                "spawned_session_id": "session-spawned",
+                "session_id": "session-spawned",
+                "session_run_id": "run-123",
+                "status": "running",
+                "retry_count": 0,
+                "priority": 3,
+                "started_time": 1.0,
+                "finished_time": 2.0,
+                "elapsed_s": 1.0,
+                "result_summary": null,
+                "error": null,
+                "updated_time": 123.0
+            })
+        );
+    }
+
+    #[test]
+    fn team_task_result_payload_overrides_session_alias_fields() {
+        let mut task = sample_task("task-2", "success", 2, 321.0, Some("done"), None);
+        task.spawned_session_id = Some("session-old".to_string());
+        let payload = build_team_task_result_payload(&task, "session-final", true);
+        assert_eq!(
+            payload,
+            json!({
+                "team_run_id": "run-1",
+                "task_id": "task-2",
+                "hive_id": "hive-1",
+                "agent_id": "agent-task-2",
+                "target_session_id": null,
+                "spawned_session_id": "session-final",
+                "session_id": "session-final",
+                "session_run_id": null,
+                "status": "success",
+                "retry_count": 0,
+                "priority": 2,
+                "started_time": 1.0,
+                "finished_time": 2.0,
+                "elapsed_s": 1.0,
+                "result_summary": "done",
+                "error": null,
+                "updated_time": 321.0,
+                "created_session": true
+            })
+        );
     }
 }

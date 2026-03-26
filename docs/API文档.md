@@ -2140,3 +2140,31 @@
     - `user_id`：提交反馈的用户 ID
     - `created_at`：反馈时间（RFC3339）
     - `created_time`：UNIX 时间戳（秒）
+
+## 2026-03-26 增补：beeroom 实时链路重构与观测
+
+### `GET /wunder/beeroom/realtime/metrics`
+
+- 方法：`GET`
+- 鉴权：与 beeroom WS/SSE 保持一致（用户鉴权，支持 query token）
+- 返回（JSON）：
+  - `metrics.publish_total`：实时事件发布总数
+  - `metrics.replay_batch_total`：回放批次数
+  - `metrics.replay_event_total`：回放事件总量
+  - `metrics.replay_failure_total`：回放失败次数
+  - `metrics.lag_recovery_total`：lag 恢复次数
+  - `metrics.push_sample_total`：推送延迟采样数
+  - `metrics.push_latency_avg_ms`：推送延迟均值（ms）
+  - `metrics.push_latency_max_ms`：推送延迟最大值（ms）
+  - `timestamp`：服务端时间（RFC3339）
+
+### beeroom WS/SSE watch 语义更新
+
+- `watch` 进入后不再只依赖内存广播，先按 `after_event_id` 回放持久化事件，再进入 live push。
+- 当连接出现 `Lagged` 或续传缺口时，服务端优先做 cursor replay 补齐，而不是直接要求前端全量刷新。
+- `sync_required` 仍保留为兜底事件，但主恢复路径已切换为“回放优先”。
+- 前端 beeroom 轮询降级为健康检查（默认 30s），不再作为主实时来源。
+
+### 说明
+
+- 本次改造针对 beeroom/chat/channel 的消息实时链路；“模型配置变更（用户改模型、管理员改默认模型）”的全局推送链路尚未迁移到统一实时总线，仍按现有页面刷新/重新拉取机制生效。

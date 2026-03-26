@@ -45,6 +45,7 @@ use crate::services::bridge::{
     append_bridge_meta, log_bridge_delivery, resolve_inbound_bridge_route,
     touch_bridge_route_after_outbound, BridgeRouteResolution, BridgeRuntime,
 };
+use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
     ChannelSessionRecord, ChatSessionRecord, ListChannelUserBindingsQuery, StorageBackend,
@@ -286,6 +287,7 @@ pub struct ChannelHub {
     approval_registry: Arc<PendingApprovalRegistry>,
     runtime_logs: Arc<Mutex<ChannelRuntimeLogBuffer>>,
     inbound_queue_tx: TokioSender<ChannelInboundEnvelope>,
+    stream_events: Arc<StreamEventService>,
 }
 
 impl ChannelHub {
@@ -300,6 +302,7 @@ impl ChannelHub {
     ) -> Self {
         let (inbound_queue_tx, inbound_queue_rx) =
             new_inbound_channel(CHANNEL_INBOUND_QUEUE_CAPACITY);
+        let stream_events = Arc::new(StreamEventService::new(storage.clone()));
         let hub = Self {
             config_store,
             storage,
@@ -319,6 +322,7 @@ impl ChannelHub {
                 CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S,
             ))),
             inbound_queue_tx,
+            stream_events,
         };
         let inbound_worker = hub.clone();
         let inbound_processor: ChannelInboundProcessor = Arc::new(move |envelope| {
@@ -1037,13 +1041,6 @@ impl ChannelHub {
             if !incoming_files.is_empty() {
                 let user_text = format_pending_upload_preview(&incoming_files);
                 self.append_channel_chat(
-                    &session_info.user_id,
-                    &session_info.session_id,
-                    "user",
-                    &user_text,
-                )
-                .await;
-                self.append_channel_stream_event_message(
                     &session_info.user_id,
                     &session_info.session_id,
                     "user",
@@ -3413,7 +3410,15 @@ impl ChannelHub {
                 "append channel chat failed: user_id={}, session_id={}, role={}, error={err}",
                 cleaned_user, cleaned_session, cleaned_role
             );
+            return;
         }
+        self.append_channel_stream_event_message(
+            cleaned_user,
+            cleaned_session,
+            cleaned_role,
+            content,
+        )
+        .await;
     }
 
     async fn append_channel_stream_event_message(
@@ -3443,15 +3448,12 @@ impl ChannelHub {
             },
             "timestamp": Utc::now().to_rfc3339(),
         });
-        let storage = self.storage.clone();
+        let stream_events = self.stream_events.clone();
         let user_id = cleaned_user.to_string();
         let session_id = cleaned_session.to_string();
-        let outcome = tokio::task::spawn_blocking(move || -> Result<()> {
-            let next_event_id = storage.get_max_stream_event_id(&session_id)?.max(0) + 1;
-            storage.append_stream_event(&session_id, &user_id, next_event_id, &payload)
-        })
-        .await
-        .unwrap_or_else(|err| Err(anyhow!(err)));
+        let outcome = stream_events
+            .append_event(&session_id, &user_id, payload)
+            .await;
         if let Err(err) = outcome {
             warn!(
                 "append channel stream event failed: user_id={}, session_id={}, role={}, error={err}",
@@ -3527,10 +3529,10 @@ impl ChannelHub {
             .filter(|value| !value.is_empty())
             .unwrap_or("智能体");
         let busy_text = if last_message.trim().is_empty() {
-            format!("{agent_display_name}正在忙，请稍后再试。")
+            format!("正在忙，请稍后再试（{agent_display_name}）。")
         } else {
             let preview = truncate_text(last_message.trim(), 120);
-            format!("{agent_display_name}正在忙：{preview}")
+            format!("正在忙：{preview}（{agent_display_name}）。")
         };
         let user_text = message_preview_text(message);
         self.append_channel_chat(

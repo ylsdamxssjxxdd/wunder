@@ -148,15 +148,15 @@ export const buildAssistantMessageStatsEntries = (
     stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
   );
   const contextTokens =
-    (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0
-      ? usageTotalTokens
-      : null) ??
     stats?.contextTokens ??
     stats?.context_tokens ??
     stats?.context_tokens_total ??
     stats?.context_usage?.context_tokens ??
     stats?.context_usage?.contextTokens ??
     (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null) ??
+    (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0
+      ? usageTotalTokens
+      : null) ??
     null;
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;

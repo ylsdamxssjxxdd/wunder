@@ -83,6 +83,7 @@ test('empty incoming status is ignored', () => {
 
 test('team runtime event marks workflow refresh only for runtime-critical types', () => {
   assert.equal(shouldForceWorkflowRefresh('team_task_dispatch'), true);
+  assert.equal(shouldForceWorkflowRefresh('team_task_update'), true);
   assert.equal(shouldForceWorkflowRefresh('team_task_result'), true);
   assert.equal(shouldForceWorkflowRefresh('team_finish'), true);
   assert.equal(shouldForceWorkflowRefresh(' team_error '), true);
@@ -117,6 +118,13 @@ test('team runtime reconcile forces immediate refresh for rejected or terminal e
       accepted: true
     }),
     false
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_task_update',
+      accepted: true
+    }),
+    true
   );
 });
 

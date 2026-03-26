@@ -14,6 +14,7 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::Response;
+use axum::Json;
 use axum::{routing::get, Router};
 use chrono::Utc;
 use futures::{SinkExt, Stream, StreamExt as WsStreamExt};
@@ -32,6 +33,10 @@ use uuid::Uuid;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/beeroom/ws", get(beeroom_ws))
+        .route(
+            "/wunder/beeroom/realtime/metrics",
+            get(beeroom_realtime_metrics),
+        )
         .route(
             "/wunder/beeroom/groups/{group_id}/chat/stream",
             get(beeroom_chat_stream),
@@ -67,6 +72,8 @@ struct BeeroomStreamQuery {
 struct WatchTask {
     cancel: CancellationToken,
 }
+
+const BEEROOM_REPLAY_FETCH_LIMIT: i64 = 200;
 
 async fn beeroom_ws(
     State(state): State<Arc<AppState>>,
@@ -116,17 +123,24 @@ async fn beeroom_chat_stream(
         })?;
     let current_event_id = resolve_after_event_id(&headers, after_event_id);
     let normalized_group_id = group.hive_id.clone();
-    let latest_event_id = state
-        .beeroom_realtime
-        .latest_event_id(&user_id, &normalized_group_id)
-        .await
-        .unwrap_or(0);
-    let should_emit_resume_gap_sync =
-        should_emit_resume_gap_sync_required(current_event_id, latest_event_id);
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(STREAM_EVENT_QUEUE_SIZE);
+    let state_snapshot = state.clone();
+    let user_snapshot = user_id.clone();
 
     tokio::spawn(async move {
         let mut cursor_event_id = current_event_id;
+        if replay_group_events_to_sse(
+            state_snapshot.clone(),
+            &user_snapshot,
+            &normalized_group_id,
+            &mut cursor_event_id,
+            &tx,
+        )
+        .await
+        .is_err()
+        {
+            return;
+        }
         let watching_event = Event::default().event("watching").data(
             json!({
                 "group_id": &normalized_group_id,
@@ -137,20 +151,6 @@ async fn beeroom_chat_stream(
         if tx.send(Ok(watching_event)).await.is_err() {
             return;
         }
-        if should_emit_resume_gap_sync {
-            let resume_gap_event = Event::default().event("sync_required").data(
-                json!({
-                    "group_id": &normalized_group_id,
-                    "reason": "resume_gap",
-                    "after_event_id": cursor_event_id,
-                    "latest_event_id": latest_event_id,
-                })
-                .to_string(),
-            );
-            if tx.send(Ok(resume_gap_event)).await.is_err() {
-                return;
-            }
-        }
         loop {
             match receiver.recv().await {
                 Ok(event) => {
@@ -159,6 +159,9 @@ async fn beeroom_chat_stream(
                         continue;
                     }
                     cursor_event_id = event.event_id;
+                    state_snapshot
+                        .beeroom_realtime
+                        .record_push_latency_sample(event.created_at);
                     let stream_event = Event::default()
                         .event(event.event_type)
                         .id(event.event_id.to_string())
@@ -167,17 +170,18 @@ async fn beeroom_chat_stream(
                         return;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    let gap_event = Event::default().event("sync_required").data(
-                        json!({
-                            "group_id": &normalized_group_id,
-                            "reason": "lagged",
-                            "skipped": skipped,
-                            "after_event_id": cursor_event_id,
-                        })
-                        .to_string(),
-                    );
-                    if tx.send(Ok(gap_event)).await.is_err() {
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    state_snapshot.beeroom_realtime.record_lag_recovery();
+                    if replay_group_events_to_sse(
+                        state_snapshot.clone(),
+                        &user_snapshot,
+                        &normalized_group_id,
+                        &mut cursor_event_id,
+                        &tx,
+                    )
+                    .await
+                    .is_err()
+                    {
                         return;
                     }
                 }
@@ -190,6 +194,19 @@ async fn beeroom_chat_stream(
 
     Ok(Sse::new(ReceiverStream::new(rx))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+}
+
+async fn beeroom_realtime_metrics(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<WsQuery>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let auth_headers = apply_ws_auth_headers(&headers, &query);
+    let _resolved = resolve_user(&state, &auth_headers, None).await?;
+    Ok(Json(json!({
+        "metrics": state.beeroom_realtime.metrics_snapshot(),
+        "timestamp": Utc::now().to_rfc3339(),
+    })))
 }
 
 async fn handle_ws(
@@ -378,42 +395,29 @@ async fn run_watch_loop(
             return;
         }
     };
-    let latest_event_id = state
-        .beeroom_realtime
-        .latest_event_id(&user_id, &group_id)
-        .await
-        .unwrap_or(0);
-    let should_emit_resume_gap_sync =
-        should_emit_resume_gap_sync_required(current_event_id, latest_event_id);
+    if replay_group_events_to_ws(
+        state.clone(),
+        &user_id,
+        &group_id,
+        &request_id,
+        &ws_tx,
+        &mut current_event_id,
+    )
+    .await
+    .is_err()
+    {
+        return;
+    }
     let watching_event = StreamEvent {
         event: "watching".to_string(),
         data: json!({
-            "group_id": group_id,
+            "group_id": &group_id,
             "after_event_id": current_event_id,
         }),
         id: None,
         timestamp: Some(Utc::now()),
     };
     let _ = send_ws_event(&ws_tx, Some(&request_id), watching_event).await;
-    if should_emit_resume_gap_sync {
-        let resume_gap_event = StreamEvent {
-            event: "sync_required".to_string(),
-            data: json!({
-                "group_id": group_id,
-                "reason": "resume_gap",
-                "after_event_id": current_event_id,
-                "latest_event_id": latest_event_id,
-            }),
-            id: None,
-            timestamp: Some(Utc::now()),
-        };
-        if send_ws_event(&ws_tx, Some(&request_id), resume_gap_event)
-            .await
-            .is_err()
-        {
-            return;
-        }
-    }
 
     loop {
         tokio::select! {
@@ -427,6 +431,9 @@ async fn run_watch_loop(
                             continue;
                         }
                         current_event_id = event.event_id;
+                        state
+                            .beeroom_realtime
+                            .record_push_latency_sample(event.created_at);
                         let stream_event = StreamEvent {
                             event: event.event_type,
                             data: event.payload,
@@ -437,19 +444,19 @@ async fn run_watch_loop(
                             return;
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        let gap_event = StreamEvent {
-                            event: "sync_required".to_string(),
-                            data: json!({
-                                "group_id": group_id,
-                                "reason": "lagged",
-                                "skipped": skipped,
-                                "after_event_id": current_event_id
-                            }),
-                            id: None,
-                            timestamp: Some(Utc::now()),
-                        };
-                        if send_ws_event(&ws_tx, Some(&request_id), gap_event).await.is_err() {
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        state.beeroom_realtime.record_lag_recovery();
+                        if replay_group_events_to_ws(
+                            state.clone(),
+                            &user_id,
+                            &group_id,
+                            &request_id,
+                            &ws_tx,
+                            &mut current_event_id,
+                        )
+                        .await
+                        .is_err()
+                        {
                             return;
                         }
                     }
@@ -458,6 +465,138 @@ async fn run_watch_loop(
                     }
                 }
             }
+        }
+    }
+}
+
+async fn replay_group_events_to_ws(
+    state: Arc<AppState>,
+    user_id: &str,
+    group_id: &str,
+    request_id: &str,
+    ws_tx: &WsSender,
+    cursor_event_id: &mut i64,
+) -> Result<(), ()> {
+    // Drain persisted backlog before relying on live broadcast only.
+    loop {
+        let events = match state
+            .beeroom_realtime
+            .list_group_events(
+                user_id,
+                group_id,
+                (*cursor_event_id).max(0),
+                BEEROOM_REPLAY_FETCH_LIMIT,
+            )
+            .await
+        {
+            Ok(events) => events,
+            Err(err) => {
+                state.beeroom_realtime.record_replay_failure();
+                let sync_required = StreamEvent {
+                    event: "sync_required".to_string(),
+                    data: json!({
+                        "group_id": group_id,
+                        "reason": "replay_failed",
+                        "after_event_id": *cursor_event_id,
+                        "detail": err.to_string(),
+                    }),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                };
+                let _ = send_ws_event(ws_tx, Some(request_id), sync_required).await;
+                return Err(());
+            }
+        };
+        if events.is_empty() {
+            return Ok(());
+        }
+        state.beeroom_realtime.record_replay_batch(events.len());
+        let has_more = events.len() as i64 >= BEEROOM_REPLAY_FETCH_LIMIT;
+        for event in events {
+            if event.event_id <= *cursor_event_id {
+                continue;
+            }
+            *cursor_event_id = event.event_id;
+            state
+                .beeroom_realtime
+                .record_push_latency_sample(event.created_at);
+            let stream_event = StreamEvent {
+                event: event.event_type,
+                data: event.payload,
+                id: Some(event.event_id.to_string()),
+                timestamp: Some(Utc::now()),
+            };
+            if send_ws_event(ws_tx, Some(request_id), stream_event)
+                .await
+                .is_err()
+            {
+                return Err(());
+            }
+        }
+        if !has_more {
+            return Ok(());
+        }
+    }
+}
+
+async fn replay_group_events_to_sse(
+    state: Arc<AppState>,
+    user_id: &str,
+    group_id: &str,
+    cursor_event_id: &mut i64,
+    tx: &mpsc::Sender<Result<Event, Infallible>>,
+) -> Result<(), ()> {
+    // SSE fallback shares the same cursor-replay semantics as WS.
+    loop {
+        let events = match state
+            .beeroom_realtime
+            .list_group_events(
+                user_id,
+                group_id,
+                (*cursor_event_id).max(0),
+                BEEROOM_REPLAY_FETCH_LIMIT,
+            )
+            .await
+        {
+            Ok(events) => events,
+            Err(err) => {
+                state.beeroom_realtime.record_replay_failure();
+                let sync_required = Event::default().event("sync_required").data(
+                    json!({
+                        "group_id": group_id,
+                        "reason": "replay_failed",
+                        "after_event_id": *cursor_event_id,
+                        "detail": err.to_string(),
+                    })
+                    .to_string(),
+                );
+                let _ = tx.send(Ok(sync_required)).await;
+                return Err(());
+            }
+        };
+        if events.is_empty() {
+            return Ok(());
+        }
+        state.beeroom_realtime.record_replay_batch(events.len());
+        let has_more = events.len() as i64 >= BEEROOM_REPLAY_FETCH_LIMIT;
+        for event in events {
+            if event.event_id <= *cursor_event_id {
+                continue;
+            }
+            *cursor_event_id = event.event_id;
+            state
+                .beeroom_realtime
+                .record_push_latency_sample(event.created_at);
+            let stream_event = Event::default()
+                .event(event.event_type)
+                .id(event.event_id.to_string())
+                .data(event.payload.to_string());
+            if tx.send(Ok(stream_event)).await.is_err() {
+                return Err(());
+            }
+        }
+        if !has_more {
+            return Ok(());
         }
     }
 }
@@ -478,10 +617,6 @@ fn should_forward_realtime_event(
     event.group_id == expected_group_id && event.event_id > current_event_id
 }
 
-fn should_emit_resume_gap_sync_required(after_event_id: i64, latest_event_id: i64) -> bool {
-    after_event_id > 0 && latest_event_id > after_event_id
-}
-
 fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>) -> i64 {
     query_after_event_id
         .and_then(|value| (value >= 0).then_some(value))
@@ -497,9 +632,7 @@ fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        resolve_after_event_id, should_emit_resume_gap_sync_required, should_forward_realtime_event,
-    };
+    use super::{resolve_after_event_id, should_forward_realtime_event};
     use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
     use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
@@ -555,13 +688,5 @@ mod tests {
             10,
             &other_group_newer
         ));
-    }
-
-    #[test]
-    fn should_emit_resume_gap_sync_required_only_for_resume_gap() {
-        assert!(!should_emit_resume_gap_sync_required(0, 12));
-        assert!(!should_emit_resume_gap_sync_required(9, 9));
-        assert!(!should_emit_resume_gap_sync_required(10, 9));
-        assert!(should_emit_resume_gap_sync_required(8, 12));
     }
 }

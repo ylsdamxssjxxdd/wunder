@@ -788,6 +788,25 @@ const bindNavigation = () => {
       elements.a2aServicesPanel,
       elements.skillsPanel,
     ];
+    const resolveMirrorInsertAfterHeader = (panel) => {
+      if (!panel) {
+        return null;
+      }
+      const children = Array.from(panel.children || []);
+      const header = children.find(
+        (child) => child instanceof HTMLElement && child.classList.contains("list-header")
+      );
+      if (header) {
+        return header.nextElementSibling || null;
+      }
+      const tips = children.find(
+        (child) => child instanceof HTMLElement && child.classList.contains("tips")
+      );
+      if (tips) {
+        return tips.nextElementSibling || null;
+      }
+      return panel.firstElementChild || null;
+    };
     mirrorTargets.forEach((panel) => {
       if (!panel || panel.querySelector('.tool-manager-shortcuts[data-tool-shortcuts="mirrored"]')) {
         return;
@@ -803,12 +822,8 @@ const bindNavigation = () => {
         clone.dataset.toolPanel = sourceButton.dataset.toolPanel;
         mirroredShortcuts.appendChild(clone);
       });
-      const anchor = panel.querySelector(".tips");
-      if (anchor && anchor.parentNode) {
-        anchor.parentNode.insertBefore(mirroredShortcuts, anchor.nextSibling);
-      } else {
-        panel.insertBefore(mirroredShortcuts, panel.firstChild);
-      }
+      const insertBeforeNode = resolveMirrorInsertAfterHeader(panel);
+      panel.insertBefore(mirroredShortcuts, insertBeforeNode);
       if (sourceHint) {
         const hintClone = sourceHint.cloneNode(true);
         hintClone.dataset.toolShortcuts = "mirrored";

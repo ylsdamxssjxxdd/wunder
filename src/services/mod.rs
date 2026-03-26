@@ -32,6 +32,7 @@ pub mod preset_worker_cards;
 pub mod prompting;
 pub mod sim_lab;
 pub mod skills;
+pub mod stream_events;
 pub mod swarm;
 pub mod tools;
 pub mod user_access;

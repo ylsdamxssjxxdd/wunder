@@ -1184,9 +1184,6 @@ const renderMonitorMetrics = (system) => {
     elements.metricMemoryDetail.textContent = "";
     elements.metricProcessMemory.textContent = "-";
     elements.metricProcessCpu.textContent = "-";
-    elements.metricLoad1.textContent = "-";
-    elements.metricLoad5.textContent = "-";
-    elements.metricLoad15.textContent = "-";
     elements.metricUptime.textContent = "-";
     elements.metricDisk.textContent = "-";
     elements.metricDiskDetail.textContent = "";
@@ -1202,13 +1199,6 @@ const renderMonitorMetrics = (system) => {
   });
   elements.metricProcessMemory.textContent = formatBytes(system.process_rss);
   elements.metricProcessCpu.textContent = `${system.process_cpu_percent.toFixed(1)}%`;
-  const loadValues = [
-    system.load_avg_1,
-    system.load_avg_5,
-    system.load_avg_15,
-  ].map((value) => (Number.isFinite(value) ? value.toFixed(2) : "-"));
-  [elements.metricLoad1.textContent, elements.metricLoad5.textContent, elements.metricLoad15.textContent] =
-    loadValues;
   elements.metricUptime.textContent = formatDurationLong(system.uptime_s);
   const hasDisk = Number.isFinite(system.disk_total) && system.disk_total > 0;
   elements.metricDisk.textContent =

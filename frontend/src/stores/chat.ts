@@ -384,11 +384,11 @@ const normalizeUsagePayload = (payload) => {
 
 const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number | null => {
   if (!usage) return null;
-  if (Number.isFinite(usage.total) && usage.total > 0) {
-    return usage.total;
-  }
   if (Number.isFinite(usage.input) && usage.input > 0) {
     return usage.input;
+  }
+  if (Number.isFinite(usage.total) && usage.total > 0) {
+    return usage.total;
   }
   return null;
 };
@@ -430,13 +430,13 @@ const normalizeMessageStats = (stats) => {
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
   const contextTokens = normalizeContextTokens(
-    usageContextTokens ??
-      stats.contextTokens ??
+    stats.contextTokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       stats.contextUsage ??
       stats.context_usage?.context_tokens ??
-      stats.context_usage?.contextTokens
+      stats.context_usage?.contextTokens ??
+      usageContextTokens
   );
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
@@ -3581,12 +3581,16 @@ const startSessionWatcher = (store, sessionId) => {
     if (runtime.resumeController?.signal?.aborted) {
       runtime.resumeController = null;
     }
-    if (runtime.sendController || runtime.resumeController) {
-      return;
-    }
     markWatchdogEvent();
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
+    const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    if (
+      (runtime.sendController || runtime.resumeController) &&
+      normalizedEventType !== 'channel_message'
+    ) {
+      return;
+    }
     if (perfEnabled) {
       chatPerf.count('chat_watch_event', 1, { eventType, sessionId: key });
     }
@@ -3597,10 +3601,17 @@ const startSessionWatcher = (store, sessionId) => {
     if (eventType === 'slow_client' && !data) {
       return;
     }
-    const normalizedEventType = String(eventType || '').trim().toLowerCase();
     const stage = data?.stage ?? payload?.stage;
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
+    const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventType === 'channel_message') {
+      if (normalizedEventId !== null) {
+        if (normalizedEventId <= lastEventId) {
+          return;
+        }
+        updateRuntimeLastEventId(runtime, normalizedEventId);
+        lastEventId = normalizedEventId;
+      }
       const roleRaw = String(data?.role ?? payload?.role ?? '').trim().toLowerCase();
       const content = String(data?.content ?? payload?.content ?? '').trim();
       const role = roleRaw === 'user' || roleRaw === 'assistant' ? roleRaw : '';
@@ -3610,6 +3621,16 @@ const startSessionWatcher = (store, sessionId) => {
       if (role === 'user') {
         insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null);
         return;
+      }
+      if (normalizedEventId !== null) {
+        const duplicateByEventId = sessionMessagesRef.some(
+          (message) =>
+            message?.role === 'assistant' &&
+            normalizeStreamEventId(message?.stream_event_id) === normalizedEventId
+        );
+        if (duplicateByEventId) {
+          return;
+        }
       }
       const lastMessage = sessionMessagesRef[sessionMessagesRef.length - 1];
       const lastTimestamp = resolveTimestampMs(lastMessage?.created_at);
@@ -3625,7 +3646,9 @@ const startSessionWatcher = (store, sessionId) => {
       const createdAt = Number.isFinite(eventTimestampMs)
         ? new Date(eventTimestampMs).toISOString()
         : undefined;
-      sessionMessagesRef.push(buildMessage('assistant', content, createdAt));
+      const assistantMessage = buildMessage('assistant', content, createdAt);
+      assignStreamEventId(assistantMessage, eventId);
+      sessionMessagesRef.push(assistantMessage);
       touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
       notifySessionSnapshot(store, key, sessionMessagesRef, true);
       return;
@@ -3636,7 +3659,6 @@ const startSessionWatcher = (store, sessionId) => {
       normalizedEventType === 'round_start' ||
       normalizedEventType === 'received' ||
       (normalizedEventType === 'progress' && stage === 'start');
-    const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventId !== null) {
       if (normalizedEventId <= lastEventId) {
         const latestAssistantTimestamp = resolveLastAssistantTimestampMs(sessionMessagesRef);
@@ -4270,13 +4292,19 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const normalizedUsage = normalizeUsagePayload(usagePayload);
     const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
     const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
+    const existingContextTokens = normalizeContextTokens(stats.contextTokens);
     if (shouldUpdateUsage) {
       stats.usage = normalizedUsage;
     }
-    if (usageContextTokens !== null) {
+    if (
+      usageContextTokens !== null &&
+      (existingContextTokens === null || existingContextTokens <= 0)
+    ) {
       stats.contextTokens = usageContextTokens;
       contextEstimateBaseTokens = usageContextTokens;
       options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
+    } else if (existingContextTokens !== null && existingContextTokens > 0) {
+      contextEstimateBaseTokens = existingContextTokens;
     }
     const prefill = normalizeDurationValue(prefillDuration);
     const decode = normalizeDurationValue(decodeDuration);

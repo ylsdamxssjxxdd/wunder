@@ -23,6 +23,9 @@ const templateState = {
   loadedContent: "",
 };
 
+// Keep dirty detection stable across CRLF/LF sources and textarea normalization.
+const normalizeEditorText = (value) => String(value || "").replace(/\r\n?/g, "\n");
+
 const normalizePackId = (value) => {
   const raw = String(value || "").trim();
   return raw || "default";
@@ -115,7 +118,10 @@ const hasUnsavedChanges = () => {
   if (!elements.promptTemplateEditor) {
     return false;
   }
-  return elements.promptTemplateEditor.value !== templateState.loadedContent;
+  return (
+    normalizeEditorText(elements.promptTemplateEditor.value) !==
+    normalizeEditorText(templateState.loadedContent)
+  );
 };
 
 const confirmDiscardChanges = () => {
@@ -257,7 +263,7 @@ const loadTemplateFile = async () => {
   setStatusText(t("common.loading"));
   const data = await fetchPromptTemplateFile(packId, key);
   const content = typeof data.content === "string" ? data.content : "";
-  templateState.loadedContent = content;
+  templateState.loadedContent = normalizeEditorText(content);
   applyEditorContent(content);
   renderFileTitle();
   renderFileList();
@@ -446,7 +452,7 @@ export const initPromptPanel = () => {
       try {
         setStatusText(t("common.loading"));
         await savePromptTemplateFile(templateState.selectedPack, templateState.key, content);
-        templateState.loadedContent = content;
+        templateState.loadedContent = normalizeEditorText(content);
         setStatusText(t("prompt.template.saved"));
         notify(t("prompt.template.saved"), "success");
         state.runtime.promptNeedsRefresh = true;

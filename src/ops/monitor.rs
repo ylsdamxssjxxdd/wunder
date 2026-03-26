@@ -1488,7 +1488,7 @@ impl MonitorState {
         let disk_free: u64;
         let mut disk_percent = 0.0;
         let mut disks = self.disks.lock();
-        (disk_total, disk_free) = disk_space(&mut disks);
+        (disk_total, disk_free) = disk_space(&mut disks, &self.workspace_root);
         if disk_total > 0 {
             disk_used = disk_total.saturating_sub(disk_free);
             disk_percent = (disk_used as f64 / disk_total as f64 * 100.0) as f32;

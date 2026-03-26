@@ -215,15 +215,6 @@
                             </td>
                           </tr>
                           <tr>
-                            <th data-i18n="monitor.metric.load">负载 1/5/15</th>
-                            <td>
-                              <strong
-                                ><span id="metricLoad1">-</span> / <span id="metricLoad5">-</span> /
-                                <span id="metricLoad15">-</span></strong
-                              >
-                            </td>
-                          </tr>
-                          <tr>
                             <th data-i18n="monitor.metric.uptime">运行时长</th>
                             <td><strong id="metricUptime">-</strong></td>
                           </tr>
@@ -1802,9 +1793,6 @@
                 </button>
               </div>
             </div>
-          <div class="tips" data-i18n="mcp.tip">
-            录入 MCP 服务后可连接列出工具，并选择是否启用。启用的工具会注入系统提示词。
-          </div>
           <div class="management-layout">
             <div class="management-list">
               <div class="list-header">
@@ -1841,7 +1829,6 @@
                   </button>
                 </div>
               </div>
-              <div class="muted" data-i18n="mcp.tip.allowTools">勾选后将写入 allow_tools，仅启用选中的工具。</div>
               <div id="mcpToolList" class="tool-list"></div>
             </div>
           </div>
@@ -2412,13 +2399,12 @@
         <section id="builtinPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.toolManager">工具管理</h1>
-            <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
-              <i class="fa-solid fa-arrows-rotate"></i>
-              <span data-i18n="builtin.refresh">刷新工具</span>
-            </button>
-          </div>
-          <div class="tips" data-i18n="toolManager.tip">
-            统一入口管理内置工具、MCP、知识库、A2A 服务与技能配置。
+            <div class="header-actions">
+              <button id="refreshBuiltinBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="builtin.refresh">刷新工具</span>
+              </button>
+            </div>
           </div>
           <div class="tool-manager-shortcuts">
             <button id="toolManagerOpenBuiltin" class="secondary btn-with-icon tool-manager-shortcut" type="button" data-tool-panel="builtin" aria-pressed="false">
@@ -2453,9 +2439,6 @@
               <i class="fa-solid fa-wand-magic-sparkles"></i>
               <span data-i18n="panel.skills">技能管理</span>
             </button>
-          </div>
-          <div class="tool-manager-shortcuts-hint" data-i18n="toolManager.shortcutHint">
-            点击上方子模块可切换到对应配置页面；当前列表用于内置工具启停。
           </div>
           <div class="skills-panel">
             <div id="builtinToolsList" class="tool-list"></div>

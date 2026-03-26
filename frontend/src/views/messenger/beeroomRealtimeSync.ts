@@ -15,10 +15,11 @@ type MessengerBeeroomRealtimeSyncController = {
   trigger: (reason?: string) => void;
 };
 
-const HOT_SYNC_MS = 1600;
-const IDLE_SYNC_MS = 4200;
-const HIDDEN_SYNC_MS = 12000;
-const ERROR_RETRY_MS = 2800;
+// Beeroom page refresh is now health-check fallback; realtime WS/SSE is the primary source.
+const HOT_SYNC_MS = 8000;
+const IDLE_SYNC_MS = 20000;
+const HIDDEN_SYNC_MS = 45000;
+const ERROR_RETRY_MS = 6000;
 const TRIGGER_DELAY_MS = 120;
 
 const isPageVisible = (): boolean => {

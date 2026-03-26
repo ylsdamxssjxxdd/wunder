@@ -8,6 +8,7 @@ pub use worker_card::{
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::core::atomic_write::atomic_write_text;
+use crate::schemas::AbilityKind;
 use crate::services::agent_abilities::normalize_ability_items;
 use crate::services::default_agent_protocol::{
     default_agent_meta_key, record_from_default_agent_config,
@@ -26,7 +27,6 @@ use crate::services::user_agent_presets::{
 };
 use crate::services::worker_card_files::worker_card_file_name as canonical_worker_card_file_name;
 use crate::skills::{load_skills, SkillRegistry};
-use crate::schemas::AbilityKind;
 use crate::storage::{
     normalize_hive_id, UserAccountRecord, UserAgentRecord, DEFAULT_HIVE_ID,
     DEFAULT_SANDBOX_CONTAINER_ID,
@@ -373,8 +373,7 @@ impl InnerVisibleService {
         );
         parsed.declared_skill_names = resolved_declared_skill_names.clone();
         if !renamed_skills.is_empty() {
-            parsed.ability_items =
-                remap_skill_ability_items(parsed.ability_items, &renamed_skills);
+            parsed.ability_items = remap_skill_ability_items(parsed.ability_items, &renamed_skills);
         }
         let mut runtime_tool_names = parsed.declared_tool_names.clone();
         runtime_tool_names.extend(resolved_declared_skill_names.iter().cloned());
@@ -532,8 +531,7 @@ impl InnerVisibleService {
         );
         parsed.declared_skill_names = resolved_declared_skill_names.clone();
         if !renamed_skills.is_empty() {
-            parsed.ability_items =
-                remap_skill_ability_items(parsed.ability_items, &renamed_skills);
+            parsed.ability_items = remap_skill_ability_items(parsed.ability_items, &renamed_skills);
         }
         let mut runtime_tool_names = parsed.declared_tool_names.clone();
         runtime_tool_names.extend(resolved_declared_skill_names.iter().cloned());
@@ -827,7 +825,9 @@ fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {
     Ok(output)
 }
 
-fn collect_declared_skill_names_from_worker_cards(paths: &InnerVisiblePaths) -> Result<Vec<String>> {
+fn collect_declared_skill_names_from_worker_cards(
+    paths: &InnerVisiblePaths,
+) -> Result<Vec<String>> {
     let mut files = Vec::new();
     let default_worker_card = defaults_worker_card_path(paths);
     if default_worker_card.exists() {
@@ -1674,11 +1674,7 @@ mod tests {
 
         let payload = service.user_tool_store.load_user_tools(user_id);
         assert!(
-            payload
-                .skills
-                .enabled
-                .iter()
-                .any(|name| name == skill_name),
+            payload.skills.enabled.iter().any(|name| name == skill_name),
             "declared local skill should be auto-enabled"
         );
 

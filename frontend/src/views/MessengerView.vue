@@ -798,7 +798,7 @@
                         {{ fileContainerLifecycleText }}
                       </span>
                     </div>
-                    <div class="messenger-entity-field">
+                    <div v-if="!desktopLocalMode" class="messenger-entity-field">
                       <span class="messenger-entity-label">{{ t('messenger.files.cloudLocation') }}</span>
                       <span class="messenger-entity-value">{{ fileContainerCloudLocation }}</span>
                     </div>

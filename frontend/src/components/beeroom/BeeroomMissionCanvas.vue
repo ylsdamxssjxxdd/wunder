@@ -308,9 +308,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   appendBeeroomChatMessage,
   clearBeeroomChatMessages,
-  listBeeroomChatMessages,
-  openBeeroomChatStream,
-  openBeeroomSocket
+  listBeeroomChatMessages
 } from '@/api/beeroom';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
 import {
@@ -333,8 +331,8 @@ import {
   type BeeroomMission,
   type BeeroomMissionTask
 } from '@/stores/beeroom';
+import { createBeeroomChatRealtimeRuntime } from '@/realtime/beeroomChatRealtimeRuntime';
 import { consumeSseStream } from '@/utils/sse';
-import { createWsMultiplexer } from '@/utils/ws';
 import {
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
@@ -350,7 +348,6 @@ import {
   shouldForceImmediateTeamRealtimeReconcile,
   shouldForceWorkflowRefresh
 } from '@/components/beeroom/beeroomRealtimeReconcile';
-import { resolveNextRealtimeCursor } from '@/components/beeroom/beeroomRealtimeCursor';
 import {
   resolveSyncRequiredReloadDelayMs,
   shouldRunSyncRequiredReloadImmediately
@@ -449,9 +446,7 @@ const NODE_HEIGHT = 156;
 const MOTHER_NODE_HEIGHT = NODE_HEIGHT;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
-const CHAT_POLL_INTERVAL_MS = 2000;
-const CHAT_WS_RETRY_DELAY_MS = 1400;
-const CHAT_SSE_RETRY_DELAY_MS = 2200;
+const CHAT_HEALTH_POLL_INTERVAL_MS = 30_000;
 const TEAM_REALTIME_REFRESH_THROTTLE_MS = 360;
 const SYNC_REQUIRED_HISTORY_RELOAD_THROTTLE_MS = 520;
 const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
@@ -465,12 +460,6 @@ const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_error'
 ]);
 const DEMO_RUNTIME_EVENT_TYPES = new Set(['beeroom_demo_status']);
-
-const beeroomWsClient = createWsMultiplexer(() => openBeeroomSocket({ allowQueryToken: true }), {
-  idleTimeoutMs: 20000,
-  connectTimeoutMs: 10000,
-  pingIntervalMs: 20000
-});
 const CANVAS_ZOOM_MIN = 0.5;
 const CANVAS_ZOOM_MAX = 1.8;
 const CANVAS_ZOOM_STEP = 0.12;
@@ -547,13 +536,6 @@ let renderSequence = 0;
 let renderTask: Promise<void> | null = null;
 let renderRequested = false;
 let renderRequestedForceFit = false;
-let chatPollTimer: number | null = null;
-let chatWatchController: AbortController | null = null;
-let chatWatchRequestId = '';
-let chatWatchRetryTimer: number | null = null;
-let chatSseRetryTimer: number | null = null;
-let chatSseSource: EventSource | null = null;
-let chatSseGroupId = '';
 let chatAuthDenied = false;
 let teamRealtimeReconcileTimer: number | null = null;
 let lastTeamRealtimeRefreshAt = 0;
@@ -2618,39 +2600,15 @@ const syncDispatchEdgeFlow = () => {
 };
 
 function stopChatPolling() {
-  if (chatPollTimer !== null) {
-    window.clearInterval(chatPollTimer);
-    chatPollTimer = null;
-  }
+  chatRealtimeRuntime.stopHealthPolling();
 }
 
 function syncChatPollingState(options: { immediate?: boolean } = {}) {
-  stopChatPolling();
-  if (typeof window === 'undefined') return;
-  if (chatAuthDenied) return;
-  const groupId = String(activeGroupId.value || '').trim();
-  if (!groupId) return;
-  if (chatRealtimeTransport.value !== 'none') return;
   if (options.immediate) {
-    void loadManualChatHistory();
+    chatRealtimeRuntime.triggerHealthPoll('immediate');
+    return;
   }
-  chatPollTimer = window.setInterval(() => {
-    void loadManualChatHistory();
-  }, CHAT_POLL_INTERVAL_MS);
-}
-
-function clearChatWatchRetry() {
-  if (chatWatchRetryTimer !== null) {
-    window.clearTimeout(chatWatchRetryTimer);
-    chatWatchRetryTimer = null;
-  }
-}
-
-function clearChatSseRetry() {
-  if (chatSseRetryTimer !== null) {
-    window.clearTimeout(chatSseRetryTimer);
-    chatSseRetryTimer = null;
-  }
+  chatRealtimeRuntime.syncHealthPolling();
 }
 
 function clearTeamRealtimeReconcileTimer() {
@@ -2722,146 +2680,43 @@ function scheduleSyncRequiredHistoryReload() {
   syncRequiredHistoryReloadTimer = window.setTimeout(run, delayMs);
 }
 
-function stopChatSseWatch() {
-  clearChatSseRetry();
-  if (chatSseSource) {
-    chatSseSource.close();
-    chatSseSource = null;
-  }
-  chatSseGroupId = '';
-  if (chatRealtimeTransport.value === 'sse') {
-    chatRealtimeTransport.value = 'none';
-    syncChatPollingState();
-  }
-}
-
-function scheduleChatSseRetry(groupId: string) {
-  if (chatAuthDenied) return;
-  if (typeof window === 'undefined') return;
-  clearChatSseRetry();
-  chatSseRetryTimer = window.setTimeout(() => {
-    chatSseRetryTimer = null;
-    if (groupId !== activeGroupId.value) return;
-    startChatSseWatch(groupId);
-  }, CHAT_SSE_RETRY_DELAY_MS);
-}
-
-function startChatSseWatch(groupId: string) {
-  if (chatAuthDenied) return;
-  const normalizedGroupId = String(groupId || '').trim();
-  if (!normalizedGroupId || typeof window === 'undefined' || typeof EventSource === 'undefined') {
-    return;
-  }
-  if (chatSseSource && chatSseGroupId === normalizedGroupId) {
-    return;
-  }
-  stopChatSseWatch();
-  let source: EventSource;
-  try {
-    source = openBeeroomChatStream(normalizedGroupId, {
-      allowQueryToken: true,
-      params: { after_event_id: chatRealtimeCursor.value }
-    });
-  } catch {
-    scheduleChatSseRetry(normalizedGroupId);
-    return;
-  }
-  chatSseSource = source;
-  chatSseGroupId = normalizedGroupId;
-
-  const bindEvent = (eventType: string) => {
-    source.addEventListener(eventType, (event: Event) => {
-      if (chatSseSource !== source) return;
-      const messageEvent = event as MessageEvent;
-      const dataText =
-        typeof messageEvent.data === 'string'
-          ? messageEvent.data
-          : JSON.stringify(messageEvent.data ?? null);
-      handleChatRealtimeEvent(
-        normalizedGroupId,
-        eventType,
-        dataText,
-        String(messageEvent.lastEventId || ''),
-        'sse'
-      );
-    });
-  };
-
-  bindEvent('watching');
-  bindEvent('sync_required');
-  bindEvent('chat_cleared');
-  bindEvent('chat_message');
-  DEMO_RUNTIME_EVENT_TYPES.forEach((name) => bindEvent(name));
-  TEAM_RUNTIME_EVENT_TYPES.forEach((name) => bindEvent(name));
-
-  source.onerror = () => {
-    if (chatSseSource !== source) return;
-    source.close();
-    chatSseSource = null;
-    chatSseGroupId = '';
-    if (chatRealtimeTransport.value === 'sse') {
-      chatRealtimeTransport.value = 'none';
-      syncChatPollingState();
-    }
-    if (normalizedGroupId !== activeGroupId.value) return;
-    scheduleChatSseRetry(normalizedGroupId);
-  };
-}
+const chatRealtimeRuntime = createBeeroomChatRealtimeRuntime({
+  getActiveGroupId: () => String(activeGroupId.value || '').trim(),
+  getCursor: () => Number(chatRealtimeCursor.value || 0),
+  setCursor: (cursor) => {
+    chatRealtimeCursor.value = Math.max(0, Number(cursor || 0));
+  },
+  onPoll: () => loadManualChatHistory(),
+  onEvent: ({ groupId, eventType, dataText, eventId, transport }) =>
+    handleChatRealtimeEvent(groupId, eventType, dataText, eventId, transport),
+  onTransportChange: (transport) => {
+    chatRealtimeTransport.value = transport;
+  },
+  isDisposed: () => canvasDisposed,
+  isAuthDenied: () => chatAuthDenied,
+  healthPollIntervalMs: CHAT_HEALTH_POLL_INTERVAL_MS,
+  sseEventTypes: [...DEMO_RUNTIME_EVENT_TYPES, ...TEAM_RUNTIME_EVENT_TYPES]
+});
 
 function stopChatRealtimeWatch() {
-  clearChatWatchRetry();
-  stopChatSseWatch();
   clearTeamRealtimeReconcileTimer();
   clearSyncRequiredHistoryReloadTimer();
-  if (chatWatchController) {
-    chatWatchController.abort();
-    chatWatchController = null;
-  }
-  if (chatWatchRequestId) {
-    beeroomWsClient.sendCancel(chatWatchRequestId, activeGroupId.value);
-    chatWatchRequestId = '';
-  }
-  if (chatRealtimeTransport.value === 'ws') {
-    chatRealtimeTransport.value = 'none';
-  }
-  syncChatPollingState();
+  chatRealtimeRuntime.stop();
+  chatRealtimeTransport.value = 'none';
 }
 
 function handleChatRealtimeEvent(
   groupId: string,
   eventType: string,
   dataText: string,
-  eventId: string,
-  transport: 'ws' | 'sse' = 'ws'
+  _eventId: string,
+  _transport: 'ws' | 'sse' = 'ws'
 ) {
   if (canvasDisposed) return;
   if (!groupId || groupId !== activeGroupId.value) return;
   const payload = safeJsonParse(dataText);
-  chatRealtimeCursor.value = resolveNextRealtimeCursor({
-    currentCursor: chatRealtimeCursor.value,
-    eventId,
-    payload
-  });
   const normalizedType = String(eventType || '').trim().toLowerCase();
-  if (
-    (normalizedType === 'chat_message' ||
-      normalizedType === 'chat_cleared' ||
-      normalizedType === 'sync_required' ||
-      DEMO_RUNTIME_EVENT_TYPES.has(normalizedType) ||
-      TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) &&
-    chatRealtimeTransport.value !== transport
-  ) {
-    chatRealtimeTransport.value = transport;
-    syncChatPollingState();
-  }
   if (normalizedType === 'watching') {
-    if (transport === 'ws') {
-      stopChatSseWatch();
-      chatRealtimeTransport.value = 'ws';
-    } else if (transport === 'sse') {
-      chatRealtimeTransport.value = 'sse';
-    }
-    syncChatPollingState();
     return;
   }
   if (normalizedType === 'sync_required') {
@@ -2901,72 +2756,12 @@ function handleChatRealtimeEvent(
   }
 }
 
-function scheduleChatRealtimeRetry(groupId: string) {
-  if (chatAuthDenied) return;
-  if (typeof window === 'undefined') return;
-  clearChatWatchRetry();
-  chatWatchRetryTimer = window.setTimeout(() => {
-    chatWatchRetryTimer = null;
-    if (groupId !== activeGroupId.value) return;
-    startChatRealtimeWatch(groupId);
-  }, CHAT_WS_RETRY_DELAY_MS);
-}
-
 function startChatRealtimeWatch(groupId: string) {
-  if (chatAuthDenied) return;
-  const normalizedGroupId = String(groupId || '').trim();
-  if (!normalizedGroupId || canvasDisposed) return;
-  clearChatWatchRetry();
-  if (chatWatchController) {
-    chatWatchController.abort();
-    chatWatchController = null;
-  }
-  if (chatWatchRequestId) {
-    beeroomWsClient.sendCancel(chatWatchRequestId, activeGroupId.value);
-    chatWatchRequestId = '';
-  }
-  chatWatchController = new AbortController();
-  const controller = chatWatchController;
-  const requestId = nextManualMessageKey('chat-watch');
-  chatWatchRequestId = requestId;
-  beeroomWsClient
-    .request({
-      requestId,
-      sessionId: normalizedGroupId,
-      message: {
-        type: 'watch',
-        request_id: requestId,
-        payload: {
-          group_id: normalizedGroupId,
-          after_event_id: chatRealtimeCursor.value
-        }
-      },
-      closeOnFinal: false,
-      signal: controller.signal,
-      onEvent: (eventType, dataText, eventId) =>
-        handleChatRealtimeEvent(normalizedGroupId, eventType, dataText, eventId, 'ws')
-    })
-    .catch(() => {
-      if (controller.signal.aborted) return;
-      if (chatRealtimeTransport.value === 'ws') {
-        chatRealtimeTransport.value = 'none';
-        syncChatPollingState();
-      }
-      startChatSseWatch(normalizedGroupId);
-      scheduleChatRealtimeRetry(normalizedGroupId);
-    })
-    .finally(() => {
-      if (chatWatchController === controller) {
-        chatWatchController = null;
-      }
-      if (chatWatchRequestId === requestId) {
-        chatWatchRequestId = '';
-      }
-    });
+  chatRealtimeRuntime.activateGroup(groupId, { immediatePoll: false });
 }
 
 function restartChatPolling() {
-  syncChatPollingState({ immediate: true });
+  chatRealtimeRuntime.triggerHealthPoll('restart');
 }
 
 const waitForCanvasViewport = async (attempts = 10) => {

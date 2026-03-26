@@ -2208,6 +2208,7 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .monitor-kv-table td {
   text-align: right;
+  white-space: nowrap;
 }
 
 .throughput-model-select {
@@ -2221,14 +2222,27 @@ button.btn-with-icon[aria-busy="true"] i {
 }
 
 .monitor-kv-table td strong {
+  display: inline;
   color: #0f172a;
   font-weight: 600;
   font-size: 13px;
 }
 
 .monitor-kv-table td .monitor-subtext {
+  display: inline;
   text-align: right;
-  margin-top: 2px;
+  margin-top: 0;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.monitor-kv-table td .monitor-subtext::before {
+  content: " | ";
+  color: #94a3b8;
+}
+
+.monitor-kv-table td .monitor-subtext:empty {
+  display: none;
 }
 
 .monitor-section-title {

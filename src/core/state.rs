@@ -154,7 +154,7 @@ impl AppState {
         ));
         let user_presence = Arc::new(UserPresenceService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
-        let beeroom_realtime = Arc::new(BeeroomRealtimeService::new());
+        let beeroom_realtime = Arc::new(BeeroomRealtimeService::new(storage.clone()));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
 

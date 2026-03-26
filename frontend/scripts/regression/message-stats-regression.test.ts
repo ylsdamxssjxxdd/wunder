@@ -59,7 +59,7 @@ test('message stats suppresses multi-round aggregate speed fallback when usage i
   assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
 
-test('message stats context uses usage.total_tokens when available', () => {
+test('message stats context uses usage.input_tokens when explicit context is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -74,10 +74,10 @@ test('message stats context uses usage.total_tokens when available', () => {
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '4198');
+  assert.equal(findEntryValue(entries, 'Context'), '4027');
 });
 
-test('message stats context prefers usage.total_tokens over stale context_tokens', () => {
+test('message stats context prefers explicit context_tokens over usage.total_tokens', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -93,7 +93,24 @@ test('message stats context prefers usage.total_tokens over stale context_tokens
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '7227');
+  assert.equal(findEntryValue(entries, 'Context'), '7101');
+});
+
+test('message stats context falls back to usage.total_tokens when input is absent', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          output_tokens: 171,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '4198');
 });
 
 test('message stats clamps direct outlier speed to multi-round average speed', () => {
