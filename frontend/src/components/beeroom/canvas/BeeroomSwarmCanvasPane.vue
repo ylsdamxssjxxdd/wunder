@@ -16,10 +16,34 @@
         >
           <g v-for="edge in worldEdges" :key="edge.id" class="beeroom-swarm-edge-group">
             <path
+              v-if="edge.active"
+              class="beeroom-swarm-edge-activity"
+              :class="{ 'is-selected': edge.selected }"
+              :d="edge.path"
+            />
+            <path
               class="beeroom-swarm-edge"
               :class="{ 'is-active': edge.active, 'is-selected': edge.selected }"
               :d="edge.path"
             />
+            <circle v-if="edge.active" class="beeroom-swarm-edge-orb" r="4.5">
+              <animateMotion
+                :dur="edge.motionDuration"
+                :begin="edge.motionDelay"
+                repeatCount="indefinite"
+                :path="edge.path"
+                rotate="auto"
+              />
+            </circle>
+            <circle v-if="edge.active" class="beeroom-swarm-edge-orb is-trailing" r="3">
+              <animateMotion
+                :dur="edge.motionDuration"
+                :begin="edge.motionTrailDelay"
+                repeatCount="indefinite"
+                :path="edge.path"
+                rotate="auto"
+              />
+            </circle>
             <text
               v-if="edge.label"
               class="beeroom-swarm-edge-label"
@@ -195,7 +219,6 @@ import {
   SWARM_SCALE_STEP,
   clampSwarmScale,
   createDefaultSwarmViewportState,
-  fitSwarmViewportToBounds,
   normalizeSwarmViewportSize,
   zoomSwarmViewportAroundPoint,
   type SwarmViewportState
@@ -203,6 +226,7 @@ import {
 
 const MINIMAP_WIDTH = 132;
 const MINIMAP_HEIGHT = 80;
+const WORLD_DRAG_BUFFER = 720;
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -255,7 +279,6 @@ const nodePositionOverrides = ref<Record<string, BeeroomCanvasPositionOverride>>
 const viewportState = ref<SwarmViewportState>(createDefaultSwarmViewportState());
 const pendingViewportRestore = ref<BeeroomCanvasViewportState | null>(null);
 const pendingFitView = ref(false);
-const worldOriginAnchor = ref<{ x: number; y: number } | null>(null);
 
 let resizeObserver: ResizeObserver | null = null;
 let viewportSaveTimer: number | null = null;
@@ -327,21 +350,15 @@ const canvasStatusSummary = computed(() => {
 const worldMetrics = computed(() => {
   const bounds = projection.value.bounds;
   const baseBounds = baseProjection.value.bounds;
-  const stableBounds = {
-    minX: Math.min(baseBounds.minX, bounds.minX),
-    minY: Math.min(baseBounds.minY, bounds.minY),
-    maxX: Math.max(baseBounds.maxX, bounds.maxX),
-    maxY: Math.max(baseBounds.maxY, bounds.maxY)
-  };
-  const stableWidth = Math.max(0, stableBounds.maxX - stableBounds.minX);
-  const stableHeight = Math.max(0, stableBounds.maxY - stableBounds.minY);
-  const width = Math.max(NODE_WIDTH + WORLD_PADDING * 2, Math.ceil(bounds.width + WORLD_PADDING * 2));
-  const height = Math.max(NODE_HEIGHT + WORLD_PADDING * 2, Math.ceil(bounds.height + WORLD_PADDING * 2));
+  const worldMinX = baseBounds.minX - WORLD_DRAG_BUFFER;
+  const worldMinY = baseBounds.minY - WORLD_DRAG_BUFFER;
+  const worldMaxX = Math.max(bounds.maxX, baseBounds.maxX);
+  const worldMaxY = Math.max(bounds.maxY, baseBounds.maxY);
   return {
-    width: Math.max(width, Math.ceil(stableWidth + WORLD_PADDING * 2)),
-    height: Math.max(height, Math.ceil(stableHeight + WORLD_PADDING * 2)),
-    originX: Math.round(WORLD_PADDING - stableBounds.minX),
-    originY: Math.round(WORLD_PADDING - stableBounds.minY)
+    width: Math.max(NODE_WIDTH + WORLD_PADDING * 2, Math.ceil(worldMaxX - worldMinX + WORLD_PADDING * 2)),
+    height: Math.max(NODE_HEIGHT + WORLD_PADDING * 2, Math.ceil(worldMaxY - worldMinY + WORLD_PADDING * 2)),
+    originX: Math.round(WORLD_PADDING - worldMinX),
+    originY: Math.round(WORLD_PADDING - worldMinY)
   };
 });
 
@@ -374,18 +391,22 @@ const worldNodeMap = computed(() => {
 
 const worldEdges = computed(() =>
   projection.value.edges
-    .map((edge) => {
+    .map((edge, index) => {
       const source = worldNodeMap.value.get(edge.source);
       const target = worldNodeMap.value.get(edge.target);
       if (!source || !target) return null;
       const dx = target.centerX - source.centerX;
       const controlOffset = Math.max(42, Math.abs(dx) * 0.22);
+      const motionSeed = index % 4;
       const path = `M ${source.centerX} ${source.centerY} C ${source.centerX + controlOffset} ${source.centerY} ${target.centerX - controlOffset} ${target.centerY} ${target.centerX} ${target.centerY}`;
       return {
         ...edge,
         path,
         labelX: Math.round(source.centerX + dx / 2),
-        labelY: Math.round(source.centerY + (target.centerY - source.centerY) / 2 - 10)
+        labelY: Math.round(source.centerY + (target.centerY - source.centerY) / 2 - 10),
+        motionDuration: `${1.4 + motionSeed * 0.12}s`,
+        motionDelay: `${-(motionSeed * 0.18)}s`,
+        motionTrailDelay: `${-(0.72 + motionSeed * 0.18)}s`
       };
     })
     .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge))
@@ -540,19 +561,26 @@ const hydrateCanvasState = () => {
   selectedNodeId.value = String(cached?.activeNodeId || '').trim();
   pendingViewportRestore.value = cached?.viewport || null;
   pendingFitView.value = !cached?.viewport;
-  worldOriginAnchor.value = null;
 };
 
 const fitView = async (force = false) => {
   await nextTick();
   if (!viewportRef.value || !projection.value.nodes.length) return;
-  viewportState.value = fitSwarmViewportToBounds({
-    bounds: projection.value.bounds,
-    worldWidth: worldSize.value.width,
-    worldHeight: worldSize.value.height,
-    viewport: containerSize.value,
-    padding: force ? 36 : 44
-  });
+  const viewport = normalizeSwarmViewportSize(containerSize.value);
+  const padding = force ? 36 : 44;
+  const bounds = projection.value.bounds;
+  const contentWidth = Math.max(1, Math.ceil(bounds.width));
+  const contentHeight = Math.max(1, Math.ceil(bounds.height));
+  const scale = clampSwarmScale(
+    Math.min((viewport.width - padding * 2) / contentWidth, (viewport.height - padding * 2) / contentHeight, 1)
+  );
+  const contentCenterX = worldMetrics.value.originX + bounds.minX + bounds.width / 2;
+  const contentCenterY = worldMetrics.value.originY + bounds.minY + bounds.height / 2;
+  viewportState.value = {
+    scale,
+    offsetX: Math.round(viewport.width / 2 - contentCenterX * scale),
+    offsetY: Math.round(viewport.height / 2 - contentCenterY * scale)
+  };
   saveViewportState();
 };
 
@@ -820,33 +848,6 @@ watch(
   { immediate: true }
 );
 
-watch(
-  () => [worldMetrics.value.originX, worldMetrics.value.originY] as const,
-  ([nextOriginX, nextOriginY]) => {
-    const anchor = worldOriginAnchor.value;
-    worldOriginAnchor.value = { x: nextOriginX, y: nextOriginY };
-    if (!anchor) {
-      return;
-    }
-    if (pendingViewportRestore.value || pendingFitView.value) {
-      return;
-    }
-    const deltaX = nextOriginX - anchor.x;
-    const deltaY = nextOriginY - anchor.y;
-    if (!deltaX && !deltaY) {
-      return;
-    }
-    const scale = clampSwarmScale(viewportState.value.scale);
-    viewportState.value = {
-      ...viewportState.value,
-      offsetX: Math.round(viewportState.value.offsetX - deltaX * scale),
-      offsetY: Math.round(viewportState.value.offsetY - deltaY * scale)
-    };
-    scheduleViewportStateSave(60);
-  },
-  { immediate: true }
-);
-
 onMounted(() => {
   updateContainerSize();
   if (typeof ResizeObserver !== 'undefined') {
@@ -944,6 +945,30 @@ onBeforeUnmount(() => {
   stroke: rgba(148, 163, 184, 0.42);
   stroke-width: 1.25;
   stroke-dasharray: 5 9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    stroke 180ms ease,
+    stroke-width 180ms ease,
+    opacity 180ms ease;
+}
+
+.beeroom-swarm-edge-group {
+  isolation: isolate;
+}
+
+.beeroom-swarm-edge-activity {
+  fill: none;
+  stroke: rgba(248, 113, 113, 0.22);
+  stroke-width: 5.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.82;
+  animation: beeroom-edge-breathe 1.45s ease-in-out infinite;
+}
+
+.beeroom-swarm-edge-activity.is-selected {
+  stroke: rgba(248, 113, 113, 0.3);
 }
 
 .beeroom-swarm-edge.is-selected {
@@ -955,6 +980,20 @@ onBeforeUnmount(() => {
   stroke-width: 1.52;
   stroke-dasharray: 10 8;
   animation: beeroom-edge-flow 1.8s linear infinite;
+}
+
+.beeroom-swarm-edge-orb {
+  fill: rgba(254, 202, 202, 0.96);
+  stroke: rgba(255, 241, 242, 0.9);
+  stroke-width: 1.1;
+  opacity: 0.96;
+  animation: beeroom-edge-orb-pulse 1.15s ease-in-out infinite;
+}
+
+.beeroom-swarm-edge-orb.is-trailing {
+  fill: rgba(248, 113, 113, 0.7);
+  stroke: rgba(254, 226, 226, 0.58);
+  opacity: 0.7;
 }
 
 .beeroom-swarm-edge-label {
@@ -970,6 +1009,7 @@ onBeforeUnmount(() => {
 
 .beeroom-swarm-edge-label.is-active {
   fill: rgba(254, 202, 202, 0.96);
+  animation: beeroom-edge-label-breathe 1.3s ease-in-out infinite;
 }
 
 .beeroom-canvas-legend,
@@ -1166,6 +1206,39 @@ onBeforeUnmount(() => {
 
   to {
     stroke-dashoffset: -36;
+  }
+}
+
+@keyframes beeroom-edge-breathe {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+
+  50% {
+    opacity: 0.88;
+  }
+}
+
+@keyframes beeroom-edge-orb-pulse {
+  0%,
+  100% {
+    opacity: 0.62;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes beeroom-edge-label-breathe {
+  0%,
+  100% {
+    opacity: 0.82;
+  }
+
+  50% {
+    opacity: 1;
   }
 }
 

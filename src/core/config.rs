@@ -1689,10 +1689,17 @@ pub fn load_config() -> Config {
 pub fn load_config_from_path(path: &Path) -> Config {
     let mut value = load_config_value_from_path(path);
     expand_yaml_env(&mut value);
-    serde_yaml::from_value::<Config>(value).unwrap_or_else(|err| {
+    let mut config = serde_yaml::from_value::<Config>(value).unwrap_or_else(|err| {
         warn!("failed to parse config, falling back to defaults: {err}");
         Config::default()
-    })
+    });
+    if let Some(example_path) = resolve_example_config_path(&resolve_config_path(path)) {
+        if example_path.exists() {
+            let example = load_config_from_path(&example_path);
+            restore_generated_sparse_config_sections(&mut config, &example);
+        }
+    }
+    config
 }
 
 pub fn load_config_value_from_path(path: &Path) -> Value {
@@ -1800,6 +1807,97 @@ fn merge_yaml(base: &mut Value, override_value: Value) {
 
 fn is_blank_yaml_string(value: &Value) -> bool {
     matches!(value, Value::String(text) if text.trim().is_empty())
+}
+
+fn equals_default_section<T>(value: &T) -> bool
+where
+    T: Serialize + Default,
+{
+    let Ok(current) = serde_yaml::to_value(value) else {
+        return false;
+    };
+    let Ok(default_value) = serde_yaml::to_value(T::default()) else {
+        return false;
+    };
+    current == default_value
+}
+
+fn looks_generated_sparse_config(config: &Config) -> bool {
+    equals_default_section(&config.mcp)
+        && equals_default_section(&config.skills)
+        && equals_default_section(&config.knowledge)
+        && equals_default_section(&config.vector_store)
+        && equals_default_section(&config.storage)
+}
+
+fn restore_generated_sparse_config_sections(config: &mut Config, example: &Config) {
+    if !looks_generated_sparse_config(config) {
+        return;
+    }
+
+    if equals_default_section(&config.security) {
+        config.security = example.security.clone();
+    }
+    if equals_default_section(&config.cors) {
+        config.cors = example.cors.clone();
+    }
+    if equals_default_section(&config.server) {
+        config.server = example.server.clone();
+    }
+    if equals_default_section(&config.i18n) {
+        config.i18n = example.i18n.clone();
+    }
+    if equals_default_section(&config.tools) {
+        config.tools = example.tools.clone();
+    }
+    if equals_default_section(&config.browser) {
+        config.browser = example.browser.clone();
+    }
+    if equals_default_section(&config.cron) {
+        config.cron = example.cron.clone();
+    }
+    if equals_default_section(&config.workspace) {
+        config.workspace = example.workspace.clone();
+    }
+    if equals_default_section(&config.mcp) {
+        config.mcp = example.mcp.clone();
+    }
+    if equals_default_section(&config.lsp) {
+        config.lsp = example.lsp.clone();
+    }
+    if equals_default_section(&config.a2a) {
+        config.a2a = example.a2a.clone();
+    }
+    if equals_default_section(&config.skills) {
+        config.skills = example.skills.clone();
+    }
+    if equals_default_section(&config.knowledge) {
+        config.knowledge = example.knowledge.clone();
+    }
+    if equals_default_section(&config.vector_store) {
+        config.vector_store = example.vector_store.clone();
+    }
+    if equals_default_section(&config.observability) {
+        config.observability = example.observability.clone();
+    }
+    if equals_default_section(&config.storage) {
+        config.storage = example.storage.clone();
+    }
+    if equals_default_section(&config.channels) {
+        config.channels = example.channels.clone();
+    }
+    if equals_default_section(&config.gateway) {
+        config.gateway = example.gateway.clone();
+    }
+    if equals_default_section(&config.sandbox) {
+        config.sandbox = example.sandbox.clone();
+    }
+    if equals_default_section(&config.user_agents) {
+        config.user_agents = example.user_agents.clone();
+    }
+    if equals_default_section(&config.prompt_templates) {
+        config.prompt_templates = example.prompt_templates.clone();
+    }
 }
 
 fn expand_yaml_env(value: &mut Value) {
@@ -1983,6 +2081,131 @@ sandbox:
 
         assert_eq!(config.mcp.servers.len(), 1);
         assert_eq!(config.mcp.servers[0].name, "extra_mcp");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_load_config_from_path_repairs_generated_sparse_config_from_example() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-config-repair-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        let config_path = root.join("wunder.yaml");
+        let example_path = root.join("wunder-example.yaml");
+        fs::write(
+            &example_path,
+            r#"
+server:
+  host: 0.0.0.0
+  port: 18000
+  stream_chunk_size: 1024
+  max_active_sessions: 300
+  mode: api
+i18n:
+  default_language: zh-CN
+  supported_languages:
+    - zh-CN
+    - en-US
+  aliases:
+    zh: zh-CN
+mcp:
+  timeout_s: 1200
+  servers:
+    - name: extra_mcp
+      endpoint: http://127.0.0.1:9010/mcp
+      enabled: true
+skills:
+  paths:
+    - ./skills
+  enabled:
+    - 技能创建器
+knowledge:
+  bases:
+    - name: 公司制度知识库
+      root: ./knowledge/plan
+      enabled: false
+vector_store:
+  weaviate:
+    url: http://wunder-weaviate:8080
+    timeout_s: 30
+    batch_size: 64
+storage:
+  backend: auto
+  db_path: ./config/data/wunder.db
+  postgres:
+    dsn: postgresql://wunder:wunder@postgres:5432/wunder
+    connect_timeout_s: 5
+    pool_size: 64
+tools:
+  builtin:
+    enabled:
+      - 最终回复
+workspace:
+  root: /workspaces
+  max_history_items: 0
+  retention_days: 0
+security:
+  allow_commands:
+    - '*'
+"#,
+        )
+        .expect("write example config");
+        fs::write(
+            &config_path,
+            r#"
+llm:
+  default: glm-5
+  models:
+    glm-5:
+      provider: openai_compatible
+      base_url: https://example.test/v1
+      api_key: secret
+      model: glm-5
+mcp:
+  timeout_s: 0
+  servers: []
+skills:
+  paths: []
+  enabled: []
+knowledge:
+  bases: []
+vector_store:
+  weaviate:
+    url: ''
+    timeout_s: 0
+    batch_size: 0
+storage:
+  backend: ''
+  db_path: ''
+  postgres:
+    dsn: ''
+    connect_timeout_s: 0
+    pool_size: 0
+"#,
+        )
+        .expect("write sparse config");
+
+        let config = load_config_from_path(&config_path);
+
+        assert_eq!(config.llm.default, "glm-5");
+        assert_eq!(config.server.port, 18000);
+        assert_eq!(config.i18n.aliases.get("zh"), Some(&"zh-CN".to_string()));
+        assert_eq!(config.mcp.timeout_s, 1200);
+        assert_eq!(config.mcp.servers.len(), 1);
+        assert_eq!(config.skills.paths, vec!["./skills".to_string()]);
+        assert_eq!(config.skills.enabled, vec!["技能创建器".to_string()]);
+        assert_eq!(config.knowledge.bases.len(), 1);
+        assert_eq!(
+            config.vector_store.weaviate.url,
+            "http://wunder-weaviate:8080"
+        );
+        assert_eq!(config.storage.backend, "auto");
+        assert_eq!(config.storage.db_path, "./config/data/wunder.db");
+        assert_eq!(config.tools.builtin.enabled, vec!["最终回复".to_string()]);
+        assert_eq!(config.workspace.root, "/workspaces");
+        assert_eq!(config.security.allow_commands, vec!["*".to_string()]);
 
         let _ = fs::remove_dir_all(&root);
     }

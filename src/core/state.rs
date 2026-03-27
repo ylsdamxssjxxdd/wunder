@@ -281,7 +281,10 @@ impl AppState {
         let presence = Arc::new(PresenceService::new());
         let route_leases = Arc::new(RouteLeaseService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
-        let beeroom_projection = Arc::new(BeeroomProjectionService::new(storage.clone()));
+        let beeroom_projection = Arc::new(BeeroomProjectionService::new(
+            storage.clone(),
+            route_leases.clone(),
+        ));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
         let command_sessions = Arc::new(CommandSessionBroker::new());

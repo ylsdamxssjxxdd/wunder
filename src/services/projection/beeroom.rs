@@ -1,3 +1,4 @@
+use crate::services::directory::{RouteLeaseGuard, RouteLeaseService, RouteTargetKind};
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{BeeroomChatMessageRecord, StorageBackend};
 use anyhow::{anyhow, Result};
@@ -6,9 +7,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::{broadcast, RwLock};
 use tracing::warn;
+use uuid::Uuid;
 
 const PROJECTION_CHANNEL_CAPACITY: usize = 512;
 const REPLAY_LIMIT_DEFAULT: i64 = 200;
@@ -116,17 +118,27 @@ struct BeeroomProjectionChannel {
 
 pub struct BeeroomProjectionService {
     stream_events: Arc<StreamEventService>,
+    route_leases: Arc<RouteLeaseService>,
     channels: Arc<RwLock<HashMap<String, BeeroomProjectionChannel>>>,
+    route_guards: StdRwLock<HashMap<String, RouteLeaseGuard>>,
     metrics: Arc<BeeroomProjectionMetrics>,
+    runtime_owner_id: String,
 }
 
 impl BeeroomProjectionService {
-    pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
+    pub fn new(storage: Arc<dyn StorageBackend>, route_leases: Arc<RouteLeaseService>) -> Self {
         Self {
             stream_events: Arc::new(StreamEventService::new(storage)),
+            route_leases,
             channels: Arc::new(RwLock::new(HashMap::new())),
+            route_guards: StdRwLock::new(HashMap::new()),
             metrics: Arc::new(BeeroomProjectionMetrics::default()),
+            runtime_owner_id: format!("beeroom_projection_{}", Uuid::new_v4().simple()),
         }
+    }
+
+    pub fn route_target_id(user_id: &str, group_id: &str) -> Result<String> {
+        normalize_stream_key(user_id, group_id)
     }
 
     pub fn metrics_snapshot(&self) -> BeeroomProjectionMetricsSnapshot {
@@ -160,7 +172,7 @@ impl BeeroomProjectionService {
         group_id: &str,
     ) -> Result<broadcast::Receiver<BeeroomProjectionEvent>> {
         let stream_key = normalize_stream_key(user_id, group_id)?;
-        let sender = self.ensure_channel(&stream_key).await;
+        let sender = self.ensure_channel(user_id, group_id, &stream_key).await;
         Ok(sender.subscribe())
     }
 
@@ -176,9 +188,6 @@ impl BeeroomProjectionService {
             return Ok(cached);
         }
         let tail = self.stream_events.tail_event_id(&stream_key).await?;
-        if tail > 0 {
-            self.update_channel_tail(&stream_key, tail).await;
-        }
         Ok(tail)
     }
 
@@ -202,9 +211,6 @@ impl BeeroomProjectionService {
             .into_iter()
             .filter_map(|record| map_record_to_event(record, normalized_user, normalized_group))
             .collect::<Vec<_>>();
-        if let Some(last) = events.last() {
-            self.update_channel_tail(&stream_key, last.event_id).await;
-        }
         Ok(events)
     }
 
@@ -284,6 +290,9 @@ impl BeeroomProjectionService {
             return Ok(());
         }
         let stream_key = normalize_stream_key(normalized_user, normalized_group)?;
+        let sender = self
+            .ensure_channel(normalized_user, normalized_group, &stream_key)
+            .await;
         let event_id = self
             .persist_stream_event(
                 stream_key.clone(),
@@ -302,7 +311,6 @@ impl BeeroomProjectionService {
             created_at,
         };
         self.metrics.record_publish();
-        let sender = self.ensure_channel(&stream_key).await;
         let _ = sender.send(event);
         Ok(())
     }
@@ -325,41 +333,73 @@ impl BeeroomProjectionService {
             .stream_events
             .append_event(&session_id, &user_id, envelope)
             .await?;
-        self.update_channel_tail(&stream_key, event_id).await;
+        self.update_channel_tail_if_present(&stream_key, event_id)
+            .await;
         Ok(event_id)
     }
 
-    async fn ensure_channel(&self, stream_key: &str) -> broadcast::Sender<BeeroomProjectionEvent> {
+    async fn ensure_channel(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        stream_key: &str,
+    ) -> broadcast::Sender<BeeroomProjectionEvent> {
         if let Some(channel) = self.channels.read().await.get(stream_key).cloned() {
             return channel.sender;
         }
         let mut guard = self.channels.write().await;
-        guard
-            .entry(stream_key.to_string())
-            .or_insert_with(|| {
-                let (sender, _receiver) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
-                BeeroomProjectionChannel {
-                    sender,
-                    last_event_id: 0,
-                }
-            })
-            .sender
-            .clone()
+        if let Some(channel) = guard.get(stream_key).cloned() {
+            return channel.sender;
+        }
+        self.ensure_projection_route_guard(user_id, group_id, stream_key);
+        let (sender, _receiver) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
+        guard.insert(
+            stream_key.to_string(),
+            BeeroomProjectionChannel {
+                sender: sender.clone(),
+                last_event_id: 0,
+            },
+        );
+        sender
     }
 
-    async fn update_channel_tail(&self, stream_key: &str, event_id: i64) {
+    async fn update_channel_tail_if_present(&self, stream_key: &str, event_id: i64) {
         if event_id <= 0 {
             return;
         }
         let mut guard = self.channels.write().await;
-        let channel = guard.entry(stream_key.to_string()).or_insert_with(|| {
-            let (sender, _receiver) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
-            BeeroomProjectionChannel {
-                sender,
-                last_event_id: 0,
-            }
-        });
-        channel.last_event_id = channel.last_event_id.max(event_id);
+        if let Some(channel) = guard.get_mut(stream_key) {
+            channel.last_event_id = channel.last_event_id.max(event_id);
+        }
+    }
+
+    fn ensure_projection_route_guard(&self, user_id: &str, group_id: &str, stream_key: &str) {
+        let Some(mut guard) = self.route_guards.write().ok() else {
+            return;
+        };
+        if guard.contains_key(stream_key) {
+            return;
+        }
+        let Some(route_lease) = self.route_leases.try_acquire_route_lease(
+            RouteTargetKind::Projection,
+            stream_key,
+            &self.runtime_owner_id,
+            None,
+            Some(user_id),
+        ) else {
+            let snapshot = self
+                .route_leases
+                .route_snapshot(RouteTargetKind::Projection, stream_key);
+            warn!(
+                "beeroom projection route lease acquisition skipped: user_id={}, group_id={}, stream_key={}, owner={:?}",
+                user_id,
+                group_id,
+                stream_key,
+                snapshot.as_ref().map(|item| item.owner_id.as_str()),
+            );
+            return;
+        };
+        guard.insert(stream_key.to_string(), route_lease);
     }
 }
 
@@ -460,6 +500,7 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::BeeroomProjectionService;
+    use crate::services::directory::{RouteLeaseService, RouteTargetKind};
     use crate::storage::{BeeroomChatMessageRecord, SqliteStorage, StorageBackend};
     use serde_json::json;
     use std::sync::Arc;
@@ -472,7 +513,8 @@ mod tests {
         ));
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        BeeroomProjectionService::new(storage)
+        let route_leases = Arc::new(RouteLeaseService::new());
+        BeeroomProjectionService::new(storage, route_leases)
     }
 
     fn sample_chat_message_record() -> BeeroomChatMessageRecord {
@@ -671,5 +713,29 @@ mod tests {
             }
             other => panic!("expected lagged error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_acquires_projection_route_lease() {
+        let db_path = std::env::temp_dir().join(format!(
+            "wunder_beeroom_projection_route_{}.db",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let route_leases = Arc::new(RouteLeaseService::new());
+        let service = BeeroomProjectionService::new(storage, route_leases.clone());
+
+        let _receiver = service
+            .subscribe_group("user-a", "group-a")
+            .await
+            .expect("subscription should succeed");
+
+        let route_target_id =
+            BeeroomProjectionService::route_target_id("user-a", "group-a").expect("route key");
+        let snapshot = route_leases
+            .route_snapshot(RouteTargetKind::Projection, &route_target_id)
+            .expect("projection route snapshot should exist");
+        assert_eq!(snapshot.user_id.as_deref(), Some("user-a"));
     }
 }

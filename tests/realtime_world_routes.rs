@@ -208,6 +208,13 @@ async fn session_realtime_snapshot_reports_route_and_watch_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn realtime_metrics_requires_admin_and_reports_control_plane_counts() {
     let context = build_test_context("realtime_metrics_user").await;
+    let _projection_receiver = context
+        .state
+        .projection
+        .beeroom
+        .subscribe_group(&context.user_id, "group_metrics")
+        .await
+        .expect("projection subscription should succeed");
     context.state.control.presence.watch_projection(
         "conn-admin",
         "req-admin",
@@ -250,8 +257,9 @@ async fn realtime_metrics_requires_admin_and_reports_control_plane_counts() {
         payload["data"]["presence"]["projection_watch_metrics"]["total_watch_count"],
         1
     );
-    assert_eq!(payload["data"]["route_leases"]["active_route_count"], 1);
+    assert_eq!(payload["data"]["route_leases"]["active_route_count"], 2);
     assert_eq!(payload["data"]["route_leases"]["thread_route_count"], 1);
+    assert_eq!(payload["data"]["route_leases"]["projection_route_count"], 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -380,6 +388,13 @@ async fn mission_realtime_snapshot_reports_route_watch_and_task_summary() {
         parent_session_id,
         now_ts(),
     );
+    let _projection_receiver = context
+        .state
+        .projection
+        .beeroom
+        .subscribe_group(&context.user_id, hive_id)
+        .await
+        .expect("projection subscription should succeed");
 
     let (status, payload) = send_request(
         &context.app,
@@ -393,6 +408,10 @@ async fn mission_realtime_snapshot_reports_route_watch_and_task_summary() {
     assert_eq!(
         payload["data"]["mission_route"]["owner_id"],
         "mission_runtime_test"
+    );
+    assert_eq!(
+        payload["data"]["beeroom_projection_route"]["target_kind"],
+        "projection"
     );
     assert_eq!(payload["data"]["beeroom_group_watch"]["watch_count"], 1);
     assert_eq!(payload["data"]["parent_session_watch"]["watch_count"], 1);

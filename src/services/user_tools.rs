@@ -138,7 +138,7 @@ struct SkillCache {
     order: VecDeque<String>,
 }
 
-/// 用户工具存储：读取/写入 data/user_tools 目录下的配置文件。
+/// 用户工具存储：主配置写入用户工作区，兼容读取旧版 legacy 根目录中的配置文件。
 pub struct UserToolStore {
     workspace: Arc<WorkspaceManager>,
     legacy_root: PathBuf,
@@ -148,7 +148,6 @@ pub struct UserToolStore {
 impl UserToolStore {
     pub fn new(_config: &Config, workspace: Arc<WorkspaceManager>) -> Result<Self> {
         let legacy_root = resolve_user_tools_root();
-        std::fs::create_dir_all(&legacy_root)?;
         Ok(Self {
             workspace,
             legacy_root,
@@ -1433,13 +1432,16 @@ fn file_modified_ts(path: &Path) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn resolve_user_tools_root() -> PathBuf {
-    std::env::var(USER_TOOLS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+fn resolve_user_tools_root_from_env(value: Option<String>) -> PathBuf {
+    value
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data").join("user_tools"))
+        .unwrap_or_else(|| PathBuf::from("config").join("data").join("user_tools"))
+}
+
+fn resolve_user_tools_root() -> PathBuf {
+    resolve_user_tools_root_from_env(std::env::var(USER_TOOLS_ROOT_ENV).ok())
 }
 
 fn safe_user_id(user_id: &str) -> String {
@@ -1562,6 +1564,18 @@ mod tests {
         .expect("write config");
         let payload = store.load_user_tools(user_id);
         assert_eq!(payload.user_id, user_id);
+    }
+
+    #[test]
+    fn resolve_user_tools_root_falls_back_to_config_data_dir() {
+        assert_eq!(
+            resolve_user_tools_root_from_env(None),
+            PathBuf::from("config").join("data").join("user_tools")
+        );
+        assert_eq!(
+            resolve_user_tools_root_from_env(Some("   ".to_string())),
+            PathBuf::from("config").join("data").join("user_tools")
+        );
     }
 
     #[test]

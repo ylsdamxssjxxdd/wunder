@@ -187,6 +187,14 @@
     - `epoch`
     - `acquired_at`
     - `updated_at`
+  - `data.beeroom_projection_route`
+    - `target_kind=projection`
+    - `target_id`
+    - `owner_id`
+    - `user_id`
+    - `epoch`
+    - `acquired_at`
+    - `updated_at`
   - `data.beeroom_group_watch`
     - `target_kind=beeroom_group`
     - `target_id`

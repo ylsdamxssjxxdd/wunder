@@ -2,6 +2,7 @@ use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
 use crate::services::directory::RouteTargetKind;
 use crate::services::presence::ProjectionTargetKind;
+use crate::services::projection::beeroom::BeeroomProjectionService;
 use crate::state::AppState;
 use crate::user_store::UserStore;
 use axum::extract::{Path as AxumPath, State};
@@ -106,6 +107,15 @@ async fn mission_realtime_snapshot(
         .control
         .route_leases
         .route_snapshot(RouteTargetKind::Mission, &run.team_run_id);
+    let beeroom_projection_route =
+        BeeroomProjectionService::route_target_id(&run.user_id, &run.hive_id)
+            .ok()
+            .and_then(|target_id| {
+                state
+                    .control
+                    .route_leases
+                    .route_snapshot(RouteTargetKind::Projection, &target_id)
+            });
     let beeroom_group_watch = state.control.presence.projection_watch_snapshot(
         ProjectionTargetKind::BeeroomGroup,
         &run.hive_id,
@@ -125,6 +135,7 @@ async fn mission_realtime_snapshot(
         "data": {
             "mission": mission_payload(&run),
             "mission_route": mission_route,
+            "beeroom_projection_route": beeroom_projection_route,
             "beeroom_group_watch": beeroom_group_watch,
             "parent_session_watch": parent_session_watch,
             "task_summary": build_mission_task_summary(&tasks),

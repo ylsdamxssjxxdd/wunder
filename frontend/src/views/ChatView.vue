@@ -2375,7 +2375,7 @@ const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
     chatStore.appendLocalMessage('user', rawText, { sessionId: activeId });
     try {
       await chatStore.compactSession(activeId);
-      scheduleExternalSessionSync(true);
+      scheduleExternalSessionSync(false);
     } catch (error) {
       chatStore.appendLocalMessage(
         'assistant',
@@ -3247,7 +3247,7 @@ onMounted(async () => {
   initComposerResizeObserver();
   updateComposerPadding();
   externalSessionSyncStopped = false;
-  scheduleExternalSessionSync(true);
+  scheduleExternalSessionSync(false);
   window.addEventListener('resize', updateCompactLayout);
   window.addEventListener('beforeunload', handleBeforeUnload);
   document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -3285,7 +3285,7 @@ watch(
       planExpanded.value = false;
       dismissedPlanMessages.value = new WeakSet();
       dismissedPlanVersion.value += 1;
-      scheduleExternalSessionSync(true);
+      scheduleExternalSessionSync(false);
     }
   }
 );
@@ -3351,7 +3351,7 @@ watch(
     if (value === oldValue) return;
     await init();
     loadToolSummary();
-    scheduleExternalSessionSync(true);
+    scheduleExternalSessionSync(false);
   }
 );
 
@@ -3377,7 +3377,7 @@ watch(
   async (value, oldValue) => {
     if (!value || value === oldValue || value !== 'default') return;
     await openAgentSession('');
-    scheduleExternalSessionSync(true);
+    scheduleExternalSessionSync(false);
     router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
   }
 );
@@ -3388,7 +3388,7 @@ watch(
     if (value === oldValue) return;
     if (routeEntry.value === 'default') return;
     await openAgentSession(value);
-    scheduleExternalSessionSync(true);
+    scheduleExternalSessionSync(false);
   }
 );
 

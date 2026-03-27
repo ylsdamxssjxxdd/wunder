@@ -28,6 +28,30 @@
     }
   },
   "knowledge": {
-    "enabled": false
+    "enabled": false,
+    "base_url": "http://127.0.0.1:9380",
+    "api_key": "REPLACE_WITH_RAGFLOW_API_KEY",
+    "default_key": "product_docs",
+    "request": {
+      "top_k": 8,
+      "similarity_threshold": 0.2,
+      "highlight": true
+    },
+    "targets": {
+      "product_docs": {
+        "dataset_ids": [
+          "REPLACE_WITH_PRODUCT_DATASET_ID_1",
+          "REPLACE_WITH_PRODUCT_DATASET_ID_2"
+        ],
+        "description": "产品文档知识库示例，演示一个知识库目标聚合多个 dataset_ids"
+      },
+      "hr_docs": {
+        "dataset_ids": [
+          "REPLACE_WITH_HR_DATASET_ID_1",
+          "REPLACE_WITH_HR_DATASET_ID_2"
+        ],
+        "description": "人事制度知识库示例，演示同时配置多个知识库目标"
+      }
+    }
   }
 }

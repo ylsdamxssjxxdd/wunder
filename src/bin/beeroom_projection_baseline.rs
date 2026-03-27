@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
+use wunder_server::directory::RouteLeaseService;
 use wunder_server::projection::beeroom::{
     BeeroomProjectionMetricsSnapshot, BeeroomProjectionService,
 };
@@ -60,7 +61,8 @@ async fn run_baseline(args: Args) -> Result<BaselineSummary> {
     ));
     let storage: Arc<dyn StorageBackend> =
         Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-    let service = Arc::new(BeeroomProjectionService::new(storage));
+    let route_leases = Arc::new(RouteLeaseService::new());
+    let service = Arc::new(BeeroomProjectionService::new(storage, route_leases));
 
     for seq in 0..args.warmup {
         service
