@@ -1,4 +1,7 @@
 use crate::channels::adapter::{ChannelAdapter, OutboundContext};
+use crate::channels::outbound_attachments::{
+    merge_attachments_with_text_links, OutboundLinkExtractionMode,
+};
 use crate::channels::types::{
     ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
     ChannelThread, XmppConfig,
@@ -11,10 +14,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
+use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
+use std::path::Path;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
@@ -105,6 +110,12 @@ struct XmppRuntimeSettings {
 struct XmppRuntimeDispatcher {
     runtime_id: u64,
     sender: mpsc::Sender<XmppRuntimeCommand>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedXmppOutbound {
+    text: Option<String>,
+    attachments: Vec<ChannelAttachment>,
 }
 
 enum XmppRuntimeCommand {
@@ -683,10 +694,12 @@ async fn send_outbound_stanza(
     settings: &XmppRuntimeSettings,
     outbound: &ChannelOutboundMessage,
 ) -> Result<()> {
-    if settings.custom_message_format_enabled && outbound.attachments.is_empty() {
+    let prepared = prepare_outbound_payload(outbound);
+
+    if settings.custom_message_format_enabled && prepared.attachments.is_empty() {
         let target = resolve_outbound_target(outbound);
         let to_jid = resolve_outbound_target_jid(&target, &settings.login_domain)?;
-        let text = outbound_text(outbound)?;
+        let text = resolve_outbound_text(prepared.text.as_deref(), &prepared.attachments)?;
         if let Err(err) =
             send_custom_format_message(client, &to_jid, &text, &outbound.peer.kind).await
         {
@@ -701,7 +714,7 @@ async fn send_outbound_stanza(
         }
     }
 
-    let stanza = build_outbound_stanza(settings, outbound)?;
+    let stanza = build_outbound_stanza(settings, outbound, &prepared)?;
 
     client
         .send_stanza(stanza)
@@ -712,6 +725,7 @@ async fn send_outbound_stanza(
 fn build_outbound_stanza(
     settings: &XmppRuntimeSettings,
     outbound: &ChannelOutboundMessage,
+    prepared: &PreparedXmppOutbound,
 ) -> Result<Element> {
     let target = resolve_outbound_target(outbound);
     let to_jid = resolve_outbound_target_jid(&target, &settings.login_domain)?;
@@ -725,7 +739,10 @@ fn build_outbound_stanza(
         .attr("type", message_type)
         .append(
             Element::builder("body", ns::DEFAULT_NS)
-                .append(outbound_text(outbound)?)
+                .append(resolve_outbound_text(
+                    prepared.text.as_deref(),
+                    &prepared.attachments,
+                )?)
                 .build(),
         );
     if let Some(thread_id) = outbound
@@ -739,7 +756,7 @@ fn build_outbound_stanza(
                 .build(),
         );
     }
-    for attachment in &outbound.attachments {
+    for attachment in &prepared.attachments {
         let Some(url) = optional_trimmed(Some(attachment.url.as_str())) else {
             continue;
         };
@@ -889,17 +906,75 @@ fn resolve_outbound_target_jid(target: &str, login_domain: &str) -> Result<Jid> 
     Jid::from_str(target).map_err(|err| anyhow!("invalid xmpp outbound target: {err}"))
 }
 
-fn outbound_text(outbound: &ChannelOutboundMessage) -> Result<String> {
-    if let Some(text) = outbound
-        .text
-        .as_deref()
-        .and_then(|value| optional_trimmed(Some(value)).map(str::to_string))
-    {
+fn prepare_outbound_payload(outbound: &ChannelOutboundMessage) -> PreparedXmppOutbound {
+    let attachments = collect_outbound_attachments(&outbound.attachments, outbound.text.as_deref());
+    let text = text_for_outbound_with_attachments(outbound.text.as_deref(), &attachments);
+    PreparedXmppOutbound { text, attachments }
+}
+
+fn collect_outbound_attachments(
+    outbound_attachments: &[ChannelAttachment],
+    text: Option<&str>,
+) -> Vec<ChannelAttachment> {
+    merge_attachments_with_text_links(
+        outbound_attachments,
+        text,
+        OutboundLinkExtractionMode::WorkspaceResource,
+    )
+}
+
+fn text_for_outbound_with_attachments(
+    text: Option<&str>,
+    attachments: &[ChannelAttachment],
+) -> Option<String> {
+    let trimmed = text.map(str::trim).filter(|value| !value.is_empty())?;
+    if attachments.is_empty() {
+        return Some(trimmed.to_string());
+    }
+
+    let mut cleaned = trimmed.to_string();
+    for attachment in attachments {
+        let source = attachment.url.trim();
+        if source.is_empty() {
+            continue;
+        }
+        cleaned = strip_markdown_link_for_source(&cleaned, source);
+        cleaned = cleaned.replace(source, "");
+    }
+
+    let normalized_lines = cleaned
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if normalized_lines.is_empty() {
+        None
+    } else {
+        Some(normalized_lines.join("\n"))
+    }
+}
+
+fn strip_markdown_link_for_source(text: &str, source: &str) -> String {
+    let escaped = regex::escape(source);
+    let image_pattern = format!(r#"!\[[^\]]*]\(\s*{escaped}\s*(?:\"[^\"]*\")?\)"#);
+    let link_pattern = format!(r#"\[[^\]]+]\(\s*{escaped}\s*(?:\"[^\"]*\")?\)"#);
+    let mut rewritten = text.to_string();
+    if let Ok(image_re) = Regex::new(&image_pattern) {
+        rewritten = image_re.replace_all(&rewritten, "").into_owned();
+    }
+    if let Ok(link_re) = Regex::new(&link_pattern) {
+        rewritten = link_re.replace_all(&rewritten, "").into_owned();
+    }
+    rewritten
+}
+
+fn resolve_outbound_text(text: Option<&str>, attachments: &[ChannelAttachment]) -> Result<String> {
+    if let Some(text) = text.and_then(|value| optional_trimmed(Some(value)).map(str::to_string)) {
         return Ok(text);
     }
 
     let mut lines: Vec<String> = Vec::new();
-    for item in &outbound.attachments {
+    for item in attachments {
         if let Some(line) = outbound_attachment_fallback_line(item) {
             lines.push(line);
         }
@@ -1026,9 +1101,18 @@ fn build_channel_message_from_custom(
         "type": msg_type_attr,
         "custom_format": true,
     });
+    let mut text = optional_trimmed(Some(custom.text.as_str())).map(str::to_string);
+    let mut attachments = Vec::new();
     if let Some(file_transfer) = custom.file_transfer {
+        if let Some(attachment) = build_custom_file_transfer_attachment(&file_transfer) {
+            // Treat custom file-transfer payloads as file-only user actions so they flow into
+            // the shared pending-files pipeline instead of being misclassified as plain text.
+            attachments.push(attachment);
+            text = None;
+        }
         xmpp_meta["file_transfer"] = file_transfer;
     }
+    let message_type = resolve_inbound_message_type(text.as_deref(), &attachments);
 
     Some(ChannelMessage {
         channel: XMPP_CHANNEL.to_string(),
@@ -1041,9 +1125,9 @@ fn build_channel_message_from_custom(
         thread: None,
         message_id: Some(custom.mid),
         sender,
-        message_type: "text".to_string(),
-        text: Some(custom.text),
-        attachments: vec![],
+        message_type,
+        text,
+        attachments,
         location: None,
         ts: None,
         meta: Some(json!({
@@ -1114,17 +1198,7 @@ fn parse_inbound_message(
 
     let message_id = id.and_then(normalize_owned_string);
 
-    let message_type = if attachments.is_empty() {
-        "text".to_string()
-    } else if text.is_some() {
-        "mixed".to_string()
-    } else {
-        attachments
-            .first()
-            .map(|item| item.kind.clone())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "file".to_string())
-    };
+    let message_type = resolve_inbound_message_type(text.as_deref(), &attachments);
 
     Some(ChannelMessage {
         channel: XMPP_CHANNEL.to_string(),
@@ -1150,6 +1224,83 @@ fn parse_inbound_message(
             }
         })),
     })
+}
+
+fn build_custom_file_transfer_attachment(file_transfer: &Value) -> Option<ChannelAttachment> {
+    let download_url = file_transfer
+        .get("download_url")
+        .and_then(Value::as_str)
+        .and_then(|value| optional_trimmed(Some(value)).map(str::to_string))?;
+    if !is_attachment_url(&download_url) {
+        return None;
+    }
+
+    let mime = file_transfer
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .and_then(|value| optional_trimmed(Some(value)).map(str::to_string));
+    let name = file_transfer
+        .get("filename")
+        .and_then(Value::as_str)
+        .and_then(|value| optional_trimmed(Some(value)).map(str::to_string));
+    let size = file_transfer
+        .get("size")
+        .and_then(Value::as_u64)
+        .and_then(|value| i64::try_from(value).ok());
+
+    Some(ChannelAttachment {
+        kind: infer_attachment_kind_from_transfer(&download_url, mime.as_deref(), name.as_deref()),
+        url: download_url,
+        mime,
+        size,
+        name,
+    })
+}
+
+fn infer_attachment_kind_from_transfer(
+    download_url: &str,
+    mime_type: Option<&str>,
+    filename: Option<&str>,
+) -> String {
+    if let Some(mime_type) = mime_type.map(|value| value.trim().to_ascii_lowercase()) {
+        if mime_type.starts_with("image/") {
+            return "image".to_string();
+        }
+        if mime_type.starts_with("audio/") {
+            return "audio".to_string();
+        }
+        if mime_type.starts_with("video/") {
+            return "video".to_string();
+        }
+    }
+
+    if let Some(filename) = filename {
+        let lowered = Path::new(filename)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+        if let Some(extension) = lowered {
+            return infer_attachment_kind_from_url(&format!(
+                "https://wunder.invalid/file.{extension}"
+            ));
+        }
+    }
+
+    infer_attachment_kind_from_url(download_url)
+}
+
+fn resolve_inbound_message_type(text: Option<&str>, attachments: &[ChannelAttachment]) -> String {
+    if attachments.is_empty() {
+        return "text".to_string();
+    }
+    if text.is_some() {
+        return "mixed".to_string();
+    }
+    attachments
+        .first()
+        .map(|item| item.kind.clone())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "file".to_string())
 }
 
 fn extract_stanza_attachments(stanza: &Element) -> Vec<ChannelAttachment> {
@@ -1598,11 +1749,49 @@ mod tests {
             meta: None,
         };
 
-        let stanza = build_outbound_stanza(&settings, &outbound).expect("build stanza");
+        let prepared = prepare_outbound_payload(&outbound);
+        let stanza = build_outbound_stanza(&settings, &outbound, &prepared).expect("build stanza");
         let attachments = extract_stanza_attachments(&stanza);
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].url, "https://example.com/image.png");
         assert_eq!(attachments[0].name.as_deref(), Some("image.png"));
+    }
+
+    #[test]
+    fn build_outbound_stanza_extracts_workspace_attachment_links_from_text() {
+        let settings = build_test_runtime_settings();
+        let attachment_url =
+            "https://example.com/wunder/temp_dir/download?filename=channels%2Fxmpp%2Fu1%2Freport.pdf";
+        let outbound = ChannelOutboundMessage {
+            channel: XMPP_CHANNEL.to_string(),
+            account_id: "acc1".to_string(),
+            peer: ChannelPeer {
+                kind: "user".to_string(),
+                id: "alice@example.com".to_string(),
+                name: None,
+            },
+            thread: None,
+            text: Some(format!("report is ready\n[download]({attachment_url})")),
+            attachments: vec![],
+            meta: None,
+        };
+
+        let prepared = prepare_outbound_payload(&outbound);
+        assert_eq!(prepared.attachments.len(), 1);
+        assert_eq!(prepared.attachments[0].url, attachment_url);
+        assert_eq!(prepared.text.as_deref(), Some("report is ready"));
+
+        let stanza = build_outbound_stanza(&settings, &outbound, &prepared).expect("build stanza");
+        let body = stanza
+            .get_child("body", ns::DEFAULT_NS)
+            .expect("body should exist")
+            .text();
+        assert_eq!(body, "report is ready");
+
+        let attachments = extract_stanza_attachments(&stanza);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, attachment_url);
+        assert_eq!(attachments[0].kind, "file");
     }
 
     #[test]
@@ -1795,6 +1984,57 @@ mod tests {
                 .and_then(|xmpp| xmpp.get("custom_format"))
                 .and_then(Value::as_bool),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn parse_custom_format_file_transfer_builds_channel_attachment() {
+        let settings = build_test_runtime_settings();
+        let mid = "{660e8400-e29b-41d4-a716-446655440001}";
+        let html = format!(
+            "<html><body><p>file@fid-1| report.pdf | 24 | application/pdf | https://example.com/files/report.pdf </p></body></html>\n[mid]{mid}"
+        );
+        let first = BASE64.encode(&html);
+        let second = BASE64.encode(first);
+        let encoded = BASE64.encode(second);
+        let stanza = Element::builder("message", ns::DEFAULT_NS)
+            .attr("type", "chat")
+            .attr("from", "alice@example.com/mobile")
+            .attr("to", "bot@example.com/wunder")
+            .attr("mid", mid)
+            .attr("codec", "base64")
+            .append(
+                Element::builder("body", ns::DEFAULT_NS)
+                    .append(encoded)
+                    .build(),
+            )
+            .build();
+
+        let parsed = parse_stanza_message("acc1", stanza, &settings, None, None)
+            .expect("custom file transfer should be parsed");
+        assert!(parsed.text.is_none());
+        assert_eq!(parsed.message_type, "file");
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].kind, "file");
+        assert_eq!(
+            parsed.attachments[0].url,
+            "https://example.com/files/report.pdf"
+        );
+        assert_eq!(parsed.attachments[0].name.as_deref(), Some("report.pdf"));
+        assert_eq!(
+            parsed.attachments[0].mime.as_deref(),
+            Some("application/pdf")
+        );
+        assert_eq!(parsed.attachments[0].size, Some(24));
+        assert_eq!(
+            parsed
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("xmpp"))
+                .and_then(|xmpp| xmpp.get("file_transfer"))
+                .and_then(|file_transfer| file_transfer.get("download_url"))
+                .and_then(Value::as_str),
+            Some("https://example.com/files/report.pdf")
         );
     }
 }

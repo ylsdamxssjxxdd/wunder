@@ -99,12 +99,11 @@ async fn run_python_script(
 
 fn python_candidates(config: &Config) -> Vec<(String, Vec<String>)> {
     let mut output = Vec::new();
-    let configured_path = config
+    let configured_path = config.browser.playwright.python_path.as_deref().or(config
+        .tools
         .browser
-        .playwright
         .python_path
-        .as_deref()
-        .or(config.tools.browser.python_path.as_deref());
+        .as_deref());
     if let Some(path) = configured_path {
         let trimmed = path.trim();
         if !trimmed.is_empty() {

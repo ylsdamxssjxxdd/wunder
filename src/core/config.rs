@@ -1681,9 +1681,11 @@ pub fn load_config() -> Config {
         .unwrap_or_else(|_| "data/config/wunder.override.yaml".to_string());
     let override_path = resolve_yaml_variant_path(Path::new(&override_path));
 
-    let mut merged = read_yaml(&base_path);
+    let base_value = read_yaml(&base_path);
+    let mut merged = base_value.clone();
     if override_path.exists() {
         let override_value = read_yaml_path(&override_path);
+        warn_on_shadowed_empty_overrides(&base_value, &override_value, &override_path);
         // Apply override values without blanking existing keys.
         merge_yaml(&mut merged, override_value);
     }
@@ -1702,6 +1704,61 @@ pub fn load_base_config_value() -> Value {
     let mut base = read_yaml(&base_path);
     expand_yaml_env(&mut base);
     base
+}
+
+fn warn_on_shadowed_empty_overrides(base: &Value, override_value: &Value, override_path: &Path) {
+    let shadowed = collect_shadowed_empty_override_paths(base, override_value);
+    if shadowed.is_empty() {
+        return;
+    }
+    warn!(
+        "config override {} masks non-empty base config sections with empty lists: {}. \
+remove or edit this override file if the admin UI unexpectedly shows empty MCP/skills/knowledge data",
+        override_path.display(),
+        shadowed.join(", ")
+    );
+}
+
+fn collect_shadowed_empty_override_paths(
+    base: &Value,
+    override_value: &Value,
+) -> Vec<&'static str> {
+    let mut shadowed = Vec::new();
+    for (label, path) in [
+        (
+            "tools.builtin.enabled",
+            &["tools", "builtin", "enabled"][..],
+        ),
+        ("mcp.servers", &["mcp", "servers"][..]),
+        ("skills.enabled", &["skills", "enabled"][..]),
+        ("knowledge.bases", &["knowledge", "bases"][..]),
+    ] {
+        if yaml_value_is_non_empty_sequence(yaml_value_at_path(base, path))
+            && yaml_value_is_empty_sequence(yaml_value_at_path(override_value, path))
+        {
+            shadowed.push(label);
+        }
+    }
+    shadowed
+}
+
+fn yaml_value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path {
+        let Value::Mapping(map) = current else {
+            return None;
+        };
+        current = map.get(Value::String((*segment).to_string()))?;
+    }
+    Some(current)
+}
+
+fn yaml_value_is_non_empty_sequence(value: Option<&Value>) -> bool {
+    matches!(value, Some(Value::Sequence(items)) if !items.is_empty())
+}
+
+fn yaml_value_is_empty_sequence(value: Option<&Value>) -> bool {
+    matches!(value, Some(Value::Sequence(items)) if items.is_empty())
 }
 
 fn read_yaml(path: &str) -> Value {
@@ -1979,6 +2036,75 @@ sandbox:
             "postgresql://wunder:wunder@postgres:5432/wunder"
         );
         assert_eq!(merged.sandbox.endpoint, "http://sandbox:9001");
+    }
+
+    #[test]
+    fn test_collect_shadowed_empty_override_paths_detects_hidden_catalog_lists() {
+        let base = serde_yaml::from_str::<Value>(
+            r#"
+tools:
+  builtin:
+    enabled: [final_response]
+mcp:
+  servers:
+    - name: extra_mcp
+skills:
+  enabled: [writer]
+knowledge:
+  bases:
+    - name: handbook
+"#,
+        )
+        .expect("parse base yaml");
+        let override_value = serde_yaml::from_str::<Value>(
+            r#"
+tools:
+  builtin:
+    enabled: []
+mcp:
+  servers: []
+skills:
+  enabled: []
+knowledge:
+  bases: []
+"#,
+        )
+        .expect("parse override yaml");
+
+        assert_eq!(
+            collect_shadowed_empty_override_paths(&base, &override_value),
+            vec![
+                "tools.builtin.enabled",
+                "mcp.servers",
+                "skills.enabled",
+                "knowledge.bases"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_collect_shadowed_empty_override_paths_ignores_missing_or_non_empty_entries() {
+        let base = serde_yaml::from_str::<Value>(
+            r#"
+mcp:
+  servers:
+    - name: extra_mcp
+skills:
+  enabled: [writer]
+"#,
+        )
+        .expect("parse base yaml");
+        let override_value = serde_yaml::from_str::<Value>(
+            r#"
+mcp:
+  servers:
+    - name: extra_mcp
+skills: {}
+"#,
+        )
+        .expect("parse override yaml");
+
+        assert!(collect_shadowed_empty_override_paths(&base, &override_value).is_empty());
     }
 
     #[test]

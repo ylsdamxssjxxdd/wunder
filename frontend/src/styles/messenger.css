@@ -1560,6 +1560,11 @@ button.messenger-chat-header-model {
   overflow: hidden;
 }
 
+.messenger-chat-settings--beeroom-canvas > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .messenger-chat-settings-block {
   border: 1px solid #dfdfdf;
   border-radius: 12px;

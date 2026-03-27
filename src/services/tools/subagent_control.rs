@@ -356,11 +356,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                     "dispatch_id",
                     json!(dispatch_id),
                 );
-                super::insert_run_metadata_field(
-                    &mut run_metadata,
-                    "dispatch_index",
-                    json!(index),
-                );
+                super::insert_run_metadata_field(&mut run_metadata, "dispatch_index", json!(index));
                 super::insert_run_metadata_field(
                     &mut run_metadata,
                     "dispatch_size",
@@ -788,7 +784,9 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
         let (parent_turn_ref, parent_user_round, parent_model_round) =
             crate::services::subagents::parent_turn_payload(
                 metadata.as_ref(),
-                session.as_ref().and_then(|entry| entry.parent_message_id.as_deref()),
+                session
+                    .as_ref()
+                    .and_then(|entry| entry.parent_message_id.as_deref()),
             );
         let mut payload = json!({
             "run_id": record.run_id,
@@ -821,7 +819,10 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
             "spawned_by": session.as_ref().and_then(|entry| entry.spawned_by.clone()),
         });
         if let Some(object) = payload.as_object_mut() {
-            object.insert("metadata".to_string(), metadata.clone().unwrap_or(Value::Null));
+            object.insert(
+                "metadata".to_string(),
+                metadata.clone().unwrap_or(Value::Null),
+            );
             object.insert(
                 "controller_session_id".to_string(),
                 crate::services::subagents::run_metadata_field(
@@ -839,10 +840,7 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
             );
             object.insert(
                 "control_scope".to_string(),
-                crate::services::subagents::run_metadata_field(
-                    metadata.as_ref(),
-                    "control_scope",
-                ),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "control_scope"),
             );
             object.insert(
                 "spawn_mode".to_string(),
@@ -868,24 +866,15 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
             );
             object.insert(
                 "dispatch_label".to_string(),
-                crate::services::subagents::run_metadata_field(
-                    metadata.as_ref(),
-                    "dispatch_label",
-                ),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "dispatch_label"),
             );
             object.insert(
                 "dispatch_index".to_string(),
-                crate::services::subagents::run_metadata_field(
-                    metadata.as_ref(),
-                    "dispatch_index",
-                ),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "dispatch_index"),
             );
             object.insert(
                 "dispatch_size".to_string(),
-                crate::services::subagents::run_metadata_field(
-                    metadata.as_ref(),
-                    "dispatch_size",
-                ),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "dispatch_size"),
             );
             object.insert(
                 "cleanup".to_string(),
@@ -967,10 +956,7 @@ fn build_session_snapshot(
     let terminal = is_terminal_status(&status);
     let failed = is_failed_status(&status);
     let (parent_turn_ref, parent_user_round, parent_model_round) =
-        crate::services::subagents::parent_turn_payload(
-            None,
-            session.parent_message_id.as_deref(),
-        );
+        crate::services::subagents::parent_turn_payload(None, session.parent_message_id.as_deref());
     let mut payload = json!({
         "status": status,
         "runtime_status": runtime_status,

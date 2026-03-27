@@ -118,7 +118,11 @@ fn parse_file_transfer(text: &str) -> Option<(String, Value)> {
         return None;
     }
 
+    let file_id = parts[0].trim();
     let filename = parts[1].trim();
+    let size = parts[2].trim().parse::<u64>().unwrap_or(0);
+    let mime_type = parts[3].trim();
+    let download_url = parts[4].trim();
     let display_text = if filename.is_empty() {
         "User initiated file transfer".to_string()
     } else {
@@ -126,11 +130,11 @@ fn parse_file_transfer(text: &str) -> Option<(String, Value)> {
     };
 
     let file_info = json!({
-        "file_id": parts[0],
-        "filename": parts[1],
-        "size": parts[2].parse::<u64>().unwrap_or(0),
-        "mime_type": parts[3],
-        "download_url": parts[4],
+        "file_id": file_id,
+        "filename": filename,
+        "size": size,
+        "mime_type": mime_type,
+        "download_url": download_url,
     });
     Some((display_text, file_info))
 }

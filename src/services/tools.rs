@@ -1228,7 +1228,10 @@ fn child_session_depth(
         if !seen.insert(session_id.clone()) || depth >= MAX_SUBAGENT_SESSION_DEPTH as i64 {
             break;
         }
-        let Some(session) = storage.get_chat_session(cleaned_user, &session_id).ok().flatten()
+        let Some(session) = storage
+            .get_chat_session(cleaned_user, &session_id)
+            .ok()
+            .flatten()
         else {
             break;
         };
@@ -3146,7 +3149,8 @@ fn prepare_child_session(
 
     let now = now_ts();
     let child_session_id = format!("sess_{}", Uuid::new_v4().simple());
-    let parent_turn_ref = subagents::encode_parent_turn_ref(context.user_round, context.model_round);
+    let parent_turn_ref =
+        subagents::encode_parent_turn_ref(context.user_round, context.model_round);
     let child_record = ChatSessionRecord {
         session_id: child_session_id.clone(),
         user_id: user_id.to_string(),
@@ -3246,11 +3250,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         "run_timeout_seconds",
         json!(wait_seconds),
     );
-    insert_run_metadata_field(
-        &mut run_metadata,
-        "background",
-        json!(wait_seconds <= 0.0),
-    );
+    insert_run_metadata_field(&mut run_metadata, "background", json!(wait_seconds <= 0.0));
     let mut receiver = spawn_session_run(
         context,
         request,

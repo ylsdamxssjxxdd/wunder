@@ -1,6 +1,11 @@
 <template>
   <div class="beeroom-canvas-graph-shell">
-    <div ref="viewportRef" class="beeroom-canvas-surface" @wheel.prevent="handleViewportWheel" @pointerdown="handleViewportPointerDown">
+    <div
+      ref="viewportRef"
+      class="beeroom-canvas-surface"
+      @wheel.prevent="handleViewportWheel"
+      @pointerdown="handleViewportPointerDown"
+    >
       <div class="beeroom-swarm-world" :style="worldStyle">
         <svg
           class="beeroom-swarm-grid-layer"
@@ -10,7 +15,7 @@
         >
           <defs>
             <pattern :id="gridPatternId" width="32" height="32" patternUnits="userSpaceOnUse">
-              <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(148, 163, 184, 0.14)" stroke-width="1" />
+              <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(148, 163, 184, 0.1)" stroke-width="1" />
             </pattern>
           </defs>
           <rect :width="worldSize.width" :height="worldSize.height" :fill="`url(#${gridPatternId})`" />
@@ -71,38 +76,70 @@
       </span>
     </div>
 
-    <div class="beeroom-canvas-tools" role="toolbar" aria-label="画布控制">
-      <button class="beeroom-canvas-tool-btn" type="button" title="放大画布" aria-label="放大画布" @click="zoomIn">
+    <div class="beeroom-canvas-tools" role="toolbar" :aria-label="canvasControlLabels.toolbar">
+      <button
+        class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.zoomIn"
+        :aria-label="canvasControlLabels.zoomIn"
+        @click="zoomIn"
+      >
         <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">放大画布</span>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.zoomIn }}</span>
       </button>
-      <button class="beeroom-canvas-tool-btn" type="button" title="缩小画布" aria-label="缩小画布" @click="zoomOut">
+      <button
+        class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.zoomOut"
+        :aria-label="canvasControlLabels.zoomOut"
+        @click="zoomOut"
+      >
         <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">缩小画布</span>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.zoomOut }}</span>
       </button>
-      <button class="beeroom-canvas-tool-btn" type="button" title="重置缩放 100%" aria-label="重置缩放 100%" @click="resetZoom">
+      <button
+        class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.resetZoom"
+        :aria-label="canvasControlLabels.resetZoom"
+        @click="resetZoom"
+      >
         <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">重置缩放 100%</span>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.resetZoom }}</span>
       </button>
-      <button class="beeroom-canvas-tool-btn" type="button" title="适配视图" aria-label="适配视图" @click="fitView(true)">
+      <button
+        class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.fitView"
+        :aria-label="canvasControlLabels.fitView"
+        @click="fitView(true)"
+      >
         <i class="fa-solid fa-expand" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">适配视图</span>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.fitView }}</span>
       </button>
-      <button class="beeroom-canvas-tool-btn" type="button" title="自动整理" aria-label="自动整理" @click="autoArrangeCanvas">
+      <button
+        class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.autoArrange"
+        :aria-label="canvasControlLabels.autoArrange"
+        @click="autoArrangeCanvas"
+      >
         <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">自动整理</span>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.autoArrange }}</span>
       </button>
       <button
         class="beeroom-canvas-tool-btn"
         :class="{ 'is-active': fullscreen }"
         type="button"
-        :title="fullscreen ? '退出全屏' : '全屏'"
-        :aria-label="fullscreen ? '退出全屏' : '全屏'"
+        :title="fullscreen ? canvasControlLabels.exitFullscreen : canvasControlLabels.enterFullscreen"
+        :aria-label="fullscreen ? canvasControlLabels.exitFullscreen : canvasControlLabels.enterFullscreen"
         :aria-pressed="fullscreen"
         @click="emit('toggle-fullscreen')"
       >
         <i class="fa-solid" :class="fullscreen ? 'fa-minimize' : 'fa-maximize'" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">{{ fullscreen ? '退出全屏' : '全屏' }}</span>
+        <span class="beeroom-visually-hidden">
+          {{ fullscreen ? canvasControlLabels.exitFullscreen : canvasControlLabels.enterFullscreen }}
+        </span>
       </button>
     </div>
 
@@ -215,6 +252,16 @@ type PanState = {
 };
 
 const { t } = useI18n();
+const canvasControlLabels = {
+  toolbar: '画布控制区',
+  zoomIn: '放大画布',
+  zoomOut: '缩小画布',
+  resetZoom: '重置缩放 100%',
+  fitView: '适配视图',
+  autoArrange: '自动整理',
+  enterFullscreen: '全屏',
+  exitFullscreen: '退出全屏'
+} as const;
 const viewportRef = ref<HTMLDivElement | null>(null);
 const containerSize = ref(normalizeSwarmViewportSize({ width: 0, height: 0 }));
 const selectedNodeId = ref('');
@@ -518,14 +565,6 @@ const autoArrangeCanvas = async () => {
   await fitView(true);
 };
 
-const resolvePointerPosition = (event: PointerEvent) => {
-  const rect = viewportRef.value?.getBoundingClientRect();
-  return {
-    x: Number(event.clientX || 0) - Number(rect?.left || 0),
-    y: Number(event.clientY || 0) - Number(rect?.top || 0)
-  };
-};
-
 const handleViewportWheel = (event: WheelEvent) => {
   const rect = viewportRef.value?.getBoundingClientRect();
   if (!rect) return;
@@ -714,21 +753,38 @@ onBeforeUnmount(() => {
 <style scoped>
 .beeroom-canvas-graph-shell {
   position: relative;
+  display: flex;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
-  border-radius: 30px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.beeroom-canvas-graph-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 24px rgba(15, 23, 42, 0.2);
+  pointer-events: none;
+}
+
+.beeroom-canvas-graph-shell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   background:
-    radial-gradient(circle at top left, rgba(59, 130, 246, 0.14), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.12), transparent 36%),
-    linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(241, 245, 249, 0.96));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 96px),
+    linear-gradient(135deg, transparent 0%, rgba(239, 68, 68, 0.02) 48%, transparent 100%);
+  opacity: 0.56;
+  pointer-events: none;
 }
 
 .beeroom-canvas-surface {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   touch-action: none;
   cursor: grab;
@@ -772,132 +828,167 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-swarm-edge.is-active {
-  stroke: rgba(59, 130, 246, 0.94);
+  stroke: rgba(248, 113, 113, 0.94);
   stroke-width: 1.52;
   stroke-dasharray: 10 8;
   animation: beeroom-edge-flow 1.8s linear infinite;
 }
 
 .beeroom-swarm-edge-label {
-  fill: rgba(71, 85, 105, 0.94);
+  fill: rgba(226, 232, 240, 0.8);
   font-size: 11px;
   font-weight: 600;
   text-anchor: middle;
   paint-order: stroke;
-  stroke: rgba(248, 250, 252, 0.92);
+  stroke: rgba(8, 11, 17, 0.92);
   stroke-width: 4px;
   stroke-linejoin: round;
 }
 
 .beeroom-swarm-edge-label.is-active {
-  fill: rgba(30, 64, 175, 0.96);
+  fill: rgba(254, 202, 202, 0.96);
 }
 
 .beeroom-canvas-legend,
 .beeroom-canvas-tools,
 .beeroom-canvas-minimap-shell {
   position: absolute;
-  z-index: 2;
+  z-index: 5;
 }
 
 .beeroom-canvas-legend {
-  left: 18px;
-  top: 18px;
-  display: flex;
+  top: 12px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(12, 13, 18, 0.88);
+  color: rgba(229, 231, 235, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 24px rgba(0, 0, 0, 0.2);
 }
 
 .beeroom-canvas-legend-item {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.9);
-  color: rgba(51, 65, 85, 0.92);
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 12px 24px rgba(148, 163, 184, 0.14);
+  gap: 6px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .beeroom-canvas-legend-item i {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  display: inline-block;
-  background: rgba(148, 163, 184, 0.88);
+  background: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
 }
 
 .beeroom-canvas-legend-item.is-running i {
-  background: rgba(34, 197, 94, 0.92);
+  background: rgba(239, 68, 68, 0.95);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
 }
 
 .beeroom-canvas-legend-item.is-danger i {
-  background: rgba(239, 68, 68, 0.92);
+  background: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
+
+.beeroom-canvas-legend-item.is-idle i {
+  background: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
 }
 
 .beeroom-canvas-tools {
-  right: 18px;
-  top: 18px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  left: 14px;
+  top: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(12, 13, 18, 0.72);
+  opacity: 0.78;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 16px rgba(0, 0, 0, 0.16);
 }
 
 .beeroom-canvas-tool-btn {
-  width: 40px;
-  height: 40px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(51, 65, 85, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.28);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
-  box-shadow: 0 10px 20px rgba(148, 163, 184, 0.12);
+  transition:
+    border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .beeroom-canvas-tool-btn:hover,
 .beeroom-canvas-tool-btn:focus-visible,
 .beeroom-canvas-tool-btn.is-active {
-  border-color: rgba(96, 165, 250, 0.4);
-  color: rgba(30, 64, 175, 0.92);
+  border-color: rgba(96, 165, 250, 0.48);
+  background: rgba(30, 64, 175, 0.32);
+  color: #dbeafe;
+  transform: translateY(-1px);
   outline: none;
 }
 
+.beeroom-canvas-tool-btn:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .beeroom-canvas-minimap-shell {
-  right: 18px;
-  bottom: 18px;
+  left: 12px;
+  bottom: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 20px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 16px 28px rgba(148, 163, 184, 0.16);
+  gap: 6px;
+  pointer-events: none;
 }
 
 .beeroom-canvas-minimap-label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(100, 116, 139, 0.9);
+  align-self: flex-start;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.94), rgba(15, 17, 23, 0.9));
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: rgba(209, 213, 219, 0.86);
+  font-size: 9px;
+  letter-spacing: 0.04em;
 }
 
 .beeroom-canvas-minimap {
   width: 132px;
   height: 80px;
   padding: 0;
-  border: none;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.92));
-  border-radius: 14px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(180deg, rgba(15, 17, 23, 0.94), rgba(10, 11, 16, 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 10px 26px rgba(0, 0, 0, 0.28);
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .beeroom-canvas-minimap-svg {
@@ -918,14 +1009,14 @@ onBeforeUnmount(() => {
 .beeroom-canvas-minimap-node.is-running,
 .beeroom-canvas-minimap-node.is-queued,
 .beeroom-canvas-minimap-node.is-awaiting_idle {
-  fill: rgba(34, 197, 94, 0.9);
+  fill: rgba(239, 68, 68, 0.9);
 }
 
 .beeroom-canvas-minimap-node.is-failed,
 .beeroom-canvas-minimap-node.is-error,
 .beeroom-canvas-minimap-node.is-timeout,
 .beeroom-canvas-minimap-node.is-cancelled {
-  fill: rgba(239, 68, 68, 0.9);
+  fill: rgba(248, 113, 113, 0.92);
 }
 
 .beeroom-canvas-minimap-node.is-completed,
@@ -935,7 +1026,7 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-minimap-viewport {
   fill: rgba(148, 163, 184, 0.1);
-  stroke: rgba(71, 85, 105, 0.62);
+  stroke: rgba(203, 213, 225, 0.62);
   stroke-width: 1.2;
 }
 
@@ -947,6 +1038,7 @@ onBeforeUnmount(() => {
   margin: -1px;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
   border: 0;
 }
 
@@ -957,6 +1049,24 @@ onBeforeUnmount(() => {
 
   to {
     stroke-dashoffset: -36;
+  }
+}
+
+@media (max-width: 900px) {
+  .beeroom-canvas-legend {
+    left: 108px;
+    right: 12px;
+    flex-wrap: wrap;
+  }
+
+  .beeroom-canvas-tools {
+    left: 12px;
+  }
+
+  .beeroom-canvas-minimap-shell {
+    left: auto;
+    right: 12px;
+    bottom: 12px;
   }
 }
 </style>

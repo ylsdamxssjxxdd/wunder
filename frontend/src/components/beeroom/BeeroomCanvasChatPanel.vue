@@ -45,6 +45,7 @@
           >
             <i class="fa-solid fa-play" aria-hidden="true"></i>
           </button>
+          <span class="beeroom-canvas-chat-count">{{ messages.length }}</span>
         </div>
       </div>
 
@@ -273,77 +274,99 @@ watch(
 <style scoped>
 .beeroom-canvas-chat {
   position: relative;
-  width: min(360px, 34vw);
-  min-width: 320px;
-  flex: 0 0 auto;
+  z-index: 1;
   display: flex;
+  width: var(--beeroom-chat-width, 344px);
+  min-width: 0;
   flex-direction: column;
   gap: 12px;
-  padding: 18px 18px 18px 14px;
-  border-left: 1px solid rgba(148, 163, 184, 0.14);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.98));
+  padding: 14px 14px 14px 18px;
+  border-left: 1px solid rgba(148, 163, 184, 0.2);
+  background:
+    linear-gradient(180deg, rgba(13, 14, 20, 0.95), rgba(9, 10, 15, 0.97)),
+    linear-gradient(180deg, rgba(239, 68, 68, 0.03), rgba(148, 163, 184, 0.02));
+  color: #e5e7eb;
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  transition:
+    width 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .beeroom-canvas-chat::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 22px;
-  bottom: 22px;
-  width: 1px;
-  background: linear-gradient(180deg, transparent, rgba(148, 163, 184, 0.24), transparent);
+  inset: 0 0 auto 0;
+  height: 56px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
+  pointer-events: none;
 }
 
 .beeroom-canvas-chat.collapsed {
-  width: 28px;
-  min-width: 28px;
-  padding: 18px 10px 18px 0;
-  border-left: none;
+  width: 0;
+  padding: 0;
+  border-left: 0;
+  box-shadow: none;
   background: transparent;
-}
-
-.beeroom-canvas-chat.collapsed::before {
-  display: none;
+  gap: 0;
+  overflow: visible;
 }
 
 .beeroom-canvas-chat-handle {
   position: absolute;
-  left: -14px;
-  top: 18px;
-  width: 28px;
-  height: 56px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.94);
-  color: rgba(71, 85, 105, 0.92);
+  left: -12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 78px;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.94));
+  color: #cbd5e1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(148, 163, 184, 0.16);
+  z-index: 2;
+  opacity: 0.82;
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.3);
+}
+
+.beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle {
+  left: -14px;
 }
 
 .beeroom-canvas-chat-handle:hover,
 .beeroom-canvas-chat-handle:focus-visible {
-  border-color: rgba(96, 165, 250, 0.36);
-  color: rgba(30, 64, 175, 0.92);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
+  border-color: rgba(148, 163, 184, 0.56);
   outline: none;
 }
 
-.beeroom-canvas-chat-head,
-.beeroom-canvas-chat-head-actions,
-.beeroom-canvas-chat-runtime,
-.beeroom-canvas-chat-meta-row,
-.beeroom-canvas-chat-compose-foot,
-.beeroom-canvas-chat-approvals-head,
-.beeroom-canvas-chat-approval-actions {
+.beeroom-canvas-chat-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.beeroom-canvas-chat-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .beeroom-canvas-chat-title {
-  font-size: 14px;
+  color: #f3f4f6;
+  font-size: 16px;
   font-weight: 700;
-  color: rgba(15, 23, 42, 0.96);
+  letter-spacing: 0.02em;
 }
 
 .beeroom-canvas-chat-runtime,
@@ -351,109 +374,142 @@ watch(
 .beeroom-canvas-chat-extra,
 .beeroom-canvas-chat-approval-meta,
 .beeroom-canvas-chat-compose-status {
-  font-size: 12px;
-  color: rgba(100, 116, 139, 0.92);
+  font-size: 11px;
+  color: rgba(156, 163, 175, 0.92);
+}
+
+.beeroom-canvas-chat-runtime {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .beeroom-canvas-runtime-chip {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
+  min-height: 20px;
+  padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.48);
+  color: rgba(226, 232, 240, 0.92);
   font-size: 11px;
-  font-weight: 700;
+  line-height: 1;
 }
 
 .beeroom-canvas-runtime-chip.is-running {
-  color: rgba(21, 128, 61, 0.92);
-  border-color: rgba(34, 197, 94, 0.22);
-  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(239, 68, 68, 0.36);
+  background: rgba(127, 29, 29, 0.3);
+  color: rgba(254, 202, 202, 0.96);
 }
 
 .beeroom-canvas-runtime-chip.is-success {
-  color: rgba(30, 64, 175, 0.92);
-  border-color: rgba(96, 165, 250, 0.22);
-  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(34, 197, 94, 0.36);
+  background: rgba(21, 128, 61, 0.28);
+  color: rgba(187, 247, 208, 0.96);
 }
 
 .beeroom-canvas-runtime-chip.is-danger {
-  color: rgba(185, 28, 28, 0.92);
-  border-color: rgba(239, 68, 68, 0.22);
-  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(127, 29, 29, 0.3);
+  color: rgba(254, 202, 202, 0.96);
 }
 
 .beeroom-canvas-runtime-chip.is-warn {
-  color: rgba(146, 64, 14, 0.92);
-  border-color: rgba(245, 158, 11, 0.22);
-  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.42);
+  background: rgba(146, 64, 14, 0.28);
+  color: rgba(254, 240, 138, 0.98);
 }
 
 .beeroom-canvas-runtime-session {
   font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 }
 
+.beeroom-canvas-chat-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(127, 29, 29, 0.22);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  color: rgba(248, 113, 113, 0.98);
+  font-size: 11px;
+}
+
 .beeroom-canvas-icon-btn,
 .beeroom-canvas-chat-approval-btn {
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(51, 65, 85, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(19, 21, 29, 0.84);
+  color: #d1d5db;
   cursor: pointer;
 }
 
 .beeroom-canvas-icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .beeroom-canvas-icon-btn:hover:not(:disabled),
 .beeroom-canvas-icon-btn:focus-visible:not(:disabled),
 .beeroom-canvas-chat-approval-btn:hover:not(:disabled),
 .beeroom-canvas-chat-approval-btn:focus-visible:not(:disabled) {
-  border-color: rgba(96, 165, 250, 0.38);
-  color: rgba(30, 64, 175, 0.92);
+  border-color: rgba(96, 165, 250, 0.42);
+  background: rgba(30, 41, 59, 0.96);
+  color: #e2e8f0;
   outline: none;
 }
 
 .beeroom-canvas-chat-stream {
-  flex: 1 1 auto;
-  min-height: 220px;
-  overflow: auto;
   display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
-  gap: 12px;
-  padding-right: 4px;
+  gap: 10px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .beeroom-canvas-chat-message {
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
+  display: flex;
+  align-items: flex-start;
   gap: 10px;
-  align-items: start;
 }
 
 .beeroom-canvas-chat-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(51, 65, 85, 0.92);
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  background: rgba(23, 25, 34, 0.9);
+  color: #e5e7eb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
   overflow: hidden;
   cursor: pointer;
 }
 
 .beeroom-canvas-chat-avatar.is-system {
-  background: rgba(226, 232, 240, 0.84);
+  cursor: default;
+  background: rgba(23, 25, 34, 0.76);
+  color: #9ca3af;
 }
 
 .beeroom-canvas-chat-avatar.is-user {
-  background: rgba(191, 219, 254, 0.74);
+  cursor: default;
+  background: rgba(127, 29, 29, 0.52);
+  color: #fee2e2;
 }
 
 .beeroom-canvas-chat-avatar-img {
@@ -463,178 +519,314 @@ watch(
 }
 
 .beeroom-canvas-chat-main {
+  display: grid;
+  gap: 4px;
+  flex: 1;
   min-width: 0;
+}
+
+.beeroom-canvas-chat-meta-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .beeroom-canvas-chat-sender {
+  padding: 0;
   border: none;
   background: transparent;
-  padding: 0;
-  font-size: 13px;
+  color: #f3f4f6;
+  font-size: 12px;
   font-weight: 700;
-  color: rgba(15, 23, 42, 0.96);
   cursor: pointer;
-}
-
-.beeroom-canvas-chat-sender.is-user {
-  color: rgba(30, 64, 175, 0.92);
+  border-radius: 8px;
 }
 
 .beeroom-canvas-chat-sender.is-system {
-  color: rgba(71, 85, 105, 0.92);
+  color: #9ca3af;
+  cursor: default;
+}
+
+.beeroom-canvas-chat-sender.is-user {
+  color: #fee2e2;
 }
 
 .beeroom-canvas-chat-bubble {
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(255, 255, 255, 0.9);
-  color: rgba(30, 41, 59, 0.96);
-  line-height: 1.6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: linear-gradient(180deg, rgba(24, 26, 34, 0.86), rgba(16, 18, 24, 0.82));
+  color: #e5e7eb;
+  font-size: 12.5px;
+  line-height: 1.65;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-canvas-chat-message.is-mother .beeroom-canvas-chat-bubble {
-  background: rgba(254, 243, 199, 0.72);
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(69, 10, 10, 0.24);
 }
 
 .beeroom-canvas-chat-message.is-worker .beeroom-canvas-chat-bubble {
-  background: rgba(219, 234, 254, 0.72);
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(31, 41, 55, 0.32);
 }
 
 .beeroom-canvas-chat-message.is-system .beeroom-canvas-chat-bubble {
-  background: rgba(226, 232, 240, 0.74);
+  border-style: dashed;
+  background: rgba(17, 24, 39, 0.56);
 }
 
 .beeroom-canvas-chat-message.is-user .beeroom-canvas-chat-bubble {
-  background: rgba(220, 252, 231, 0.74);
+  border-color: rgba(239, 68, 68, 0.32);
+  background: rgba(127, 29, 29, 0.3);
 }
 
 .beeroom-canvas-chat-mention {
-  color: rgba(30, 64, 175, 0.9);
+  color: #fca5a5;
   font-weight: 700;
-  margin-right: 6px;
 }
 
 .beeroom-canvas-chat-approvals,
-.beeroom-canvas-chat-approval-item,
 .beeroom-canvas-chat-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  gap: 8px;
 }
 
-.beeroom-canvas-chat-approval-item {
-  padding: 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(255, 255, 255, 0.86);
+.beeroom-canvas-chat-approvals {
+  max-height: 178px;
+  overflow: auto;
+  padding: 8px 0 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.beeroom-canvas-chat-approvals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .beeroom-canvas-chat-approvals-count {
-  min-width: 24px;
-  height: 24px;
-  border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(59, 130, 246, 0.12);
-  color: rgba(30, 64, 175, 0.92);
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  background: rgba(120, 53, 15, 0.28);
+  color: rgba(254, 240, 138, 0.96);
+  font-size: 11px;
+}
+
+.beeroom-canvas-chat-approval-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.beeroom-canvas-chat-approval-summary {
+  color: rgba(243, 244, 246, 0.94);
   font-size: 12px;
-  font-weight: 700;
+  line-height: 1.5;
+}
+
+.beeroom-canvas-chat-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .beeroom-canvas-chat-approval-btn {
-  padding: 7px 10px;
-  border-radius: 12px;
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: rgba(30, 41, 59, 0.65);
+  color: rgba(226, 232, 240, 0.96);
+  font-size: 11px;
 }
 
 .beeroom-canvas-chat-approval-btn.is-danger {
-  color: rgba(185, 28, 28, 0.92);
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(127, 29, 29, 0.44);
+  color: rgba(254, 202, 202, 0.98);
+}
+
+.beeroom-canvas-chat-composer {
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(9, 10, 15, 0), rgba(9, 10, 15, 0.52));
+}
+
+.beeroom-canvas-chat-compose-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .beeroom-canvas-chat-textarea {
   width: 100%;
-  min-height: 108px;
-  resize: vertical;
-  padding: 12px 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(30, 41, 59, 0.96);
+  min-height: 84px;
+  resize: none;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.92), rgba(15, 17, 23, 0.88));
+  color: #f3f4f6;
   line-height: 1.6;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-canvas-chat-textarea:focus-visible {
-  border-color: rgba(96, 165, 250, 0.42);
-  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(96, 165, 250, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.beeroom-canvas-chat-compose-status.is-error {
+  color: #f87171;
+}
+
+.beeroom-canvas-chat-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__wrapper) {
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.92), rgba(15, 17, 23, 0.88));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__selected-item),
+.beeroom-canvas-chat-select :deep(.el-select__placeholder),
+.beeroom-canvas-chat-select :deep(.el-select__input) {
+  color: #f3f4f6;
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__caret) {
+  color: rgba(209, 213, 219, 0.78);
+}
+
+.beeroom-canvas-chat-select :deep(.is-focused .el-select__wrapper),
+.beeroom-canvas-chat-select :deep(.el-select__wrapper.is-focused) {
+  box-shadow:
+    0 0 0 2px rgba(96, 165, 250, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:deep(.beeroom-canvas-chat-select-popper.el-popper) {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.98), rgba(14, 16, 22, 0.98));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42);
+}
+
+:deep(.beeroom-canvas-chat-select-popper.el-popper .el-popper__arrow::before) {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(14, 16, 22, 0.98);
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item) {
+  color: #e5e7eb;
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-hovering),
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item:hover) {
+  background: rgba(31, 41, 55, 0.78);
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-selected) {
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.6);
 }
 
 .beeroom-canvas-chat-send,
 .beeroom-canvas-chat-demo {
-  min-width: 96px;
-  height: 40px;
-  padding: 0 16px;
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
   cursor: pointer;
 }
 
 .beeroom-canvas-chat-send {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.96), rgba(37, 99, 235, 0.94));
-  color: rgba(255, 255, 255, 0.98);
+  min-width: 74px;
+  border: 1px solid rgba(239, 68, 68, 0.34);
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.92), rgba(185, 28, 28, 0.92));
+  color: #fee2e2;
+  box-shadow: 0 10px 24px rgba(127, 29, 29, 0.24);
 }
 
 .beeroom-canvas-chat-demo {
-  background: rgba(255, 255, 255, 0.92);
-  color: rgba(51, 65, 85, 0.92);
+  min-width: 86px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.72);
+  color: rgba(226, 232, 240, 0.92);
 }
 
 .beeroom-canvas-chat-demo.is-running {
-  background: rgba(254, 243, 199, 0.9);
-  color: rgba(146, 64, 14, 0.92);
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(120, 53, 15, 0.44);
+  color: rgba(254, 240, 138, 0.98);
 }
 
 .beeroom-canvas-chat-send:disabled,
 .beeroom-canvas-chat-demo:disabled,
 .beeroom-canvas-chat-approval-btn:disabled,
 .beeroom-canvas-icon-btn:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
-  opacity: 0.58;
 }
 
-.beeroom-canvas-chat-compose-status.is-error {
-  color: rgba(185, 28, 28, 0.92);
-}
-
-.beeroom-canvas-chat-select {
-  flex: 1 1 auto;
-}
-
-.beeroom-canvas-chat-select :deep(.el-select__wrapper) {
-  min-height: 40px;
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: none;
-}
-
-.beeroom-canvas-chat-select :deep(.is-focused .el-select__wrapper),
-.beeroom-canvas-chat-select :deep(.el-select__wrapper.is-focused) {
-  border-color: rgba(96, 165, 250, 0.42);
-}
-
-:deep(.beeroom-canvas-chat-select-popper.el-popper) {
-  border-radius: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .beeroom-canvas-chat {
-    width: min(320px, 42vw);
-    min-width: 280px;
+    width: 100%;
+    padding: 18px 14px 14px;
+    border-left: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.03),
+      inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+
+  .beeroom-canvas-chat.collapsed {
+    width: 100%;
+  }
+
+  .beeroom-canvas-chat-handle {
+    left: 50%;
+    top: -12px;
+    width: 76px;
+    height: 22px;
+    transform: translateX(-50%);
+  }
+
+  .beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle {
+    left: 50%;
+    top: -14px;
+  }
+
+  .beeroom-canvas-chat-head,
+  .beeroom-canvas-chat-compose-foot {
+    flex-wrap: wrap;
   }
 }
 </style>

@@ -68,6 +68,8 @@ import { useRouter } from 'vue-router';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { fetchOrgUnits } from '@/api/auth';
+import { isDesktopModeEnabled } from '@/config/desktop';
+import { buildDefaultAgentChatRoute } from '@/utils/authNavigation';
 import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
@@ -114,7 +116,7 @@ const handleRegister = async () => {
       ...form,
       unit_id: form.unit_id || ''
     });
-    router.push('/app/home');
+    router.push(buildDefaultAgentChatRoute({ desktop: isDesktopModeEnabled() }));
   } catch (error) {
     showApiError(error, t('auth.register.error'));
   }

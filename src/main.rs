@@ -33,7 +33,7 @@ use axum::middleware::{from_fn, from_fn_with_state, Next};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::Router;
-use config::Config;
+use config::{Config, McpToolSpec};
 use config_store::ConfigStore;
 use futures::FutureExt;
 use shutdown::shutdown_signal;
@@ -75,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
     }
     let state = Arc::new(AppState::new(config_store.clone(), config.clone())?);
     state.lsp_manager.sync_with_config(&config).await;
+    tokio::spawn(hydrate_enabled_mcp_tool_specs(state.clone()));
 
     // 挂载 API 路由与静态资源入口。
     let app = api::build_router(state.clone());
@@ -157,6 +158,122 @@ fn resolve_server_mode(config: &Config) -> String {
         "api".to_string()
     } else {
         raw.to_ascii_lowercase()
+    }
+}
+
+fn should_hydrate_mcp_tool_specs(server: &config::McpServerConfig) -> bool {
+    server.enabled
+        && server.tool_specs.is_empty()
+        && !server.name.trim().is_empty()
+        && !server.endpoint.trim().is_empty()
+}
+
+fn to_mcp_tool_specs(specs: Vec<schemas::ToolSpec>) -> Vec<McpToolSpec> {
+    specs
+        .into_iter()
+        .map(|spec| McpToolSpec {
+            name: spec.name,
+            description: spec.description,
+            input_schema: serde_yaml::to_value(spec.input_schema)
+                .unwrap_or(serde_yaml::Value::Null),
+        })
+        .collect()
+}
+
+async fn hydrate_enabled_mcp_tool_specs(state: Arc<AppState>) {
+    for attempt in 1..=5 {
+        let config = state.config_store.get().await;
+        let timeout_s = if config.mcp.timeout_s > 0 {
+            config.mcp.timeout_s.clamp(10, 300)
+        } else {
+            120
+        };
+        let pending = config
+            .mcp
+            .servers
+            .iter()
+            .filter(|server| should_hydrate_mcp_tool_specs(server))
+            .cloned()
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
+            return;
+        }
+
+        let mut hydrated = Vec::new();
+        for server in pending {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_s),
+                crate::mcp::fetch_tools(&config, &server),
+            )
+            .await;
+            match result {
+                Ok(Ok(specs)) if !specs.is_empty() => {
+                    hydrated.push((server.name.clone(), to_mcp_tool_specs(specs)));
+                }
+                Ok(Ok(_)) => {
+                    warn!(
+                        "startup MCP tool hydration returned no tools for server {}",
+                        server.name
+                    );
+                }
+                Ok(Err(err)) => {
+                    warn!(
+                        "startup MCP tool hydration failed for server {}: {}",
+                        server.name, err
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        "startup MCP tool hydration timed out for server {} after {}s",
+                        server.name, timeout_s
+                    );
+                }
+            }
+        }
+
+        if !hydrated.is_empty() {
+            let names = hydrated
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>();
+            if let Err(err) = state
+                .config_store
+                .update(|config| {
+                    for (name, specs) in &hydrated {
+                        if let Some(server) = config
+                            .mcp
+                            .servers
+                            .iter_mut()
+                            .find(|item| item.name == *name)
+                        {
+                            if server.tool_specs.is_empty() {
+                                server.tool_specs = specs.clone();
+                            }
+                        }
+                    }
+                })
+                .await
+            {
+                warn!("failed to persist hydrated MCP tool specs: {err}");
+            } else {
+                info!("hydrated MCP tool specs at startup: {}", names.join(", "));
+            }
+        }
+
+        let has_remaining = state
+            .config_store
+            .get()
+            .await
+            .mcp
+            .servers
+            .iter()
+            .any(should_hydrate_mcp_tool_specs);
+        if !has_remaining {
+            return;
+        }
+        if attempt < 5 {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
     }
 }
 

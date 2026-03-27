@@ -168,11 +168,8 @@ pub(crate) fn parent_turn_payload(
         fallback_turn.as_ref().map(|value| value.user_round),
         fallback_turn.as_ref().and_then(|value| value.model_round),
     );
-    let parent_turn_ref = cloned_metadata_field(metadata, "parent_turn_ref").unwrap_or_else(|| {
-        fallback_ref
-            .map(Value::String)
-            .unwrap_or(Value::Null)
-    });
+    let parent_turn_ref = cloned_metadata_field(metadata, "parent_turn_ref")
+        .unwrap_or_else(|| fallback_ref.map(Value::String).unwrap_or(Value::Null));
     let parent_user_round =
         cloned_metadata_field(metadata, "parent_user_round").unwrap_or_else(|| {
             fallback_turn
@@ -734,7 +731,10 @@ fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
     let Some(object) = payload.as_object_mut() else {
         return payload;
     };
-    object.insert("metadata".to_string(), metadata.clone().unwrap_or(Value::Null));
+    object.insert(
+        "metadata".to_string(),
+        metadata.clone().unwrap_or(Value::Null),
+    );
     object.insert(
         "controller_session_id".to_string(),
         run_metadata_field(metadata.as_ref(), "controller_session_id"),

@@ -178,7 +178,9 @@ impl BrowserBridge {
         let ready: BridgeResponse = serde_json::from_str(ready_line.trim())
             .map_err(|err| format!("Bridge startup failed: {err}. Output: {ready_line}"))?;
         if !ready.success {
-            let error = ready.error.unwrap_or_else(|| "Unknown startup error".to_string());
+            let error = ready
+                .error
+                .unwrap_or_else(|| "Unknown startup error".to_string());
             let _ = child.kill();
             return Err(format!("Browser bridge failed to start: {error}"));
         }

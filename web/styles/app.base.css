@@ -2180,6 +2180,10 @@ button.btn-with-icon[aria-busy="true"] i {
   padding-right: 4px;
 }
 
+.monitor-block-summary .monitor-summary > div {
+  min-width: 0;
+}
+
 .monitor-kv-table {
   width: 100%;
   border-collapse: collapse;
@@ -2243,6 +2247,30 @@ button.btn-with-icon[aria-busy="true"] i {
 
 .monitor-kv-table td .monitor-subtext:empty {
   display: none;
+}
+
+.monitor-block-summary .monitor-kv-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.monitor-block-summary .monitor-kv-table td strong {
+  display: block;
+  line-height: 1.45;
+}
+
+.monitor-block-summary .monitor-kv-table td .monitor-subtext {
+  display: block;
+  margin-top: 4px;
+  margin-left: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.monitor-block-summary .monitor-kv-table td .monitor-subtext::before {
+  content: none;
 }
 
 .monitor-section-title {

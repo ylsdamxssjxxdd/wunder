@@ -55,7 +55,9 @@ import { useRouter } from 'vue-router';
 
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
+import { buildDefaultAgentChatRoute } from '@/utils/authNavigation';
 import { resolveLoginErrorMessage, validateLoginForm, type LoginField } from '@/utils/authFeedback';
+import { isDesktopModeEnabled } from '@/config/desktop';
 
 const router = useRouter();
 const authStore = useAuthStore();
@@ -111,7 +113,7 @@ const handleLogin = async () => {
   }
   try {
     await authStore.login(form);
-    router.push('/app/home');
+    router.push(buildDefaultAgentChatRoute({ desktop: isDesktopModeEnabled() }));
   } catch (error) {
     submitError.value = resolveLoginErrorMessage(error, t);
   }

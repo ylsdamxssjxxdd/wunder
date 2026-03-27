@@ -303,7 +303,10 @@ impl BrowserControlService {
                 map.insert("text".to_string(), json!(required_string(args, "text")?));
             }
             if kind == "click" && !map.contains_key("selector") && !map.contains_key("ref") {
-                map.insert("selector".to_string(), json!(required_string(args, "selector")?));
+                map.insert(
+                    "selector".to_string(),
+                    json!(required_string(args, "selector")?),
+                );
             }
         }
         self.act(
@@ -510,7 +513,8 @@ fn save_screenshot(bytes: &[u8]) -> Result<(String, String)> {
     std::fs::create_dir_all(&dir).map_err(|err| anyhow!("Create temp dir failed: {err}"))?;
     let filename = format!("browser_shot_{}.png", Uuid::new_v4().simple());
     let path = dir.join(&filename);
-    std::fs::write(&path, bytes).map_err(|err| anyhow!("Write browser screenshot failed: {err}"))?;
+    std::fs::write(&path, bytes)
+        .map_err(|err| anyhow!("Write browser screenshot failed: {err}"))?;
     Ok((
         filename.clone(),
         format!("/wunder/temp_dir/download?filename={filename}"),
@@ -586,7 +590,10 @@ mod tests {
         config.browser.enabled = true;
         let service: &BrowserControlService = browser_service(&config);
         assert_eq!(
-            service.status().get("ok").and_then(serde_json::Value::as_bool),
+            service
+                .status()
+                .get("ok")
+                .and_then(serde_json::Value::as_bool),
             Some(true)
         );
     }

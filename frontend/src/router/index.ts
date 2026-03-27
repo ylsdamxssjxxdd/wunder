@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { resolveApiBase } from '@/config/runtime';
 import {
+  buildDefaultAgentChatRoute,
   FORCE_LOGOUT_QUERY_KEY,
   isForcedLogoutQuery
 } from '@/utils/authNavigation';
@@ -23,8 +24,6 @@ const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
 const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 
 const USER_LOGIN_PATH = '/login';
-const USER_BEEHIVE_PATH = '/app/home';
-const DESKTOP_HOME_PATH = '/desktop/home';
 const EMBED_AUTH_QUERY_KEYS = new Set([
   'wunder_token',
   'access_token',
@@ -183,15 +182,20 @@ const isAuthRequiredError = (error: unknown): boolean => {
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH)
+    redirect: () =>
+      isDesktopModeEnabled()
+        ? buildDefaultAgentChatRoute({ desktop: true })
+        : hasAccessToken()
+          ? buildDefaultAgentChatRoute()
+          : USER_LOGIN_PATH
   },
   {
     path: '/home',
-    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : USER_BEEHIVE_PATH)
+    redirect: () => buildDefaultAgentChatRoute({ desktop: isDesktopModeEnabled() })
   },
   {
     path: '/portal',
-    redirect: () => (isDesktopModeEnabled() ? DESKTOP_HOME_PATH : '/home')
+    redirect: () => buildDefaultAgentChatRoute({ desktop: isDesktopModeEnabled() })
   },
   {
     path: '/login',
@@ -206,7 +210,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/desktop',
     component: UserLayout,
-    redirect: DESKTOP_HOME_PATH,
+    redirect: () => buildDefaultAgentChatRoute({ desktop: true }),
     children: [
       { path: 'home', name: 'desktop-home', component: MessengerView },
       { path: 'external/:linkId', name: 'desktop-external-app', component: ExternalAppView },
@@ -228,7 +232,7 @@ const routes: RouteRecordRaw[] = [
     path: '/app',
     component: UserLayout,
     meta: { requiresAuth: true },
-    redirect: USER_BEEHIVE_PATH,
+    redirect: () => buildDefaultAgentChatRoute(),
     children: [
       { path: 'home', name: 'home', component: MessengerView },
       { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
@@ -353,7 +357,7 @@ router.beforeEach(async (to) => {
   const desktopMode = isDesktopModeEnabled();
 
   if (!desktopMode && to.path.startsWith('/desktop')) {
-    return hasAccessToken() ? USER_BEEHIVE_PATH : USER_LOGIN_PATH;
+    return hasAccessToken() ? buildDefaultAgentChatRoute() : USER_LOGIN_PATH;
   }
 
   if (to.path.startsWith('/demo') && !desktopMode) {
@@ -376,7 +380,7 @@ router.beforeEach(async (to) => {
       if (!authStore.user) {
         try {
           await authStore.loadProfile();
-          return DESKTOP_HOME_PATH;
+          return buildDefaultAgentChatRoute({ desktop: true });
         } catch (error) {
           if (isAuthRequiredError(error)) {
             authStore.logout();
@@ -384,7 +388,7 @@ router.beforeEach(async (to) => {
           return true;
         }
       }
-      return DESKTOP_HOME_PATH;
+      return buildDefaultAgentChatRoute({ desktop: true });
     }
 
     if (to.path.startsWith('/desktop')) {
@@ -408,19 +412,19 @@ router.beforeEach(async (to) => {
     }
 
     if (to.path === '/app') {
-      return DESKTOP_HOME_PATH;
+      return buildDefaultAgentChatRoute({ desktop: true });
     }
     if (to.path.startsWith('/app/')) {
       return to.fullPath.replace(/^\/app\//, '/desktop/');
     }
     if (to.path === '/home' || to.path === '/portal') {
-      return remoteAuthMode && !hasAccessToken() ? USER_LOGIN_PATH : DESKTOP_HOME_PATH;
+      return remoteAuthMode && !hasAccessToken() ? USER_LOGIN_PATH : buildDefaultAgentChatRoute({ desktop: true });
     }
 
     if (remoteAuthMode && !hasAccessToken()) {
       return USER_LOGIN_PATH;
     }
-    return DESKTOP_HOME_PATH;
+    return buildDefaultAgentChatRoute({ desktop: true });
   }
 
   const token = hasAccessToken();
@@ -433,7 +437,7 @@ router.beforeEach(async (to) => {
       if (!authStore.user) {
         await authStore.loadProfile();
       }
-      return USER_BEEHIVE_PATH;
+      return buildDefaultAgentChatRoute();
     } catch (error) {
       if (isAuthRequiredError(error)) {
         authStore.logout();

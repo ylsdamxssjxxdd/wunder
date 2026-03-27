@@ -15,10 +15,32 @@
             </span>
             <span class="beeroom-workbench-group-id">#{{ group.group_id }}</span>
           </div>
-          <h2 class="beeroom-workbench-title">{{ group.name || group.group_id }}</h2>
-          <p class="beeroom-workbench-description">
-            {{ group.description || t('beeroom.empty.description') }}
-          </p>
+
+          <div class="beeroom-workbench-heading">
+            <div class="beeroom-workbench-title-block">
+              <h2 class="beeroom-workbench-title">{{ group.name || group.group_id }}</h2>
+              <p class="beeroom-workbench-description">
+                {{ group.description || t('beeroom.empty.description') }}
+              </p>
+            </div>
+
+            <div class="beeroom-workbench-actions">
+              <button class="beeroom-action-btn" type="button" @click="emit('refresh')">
+                <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                <span>{{ refreshing ? t('common.loading') : t('common.refresh') }}</span>
+              </button>
+              <button
+                class="beeroom-action-btn beeroom-action-btn--primary"
+                type="button"
+                :disabled="!availableAgents.length"
+                @click="moveDialogVisible = true"
+              >
+                <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>
+                <span>{{ t('beeroom.action.moveAgents') }}</span>
+              </button>
+            </div>
+          </div>
+
           <div class="beeroom-workbench-meta">
             <span>{{ t('beeroom.summary.motherAgent') }}: {{ motherAgentLabel }}</span>
             <span>{{ t('beeroom.summary.latestMission') }}: {{ latestMissionLabel }}</span>
@@ -26,62 +48,48 @@
           </div>
         </div>
 
-        <div class="beeroom-workbench-actions">
-          <button class="beeroom-action-btn" type="button" @click="emit('refresh')">
-            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-            <span>{{ refreshing ? t('common.loading') : t('common.refresh') }}</span>
-          </button>
-          <button
-            class="beeroom-action-btn beeroom-action-btn--primary"
-            type="button"
-            :disabled="!availableAgents.length"
-            @click="moveDialogVisible = true"
-          >
-            <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>
-            <span>{{ t('beeroom.action.moveAgents') }}</span>
-          </button>
+        <div class="beeroom-workbench-summary">
+          <article v-for="card in summaryCards" :key="card.key" class="beeroom-workbench-summary-card">
+            <div class="beeroom-workbench-summary-label">{{ card.label }}</div>
+            <div class="beeroom-workbench-summary-value">{{ card.value }}</div>
+            <div class="beeroom-workbench-summary-hint">{{ card.hint }}</div>
+          </article>
         </div>
       </header>
 
-      <div class="beeroom-workbench-summary">
-        <article v-for="card in summaryCards" :key="card.key" class="beeroom-workbench-summary-card">
-          <div class="beeroom-workbench-summary-label">{{ card.label }}</div>
-          <div class="beeroom-workbench-summary-value">{{ card.value }}</div>
-          <div class="beeroom-workbench-summary-hint">{{ card.hint }}</div>
-        </article>
-      </div>
+      <div class="beeroom-workbench-theater">
+        <div v-if="orderedMissions.length" class="beeroom-workbench-missions">
+          <button
+            v-for="mission in orderedMissions"
+            :key="mission.mission_id || mission.team_run_id"
+            class="beeroom-workbench-mission-chip"
+            :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
+            type="button"
+            :aria-pressed="selectedMissionId === (mission.mission_id || mission.team_run_id)"
+            @click="selectedMissionId = mission.mission_id || mission.team_run_id"
+          >
+            <span class="beeroom-workbench-mission-chip-title">{{ resolveMissionTitle(mission) }}</span>
+            <span class="beeroom-workbench-mission-chip-meta">
+              #{{ shortMissionId(mission.mission_id || mission.team_run_id) }}
+              路
+              {{ resolveMissionStatus(mission.completion_status || mission.status) }}
+              路
+              {{ formatDateTime(mission.updated_time || mission.started_time) }}
+            </span>
+          </button>
+        </div>
 
-      <div v-if="orderedMissions.length" class="beeroom-workbench-missions">
-        <button
-          v-for="mission in orderedMissions"
-          :key="mission.mission_id || mission.team_run_id"
-          class="beeroom-workbench-mission-chip"
-          :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
-          type="button"
-          :aria-pressed="selectedMissionId === (mission.mission_id || mission.team_run_id)"
-          @click="selectedMissionId = mission.mission_id || mission.team_run_id"
-        >
-          <span class="beeroom-workbench-mission-chip-title">{{ resolveMissionTitle(mission) }}</span>
-          <span class="beeroom-workbench-mission-chip-meta">
-            #{{ shortMissionId(mission.mission_id || mission.team_run_id) }}
-            ·
-            {{ resolveMissionStatus(mission.completion_status || mission.status) }}
-            ·
-            {{ formatDateTime(mission.updated_time || mission.started_time) }}
-          </span>
-        </button>
-      </div>
-
-      <div class="beeroom-workbench-stage">
-        <BeeroomMissionCanvas
-          class="beeroom-workbench-canvas"
-          :group="group"
-          :mission="selectedMission"
-          :agents="agents"
-          :refreshing="refreshing"
-          @refresh="emit('refresh')"
-          @open-agent="emit('open-agent', $event)"
-        />
+        <div class="beeroom-workbench-stage">
+          <BeeroomMissionCanvas
+            class="beeroom-workbench-canvas"
+            :group="group"
+            :mission="selectedMission"
+            :agents="agents"
+            :refreshing="refreshing"
+            @refresh="emit('refresh')"
+            @open-agent="emit('open-agent', $event)"
+          />
+        </div>
       </div>
 
       <el-dialog
@@ -328,59 +336,67 @@ watch(selectedMissionId, (value) => {
 <style scoped>
 .beeroom-workbench {
   display: flex;
+  flex: 1;
   flex-direction: column;
-  gap: 12px;
-  min-height: 100%;
-}
-
-.beeroom-workbench-stage {
-  position: relative;
-  display: flex;
-  flex: 1;
-  width: 100%;
+  gap: 10px;
   min-height: 0;
-}
-
-.beeroom-workbench-canvas {
-  display: flex;
-  flex: 1;
-  width: 100%;
-  min-height: 0;
+  height: 100%;
+  color: #e2e8f0;
 }
 
 .beeroom-state {
   display: flex;
-  min-height: 320px;
+  min-height: 360px;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  border: 1px dashed var(--hula-border);
-  border-radius: 18px;
-  color: var(--hula-muted);
-  background: var(--hula-center-bg);
+  border: 1px dashed rgba(148, 163, 184, 0.24);
+  border-radius: 24px;
+  color: rgba(191, 219, 254, 0.78);
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.1), transparent 32%),
+    linear-gradient(180deg, rgba(7, 10, 18, 0.96), rgba(8, 12, 21, 0.94));
 }
 
 .beeroom-workbench-toolbar,
 .beeroom-workbench-summary-card {
-  border: 1px solid var(--hula-border);
-  background: var(--hula-center-bg);
-  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background:
+    linear-gradient(180deg, rgba(12, 16, 27, 0.96), rgba(8, 11, 18, 0.94)),
+    linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(15, 23, 42, 0));
+  box-shadow:
+    0 18px 38px rgba(2, 6, 23, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  border-radius: 24px;
 }
 
 .beeroom-workbench-toolbar {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px;
 }
 
 .beeroom-workbench-main {
   display: flex;
   flex: 1;
-  flex-direction: column;
-  gap: 8px;
   min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.beeroom-workbench-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.beeroom-workbench-title-block {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .beeroom-workbench-topline,
@@ -397,22 +413,27 @@ watch(selectedMissionId, (value) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
-  padding: 0 10px;
+  min-height: 26px;
+  padding: 0 11px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.14);
-  color: var(--hula-muted);
-  font-size: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.62);
+  color: rgba(191, 219, 254, 0.78);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .beeroom-workbench-badge {
-  background: var(--hula-accent-soft);
-  color: var(--hula-accent);
+  border-color: rgba(34, 211, 238, 0.28);
+  background: rgba(8, 47, 73, 0.72);
+  color: #67e8f9;
 }
 
 .beeroom-workbench-title {
   margin: 0;
-  font-size: 24px;
+  color: #f8fafc;
+  font-size: 26px;
   line-height: 1.2;
 }
 
@@ -420,11 +441,11 @@ watch(selectedMissionId, (value) => {
 .beeroom-workbench-meta,
 .beeroom-workbench-summary-hint,
 .beeroom-workbench-mission-chip-meta {
-  color: var(--hula-muted);
+  color: rgba(148, 163, 184, 0.92);
 }
 
 .beeroom-workbench-error {
-  color: var(--hula-danger);
+  color: #fca5a5;
 }
 
 .beeroom-workbench-actions {
@@ -438,11 +459,12 @@ watch(selectedMissionId, (value) => {
   gap: 8px;
   min-height: 40px;
   padding: 0 14px;
-  border: 1px solid var(--hula-border);
-  background: var(--hula-center-bg);
-  color: var(--hula-text);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.68);
+  color: #e2e8f0;
   border-radius: 12px;
   cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-action-btn:disabled {
@@ -451,43 +473,60 @@ watch(selectedMissionId, (value) => {
 }
 
 .beeroom-action-btn--primary {
-  border-color: var(--hula-accent);
-  background: var(--hula-accent-soft);
-  color: var(--hula-accent);
+  border-color: rgba(34, 211, 238, 0.32);
+  background: linear-gradient(135deg, rgba(8, 47, 73, 0.92), rgba(10, 30, 62, 0.9));
+  color: #ccfbf1;
 }
 
 .beeroom-workbench-summary {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .beeroom-workbench-summary-card {
-  padding: 16px;
+  display: grid;
+  min-width: 148px;
+  flex: 1 1 148px;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 18px;
 }
 
 .beeroom-workbench-summary-label {
-  color: var(--hula-muted);
-  font-size: 12px;
+  color: rgba(148, 163, 184, 0.78);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .beeroom-workbench-summary-value {
-  margin-top: 10px;
-  font-size: 28px;
+  color: #f8fafc;
+  font-size: 24px;
   font-weight: 700;
+}
+
+.beeroom-workbench-theater {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .beeroom-workbench-missions {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 8px 10px 10px;
-  border-radius: 16px;
+  padding: 10px 12px 12px;
+  border-radius: 20px;
   border: 1px solid rgba(56, 189, 248, 0.12);
-  background: linear-gradient(180deg, rgba(8, 15, 32, 0.74), rgba(8, 15, 32, 0.46));
+  background:
+    linear-gradient(180deg, rgba(9, 14, 24, 0.92), rgba(7, 10, 18, 0.88)),
+    linear-gradient(90deg, rgba(14, 116, 144, 0.08), rgba(15, 23, 42, 0));
   box-shadow:
     inset 0 1px 0 rgba(186, 230, 253, 0.03),
-    0 12px 30px rgba(2, 6, 23, 0.18);
+    0 16px 34px rgba(2, 6, 23, 0.22);
 }
 
 .beeroom-workbench-mission-chip {
@@ -499,7 +538,7 @@ watch(selectedMissionId, (value) => {
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(56, 189, 248, 0.16);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(8, 15, 32, 0.82));
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(8, 15, 32, 0.88));
   color: #e2e8f0;
   cursor: pointer;
   box-shadow:
@@ -530,6 +569,21 @@ watch(selectedMissionId, (value) => {
   white-space: nowrap;
 }
 
+.beeroom-workbench-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.beeroom-workbench-canvas {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
 .beeroom-status-chip {
   display: inline-flex;
   align-items: center;
@@ -537,33 +591,39 @@ watch(selectedMissionId, (value) => {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
+  border: 1px solid transparent;
   font-size: 12px;
 }
 
 .beeroom-status-chip.tone-default,
 .beeroom-status-chip.tone-muted {
-  background: rgba(148, 163, 184, 0.14);
-  color: #64748b;
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(51, 65, 85, 0.42);
+  color: #cbd5e1;
 }
 
 .beeroom-status-chip.tone-running {
-  background: rgba(59, 130, 246, 0.14);
-  color: #2563eb;
+  border-color: rgba(34, 211, 238, 0.24);
+  background: rgba(8, 47, 73, 0.54);
+  color: #67e8f9;
 }
 
 .beeroom-status-chip.tone-success {
-  background: rgba(34, 197, 94, 0.14);
-  color: #15803d;
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(20, 83, 45, 0.48);
+  color: #86efac;
 }
 
 .beeroom-status-chip.tone-danger {
-  background: rgba(239, 68, 68, 0.14);
-  color: #b91c1c;
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.5);
+  color: #fca5a5;
 }
 
 .beeroom-status-chip.tone-warn {
-  background: rgba(245, 158, 11, 0.15);
-  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(120, 53, 15, 0.5);
+  color: #fcd34d;
 }
 
 .beeroom-move-copy {
@@ -572,13 +632,17 @@ watch(selectedMissionId, (value) => {
 }
 
 @media (max-width: 1280px) {
-  .beeroom-workbench-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .beeroom-workbench-summary-card {
+    min-width: calc(50% - 5px);
   }
 }
 
 @media (max-width: 900px) {
   .beeroom-workbench-toolbar {
+    padding: 14px;
+  }
+
+  .beeroom-workbench-heading {
     flex-direction: column;
   }
 
@@ -587,8 +651,8 @@ watch(selectedMissionId, (value) => {
     justify-content: flex-start;
   }
 
-  .beeroom-workbench-summary {
-    grid-template-columns: 1fr;
+  .beeroom-workbench-summary-card {
+    min-width: 100%;
   }
 
   .beeroom-workbench-mission-chip {
