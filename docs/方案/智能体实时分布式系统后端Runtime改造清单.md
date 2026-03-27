@@ -4,10 +4,10 @@
 
 基于代码现状，后端目前有四个核心事实：
 
-- [agent_runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/agent_runtime.rs) 已经承担了 thread 提交、main session 解析、lease、队列唤醒等多种职责。
-- [runner.rs](C:/Users/sjxx/Desktop/wunder/src/services/swarm/runner.rs) 仍是全局扫描型 TeamRunRunner，不是 mission owner 模式。
-- [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 直接把 `agent_runtime`、`team_run_runner`、`user_presence`、`beeroom_realtime`、`user_world` 平铺注入，尚未按 kernel/projection 分层。
-- [user_presence.rs](C:/Users/sjxx/Desktop/wunder/src/services/user_presence.rs) 仍是单机 `Mutex<HashMap<...>>` 模式，不适合作为多实例在线路由基础。
+- [runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/runtime/thread/runtime.rs) 已经承担了 thread 提交、main session 解析、lease、队列唤醒等多种职责。
+- [runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/runtime/mission/runtime.rs) 仍是全局扫描型 MissionRuntime，不是 mission owner 模式。
+- [x] [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 已收敛为 `kernel / projection / control` 三层注入，旧的平铺 runtime/projection/control 字段已移除。
+- [x] `presence` 已迁移到 [src/services/presence/](C:/Users/sjxx/Desktop/wunder/src/services/presence)；控制平面不再使用单体 `user_presence.rs`。
 
 ## 2. 后端改造目标
 
@@ -26,11 +26,11 @@
 - [ ] `pending_sessions` 与 `running_threads` 收敛成 thread owner state。
 - [ ] `stream_events` 的 thread 公共事件改由 `thread/public_events.rs` 统一发射。
 
-### 3.2 AgentRuntime 一期保留内容
+### 3.2 Thread Runtime 一期收口内容
 
-- [ ] 保留旧 API 兼容入口。
-- [ ] 作为 legacy adapter 调用新 thread runtime。
-- [ ] 保留 wake/queue 接口作为过渡桥接。
+- [ ] 旧入口直接改接 thread runtime，不再保留并行实现。
+- [ ] 保留 wake/queue 接口，但语义统一归入 thread runtime 主路径。
+- [ ] 删除旧 `AgentRuntime` 名称与文件残留，避免双主语并存。
 
 ### 3.3 需要新增的后端文件
 
@@ -42,7 +42,7 @@
 
 ### 3.4 需要修改的文件
 
-- [ ] [agent_runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/agent_runtime.rs)
+- [ ] [runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/runtime/thread/runtime.rs)
 - [ ] [chat_ws.rs](C:/Users/sjxx/Desktop/wunder/src/api/chat_ws.rs)
 - [ ] [chat.rs](C:/Users/sjxx/Desktop/wunder/src/api/chat.rs)
 - [ ] [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs)
@@ -62,11 +62,11 @@
 - [ ] `active_runs` 与 `sessions` 状态从 `runner.rs` 迁入 mission runtime state。
 - [ ] 任务裁决与对外投影分离。
 
-### 4.2 一期过渡方案
+### 4.2 一期切换方案
 
-- [ ] 保留 [runner.rs](C:/Users/sjxx/Desktop/wunder/src/services/swarm/runner.rs) 作为 legacy runner。
-- [ ] 新配置支持 `legacy | hybrid | mission_runtime`。
-- [ ] `SwarmService` 与 `team_runs` API 优先调新 runtime。
+- [ ] [runner.rs](C:/Users/sjxx/Desktop/wunder/src/services/swarm/runner.rs) 直接切为 mission runtime 拆分入口。
+- [ ] 移除 `legacy | hybrid | mission_runtime` 三档切换思路，统一只保留 mission runtime 主路径。
+- [ ] `SwarmService` 与 `team_runs` API 直接改调新 runtime。
 
 ### 4.3 需要新增的文件
 
@@ -78,10 +78,10 @@
 
 ### 4.4 需要修改的文件
 
-- [ ] [runner.rs](C:/Users/sjxx/Desktop/wunder/src/services/swarm/runner.rs)
+- [x] [runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/runtime/mission/runtime.rs)
 - [ ] [team_runs.rs](C:/Users/sjxx/Desktop/wunder/src/api/team_runs.rs)
 - [ ] [beeroom.rs](C:/Users/sjxx/Desktop/wunder/src/api/beeroom.rs)
-- [ ] [beeroom_realtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/beeroom_realtime.rs)
+- [x] [beeroom.rs](C:/Users/sjxx/Desktop/wunder/src/services/projection/beeroom.rs)
 
 ### 4.5 Mission Runtime 验收
 
@@ -105,7 +105,7 @@
 
 ### 5.3 需要修改的现有文件
 
-- [ ] [beeroom_realtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/beeroom_realtime.rs)
+- [x] [beeroom.rs](C:/Users/sjxx/Desktop/wunder/src/services/projection/beeroom.rs)
 - [ ] [user_world.rs](C:/Users/sjxx/Desktop/wunder/src/services/user_world.rs)
 - [ ] [beeroom_ws.rs](C:/Users/sjxx/Desktop/wunder/src/api/beeroom_ws.rs)
 - [ ] [user_world_ws.rs](C:/Users/sjxx/Desktop/wunder/src/api/user_world_ws.rs)
@@ -125,11 +125,11 @@
 
 ### 6.2 Presence
 
-- [ ] 将 [user_presence.rs](C:/Users/sjxx/Desktop/wunder/src/services/user_presence.rs) 拆成：
+- [x] 将 `presence` 拆成：
   - connection presence
   - watch presence
-- [ ] 网关连接与 watch 订阅分开记录。
-- [ ] presence 不再只服务联系人在线提示，还服务投影路由和降级。
+- [x] 网关/WS 连接与 watch 订阅分开记录。
+- [x] presence 不再只服务联系人在线提示，还服务投影路由和降级。
 
 ### 6.3 验收
 
@@ -140,13 +140,13 @@
 
 ### 7.1 AppState
 
-- [ ] 调整 [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 的注入顺序：
+- [x] 调整 [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 的注入顺序：
   - directory
   - thread runtime
   - mission runtime
   - projection publisher
   - presence
-- [ ] 避免继续平铺添加“越来越多的服务单例”。
+- [x] 避免继续平铺添加“越来越多的服务单例”。
 
 ### 7.2 API 路由
 

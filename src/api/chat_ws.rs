@@ -20,7 +20,8 @@ use crate::core::approval_registry::{
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
-use crate::services::agent_runtime::AgentSubmitOutcome;
+use crate::services::presence::ProjectionTargetKind;
+use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -134,7 +135,7 @@ async fn handle_ws(
     let ws_tx = WsSender::new(out_tx.clone());
     let started_at = std::time::Instant::now();
     let tasks: Arc<Mutex<HashMap<String, WsStreamEntry>>> = Arc::new(Mutex::new(HashMap::new()));
-    let approval_registry = state.approval_registry.clone();
+    let approval_registry = state.control.approval_registry.clone();
 
     let writer = tokio::spawn(async move {
         while let Some(message) = out_rx.recv().await {
@@ -144,9 +145,11 @@ async fn handle_ws(
         }
     });
 
-    state
-        .user_presence
-        .connect(&user.user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
+    state.control.presence.connect_client(
+        &user.user_id,
+        &connection_id,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     log_ws_open(WS_ENDPOINT, &connection_id, &user.user_id, &conn_meta);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let protocol = ws_protocol_info();
@@ -363,7 +366,12 @@ async fn handle_ws(
                         let (approval_tx, approval_rx) = new_approval_channel();
                         request.approval_tx = Some(approval_tx);
 
-                        let outcome = match state.agent_runtime.submit_user_request(request).await {
+                        let outcome = match state
+                            .kernel
+                            .thread_runtime
+                            .submit_user_request(request)
+                            .await
+                        {
                             Ok(outcome) => outcome,
                             Err(err) => {
                                 let _ = send_ws_error(
@@ -378,7 +386,7 @@ async fn handle_ws(
                         };
 
                         let (request, lease, approval_rx) = match outcome {
-                            AgentSubmitOutcome::Queued(info) => {
+                            ThreadSubmitOutcome::Queued(info) => {
                                 let payload = json!({
                                     "queued": true,
                                     "queue_id": info.task_id,
@@ -395,7 +403,7 @@ async fn handle_ws(
                                     send_ws_event(&ws_tx, Some(&request_id), queued_event).await;
                                 continue;
                             }
-                            AgentSubmitOutcome::Run(request, lease) => {
+                            ThreadSubmitOutcome::Run(request, lease) => {
                                 (*request, lease, approval_rx)
                             }
                         };
@@ -409,7 +417,16 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
+                        let connection_id_cleanup = connection_id.clone();
                         let session_id_cleanup = session_id.clone();
+                        state.control.presence.watch_projection(
+                            &connection_id,
+                            &request_id,
+                            &user.user_id,
+                            ProjectionTargetKind::Session,
+                            &session_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         let approval_forward = tokio::spawn(forward_approval_requests(
                             approval_rx,
                             approval_registry_snapshot.clone(),
@@ -418,7 +435,7 @@ async fn handle_ws(
                         ));
                         tokio::spawn(async move {
                             let _lease = lease;
-                            match state_snapshot.orchestrator.stream(request).await {
+                            match state_snapshot.kernel.orchestrator.stream(request).await {
                                 Ok(stream) => {
                                     tokio::pin!(stream);
                                     loop {
@@ -467,8 +484,18 @@ async fn handle_ws(
                                 ApprovalResponse::Deny,
                             )
                             .await;
-                            cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)
-                                .await;
+                            if cleanup_ws_task(
+                                &tasks_cleanup,
+                                &request_id_cleanup,
+                                &task_id_cleanup,
+                            )
+                            .await
+                            {
+                                state_snapshot.control.presence.unwatch_projection(
+                                    &connection_id_cleanup,
+                                    &request_id_cleanup,
+                                );
+                            }
                         });
                     }
                     "resume" => {
@@ -530,12 +557,22 @@ async fn handle_ws(
                         }
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
+                        let state_cleanup = state.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
+                        let connection_id_cleanup = connection_id.clone();
+                        state.control.presence.watch_projection(
+                            &connection_id,
+                            &request_id,
+                            &user.user_id,
+                            ProjectionTargetKind::Session,
+                            &session_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         tokio::spawn(async move {
                             resume_stream_events(
                                 state_snapshot,
@@ -547,8 +584,18 @@ async fn handle_ws(
                                 false,
                             )
                             .await;
-                            cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)
-                                .await;
+                            if cleanup_ws_task(
+                                &tasks_cleanup,
+                                &request_id_cleanup,
+                                &task_id_cleanup,
+                            )
+                            .await
+                            {
+                                state_cleanup.control.presence.unwatch_projection(
+                                    &connection_id_cleanup,
+                                    &request_id_cleanup,
+                                );
+                            }
                         });
                     }
                     "watch" => {
@@ -590,12 +637,22 @@ async fn handle_ws(
                         let after_event_id = payload.after_event_id.unwrap_or(0).max(0);
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
+                        let state_cleanup = state.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
+                        let connection_id_cleanup = connection_id.clone();
+                        state.control.presence.watch_projection(
+                            &connection_id,
+                            &request_id,
+                            &user.user_id,
+                            ProjectionTargetKind::Session,
+                            &session_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         tokio::spawn(async move {
                             resume_stream_events(
                                 state_snapshot,
@@ -607,8 +664,18 @@ async fn handle_ws(
                                 true,
                             )
                             .await;
-                            cleanup_ws_task(&tasks_cleanup, &request_id_cleanup, &task_id_cleanup)
-                                .await;
+                            if cleanup_ws_task(
+                                &tasks_cleanup,
+                                &request_id_cleanup,
+                                &task_id_cleanup,
+                            )
+                            .await
+                            {
+                                state_cleanup.control.presence.unwatch_projection(
+                                    &connection_id_cleanup,
+                                    &request_id_cleanup,
+                                );
+                            }
                         });
                     }
                     "cancel" => {
@@ -656,6 +723,10 @@ async fn handle_ws(
                             if let Some(request_id) = request_id.as_deref() {
                                 if let Some(entry) = guard.remove(request_id) {
                                     entry.cancel.cancel();
+                                    state
+                                        .control
+                                        .presence
+                                        .unwatch_projection(&connection_id, request_id);
                                     if entry.cancel_session {
                                         cancel_session_id = entry.session_id;
                                     }
@@ -674,6 +745,10 @@ async fn handle_ws(
                                 for key in targets {
                                     if let Some(entry) = guard.remove(&key) {
                                         entry.cancel.cancel();
+                                        state
+                                            .control
+                                            .presence
+                                            .unwatch_projection(&connection_id, &key);
                                     }
                                 }
                                 cancel_session_id = Some(session_id.to_string());
@@ -825,9 +900,11 @@ async fn handle_ws(
     drop(out_tx);
     let _ = writer.await;
     clear_pending_approvals(&approval_registry, None, None, ApprovalResponse::Deny).await;
-    state
-        .user_presence
-        .disconnect(&user.user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
+    state.control.presence.disconnect_client(
+        &user.user_id,
+        &connection_id,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     if !close_logged {
         log_ws_close(
             WS_ENDPOINT,
@@ -998,7 +1075,7 @@ async fn cleanup_ws_task(
     tasks: &Arc<Mutex<HashMap<String, WsStreamEntry>>>,
     request_id: &str,
     task_id: &str,
-) {
+) -> bool {
     let mut guard = tasks.lock().await;
     let should_remove = guard
         .get(request_id)
@@ -1007,4 +1084,5 @@ async fn cleanup_ws_task(
     if should_remove {
         guard.remove(request_id);
     }
+    should_remove
 }

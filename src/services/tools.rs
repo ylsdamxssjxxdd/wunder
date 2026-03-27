@@ -26,7 +26,7 @@ pub(crate) mod sessions_yield_tool;
 mod skill_call;
 mod sleep_tool;
 mod subagent_control;
-mod swarm_realtime;
+mod swarm_projection;
 mod thread_control_tool;
 pub(crate) mod tool_error;
 mod web_fetch_tool;
@@ -108,7 +108,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use swarm_realtime::{
+use swarm_projection::{
     emit_swarm_run_started, emit_swarm_run_terminal, emit_swarm_task_dispatched,
     emit_swarm_task_updated, sync_swarm_run_summary,
 };

@@ -10,8 +10,8 @@
 
 ## 2. 当前代码判断
 
-- [src/core/state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 中 `cli_default()` 默认关闭 `start_team_run_runner`、`start_agent_runtime`、`start_cron`。
-- [src/core/state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 中 `desktop_default()` 默认关闭 `start_team_run_runner`、`start_agent_runtime`，仅保留 `start_cron`。
+- [src/core/state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 中 `cli_default()` 默认关闭 `start_mission_runtime`、`start_thread_runtime`、`start_cron`。
+- [src/core/state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 中 `desktop_default()` 默认关闭 `start_mission_runtime`，启用 `start_thread_runtime` 与 `start_cron`。
 - [wunder-cli/runtime.rs](C:/Users/sjxx/Desktop/wunder/wunder-cli/runtime.rs) 的 `apply_cli_defaults()` 已将 `server.mode` 设为 `cli`，并关闭 `channels`、`gateway`、`agent_queue`、`cron`，说明 CLI 当前是轻量本地形态，不是完整 server 形态。
 - [desktop/tauri/runtime.rs](C:/Users/sjxx/Desktop/wunder/desktop/tauri/runtime.rs) 的 `apply_desktop_defaults()` 已将 `server.mode` 设为 `desktop`，并使用本地 SQLite、工作区根目录和桌面侧默认配置。
 - [src/storage/sqlite.rs](C:/Users/sjxx/Desktop/wunder/src/storage/sqlite.rs) 已对本地 SQLite 启用 `busy_timeout`、`journal_mode=WAL`、`synchronous=NORMAL`，本地高频事件写入已有较好基础。
@@ -41,7 +41,7 @@
 ### 4.1 运行模式收口
 
 - [ ] 在 [src/core/state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 引入显式 deployment/runtime profile，至少区分 `server_distributed`、`desktop_embedded`、`cli_embedded`。
-- [ ] 将当前 `start_team_run_runner`、`start_agent_runtime` 这样的布尔开关收口为更稳定的 profile 级别启动策略，避免未来组合爆炸。
+- [ ] 将当前 `start_mission_runtime`、`start_thread_runtime` 这样的布尔开关继续收口为更稳定的 profile 级别启动策略，避免未来组合爆炸。
 - [ ] 为 desktop/cli 增加嵌入式 thread runtime 启动能力，而不是沿用 server 的全局扫描式后台组件。
 - [ ] 为 shared runtime 增加 capability 描述，明确当前节点是否支持 mission、projection、LAN overlay、background cron、gateway 等能力。
 
@@ -136,9 +136,9 @@
 
 - [ ] 在配置中增加 `runtime_profile`、`embedded_runtime.enabled`、`projection.replay_window`、`projection.max_queue`、`projection.slow_client_policy`。
 - [ ] 为 desktop/cli 增加单独监控项：本地队列深度、事件丢弃数、coalesce 次数、snapshot 命中率、重放耗时、UI/TUI 渲染延迟。
-- [ ] 保留 legacy 开关，支持 `legacy`、`hybrid`、`embedded` 三种演进阶段，便于逐步切换。
-- [ ] hybrid 阶段允许 server 仍使用旧 `AgentRuntime/TeamRunRunner` 外壳，desktop/cli 先接入统一事件与 replay 语义。
-- [ ] 任何兼容层都不能改写线程冻结的 `system prompt` 和一次性注入的长期记忆。
+- [ ] 不再保留 legacy/hybrid 切换开关，desktop/cli 直接对齐 embedded runtime 主路径。
+- [ ] server、desktop、cli 统一围绕 thread runtime / mission runtime / projection runtime 组织，不再保留旧 `AgentRuntime/TeamRunRunner` 外壳。
+- [ ] 任何运行时重构都不能改写线程冻结的 `system prompt` 和一次性注入的长期记忆。
 
 ## 8. 分阶段节点
 
@@ -152,7 +152,7 @@
 
 - [ ] 引入本地 owner、进程内 bus、shared replay 接口。
 - [ ] desktop/cli 都能以 embedded 方式启动 thread runtime。
-- [ ] 保留 legacy 外壳，避免一次性推翻 server 路径。
+- [ ] server/desktop/cli 统一切到新的 thread runtime 主语义。
 
 ### R2 桌面端接入
 
@@ -182,7 +182,7 @@
 
 - [ ] 桌面端默认开启 embedded runtime profile。
 - [ ] CLI 交互式默认开启 embedded runtime profile。
-- [ ] legacy 模式仅保留回滚用途。
+- [ ] 清理旧 runtime 名称、旧切换开关与回滚分支。
 
 ## 9. 验收指标
 

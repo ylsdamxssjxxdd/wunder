@@ -13,14 +13,15 @@ use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
-use crate::services::agent_runtime::AgentRuntime;
-use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::bridge::BridgeRuntime;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
-use crate::services::swarm::{SwarmService, TeamRunRunner};
+use crate::services::presence::PresenceService;
+use crate::services::projection::beeroom::BeeroomProjectionService;
+use crate::services::runtime::mission::MissionRuntime;
+use crate::services::runtime::thread::ThreadRuntime;
+use crate::services::swarm::SwarmService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
-use crate::services::user_presence::UserPresenceService;
 use crate::services::user_world::UserWorldService;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{build_storage, SqliteStorage, StorageBackend};
@@ -29,51 +30,153 @@ use crate::user_store::UserStore;
 use crate::user_tools::{UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
+use serde::Serialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AppRuntimeProfile {
+    ServerDistributed,
+    DesktopEmbedded,
+    CliEmbedded,
+}
+
+impl AppRuntimeProfile {
+    pub const fn is_embedded(self) -> bool {
+        matches!(self, Self::DesktopEmbedded | Self::CliEmbedded)
+    }
+
+    pub const fn supports_lan_overlay(self) -> bool {
+        matches!(self, Self::DesktopEmbedded)
+    }
+
+    pub const fn default_seed_org_units(self) -> bool {
+        matches!(self, Self::ServerDistributed)
+    }
+
+    pub const fn default_ensure_default_admin(self) -> bool {
+        matches!(self, Self::ServerDistributed)
+    }
+
+    pub const fn default_spawn_gateway_maintenance(self) -> bool {
+        matches!(self, Self::ServerDistributed)
+    }
+
+    pub const fn default_start_mission_runtime(self) -> bool {
+        matches!(self, Self::ServerDistributed)
+    }
+
+    pub const fn default_start_thread_runtime(self) -> bool {
+        matches!(self, Self::ServerDistributed | Self::DesktopEmbedded)
+    }
+
+    pub const fn default_start_cron(self) -> bool {
+        matches!(self, Self::ServerDistributed | Self::DesktopEmbedded)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AppRuntimeCapabilities {
+    pub embedded_mode: bool,
+    pub thread_runtime_active: bool,
+    pub mission_runtime_active: bool,
+    pub gateway_maintenance_active: bool,
+    pub channels_enabled: bool,
+    pub channel_outbox_worker_enabled: bool,
+    pub cron_active: bool,
+    pub lan_overlay_supported: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct AppStateInitOptions {
-    pub seed_org_units: bool,
-    pub ensure_default_admin: bool,
-    pub spawn_gateway_maintenance: bool,
-    pub start_team_run_runner: bool,
-    pub start_agent_runtime: bool,
-    pub start_cron: bool,
+    pub runtime_profile: AppRuntimeProfile,
+    seed_org_units: Option<bool>,
+    ensure_default_admin: Option<bool>,
+    spawn_gateway_maintenance: Option<bool>,
+    start_mission_runtime: Option<bool>,
+    start_thread_runtime: Option<bool>,
+    start_cron: Option<bool>,
 }
 
 impl AppStateInitOptions {
     pub const fn server_default() -> Self {
-        Self {
-            seed_org_units: true,
-            ensure_default_admin: true,
-            spawn_gateway_maintenance: true,
-            start_team_run_runner: true,
-            start_agent_runtime: true,
-            start_cron: true,
-        }
+        Self::from_profile(AppRuntimeProfile::ServerDistributed)
     }
 
     pub const fn cli_default() -> Self {
-        Self {
-            seed_org_units: false,
-            ensure_default_admin: false,
-            spawn_gateway_maintenance: false,
-            start_team_run_runner: false,
-            start_agent_runtime: false,
-            start_cron: false,
-        }
+        Self::from_profile(AppRuntimeProfile::CliEmbedded)
     }
 
     pub const fn desktop_default() -> Self {
+        Self::from_profile(AppRuntimeProfile::DesktopEmbedded)
+    }
+
+    pub const fn from_profile(runtime_profile: AppRuntimeProfile) -> Self {
         Self {
-            seed_org_units: false,
-            ensure_default_admin: false,
-            spawn_gateway_maintenance: false,
-            start_team_run_runner: false,
-            start_agent_runtime: false,
-            start_cron: true,
+            runtime_profile,
+            seed_org_units: None,
+            ensure_default_admin: None,
+            spawn_gateway_maintenance: None,
+            start_mission_runtime: None,
+            start_thread_runtime: None,
+            start_cron: None,
+        }
+    }
+
+    pub const fn resolved_seed_org_units(self) -> bool {
+        match self.seed_org_units {
+            Some(value) => value,
+            None => self.runtime_profile.default_seed_org_units(),
+        }
+    }
+
+    pub const fn resolved_ensure_default_admin(self) -> bool {
+        match self.ensure_default_admin {
+            Some(value) => value,
+            None => self.runtime_profile.default_ensure_default_admin(),
+        }
+    }
+
+    pub const fn resolved_spawn_gateway_maintenance(self) -> bool {
+        match self.spawn_gateway_maintenance {
+            Some(value) => value,
+            None => self.runtime_profile.default_spawn_gateway_maintenance(),
+        }
+    }
+
+    pub const fn resolved_start_mission_runtime(self) -> bool {
+        match self.start_mission_runtime {
+            Some(value) => value,
+            None => self.runtime_profile.default_start_mission_runtime(),
+        }
+    }
+
+    pub const fn resolved_start_thread_runtime(self) -> bool {
+        match self.start_thread_runtime {
+            Some(value) => value,
+            None => self.runtime_profile.default_start_thread_runtime(),
+        }
+    }
+
+    pub const fn resolved_start_cron(self) -> bool {
+        match self.start_cron {
+            Some(value) => value,
+            None => self.runtime_profile.default_start_cron(),
+        }
+    }
+
+    pub fn resolve_capabilities(self, config: &Config) -> AppRuntimeCapabilities {
+        AppRuntimeCapabilities {
+            embedded_mode: self.runtime_profile.is_embedded(),
+            thread_runtime_active: self.resolved_start_thread_runtime(),
+            mission_runtime_active: self.resolved_start_mission_runtime(),
+            gateway_maintenance_active: self.resolved_spawn_gateway_maintenance(),
+            channels_enabled: config.channels.enabled,
+            channel_outbox_worker_enabled: config.channels.outbox.worker_enabled,
+            cron_active: self.resolved_start_cron(),
+            lan_overlay_supported: self.runtime_profile.supports_lan_overlay(),
         }
     }
 }
@@ -85,14 +188,39 @@ impl Default for AppStateInitOptions {
 }
 
 #[derive(Clone)]
+pub struct AppKernelServices {
+    pub orchestrator: Arc<Orchestrator>,
+    pub thread_runtime: Arc<ThreadRuntime>,
+    pub swarm_service: Arc<SwarmService>,
+    pub mission_runtime: Arc<MissionRuntime>,
+}
+
+#[derive(Clone)]
+pub struct AppProjectionServices {
+    pub user_world: Arc<UserWorldService>,
+    pub beeroom: Arc<BeeroomProjectionService>,
+}
+
+#[derive(Clone)]
+pub struct AppControlServices {
+    pub presence: Arc<PresenceService>,
+    pub channels: Arc<ChannelHub>,
+    pub gateway: Arc<GatewayHub>,
+    pub cron: Arc<CronScheduler>,
+    pub approval_registry: Arc<PendingApprovalRegistry>,
+    pub command_sessions: Arc<CommandSessionBroker>,
+}
+
+#[derive(Clone)]
 pub struct AppState {
     pub config_store: ConfigStore,
+    pub runtime_profile: AppRuntimeProfile,
+    pub runtime_capabilities: AppRuntimeCapabilities,
     pub workspace: Arc<WorkspaceManager>,
     pub monitor: Arc<MonitorState>,
-    pub orchestrator: Arc<Orchestrator>,
-    pub agent_runtime: Arc<AgentRuntime>,
-    pub swarm_service: Arc<SwarmService>,
-    pub team_run_runner: Arc<TeamRunRunner>,
+    pub kernel: AppKernelServices,
+    pub projection: AppProjectionServices,
+    pub control: AppControlServices,
     pub lsp_manager: Arc<LspManager>,
     pub memory: Arc<MemoryStore>,
     pub skills: Arc<RwLock<SkillRegistry>>,
@@ -100,18 +228,10 @@ pub struct AppState {
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
     pub user_store: Arc<UserStore>,
-    pub user_presence: Arc<UserPresenceService>,
-    pub user_world: Arc<UserWorldService>,
-    pub beeroom_realtime: Arc<BeeroomRealtimeService>,
     pub external_auth_codes: Arc<ExternalAuthCodeStore>,
     pub throughput: ThroughputManager,
     pub benchmark: BenchmarkManager,
     pub storage: Arc<dyn StorageBackend>,
-    pub channels: Arc<ChannelHub>,
-    pub gateway: Arc<GatewayHub>,
-    pub cron: Arc<CronScheduler>,
-    pub approval_registry: Arc<PendingApprovalRegistry>,
-    pub command_sessions: Arc<CommandSessionBroker>,
 }
 
 impl AppState {
@@ -124,6 +244,8 @@ impl AppState {
         config: Config,
         options: AppStateInitOptions,
     ) -> Result<Self> {
+        let runtime_profile = options.runtime_profile;
+        let runtime_capabilities = options.resolve_capabilities(&config);
         let storage = init_storage(&config)?;
         let workspace = Arc::new(WorkspaceManager::new(
             &config.workspace.root,
@@ -154,25 +276,27 @@ impl AppState {
             user_tool_manager.clone(),
             user_store.clone(),
         ));
-        let user_presence = Arc::new(UserPresenceService::new());
+        let presence = Arc::new(PresenceService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
-        let beeroom_realtime = Arc::new(BeeroomRealtimeService::new(storage.clone()));
+        let beeroom_projection = Arc::new(BeeroomProjectionService::new(storage.clone()));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
         let command_sessions = Arc::new(CommandSessionBroker::new());
 
-        if options.seed_org_units {
+        if options.resolved_seed_org_units() {
             org_units::seed_org_units_if_empty(user_store.as_ref())
                 .context("Failed to seed org unit structure")?;
         }
-        if options.ensure_default_admin {
+        if options.resolved_ensure_default_admin() {
             user_store
                 .ensure_default_admin()
                 .context("Failed to ensure default admin account")?;
         }
 
         let gateway = Arc::new(GatewayHub::new(storage.clone()));
-        if options.spawn_gateway_maintenance && tokio::runtime::Handle::try_current().is_ok() {
+        if options.resolved_spawn_gateway_maintenance()
+            && tokio::runtime::Handle::try_current().is_ok()
+        {
             gateway.clone().spawn_maintenance();
         }
         let cron_wake_signal = CronWakeSignal::new();
@@ -192,30 +316,30 @@ impl AppState {
             command_sessions.clone(),
             gateway.clone(),
             user_world.clone(),
-            beeroom_realtime.clone(),
+            beeroom_projection.clone(),
             Some(cron_wake_signal.clone()),
         ));
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
-        let team_run_runner = TeamRunRunner::new(
+        let mission_runtime = MissionRuntime::new(
             config_store.clone(),
             user_store.clone(),
             workspace.clone(),
             monitor.clone(),
             orchestrator.clone(),
-            beeroom_realtime.clone(),
+            beeroom_projection.clone(),
         );
-        if options.start_team_run_runner {
-            team_run_runner.clone().start();
+        if options.resolved_start_mission_runtime() {
+            mission_runtime.clone().start();
         }
 
-        let agent_runtime = AgentRuntime::new(
+        let thread_runtime = ThreadRuntime::new(
             config_store.clone(),
             user_store.clone(),
             monitor.clone(),
             orchestrator.clone(),
         );
-        if options.start_agent_runtime {
-            agent_runtime.clone().start();
+        if options.resolved_start_thread_runtime() {
+            thread_runtime.clone().start();
         }
 
         let memory = Arc::new(MemoryStore::new(storage.clone()));
@@ -223,7 +347,7 @@ impl AppState {
             config_store.clone(),
             storage.clone(),
             orchestrator.clone(),
-            agent_runtime.clone(),
+            thread_runtime.clone(),
             user_store.clone(),
             workspace.clone(),
             ChannelHubSharedState {
@@ -247,7 +371,7 @@ impl AppState {
             user_tool_manager.clone(),
             skills.clone(),
         );
-        if options.start_cron {
+        if options.resolved_start_cron() {
             cron.start();
         }
 
@@ -263,12 +387,28 @@ impl AppState {
         );
         Ok(Self {
             config_store,
+            runtime_profile,
+            runtime_capabilities,
             workspace,
             monitor,
-            orchestrator,
-            agent_runtime,
-            swarm_service,
-            team_run_runner,
+            kernel: AppKernelServices {
+                orchestrator,
+                thread_runtime,
+                swarm_service,
+                mission_runtime,
+            },
+            projection: AppProjectionServices {
+                user_world,
+                beeroom: beeroom_projection,
+            },
+            control: AppControlServices {
+                presence,
+                channels,
+                gateway,
+                cron,
+                approval_registry,
+                command_sessions,
+            },
             lsp_manager,
             memory,
             skills,
@@ -276,18 +416,10 @@ impl AppState {
             user_tool_store,
             user_tool_manager,
             user_store,
-            user_presence,
-            user_world,
-            beeroom_realtime,
             external_auth_codes,
             throughput,
             benchmark,
             storage,
-            channels,
-            gateway,
-            cron,
-            approval_registry,
-            command_sessions,
         })
     }
 
@@ -337,11 +469,29 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
 
 #[cfg(test)]
 mod tests {
-    use super::AppStateInitOptions;
+    use super::{AppRuntimeProfile, AppStateInitOptions};
 
     #[test]
     fn desktop_default_starts_cron_scheduler() {
         let options = AppStateInitOptions::desktop_default();
-        assert!(options.start_cron);
+        assert_eq!(options.runtime_profile, AppRuntimeProfile::DesktopEmbedded);
+        assert!(options.resolved_start_cron());
+    }
+
+    #[test]
+    fn desktop_default_enables_embedded_thread_runtime() {
+        let options = AppStateInitOptions::desktop_default();
+        assert!(options.runtime_profile.is_embedded());
+        assert!(options.resolved_start_thread_runtime());
+        assert!(!options.resolved_start_mission_runtime());
+    }
+
+    #[test]
+    fn cli_default_keeps_background_runtimes_disabled() {
+        let options = AppStateInitOptions::cli_default();
+        assert_eq!(options.runtime_profile, AppRuntimeProfile::CliEmbedded);
+        assert!(!options.resolved_start_thread_runtime());
+        assert!(!options.resolved_start_mission_runtime());
+        assert!(!options.resolved_start_cron());
     }
 }

@@ -9,7 +9,7 @@ use crate::schemas::{
     WunderPromptResponse, WunderRequest,
 };
 use crate::services::abilities::populate_ability_items;
-use crate::services::agent_runtime::AgentSubmitOutcome;
+use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
@@ -63,7 +63,8 @@ async fn wunder_entry(
     }
     let wants_stream = request.stream;
     let outcome = state
-        .agent_runtime
+        .kernel
+        .thread_runtime
         .submit_user_request(request)
         .await
         .map_err(|err| {
@@ -73,7 +74,7 @@ async fn wunder_entry(
             )
         })?;
     match outcome {
-        AgentSubmitOutcome::Queued(info) => {
+        ThreadSubmitOutcome::Queued(info) => {
             let payload = json!({
                 "queued": true,
                 "queue_id": info.task_id,
@@ -91,10 +92,11 @@ async fn wunder_entry(
                 Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
         }
-        AgentSubmitOutcome::Run(request, lease) => {
+        ThreadSubmitOutcome::Run(request, lease) => {
             let request = *request;
             if request.stream {
                 let stream = state
+                    .kernel
                     .orchestrator
                     .stream(request)
                     .await
@@ -126,6 +128,7 @@ async fn wunder_entry(
                 Ok(sse.into_response())
             } else {
                 let response = state
+                    .kernel
                     .orchestrator
                     .run(request)
                     .await
@@ -160,6 +163,7 @@ async fn wunder_system_prompt(
             .build_bindings(&config, &skills_snapshot, &request.user_id);
     let workspace_id = state.workspace.scoped_user_id(&request.user_id, None);
     let prompt = state
+        .kernel
         .orchestrator
         .build_system_prompt(
             &config,

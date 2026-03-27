@@ -122,7 +122,7 @@ async fn list_channel_runtime_logs(
     }
 
     let query_limit = (limit.saturating_mul(4)).clamp(limit, 400);
-    let runtime_logs = state.channels.list_runtime_logs(
+    let runtime_logs = state.control.channels.list_runtime_logs(
         channel_filter.as_deref(),
         account_filter.as_deref(),
         query_limit,
@@ -243,7 +243,7 @@ async fn write_channel_runtime_probe(
             agent_filter.as_deref().unwrap_or("-")
         )
     });
-    state.channels.record_runtime_info(
+    state.control.channels.record_runtime_info(
         &target.0,
         Some(&target.1),
         "runtime_probe",

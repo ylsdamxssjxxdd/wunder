@@ -160,12 +160,14 @@ async fn list_contacts(
     let (offset, limit) = normalize_pagination(query.offset, query.limit);
     let keyword = query.keyword.as_deref();
     let (mut items, total) = state
+        .projection
         .user_world
         .list_contacts(&resolved.user.user_id, keyword, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let snapshots = state
-        .user_presence
-        .snapshot_many(items.iter().map(|item| item.user_id.as_str()), now_ts());
+        .control
+        .presence
+        .user_snapshot_many(items.iter().map(|item| item.user_id.as_str()), now_ts());
     for item in &mut items {
         if let Some(snapshot) = snapshots.get(item.user_id.as_str()) {
             item.online = snapshot.online;
@@ -196,6 +198,7 @@ async fn create_or_get_conversation(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let item = state
+        .projection
         .user_world
         .resolve_or_create_direct_conversation(
             &resolved.user.user_id,
@@ -214,6 +217,7 @@ async fn list_groups(
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = normalize_pagination(query.offset, query.limit);
     let (items, total) = state
+        .projection
         .user_world
         .list_groups(&resolved.user.user_id, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -234,6 +238,7 @@ async fn create_group(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let item = state
+        .projection
         .user_world
         .create_group(
             &resolved.user.user_id,
@@ -267,6 +272,7 @@ async fn get_group_detail(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let item = state
+        .projection
         .user_world
         .get_group_detail(&resolved.user.user_id, group_id.trim())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -284,6 +290,7 @@ async fn update_group_announcement(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let item = state
+        .projection
         .user_world
         .update_group_announcement(
             &resolved.user.user_id,
@@ -319,6 +326,7 @@ async fn list_conversations(
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = normalize_pagination(query.offset, query.limit);
     let (items, total) = state
+        .projection
         .user_world
         .list_conversations(&resolved.user.user_id, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -339,6 +347,7 @@ async fn get_conversation(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let item = state
+        .projection
         .user_world
         .get_conversation(&resolved.user.user_id, conversation_id.trim())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -360,6 +369,7 @@ async fn list_messages(
     let resolved = resolve_user(&state, &headers, None).await?;
     let limit = normalize_limit(query.limit.unwrap_or(DEFAULT_LIMIT));
     let items = state
+        .projection
         .user_world
         .list_messages(
             &resolved.user.user_id,
@@ -391,6 +401,7 @@ async fn send_message(
         ));
     }
     let result = state
+        .projection
         .user_world
         .send_message(
             &resolved.user.user_id,
@@ -425,6 +436,7 @@ async fn mark_read(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let result = state
+        .projection
         .user_world
         .mark_read(
             &resolved.user.user_id,
@@ -454,7 +466,7 @@ async fn stream_events(
     let after_event_id = query.after_event_id.unwrap_or(0).max(0);
     let fetch_limit = normalize_limit(query.limit.unwrap_or(DEFAULT_LIMIT));
     let user_id = resolved.user.user_id.clone();
-    let service = state.user_world.clone();
+    let service = state.projection.user_world.clone();
     service
         .list_events(&user_id, &conversation_id, after_event_id, 1)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -669,6 +681,7 @@ async fn append_lan_contacts(
         let username = normalize_lan_ip(peer.lan_ip.as_str())
             .map_or(username.clone(), |ip| format!("{username} · {ip}"));
         let conversation = state
+            .projection
             .user_world
             .resolve_or_create_direct_conversation(current_user_id, &user_id, now)
             .map_err(|err| err.to_string())?;

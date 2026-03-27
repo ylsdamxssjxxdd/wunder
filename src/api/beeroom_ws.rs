@@ -7,7 +7,8 @@ use crate::api::ws_helpers::{
 };
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
-use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
+use crate::services::presence::ProjectionTargetKind;
+use crate::services::projection::beeroom::BeeroomProjectionEvent;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
@@ -35,7 +36,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/beeroom/ws", get(beeroom_ws))
         .route(
             "/wunder/beeroom/realtime/metrics",
-            get(beeroom_realtime_metrics),
+            get(beeroom_projection_metrics),
         )
         .route(
             "/wunder/beeroom/groups/{group_id}/chat/stream",
@@ -115,7 +116,8 @@ async fn beeroom_chat_stream(
     let user_id = resolved.user.user_id;
     let group = load_group(state.as_ref(), &user_id, &group_id)?;
     let mut receiver = state
-        .beeroom_realtime
+        .projection
+        .beeroom
         .subscribe_group(&user_id, &group.hive_id)
         .await
         .map_err(|err| {
@@ -154,13 +156,17 @@ async fn beeroom_chat_stream(
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    if !should_forward_realtime_event(&normalized_group_id, cursor_event_id, &event)
-                    {
+                    if !should_forward_projection_event(
+                        &normalized_group_id,
+                        cursor_event_id,
+                        &event,
+                    ) {
                         continue;
                     }
                     cursor_event_id = event.event_id;
                     state_snapshot
-                        .beeroom_realtime
+                        .projection
+                        .beeroom
                         .record_push_latency_sample(event.created_at);
                     let stream_event = Event::default()
                         .event(event.event_type)
@@ -171,7 +177,7 @@ async fn beeroom_chat_stream(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    state_snapshot.beeroom_realtime.record_lag_recovery();
+                    state_snapshot.projection.beeroom.record_lag_recovery();
                     if replay_group_events_to_sse(
                         state_snapshot.clone(),
                         &user_snapshot,
@@ -196,7 +202,7 @@ async fn beeroom_chat_stream(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-async fn beeroom_realtime_metrics(
+async fn beeroom_projection_metrics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<WsQuery>,
@@ -204,7 +210,7 @@ async fn beeroom_realtime_metrics(
     let auth_headers = apply_ws_auth_headers(&headers, &query);
     let _resolved = resolve_user(&state, &auth_headers, None).await?;
     Ok(Json(json!({
-        "metrics": state.beeroom_realtime.metrics_snapshot(),
+        "metrics": state.projection.beeroom.metrics_snapshot(),
         "timestamp": Utc::now().to_rfc3339(),
     })))
 }
@@ -228,9 +234,14 @@ async fn handle_ws(
         }
     });
 
+    state.control.presence.connect_client(
+        &user_id,
+        &connection_id,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let ready_payload = WsReadyPayload {
-        connection_id,
+        connection_id: connection_id.clone(),
         server_time: now_ts,
         protocol: ws_protocol_info(),
         policy: WsPolicy::default_policy(),
@@ -311,6 +322,14 @@ async fn handle_ws(
                                 },
                             );
                         }
+                        state.control.presence.watch_projection(
+                            &connection_id,
+                            &request_id,
+                            &user_id,
+                            ProjectionTargetKind::BeeroomGroup,
+                            &group.hive_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         let state_snapshot = state.clone();
                         let user_snapshot = user_id.clone();
                         let req_snapshot = request_id.clone();
@@ -340,6 +359,10 @@ async fn handle_ws(
                         if let Some(task) = watch_tasks.lock().await.remove(&target_id) {
                             task.cancel.cancel();
                         }
+                        state
+                            .control
+                            .presence
+                            .unwatch_projection(&connection_id, &target_id);
                         let final_event = StreamEvent {
                             event: "final".to_string(),
                             data: json!({ "ok": true, "cancelled": target_id }),
@@ -370,6 +393,11 @@ async fn handle_ws(
             task.cancel.cancel();
         }
     }
+    state.control.presence.disconnect_client(
+        &user_id,
+        &connection_id,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     drop(out_tx);
     let _ = writer.await;
 }
@@ -385,7 +413,8 @@ async fn run_watch_loop(
 ) {
     let mut current_event_id = after_event_id;
     let mut receiver = match state
-        .beeroom_realtime
+        .projection
+        .beeroom
         .subscribe_group(&user_id, &group_id)
         .await
     {
@@ -427,12 +456,13 @@ async fn run_watch_loop(
             recv = receiver.recv() => {
                 match recv {
                     Ok(event) => {
-                        if !should_forward_realtime_event(&group_id, current_event_id, &event) {
+                        if !should_forward_projection_event(&group_id, current_event_id, &event) {
                             continue;
                         }
                         current_event_id = event.event_id;
                         state
-                            .beeroom_realtime
+                            .projection
+                            .beeroom
                             .record_push_latency_sample(event.created_at);
                         let stream_event = StreamEvent {
                             event: event.event_type,
@@ -445,7 +475,7 @@ async fn run_watch_loop(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        state.beeroom_realtime.record_lag_recovery();
+                        state.projection.beeroom.record_lag_recovery();
                         if replay_group_events_to_ws(
                             state.clone(),
                             &user_id,
@@ -480,7 +510,8 @@ async fn replay_group_events_to_ws(
     // Drain persisted backlog before relying on live broadcast only.
     loop {
         let events = match state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .list_group_events(
                 user_id,
                 group_id,
@@ -491,7 +522,7 @@ async fn replay_group_events_to_ws(
         {
             Ok(events) => events,
             Err(err) => {
-                state.beeroom_realtime.record_replay_failure();
+                state.projection.beeroom.record_replay_failure();
                 let sync_required = StreamEvent {
                     event: "sync_required".to_string(),
                     data: json!({
@@ -510,7 +541,7 @@ async fn replay_group_events_to_ws(
         if events.is_empty() {
             return Ok(());
         }
-        state.beeroom_realtime.record_replay_batch(events.len());
+        state.projection.beeroom.record_replay_batch(events.len());
         let has_more = events.len() as i64 >= BEEROOM_REPLAY_FETCH_LIMIT;
         for event in events {
             if event.event_id <= *cursor_event_id {
@@ -518,7 +549,8 @@ async fn replay_group_events_to_ws(
             }
             *cursor_event_id = event.event_id;
             state
-                .beeroom_realtime
+                .projection
+                .beeroom
                 .record_push_latency_sample(event.created_at);
             let stream_event = StreamEvent {
                 event: event.event_type,
@@ -549,7 +581,8 @@ async fn replay_group_events_to_sse(
     // SSE fallback shares the same cursor-replay semantics as WS.
     loop {
         let events = match state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .list_group_events(
                 user_id,
                 group_id,
@@ -560,7 +593,7 @@ async fn replay_group_events_to_sse(
         {
             Ok(events) => events,
             Err(err) => {
-                state.beeroom_realtime.record_replay_failure();
+                state.projection.beeroom.record_replay_failure();
                 let sync_required = Event::default().event("sync_required").data(
                     json!({
                         "group_id": group_id,
@@ -577,7 +610,7 @@ async fn replay_group_events_to_sse(
         if events.is_empty() {
             return Ok(());
         }
-        state.beeroom_realtime.record_replay_batch(events.len());
+        state.projection.beeroom.record_replay_batch(events.len());
         let has_more = events.len() as i64 >= BEEROOM_REPLAY_FETCH_LIMIT;
         for event in events {
             if event.event_id <= *cursor_event_id {
@@ -585,7 +618,8 @@ async fn replay_group_events_to_sse(
             }
             *cursor_event_id = event.event_id;
             state
-                .beeroom_realtime
+                .projection
+                .beeroom
                 .record_push_latency_sample(event.created_at);
             let stream_event = Event::default()
                 .event(event.event_type)
@@ -609,10 +643,10 @@ fn resolve_request_id(value: Option<&str>) -> String {
         .unwrap_or_else(|| format!("req_{}", Uuid::new_v4().simple()))
 }
 
-fn should_forward_realtime_event(
+fn should_forward_projection_event(
     expected_group_id: &str,
     current_event_id: i64,
-    event: &BeeroomRealtimeEvent,
+    event: &BeeroomProjectionEvent,
 ) -> bool {
     event.group_id == expected_group_id && event.event_id > current_event_id
 }
@@ -632,13 +666,13 @@ fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_after_event_id, should_forward_realtime_event};
-    use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
+    use super::{resolve_after_event_id, should_forward_projection_event};
+    use crate::services::projection::beeroom::BeeroomProjectionEvent;
     use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
 
-    fn sample_event(group_id: &str, event_id: i64) -> BeeroomRealtimeEvent {
-        BeeroomRealtimeEvent {
+    fn sample_event(group_id: &str, event_id: i64) -> BeeroomProjectionEvent {
+        BeeroomProjectionEvent {
             event_id,
             user_id: "user-a".to_string(),
             group_id: group_id.to_string(),
@@ -672,18 +706,18 @@ mod tests {
     }
 
     #[test]
-    fn should_forward_realtime_event_requires_same_group_and_newer_id() {
+    fn should_forward_projection_event_requires_same_group_and_newer_id() {
         let accepted = sample_event("group-a", 11);
         let same_group_duplicate = sample_event("group-a", 10);
         let other_group_newer = sample_event("group-b", 15);
 
-        assert!(should_forward_realtime_event("group-a", 10, &accepted));
-        assert!(!should_forward_realtime_event(
+        assert!(should_forward_projection_event("group-a", 10, &accepted));
+        assert!(!should_forward_projection_event(
             "group-a",
             10,
             &same_group_duplicate
         ));
-        assert!(!should_forward_realtime_event(
+        assert!(!should_forward_projection_event(
             "group-a",
             10,
             &other_group_newer

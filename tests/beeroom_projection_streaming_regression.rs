@@ -23,7 +23,7 @@ use wunder_server::{
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type BoxedBytesStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send>>;
 
-struct BeeroomRealtimeHarness {
+struct BeeroomProjectionHarness {
     state: Arc<AppState>,
     user_id: String,
     token: String,
@@ -33,7 +33,7 @@ struct BeeroomRealtimeHarness {
     server_task: JoinHandle<()>,
 }
 
-impl BeeroomRealtimeHarness {
+impl BeeroomProjectionHarness {
     async fn start() -> Result<Self> {
         let temp_dir = tempfile::tempdir().context("create temp dir failed")?;
         let mut config = Config::default();
@@ -63,8 +63,8 @@ impl BeeroomRealtimeHarness {
         let user = state
             .user_store
             .create_user(
-                "beeroom_realtime_tester",
-                Some("beeroom_realtime_tester@example.test".to_string()),
+                "beeroom_projection_tester",
+                Some("beeroom_projection_tester@example.test".to_string()),
                 "password-123",
                 Some("A"),
                 None,
@@ -133,14 +133,16 @@ impl BeeroomRealtimeHarness {
 
     async fn publish_group_event(&self, group_id: &str, event_type: &str, payload: Value) {
         self.state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .publish_group_event(&self.user_id, group_id, event_type, payload)
             .await;
     }
 
     async fn latest_event_id(&self, group_id: &str) -> Result<i64> {
         self.state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .latest_event_id(&self.user_id, group_id)
             .await
             .context("load latest event id failed")
@@ -169,7 +171,7 @@ impl BeeroomRealtimeHarness {
     }
 }
 
-impl Drop for BeeroomRealtimeHarness {
+impl Drop for BeeroomProjectionHarness {
     fn drop(&mut self) {
         self.server_task.abort();
     }
@@ -389,8 +391,8 @@ async fn wait_for_ws_any_event_for_request(
 }
 
 #[tokio::test]
-async fn ws_watch_emits_resume_gap_then_forwards_new_event() -> Result<()> {
-    let harness = BeeroomRealtimeHarness::start().await?;
+async fn ws_watch_replays_gap_then_forwards_new_event() -> Result<()> {
+    let harness = BeeroomProjectionHarness::start().await?;
     let group_id = harness.create_group("ws-gap").await?;
     harness
         .publish_group_event(&group_id, "team_task_dispatch", json!({ "seq": 1 }))
@@ -408,27 +410,24 @@ async fn ws_watch_emits_resume_gap_then_forwards_new_event() -> Result<()> {
 
     ws_send_watch(&mut ws, "watch-gap", &group_id, after_event_id).await?;
 
-    let watching =
-        wait_for_ws_event(&mut ws, "watch-gap", "watching", Duration::from_secs(3)).await?;
-    assert_eq!(watching["data"]["group_id"], json!(group_id.clone()));
-    assert_eq!(watching["data"]["after_event_id"], json!(after_event_id));
-
-    let sync_required = wait_for_ws_event(
+    let replayed = wait_for_ws_event(
         &mut ws,
         "watch-gap",
-        "sync_required",
+        "team_task_result",
         Duration::from_secs(3),
     )
     .await?;
-    assert_eq!(sync_required["data"]["reason"], json!("resume_gap"));
-    assert_eq!(
-        sync_required["data"]["after_event_id"],
-        json!(after_event_id)
-    );
-    assert_eq!(
-        sync_required["data"]["latest_event_id"],
-        json!(latest_event_id)
-    );
+    assert_eq!(replayed["data"]["seq"], json!(2));
+    assert_eq!(replayed["id"], json!(latest_event_id.to_string()));
+
+    let watching =
+        wait_for_ws_event(&mut ws, "watch-gap", "watching", Duration::from_secs(3)).await?;
+    assert_eq!(watching["data"]["group_id"], json!(group_id.clone()));
+    assert_eq!(watching["data"]["after_event_id"], json!(latest_event_id));
+
+    let no_sync_required =
+        wait_for_ws_any_event_for_request(&mut ws, "watch-gap", Duration::from_millis(260)).await?;
+    assert!(no_sync_required.is_none());
 
     harness
         .publish_group_event(&group_id, "team_task_update", json!({ "seq": 3 }))
@@ -454,7 +453,7 @@ async fn ws_watch_emits_resume_gap_then_forwards_new_event() -> Result<()> {
 #[tokio::test]
 async fn ws_watch_does_not_emit_resume_gap_without_gap_and_ignores_other_group_events() -> Result<()>
 {
-    let harness = BeeroomRealtimeHarness::start().await?;
+    let harness = BeeroomProjectionHarness::start().await?;
     let target_group_id = harness.create_group("ws-no-gap-target").await?;
     let other_group_id = harness.create_group("ws-no-gap-other").await?;
     harness
@@ -514,8 +513,8 @@ async fn ws_watch_does_not_emit_resume_gap_without_gap_and_ignores_other_group_e
 }
 
 #[tokio::test]
-async fn sse_stream_emits_resume_gap_and_forwards_new_event() -> Result<()> {
-    let harness = BeeroomRealtimeHarness::start().await?;
+async fn sse_stream_replays_gap_and_forwards_new_event() -> Result<()> {
+    let harness = BeeroomProjectionHarness::start().await?;
     let group_id = harness.create_group("sse-gap").await?;
     harness
         .publish_group_event(&group_id, "team_task_dispatch", json!({ "seq": 1 }))
@@ -542,20 +541,20 @@ async fn sse_stream_emits_resume_gap_and_forwards_new_event() -> Result<()> {
     assert!(response.status().is_success());
 
     let mut reader = SseEventReader::new(response);
+    let replayed = reader.next_event(Duration::from_secs(3)).await?;
+    assert_eq!(replayed.event, "team_task_result");
+    let latest_event_id_text = latest_event_id.to_string();
+    assert_eq!(replayed.id.as_deref(), Some(latest_event_id_text.as_str()));
+    let replayed_data: Value =
+        serde_json::from_str(&replayed.data).context("parse replay event data failed")?;
+    assert_eq!(replayed_data["seq"], json!(2));
+
     let watching = reader.next_event(Duration::from_secs(3)).await?;
     assert_eq!(watching.event, "watching");
     let watching_data: Value =
         serde_json::from_str(&watching.data).context("parse watching event data failed")?;
     assert_eq!(watching_data["group_id"], json!(group_id.clone()));
-    assert_eq!(watching_data["after_event_id"], json!(after_event_id));
-
-    let sync_required = reader.next_event(Duration::from_secs(3)).await?;
-    assert_eq!(sync_required.event, "sync_required");
-    let sync_data: Value = serde_json::from_str(&sync_required.data)
-        .context("parse sync_required event data failed")?;
-    assert_eq!(sync_data["reason"], json!("resume_gap"));
-    assert_eq!(sync_data["after_event_id"], json!(after_event_id));
-    assert_eq!(sync_data["latest_event_id"], json!(latest_event_id));
+    assert_eq!(watching_data["after_event_id"], json!(latest_event_id));
 
     harness
         .publish_group_event(&group_id, "team_finish", json!({ "seq": 3 }))
@@ -576,8 +575,8 @@ async fn sse_stream_emits_resume_gap_and_forwards_new_event() -> Result<()> {
 }
 
 #[tokio::test]
-async fn sse_stream_uses_last_event_id_header_for_resume_gap_cursor() -> Result<()> {
-    let harness = BeeroomRealtimeHarness::start().await?;
+async fn sse_stream_uses_last_event_id_header_for_replay_cursor() -> Result<()> {
+    let harness = BeeroomProjectionHarness::start().await?;
     let group_id = harness.create_group("sse-header-cursor").await?;
     harness
         .publish_group_event(&group_id, "team_task_dispatch", json!({ "seq": 1 }))
@@ -602,19 +601,19 @@ async fn sse_stream_uses_last_event_id_header_for_resume_gap_cursor() -> Result<
     assert!(response.status().is_success());
 
     let mut reader = SseEventReader::new(response);
+    let replayed = reader.next_event(Duration::from_secs(3)).await?;
+    assert_eq!(replayed.event, "team_task_result");
+    let latest_event_id_text = latest_event_id.to_string();
+    assert_eq!(replayed.id.as_deref(), Some(latest_event_id_text.as_str()));
+    let replayed_data: Value =
+        serde_json::from_str(&replayed.data).context("parse replay event data failed")?;
+    assert_eq!(replayed_data["seq"], json!(2));
+
     let watching = reader.next_event(Duration::from_secs(3)).await?;
     assert_eq!(watching.event, "watching");
     let watching_data: Value =
         serde_json::from_str(&watching.data).context("parse watching event data failed")?;
     assert_eq!(watching_data["group_id"], json!(group_id.clone()));
-    assert_eq!(watching_data["after_event_id"], json!(header_cursor));
-
-    let sync_required = reader.next_event(Duration::from_secs(3)).await?;
-    assert_eq!(sync_required.event, "sync_required");
-    let sync_data: Value = serde_json::from_str(&sync_required.data)
-        .context("parse sync_required event data failed")?;
-    assert_eq!(sync_data["reason"], json!("resume_gap"));
-    assert_eq!(sync_data["after_event_id"], json!(header_cursor));
-    assert_eq!(sync_data["latest_event_id"], json!(latest_event_id));
+    assert_eq!(watching_data["after_event_id"], json!(latest_event_id));
     Ok(())
 }

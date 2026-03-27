@@ -3605,6 +3605,7 @@ async fn admin_monitor_compaction(
         .map(|user| UserStore::is_admin(&user))
         .unwrap_or(false);
     state
+        .kernel
         .orchestrator
         .force_compact_session(
             &user_id,
@@ -3663,7 +3664,11 @@ async fn admin_throughput_start(
     .map_err(|message| error_response(StatusCode::BAD_REQUEST, message))?;
     let snapshot = state
         .throughput
-        .start(state.orchestrator.clone(), state.monitor.clone(), config)
+        .start(
+            state.kernel.orchestrator.clone(),
+            state.monitor.clone(),
+            config,
+        )
         .await
         .map_err(|message| error_response(StatusCode::CONFLICT, message))?;
     Ok(Json(snapshot))
@@ -4395,8 +4400,9 @@ async fn admin_user_accounts_list(
     }
     let unit_map = build_unit_map(&units);
     let presence_map = state
-        .user_presence
-        .snapshot_many(users.iter().map(|user| user.user_id.as_str()), presence_now);
+        .control
+        .presence
+        .user_snapshot_many(users.iter().map(|user| user.user_id.as_str()), presence_now);
     let items = users
         .into_iter()
         .map(|user| {
@@ -8130,7 +8136,7 @@ async fn admin_channel_runtime_logs(
     let limit = query.limit.unwrap_or(80).clamp(1, 200);
     let query_limit = (limit.saturating_mul(4)).clamp(limit, 400);
 
-    let runtime_logs = state.channels.list_runtime_logs(
+    let runtime_logs = state.control.channels.list_runtime_logs(
         channel_filter.as_deref(),
         account_filter.as_deref(),
         query_limit,
@@ -8226,7 +8232,7 @@ async fn admin_channel_runtime_probe(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| "runtime probe ok: admin".to_string());
-    state.channels.record_runtime_info(
+    state.control.channels.record_runtime_info(
         &channel,
         account_id.as_deref(),
         "runtime_probe",
@@ -8308,7 +8314,7 @@ struct GatewayNodeInvokeRequestPayload {
 }
 
 async fn admin_gateway_status(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
-    let snapshot = state.gateway.snapshot().await;
+    let snapshot = state.control.gateway.snapshot().await;
     let nodes = state
         .storage
         .list_gateway_nodes(None)
@@ -8332,7 +8338,7 @@ async fn admin_gateway_status(State(state): State<Arc<AppState>>) -> Result<Json
 async fn admin_gateway_presence(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, Response> {
-    let snapshot = state.gateway.snapshot().await;
+    let snapshot = state.control.gateway.snapshot().await;
     Ok(Json(json!({ "data": {
         "state_version": snapshot.state_version,
         "items": snapshot.items
@@ -8559,6 +8565,7 @@ async fn admin_gateway_invoke(
     }
     let timeout_s = payload.timeout_s.unwrap_or(30.0);
     let result = state
+        .control
         .gateway
         .invoke_node(GatewayNodeInvokeRequest {
             node_id: node_id.to_string(),

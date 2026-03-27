@@ -511,7 +511,7 @@ async fn create_and_enqueue_runs(
         queued.updated_time = now_ts();
         state.user_store.upsert_team_run(&queued)?;
 
-        state.team_run_runner.enqueue(&team_run_id).await;
+        state.kernel.mission_runtime.enqueue(&team_run_id).await;
         team_run_ids.push(team_run_id);
     }
 

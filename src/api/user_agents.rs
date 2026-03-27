@@ -611,7 +611,7 @@ async fn get_agent(
 }
 
 #[derive(Debug, Default, Clone)]
-struct AgentRuntimeDayStats {
+struct ThreadRuntimeDayStats {
     runtime_seconds: f64,
     billed_tokens: i64,
     quota_consumed: i64,
@@ -622,7 +622,7 @@ async fn get_agent_runtime_records(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
-    Query(query): Query<AgentRuntimeRecordsQuery>,
+    Query(query): Query<ThreadRuntimeRecordsQuery>,
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
@@ -1381,7 +1381,8 @@ async fn set_default_session(
         ));
     }
     let record = state
-        .agent_runtime
+        .kernel
+        .thread_runtime
         .set_main_session(&user_id, &normalized_agent, &session_id, "manual")
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1637,13 +1638,13 @@ fn parse_runtime_date(raw: Option<&str>) -> Option<NaiveDate> {
 fn build_runtime_day_map(
     range_start: NaiveDate,
     range_end: NaiveDate,
-) -> BTreeMap<String, AgentRuntimeDayStats> {
+) -> BTreeMap<String, ThreadRuntimeDayStats> {
     let mut result = BTreeMap::new();
     let mut cursor = range_start;
     while cursor <= range_end {
         result.insert(
             cursor.format("%Y-%m-%d").to_string(),
-            AgentRuntimeDayStats::default(),
+            ThreadRuntimeDayStats::default(),
         );
         cursor += Duration::days(1);
     }
@@ -1764,7 +1765,7 @@ fn extract_event_tool_name(data: &Value) -> String {
 }
 
 fn accumulate_runtime_seconds(
-    daily: &mut BTreeMap<String, AgentRuntimeDayStats>,
+    daily: &mut BTreeMap<String, ThreadRuntimeDayStats>,
     start_ts: f64,
     end_ts: f64,
     range_start_ts: f64,
@@ -2324,7 +2325,7 @@ struct DefaultSessionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentRuntimeRecordsQuery {
+struct ThreadRuntimeRecordsQuery {
     #[serde(default)]
     user_id: Option<String>,
     #[serde(default)]

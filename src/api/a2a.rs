@@ -729,6 +729,7 @@ impl A2aService {
         if blocking {
             let result = self
                 .state
+                .kernel
                 .orchestrator
                 .run(request)
                 .await
@@ -750,7 +751,7 @@ impl A2aService {
             return Ok(json!({ "task": task }));
         }
 
-        let orchestrator = self.state.orchestrator.clone();
+        let orchestrator = self.state.kernel.orchestrator.clone();
         tokio::spawn(async move {
             let _ = orchestrator.run(request).await;
         });
@@ -843,7 +844,7 @@ impl A2aService {
                 return;
             }
 
-            let stream = match state.orchestrator.stream(request).await {
+            let stream = match state.kernel.orchestrator.stream(request).await {
                 Ok(stream) => stream,
                 Err(err) => {
                     let status = build_status(

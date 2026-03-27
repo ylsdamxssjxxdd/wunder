@@ -184,8 +184,8 @@ async fn handle_action(
     let result = handle_cron_action(
         config,
         state.storage.clone(),
-        Some(state.orchestrator.clone()),
-        Some(state.cron.wake_signal()),
+        Some(state.kernel.orchestrator.clone()),
+        Some(state.control.cron.wake_signal()),
         state.user_store.clone(),
         state.user_tool_manager.clone(),
         state.skills.clone(),

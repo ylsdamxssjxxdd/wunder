@@ -289,14 +289,14 @@ pub(crate) fn emit_swarm_team_event(
         return;
     }
 
-    let Some(realtime) = context.beeroom_realtime.as_ref().cloned() else {
+    let Some(projection) = context.beeroom_projection.as_ref().cloned() else {
         return;
     };
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
     let event_name = cleaned_event.to_string();
     tokio::spawn(async move {
-        realtime
+        projection
             .publish_group_event(&user_id, &hive_id, &event_name, normalized_payload)
             .await;
     });
@@ -531,7 +531,7 @@ mod tests {
                 storage: self.storage.clone(),
                 orchestrator: None,
                 monitor: Some(self.monitor.clone()),
-                beeroom_realtime: None,
+                beeroom_projection: None,
                 workspace: self.workspace.clone(),
                 lsp_manager: self.lsp_manager.clone(),
                 config: &self.config,

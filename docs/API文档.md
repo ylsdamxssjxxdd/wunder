@@ -41,6 +41,8 @@
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
+- Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
+- 控制平面实时状态已收敛到 `state.control.presence`：内部拆分为 `connection presence` 与 `projection watch presence` 两层；`/wunder/ws`、`/wunder/chat/ws`、`/wunder/user_world/ws`、`/wunder/beeroom/ws` 会在 `start/resume/watch/cancel/disconnect` 时同步订阅态，用于在线状态、热点观测与慢客户端恢复链路。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
@@ -67,6 +69,7 @@
 
 - 目标：支持“用户↔用户”单聊 + 群聊，默认可见联系人，WebSocket 优先，SSE 兜底。
 - 鉴权：使用用户端 Bearer Token（与 `/wunder/chat/*` 一致）。
+- 在线态来源：联系人列表中的 `online/last_seen_at` 由 `connection presence` 提供；会话订阅本身则进入 `projection watch presence`，用于实时路由与恢复，不额外暴露为独立接口字段。
 - 接口清单：
   - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`，返回 `online/last_seen_at` 在线状态）
   - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
@@ -152,6 +155,7 @@
 - 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
+- 会话级实时订阅会同步登记到控制平面 `projection watch presence`；`cancel`、连接关闭或任务自然结束都会清理对应 watch，避免慢客户端或断连后残留假订阅。
 - 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段，用于前端刷新后直接恢复工作流里的终端预览。
 - 新增命令会话回放接口：
   - `GET /wunder/chat/sessions/{session_id}/command-sessions`：返回当前会话可见的命令会话快照列表。

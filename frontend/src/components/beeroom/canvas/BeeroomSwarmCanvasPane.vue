@@ -253,14 +253,14 @@ type PanState = {
 
 const { t } = useI18n();
 const canvasControlLabels = {
-  toolbar: '画布控制区',
-  zoomIn: '放大画布',
-  zoomOut: '缩小画布',
-  resetZoom: '重置缩放 100%',
-  fitView: '适配视图',
-  autoArrange: '自动整理',
-  enterFullscreen: '全屏',
-  exitFullscreen: '退出全屏'
+  toolbar: 'Canvas Controls',
+  zoomIn: 'Zoom In',
+  zoomOut: 'Zoom Out',
+  resetZoom: 'Reset Zoom 100%',
+  fitView: 'Fit View',
+  autoArrange: 'Auto Arrange',
+  enterFullscreen: 'Enter Fullscreen',
+  exitFullscreen: 'Exit Fullscreen'
 } as const;
 const viewportRef = ref<HTMLDivElement | null>(null);
 const containerSize = ref(normalizeSwarmViewportSize({ width: 0, height: 0 }));
@@ -588,6 +588,7 @@ const handleNodeClick = (nodeId: string) => {
 
 const handleNodePointerDown = (nodeId: string, event: PointerEvent) => {
   if (event.button !== 0) return;
+  event.preventDefault();
   const node = projection.value.nodes.find((item) => item.id === nodeId);
   if (!node) return;
   dragState = {

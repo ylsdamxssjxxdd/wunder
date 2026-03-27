@@ -246,7 +246,8 @@ async fn delete_beeroom_group(
     }
     if deleted_chat_message_total > 0 {
         state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .publish_chat_cleared(
                 &user_id,
                 &group.hive_id,
@@ -406,7 +407,7 @@ async fn append_beeroom_chat_message(
             payload.created_at.unwrap_or(0.0),
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    state.beeroom_realtime.publish_chat_message(&record).await;
+    state.projection.beeroom.publish_chat_message(&record).await;
     Ok(Json(
         json!({ "data": beeroom_chat_message_payload(record) }),
     ))
@@ -430,7 +431,8 @@ async fn clear_beeroom_chat_messages(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if deleted > 0 {
         state
-            .beeroom_realtime
+            .projection
+            .beeroom
             .publish_chat_cleared(&user_id, &group.hive_id, deleted, now_ts())
             .await;
     }

@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
-use wunder_server::beeroom_realtime::{BeeroomRealtimeMetricsSnapshot, BeeroomRealtimeService};
+use wunder_server::projection::beeroom::{
+    BeeroomProjectionMetricsSnapshot, BeeroomProjectionService,
+};
 use wunder_server::storage::{SqliteStorage, StorageBackend};
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,7 +39,7 @@ struct BaselineSummary {
     observed_watch_events: usize,
     lagged_skipped_events: u64,
     watch_latency: LatencySummary,
-    service_metrics: BeeroomRealtimeMetricsSnapshot,
+    service_metrics: BeeroomProjectionMetricsSnapshot,
 }
 
 #[tokio::main]
@@ -53,12 +55,12 @@ async fn main() -> Result<()> {
 
 async fn run_baseline(args: Args) -> Result<BaselineSummary> {
     let db_path = std::env::temp_dir().join(format!(
-        "wunder_beeroom_realtime_baseline_{}.db",
+        "wunder_beeroom_projection_baseline_{}.db",
         uuid::Uuid::new_v4().simple()
     ));
     let storage: Arc<dyn StorageBackend> =
         Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-    let service = Arc::new(BeeroomRealtimeService::new(storage));
+    let service = Arc::new(BeeroomProjectionService::new(storage));
 
     for seq in 0..args.warmup {
         service
@@ -264,7 +266,7 @@ fn parse_string(raw: Option<&String>, flag: &str) -> Result<String> {
 
 fn print_help() {
     println!(
-        "beeroom_realtime_baseline\n\
+        "beeroom_projection_baseline\n\
          --events <N>       total publish events (default: 5000)\n\
          --publishers <N>   concurrent publishers (default: 8)\n\
          --warmup <N>       warmup events before measure (default: 300)\n\

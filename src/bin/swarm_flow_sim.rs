@@ -285,7 +285,7 @@ async fn main() -> Result<()> {
         approval_tx: None,
     };
 
-    let mother_response = state.orchestrator.run(mother_request).await?;
+    let mother_response = state.kernel.orchestrator.run(mother_request).await?;
 
     wait_until_no_active_runs(&db_path, &user_id, args.max_wait_s, args.poll_ms).await?;
     let _ = state.workspace.flush_writes_async().await;

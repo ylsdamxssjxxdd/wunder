@@ -124,7 +124,7 @@ async fn handle_gateway_ws(
         }
     });
 
-    let hub = state.gateway.clone();
+    let hub = state.control.gateway.clone();
     let challenge = json!({
         "type": "event",
         "event": "connect.challenge",

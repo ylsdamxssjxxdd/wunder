@@ -212,6 +212,7 @@ async fn whatsapp_webhook(
             messages.push(whatsapp_cloud::inbound_to_channel_message(item, Vec::new()));
         }
         let result = state
+            .control
             .channels
             .enqueue_inbound(
                 whatsapp_cloud::WHATSAPP_CHANNEL,
@@ -231,6 +232,7 @@ async fn whatsapp_webhook(
         messages,
     );
     let result = state
+        .control
         .channels
         .enqueue_inbound(
             whatsapp_cloud::WHATSAPP_CHANNEL,
@@ -303,6 +305,7 @@ async fn feishu_webhook(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
 
     let result = state
+        .control
         .channels
         .enqueue_inbound(
             feishu::FEISHU_CHANNEL,
@@ -503,6 +506,7 @@ async fn wechat_webhook(
     });
 
     state
+        .control
         .channels
         .enqueue_inbound(wechat::WECHAT_CHANNEL, &headers, messages, Some(payload))
         .await
@@ -727,6 +731,7 @@ async fn wechat_mp_webhook(
         "payload_xml": xml_payload,
     });
     state
+        .control
         .channels
         .enqueue_inbound(
             wechat_mp::WECHAT_MP_CHANNEL,
@@ -750,7 +755,7 @@ async fn qqbot_webhook(
     let app_id_hint = extract_qqbot_app_id(&payload)
         .or_else(|| extract_qqbot_app_id_from_headers(&headers))
         .unwrap_or_else(|| "(none)".to_string());
-    state.channels.record_runtime_info(
+    state.control.channels.record_runtime_info(
         qqbot::QQBOT_CHANNEL,
         None,
         "callback_received",
@@ -759,7 +764,7 @@ async fn qqbot_webhook(
     let account_id = match resolve_qqbot_account_id(&state, &headers, &query, &payload).await {
         Ok(value) => value,
         Err(response) => {
-            state.channels.record_runtime_warn(
+            state.control.channels.record_runtime_warn(
                 qqbot::QQBOT_CHANNEL,
                 None,
                 "account_resolve_failed",
@@ -775,7 +780,7 @@ async fn qqbot_webhook(
         match load_account_by_channel_and_id(&state, qqbot::QQBOT_CHANNEL, &account_id).await {
             Ok(value) => value,
             Err(response) => {
-                state.channels.record_runtime_error(
+                state.control.channels.record_runtime_error(
                     qqbot::QQBOT_CHANNEL,
                     Some(&account_id),
                     "account_load_failed",
@@ -797,7 +802,7 @@ async fn qqbot_webhook(
             .and_then(qqbot::resolved_client_secret);
         let response =
             qqbot::validation_response(&payload, qq_client_secret.as_deref()).map_err(|err| {
-                state.channels.record_runtime_error(
+                state.control.channels.record_runtime_error(
                     qqbot::QQBOT_CHANNEL,
                     Some(&account_id),
                     "validation_failed",
@@ -806,7 +811,7 @@ async fn qqbot_webhook(
                 error_response(StatusCode::BAD_REQUEST, &err.to_string())
             })?;
         if let Some(response) = response {
-            state.channels.record_runtime_info(
+            state.control.channels.record_runtime_info(
                 qqbot::QQBOT_CHANNEL,
                 Some(&account_id),
                 "validation_succeeded",
@@ -822,7 +827,7 @@ async fn qqbot_webhook(
 
     let is_dispatch_event = qqbot::is_dispatch_event(&payload);
     if qqbot::callback_opcode(&payload).is_some() && !is_dispatch_event {
-        state.channels.record_runtime_info(
+        state.control.channels.record_runtime_info(
             qqbot::QQBOT_CHANNEL,
             Some(&account_id),
             "callback_ignored",
@@ -885,7 +890,7 @@ async fn qqbot_webhook(
     };
     if peer_id.is_empty() {
         if is_dispatch_event {
-            state.channels.record_runtime_info(
+            state.control.channels.record_runtime_info(
                 qqbot::QQBOT_CHANNEL,
                 Some(&account_id),
                 "dispatch_without_peer_ignored",
@@ -896,7 +901,7 @@ async fn qqbot_webhook(
             );
             return Ok(Json(qqbot::dispatch_ack(true)));
         }
-        state.channels.record_runtime_error(
+        state.control.channels.record_runtime_error(
             qqbot::QQBOT_CHANNEL,
             Some(&account_id),
             "invalid_payload",
@@ -947,6 +952,7 @@ async fn qqbot_webhook(
     };
 
     let result = state
+        .control
         .channels
         .enqueue_inbound(
             qqbot::QQBOT_CHANNEL,
@@ -956,7 +962,7 @@ async fn qqbot_webhook(
         )
         .await;
     if let Err(err) = &result {
-        state.channels.record_runtime_error(
+        state.control.channels.record_runtime_error(
             qqbot::QQBOT_CHANNEL,
             Some(&account_id),
             "inbound_enqueue_failed",
@@ -964,7 +970,7 @@ async fn qqbot_webhook(
         );
     } else if let Ok(outcome) = &result {
         if outcome.accepted == 0 {
-            state.channels.record_runtime_warn(
+            state.control.channels.record_runtime_warn(
                 qqbot::QQBOT_CHANNEL,
                 Some(&account_id),
                 "inbound_ignored",
@@ -995,7 +1001,7 @@ async fn channel_webhook(
         .clone()
         .or_else(|| header_string(&headers, "x-channel-account"));
     let raw_payload = Some(payload.clone());
-    let adapter_registry = state.channels.adapter_registry();
+    let adapter_registry = state.control.channels.adapter_registry();
     let mut messages = if let Some(adapter) = adapter_registry.get(&provider) {
         let verify_context = InboundVerifyContext {
             provider: &provider,
@@ -1025,6 +1031,7 @@ async fn channel_webhook(
     };
     messages = apply_overrides(&provider, account_override.as_deref(), messages);
     let result = state
+        .control
         .channels
         .enqueue_inbound(&provider, &headers, messages, raw_payload)
         .await

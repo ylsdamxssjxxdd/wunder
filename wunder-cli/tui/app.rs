@@ -4194,7 +4194,7 @@ impl TuiApp {
         )
         .await?;
         request.approval_tx = Some(approval_tx);
-        let orchestrator = self.runtime.state.orchestrator.clone();
+        let orchestrator = self.runtime.state.kernel.orchestrator.clone();
         let frame_requester = self.frame_requester.clone();
         let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
         self.stream_rx = Some(rx);

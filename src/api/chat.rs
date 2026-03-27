@@ -9,8 +9,8 @@ use crate::orchestrator_constants::{
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
-use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
+use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
@@ -312,7 +312,8 @@ async fn create_session(
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let is_main = state
-        .agent_runtime
+        .kernel
+        .thread_runtime
         .set_main_session(
             &resolved.user.user_id,
             record.agent_id.as_deref().unwrap_or(""),
@@ -620,6 +621,7 @@ async fn get_session_events(
         .map(|record| collect_session_event_rounds(&record))
         .unwrap_or_default();
     let command_sessions = state
+        .control
         .command_sessions
         .list_session_snapshots(&resolved.user.user_id, &session_id);
     let monitor_status = state.monitor.get_record(&session_id).and_then(|record| {
@@ -629,6 +631,7 @@ async fn get_session_events(
             .map(ToString::to_string)
     });
     let runtime = state
+        .kernel
         .orchestrator
         .get_tool_session_runtime_snapshot(&session_id);
     let running = is_session_stream_active_or_queued(
@@ -676,6 +679,7 @@ async fn list_session_command_sessions(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let items = state
+        .control
         .command_sessions
         .list_session_snapshots(&resolved.user.user_id, &session_id);
     Ok(Json(json!({
@@ -706,6 +710,7 @@ async fn get_session_command_session(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let snapshot = state
+        .control
         .command_sessions
         .snapshot_for_scope(&resolved.user.user_id, &session_id, &command_session_id)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
@@ -1008,7 +1013,8 @@ async fn archive_session(
             .find(|item| item.session_id != session_id)
         {
             let _ = state
-                .agent_runtime
+                .kernel
+                .thread_runtime
                 .set_main_session(
                     &resolved.user.user_id,
                     agent_key.as_str(),
@@ -1094,7 +1100,8 @@ async fn restore_session(
     };
     if should_rebind_main {
         let _ = state
-            .agent_runtime
+            .kernel
+            .thread_runtime
             .set_main_session(
                 &resolved.user.user_id,
                 agent_key.as_str(),
@@ -1158,7 +1165,8 @@ async fn send_message(
     .await?;
     let wants_stream = request.stream;
     let outcome = state
-        .agent_runtime
+        .kernel
+        .thread_runtime
         .submit_user_request(request)
         .await
         .map_err(|err| {
@@ -1169,7 +1177,7 @@ async fn send_message(
         })?;
 
     match outcome {
-        AgentSubmitOutcome::Queued(info) => {
+        ThreadSubmitOutcome::Queued(info) => {
             let payload = json!({
                 "queued": true,
                 "queue_id": info.task_id,
@@ -1187,10 +1195,11 @@ async fn send_message(
                 Ok((StatusCode::ACCEPTED, Json(json!({ "data": payload }))).into_response())
             }
         }
-        AgentSubmitOutcome::Run(request, lease) => {
+        ThreadSubmitOutcome::Run(request, lease) => {
             let request = *request;
             if request.stream {
                 let stream = state
+                    .kernel
                     .orchestrator
                     .stream(request)
                     .await
@@ -1221,6 +1230,7 @@ async fn send_message(
                 Ok(sse.into_response())
             } else {
                 let response = state
+                    .kernel
                     .orchestrator
                     .run(request)
                     .await
@@ -1919,6 +1929,7 @@ async fn compact_session(
         .filter(|value| !value.is_empty());
 
     state
+        .kernel
         .orchestrator
         .force_compact_session(
             &resolved.user.user_id,
@@ -1973,6 +1984,7 @@ async fn system_prompt(
         agent_record.as_ref(),
     );
     let prompt = state
+        .kernel
         .orchestrator
         .build_system_prompt(
             &user_context.config,
@@ -2077,6 +2089,7 @@ async fn session_system_prompt(
         agent_record.as_ref(),
     );
     let prompt = state
+        .kernel
         .orchestrator
         .build_system_prompt(
             &user_context.config,
@@ -2161,6 +2174,7 @@ async fn update_session_tools(
         false,
     );
     let prompt = state
+        .kernel
         .orchestrator
         .build_system_prompt(
             &user_context.config,
@@ -2948,7 +2962,7 @@ fn build_prompt_tooling_preview_payload(
 ) -> Value {
     let tool_call_mode = resolve_system_prompt_tool_call_mode(&user_context.config, agent_record);
     let selected_tool_names = finalize_tool_names(allowed_tool_names.clone());
-    let tooling = state.orchestrator.build_function_tooling(
+    let tooling = state.kernel.orchestrator.build_function_tooling(
         &user_context.config,
         &user_context.skills,
         allowed_tool_names,

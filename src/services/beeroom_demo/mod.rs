@@ -352,7 +352,7 @@ pub async fn cancel_demo_run(
         let _ = state.monitor.cancel(session_id);
     }
     if let Some(team_run_id) = snapshot.team_run_id.as_deref() {
-        state.team_run_runner.cancel(team_run_id).await;
+        state.kernel.mission_runtime.cancel(team_run_id).await;
     }
     Ok(Some(snapshot))
 }
@@ -650,12 +650,12 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
             &base_url,
             &control.run_id,
         );
-        let response = state.orchestrator.run(request).await;
+        let response = state.kernel.orchestrator.run(request).await;
         server_task.abort();
         response?;
         wait_for_demo_team_run_created(state.as_ref(), &plan.team_run_id).await?;
         if control.cancel_requested.load(Ordering::Relaxed) {
-            state.team_run_runner.cancel(&plan.team_run_id).await;
+            state.kernel.mission_runtime.cancel(&plan.team_run_id).await;
             return Err(anyhow!("demo cancelled"));
         }
         wait_for_demo_terminal(state.as_ref(), control.as_ref(), &plan.team_run_id).await
@@ -810,7 +810,8 @@ async fn publish_demo_status(state: &AppState, control: &DemoRunControl) {
         "error": snapshot.error,
     });
     state
-        .beeroom_realtime
+        .projection
+        .beeroom
         .publish_group_event(
             &control.user_id,
             &control.group_id,

@@ -148,10 +148,12 @@ async fn qqbot_webhook_resolves_account_by_app_id_and_records_validation_log() {
         .map(|value| value.len() == 128)
         .unwrap_or(false));
 
-    let logs = context
-        .state
-        .channels
-        .list_runtime_logs(Some("qqbot"), Some(account_id), 20);
+    let logs =
+        context
+            .state
+            .control
+            .channels
+            .list_runtime_logs(Some("qqbot"), Some(account_id), 20);
     assert!(logs.iter().any(|item| item.event == "validation_succeeded"));
 }
 
@@ -176,6 +178,7 @@ async fn qqbot_webhook_records_runtime_log_when_account_resolution_fails() {
 
     let logs = context
         .state
+        .control
         .channels
         .list_runtime_logs(Some("qqbot"), None, 20);
     let log = logs
@@ -235,6 +238,7 @@ async fn qqbot_webhook_resolves_account_by_header_app_id() {
 
     let logs = context
         .state
+        .control
         .channels
         .list_runtime_logs(Some("qqbot"), None, 30);
     assert!(logs.iter().any(|item| {
@@ -294,6 +298,7 @@ async fn qqbot_dispatch_event_is_not_rejected_by_missing_channel_token() {
 
     let logs = context
         .state
+        .control
         .channels
         .list_runtime_logs(Some("qqbot"), None, 50);
     assert!(logs.iter().any(|item| item.event == "callback_received"));
@@ -344,9 +349,11 @@ async fn qqbot_webhook_token_mode_resolves_account_and_validates_signature() {
         .map(|value| value.len() == 128)
         .unwrap_or(false));
 
-    let logs = context
-        .state
-        .channels
-        .list_runtime_logs(Some("qqbot"), Some(account_id), 30);
+    let logs =
+        context
+            .state
+            .control
+            .channels
+            .list_runtime_logs(Some("qqbot"), Some(account_id), 30);
     assert!(logs.iter().any(|item| item.event == "validation_succeeded"));
 }

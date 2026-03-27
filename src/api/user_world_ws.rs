@@ -6,6 +6,7 @@ use crate::api::ws_helpers::{
 };
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
+use crate::services::presence::ProjectionTargetKind;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -98,10 +99,13 @@ async fn handle_ws(
     });
 
     let connected_at = Utc::now().timestamp_millis() as f64 / 1000.0;
-    state.user_presence.connect(&user_id, connected_at);
+    state
+        .control
+        .presence
+        .connect_client(&user_id, &connection_id, connected_at);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let ready_payload = WsReadyPayload {
-        connection_id,
+        connection_id: connection_id.clone(),
         server_time: now_ts,
         protocol: ws_protocol_info(),
         policy: WsPolicy::default_policy(),
@@ -172,6 +176,14 @@ async fn handle_ws(
                                 },
                             );
                         }
+                        state.control.presence.watch_projection(
+                            &connection_id,
+                            &request_id,
+                            &user_id,
+                            ProjectionTargetKind::UserWorldConversation,
+                            &conversation_id,
+                            Utc::now().timestamp_millis() as f64 / 1000.0,
+                        );
                         let state_snapshot = state.clone();
                         let user_snapshot = user_id.clone();
                         let req_snapshot = request_id.clone();
@@ -217,6 +229,7 @@ async fn handle_ws(
                             continue;
                         }
                         match state
+                            .projection
                             .user_world
                             .send_message(
                                 &user_id,
@@ -281,6 +294,7 @@ async fn handle_ws(
                             continue;
                         }
                         match state
+                            .projection
                             .user_world
                             .mark_read(
                                 &user_id,
@@ -327,6 +341,10 @@ async fn handle_ws(
                         if let Some(task) = watch_tasks.lock().await.remove(&target_id) {
                             task.cancel.cancel();
                         }
+                        state
+                            .control
+                            .presence
+                            .unwatch_projection(&connection_id, &target_id);
                         let final_event = StreamEvent {
                             event: "final".to_string(),
                             data: json!({ "ok": true, "cancelled": target_id }),
@@ -357,9 +375,11 @@ async fn handle_ws(
             task.cancel.cancel();
         }
     }
-    state
-        .user_presence
-        .disconnect(&user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
+    state.control.presence.disconnect_client(
+        &user_id,
+        &connection_id,
+        Utc::now().timestamp_millis() as f64 / 1000.0,
+    );
     drop(out_tx);
     let _ = writer.await;
 }
@@ -374,9 +394,11 @@ async fn run_watch_loop(
     ws_tx: WsSender,
 ) {
     let mut current_event_id = after_event_id;
-    let initial = state
-        .user_world
-        .list_events(&user_id, &conversation_id, current_event_id, 200);
+    let initial =
+        state
+            .projection
+            .user_world
+            .list_events(&user_id, &conversation_id, current_event_id, 200);
     let Ok(initial_events) = initial else {
         let _ = send_ws_error(
             &ws_tx,
@@ -402,7 +424,7 @@ async fn run_watch_loop(
             return;
         }
     }
-    let mut receiver = match state.user_world.subscribe_user(&user_id).await {
+    let mut receiver = match state.projection.user_world.subscribe_user(&user_id).await {
         Ok(receiver) => receiver,
         Err(err) => {
             let _ = send_ws_error(&ws_tx, Some(&request_id), "BAD_REQUEST", err.to_string()).await;
@@ -444,6 +466,7 @@ async fn run_watch_loop(
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                         let Ok(events) = state
+                            .projection
                             .user_world
                             .list_events(&user_id, &conversation_id, current_event_id, 200) else {
                                 continue;

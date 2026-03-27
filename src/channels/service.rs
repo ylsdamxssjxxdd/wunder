@@ -40,11 +40,11 @@ use crate::core::approval_registry::{
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
-use crate::services::agent_runtime::AgentRuntime;
 use crate::services::bridge::{
     append_bridge_meta, log_bridge_delivery, resolve_inbound_bridge_route,
     touch_bridge_route_after_outbound, BridgeRouteResolution, BridgeRuntime,
 };
+use crate::services::runtime::thread::ThreadRuntime;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
@@ -275,7 +275,7 @@ pub struct ChannelHub {
     config_store: crate::config_store::ConfigStore,
     storage: Arc<dyn StorageBackend>,
     orchestrator: Arc<Orchestrator>,
-    agent_runtime: Arc<AgentRuntime>,
+    thread_runtime: Arc<ThreadRuntime>,
     user_store: Arc<UserStore>,
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
@@ -295,7 +295,7 @@ impl ChannelHub {
         config_store: crate::config_store::ConfigStore,
         storage: Arc<dyn StorageBackend>,
         orchestrator: Arc<Orchestrator>,
-        agent_runtime: Arc<AgentRuntime>,
+        thread_runtime: Arc<ThreadRuntime>,
         user_store: Arc<UserStore>,
         workspace: Arc<WorkspaceManager>,
         shared_state: ChannelHubSharedState,
@@ -307,7 +307,7 @@ impl ChannelHub {
             config_store,
             storage,
             orchestrator,
-            agent_runtime,
+            thread_runtime,
             user_store,
             workspace,
             monitor: shared_state.monitor,
@@ -1387,13 +1387,13 @@ impl ChannelHub {
                 && is_direct_peer(&peer_kind));
         let session_id = if use_main_thread {
             if let Some(existing_main) = self
-                .agent_runtime
+                .thread_runtime
                 .resolve_main_session_id(&user_id, cleaned_agent)
                 .await?
             {
                 existing_main
             } else {
-                self.agent_runtime
+                self.thread_runtime
                     .resolve_or_create_main_session_id(&user_id, cleaned_agent)
                     .await?
             }
@@ -1455,14 +1455,14 @@ impl ChannelHub {
                 .filter(|value| !value.is_empty())
             {
                 match self
-                    .agent_runtime
+                    .thread_runtime
                     .resolve_main_session_id(&user_id, agent_key)
                     .await
                 {
                     Ok(Some(_)) => {}
                     Ok(None) => {
                         if let Err(err) = self
-                            .agent_runtime
+                            .thread_runtime
                             .set_main_session(
                                 &user_id,
                                 agent_key,
@@ -3761,7 +3761,7 @@ impl ChannelHub {
                 let new_session_id = format!("sess_{}", Uuid::new_v4().simple());
                 let agent_key = agent_id.unwrap_or("").trim();
                 if let Err(err) = self
-                    .agent_runtime
+                    .thread_runtime
                     .set_main_session(&user_id, agent_key, &new_session_id, "channel_command")
                     .await
                 {

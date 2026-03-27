@@ -240,19 +240,19 @@ async fn list_channel_runtime_logs_filters_by_agent_and_collapses_repeats() {
         })
         .expect("upsert binding b");
 
-    context.state.channels.record_runtime_warn(
+    context.state.control.channels.record_runtime_warn(
         "feishu",
         Some(account_a),
         "long_connection_failed",
         "connection refused, retry_in=3s",
     );
-    context.state.channels.record_runtime_warn(
+    context.state.control.channels.record_runtime_warn(
         "feishu",
         Some(account_a),
         "long_connection_failed",
         "connection refused, retry_in=30s",
     );
-    context.state.channels.record_runtime_warn(
+    context.state.control.channels.record_runtime_warn(
         "xmpp",
         Some(account_b),
         "long_connection_failed",
@@ -338,7 +338,7 @@ async fn list_channel_runtime_logs_falls_back_to_account_agent_id_when_binding_m
         })
         .expect("upsert user binding");
 
-    context.state.channels.record_runtime_warn(
+    context.state.control.channels.record_runtime_warn(
         "qqbot",
         Some(account_id),
         "inbound_enqueue_failed",
@@ -443,7 +443,7 @@ async fn runtime_logs_owner_fallback_works_without_user_binding() {
             updated_at: now,
         })
         .expect("upsert owner fallback account");
-    context.state.channels.record_runtime_warn(
+    context.state.control.channels.record_runtime_warn(
         "qqbot",
         Some(account_id),
         "inbound_enqueue_failed",

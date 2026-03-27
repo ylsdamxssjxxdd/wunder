@@ -729,7 +729,7 @@ async fn admin_bridge_center_weixin_bind(
     let long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
     let configured = weixin::has_long_connection_credentials(&weixin_cfg);
     if configured {
-        state.channels.record_runtime_info(
+        state.control.channels.record_runtime_info(
             weixin::WEIXIN_CHANNEL,
             Some(&channel_account.account_id),
             "weixin_config_ready",
@@ -738,7 +738,7 @@ async fn admin_bridge_center_weixin_bind(
             ),
         );
     } else {
-        state.channels.record_runtime_warn(
+        state.control.channels.record_runtime_warn(
             weixin::WEIXIN_CHANNEL,
             Some(&channel_account.account_id),
             "weixin_config_incomplete",
@@ -1110,7 +1110,12 @@ async fn build_bridge_center_account_record(
         .as_ref()
         .map(|record| record.created_at)
         .unwrap_or(now);
-    let adapter_registered = state.channels.adapter_registry().get(&channel).is_some();
+    let adapter_registered = state
+        .control
+        .channels
+        .adapter_registry()
+        .get(&channel)
+        .is_some();
     Ok(BridgeCenterAccountRecord {
         center_account_id,
         center_id: center.center_id.clone(),
@@ -1366,7 +1371,7 @@ fn bridge_route_audit_payload(record: &BridgeRouteAuditLogRecord) -> Value {
 }
 
 fn supported_channel_payload(state: &Arc<AppState>) -> Vec<Value> {
-    let registry = state.channels.adapter_registry();
+    let registry = state.control.channels.adapter_registry();
     user_supported_channels()
         .into_iter()
         .map(|item| {

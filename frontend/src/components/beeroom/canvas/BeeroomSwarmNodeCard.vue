@@ -8,9 +8,12 @@
     :aria-label="`${node.name} ${node.roleLabel} ${node.statusLabel}`"
     type="button"
     :style="cardStyle"
-    @pointerdown.stop="emit('pointerdown', $event)"
+    @pointerdown.stop="handlePointerDown"
+    @pointerup.stop="handlePointerRelease"
+    @pointercancel.stop="handlePointerRelease"
     @click.stop="emit('click')"
     @dblclick.stop="emit('dblclick')"
+    @dragstart.prevent
   >
     <div class="beeroom-node-card-body">
       <div class="beeroom-node-card-head">
@@ -78,6 +81,20 @@ const emit = defineEmits<{
   (event: 'pointerdown', value: PointerEvent): void;
 }>();
 
+function handlePointerDown(event: PointerEvent) {
+  event.preventDefault();
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  emit('pointerdown', event);
+}
+
+function handlePointerRelease(event: PointerEvent) {
+  const target = event.currentTarget as HTMLElement | null;
+  if (target?.hasPointerCapture?.(event.pointerId)) {
+    target.releasePointerCapture(event.pointerId);
+  }
+}
+
 const cardStyle = computed(() => ({
   '--node-accent': props.node.accentColor,
   width: `${props.node.width}px`,
@@ -107,6 +124,10 @@ const visibleWorkflowLines = computed(() =>
   text-align: left;
   cursor: pointer;
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  touch-action: none;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 18px 34px rgba(2, 6, 23, 0.3);

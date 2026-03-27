@@ -271,7 +271,8 @@ async fn create_team_run(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
     state
-        .team_run_runner
+        .kernel
+        .mission_runtime
         .enqueue(&queued_record.team_run_id)
         .await;
 
@@ -351,7 +352,7 @@ async fn cancel_team_run(
         .upsert_team_run(&run)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    state.team_run_runner.cancel(&run.team_run_id).await;
+    state.kernel.mission_runtime.cancel(&run.team_run_id).await;
 
     let tasks = state
         .user_store
@@ -522,7 +523,7 @@ fn emit_team_event(
             .or_insert_with(|| Value::String(cleaned_hive.to_string()));
     }
 
-    let realtime = state.beeroom_realtime.clone();
+    let realtime = state.projection.beeroom.clone();
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
     let event_name = cleaned_event.to_string();

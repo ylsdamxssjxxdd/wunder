@@ -1486,7 +1486,7 @@ async fn upsert_channel_account(
         now,
     )?;
 
-    state.channels.record_runtime_info(
+    state.control.channels.record_runtime_info(
         &channel,
         Some(&account_id),
         "account_upserted",
@@ -1510,7 +1510,7 @@ async fn upsert_channel_account(
             .is_some();
         let long_connection_enabled = qqbot::long_connection_enabled(&qqbot_cfg);
         if app_id_set && client_secret_set {
-            state.channels.record_runtime_info(
+            state.control.channels.record_runtime_info(
                 USER_CHANNEL_QQBOT,
                 Some(&account_id),
                 "qqbot_config_ready",
@@ -1519,7 +1519,7 @@ async fn upsert_channel_account(
                 ),
             );
         } else {
-            state.channels.record_runtime_warn(
+            state.control.channels.record_runtime_warn(
                 USER_CHANNEL_QQBOT,
                 Some(&account_id),
                 "qqbot_config_incomplete",
@@ -1536,7 +1536,7 @@ async fn upsert_channel_account(
         let long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
         let configured = weixin::has_long_connection_credentials(&weixin_cfg);
         if configured {
-            state.channels.record_runtime_info(
+            state.control.channels.record_runtime_info(
                 USER_CHANNEL_WEIXIN,
                 Some(&account_id),
                 "weixin_config_ready",
@@ -1545,7 +1545,7 @@ async fn upsert_channel_account(
                 ),
             );
         } else {
-            state.channels.record_runtime_warn(
+            state.control.channels.record_runtime_warn(
                 USER_CHANNEL_WEIXIN,
                 Some(&account_id),
                 "weixin_config_incomplete",
@@ -1715,7 +1715,7 @@ async fn start_weixin_qr_login(
     };
     save_weixin_qr_session(session);
 
-    state.channels.record_runtime_info(
+    state.control.channels.record_runtime_info(
         USER_CHANNEL_WEIXIN,
         account_id.as_deref(),
         "qr_login_started",
@@ -1796,7 +1796,7 @@ async fn wait_weixin_qr_login(
 
         if status == "confirmed" {
             remove_weixin_qr_session(&session_key);
-            state.channels.record_runtime_info(
+            state.control.channels.record_runtime_info(
                 USER_CHANNEL_WEIXIN,
                 None,
                 "qr_login_confirmed",
@@ -1815,7 +1815,7 @@ async fn wait_weixin_qr_login(
 
         if status == "expired" {
             remove_weixin_qr_session(&session_key);
-            state.channels.record_runtime_warn(
+            state.control.channels.record_runtime_warn(
                 USER_CHANNEL_WEIXIN,
                 None,
                 "qr_login_expired",

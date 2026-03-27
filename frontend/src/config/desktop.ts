@@ -10,8 +10,21 @@ export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call', 'freeform_
 
 export type DesktopToolCallMode = (typeof DESKTOP_TOOL_CALL_MODES)[number];
 
+export type DesktopRuntimeCapabilities = {
+  embedded_mode: boolean;
+  thread_runtime_active: boolean;
+  mission_runtime_active: boolean;
+  gateway_maintenance_active: boolean;
+  channels_enabled: boolean;
+  channel_outbox_worker_enabled: boolean;
+  cron_active: boolean;
+  lan_overlay_supported: boolean;
+};
+
 export type DesktopRuntime = {
   mode: string;
+  runtime_profile?: string;
+  runtime_capabilities?: DesktopRuntimeCapabilities;
   bind_addr: string;
   web_base: string;
   api_base: string;
@@ -40,6 +53,25 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
 const asString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+const asBoolean = (value: unknown): boolean => Boolean(value);
+
+const normalizeRuntimeCapabilities = (value: unknown): DesktopRuntimeCapabilities | undefined => {
+  const source = asRecord(value);
+  if (!Object.keys(source).length) {
+    return undefined;
+  }
+  return {
+    embedded_mode: asBoolean(source.embedded_mode),
+    thread_runtime_active: asBoolean(source.thread_runtime_active),
+    mission_runtime_active: asBoolean(source.mission_runtime_active),
+    gateway_maintenance_active: asBoolean(source.gateway_maintenance_active),
+    channels_enabled: asBoolean(source.channels_enabled),
+    channel_outbox_worker_enabled: asBoolean(source.channel_outbox_worker_enabled),
+    cron_active: asBoolean(source.cron_active),
+    lan_overlay_supported: asBoolean(source.lan_overlay_supported)
+  };
+};
 
 const normalizeToolCallMode = (value: unknown): DesktopToolCallMode => {
   const normalized = asString(value).toLowerCase();
@@ -161,6 +193,14 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
     remote_connected: Boolean(source.remote_connected),
     remote_server_base_url: asString(source.remote_server_base_url)
   };
+  const runtimeProfile = asString(source.runtime_profile);
+  if (runtimeProfile) {
+    runtime.runtime_profile = runtimeProfile;
+  }
+  const runtimeCapabilities = normalizeRuntimeCapabilities(source.runtime_capabilities);
+  if (runtimeCapabilities) {
+    runtime.runtime_capabilities = runtimeCapabilities;
+  }
   const remoteError = asString(source.remote_error);
   if (remoteError) {
     runtime.remote_error = remoteError;

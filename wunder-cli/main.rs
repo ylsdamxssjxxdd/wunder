@@ -4248,6 +4248,7 @@ pub(crate) async fn build_current_system_prompt(
     let effective_prompt = build_effective_agent_prompt(runtime);
     Ok(runtime
         .state
+        .kernel
         .orchestrator
         .build_system_prompt(
             &config,
@@ -4621,25 +4622,25 @@ async fn run_tool_direct(
         model_round: None,
         is_admin: false,
         storage: runtime.state.storage.clone(),
-        orchestrator: Some(runtime.state.orchestrator.clone()),
+        orchestrator: Some(runtime.state.kernel.orchestrator.clone()),
         monitor: Some(runtime.state.monitor.clone()),
         workspace: runtime.state.workspace.clone(),
         lsp_manager: runtime.state.lsp_manager.clone(),
         config: &config,
         a2a_store: &a2a_store,
         skills: &skills_snapshot,
-        gateway: Some(runtime.state.gateway.clone()),
-        user_world: Some(runtime.state.user_world.clone()),
-        cron_wake_signal: Some(runtime.state.cron.wake_signal()),
+        gateway: Some(runtime.state.control.gateway.clone()),
+        user_world: Some(runtime.state.projection.user_world.clone()),
+        cron_wake_signal: Some(runtime.state.control.cron.wake_signal()),
         user_tool_manager: Some(runtime.state.user_tool_manager.clone()),
         user_tool_bindings: Some(&bindings),
         user_tool_store: Some(runtime.state.user_tool_manager.store()),
         request_config_overrides: None,
         allow_roots: Some(roots.allow_roots.clone()),
         read_roots: Some(roots.read_roots.clone()),
-        command_sessions: Some(runtime.state.command_sessions.clone()),
+        command_sessions: Some(runtime.state.control.command_sessions.clone()),
         event_emitter: None,
-        beeroom_realtime: Some(runtime.state.beeroom_realtime.clone()),
+        beeroom_projection: Some(runtime.state.projection.beeroom.clone()),
         http: &http,
     };
 
@@ -6628,7 +6629,7 @@ async fn run_prompt_once(
     };
 
     if global.no_stream {
-        let response = runtime.state.orchestrator.run(request).await?;
+        let response = runtime.state.kernel.orchestrator.run(request).await?;
         let final_event = FinalEvent {
             answer: response.answer.clone(),
             usage: response
@@ -6654,7 +6655,7 @@ async fn run_prompt_once(
         return Ok(final_event);
     }
 
-    let mut stream = runtime.state.orchestrator.stream(request).await?;
+    let mut stream = runtime.state.kernel.orchestrator.stream(request).await?;
     let language = locale::resolve_cli_language(global);
     let mut renderer = StreamRenderer::new(global.json, language.as_str());
     let mut final_event = FinalEvent::default();

@@ -10,12 +10,12 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use tracing::warn;
 
-const REALTIME_CHANNEL_CAPACITY: usize = 512;
+const PROJECTION_CHANNEL_CAPACITY: usize = 512;
 const REPLAY_LIMIT_DEFAULT: i64 = 200;
 const REPLAY_LIMIT_MAX: i64 = 1000;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BeeroomRealtimeMetricsSnapshot {
+pub struct BeeroomProjectionMetricsSnapshot {
     pub publish_total: u64,
     pub replay_batch_total: u64,
     pub replay_event_total: u64,
@@ -27,7 +27,7 @@ pub struct BeeroomRealtimeMetricsSnapshot {
 }
 
 #[derive(Default)]
-struct BeeroomRealtimeMetrics {
+struct BeeroomProjectionMetrics {
     publish_total: AtomicU64,
     replay_batch_total: AtomicU64,
     replay_event_total: AtomicU64,
@@ -38,7 +38,7 @@ struct BeeroomRealtimeMetrics {
     push_latency_max_ms: AtomicU64,
 }
 
-impl BeeroomRealtimeMetrics {
+impl BeeroomProjectionMetrics {
     fn record_publish(&self) {
         self.publish_total.fetch_add(1, Ordering::Relaxed);
     }
@@ -77,7 +77,7 @@ impl BeeroomRealtimeMetrics {
         }
     }
 
-    fn snapshot(&self) -> BeeroomRealtimeMetricsSnapshot {
+    fn snapshot(&self) -> BeeroomProjectionMetricsSnapshot {
         let push_sample_total = self.push_sample_total.load(Ordering::Relaxed);
         let push_latency_total_ms = self.push_latency_total_ms.load(Ordering::Relaxed);
         let push_latency_avg_ms = if push_sample_total == 0 {
@@ -85,7 +85,7 @@ impl BeeroomRealtimeMetrics {
         } else {
             push_latency_total_ms as f64 / push_sample_total as f64
         };
-        BeeroomRealtimeMetricsSnapshot {
+        BeeroomProjectionMetricsSnapshot {
             publish_total: self.publish_total.load(Ordering::Relaxed),
             replay_batch_total: self.replay_batch_total.load(Ordering::Relaxed),
             replay_event_total: self.replay_event_total.load(Ordering::Relaxed),
@@ -99,7 +99,7 @@ impl BeeroomRealtimeMetrics {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct BeeroomRealtimeEvent {
+pub struct BeeroomProjectionEvent {
     pub event_id: i64,
     pub user_id: String,
     pub group_id: String,
@@ -109,27 +109,27 @@ pub struct BeeroomRealtimeEvent {
 }
 
 #[derive(Clone)]
-struct BeeroomRealtimeChannel {
-    sender: broadcast::Sender<BeeroomRealtimeEvent>,
+struct BeeroomProjectionChannel {
+    sender: broadcast::Sender<BeeroomProjectionEvent>,
     last_event_id: i64,
 }
 
-pub struct BeeroomRealtimeService {
+pub struct BeeroomProjectionService {
     stream_events: Arc<StreamEventService>,
-    channels: Arc<RwLock<HashMap<String, BeeroomRealtimeChannel>>>,
-    metrics: Arc<BeeroomRealtimeMetrics>,
+    channels: Arc<RwLock<HashMap<String, BeeroomProjectionChannel>>>,
+    metrics: Arc<BeeroomProjectionMetrics>,
 }
 
-impl BeeroomRealtimeService {
+impl BeeroomProjectionService {
     pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             stream_events: Arc::new(StreamEventService::new(storage)),
             channels: Arc::new(RwLock::new(HashMap::new())),
-            metrics: Arc::new(BeeroomRealtimeMetrics::default()),
+            metrics: Arc::new(BeeroomProjectionMetrics::default()),
         }
     }
 
-    pub fn metrics_snapshot(&self) -> BeeroomRealtimeMetricsSnapshot {
+    pub fn metrics_snapshot(&self) -> BeeroomProjectionMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -158,7 +158,7 @@ impl BeeroomRealtimeService {
         &self,
         user_id: &str,
         group_id: &str,
-    ) -> Result<broadcast::Receiver<BeeroomRealtimeEvent>> {
+    ) -> Result<broadcast::Receiver<BeeroomProjectionEvent>> {
         let stream_key = normalize_stream_key(user_id, group_id)?;
         let sender = self.ensure_channel(&stream_key).await;
         Ok(sender.subscribe())
@@ -188,7 +188,7 @@ impl BeeroomRealtimeService {
         group_id: &str,
         after_event_id: i64,
         limit: i64,
-    ) -> Result<Vec<BeeroomRealtimeEvent>> {
+    ) -> Result<Vec<BeeroomProjectionEvent>> {
         let normalized_user = user_id.trim();
         let normalized_group = group_id.trim();
         let stream_key = normalize_stream_key(normalized_user, normalized_group)?;
@@ -293,7 +293,7 @@ impl BeeroomRealtimeService {
                 created_at,
             )
             .await?;
-        let event = BeeroomRealtimeEvent {
+        let event = BeeroomProjectionEvent {
             event_id,
             user_id: normalized_user.to_string(),
             group_id: normalized_group.to_string(),
@@ -329,7 +329,7 @@ impl BeeroomRealtimeService {
         Ok(event_id)
     }
 
-    async fn ensure_channel(&self, stream_key: &str) -> broadcast::Sender<BeeroomRealtimeEvent> {
+    async fn ensure_channel(&self, stream_key: &str) -> broadcast::Sender<BeeroomProjectionEvent> {
         if let Some(channel) = self.channels.read().await.get(stream_key).cloned() {
             return channel.sender;
         }
@@ -337,8 +337,8 @@ impl BeeroomRealtimeService {
         guard
             .entry(stream_key.to_string())
             .or_insert_with(|| {
-                let (sender, _receiver) = broadcast::channel(REALTIME_CHANNEL_CAPACITY);
-                BeeroomRealtimeChannel {
+                let (sender, _receiver) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
+                BeeroomProjectionChannel {
                     sender,
                     last_event_id: 0,
                 }
@@ -353,8 +353,8 @@ impl BeeroomRealtimeService {
         }
         let mut guard = self.channels.write().await;
         let channel = guard.entry(stream_key.to_string()).or_insert_with(|| {
-            let (sender, _receiver) = broadcast::channel(REALTIME_CHANNEL_CAPACITY);
-            BeeroomRealtimeChannel {
+            let (sender, _receiver) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
+            BeeroomProjectionChannel {
                 sender,
                 last_event_id: 0,
             }
@@ -395,7 +395,7 @@ fn map_record_to_event(
     record: Value,
     user_id: &str,
     group_id: &str,
-) -> Option<BeeroomRealtimeEvent> {
+) -> Option<BeeroomProjectionEvent> {
     let event_id = record.get("event_id").and_then(Value::as_i64)?;
     let event_type = record
         .get("event")
@@ -404,7 +404,7 @@ fn map_record_to_event(
         .filter(|value| !value.is_empty())?
         .to_string();
     let payload = record.get("data").cloned().unwrap_or(Value::Null);
-    Some(BeeroomRealtimeEvent {
+    Some(BeeroomProjectionEvent {
         event_id,
         user_id: user_id.to_string(),
         group_id: group_id.to_string(),
@@ -459,20 +459,20 @@ fn now_ts() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::BeeroomRealtimeService;
+    use super::BeeroomProjectionService;
     use crate::storage::{BeeroomChatMessageRecord, SqliteStorage, StorageBackend};
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-    fn build_service() -> BeeroomRealtimeService {
+    fn build_service() -> BeeroomProjectionService {
         let db_path = std::env::temp_dir().join(format!(
-            "wunder_beeroom_realtime_{}.db",
+            "wunder_beeroom_projection_{}.db",
             uuid::Uuid::new_v4().simple()
         ));
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
-        BeeroomRealtimeService::new(storage)
+        BeeroomProjectionService::new(storage)
     }
 
     fn sample_chat_message_record() -> BeeroomChatMessageRecord {

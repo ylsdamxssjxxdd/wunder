@@ -629,7 +629,7 @@ async fn run_swarm_flow(
             return Err(cancelled_error());
         }
 
-        let mother_response = state.orchestrator.run(mother_request).await?;
+        let mother_response = state.kernel.orchestrator.run(mother_request).await?;
 
         wait_until_no_active_runs(
             state.as_ref(),

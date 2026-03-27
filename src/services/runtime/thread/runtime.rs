@@ -39,18 +39,18 @@ pub struct QueueInfo {
 }
 
 #[derive(Debug, Clone)]
-pub enum AgentSubmitOutcome {
-    Run(Box<WunderRequest>, Option<SessionLease>),
+pub enum ThreadSubmitOutcome {
+    Run(Box<WunderRequest>, Option<ThreadLease>),
     Queued(QueueInfo),
 }
 
 #[derive(Debug, Clone)]
-pub struct SessionLease {
+pub struct ThreadLease {
     session_id: String,
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
 }
 
-impl SessionLease {
+impl ThreadLease {
     fn new(session_id: String, pending_sessions: Arc<StdMutex<HashSet<String>>>) -> Self {
         Self {
             session_id,
@@ -59,7 +59,7 @@ impl SessionLease {
     }
 }
 
-impl Drop for SessionLease {
+impl Drop for ThreadLease {
     fn drop(&mut self) {
         if self.session_id.trim().is_empty() {
             return;
@@ -71,7 +71,7 @@ impl Drop for SessionLease {
 }
 
 #[derive(Clone)]
-pub struct AgentRuntime {
+pub struct ThreadRuntime {
     config_store: ConfigStore,
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
@@ -83,7 +83,7 @@ pub struct AgentRuntime {
     pending_sessions: Arc<StdMutex<HashSet<String>>>,
 }
 
-impl AgentRuntime {
+impl ThreadRuntime {
     pub fn new(
         config_store: ConfigStore,
         user_store: Arc<UserStore>,
@@ -123,7 +123,7 @@ impl AgentRuntime {
     pub async fn submit_user_request(
         &self,
         mut request: WunderRequest,
-    ) -> Result<AgentSubmitOutcome> {
+    ) -> Result<ThreadSubmitOutcome> {
         let user_id = request.user_id.trim().to_string();
         if user_id.is_empty() {
             return Err(anyhow!(i18n::t("error.user_id_required")));
@@ -187,19 +187,19 @@ impl AgentRuntime {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
-                    return Ok(AgentSubmitOutcome::Queued(info));
+                    return Ok(ThreadSubmitOutcome::Queued(info));
                 }
                 lease = self.try_acquire_session_lease(session_id).await;
                 if lease.is_none() {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
-                    return Ok(AgentSubmitOutcome::Queued(info));
+                    return Ok(ThreadSubmitOutcome::Queued(info));
                 }
             }
         }
 
-        Ok(AgentSubmitOutcome::Run(Box::new(request), lease))
+        Ok(ThreadSubmitOutcome::Run(Box::new(request), lease))
     }
 
     pub async fn resolve_main_session_id(
@@ -483,7 +483,7 @@ impl AgentRuntime {
             .await
     }
 
-    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionLease> {
+    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<ThreadLease> {
         let cleaned = session_id.trim();
         if cleaned.is_empty() {
             return None;
@@ -493,7 +493,7 @@ impl AgentRuntime {
             return None;
         }
         guard.insert(cleaned.to_string());
-        Some(SessionLease::new(
+        Some(ThreadLease::new(
             cleaned.to_string(),
             self.pending_sessions.clone(),
         ))

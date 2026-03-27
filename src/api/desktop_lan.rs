@@ -247,6 +247,7 @@ async fn apply_user_world_envelope(
                 return Ok(());
             }
             let conversation = state
+                .projection
                 .user_world
                 .resolve_or_create_direct_conversation(&local_user_id, &remote_user_id, now_ts())
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -258,6 +259,7 @@ async fn apply_user_world_envelope(
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("lan:{}", envelope.envelope_id));
             state
+                .projection
                 .user_world
                 .send_message(
                     &remote_user_id,
@@ -315,6 +317,7 @@ async fn apply_user_world_envelope(
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("lan:{}", envelope.envelope_id));
             state
+                .projection
                 .user_world
                 .send_message(
                     &remote_user_id,
@@ -354,6 +357,7 @@ async fn apply_user_world_envelope(
                 return Ok(());
             };
             let _ = state
+                .projection
                 .user_world
                 .update_group_announcement(
                     &local_user_id,
@@ -411,6 +415,7 @@ async fn ensure_group_conversation(
     let name = group_name.trim();
     let effective_name = if name.is_empty() { group_key } else { name };
     let created = state
+        .projection
         .user_world
         .create_group(&owner, effective_name, &normalized_members, now_ts())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;

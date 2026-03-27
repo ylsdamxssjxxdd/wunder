@@ -6,77 +6,44 @@
       <span>{{ t('beeroom.empty.selectGroup') }}</span>
     </div>
     <template v-else>
-      <header class="beeroom-workbench-toolbar">
-        <div class="beeroom-workbench-main">
-          <div class="beeroom-workbench-topline">
-            <span class="beeroom-workbench-badge">{{ t('messenger.section.swarms') }}</span>
-            <span class="beeroom-status-chip" :class="resolveGroupTone(group.status)">
-              {{ resolveGroupStatus(group.status) }}
-            </span>
-            <span class="beeroom-workbench-group-id">#{{ group.group_id }}</span>
-          </div>
-
-          <div class="beeroom-workbench-heading">
-            <div class="beeroom-workbench-title-block">
-              <h2 class="beeroom-workbench-title">{{ group.name || group.group_id }}</h2>
-              <p class="beeroom-workbench-description">
-                {{ group.description || t('beeroom.empty.description') }}
-              </p>
-            </div>
-
-            <div class="beeroom-workbench-actions">
-              <button class="beeroom-action-btn" type="button" @click="emit('refresh')">
-                <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-                <span>{{ refreshing ? t('common.loading') : t('common.refresh') }}</span>
-              </button>
-              <button
-                class="beeroom-action-btn beeroom-action-btn--primary"
-                type="button"
-                :disabled="!availableAgents.length"
-                @click="moveDialogVisible = true"
-              >
-                <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>
-                <span>{{ t('beeroom.action.moveAgents') }}</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="beeroom-workbench-meta">
-            <span>{{ t('beeroom.summary.motherAgent') }}: {{ motherAgentLabel }}</span>
-            <span>{{ t('beeroom.summary.latestMission') }}: {{ latestMissionLabel }}</span>
-            <span v-if="error" class="beeroom-workbench-error">{{ error }}</span>
-          </div>
-        </div>
-
-        <div class="beeroom-workbench-summary">
-          <article v-for="card in summaryCards" :key="card.key" class="beeroom-workbench-summary-card">
-            <div class="beeroom-workbench-summary-label">{{ card.label }}</div>
-            <div class="beeroom-workbench-summary-value">{{ card.value }}</div>
-            <div class="beeroom-workbench-summary-hint">{{ card.hint }}</div>
-          </article>
-        </div>
-      </header>
-
       <div class="beeroom-workbench-theater">
-        <div v-if="orderedMissions.length" class="beeroom-workbench-missions">
-          <button
-            v-for="mission in orderedMissions"
-            :key="mission.mission_id || mission.team_run_id"
-            class="beeroom-workbench-mission-chip"
-            :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
-            type="button"
-            :aria-pressed="selectedMissionId === (mission.mission_id || mission.team_run_id)"
-            @click="selectedMissionId = mission.mission_id || mission.team_run_id"
-          >
-            <span class="beeroom-workbench-mission-chip-title">{{ resolveMissionTitle(mission) }}</span>
-            <span class="beeroom-workbench-mission-chip-meta">
-              #{{ shortMissionId(mission.mission_id || mission.team_run_id) }}
-              路
-              {{ resolveMissionStatus(mission.completion_status || mission.status) }}
-              路
-              {{ formatDateTime(mission.updated_time || mission.started_time) }}
-            </span>
-          </button>
+        <div class="beeroom-workbench-missions-shell">
+          <div v-if="orderedMissions.length" class="beeroom-workbench-missions">
+            <button
+              v-for="mission in orderedMissions"
+              :key="mission.mission_id || mission.team_run_id"
+              class="beeroom-workbench-mission-chip"
+              :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
+              type="button"
+              :aria-pressed="selectedMissionId === (mission.mission_id || mission.team_run_id)"
+              @click="selectedMissionId = mission.mission_id || mission.team_run_id"
+            >
+              <span class="beeroom-workbench-mission-chip-title">{{ resolveMissionTitle(mission) }}</span>
+              <span class="beeroom-workbench-mission-chip-meta">
+                #{{ shortMissionId(mission.mission_id || mission.team_run_id) }}
+                /
+                {{ resolveMissionStatus(mission.completion_status || mission.status) }}
+                /
+                {{ formatDateTime(mission.updated_time || mission.started_time) }}
+              </span>
+            </button>
+          </div>
+
+          <div class="beeroom-workbench-quick-actions">
+            <button class="beeroom-action-btn" type="button" @click="emit('refresh')">
+              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+              <span>{{ refreshing ? t('common.loading') : t('common.refresh') }}</span>
+            </button>
+            <button
+              class="beeroom-action-btn beeroom-action-btn--primary"
+              type="button"
+              :disabled="!availableAgents.length"
+              @click="moveDialogVisible = true"
+            >
+              <i class="fa-solid fa-share-nodes" aria-hidden="true"></i>
+              <span>{{ t('beeroom.action.moveAgents') }}</span>
+            </button>
+          </div>
         </div>
 
         <div class="beeroom-workbench-stage">
@@ -205,20 +172,6 @@ const resolveDisplayAgentName = (agentId: unknown, fallbackName?: unknown) => {
   return String(fallbackName || agentId || '-').trim() || '-';
 };
 
-const resolveGroupTone = (value: unknown) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'active') return 'tone-running';
-  if (normalized === 'archived') return 'tone-muted';
-  return 'tone-default';
-};
-
-const resolveGroupStatus = (value: unknown) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'active') return t('beeroom.status.active');
-  if (normalized === 'archived') return t('beeroom.status.archived');
-  return normalized || t('beeroom.status.unknown');
-};
-
 const resolveMissionStatus = (value: unknown) => {
   const normalized = String(value || '').trim().toLowerCase();
   const keyMap: Record<string, string> = {
@@ -245,43 +198,6 @@ const resolveMissionTitle = (mission: BeeroomMission) =>
 const orderedMissions = computed(() =>
   [...props.missions].sort((left, right) => resolveMissionMoment(right) - resolveMissionMoment(left))
 );
-
-const latestMissionLabel = computed(() => {
-  const latestMission = props.group?.latest_mission || orderedMissions.value[0] || null;
-  if (!latestMission) return t('beeroom.missions.empty');
-  return resolveMissionStatus(latestMission.completion_status || latestMission.status);
-});
-
-const motherAgentLabel = computed(() =>
-  resolveDisplayAgentName(props.group?.mother_agent_id, props.group?.mother_agent_name)
-);
-
-const summaryCards = computed(() => [
-  {
-    key: 'agents',
-    label: t('beeroom.summary.agents'),
-    value: props.group?.agent_total ?? props.agents.length,
-    hint: t('beeroom.summary.agentsHint')
-  },
-  {
-    key: 'active',
-    label: t('beeroom.summary.runningAgents'),
-    value: props.group?.active_agent_total ?? props.agents.filter((item) => item.idle === false).length,
-    hint: t('beeroom.summary.runningAgentsHint')
-  },
-  {
-    key: 'idle',
-    label: t('beeroom.summary.idleAgents'),
-    value: props.group?.idle_agent_total ?? props.agents.filter((item) => item.idle !== false).length,
-    hint: t('beeroom.summary.idleAgentsHint')
-  },
-  {
-    key: 'missions',
-    label: t('beeroom.summary.runningTeams'),
-    value: props.group?.running_mission_total ?? orderedMissions.value.length,
-    hint: t('beeroom.summary.runningTeamsHint')
-  }
-]);
 
 const selectedMission = computed(() => {
   const selectedId = String(selectedMissionId.value || '').trim();
@@ -338,7 +254,6 @@ watch(selectedMissionId, (value) => {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 10px;
   min-height: 0;
   height: 100%;
   color: #e2e8f0;
@@ -358,154 +273,6 @@ watch(selectedMissionId, (value) => {
     linear-gradient(180deg, rgba(7, 10, 18, 0.96), rgba(8, 12, 21, 0.94));
 }
 
-.beeroom-workbench-toolbar,
-.beeroom-workbench-summary-card {
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background:
-    linear-gradient(180deg, rgba(12, 16, 27, 0.96), rgba(8, 11, 18, 0.94)),
-    linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(15, 23, 42, 0));
-  box-shadow:
-    0 18px 38px rgba(2, 6, 23, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  border-radius: 24px;
-}
-
-.beeroom-workbench-toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px 18px;
-}
-
-.beeroom-workbench-main {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.beeroom-workbench-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.beeroom-workbench-title-block {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.beeroom-workbench-topline,
-.beeroom-workbench-meta,
-.beeroom-workbench-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 12px;
-  align-items: center;
-}
-
-.beeroom-workbench-badge,
-.beeroom-workbench-group-id {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 26px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(15, 23, 42, 0.62);
-  color: rgba(191, 219, 254, 0.78);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.beeroom-workbench-badge {
-  border-color: rgba(34, 211, 238, 0.28);
-  background: rgba(8, 47, 73, 0.72);
-  color: #67e8f9;
-}
-
-.beeroom-workbench-title {
-  margin: 0;
-  color: #f8fafc;
-  font-size: 26px;
-  line-height: 1.2;
-}
-
-.beeroom-workbench-description,
-.beeroom-workbench-meta,
-.beeroom-workbench-summary-hint,
-.beeroom-workbench-mission-chip-meta {
-  color: rgba(148, 163, 184, 0.92);
-}
-
-.beeroom-workbench-error {
-  color: #fca5a5;
-}
-
-.beeroom-workbench-actions {
-  justify-content: flex-end;
-}
-
-.beeroom-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(15, 23, 42, 0.68);
-  color: #e2e8f0;
-  border-radius: 12px;
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-.beeroom-action-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.beeroom-action-btn--primary {
-  border-color: rgba(34, 211, 238, 0.32);
-  background: linear-gradient(135deg, rgba(8, 47, 73, 0.92), rgba(10, 30, 62, 0.9));
-  color: #ccfbf1;
-}
-
-.beeroom-workbench-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.beeroom-workbench-summary-card {
-  display: grid;
-  min-width: 148px;
-  flex: 1 1 148px;
-  gap: 4px;
-  padding: 12px 14px;
-  border-radius: 18px;
-}
-
-.beeroom-workbench-summary-label {
-  color: rgba(148, 163, 184, 0.78);
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.beeroom-workbench-summary-value {
-  color: #f8fafc;
-  font-size: 24px;
-  font-weight: 700;
-}
-
 .beeroom-workbench-theater {
   display: flex;
   flex: 1;
@@ -514,8 +281,15 @@ watch(selectedMissionId, (value) => {
   gap: 10px;
 }
 
+.beeroom-workbench-missions-shell {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
 .beeroom-workbench-missions {
   display: flex;
+  flex: 1;
   gap: 8px;
   overflow-x: auto;
   padding: 10px 12px 12px;
@@ -565,8 +339,43 @@ watch(selectedMissionId, (value) => {
 }
 
 .beeroom-workbench-mission-chip-meta {
+  color: rgba(148, 163, 184, 0.92);
   font-size: 11px;
   white-space: nowrap;
+}
+
+.beeroom-workbench-quick-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.beeroom-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.68);
+  color: #e2e8f0;
+  border-radius: 14px;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 12px 26px rgba(2, 6, 23, 0.2);
+}
+
+.beeroom-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.beeroom-action-btn--primary {
+  border-color: rgba(34, 211, 238, 0.32);
+  background: linear-gradient(135deg, rgba(8, 47, 73, 0.92), rgba(10, 30, 62, 0.9));
+  color: #ccfbf1;
 }
 
 .beeroom-workbench-stage {
@@ -584,75 +393,23 @@ watch(selectedMissionId, (value) => {
   min-height: 0;
 }
 
-.beeroom-status-chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 12px;
-}
-
-.beeroom-status-chip.tone-default,
-.beeroom-status-chip.tone-muted {
-  border-color: rgba(148, 163, 184, 0.18);
-  background: rgba(51, 65, 85, 0.42);
-  color: #cbd5e1;
-}
-
-.beeroom-status-chip.tone-running {
-  border-color: rgba(34, 211, 238, 0.24);
-  background: rgba(8, 47, 73, 0.54);
-  color: #67e8f9;
-}
-
-.beeroom-status-chip.tone-success {
-  border-color: rgba(34, 197, 94, 0.24);
-  background: rgba(20, 83, 45, 0.48);
-  color: #86efac;
-}
-
-.beeroom-status-chip.tone-danger {
-  border-color: rgba(248, 113, 113, 0.24);
-  background: rgba(127, 29, 29, 0.5);
-  color: #fca5a5;
-}
-
-.beeroom-status-chip.tone-warn {
-  border-color: rgba(245, 158, 11, 0.24);
-  background: rgba(120, 53, 15, 0.5);
-  color: #fcd34d;
-}
-
 .beeroom-move-copy {
   margin-bottom: 12px;
   color: var(--hula-muted);
 }
 
-@media (max-width: 1280px) {
-  .beeroom-workbench-summary-card {
-    min-width: calc(50% - 5px);
-  }
-}
-
 @media (max-width: 900px) {
-  .beeroom-workbench-toolbar {
-    padding: 14px;
-  }
-
-  .beeroom-workbench-heading {
+  .beeroom-workbench-missions-shell {
     flex-direction: column;
   }
 
-  .beeroom-workbench-actions {
+  .beeroom-workbench-quick-actions {
     width: 100%;
-    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
-  .beeroom-workbench-summary-card {
-    min-width: 100%;
+  .beeroom-action-btn {
+    flex: 1 1 0;
   }
 
   .beeroom-workbench-mission-chip {

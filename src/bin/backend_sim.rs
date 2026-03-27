@@ -202,7 +202,7 @@ async fn run_single_request(
     request: WunderRequest,
 ) -> RequestOutcome {
     let started = Instant::now();
-    match state.orchestrator.run(request).await {
+    match state.kernel.orchestrator.run(request).await {
         Ok(response) => {
             let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
             RequestOutcome {
@@ -253,7 +253,7 @@ async fn run_stream_request(
     request: WunderRequest,
 ) -> RequestOutcome {
     let started = Instant::now();
-    let stream = state.orchestrator.stream(request).await;
+    let stream = state.kernel.orchestrator.stream(request).await;
     let mut stream = match stream {
         Ok(stream) => stream,
         Err(err) => {

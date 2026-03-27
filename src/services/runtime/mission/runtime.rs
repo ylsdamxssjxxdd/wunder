@@ -3,7 +3,7 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
-use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::projection::beeroom::BeeroomProjectionService;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord};
 use crate::user_store::UserStore;
@@ -23,8 +23,8 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
-use super::beeroom::resolve_or_create_agent_main_session;
-use super::events::{
+use crate::services::swarm::beeroom::resolve_or_create_agent_main_session;
+use crate::services::swarm::events::{
     TEAM_ERROR, TEAM_FINISH, TEAM_MERGE, TEAM_START, TEAM_TASK_RESULT, TEAM_TASK_UPDATE,
 };
 
@@ -59,27 +59,27 @@ struct ActiveRunControl {
 }
 
 #[derive(Clone)]
-pub struct TeamRunRunner {
+pub struct MissionRuntime {
     config_store: ConfigStore,
     user_store: Arc<UserStore>,
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
-    beeroom_realtime: Arc<BeeroomRealtimeService>,
+    beeroom_projection: Arc<BeeroomProjectionService>,
     stream_events: Arc<StreamEventService>,
     queue_tx: mpsc::Sender<String>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRunControl>>>,
 }
 
-impl TeamRunRunner {
+impl MissionRuntime {
     pub fn new(
         config_store: ConfigStore,
         user_store: Arc<UserStore>,
         workspace: Arc<WorkspaceManager>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
-        beeroom_realtime: Arc<BeeroomRealtimeService>,
+        beeroom_projection: Arc<BeeroomProjectionService>,
     ) -> Arc<Self> {
         let (queue_tx, queue_rx) = mpsc::channel(RUNNER_CHANNEL_CAPACITY);
         let stream_events = Arc::new(StreamEventService::new(user_store.storage_backend()));
@@ -89,7 +89,7 @@ impl TeamRunRunner {
             workspace,
             monitor,
             orchestrator,
-            beeroom_realtime,
+            beeroom_projection,
             stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
@@ -1098,12 +1098,12 @@ impl TeamRunRunner {
 
         let realtime_payload = build_realtime_event_payload(run, payload);
 
-        let realtime_service = self.beeroom_realtime.clone();
+        let projection_service = self.beeroom_projection.clone();
         let user_id = cleaned_user.to_string();
         let hive_id = cleaned_hive.to_string();
         let event_name = cleaned_event_type.to_string();
         tokio::spawn(async move {
-            realtime_service
+            projection_service
                 .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
                 .await;
         });

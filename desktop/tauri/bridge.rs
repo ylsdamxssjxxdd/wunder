@@ -19,6 +19,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use wunder_server::desktop_lan;
+use wunder_server::state::{AppRuntimeCapabilities, AppRuntimeProfile};
 
 #[derive(Clone)]
 struct DesktopGuardState {
@@ -34,6 +35,8 @@ struct DesktopWebState {
 #[derive(Clone, Serialize)]
 pub struct DesktopRuntimeInfo {
     pub mode: &'static str,
+    pub runtime_profile: AppRuntimeProfile,
+    pub runtime_capabilities: AppRuntimeCapabilities,
     pub bind_addr: String,
     pub web_base: String,
     pub api_base: String,
@@ -246,6 +249,8 @@ fn build_runtime_info(
 
     DesktopRuntimeInfo {
         mode: "desktop",
+        runtime_profile: runtime.state.runtime_profile,
+        runtime_capabilities: runtime.state.runtime_capabilities.clone(),
         bind_addr: bind_addr.to_string(),
         web_base: web_base.to_string(),
         api_base: effective_api_base,
@@ -469,6 +474,8 @@ async fn runtime_config_handler(
         "user_id": state.runtime.user_id,
         "workspace_root": state.runtime.workspace_root,
         "mode": state.runtime.mode,
+        "runtime_profile": state.runtime.runtime_profile,
+        "runtime_capabilities": &state.runtime.runtime_capabilities,
         "remote_enabled": state.runtime.remote_enabled,
         "remote_connected": state.runtime.remote_connected,
         "remote_server_base_url": state.runtime.remote_server_base_url,

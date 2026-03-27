@@ -203,6 +203,7 @@ impl ServerHandler for WunderMcpServer {
         let tool_names = Self::build_allowed_tool_names(&config);
         let response = self
             .state
+            .kernel
             .orchestrator
             .run(WunderRequest {
                 user_id: MCP_USER_ID.to_string(),
