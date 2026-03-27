@@ -705,27 +705,30 @@
     "tab": "工具",
     "group": "网页与桌面",
     "title": "浏览器",
-    "summary": "浏览器是交互型工具，用于在 desktop 模式下真实打开页面、点击、输入和截图，与 web_fetch 分工明确。",
+    "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
     "url": "/docs/zh-CN/tools/browser/",
     "headings": [
       "浏览器",
-      "功能说明",
-      "参数说明",
-      "支持的动作",
-      "使用示例",
-      "导航到页面",
-      "点击元素",
+      "能力概览",
+      "关键设计",
+      "1. 会话与标签页",
+      "2. snapshot/ref/act",
+      "3. legacy 兼容",
+      "常用参数",
+      "推荐工作流",
+      "浏览和交互",
+      "多标签页",
+      "示例",
+      "打开页面并抓取快照",
+      "用 ref 点击元素",
       "输入文本",
-      "截图",
-      "完整工作流示例",
-      "搜索并截图",
-      "与 webfetch 的对比",
-      "适用场景",
-      "可见性限制",
-      "注意事项",
-      "延伸阅读"
+      "管理标签页",
+      "配置",
+      "Docker 准备",
+      "与网页抓取的区别",
+      "扩展接口"
     ],
-    "text": "浏览器 浏览器是交互型工具，用于在 desktop 模式下真实打开页面、点击、输入和截图，与 webfetch 分工明确。 # 浏览器 真实网页交互工具，仅在 Desktop 模式下可用。 功能说明 浏览器 是交互型工具，用于真实打开页面、点击、输入和截图。 别名： browser browsertool 独立动作别名： browsernavigate browserclick browsertype browserscreenshot browserreadpage browserclose 参数说明 | 参数名 | 类型 | 必填 | 说明 | |--------|------|------|------| | action | string | ✅ | 要执行的动作 | | url | string | ❌ | 目标 URL（navigate 动作使用） | | selector | string | ❌ | CSS 选择器（click/type 动作使用） | | text | string | ❌ | 要输入的文本（type 动作使用） | 支持的动作 | 动作 | 说明 | 必填附加参数 | |------|------|--------------| | navigate | 导航到 URL | url | | click | 点击元素 | selector | | type | 输入文本 | selector, text | | screenshot | 截图 | - | | readpage | 读取页面 | - | | close | 关闭浏览器 | - | 使用示例 导航到页面 点击元素 输入文本 截图 完整工作流示例 搜索并截图 与 webfetch 的对比 | 特性 | 浏览器 | 网页抓取 | |------|--------|--------------------------------| | 用途 | 交互型操作 | 读网页正文 | | 成本 | 较高（需要真实浏览器） | 较低（直接 HTTP 请求） | | 能力 | 点击、输入、截图 | 提取正文 | | 推荐使用 | 需要交互时 | 只需要读正文时 | 适用场景 ✅ 适合使用浏览器： 需要真实打开页面 需要点击或输入 需要截图确认页面状态 要在同一个页面会话里继续操作 ❌ 不适合使用浏览器： 只是想读一篇文章或帮助页正文 不需要交互 想尽量减少上下文噪声和执行成本 这些场景优先用 网页抓取。 可见性限制 浏览器工具仅在以下条件下可用： 运行形态是 desktop 配置 tools.browser.enabled = true Server 和 CLI 模式下不可用。 注意事项 1. 不是更强版网页抓取： - 浏览器和 webfetch 解决的是两类问题 - 不要混淆使用 2. 会话保持： - 既然已经进入浏览器会话，再退回 webfetch 读同一页面，通常会丢失交互上下文 3. 使用限制： - 浏览器工具可见，不代表当前运行环境就适合高频自动化 - 它仍然受 desktop 条件限制 延伸阅读 网页抓取 桌面控制 Desktop 界面 浏览器 功能说明 参数说明 支持的动作 使用示例 导航到页面 点击元素 输入文本 截图 完整工作流示例 搜索并截图 与 webfetch 的对比 适用场景 可见性限制 注意事项 延伸阅读"
+    "text": "浏览器 浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。 # 浏览器 浏览器 是 Wunder 的浏览器运行时入口，不再只是旧版的 navigate/click/type 脚本包装。 它现在有三层职责： 对模型暴露统一工具协议 维护浏览器会话与标签页 提供 snapshot -> ref -> act 的交互链路 能力概览 主工具名： 浏览器 英文别名：browser 保留的 legacy 别名： browsernavigate browserclick browsertype browserscreenshot browserreadpage browserclose 统一 action： status profiles start stop tabs open focus close navigate snapshot act click type press hover wait screenshot readpage 关键设计 1. 会话与标签页 同一智能体会话会复用一个浏览器 session 每个 session 支持多个标签页 tabs/open/focus/close 用于 tab 生命周期管理 2. snapshot/ref/act snapshot 返回结构化页面快照 每个可交互元素会分配 ref act 优先通过 ref 定位，不再鼓励模型猜 CSS selector 3. legacy 兼容 旧的 browserclick/browsertype/... 仍可用 内部会自动转发到新的浏览器运行时 常用参数 | 参数 | 类型 | 说明 | |------|------|------| | action | string | 要执行的动作 | | profile | string | 可选，浏览器 profile，默认 managed | | browsersessionid | string | 可选，显式浏览器会话 ID | | targetid | string | 可选，标签页 ID | | url | string | 导航或开新标签页时使用 | | format | string | snapshot 格式：role/aria/ai | | ref | string | snapshot 返回的元素引用 | | selector | string | 兼容入口，仍可直接传 CSS selector | | text | string | 输入文本或等待文本 | | key | string | press 动作使用的键值 | | request | object | act 的结构化请求 | | fullpage | boolean | 截图是否抓整页 | | maxchars | integer | snapshot/readpage 最大字符数 | 推荐工作流 浏览和交互 1. start 或直接 navigate 2. snapshot 3. 读取 ref 4. act 5. 必要时再次 snapshot 多标签页 1. open 2. tabs 3. focus 4. navigate/act 示例 打开页面并抓取快照 用 ref 点击元素 输入文本 管理标签页 配置 模型可见性： 浏览器运行时： 不需要再把 浏览器 写进 tools.builtin.enabled，系统会在 tools.browser.enabled=true 时自动挂载工具。 兼容旧版 desktop： server.mode=desktop tools.browser.enabled=true 即使没有显式开启 browser.enabled，legacy desktop 仍然可用。 Docker 准备 当前实现已经为 Docker 预留了运行条件： PLAYWRIGHTBROWSERSPATH INSTALLPLAYWRIGHTBROWSERS /app/config/data/browser /app/config/data/browser/downloads --no-sandbox --disable-dev-shm-usage shmsize: 2gb 当前仓库里的 Docker Compose 默认会： 构建时安装 Chromium（INSTALLPLAYWRIGHTBROWSERS=1） 运行时开启浏览器工具和浏览器运行时 给 Chromium 预留更大的 /dev/shm，避免白屏、崩溃和截图失败 建议： server 容器内运行 headless 浏览器 通过 volume 持久化浏览器缓存和下载目录 在生产环境收紧 browser.security.allowprivatenetwork 与网页抓取的区别 | 工具 | 适合场景 | |------|----------| | 浏览器 | 真实交互、点击、输入、截图、跨标签页操作 | | 网页抓取 | 直接读取网页正文、低噪声内容提取 | 扩展接口 除了模型工具外，还提供： GET /wunder/browser/health GET /wunder/browser/status GET /wunder/browser/profiles POST /wunder/browser/session/start POST /wunder/browser/session/stop GET /wunder/browser/tabs POST /wunder/browser/tabs/open POST /wunder/browser/tabs/focus POST /wunder/browser/tabs/close POST /wunder/browser/navigate POST /wunder/browser/snapshot POST /wunder/browser/act POST /wunder/browser/screenshot POST /wunder/browser/readpage 这些接口主要服务于后续调试面板、sidecar 和 Docker 运行形态。 浏览器 能力概览 关键设计 1. 会话与标签页 2. snapshot/ref/act 3. legacy 兼容 常用参数 推荐工作流 浏览和交互 多标签页 示例 打开页面并抓取快照 用 ref 点击元素 输入文本 管理标签页 配置 Docker 准备 与网页抓取的区别 扩展接口"
   },
   {
     "slug": "zh-CN/tools/desktop-control",
@@ -1375,10 +1378,11 @@
       "启动后先查这几项",
       "关键配置文件",
       "常见环境变量",
+      "Docker 下的浏览器运行时",
       "最容易忽略的部署问题",
       "延伸阅读"
     ],
-    "text": "部署与运行 部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。 # 部署与运行 部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。 本页重点 怎么先选对部署路径 server 侧最少要准备哪些东西 启动后应该先查哪些入口 先定这四件事 你是个人本地使用，还是团队上线 数据库该用 PostgreSQL 还是 SQLite 工作区放在哪，是否持久化 sandbox、MCP、静态前端要不要一起上线 按目标选部署路径 Desktop 适合个人直接使用 本地优先 自带桌面壳 不要求先搭完整 server Server 适合团队、组织和统一治理 多用户、多租户 管理端与用户端协同 可接 sandbox、MCP、A2A 和外部渠道 本地开发 适合开发者联调 Rust 后端和前端 dev server 分层调试 可以只启动某一层做局部验证 如果你部署 Server，最少要准备什么 典型部署里，至少会涉及这些组件： wunder-server PostgreSQL 持久化用户工作区 如果你需要更完整的能力，再按需接入： wunder-sandbox extra-mcp 用户侧或管理侧静态资源服务 对外路径怎么规划 /wunder /wunder/chat/ /a2a /.well-known/agent-card.json /docs/ 这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。 启动后先查这几项 1. /wunder 是否可返回 2. /wunder/chat/ws 是否可建连 3. /a2a/agentCard 是否可读 4. /wunder/mcp 是否可达 5. /docs/ 是否能正常打开 关键配置文件 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 常见环境变量 WUNDERHOST WUNDERPORT WUNDERAPIKEY WUNDERPOSTGRESDSN WUNDERSANDBOXENDPOINT WUNDERMCPHOST WUNDERCONFIGPATH WUNDERCONFIGOVERRIDEPATH 最容易忽略的部署问题 只启动了 server，但没准备好 Postgres 开启了 MCP 配置，但目标服务没通 工作区没有持久化，导致产物丢失 把长期业务数据放进了 data/ 误把 desktop 本地模式当成 server 部署方式 延伸阅读 Server 部署 认证与安全 配置说明 部署与运行 本页重点 先定这四件事 按目标选部署路径 Desktop Server 本地开发 如果你部署 Server，最少要准备什么 对外路径怎么规划 启动后先查这几项 关键配置文件 常见环境变量 最容易忽略的部署问题 延伸阅读"
+    "text": "部署与运行 部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。 # 部署与运行 部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。 本页重点 怎么先选对部署路径 server 侧最少要准备哪些东西 启动后应该先查哪些入口 先定这四件事 你是个人本地使用，还是团队上线 数据库该用 PostgreSQL 还是 SQLite 工作区放在哪，是否持久化 sandbox、MCP、静态前端要不要一起上线 按目标选部署路径 Desktop 适合个人直接使用 本地优先 自带桌面壳 不要求先搭完整 server Server 适合团队、组织和统一治理 多用户、多租户 管理端与用户端协同 可接 sandbox、MCP、A2A 和外部渠道 本地开发 适合开发者联调 Rust 后端和前端 dev server 分层调试 可以只启动某一层做局部验证 如果你部署 Server，最少要准备什么 典型部署里，至少会涉及这些组件： wunder-server PostgreSQL 持久化用户工作区 如果你需要更完整的能力，再按需接入： wunder-sandbox extra-mcp 用户侧或管理侧静态资源服务 对外路径怎么规划 /wunder /wunder/chat/ /a2a /.well-known/agent-card.json /docs/ 这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。 启动后先查这几项 1. /wunder 是否可返回 2. /wunder/chat/ws 是否可建连 3. /a2a/agentCard 是否可读 4. /wunder/mcp 是否可达 5. /docs/ 是否能正常打开 关键配置文件 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml config/mcpconfig.json 常见环境变量 WUNDERHOST WUNDERPORT WUNDERAPIKEY WUNDERPOSTGRESDSN WUNDERSANDBOXENDPOINT WUNDERMCPHOST WUNDERCONFIGPATH WUNDERCONFIGOVERRIDEPATH Docker 下的浏览器运行时 当前 Compose 默认会在镜像构建阶段安装 Playwright Chromium 当前 Compose 默认会开启 WUNDERBROWSERENABLED=true、WUNDERBROWSERTOOLENABLED=true 和 WUNDERBROWSERDOCKERENABLED=true shmsize: 2gb 是给 Chromium 的 /dev/shm 预留空间，避免容器内因为共享内存过小出现崩溃、卡死、空白页或截图失败 最容易忽略的部署问题 只启动了 server，但没准备好 Postgres 开启了 MCP 配置，但目标服务没通 工作区没有持久化，导致产物丢失 把长期业务数据放进了 data/ 误把 desktop 本地模式当成 server 部署方式 延伸阅读 Server 部署 认证与安全 配置说明 部署与运行 本页重点 先定这四件事 按目标选部署路径 Desktop Server 本地开发 如果你部署 Server，最少要准备什么 对外路径怎么规划 启动后先查这几项 关键配置文件 常见环境变量 Docker 下的浏览器运行时 最容易忽略的部署问题 延伸阅读"
   },
   {
     "slug": "zh-CN/ops/data-and-storage",
@@ -1558,14 +1562,14 @@
       "config/wunder.yaml",
       "config/wunder-example.yaml",
       "data/config/wunder.override.yaml",
-      "extramcp/mcpconfig.json",
+      "config/mcpconfig.json",
       "按问题找配置",
       "你最可能先改这些项",
       "配置不生效时先查这三件事",
       "常见误区",
       "延伸阅读"
     ],
-    "text": "配置说明 配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。 # 配置说明 Wunder 的配置不是一个文件包打天下，而是分层组织的。 核心结论：排查配置问题时，先分清“基础配置、运行时覆盖、外部 MCP 配置”三层。 本页重点 具体配置应该改到哪里 哪些配置是 server 在读，哪些是 extramcp 在读 为什么你改了配置却可能没生效 关键配置入口 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 它们分别负责什么 config/wunder.yaml 正式基础配置 部署 server 时通常先看这里 config/wunder-example.yaml 示例配置和兜底模板 正式配置缺失时，系统会按当前逻辑回退到这里 data/config/wunder.override.yaml 运行时覆盖配置 通常对应管理端保存后的内容 不建议手工和基础配置混着改 extramcp/mcpconfig.json 独立 MCP 服务配置 尤其是数据库和知识库相关工具 按问题找配置 服务监听和并发限制，看 server. 鉴权、命令和路径控制，看 security. 外部 MCP 服务接入，看 mcp. A2A 服务接入，看 a2a. 存储与向量能力，看 storage. 和 vectorstore. 你最可能先改这些项 服务基础：server.host、server.port、server.chatstreamchannel、server.maxactivesessions 安全控制：security.apikey、security.externalauthkey、security.allowcommands、security.allowpaths、security.denyglobs MCP：mcp.timeouts、mcp.servers[] A2A：a2a.timeouts、a2a.services[] 配置不生效时先查这三件事 1. 你改的是基础配置还是 override 配置 2. 当前运行实例实际读取的是哪个路径 3. 这个配置到底是 server、desktop 还是 extramcp 在消费 常见误区 把 wunder-example.yaml 当正式配置长期改。 管理端写入的 override 和手工改的基础配置相互打架。 以为所有配置都由 server 进程读取，实际上 extramcp 有自己的配置文件。 延伸阅读 部署与运行 MCP 入口 A2A 接口 配置说明 本页重点 关键配置入口 它们分别负责什么 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 按问题找配置 你最可能先改这些项 配置不生效时先查这三件事 常见误区 延伸阅读"
+    "text": "配置说明 配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。 # 配置说明 Wunder 的配置不是一个文件包打天下，而是分层组织的。 核心结论：排查配置问题时，先分清“基础配置、运行时覆盖、外部 MCP 配置”三层。 本页重点 具体配置应该改到哪里 哪些配置是 server 在读，哪些是 extramcp 在读 为什么你改了配置却可能没生效 关键配置入口 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml config/mcpconfig.json 它们分别负责什么 config/wunder.yaml 正式基础配置 部署 server 时通常先看这里 config/wunder-example.yaml 示例配置和兜底模板 正式配置缺失时，系统会按当前逻辑回退到这里 data/config/wunder.override.yaml 运行时覆盖配置 通常对应管理端保存后的内容 不建议手工和基础配置混着改 config/mcpconfig.json 独立 MCP 服务配置 尤其是数据库和知识库相关工具 按问题找配置 服务监听和并发限制，看 server. 鉴权、命令和路径控制，看 security. 外部 MCP 服务接入，看 mcp. A2A 服务接入，看 a2a. 存储与向量能力，看 storage. 和 vectorstore. 浏览器只需要看 tools.browser.enabled、browser.enabled 和 browser.docker.enabled；其余参数默认由系统内置 你最可能先改这些项 服务基础：server.host、server.port、server.chatstreamchannel、server.maxactivesessions 安全控制：security.apikey、security.externalauthkey、security.allowcommands、security.allowpaths、security.denyglobs MCP：mcp.timeouts、mcp.servers[] A2A：a2a.timeouts、a2a.services[] 配置不生效时先查这三件事 1. 你改的是基础配置还是 override 配置 2. 当前运行实例实际读取的是哪个路径 3. 这个配置到底是 server、desktop 还是 extramcp 在消费 常见误区 把 wunder-example.yaml 当正式配置长期改。 管理端写入的 override 和手工改的基础配置相互打架。 以为所有配置都由 server 进程读取，实际上 extramcp 有自己的配置文件。 延伸阅读 部署与运行 MCP 入口 A2A 接口 配置说明 本页重点 关键配置入口 它们分别负责什么 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml config/mcpconfig.json 按问题找配置 你最可能先改这些项 配置不生效时先查这三件事 常见误区 延伸阅读"
   },
   {
     "slug": "zh-CN/reference/stream-events",

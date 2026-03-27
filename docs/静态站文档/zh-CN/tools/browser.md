@@ -1,29 +1,38 @@
 ---
 title: 浏览器
-summary: 浏览器是交互型工具，用于在 desktop 模式下真实打开页面、点击、输入和截图，与 web_fetch 分工明确。
+summary: 浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。
 read_when:
-  - 你在做桌面自动化或网页交互
-  - 你要区分浏览器和网页抓取
+  - 你需要真实打开页面并持续交互
+  - 你需要通过 snapshot/ref 操作页面元素
+  - 你在评估 desktop、server、docker 中的浏览器自动化能力
 source_docs:
+  - src/services/browser/runtime.rs
   - src/services/tools/browser_tool.rs
+  - src/api/browser_control.rs
   - src/services/tools/catalog.rs
 ---
 
 # 浏览器
 
-真实网页交互工具，仅在 Desktop 模式下可用。
+`浏览器` 是 Wunder 的浏览器运行时入口，不再只是旧版的 `navigate/click/type` 脚本包装。
+
+它现在有三层职责：
+
+- 对模型暴露统一工具协议
+- 维护浏览器会话与标签页
+- 提供 `snapshot -> ref -> act` 的交互链路
 
 ---
 
-## 功能说明
+## 能力概览
 
-`浏览器` 是交互型工具，用于真实打开页面、点击、输入和截图。
+主工具名：
 
-**别名**：
-- `browser`
-- `browser_tool`
+- `浏览器`
+- 英文别名：`browser`
 
-**独立动作别名**：
+保留的 legacy 别名：
+
 - `browser_navigate`
 - `browser_click`
 - `browser_type`
@@ -31,35 +40,92 @@ source_docs:
 - `browser_read_page`
 - `browser_close`
 
----
+统一 action：
 
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `action` | string | ✅ | 要执行的动作 |
-| `url` | string | ❌ | 目标 URL（navigate 动作使用） |
-| `selector` | string | ❌ | CSS 选择器（click/type 动作使用） |
-| `text` | string | ❌ | 要输入的文本（type 动作使用） |
-
----
-
-## 支持的动作
-
-| 动作 | 说明 | 必填附加参数 |
-|------|------|--------------|
-| `navigate` | 导航到 URL | `url` |
-| `click` | 点击元素 | `selector` |
-| `type` | 输入文本 | `selector`, `text` |
-| `screenshot` | 截图 | - |
-| `read_page` | 读取页面 | - |
-| `close` | 关闭浏览器 | - |
+- `status`
+- `profiles`
+- `start`
+- `stop`
+- `tabs`
+- `open`
+- `focus`
+- `close`
+- `navigate`
+- `snapshot`
+- `act`
+- `click`
+- `type`
+- `press`
+- `hover`
+- `wait`
+- `screenshot`
+- `read_page`
 
 ---
 
-## 使用示例
+## 关键设计
 
-### 导航到页面
+### 1. 会话与标签页
+
+- 同一智能体会话会复用一个浏览器 session
+- 每个 session 支持多个标签页
+- `tabs/open/focus/close` 用于 tab 生命周期管理
+
+### 2. snapshot/ref/act
+
+- `snapshot` 返回结构化页面快照
+- 每个可交互元素会分配 `ref`
+- `act` 优先通过 `ref` 定位，不再鼓励模型猜 CSS selector
+
+### 3. legacy 兼容
+
+- 旧的 `browser_click/browser_type/...` 仍可用
+- 内部会自动转发到新的浏览器运行时
+
+---
+
+## 常用参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `action` | string | 要执行的动作 |
+| `profile` | string | 可选，浏览器 profile，默认 `managed` |
+| `browser_session_id` | string | 可选，显式浏览器会话 ID |
+| `target_id` | string | 可选，标签页 ID |
+| `url` | string | 导航或开新标签页时使用 |
+| `format` | string | `snapshot` 格式：`role/aria/ai` |
+| `ref` | string | `snapshot` 返回的元素引用 |
+| `selector` | string | 兼容入口，仍可直接传 CSS selector |
+| `text` | string | 输入文本或等待文本 |
+| `key` | string | `press` 动作使用的键值 |
+| `request` | object | `act` 的结构化请求 |
+| `full_page` | boolean | 截图是否抓整页 |
+| `max_chars` | integer | `snapshot/read_page` 最大字符数 |
+
+---
+
+## 推荐工作流
+
+### 浏览和交互
+
+1. `start` 或直接 `navigate`
+2. `snapshot`
+3. 读取 `ref`
+4. `act`
+5. 必要时再次 `snapshot`
+
+### 多标签页
+
+1. `open`
+2. `tabs`
+3. `focus`
+4. `navigate/act`
+
+---
+
+## 示例
+
+### 打开页面并抓取快照
 
 ```json
 {
@@ -68,12 +134,22 @@ source_docs:
 }
 ```
 
-### 点击元素
+```json
+{
+  "action": "snapshot",
+  "format": "role"
+}
+```
+
+### 用 ref 点击元素
 
 ```json
 {
-  "action": "click",
-  "selector": "#submit-button"
+  "action": "act",
+  "request": {
+    "kind": "click",
+    "ref": "e1"
+  }
 }
 ```
 
@@ -81,119 +157,121 @@ source_docs:
 
 ```json
 {
-  "action": "type",
-  "selector": "#username",
-  "text": "myusername"
+  "action": "act",
+  "request": {
+    "kind": "type",
+    "ref": "e2",
+    "text": "wunder browser runtime"
+  }
 }
 ```
 
-### 截图
+### 管理标签页
 
 ```json
 {
-  "action": "screenshot"
-}
-```
-
----
-
-## 完整工作流示例
-
-### 搜索并截图
-
-```json
-// 1. 导航到搜索引擎
-{
-  "action": "navigate",
+  "action": "open",
   "url": "https://www.bing.com"
 }
+```
 
-// 2. 输入搜索词
+```json
 {
-  "action": "type",
-  "selector": "#sb_form_q",
-  "text": "wunder AI"
+  "action": "tabs"
 }
+```
 
-// 3. 点击搜索按钮
+```json
 {
-  "action": "click",
-  "selector": "#sb_form_go"
-}
-
-// 4. 等待页面加载
-{
-  "wait_ms": 2000
-}
-
-// 5. 截图
-{
-  "action": "screenshot"
-}
-
-// 6. 关闭浏览器
-{
-  "action": "close"
+  "action": "focus",
+  "target_id": "tab-2"
 }
 ```
 
 ---
 
-## 与 web_fetch 的对比
+## 配置
 
-| 特性 | 浏览器 | [网页抓取](/docs/zh-CN/tools/web-fetch/) |
-|------|--------|--------------------------------|
-| 用途 | 交互型操作 | 读网页正文 |
-| 成本 | 较高（需要真实浏览器） | 较低（直接 HTTP 请求） |
-| 能力 | 点击、输入、截图 | 提取正文 |
-| 推荐使用 | 需要交互时 | 只需要读正文时 |
+模型可见性：
 
----
+```yaml
+tools:
+  browser:
+    enabled: true
+```
 
-## 适用场景
+浏览器运行时：
 
-✅ **适合使用浏览器**：
-- 需要真实打开页面
-- 需要点击或输入
-- 需要截图确认页面状态
-- 要在同一个页面会话里继续操作
+```yaml
+browser:
+  enabled: true
+  docker:
+    enabled: true
+```
 
-❌ **不适合使用浏览器**：
-- 只是想读一篇文章或帮助页正文
-- 不需要交互
-- 想尽量减少上下文噪声和执行成本
+不需要再把 `浏览器` 写进 `tools.builtin.enabled`，系统会在 `tools.browser.enabled=true` 时自动挂载工具。
 
-这些场景优先用 [网页抓取](/docs/zh-CN/tools/web-fetch/)。
+兼容旧版 desktop：
 
----
+- `server.mode=desktop`
+- `tools.browser.enabled=true`
 
-## 可见性限制
-
-浏览器工具仅在以下条件下可用：
-- 运行形态是 `desktop`
-- 配置 `tools.browser.enabled = true`
-
-Server 和 CLI 模式下不可用。
+即使没有显式开启 `browser.enabled`，legacy desktop 仍然可用。
 
 ---
 
-## 注意事项
+## Docker 准备
 
-1. **不是更强版网页抓取**：
-   - 浏览器和 web_fetch 解决的是两类问题
-   - 不要混淆使用
+当前实现已经为 Docker 预留了运行条件：
 
-2. **会话保持**：
-   - 既然已经进入浏览器会话，再退回 web_fetch 读同一页面，通常会丢失交互上下文
+- `PLAYWRIGHT_BROWSERS_PATH`
+- `INSTALL_PLAYWRIGHT_BROWSERS`
+- `/app/config/data/browser`
+- `/app/config/data/browser/downloads`
+- `--no-sandbox`
+- `--disable-dev-shm-usage`
+- `shm_size: 2gb`
 
-3. **使用限制**：
-   - 浏览器工具可见，不代表当前运行环境就适合高频自动化
-   - 它仍然受 desktop 条件限制
+当前仓库里的 Docker Compose 默认会：
+
+- 构建时安装 Chromium（`INSTALL_PLAYWRIGHT_BROWSERS=1`）
+- 运行时开启浏览器工具和浏览器运行时
+- 给 Chromium 预留更大的 `/dev/shm`，避免白屏、崩溃和截图失败
+
+建议：
+
+- server 容器内运行 headless 浏览器
+- 通过 volume 持久化浏览器缓存和下载目录
+- 在生产环境收紧 `browser.security.allow_private_network`
 
 ---
 
-## 延伸阅读
+## 与网页抓取的区别
 
-- [网页抓取](/docs/zh-CN/tools/web-fetch/)
-- [桌面控制](/docs/zh-CN/tools/desktop-control/)
-- [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)
+| 工具 | 适合场景 |
+|------|----------|
+| `浏览器` | 真实交互、点击、输入、截图、跨标签页操作 |
+| `网页抓取` | 直接读取网页正文、低噪声内容提取 |
+
+---
+
+## 扩展接口
+
+除了模型工具外，还提供：
+
+- `GET /wunder/browser/health`
+- `GET /wunder/browser/status`
+- `GET /wunder/browser/profiles`
+- `POST /wunder/browser/session/start`
+- `POST /wunder/browser/session/stop`
+- `GET /wunder/browser/tabs`
+- `POST /wunder/browser/tabs/open`
+- `POST /wunder/browser/tabs/focus`
+- `POST /wunder/browser/tabs/close`
+- `POST /wunder/browser/navigate`
+- `POST /wunder/browser/snapshot`
+- `POST /wunder/browser/act`
+- `POST /wunder/browser/screenshot`
+- `POST /wunder/browser/read_page`
+
+这些接口主要服务于后续调试面板、sidecar 和 Docker 运行形态。

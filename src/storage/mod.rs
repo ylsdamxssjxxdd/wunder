@@ -649,6 +649,7 @@ pub struct SessionRunRecord {
     pub result: Option<String>,
     pub error: Option<String>,
     pub updated_time: f64,
+    pub metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone)]

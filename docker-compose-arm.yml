@@ -3,11 +3,13 @@
   dockerfile: Dockerfile
   args:
     RUST_BASE_IMAGE: public.ecr.aws/docker/library/rust:1.92-slim-bookworm
+    INSTALL_PLAYWRIGHT_BROWSERS: ${INSTALL_PLAYWRIGHT_BROWSERS:-1}
 
 services:
   wunder-server:
     container_name: wunder-server
     build: *rust-build
+    shm_size: "2gb"
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -20,6 +22,8 @@ services:
     volumes:
       - ./:/app
       - ./config/data/workspaces:/workspaces
+      - ./config/data/browser:/app/config/data/browser
+      - ./config/data/ms-playwright:/ms-playwright
       - ./fonts:/usr/share/fonts/wunder:ro
     environment:
       - TZ=Asia/Shanghai
@@ -33,6 +37,9 @@ services:
       - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/config/data/user_tools}
       - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/config/data/vector_knowledge}
       - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/app/config/data/temp_dir}
+      - WUNDER_BROWSER_ENABLED=${WUNDER_BROWSER_ENABLED:-true}
+      - WUNDER_BROWSER_TOOL_ENABLED=${WUNDER_BROWSER_TOOL_ENABLED:-true}
+      - WUNDER_BROWSER_DOCKER_ENABLED=${WUNDER_BROWSER_DOCKER_ENABLED:-true}
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
       - WUNDER_MCP_HOST=${WUNDER_MCP_HOST:-extra-mcp}
@@ -44,6 +51,7 @@ services:
       - MATPLOTLIBRC=/app/config/matplotlibrc
       - MPLCONFIGDIR=/workspaces/.matplotlib
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
+      - PLAYWRIGHT_BROWSERS_PATH=${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - CARGO_HOME=/app/.cargo/arm64
       - CARGO_TARGET_DIR=/app/target/arm64
@@ -63,6 +71,7 @@ services:
   wunder-sandbox:
     container_name: wunder-sandbox
     build: *rust-build
+    shm_size: "2gb"
     privileged: true
     security_opt:
       - seccomp:unconfined
@@ -96,6 +105,8 @@ services:
     volumes:
       - ./:/app
       - ./config/data/workspaces:/workspaces
+      - ./config/data/browser:/app/config/data/browser
+      - ./config/data/ms-playwright:/ms-playwright
       - ./fonts:/usr/share/fonts/wunder:ro
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     healthcheck:
@@ -118,8 +129,6 @@ services:
     volumes:
       - ./:/app
       - ./config/data/workspaces:/workspaces
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${MCP_PORT:-9010}:${MCP_PORT:-9010}"
     environment:

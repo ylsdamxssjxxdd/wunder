@@ -6,7 +6,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_FILENAME = "mcp_config.json"
+DEFAULT_CONFIG_CANDIDATES = (
+    Path("config/mcp_config.json"),
+    Path("extra_mcp/mcp_config.json"),
+)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 def _resolve_config_path() -> Path | None:
@@ -18,12 +25,12 @@ def _resolve_config_path() -> Path | None:
         cwd_path = (Path.cwd() / path).resolve()
         if cwd_path.exists():
             return cwd_path
-        repo_root = Path(__file__).resolve().parents[2]
-        return (repo_root / path).resolve()
+        return (_repo_root() / path).resolve()
 
-    default_path = Path(__file__).resolve().parents[1] / DEFAULT_CONFIG_FILENAME
-    if default_path.exists():
-        return default_path
+    for relative_path in DEFAULT_CONFIG_CANDIDATES:
+        default_path = (_repo_root() / relative_path).resolve()
+        if default_path.exists():
+            return default_path
     return None
 
 

@@ -197,6 +197,9 @@ tools: # 内置工具配置
       cache_ttl_secs: 600
       user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36
 
+  browser:
+    enabled: ${WUNDER_BROWSER_TOOL_ENABLED:-false}
+
   swarm:
     runner: legacy
     max_active_team_runs: 256
@@ -204,6 +207,11 @@ tools: # 内置工具配置
     default_timeout_s: 300
     max_retry: 2
     max_depth: 2
+
+browser:
+  enabled: ${WUNDER_BROWSER_ENABLED:-false}
+  docker:
+    enabled: ${WUNDER_BROWSER_DOCKER_ENABLED:-false}
 
 cron: # 定时任务配置
   enabled: true

@@ -92,7 +92,7 @@ impl SqliteStorage {
     }
 
     fn session_run_select_fields() -> &'static str {
-        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time"
+        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time, metadata"
     }
 
     fn map_session_run_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRunRecord> {
@@ -114,6 +114,9 @@ impl SqliteStorage {
             result: row.get(14)?,
             error: row.get(15)?,
             updated_time: row.get::<_, Option<f64>>(16)?.unwrap_or(0.0),
+            metadata: row
+                .get::<_, Option<String>>(17)?
+                .and_then(|value| Self::json_from_str(&value)),
         })
     }
 
@@ -476,6 +479,9 @@ impl SqliteStorage {
         }
         if !columns.contains("requested_by") {
             conn.execute("ALTER TABLE session_runs ADD COLUMN requested_by TEXT", [])?;
+        }
+        if !columns.contains("metadata") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN metadata TEXT", [])?;
         }
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch \
@@ -1182,7 +1188,8 @@ impl StorageBackend for SqliteStorage {
               elapsed_s REAL,
               result TEXT,
               error TEXT,
-              updated_time REAL NOT NULL
+              updated_time REAL NOT NULL,
+              metadata TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_session_runs_session
               ON session_runs (session_id, updated_time);
@@ -8280,15 +8287,17 @@ impl StorageBackend for SqliteStorage {
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let conn = self.open()?;
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
         conn.execute(
             "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
-             started_time, finished_time, elapsed_s, result, error, updated_time) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             started_time, finished_time, elapsed_s, result, error, updated_time, metadata) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(run_id) DO UPDATE SET session_id = excluded.session_id, parent_session_id = excluded.parent_session_id, \
              user_id = excluded.user_id, dispatch_id = excluded.dispatch_id, run_kind = excluded.run_kind, requested_by = excluded.requested_by, \
              agent_id = excluded.agent_id, model_name = excluded.model_name, status = excluded.status, \
              queued_time = excluded.queued_time, started_time = excluded.started_time, finished_time = excluded.finished_time, \
-             elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time",
+             elapsed_s = excluded.elapsed_s, result = excluded.result, error = excluded.error, updated_time = excluded.updated_time, \
+             metadata = excluded.metadata",
             params![
                 record.run_id,
                 record.session_id,
@@ -8306,7 +8315,8 @@ impl StorageBackend for SqliteStorage {
                 record.elapsed_s,
                 record.result,
                 record.error,
-                record.updated_time
+                record.updated_time,
+                metadata
             ],
         )?;
         Ok(())

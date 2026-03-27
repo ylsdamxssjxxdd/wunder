@@ -27,7 +27,7 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
 - `data/config/wunder.override.yaml`
-- `extra_mcp/mcp_config.json`
+- `config/mcp_config.json`
 
 ## 它们分别负责什么
 
@@ -47,7 +47,7 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 - 通常对应管理端保存后的内容
 - 不建议手工和基础配置混着改
 
-### `extra_mcp/mcp_config.json`
+### `config/mcp_config.json`
 
 - 独立 MCP 服务配置
 - 尤其是数据库和知识库相关工具
@@ -59,6 +59,7 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 - 外部 MCP 服务接入，看 `mcp.*`
 - A2A 服务接入，看 `a2a.*`
 - 存储与向量能力，看 `storage.*` 和 `vector_store.*`
+- 浏览器只需要看 `tools.browser.enabled`、`browser.enabled` 和 `browser.docker.enabled`；其余参数默认由系统内置
 
 ## 你最可能先改这些项
 

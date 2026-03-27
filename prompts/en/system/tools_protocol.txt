@@ -71,6 +71,17 @@ Tool results will come back as a user message with prefix "tool_response: ".
 When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.
 [[/HAS_PLAN_TOOL]]
 
+[[HAS_SUBAGENT_CONTROL_TOOL]]
+[Subagent Orchestration]
+- Background subagents are non-blocking by default. Do not stall the parent turn after dispatch unless you need same-turn coordination.
+[[HAS_SESSIONS_YIELD_TOOL]]
+- Preferred path for background work: `spawn` or `batch_spawn` -> keep the returned `run_id` / `dispatch_id` -> call `sessions_yield` with a short user-facing message -> wait for auto-wake when child results arrive.
+- Use `status` or `wait` only when you truly need synchronous coordination, explicit polling, or an in-turn merge decision.
+- Avoid busy polling long-running child sessions after dispatching them.
+[[/HAS_SESSIONS_YIELD_TOOL]]
+- For batched work, prefer `first_success` when one good answer is enough, `parallel_all` when you need full coverage, and `review_then_merge` when you plan to compare branches before synthesis.
+[[/HAS_SUBAGENT_CONTROL_TOOL]]
+
 [[HAS_A2UI_TOOL]]
 [A2UI UI Generation Guide]
 

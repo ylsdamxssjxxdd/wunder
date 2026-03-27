@@ -71,8 +71,11 @@ RUN python3 -m pip install --break-system-packages \
     pypdf pdfplumber pytesseract pdf2image imageio defusedxml playwright \
   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-ARG INSTALL_PLAYWRIGHT_BROWSERS=0
+ARG INSTALL_PLAYWRIGHT_BROWSERS=1
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN mkdir -p /ms-playwright
 
 RUN if [ "$INSTALL_PLAYWRIGHT_BROWSERS" = "1" ]; then \
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0 python3 -m playwright install --with-deps chromium; \

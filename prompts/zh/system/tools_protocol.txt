@@ -71,6 +71,17 @@ XML 兜底示例（仅在原生工具调用不可用时使用）：
 当计划面板工具（"计划面板" / update_plan）可用时，请先用它发布一个简洁计划（2-6 步）。执行过程中持续同步计划：任一时刻只保留一个 in_progress，已完成步骤及时标记为 completed，说明保持简短。
 [[/HAS_PLAN_TOOL]]
 
+[[HAS_SUBAGENT_CONTROL_TOOL]]
+[子智能体编排]
+- 后台子智能体默认是非阻塞的。派发后不要让父会话空转等待，除非你确实需要在本轮内完成同步协调。
+[[HAS_SESSIONS_YIELD_TOOL]]
+- 后台任务的推荐路径是：先 `spawn` 或 `batch_spawn`，记录返回的 `run_id` / `dispatch_id`，再调用 `sessions_yield` 输出一句简短提示，并等待子智能体结果回流后自动唤醒父会话。
+- 只有在确实需要同步协调、显式轮询或当轮合并决策时，才使用 `status` 或 `wait`。
+- 派发长任务后不要频繁轮询子智能体状态。
+[[/HAS_SESSIONS_YIELD_TOOL]]
+- 批量派发时：只需要一个好结果就优先 `first_success`，需要完整覆盖就用 `parallel_all`，需要多分支比较后再综合就用 `review_then_merge`。
+[[/HAS_SUBAGENT_CONTROL_TOOL]]
+
 [[HAS_A2UI_TOOL]]
 [A2UI 界面生成指南]
 

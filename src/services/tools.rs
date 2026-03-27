@@ -1167,6 +1167,7 @@ struct SessionRunMeta {
     dispatch_id: Option<String>,
     run_kind: Option<String>,
     requested_by: Option<String>,
+    metadata: Option<Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -1176,6 +1177,7 @@ struct PreparedChildSession {
     model_name: Option<String>,
     request: WunderRequest,
     announce: AnnounceConfig,
+    run_metadata: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -1198,6 +1200,97 @@ struct AnnounceConfig {
     emit_parent_events: bool,
     auto_wake: bool,
     persist_history_message: bool,
+}
+
+const MAX_SUBAGENT_SESSION_DEPTH: usize = 32;
+
+fn session_cleanup_label(cleanup: SessionCleanup) -> &'static str {
+    match cleanup {
+        SessionCleanup::Keep => "keep",
+        SessionCleanup::Delete => "delete",
+    }
+}
+
+fn child_session_depth(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    parent_session_id: &str,
+) -> i64 {
+    let cleaned_user = user_id.trim();
+    let cleaned_parent = parent_session_id.trim();
+    if cleaned_user.is_empty() || cleaned_parent.is_empty() {
+        return 1;
+    }
+    let mut depth = 0_i64;
+    let mut cursor = Some(cleaned_parent.to_string());
+    let mut seen = HashSet::new();
+    while let Some(session_id) = cursor {
+        if !seen.insert(session_id.clone()) || depth >= MAX_SUBAGENT_SESSION_DEPTH as i64 {
+            break;
+        }
+        let Some(session) = storage.get_chat_session(cleaned_user, &session_id).ok().flatten()
+        else {
+            break;
+        };
+        let Some(next_parent) = session
+            .parent_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            break;
+        };
+        depth += 1;
+        cursor = Some(next_parent.to_string());
+    }
+    depth + 1
+}
+
+fn subagent_control_scope(tool_names: &[String]) -> &'static str {
+    if tool_names
+        .iter()
+        .any(|name| resolve_tool_name(name) == "子智能体控制")
+    {
+        "children"
+    } else {
+        "none"
+    }
+}
+
+fn subagent_role_for_scope(control_scope: &str) -> &'static str {
+    if control_scope == "children" {
+        "orchestrator"
+    } else {
+        "worker"
+    }
+}
+
+fn build_prepared_child_run_metadata(
+    context: &ToolContext<'_>,
+    parent_session_id: &str,
+    parent_tool_names: &[String],
+    parent_turn_ref: Option<&str>,
+) -> Value {
+    let depth = child_session_depth(context.storage.as_ref(), context.user_id, parent_session_id);
+    let control_scope = subagent_control_scope(parent_tool_names);
+    json!({
+        "controller_session_id": parent_session_id.trim(),
+        "parent_turn_ref": parent_turn_ref.map(str::to_string),
+        "parent_user_round": context.user_round,
+        "parent_model_round": context.model_round,
+        "depth": depth,
+        "role": subagent_role_for_scope(control_scope),
+        "control_scope": control_scope,
+        "auto_wake": true,
+        "emit_parent_events": true,
+    })
+}
+
+fn insert_run_metadata_field(target: &mut Value, key: &str, value: Value) {
+    let Some(object) = target.as_object_mut() else {
+        return;
+    };
+    object.insert(key.to_string(), value);
 }
 
 #[allow(dead_code)]
@@ -3053,6 +3146,7 @@ fn prepare_child_session(
 
     let now = now_ts();
     let child_session_id = format!("sess_{}", Uuid::new_v4().simple());
+    let parent_turn_ref = subagents::encode_parent_turn_ref(context.user_round, context.model_round);
     let child_record = ChatSessionRecord {
         session_id: child_session_id.clone(),
         user_id: user_id.to_string(),
@@ -3066,14 +3160,17 @@ fn prepare_child_session(
         agent_id: child_agent_id.clone(),
         tool_overrides: parent_tool_names.clone(),
         parent_session_id: Some(cleaned_parent_session_id.to_string()),
-        parent_message_id: subagents::encode_parent_turn_ref(
-            context.user_round,
-            context.model_round,
-        ),
+        parent_message_id: parent_turn_ref.clone(),
         spawn_label: label.clone(),
         spawned_by: Some("model".to_string()),
     };
     context.storage.upsert_chat_session(&child_record)?;
+    let run_metadata = build_prepared_child_run_metadata(
+        context,
+        cleaned_parent_session_id,
+        &parent_tool_names,
+        parent_turn_ref.as_deref(),
+    );
 
     Ok(PreparedChildSession {
         child_session_id: child_session_id.clone(),
@@ -3104,16 +3201,14 @@ fn prepare_child_session(
             strategy: None,
             completion_mode: None,
             remaining_action: None,
-            parent_turn_ref: subagents::encode_parent_turn_ref(
-                context.user_round,
-                context.model_round,
-            ),
+            parent_turn_ref,
             parent_user_round: context.user_round,
             parent_model_round: context.model_round,
             emit_parent_events: true,
             auto_wake: true,
             persist_history_message: false,
         },
+        run_metadata,
     })
 }
 
@@ -3135,9 +3230,27 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         model_name,
         request,
         announce,
+        mut run_metadata,
     } = prepared;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());
+    let wait_seconds = payload.run_timeout_seconds.unwrap_or(0.0).max(0.0);
+    insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("single"));
+    insert_run_metadata_field(
+        &mut run_metadata,
+        "cleanup",
+        json!(session_cleanup_label(cleanup)),
+    );
+    insert_run_metadata_field(
+        &mut run_metadata,
+        "run_timeout_seconds",
+        json!(wait_seconds),
+    );
+    insert_run_metadata_field(
+        &mut run_metadata,
+        "background",
+        json!(wait_seconds <= 0.0),
+    );
     let mut receiver = spawn_session_run(
         context,
         request,
@@ -3148,6 +3261,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         SessionRunMeta {
             run_kind: Some("subagent".to_string()),
             requested_by: Some("subagent_control".to_string()),
+            metadata: Some(run_metadata),
             ..SessionRunMeta::default()
         },
         Some(announce),
@@ -3155,7 +3269,6 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         payload.run_timeout_seconds,
     )
     .await?;
-    let wait_seconds = payload.run_timeout_seconds.unwrap_or(0.0).max(0.0);
     if wait_seconds <= 0.0 {
         return Ok(json!({
             "status": "accepted",
@@ -3320,6 +3433,7 @@ async fn spawn_session_run(
         result: None,
         error: None,
         updated_time: now,
+        metadata: run_meta.metadata.clone(),
     };
     {
         let queued_storage = context.storage.clone();

@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-26T16:02:04.826125+00:00",
+  "generated_at": "2026-03-27T02:56:41.936436+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -244,7 +244,7 @@
                   {
                     "slug": "zh-CN/tools/browser",
                     "title": "浏览器",
-                    "summary": "浏览器是交互型工具，用于在 desktop 模式下真实打开页面、点击、输入和截图，与 web_fetch 分工明确。",
+                    "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
                     "url": "/docs/zh-CN/tools/browser/"
                   },
                   {
@@ -3331,14 +3331,17 @@
       "slug": "zh-CN/tools/browser",
       "language": "zh-CN",
       "title": "浏览器",
-      "summary": "浏览器是交互型工具，用于在 desktop 模式下真实打开页面、点击、输入和截图，与 web_fetch 分工明确。",
-      "updated_at": "2026-03-23",
+      "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
+      "updated_at": "2026-03-27",
       "read_when": [
-        "你在做桌面自动化或网页交互",
-        "你要区分浏览器和网页抓取"
+        "你需要真实打开页面并持续交互",
+        "你需要通过 snapshot/ref 操作页面元素",
+        "你在评估 desktop、server、docker 中的浏览器自动化能力"
       ],
       "source_docs": [
+        "src/services/browser/runtime.rs",
         "src/services/tools/browser_tool.rs",
+        "src/api/browser_control.rs",
         "src/services/tools/catalog.rs"
       ],
       "tab": "工具",
@@ -3356,77 +3359,92 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "能力概览"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "关键设计"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "支持的动作"
+          "level": 3,
+          "text": "1. 会话与标签页"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "使用示例"
+          "level": 3,
+          "text": "2. snapshot/ref/act"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "导航到页面"
+          "text": "3. legacy 兼容"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "点击元素"
+          "level": 2,
+          "text": "常用参数"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "输入文本"
+          "level": 2,
+          "text": "推荐工作流"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "截图"
+          "text": "浏览和交互"
         },
         {
           "id": "section-10",
-          "level": 2,
-          "text": "完整工作流示例"
+          "level": 3,
+          "text": "多标签页"
         },
         {
           "id": "section-11",
-          "level": 3,
-          "text": "搜索并截图"
+          "level": 2,
+          "text": "示例"
         },
         {
           "id": "section-12",
-          "level": 2,
-          "text": "与 webfetch 的对比"
+          "level": 3,
+          "text": "打开页面并抓取快照"
         },
         {
           "id": "section-13",
-          "level": 2,
-          "text": "适用场景"
+          "level": 3,
+          "text": "用 ref 点击元素"
         },
         {
           "id": "section-14",
-          "level": 2,
-          "text": "可见性限制"
+          "level": 3,
+          "text": "输入文本"
         },
         {
           "id": "section-15",
-          "level": 2,
-          "text": "注意事项"
+          "level": 3,
+          "text": "管理标签页"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "延伸阅读"
+          "text": "配置"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Docker 准备"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "与网页抓取的区别"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "扩展接口"
         }
       ],
       "prev_slug": "zh-CN/tools/web-fetch",
@@ -5711,7 +5729,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-03-27",
       "read_when": [
         "你要部署 Wunder",
         "你要确认数据库、MCP、sandbox 和工作区怎么放"
@@ -5792,10 +5810,15 @@
         {
           "id": "section-13",
           "level": 2,
-          "text": "最容易忽略的部署问题"
+          "text": "Docker 下的浏览器运行时"
         },
         {
           "id": "section-14",
+          "level": 2,
+          "text": "最容易忽略的部署问题"
+        },
+        {
+          "id": "section-15",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6398,7 +6421,7 @@
       "language": "zh-CN",
       "title": "配置说明",
       "summary": "配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-03-27",
       "read_when": [
         "你在查具体配置应该写到哪里",
         "你要分清基础配置、运行时覆盖和外部 MCP 配置"
@@ -6453,7 +6476,7 @@
         {
           "id": "section-8",
           "level": 3,
-          "text": "extramcp/mcpconfig.json"
+          "text": "config/mcpconfig.json"
         },
         {
           "id": "section-9",

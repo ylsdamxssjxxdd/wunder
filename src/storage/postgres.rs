@@ -295,7 +295,7 @@ impl PostgresStorage {
     }
 
     fn session_run_select_fields() -> &'static str {
-        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time"
+        "run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, started_time, finished_time, elapsed_s, result, error, updated_time, metadata"
     }
 
     fn map_session_run_row(row: &tokio_postgres::Row) -> SessionRunRecord {
@@ -317,6 +317,9 @@ impl PostgresStorage {
             result: row.get(14),
             error: row.get(15),
             updated_time: row.get::<_, Option<f64>>(16).unwrap_or(0.0),
+            metadata: row
+                .get::<_, Option<String>>(17)
+                .and_then(|value| Self::json_from_str(&value)),
         }
     }
 
@@ -892,6 +895,9 @@ impl PostgresStorage {
         }
         if !columns.contains("requested_by") {
             conn.execute("ALTER TABLE session_runs ADD COLUMN requested_by TEXT", &[])?;
+        }
+        if !columns.contains("metadata") {
+            conn.execute("ALTER TABLE session_runs ADD COLUMN metadata TEXT", &[])?;
         }
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_session_runs_dispatch \
@@ -1776,7 +1782,8 @@ impl StorageBackend for PostgresStorage {
                   elapsed_s DOUBLE PRECISION,
                   result TEXT,
                   error TEXT,
-                  updated_time DOUBLE PRECISION NOT NULL
+                  updated_time DOUBLE PRECISION NOT NULL,
+                  metadata TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_session_runs_session
                   ON session_runs (session_id, updated_time);
@@ -8551,15 +8558,17 @@ impl StorageBackend for PostgresStorage {
     fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
+        let metadata = record.metadata.as_ref().map(Self::json_to_string);
         conn.execute(
             "INSERT INTO session_runs (run_id, session_id, parent_session_id, user_id, dispatch_id, run_kind, requested_by, agent_id, model_name, status, queued_time, \
-             started_time, finished_time, elapsed_s, result, error, updated_time) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+             started_time, finished_time, elapsed_s, result, error, updated_time, metadata) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
              ON CONFLICT(run_id) DO UPDATE SET session_id = EXCLUDED.session_id, parent_session_id = EXCLUDED.parent_session_id, \
              user_id = EXCLUDED.user_id, dispatch_id = EXCLUDED.dispatch_id, run_kind = EXCLUDED.run_kind, requested_by = EXCLUDED.requested_by, \
              agent_id = EXCLUDED.agent_id, model_name = EXCLUDED.model_name, status = EXCLUDED.status, \
              queued_time = EXCLUDED.queued_time, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, \
-             elapsed_s = EXCLUDED.elapsed_s, result = EXCLUDED.result, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
+             elapsed_s = EXCLUDED.elapsed_s, result = EXCLUDED.result, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time, \
+             metadata = EXCLUDED.metadata",
             &[
                 &record.run_id,
                 &record.session_id,
@@ -8578,6 +8587,7 @@ impl StorageBackend for PostgresStorage {
                 &record.result,
                 &record.error,
                 &record.updated_time,
+                &metadata,
             ],
         )?;
         Ok(())

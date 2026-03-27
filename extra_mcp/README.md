@@ -4,7 +4,7 @@
 和主服务内置 MCP 的关系如下：
 
 - 内置 `wunder` MCP（Rust，`src/services/mcp.rs`）：端点 `/wunder/mcp`，工具固定为 `excute`、`doc2md`
-- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `mcp_config.json` 动态生成（`db_query*`、`db_export*`、`kb_query*`）
+- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `config/mcp_config.json` 动态生成（`db_query*`、`db_export*`、`kb_query*`）
 
 ## 1. 启动 `extra_mcp`
 
@@ -24,9 +24,10 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 ```
 
 说明：
-- 默认读取 `extra_mcp/mcp_config.json`
+- 默认读取 `config/mcp_config.json`
+- 若新路径不存在，会兼容回退到 `extra_mcp/mcp_config.json`
 - 可用 `MCP_CONFIG_PATH` 指定配置路径
-- 运行参数优先级：环境变量 > `mcp_config.json` 的 `mcp.transport/host/port` > 默认值
+- 运行参数优先级：环境变量 > `config/mcp_config.json` 的 `mcp.transport/host/port` > 默认值
 - 当 `extra_mcp` 运行在 Docker 容器内且数据库主机配置为 `127.0.0.1` / `localhost` 时，会先直连本机回环地址；若失败，再自动回退到 `host.docker.internal`，以兼容“宿主机数据库 + 容器内 MCP”场景
 - 如需覆盖回退主机名，可设置环境变量 `EXTRA_MCP_LOOPBACK_FALLBACK_HOST`
 - 绑定表场景会同时注册 `db_query*` 与 `db_export*`：前者返回小样本与 `query_handle`，后者可直接把同一查询导出为 `xlsx/csv`

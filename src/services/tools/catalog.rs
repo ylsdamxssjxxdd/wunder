@@ -1268,6 +1268,12 @@ pub fn collect_available_tool_names(
             names.insert(canonical);
         }
     }
+    if browser_tool::browser_tools_enabled(config) {
+        // Browser visibility is controlled by tools.browser.enabled, so it should not require
+        // a duplicated entry in tools.builtin.enabled.
+        enabled_builtin.insert(browser_tool::TOOL_BROWSER.to_string());
+        names.insert(browser_tool::TOOL_BROWSER.to_string());
+    }
     for server in &config.mcp.servers {
         if !server.enabled {
             continue;
@@ -1580,5 +1586,17 @@ mod tests {
             resolve_tool_name(super::self_status_tool::TOOL_SELF_STATUS_ALIAS),
             super::self_status_tool::TOOL_SELF_STATUS
         );
+    }
+
+    #[test]
+    fn browser_tool_auto_registers_without_builtin_whitelist_entry() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.browser.enabled = true;
+        config.tools.browser.enabled = true;
+
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        assert!(available.contains(super::browser_tool::TOOL_BROWSER));
+        assert!(available.contains("browser"));
     }
 }

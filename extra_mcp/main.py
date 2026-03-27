@@ -3,7 +3,7 @@
 FastMCP server entrypoint for the wunder MCP service.
 
 Database configuration:
-  MCP_CONFIG_PATH (optional JSON config file, default: extra_mcp/mcp_config.json)
+  MCP_CONFIG_PATH (optional JSON config file, default: config/mcp_config.json)
   Database settings are read from mcp_config.json (single DB or database.targets).
 
 Optional MCP runtime:

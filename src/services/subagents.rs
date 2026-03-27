@@ -53,7 +53,6 @@ struct SubagentRuntimeItem {
     failed: bool,
     summary: Option<String>,
     updated_time: f64,
-    parent_turn: Option<ParentTurnRef>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +146,49 @@ pub fn config_flag(config_overrides: Option<&Value>, key: &str) -> bool {
         .and_then(|value| value.get(key))
         .and_then(Value::as_bool)
         .unwrap_or(false)
+}
+
+fn cloned_metadata_field(metadata: Option<&Value>, key: &str) -> Option<Value> {
+    metadata
+        .and_then(|value| value.get(key))
+        .filter(|value| !value.is_null())
+        .cloned()
+}
+
+pub(crate) fn run_metadata_field(metadata: Option<&Value>, key: &str) -> Value {
+    cloned_metadata_field(metadata, key).unwrap_or(Value::Null)
+}
+
+pub(crate) fn parent_turn_payload(
+    metadata: Option<&Value>,
+    fallback_parent_turn_ref: Option<&str>,
+) -> (Value, Value, Value) {
+    let fallback_turn = decode_parent_turn_ref(fallback_parent_turn_ref);
+    let fallback_ref = encode_parent_turn_ref(
+        fallback_turn.as_ref().map(|value| value.user_round),
+        fallback_turn.as_ref().and_then(|value| value.model_round),
+    );
+    let parent_turn_ref = cloned_metadata_field(metadata, "parent_turn_ref").unwrap_or_else(|| {
+        fallback_ref
+            .map(Value::String)
+            .unwrap_or(Value::Null)
+    });
+    let parent_user_round =
+        cloned_metadata_field(metadata, "parent_user_round").unwrap_or_else(|| {
+            fallback_turn
+                .as_ref()
+                .map(|value| json!(value.user_round))
+                .unwrap_or(Value::Null)
+        });
+    let parent_model_round =
+        cloned_metadata_field(metadata, "parent_model_round").unwrap_or_else(|| {
+            fallback_turn
+                .as_ref()
+                .and_then(|value| value.model_round)
+                .map(|value| json!(value))
+                .unwrap_or(Value::Null)
+        });
+    (parent_turn_ref, parent_user_round, parent_model_round)
 }
 
 pub fn list_parent_subagents(
@@ -640,7 +682,6 @@ fn build_runtime_item(
     } else {
         None
     };
-    let parent_turn = decode_parent_turn_ref(session.parent_message_id.as_deref());
     Ok(SubagentRuntimeItem {
         session,
         run,
@@ -649,14 +690,15 @@ fn build_runtime_item(
         failed,
         summary,
         updated_time,
-        parent_turn,
     })
 }
 
 fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
-    let parent_turn = item.parent_turn.clone();
     let run = item.run.clone();
-    json!({
+    let metadata = run.as_ref().and_then(|record| record.metadata.clone());
+    let (parent_turn_ref, parent_user_round, parent_model_round) =
+        parent_turn_payload(metadata.as_ref(), item.session.parent_message_id.as_deref());
+    let mut payload = json!({
         "session_id": item.session.session_id,
         "parent_session_id": item.session.parent_session_id,
         "run_id": run.as_ref().map(|record| record.run_id.clone()),
@@ -680,18 +722,72 @@ fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
         "elapsed_s": run.as_ref().map(|record| record.elapsed_s),
         "result": run.as_ref().and_then(|record| record.result.clone()),
         "error": run.as_ref().and_then(|record| record.error.clone()),
-        "parent_user_round": parent_turn.as_ref().map(|value| value.user_round),
-        "parent_model_round": parent_turn.as_ref().and_then(|value| value.model_round),
-        "parent_turn_ref": encode_parent_turn_ref(
-            parent_turn.as_ref().map(|value| value.user_round),
-            parent_turn.as_ref().and_then(|value| value.model_round),
-        ),
+        "parent_user_round": parent_user_round,
+        "parent_model_round": parent_model_round,
+        "parent_turn_ref": parent_turn_ref,
         "can_terminate": !item.terminal,
         "agent_state": {
             "status": collab_agent_status(&item.status),
             "message": item.summary,
         }
-    })
+    });
+    let Some(object) = payload.as_object_mut() else {
+        return payload;
+    };
+    object.insert("metadata".to_string(), metadata.clone().unwrap_or(Value::Null));
+    object.insert(
+        "controller_session_id".to_string(),
+        run_metadata_field(metadata.as_ref(), "controller_session_id"),
+    );
+    object.insert(
+        "depth".to_string(),
+        run_metadata_field(metadata.as_ref(), "depth"),
+    );
+    object.insert(
+        "role".to_string(),
+        run_metadata_field(metadata.as_ref(), "role"),
+    );
+    object.insert(
+        "control_scope".to_string(),
+        run_metadata_field(metadata.as_ref(), "control_scope"),
+    );
+    object.insert(
+        "spawn_mode".to_string(),
+        run_metadata_field(metadata.as_ref(), "spawn_mode"),
+    );
+    object.insert(
+        "strategy".to_string(),
+        run_metadata_field(metadata.as_ref(), "strategy"),
+    );
+    object.insert(
+        "completion_mode".to_string(),
+        run_metadata_field(metadata.as_ref(), "completion_mode"),
+    );
+    object.insert(
+        "remaining_action".to_string(),
+        run_metadata_field(metadata.as_ref(), "remaining_action"),
+    );
+    object.insert(
+        "dispatch_label".to_string(),
+        run_metadata_field(metadata.as_ref(), "dispatch_label"),
+    );
+    object.insert(
+        "dispatch_index".to_string(),
+        run_metadata_field(metadata.as_ref(), "dispatch_index"),
+    );
+    object.insert(
+        "dispatch_size".to_string(),
+        run_metadata_field(metadata.as_ref(), "dispatch_size"),
+    );
+    object.insert(
+        "cleanup".to_string(),
+        run_metadata_field(metadata.as_ref(), "cleanup"),
+    );
+    object.insert(
+        "run_timeout_seconds".to_string(),
+        run_metadata_field(metadata.as_ref(), "run_timeout_seconds"),
+    );
+    payload
 }
 
 fn list_dispatch_runtime_items(

@@ -291,10 +291,11 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let dispatch_id = format!("dispatch_{}", Uuid::new_v4().simple());
     let dispatch_label = normalize_optional_string(payload.dispatch_label.clone())
         .or_else(|| normalize_optional_string(payload.label.clone()));
+    let task_total = tasks.len() as i64;
     emit_dispatch_start(
         context,
         &dispatch_id,
-        tasks.len() as i64,
+        task_total,
         dispatch_label.as_deref(),
         strategy,
         remaining_action,
@@ -332,6 +333,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                     model_name,
                     request,
                     mut announce,
+                    mut run_metadata,
                 } = prepared;
                 let run_id = format!("run_{}", Uuid::new_v4().simple());
                 announce.dispatch_id = Some(dispatch_id.clone());
@@ -348,6 +350,55 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                 announce.emit_parent_events = true;
                 announce.auto_wake = true;
                 announce.persist_history_message = false;
+                super::insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("batch"));
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "dispatch_id",
+                    json!(dispatch_id),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "dispatch_index",
+                    json!(index),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "dispatch_size",
+                    json!(task_total),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "dispatch_label",
+                    dispatch_label
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "strategy",
+                    json!(strategy.as_str()),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "completion_mode",
+                    json!(completion_mode_from_strategy(strategy).as_str()),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "remaining_action",
+                    json!(remaining_action.as_str()),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "cleanup",
+                    json!(super::session_cleanup_label(cleanup_mode)),
+                );
+                super::insert_run_metadata_field(
+                    &mut run_metadata,
+                    "run_timeout_seconds",
+                    json!(run_timeout_s.unwrap_or(0.0)),
+                );
                 match super::spawn_session_run(
                     context,
                     request,
@@ -359,6 +410,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                         dispatch_id: Some(dispatch_id.clone()),
                         run_kind: Some("subagent".to_string()),
                         requested_by: Some("subagent_control".to_string()),
+                        metadata: Some(run_metadata),
                     },
                     Some(announce),
                     cleanup_mode,
@@ -732,42 +784,131 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
         let failed = is_failed_status(&status);
         let message =
             run_message_for_status(&status, record.result.as_deref(), record.error.as_deref());
+        let metadata = record.metadata.clone();
+        let (parent_turn_ref, parent_user_round, parent_model_round) =
+            crate::services::subagents::parent_turn_payload(
+                metadata.as_ref(),
+                session.as_ref().and_then(|entry| entry.parent_message_id.as_deref()),
+            );
+        let mut payload = json!({
+            "run_id": record.run_id,
+            "dispatch_id": record.dispatch_id,
+            "run_kind": record.run_kind,
+            "requested_by": record.requested_by,
+            "status": status,
+            "run_status": record.status,
+            "runtime_status": runtime_status,
+            "session_status": session_status,
+            "terminal": terminal,
+            "failed": failed,
+            "session_id": record.session_id,
+            "parent_session_id": record.parent_session_id,
+            "agent_id": record.agent_id,
+            "model_name": record.model_name,
+            "queued_time": record.queued_time,
+            "started_time": record.started_time,
+            "finished_time": record.finished_time,
+            "elapsed_s": record.elapsed_s,
+            "result": record.result,
+            "error": record.error,
+            "agent_state": {
+                "status": collab_agent_status(&status),
+                "message": message,
+            },
+            "updated_time": record.updated_time,
+            "title": session.as_ref().map(|entry| entry.title.clone()),
+            "spawn_label": session.as_ref().and_then(|entry| entry.spawn_label.clone()),
+            "spawned_by": session.as_ref().and_then(|entry| entry.spawned_by.clone()),
+        });
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("metadata".to_string(), metadata.clone().unwrap_or(Value::Null));
+            object.insert(
+                "controller_session_id".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "controller_session_id",
+                ),
+            );
+            object.insert(
+                "depth".to_string(),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "depth"),
+            );
+            object.insert(
+                "role".to_string(),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "role"),
+            );
+            object.insert(
+                "control_scope".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "control_scope",
+                ),
+            );
+            object.insert(
+                "spawn_mode".to_string(),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "spawn_mode"),
+            );
+            object.insert(
+                "strategy".to_string(),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "strategy"),
+            );
+            object.insert(
+                "completion_mode".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "completion_mode",
+                ),
+            );
+            object.insert(
+                "remaining_action".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "remaining_action",
+                ),
+            );
+            object.insert(
+                "dispatch_label".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "dispatch_label",
+                ),
+            );
+            object.insert(
+                "dispatch_index".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "dispatch_index",
+                ),
+            );
+            object.insert(
+                "dispatch_size".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "dispatch_size",
+                ),
+            );
+            object.insert(
+                "cleanup".to_string(),
+                crate::services::subagents::run_metadata_field(metadata.as_ref(), "cleanup"),
+            );
+            object.insert(
+                "run_timeout_seconds".to_string(),
+                crate::services::subagents::run_metadata_field(
+                    metadata.as_ref(),
+                    "run_timeout_seconds",
+                ),
+            );
+            object.insert("parent_turn_ref".to_string(), parent_turn_ref);
+            object.insert("parent_user_round".to_string(), parent_user_round);
+            object.insert("parent_model_round".to_string(), parent_model_round);
+        }
         Ok(SubagentRunSnapshot {
             key: record.run_id.clone(),
             status: status.clone(),
             terminal,
             failed,
             updated_time: record.updated_time,
-            payload: json!({
-                "run_id": record.run_id,
-                "dispatch_id": record.dispatch_id,
-                "run_kind": record.run_kind,
-                "requested_by": record.requested_by,
-                "status": status,
-                "run_status": record.status,
-                "runtime_status": runtime_status,
-                "session_status": session_status,
-                "terminal": terminal,
-                "failed": failed,
-                "session_id": record.session_id,
-                "parent_session_id": record.parent_session_id,
-                "agent_id": record.agent_id,
-                "model_name": record.model_name,
-                "queued_time": record.queued_time,
-                "started_time": record.started_time,
-                "finished_time": record.finished_time,
-                "elapsed_s": record.elapsed_s,
-                "result": record.result,
-                "error": record.error,
-                "agent_state": {
-                    "status": collab_agent_status(&status),
-                    "message": message,
-                },
-                "updated_time": record.updated_time,
-                "title": session.as_ref().map(|entry| entry.title.clone()),
-                "spawn_label": session.as_ref().and_then(|entry| entry.spawn_label.clone()),
-                "spawned_by": session.as_ref().and_then(|entry| entry.spawned_by.clone()),
-            }),
+            payload,
         })
     } else {
         Ok(SubagentRunSnapshot {
@@ -825,30 +966,62 @@ fn build_session_snapshot(
     let status = resolve_effective_status("", runtime_status.as_deref(), &session_status);
     let terminal = is_terminal_status(&status);
     let failed = is_failed_status(&status);
+    let (parent_turn_ref, parent_user_round, parent_model_round) =
+        crate::services::subagents::parent_turn_payload(
+            None,
+            session.parent_message_id.as_deref(),
+        );
+    let mut payload = json!({
+        "status": status,
+        "runtime_status": runtime_status,
+        "session_status": session_status,
+        "terminal": terminal,
+        "failed": failed,
+        "agent_state": {
+            "status": collab_agent_status(&status),
+            "message": serde_json::Value::Null,
+        },
+        "session_id": session.session_id,
+        "parent_session_id": session.parent_session_id,
+        "agent_id": session.agent_id,
+        "title": session.title,
+        "spawn_label": session.spawn_label,
+        "spawned_by": session.spawned_by,
+        "updated_time": session.updated_at,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "controller_session_id".to_string(),
+            session
+                .parent_session_id
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        object.insert("metadata".to_string(), Value::Null);
+        object.insert("depth".to_string(), Value::Null);
+        object.insert("role".to_string(), Value::Null);
+        object.insert("control_scope".to_string(), Value::Null);
+        object.insert("spawn_mode".to_string(), Value::Null);
+        object.insert("strategy".to_string(), Value::Null);
+        object.insert("completion_mode".to_string(), Value::Null);
+        object.insert("remaining_action".to_string(), Value::Null);
+        object.insert("dispatch_label".to_string(), Value::Null);
+        object.insert("dispatch_index".to_string(), Value::Null);
+        object.insert("dispatch_size".to_string(), Value::Null);
+        object.insert("cleanup".to_string(), Value::Null);
+        object.insert("run_timeout_seconds".to_string(), Value::Null);
+        object.insert("parent_turn_ref".to_string(), parent_turn_ref);
+        object.insert("parent_user_round".to_string(), parent_user_round);
+        object.insert("parent_model_round".to_string(), parent_model_round);
+    }
     Ok(SubagentRunSnapshot {
         key: session.session_id.clone(),
         status: status.clone(),
         terminal,
         failed,
         updated_time: session.updated_at,
-        payload: json!({
-            "status": status,
-            "runtime_status": runtime_status,
-            "session_status": session_status,
-            "terminal": terminal,
-            "failed": failed,
-            "agent_state": {
-                "status": collab_agent_status(&status),
-                "message": serde_json::Value::Null,
-            },
-            "session_id": session.session_id,
-            "parent_session_id": session.parent_session_id,
-            "agent_id": session.agent_id,
-            "title": session.title,
-            "spawn_label": session.spawn_label,
-            "spawned_by": session.spawned_by,
-            "updated_time": session.updated_at,
-        }),
+        payload,
     })
 }
 

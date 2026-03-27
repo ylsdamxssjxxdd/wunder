@@ -598,6 +598,7 @@ impl TeamRunRunner {
             result: None,
             error: None,
             updated_time: queued,
+            metadata: None,
         };
         let _ = self.user_store.upsert_session_run(&record);
 

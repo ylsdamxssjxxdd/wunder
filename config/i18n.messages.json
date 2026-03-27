@@ -1568,16 +1568,36 @@
     "zh-CN": "请求执行 CLI 命令。默认在工作区根目录执行；workdir 只能在当前工作目录以内（相对路径），不允许绝对路径；content 不限制路径格式。"
   },
   "tool.spec.browser.description": {
-    "en-US": "Operate the built-in browser via action: navigate/click/type/screenshot/read_page/close.",
-    "zh-CN": "通过 action 操作内置浏览器：navigate/click/type/screenshot/read_page/close。"
+    "en-US": "Operate the built-in browser runtime with session, tab, snapshot and act actions.",
+    "zh-CN": "通过统一 action 操作浏览器运行时，支持会话、标签页、snapshot 与 act。"
   },
   "tool.spec.browser.args.action": {
-    "en-US": "Action: navigate/click/type/screenshot/read_page/close.",
-    "zh-CN": "动作类型：navigate/click/type/screenshot/read_page/close。"
+    "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",
+    "zh-CN": "动作类型：status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page。"
+  },
+  "tool.spec.browser.args.profile": {
+    "en-US": "Optional browser profile name. Defaults to the managed profile.",
+    "zh-CN": "可选，浏览器 profile 名称，默认使用 managed。"
+  },
+  "tool.spec.browser.args.browser_session_id": {
+    "en-US": "Optional explicit browser session id. Defaults to user_id + session_id/agent_id.",
+    "zh-CN": "可选，显式浏览器会话 ID；默认由 user_id 与 session_id/agent_id 组合。"
+  },
+  "tool.spec.browser.args.target_id": {
+    "en-US": "Optional browser tab target id.",
+    "zh-CN": "可选，浏览器标签页 target_id。"
   },
   "tool.spec.browser.args.url": {
     "en-US": "The URL to open (http/https only).",
     "zh-CN": "要打开的网页地址（http/https）。"
+  },
+  "tool.spec.browser.args.format": {
+    "en-US": "Snapshot format: role/aria/ai.",
+    "zh-CN": "snapshot 格式：role/aria/ai。"
+  },
+  "tool.spec.browser.args.ref": {
+    "en-US": "Element ref returned by a previous snapshot.",
+    "zh-CN": "来自之前 snapshot 的元素 ref。"
   },
   "tool.spec.browser.args.selector": {
     "en-US": "CSS selector or visible text.",
@@ -1586,6 +1606,22 @@
   "tool.spec.browser.args.text": {
     "en-US": "Text to type.",
     "zh-CN": "要输入的文本。"
+  },
+  "tool.spec.browser.args.key": {
+    "en-US": "Keyboard key for press action.",
+    "zh-CN": "press 动作使用的键值。"
+  },
+  "tool.spec.browser.args.full_page": {
+    "en-US": "Whether screenshot should capture the full page.",
+    "zh-CN": "截图是否抓取整页。"
+  },
+  "tool.spec.browser.args.max_chars": {
+    "en-US": "Optional maximum characters for snapshot/read_page output.",
+    "zh-CN": "可选，snapshot/read_page 输出的最大字符数。"
+  },
+  "tool.spec.browser.args.request": {
+    "en-US": "Structured act request. Usually contains kind/target_id/ref/selector/text/key and batch steps.",
+    "zh-CN": "结构化 act 请求，通常包含 kind/target_id/ref/selector/text/key 及 batch steps。"
   },
   "tool.spec.browser_navigate.args.url": {
     "en-US": "The URL to open (http/https only).",
@@ -2140,12 +2176,12 @@
     "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Control sub-agent sessions (list/history/send/spawn).",
-    "zh-CN": "子智能体会话控制（列表/历史/发送/派生）。"
+    "en-US": "Control sub-agent sessions and dispatches. Prefer spawn or batch_spawn for background work, then yield the parent turn instead of blocking on polling.",
+    "zh-CN": "控制子智能体会话与批量调度。处理后台任务时，优先先 spawn 或 batch_spawn，再让出父会话，而不是阻塞轮询。"
   },
   "tool.spec.subagent_control.args.action": {
-    "en-US": "Action to perform: list/history/send/spawn.",
-    "zh-CN": "操作类型：list/history/send/spawn。"
+    "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume.",
+    "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。"
   },
   "tool.spec.agent_swarm.description": {
     "en-US": "Swarm dispatch tool. Typical flow: batch_send then wait.",
@@ -2264,8 +2300,8 @@
     "zh-CN": "可选。等待回复的秒数（0 表示只发送不等待）。"
   },
   "tool.spec.sessions_spawn.description": {
-    "en-US": "Spawn a sub-agent session and run a task.",
-    "zh-CN": "创建子智能体会话并执行任务。"
+    "en-US": "Spawn a sub-agent session and run a task. For background work, prefer returning immediately and yielding the parent turn instead of polling in place.",
+    "zh-CN": "创建子智能体会话并执行任务。对于后台任务，优先立即返回并让出父会话，而不是原地轮询等待。"
   },
   "tool.spec.sessions_spawn.args.task": {
     "en-US": "Task or prompt for the sub-agent.",
