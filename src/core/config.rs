@@ -25,6 +25,8 @@ pub struct Config {
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
+    pub browser: BrowserConfig,
+    #[serde(default)]
     pub cron: CronConfig,
     #[serde(default)]
     pub workspace: WorkspaceConfig,
@@ -377,6 +379,116 @@ pub struct ToolsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_browser_deployment")]
+    pub deployment: String,
+    #[serde(default = "default_browser_profile")]
+    pub default_profile: String,
+    #[serde(default)]
+    pub control: BrowserControlConfig,
+    #[serde(default)]
+    pub limits: BrowserLimitsConfig,
+    #[serde(default)]
+    pub playwright: BrowserRuntimePlaywrightConfig,
+    #[serde(default)]
+    pub security: BrowserSecurityConfig,
+    #[serde(default)]
+    pub docker: BrowserDockerConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserControlConfig {
+    #[serde(default = "default_browser_control_host")]
+    pub host: String,
+    #[serde(
+        default = "default_browser_control_port",
+        deserialize_with = "deserialize_u16_from_any"
+    )]
+    pub port: u16,
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    #[serde(default)]
+    pub public_base_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserLimitsConfig {
+    #[serde(
+        default = "default_browser_max_sessions",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_sessions: usize,
+    #[serde(
+        default = "default_browser_idle_timeout_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub idle_timeout_secs: u64,
+    #[serde(
+        default = "default_browser_max_tabs_per_session",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_tabs_per_session: usize,
+    #[serde(
+        default = "default_browser_max_snapshot_chars",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_snapshot_chars: usize,
+    #[serde(
+        default = "default_browser_max_download_bytes",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_download_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserRuntimePlaywrightConfig {
+    #[serde(default = "default_browser_headless")]
+    pub headless: bool,
+    #[serde(default = "default_browser_viewport_width")]
+    pub viewport_width: u32,
+    #[serde(default = "default_browser_viewport_height")]
+    pub viewport_height: u32,
+    #[serde(default = "default_browser_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub python_path: Option<String>,
+    #[serde(default)]
+    pub browsers_path: Option<String>,
+    #[serde(default)]
+    pub launch_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserSecurityConfig {
+    #[serde(default)]
+    pub allow_private_network: bool,
+    #[serde(default)]
+    pub hostname_allowlist: Vec<String>,
+    #[serde(default = "default_browser_deny_file_scheme")]
+    pub deny_file_scheme: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserDockerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_browser_headless")]
+    pub force_headless: bool,
+    #[serde(default = "default_browser_docker_use_no_sandbox")]
+    pub use_no_sandbox: bool,
+    #[serde(default = "default_browser_docker_disable_dev_shm_usage")]
+    pub disable_dev_shm_usage: bool,
+    #[serde(default = "default_browser_docker_browser_data_root")]
+    pub browser_data_root: String,
+    #[serde(default = "default_browser_docker_downloads_root")]
+    pub downloads_root: String,
+    #[serde(default)]
+    pub extra_launch_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CronConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -513,6 +625,82 @@ impl Default for BrowserToolConfig {
     }
 }
 
+impl Default for BrowserConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            deployment: default_browser_deployment(),
+            default_profile: default_browser_profile(),
+            control: BrowserControlConfig::default(),
+            limits: BrowserLimitsConfig::default(),
+            playwright: BrowserRuntimePlaywrightConfig::default(),
+            security: BrowserSecurityConfig::default(),
+            docker: BrowserDockerConfig::default(),
+        }
+    }
+}
+
+impl Default for BrowserControlConfig {
+    fn default() -> Self {
+        Self {
+            host: default_browser_control_host(),
+            port: default_browser_control_port(),
+            auth_token: None,
+            public_base_url: None,
+        }
+    }
+}
+
+impl Default for BrowserLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_sessions: default_browser_max_sessions(),
+            idle_timeout_secs: default_browser_idle_timeout_secs(),
+            max_tabs_per_session: default_browser_max_tabs_per_session(),
+            max_snapshot_chars: default_browser_max_snapshot_chars(),
+            max_download_bytes: default_browser_max_download_bytes(),
+        }
+    }
+}
+
+impl Default for BrowserRuntimePlaywrightConfig {
+    fn default() -> Self {
+        Self {
+            headless: default_browser_headless(),
+            viewport_width: default_browser_viewport_width(),
+            viewport_height: default_browser_viewport_height(),
+            timeout_secs: default_browser_timeout_secs(),
+            python_path: None,
+            browsers_path: None,
+            launch_args: Vec::new(),
+        }
+    }
+}
+
+impl Default for BrowserSecurityConfig {
+    fn default() -> Self {
+        Self {
+            allow_private_network: false,
+            hostname_allowlist: Vec::new(),
+            deny_file_scheme: default_browser_deny_file_scheme(),
+        }
+    }
+}
+
+impl Default for BrowserDockerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            force_headless: default_browser_headless(),
+            use_no_sandbox: default_browser_docker_use_no_sandbox(),
+            disable_dev_shm_usage: default_browser_docker_disable_dev_shm_usage(),
+            browser_data_root: default_browser_docker_browser_data_root(),
+            downloads_root: default_browser_docker_downloads_root(),
+            extra_launch_args: Vec::new(),
+        }
+    }
+}
+
 impl Default for WebFetchToolConfig {
     fn default() -> Self {
         Self {
@@ -597,6 +785,22 @@ fn default_browser_headless() -> bool {
     true
 }
 
+fn default_browser_deployment() -> String {
+    "auto".to_string()
+}
+
+fn default_browser_profile() -> String {
+    "managed".to_string()
+}
+
+fn default_browser_control_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_browser_control_port() -> u16 {
+    18791
+}
+
 fn default_web_fetch_enabled() -> bool {
     true
 }
@@ -647,6 +851,38 @@ fn default_browser_idle_timeout_secs() -> u64 {
 
 fn default_browser_max_sessions() -> usize {
     5
+}
+
+fn default_browser_max_tabs_per_session() -> usize {
+    8
+}
+
+fn default_browser_max_snapshot_chars() -> usize {
+    40_000
+}
+
+fn default_browser_max_download_bytes() -> usize {
+    100 * 1024 * 1024
+}
+
+fn default_browser_deny_file_scheme() -> bool {
+    true
+}
+
+fn default_browser_docker_use_no_sandbox() -> bool {
+    true
+}
+
+fn default_browser_docker_disable_dev_shm_usage() -> bool {
+    true
+}
+
+fn default_browser_docker_browser_data_root() -> String {
+    "./config/data/browser".to_string()
+}
+
+fn default_browser_docker_downloads_root() -> String {
+    "./config/data/browser/downloads".to_string()
 }
 
 fn default_desktop_controller_norm_width() -> i32 {

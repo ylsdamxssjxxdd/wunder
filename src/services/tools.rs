@@ -8,9 +8,9 @@ mod apply_patch_tool;
 mod browser_tool;
 mod catalog;
 mod channel_tool;
-pub mod command_sessions;
 pub(crate) mod command_options;
 pub(crate) mod command_output_guard;
+pub mod command_sessions;
 mod context;
 mod desktop_control;
 mod dispatch;
@@ -20,9 +20,9 @@ mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
 mod search_content_tool;
-pub(crate) mod sessions_yield_tool;
 mod self_status_tool;
 mod session_run_stream;
+pub(crate) mod sessions_yield_tool;
 mod skill_call;
 mod sleep_tool;
 mod subagent_control;
@@ -71,13 +71,13 @@ use crate::knowledge;
 use crate::llm::embed_texts;
 use crate::lsp::LspDiagnostic;
 use crate::mcp;
-use crate::services::subagents;
 use crate::monitor::MonitorState;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::sandbox;
 use crate::schemas::WunderRequest;
+use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
     ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom, resolve_agent_main_session,
@@ -126,9 +126,7 @@ use command_output_guard::{
     CommandOutputCollector, CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES,
     STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
 };
-use command_sessions::{
-    CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker,
-};
+use command_sessions::{CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker};
 use tool_error::{build_failed_tool_result, ToolErrorMeta};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
@@ -3068,7 +3066,10 @@ fn prepare_child_session(
         agent_id: child_agent_id.clone(),
         tool_overrides: parent_tool_names.clone(),
         parent_session_id: Some(cleaned_parent_session_id.to_string()),
-        parent_message_id: subagents::encode_parent_turn_ref(context.user_round, context.model_round),
+        parent_message_id: subagents::encode_parent_turn_ref(
+            context.user_round,
+            context.model_round,
+        ),
         spawn_label: label.clone(),
         spawned_by: Some("model".to_string()),
     };
@@ -3103,7 +3104,10 @@ fn prepare_child_session(
             strategy: None,
             completion_mode: None,
             remaining_action: None,
-            parent_turn_ref: subagents::encode_parent_turn_ref(context.user_round, context.model_round),
+            parent_turn_ref: subagents::encode_parent_turn_ref(
+                context.user_round,
+                context.model_round,
+            ),
             parent_user_round: context.user_round,
             parent_model_round: context.model_round,
             emit_parent_events: true,
@@ -3359,8 +3363,10 @@ async fn spawn_session_run(
         run_request.stream = true;
         let child_orchestrator = orchestrator.clone();
         let mut run_handle = tokio::task::spawn_blocking(move || {
-            session_run_runtime()
-                .block_on(session_run_stream::run_request(child_orchestrator, run_request))
+            session_run_runtime().block_on(session_run_stream::run_request(
+                child_orchestrator,
+                run_request,
+            ))
         });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
@@ -4751,8 +4757,8 @@ async fn run_command_streaming(
     } else {
         CommandSessionLaunchMode::Shell
     };
-    let initial_shell_name = (!used_direct)
-        .then(|| command_utils::resolve_shell_name(command).to_string());
+    let initial_shell_name =
+        (!used_direct).then(|| command_utils::resolve_shell_name(command).to_string());
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let (child, launch_mode, shell_name) = match cmd.spawn() {

@@ -46,6 +46,7 @@
 - 能用方法引用时优先用方法引用，减少多余闭包（clippy::redundant_closure_for_method_calls）。
 - 测试中优先对完整对象做 `assert_eq!`，避免逐字段对比。
 - Rust 代码变更完成后记得运行 `cargo check` 要消除所有错误和告警，必要时运行 `cargo clippy`。
+- 为了避免cpu资源耗尽，请用 8 线程编译/测试等操作就行。
 
 ## 项目结构提示（可能滞后，你可以根据你看到的最新情况来更新）
 

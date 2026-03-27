@@ -6,6 +6,7 @@ pub mod attachment;
 pub mod beeroom_demo;
 pub mod beeroom_realtime;
 pub mod bridge;
+pub mod browser;
 pub mod chat_attachments;
 pub mod cron;
 pub mod cron_schedule;

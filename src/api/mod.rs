@@ -11,6 +11,7 @@ pub mod beeroom_demo;
 pub mod beeroom_packs;
 pub mod beeroom_ws;
 pub mod benchmark;
+pub mod browser_control;
 pub mod channel;
 pub mod chat;
 pub mod chat_ws;
@@ -49,6 +50,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(beeroom_demo::router())
         .merge(beeroom_ws::router())
         .merge(beeroom_packs::router())
+        .merge(browser_control::router())
         .merge(channel::router())
         .merge(chat::router())
         .merge(chat_ws::router())
@@ -92,6 +94,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(beeroom_demo::router())
         .merge(beeroom_ws::router())
         .merge(beeroom_packs::router())
+        .merge(browser_control::router())
         .merge(chat::router())
         .merge(chat_ws::router())
         .merge(core_ws::router())

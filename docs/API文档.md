@@ -125,6 +125,7 @@
 - `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；支持 `strategy=parallel_all|first_success|review_then_merge`，其中 `first_success` 用于对齐 Codex 式的“首个成功即先返回”协作收敛语义，并会在同次等待收敛时默认对未完成兄弟分支执行 `remainingAction=interrupt`。
 - `wait` 现支持 `waitMode=all|any|first_success`：`all` 等待全部目标结束，`any` 在首个目标进入终态后返回，`first_success` 在首个成功出现后返回，否则继续等到全部结束或超时。
 - `batch_spawn/wait` 现支持 `remainingAction=keep|interrupt|close`：用于在 `first_success/any` 这类提前收敛场景下处理尚未结束的兄弟分支；`wait` 默认 `keep`，`batch_spawn.strategy=first_success` 默认 `interrupt`。
+- 新增一级编排工具 `会话让出`（英文别名 `sessions_yield`/`yield`）：用于在成功派发后台子智能体后显式结束当前轮次，并等待子智能体回流结果自动唤醒父线程继续。
 - `status/wait` 支持按 `runId/runIds/sessionId/sessionIds/dispatchId/parentId` 查询或等待；未显式传目标时，`status` 默认查询当前会话下最近子会话运行态。
 - `interrupt` 基于 monitor 对目标子会话发起取消；`close/resume` 直接切换子会话 `status=closed|active`，并可通过 `cascade=true` 递归作用到后代子会话。
 - 子智能体批量调度的运行账本统一落在 `session_runs`，新增元数据字段 `dispatch_id/run_kind/requested_by`，便于批次级聚合、追踪与恢复。
@@ -143,7 +144,7 @@
 - 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
-- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
+- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
 - `execute_command` 第一阶段实时协议已落地：`tool_output_delta` 与每条命令结果会补充 `command_session_id/command_index`，用于把一次工具调用内的多条子命令拆成独立工作流条目。
@@ -211,6 +212,7 @@
   - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
 - `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
+- 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话；无主会话时会自动创建后再发送指令。
@@ -219,6 +221,7 @@
 - `智能体蜂群` 入参语义增强（便于模型主动调用）：`spawn` 需 `agentId+task`，`send` 需 `message` 且 `agentId/sessionKey` 二选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/sessionKey` 二选一）。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
+- 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。
 - `会话线程控制` 的 `create/switch/back/set_main` 可同时更新主线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。

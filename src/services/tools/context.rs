@@ -8,8 +8,8 @@ use crate::orchestrator::Orchestrator;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
-use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
 use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
@@ -457,7 +457,8 @@ mod tests {
 
     #[test]
     fn tool_event_emitter_reads_default_string_field() {
-        let emitter = ToolEventEmitter::new(|_, _| {}, true).with_field("tool_call_id", json!("call_default"));
+        let emitter = ToolEventEmitter::new(|_, _| {}, true)
+            .with_field("tool_call_id", json!("call_default"));
         assert_eq!(
             emitter.default_string_field("tool_call_id").as_deref(),
             Some("call_default")

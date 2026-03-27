@@ -107,6 +107,13 @@ export const listSessions = (params: QueryParams) => api.get('/chat/sessions', {
 export const getSession = (id: string) => api.get(`/chat/sessions/${id}`);
 export const getSessionEvents = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/events`, options);
+export const getSessionCommandSessions = (id: string, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}/command-sessions`, options);
+export const getSessionCommandSession = (
+  sessionId: string,
+  commandSessionId: string,
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${sessionId}/command-sessions/${commandSessionId}`, options);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
   api.get(`/chat/sessions/${id}/history`, { params });
 export const getSessionSubagents = (id: string, params: QueryParams = {}) =>

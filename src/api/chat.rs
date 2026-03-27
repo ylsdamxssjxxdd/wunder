@@ -707,11 +707,7 @@ async fn get_session_command_session(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
     let snapshot = state
         .command_sessions
-        .snapshot_for_scope(
-            &resolved.user.user_id,
-            &session_id,
-            &command_session_id,
-        )
+        .snapshot_for_scope(&resolved.user.user_id, &session_id, &command_session_id)
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
     Ok(Json(json!({
         "data": {
@@ -2404,10 +2400,7 @@ fn is_hidden_internal_history_message(item: &Value) -> bool {
                 .and_then(Value::as_str)
                 .map(|value| value == subagents::HIDDEN_HISTORY_META_TYPE)
                 .unwrap_or(false)
-                || meta
-                    .get("hidden")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
+                || meta.get("hidden").and_then(Value::as_bool).unwrap_or(false)
         })
         .unwrap_or(false)
 }

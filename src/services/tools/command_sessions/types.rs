@@ -121,10 +121,16 @@ impl CommandSessionSnapshot {
             map.insert("pty_tail".to_string(), Value::String(self.pty_tail.clone()));
         }
         if !self.stdout_tail.is_empty() {
-            map.insert("stdout_tail".to_string(), Value::String(self.stdout_tail.clone()));
+            map.insert(
+                "stdout_tail".to_string(),
+                Value::String(self.stdout_tail.clone()),
+            );
         }
         if !self.stderr_tail.is_empty() {
-            map.insert("stderr_tail".to_string(), Value::String(self.stderr_tail.clone()));
+            map.insert(
+                "stderr_tail".to_string(),
+                Value::String(self.stderr_tail.clone()),
+            );
         }
         if self.stdout_dropped_bytes > 0 {
             map.insert(
@@ -139,7 +145,10 @@ impl CommandSessionSnapshot {
             );
         }
         if self.pty_dropped_bytes > 0 {
-            map.insert("pty_dropped_bytes".to_string(), json!(self.pty_dropped_bytes));
+            map.insert(
+                "pty_dropped_bytes".to_string(),
+                json!(self.pty_dropped_bytes),
+            );
         }
         Value::Object(map)
     }
@@ -152,9 +161,15 @@ fn base_event_map(snapshot: &CommandSessionSnapshot) -> Map<String, Value> {
         Value::String(snapshot.command_session_id.clone()),
     );
     if let Some(tool_call_id) = snapshot.tool_call_id.as_ref() {
-        map.insert("tool_call_id".to_string(), Value::String(tool_call_id.clone()));
+        map.insert(
+            "tool_call_id".to_string(),
+            Value::String(tool_call_id.clone()),
+        );
     }
-    map.insert("user_id".to_string(), Value::String(snapshot.user_id.clone()));
+    map.insert(
+        "user_id".to_string(),
+        Value::String(snapshot.user_id.clone()),
+    );
     map.insert(
         "session_id".to_string(),
         Value::String(snapshot.session_id.clone()),
@@ -163,11 +178,11 @@ fn base_event_map(snapshot: &CommandSessionSnapshot) -> Map<String, Value> {
         "workspace_id".to_string(),
         Value::String(snapshot.workspace_id.clone()),
     );
+    map.insert("command_index".to_string(), json!(snapshot.command_index));
     map.insert(
-        "command_index".to_string(),
-        json!(snapshot.command_index),
+        "command".to_string(),
+        Value::String(snapshot.command.clone()),
     );
-    map.insert("command".to_string(), Value::String(snapshot.command.clone()));
     map.insert("cwd".to_string(), Value::String(snapshot.cwd.clone()));
     if let Some(shell) = snapshot.shell.as_ref() {
         map.insert("shell".to_string(), Value::String(shell.clone()));

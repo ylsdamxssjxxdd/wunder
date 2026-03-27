@@ -1,5 +1,5 @@
 use super::types::{
-    CommandSessionStartSpec, CommandSessionStatus, CommandSessionStream, CommandSessionSnapshot,
+    CommandSessionSnapshot, CommandSessionStartSpec, CommandSessionStatus, CommandSessionStream,
 };
 use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
@@ -193,7 +193,9 @@ impl CommandSessionBroker {
         let mut record = entry.value().lock();
         record.seq = record.seq.saturating_add(1);
         record.updated_at = Utc::now();
-        record.stream_mut(stream).push(chunk, self.ring_buffer_bytes);
+        record
+            .stream_mut(stream)
+            .push(chunk, self.ring_buffer_bytes);
         Some(record.seq)
     }
 
@@ -208,7 +210,8 @@ impl CommandSessionBroker {
         record.status = CommandSessionStatus::FailedToStart;
         record.updated_at = Utc::now();
         record.ended_at = Some(record.updated_at);
-        record.expires_at = Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
+        record.expires_at =
+            Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
         record.error = Some(error.into());
         Some(record.snapshot())
     }
@@ -226,7 +229,8 @@ impl CommandSessionBroker {
         record.status = CommandSessionStatus::Exited;
         record.updated_at = Utc::now();
         record.ended_at = Some(record.updated_at);
-        record.expires_at = Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
+        record.expires_at =
+            Some(record.updated_at + Duration::minutes(FINISHED_SESSION_RETENTION_MINUTES));
         record.exit_code = exit_code;
         record.timed_out = timed_out;
         record.error = error;
@@ -336,7 +340,10 @@ mod tests {
         let snapshot = broker.snapshot("cmd_test").expect("snapshot");
         assert_eq!(snapshot.stdout_bytes, chunk.len());
         assert_eq!(snapshot.stdout_dropped_bytes, 32);
-        assert_eq!(snapshot.stdout_tail.len(), DEFAULT_SESSION_RING_BUFFER_BYTES);
+        assert_eq!(
+            snapshot.stdout_tail.len(),
+            DEFAULT_SESSION_RING_BUFFER_BYTES
+        );
     }
 
     #[test]

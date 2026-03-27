@@ -83,7 +83,9 @@ pub fn encode_parent_turn_ref(user_round: Option<i64>, model_round: Option<i64>)
         return None;
     }
     let model_round = model_round.unwrap_or(0).max(0);
-    Some(format!("{PARENT_TURN_REF_PREFIX}{user_round}:{model_round}"))
+    Some(format!(
+        "{PARENT_TURN_REF_PREFIX}{user_round}:{model_round}"
+    ))
 }
 
 pub fn decode_parent_turn_ref(value: Option<&str>) -> Option<ParentTurnRef> {
@@ -136,10 +138,7 @@ pub fn build_auto_wake_request_overrides(base: Option<&Value>) -> Value {
         HIDDEN_USER_MESSAGE_CONFIG_KEY.to_string(),
         Value::Bool(true),
     );
-    object.insert(
-        SKIP_AUTO_MEMORY_CONFIG_KEY.to_string(),
-        Value::Bool(true),
-    );
+    object.insert(SKIP_AUTO_MEMORY_CONFIG_KEY.to_string(), Value::Bool(true));
     payload
 }
 
@@ -165,9 +164,7 @@ pub fn list_parent_subagents(
     if cleaned_parent.is_empty() {
         return Err(anyhow!("parent_session_id is required"));
     }
-    let safe_limit = limit
-        .unwrap_or(DEFAULT_LIST_LIMIT)
-        .clamp(1, MAX_LIST_LIMIT);
+    let safe_limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
     let (sessions, _) = storage.list_chat_sessions_by_status(
         cleaned_user,
         None,
@@ -279,7 +276,11 @@ pub fn control_parent_subagents(
     }
     let updated_total = updated
         .iter()
-        .filter(|item| item.get("updated").and_then(Value::as_bool).unwrap_or(false))
+        .filter(|item| {
+            item.get("updated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
         .count() as i64;
     Ok(json!({
         "status": if updated_total > 0 { "ok" } else { "noop" },
@@ -311,13 +312,7 @@ pub async fn handle_child_completion(
         .ok()
         .flatten()
         .and_then(|session| {
-            build_runtime_item(
-                storage.as_ref(),
-                monitor.as_deref(),
-                &user_id,
-                session,
-            )
-            .ok()
+            build_runtime_item(storage.as_ref(), monitor.as_deref(), &user_id, session).ok()
         }) {
         Some(item) => item,
         None => return,
@@ -394,7 +389,8 @@ pub async fn handle_child_completion(
         return;
     }
 
-    let mut finish_payload = build_dispatch_finish_payload(&dispatch, &items, completion_mode, progress);
+    let mut finish_payload =
+        build_dispatch_finish_payload(&dispatch, &items, completion_mode, progress);
     let settled_items = apply_remaining_action(
         storage.as_ref(),
         monitor.as_deref(),
@@ -412,8 +408,14 @@ pub async fn handle_child_completion(
             "remaining_action_applied".to_string(),
             Value::Bool(!settled_items.is_empty()),
         );
-        object.insert("settled_total".to_string(), json!(settled_items.len() as i64));
-        object.insert("settled_items".to_string(), Value::Array(settled_items.clone()));
+        object.insert(
+            "settled_total".to_string(),
+            json!(settled_items.len() as i64),
+        );
+        object.insert(
+            "settled_items".to_string(),
+            Value::Array(settled_items.clone()),
+        );
     }
 
     if dispatch.emit_parent_events {
@@ -502,12 +504,7 @@ fn schedule_parent_auto_wake(
     let wake_key = dispatch_guard_key(
         &parent_session_id,
         dispatch.dispatch_id.as_deref(),
-        Some(
-            dispatch
-                .parent_turn_ref
-                .as_deref()
-                .unwrap_or("__single__"),
-        ),
+        Some(dispatch.parent_turn_ref.as_deref().unwrap_or("__single__")),
     );
     if !mark_wake_once(&wake_key) {
         return;
@@ -581,7 +578,11 @@ async fn run_parent_auto_wake(
         let event = item.expect("stream event should be infallible");
         let event_name = event.event.trim().to_ascii_lowercase();
         if event_name == "error" {
-            let payload = event.data.get("data").cloned().unwrap_or(event.data.clone());
+            let payload = event
+                .data
+                .get("data")
+                .cloned()
+                .unwrap_or(event.data.clone());
             let message = payload
                 .get("message")
                 .and_then(Value::as_str)
@@ -614,7 +615,8 @@ fn build_runtime_item(
     let runtime_status = monitor
         .and_then(|entry| entry.get_record(&session.session_id))
         .and_then(|value| {
-            value.get("status")
+            value
+                .get("status")
                 .and_then(Value::as_str)
                 .map(|status| status.trim().to_ascii_lowercase())
         })
@@ -816,12 +818,20 @@ fn evaluate_completion(mode: CompletionMode, items: &[SubagentRuntimeItem]) -> C
         CompletionMode::All => CompletionProgress {
             completion_reached: all_finished,
             all_finished,
-            completed_reason: if all_finished { "all_finished" } else { "pending" },
+            completed_reason: if all_finished {
+                "all_finished"
+            } else {
+                "pending"
+            },
         },
         CompletionMode::Any => CompletionProgress {
             completion_reached: has_terminal,
             all_finished,
-            completed_reason: if has_terminal { "first_terminal" } else { "pending" },
+            completed_reason: if has_terminal {
+                "first_terminal"
+            } else {
+                "pending"
+            },
         },
         CompletionMode::FirstSuccess => CompletionProgress {
             completion_reached: has_success || all_finished,
@@ -936,7 +946,9 @@ fn apply_remaining_action(
                 }));
             }
             RemainingAction::Close => {
-                let changed = if let Some(mut record) = storage.get_chat_session(user_id, session_id).ok().flatten() {
+                let changed = if let Some(mut record) =
+                    storage.get_chat_session(user_id, session_id).ok().flatten()
+                {
                     let changed = record.status.trim() != "closed";
                     if changed {
                         record.status = "closed".to_string();
@@ -965,7 +977,8 @@ fn apply_remaining_action(
 }
 
 fn select_winner_item(items: &[SubagentRuntimeItem]) -> Option<Value> {
-    items.iter()
+    items
+        .iter()
         .find(|item| item.status == "success")
         .cloned()
         .map(runtime_item_payload)
@@ -981,7 +994,10 @@ fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(item.session.title.as_str());
         let summary = item.summary.as_deref().unwrap_or("completed");
-        return Some(format!("{label}: {}", truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)));
+        return Some(format!(
+            "{label}: {}",
+            truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)
+        ));
     }
     let lines = items
         .iter()
@@ -993,7 +1009,10 @@ fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(item.session.title.as_str());
             let summary = item.summary.as_deref()?;
-            Some(format!("{label}: {}", truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)))
+            Some(format!(
+                "{label}: {}",
+                truncate_text(summary, AUTO_WAKE_OBSERVATION_MAX_CHARS)
+            ))
         })
         .collect::<Vec<_>>();
     if lines.is_empty() {
@@ -1049,7 +1068,10 @@ fn is_terminal_status(status: &str) -> bool {
 }
 
 fn is_failed_status(status: &str) -> bool {
-    matches!(status, "error" | "timeout" | "cancelled" | "failed" | "closed" | "not_found")
+    matches!(
+        status,
+        "error" | "timeout" | "cancelled" | "failed" | "closed" | "not_found"
+    )
 }
 
 fn collab_agent_status(status: &str) -> &'static str {
@@ -1102,7 +1124,11 @@ impl RemainingAction {
     }
 }
 
-fn dispatch_guard_key(parent_session_id: &str, dispatch_id: Option<&str>, suffix: Option<&str>) -> String {
+fn dispatch_guard_key(
+    parent_session_id: &str,
+    dispatch_id: Option<&str>,
+    suffix: Option<&str>,
+) -> String {
     let dispatch_id = dispatch_id.unwrap_or("__single__");
     let suffix = suffix.unwrap_or("__default__");
     format!("{parent_session_id}::{dispatch_id}::{suffix}")

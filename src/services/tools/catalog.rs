@@ -790,11 +790,39 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.browser.args.action"),
-                        "enum": ["navigate", "click", "type", "screenshot", "read_page", "close"]
+                        "enum": [
+                            "status",
+                            "profiles",
+                            "start",
+                            "stop",
+                            "tabs",
+                            "open",
+                            "focus",
+                            "close",
+                            "navigate",
+                            "snapshot",
+                            "act",
+                            "click",
+                            "type",
+                            "press",
+                            "hover",
+                            "wait",
+                            "screenshot",
+                            "read_page"
+                        ]
                     },
+                    "profile": { "type": "string", "description": t("tool.spec.browser.args.profile") },
+                    "browser_session_id": { "type": "string", "description": t("tool.spec.browser.args.browser_session_id") },
+                    "target_id": { "type": "string", "description": t("tool.spec.browser.args.target_id") },
                     "url": { "type": "string", "description": t("tool.spec.browser.args.url") },
+                    "format": { "type": "string", "description": t("tool.spec.browser.args.format") },
+                    "ref": { "type": "string", "description": t("tool.spec.browser.args.ref") },
                     "selector": { "type": "string", "description": t("tool.spec.browser.args.selector") },
-                    "text": { "type": "string", "description": t("tool.spec.browser.args.text") }
+                    "text": { "type": "string", "description": t("tool.spec.browser.args.text") },
+                    "key": { "type": "string", "description": t("tool.spec.browser.args.key") },
+                    "full_page": { "type": "boolean", "description": t("tool.spec.browser.args.full_page") },
+                    "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") },
+                    "request": { "type": "object", "description": t("tool.spec.browser.args.request") }
                 },
                 "required": ["action"],
                 "allOf": [
@@ -809,6 +837,18 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     {
                         "if": {"properties": {"action": {"const": "type"}}},
                         "then": {"required": ["selector", "text"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "focus"}}},
+                        "then": {"required": ["target_id"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "snapshot"}}},
+                        "then": {"properties": {"format": {"enum": ["role", "aria", "ai"]}}}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "act"}}},
+                        "then": {"required": ["request"]}
                     }
                 ]
             }),

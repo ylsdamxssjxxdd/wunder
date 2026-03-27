@@ -11,9 +11,9 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
-use crate::services::tools::sessions_yield_tool;
-use crate::services::subagents;
 use crate::services::chat_attachments::persist_user_chat_attachments;
+use crate::services::subagents;
+use crate::services::tools::sessions_yield_tool;
 
 struct PlannedToolCall {
     call: ToolCall,

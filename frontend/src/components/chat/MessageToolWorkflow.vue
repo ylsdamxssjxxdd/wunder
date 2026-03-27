@@ -328,6 +328,57 @@ const statusLabel = (status: string): string => {
   return t('chat.toolWorkflow.statusSuccess');
 };
 
+const resolveCommandSessionRefFromItem = (item: WorkflowItem | null): string =>
+  String(item?.commandSessionId || item?.toolCallId || '').trim();
+
+const resolveCommandSessionStatus = (snapshot: CommandSessionRuntimeEntry | null): string => {
+  if (!snapshot) return '';
+  if (snapshot.status === 'running') return 'loading';
+  if (snapshot.status === 'failed_to_start') return 'failed';
+  if (snapshot.status === 'exited') {
+    const failed =
+      snapshot.timedOut
+      || Boolean(snapshot.error)
+      || snapshot.exitCode === null
+      || snapshot.exitCode !== 0;
+    return failed ? 'failed' : 'completed';
+  }
+  return '';
+};
+
+const parseTimestampMs = (value: unknown): number | null => {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const millis = Date.parse(text);
+  return Number.isFinite(millis) ? millis : null;
+};
+
+const resolveCommandSessionDurationMs = (
+  snapshot: CommandSessionRuntimeEntry | null
+): number | null => {
+  if (!snapshot) return null;
+  const startedAtMs = parseTimestampMs(snapshot.startedAt);
+  const endedAtMs = parseTimestampMs(snapshot.endedAt || snapshot.updatedAt);
+  if (startedAtMs === null || endedAtMs === null || endedAtMs < startedAtMs) {
+    return null;
+  }
+  return endedAtMs - startedAtMs;
+};
+
+const resolveCommandSessionSnapshot = (entry: RawEntry): CommandSessionRuntimeEntry | null => {
+  if (!isExecuteCommandTool(entry.toolName)) return null;
+  const refs = [
+    resolveCommandSessionRefFromItem(entry.resultItem),
+    resolveCommandSessionRefFromItem(entry.outputItem),
+    resolveCommandSessionRefFromItem(entry.callItem)
+  ].filter(Boolean);
+  for (const ref of refs) {
+    const snapshot = commandSessionStore.getById(ref);
+    if (snapshot) return snapshot;
+  }
+  return null;
+};
+
 const getCachedPreview = (key: string): string | null => {
   if (!key) return null;
   const cached = previewCache.get(key);
@@ -1146,7 +1197,10 @@ const countApplyPatchHunks = (patchInput: string, fallback = 0): number => {
 };
 
 // Keep command/patch sections consistent: summary shows metadata, body keeps raw payload.
-const buildExecuteCommandCallSummary = (entry: RawEntry): string => {
+const buildExecuteCommandCallSummary = (
+  entry: RawEntry,
+  snapshot: CommandSessionRuntimeEntry | null
+): string => {
   const args = extractCallArgs(entry.callItem);
   const commandText = pickString(
     args?.content,
@@ -1155,11 +1209,15 @@ const buildExecuteCommandCallSummary = (entry: RawEntry): string => {
     args?.script,
     args?.command,
     args?.cmd,
+    snapshot?.command,
     resolveCommandFromCall(entry.callItem)
   );
-  const commandLine = truncateSingleLine(resolveCommandFromCall(entry.callItem), 120);
+  const commandLine = truncateSingleLine(
+    pickString(snapshot?.command, resolveCommandFromCall(entry.callItem)),
+    120
+  );
   const commandCount = Math.max(countNonEmptyCommandLines(commandText), commandLine ? 1 : 0);
-  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory);
+  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory, snapshot?.cwd);
   const timeout = formatTimeoutValue(
     args?.timeout_s,
     args?.timeout,
@@ -1180,7 +1238,11 @@ const buildExecuteCommandCallSummary = (entry: RawEntry): string => {
   ]);
 };
 
-const buildExecuteCommandCallBody = (entry: RawEntry, command: string): string => {
+const buildExecuteCommandCallBody = (
+  entry: RawEntry,
+  command: string,
+  snapshot: CommandSessionRuntimeEntry | null
+): string => {
   const args = extractCallArgs(entry.callItem);
   const commandText = pickString(
     args?.content,
@@ -1189,6 +1251,7 @@ const buildExecuteCommandCallBody = (entry: RawEntry, command: string): string =
     args?.script,
     args?.command,
     args?.cmd,
+    snapshot?.command,
     command
   );
 
@@ -1394,7 +1457,14 @@ const buildApplyPatchResultFiles = (patchEntries: PatchEntry[], errorText: strin
   return files;
 };
 
-const extractDurationMs = (entry: RawEntry): number | null => {
+const extractDurationMs = (
+  entry: RawEntry,
+  commandSession: CommandSessionRuntimeEntry | null
+): number | null => {
+  const liveDuration = resolveCommandSessionDurationMs(commandSession);
+  if (liveDuration !== null) {
+    return liveDuration;
+  }
   const detailObject = parseDetailObject(entry.resultItem?.detail);
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
@@ -2026,6 +2096,7 @@ const buildExecuteCommandView = (
   command: string,
   status: string,
   errorText: string,
+  snapshot: CommandSessionRuntimeEntry | null,
   includeCommandLine = true
 ): CommandView => {
   const args = extractCallArgs(entry.callItem);
@@ -2054,9 +2125,12 @@ const buildExecuteCommandView = (
   const structuredStdout = pickString(...structuredCandidates.map((item) => item.stdout));
   const structuredStderr = pickString(...structuredCandidates.map((item) => item.stderr));
   const structuredReturncode = toOptionalInt(...structuredCandidates.map((item) => item.returncode));
+  const liveStdout = pickString(snapshot?.ptyTail, snapshot?.stdoutTail);
+  const liveStderr = pickString(snapshot?.stderrTail);
 
   const resolvedCommand = pickString(
     command,
+    snapshot?.command,
     outputStreams.command,
     firstResult?.command,
     extractFirstCommandLine(firstResult?.content),
@@ -2069,6 +2143,7 @@ const buildExecuteCommandView = (
     compacted.command
   );
   const exitCode = toOptionalInt(
+    snapshot?.exitCode,
     resolveExecuteCommandExitCode(resultObject, dataObject),
     structuredReturncode,
     compacted.returncode
@@ -2083,6 +2158,7 @@ const buildExecuteCommandView = (
     resolvedCommand
   );
   const stdoutRaw = pickString(
+    liveStdout,
     outputStreams.stdout,
     firstResult?.stdout,
     structuredStdout,
@@ -2097,6 +2173,7 @@ const buildExecuteCommandView = (
     resultObject?.result
   );
   const stderrRaw = pickString(
+    liveStderr,
     outputStreams.stderr,
     firstResult?.stderr,
     structuredStderr,
@@ -2113,7 +2190,7 @@ const buildExecuteCommandView = (
   const commandText = resolvedCommand || '(command)';
   const displayStdout = stripBackendTruncationMarkers(normalizedStdout);
   const displayStderr = stripBackendTruncationMarkers(normalizedStderr);
-  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory);
+  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory, snapshot?.cwd);
   const timeout = formatTimeoutValue(
     args?.timeout_s,
     args?.timeout,
@@ -2127,13 +2204,21 @@ const buildExecuteCommandView = (
     commandText ? 1 : 0
   );
   const truncatedCommands = toOptionalInt(outputGuard?.truncated_commands);
-  const totalBytes = formatByteCountLabel(toOptionalInt(outputGuard?.total_bytes));
-  const omittedBytes = formatByteCountLabel(toOptionalInt(outputGuard?.omitted_bytes));
+  const totalBytes = formatByteCountLabel(
+    toOptionalInt(outputGuard?.total_bytes)
+    ?? (snapshot ? snapshot.stdoutBytes + snapshot.stderrBytes + snapshot.ptyBytes : null)
+  );
+  const omittedBytes = formatByteCountLabel(
+    toOptionalInt(outputGuard?.omitted_bytes)
+    ?? (snapshot
+      ? snapshot.stdoutDroppedBytes + snapshot.stderrDroppedBytes + snapshot.ptyDroppedBytes
+      : null)
+  );
 
   const commandView = buildCommandCardView(
     {
       command: includeCommandLine ? commandText : commandText,
-      shell: 'bash',
+      shell: pickString(snapshot?.shell) || 'bash',
       exitCode,
       stdout: displayStdout,
       stderr: displayStderr,
@@ -2457,7 +2542,8 @@ const buildEmptySection = (key: string, title: string, body: string): ToolWorkfl
 const buildModelCallSection = (
   entry: RawEntry,
   command: string,
-  patchDiffBlocks: PatchDiffBlock[]
+  patchDiffBlocks: PatchDiffBlock[],
+  commandSession: CommandSessionRuntimeEntry | null
 ): ToolWorkflowDetailSection => {
   const sectionKey = `${entry.key}-model-call`;
   const sectionTitle = t('chat.toolWorkflow.modelCallSection');
@@ -2512,8 +2598,10 @@ const buildModelCallSection = (
   }
 
   if (isExecuteCommandTool(entry.toolName)) {
-    const summary = buildExecuteCommandCallSummary(entry);
-    const body = buildExecuteCommandCallBody(entry, command) || buildGenericModelCallBlock(entry, command);
+    const summary = buildExecuteCommandCallSummary(entry, commandSession);
+    const body =
+      buildExecuteCommandCallBody(entry, command, commandSession)
+      || buildGenericModelCallBlock(entry, command);
     if (summary || body) {
       return {
         key: sectionKey,
@@ -2556,7 +2644,8 @@ const buildToolResultSection = (
   status: string,
   errorText: string,
   patchEntries: PatchEntry[],
-  compactionDisplay: CompactionDisplay | null
+  compactionDisplay: CompactionDisplay | null,
+  commandSession: CommandSessionRuntimeEntry | null
 ): ToolWorkflowDetailSection => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
@@ -2612,7 +2701,7 @@ const buildToolResultSection = (
         body: '',
         commandView: {
           // Keep command workflows concise: show command + terminal output in one block.
-          ...buildExecuteCommandView(entry, command, status, errorText, true),
+          ...buildExecuteCommandView(entry, command, status, errorText, commandSession, true),
           showExitCode: false
         },
         patchLines: []
@@ -2666,7 +2755,12 @@ const buildToolResultSection = (
   return buildEmptySection(sectionKey, sectionTitle, placeholder);
 };
 
-const buildErrorText = (resultItem: WorkflowItem | null): string => {
+const buildErrorText = (
+  resultItem: WorkflowItem | null,
+  commandSession: CommandSessionRuntimeEntry | null
+): string => {
+  const sessionError = pickString(commandSession?.error);
+  if (sessionError) return sessionError;
   if (!resultItem) return '';
   const detailObject = parseDetailObject(resultItem.detail);
   const resultObject = extractToolResultObject(detailObject);
@@ -2678,8 +2772,17 @@ const buildErrorText = (resultItem: WorkflowItem | null): string => {
   return code;
 };
 
-const resolveEntryStatus = (entry: RawEntry): string =>
-  normalizeStatus(entry.resultItem?.status || entry.outputItem?.status || entry.callItem?.status || 'completed');
+const resolveEntryStatus = (
+  entry: RawEntry,
+  commandSession: CommandSessionRuntimeEntry | null
+): string =>
+  normalizeStatus(
+    resolveCommandSessionStatus(commandSession)
+    || entry.resultItem?.status
+    || entry.outputItem?.status
+    || entry.callItem?.status
+    || 'completed'
+  );
 
 const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
   parseDetailObject(entry.resultItem?.detail)
@@ -2687,7 +2790,9 @@ const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
   || parseDetailObject(entry.callItem?.detail);
 
 const buildEntryView = (entry: RawEntry): ToolEntryView => {
+  const commandSession = resolveCommandSessionSnapshot(entry);
   const rawCommand = pickString(
+    commandSession?.command,
     resolveCommandFromCall(entry.callItem),
     resolveCommandFromOutput(entry.outputItem),
     resolveCommandFromResult(entry.resultItem)
@@ -2700,22 +2805,28 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const status = resolveEntryStatus(entry);
+  const status = resolveEntryStatus(entry, commandSession);
   const compactionDisplay = isCompactionTool(entry.toolName)
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
-  const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
+  const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
-  const durationLabel = formatDurationLabel(extractDurationMs(entry));
+  const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const shouldKeepModelCall = isWriteFileTool(entry.toolName) || isApplyPatchTool(entry.toolName);
-  const modelCallSection = buildModelCallSection(entry, command, patchDiffBlocks);
+  const modelCallSection = buildModelCallSection(
+    entry,
+    command,
+    patchDiffBlocks,
+    commandSession
+  );
   const toolResultSection = buildToolResultSection(
     entry,
     command,
     status,
     errorText,
     patchEntries,
-    compactionDisplay
+    compactionDisplay,
+    commandSession
   );
   const sections = shouldKeepModelCall ? [modelCallSection, toolResultSection] : [toolResultSection];
 
