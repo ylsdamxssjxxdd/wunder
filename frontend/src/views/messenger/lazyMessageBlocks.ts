@@ -11,6 +11,7 @@ export const MessageKnowledgeCitation = lazy(() => import('@/components/chat/Mes
 export const MessageCompactionDivider = lazy(() => import('@/components/chat/MessageCompactionDivider.vue'));
 export const MessageFeedbackActions = lazy(() => import('@/components/chat/MessageFeedbackActions.vue'));
 export const MessageThinking = lazy(() => import('@/components/chat/MessageThinking.vue'));
+export const MessageSubagentPanel = lazy(() => import('@/components/chat/MessageSubagentPanel.vue'));
 export const MessageToolWorkflow = lazy(() => import('@/components/chat/MessageToolWorkflow.vue'));
 export const PlanPanel = lazy(() => import('@/components/chat/PlanPanel.vue'));
 export const ToolApprovalComposer = lazy(

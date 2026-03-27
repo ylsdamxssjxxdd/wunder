@@ -6,7 +6,9 @@ import type {
 } from '@/components/beeroom/beeroomTaskWorkflow';
 import {
   buildNodeWorkflowPreviewLines,
-  buildTaskWorkflowRuntime
+  buildTaskWorkflowRuntime,
+  compareBeeroomMissionTasksByDisplayPriority,
+  resolveBeeroomTaskMoment
 } from '@/components/beeroom/beeroomTaskWorkflow';
 import type {
   BeeroomCanvasPositionOverride
@@ -192,11 +194,8 @@ const resolveStatusRank = (status: string) => {
   return rankMap[normalized] ?? 7;
 };
 
-const resolveTaskMoment = (task: BeeroomMissionTask | null | undefined) =>
-  Number(task?.updated_time || task?.finished_time || task?.started_time || 0);
-
 const pickLatestTask = (tasks: BeeroomMissionTask[]) =>
-  [...tasks].sort((left, right) => resolveTaskMoment(right) - resolveTaskMoment(left))[0] || null;
+  [...tasks].sort(compareBeeroomMissionTasksByDisplayPriority)[0] || null;
 
 const buildHoneycombSlots = (count: number): HoneycombSlot[] => {
   if (count <= 0) return [];
@@ -415,7 +414,7 @@ export const buildBeeroomSwarmProjection = (options: {
       task_total: agentTasks.length,
       active_session_total: Number(member?.active_session_total || 0),
       updated_time: Math.max(
-        ...agentTasks.map((task) => resolveTaskMoment(task)),
+        ...agentTasks.map((task) => resolveBeeroomTaskMoment(task)),
         Number(mission?.updated_time || 0)
       ),
       summary,

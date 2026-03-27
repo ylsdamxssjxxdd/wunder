@@ -4637,6 +4637,7 @@ async fn run_tool_direct(
         request_config_overrides: None,
         allow_roots: Some(roots.allow_roots.clone()),
         read_roots: Some(roots.read_roots.clone()),
+        command_sessions: Some(runtime.state.command_sessions.clone()),
         event_emitter: None,
         beeroom_realtime: Some(runtime.state.beeroom_realtime.clone()),
         http: &http,

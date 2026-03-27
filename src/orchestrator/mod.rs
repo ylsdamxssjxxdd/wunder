@@ -30,6 +30,7 @@ use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::inner_visible::InnerVisibleService;
+use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
@@ -117,6 +118,7 @@ pub struct Orchestrator {
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
     approval_registry: Arc<PendingApprovalRegistry>,
+    command_sessions: Arc<CommandSessionBroker>,
     active_turns: Arc<ActiveTurnRegistry>,
     thread_runtime: Arc<ThreadRuntimeRegistry>,
     user_world: Arc<UserWorldService>,
@@ -139,6 +141,7 @@ impl Orchestrator {
         lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
         approval_registry: Arc<PendingApprovalRegistry>,
+        command_sessions: Arc<CommandSessionBroker>,
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
         beeroom_realtime: Arc<BeeroomRealtimeService>,
@@ -157,6 +160,7 @@ impl Orchestrator {
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
             approval_registry,
+            command_sessions,
             active_turns: Arc::new(ActiveTurnRegistry::new()),
             thread_runtime: Arc::new(ThreadRuntimeRegistry::new()),
             user_world,

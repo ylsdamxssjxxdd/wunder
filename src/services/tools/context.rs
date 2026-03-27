@@ -8,6 +8,7 @@ use crate::orchestrator::Orchestrator;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
+use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
@@ -69,6 +70,13 @@ impl ToolEventEmitter {
     pub fn stream_enabled(&self) -> bool {
         self.stream
     }
+
+    pub fn default_string_field(&self, key: &str) -> Option<String> {
+        self.default_fields
+            .get(key)
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    }
 }
 
 pub struct ToolContext<'a> {
@@ -97,6 +105,7 @@ pub struct ToolContext<'a> {
     pub request_config_overrides: Option<&'a Value>,
     pub allow_roots: Option<Arc<Vec<PathBuf>>>,
     pub read_roots: Option<Arc<Vec<PathBuf>>>,
+    pub command_sessions: Option<Arc<CommandSessionBroker>>,
     pub event_emitter: Option<ToolEventEmitter>,
     pub http: &'a reqwest::Client,
 }
@@ -129,6 +138,7 @@ impl<'a> ToolContext<'a> {
             request_config_overrides: self.request_config_overrides,
             allow_roots: self.allow_roots.as_ref().map(Arc::clone),
             read_roots: self.read_roots.as_ref().map(Arc::clone),
+            command_sessions: self.command_sessions.as_ref().map(Arc::clone),
             event_emitter,
             http: self.http,
         }
@@ -443,5 +453,15 @@ mod tests {
         let entries = captured.lock().expect("capture lock");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].1["tool_call_id"], "call_explicit");
+    }
+
+    #[test]
+    fn tool_event_emitter_reads_default_string_field() {
+        let emitter = ToolEventEmitter::new(|_, _| {}, true).with_field("tool_call_id", json!("call_default"));
+        assert_eq!(
+            emitter.default_string_field("tool_call_id").as_deref(),
+            Some("call_default")
+        );
+        assert!(emitter.default_string_field("missing").is_none());
     }
 }

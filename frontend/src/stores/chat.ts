@@ -391,6 +391,12 @@ const normalizeSubagentEventStatus = (value) => {
 const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   if (!payload || typeof payload !== 'object') return null;
   const source = payload as Record<string, unknown>;
+  const agentState =
+    source.agent_state && typeof source.agent_state === 'object'
+      ? (source.agent_state as Record<string, unknown>)
+      : source.agentState && typeof source.agentState === 'object'
+        ? (source.agentState as Record<string, unknown>)
+        : {};
   const sessionId = String(source.session_id ?? source.sessionId ?? '').trim();
   const runId = String(source.run_id ?? source.runId ?? '').trim();
   const key = runId || sessionId;
@@ -401,12 +407,7 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   const title = label || sessionId || runId || '子智能体';
   const status = normalizeSubagentEventStatus(source.status);
   const summary = String(
-    source.summary ??
-      source.agent_state?.message ??
-      source.agentState?.message ??
-      source.result ??
-      source.error ??
-      ''
+    source.summary ?? agentState.message ?? source.result ?? source.error ?? ''
   ).trim();
   const updatedAtMs = normalizeInteractionTimestamp(
     source.updated_time ??
@@ -417,12 +418,8 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
       source.startedTime
   );
   const updatedAt = resolveTimestampIso(updatedAtMs);
-  const agentStateStatus = String(
-    source.agent_state?.status ?? source.agentState?.status ?? status
-  ).trim();
-  const agentStateMessage = String(
-    source.agent_state?.message ?? source.agentState?.message ?? summary
-  ).trim();
+  const agentStateStatus = String(agentState.status ?? status).trim();
+  const agentStateMessage = String(agentState.message ?? summary).trim();
   return {
     key,
     session_id: sessionId,
@@ -1912,6 +1909,37 @@ const pickText = (value, fallback = '') => {
 };
 
 // 保留完整详情，供弹窗查看完整内容
+const pickString = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (normalized) return value;
+      continue;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+};
+
+const toOptionalInt = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.trunc(value);
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (!normalized) continue;
+      const parsed = Number(normalized);
+      if (Number.isFinite(parsed)) {
+        return Math.trunc(parsed);
+      }
+    }
+  }
+  return null;
+};
+
 const buildDetail = (payload) => stringifyPayload(payload);
 
 const defaultSessionTitles = new Set(['新会话', '未命名会话']);
@@ -3457,6 +3485,8 @@ const insertWatchUserMessage = (
   anchor,
   options = {}
 ) => {
+  const optionRecord: Record<string, unknown> =
+    options && typeof options === 'object' ? (options as Record<string, unknown>) : {};
   if (hasAnchoredWatchUserMessage(messages, anchor, content)) {
     return;
   }
@@ -3467,7 +3497,7 @@ const insertWatchUserMessage = (
     ? new Date(eventTimestampMs).toISOString()
     : undefined;
   const userMessage = buildMessage('user', content, createdAt, {
-    hiddenInternal: normalizeHiddenInternalMessage(options.hiddenInternal)
+    hiddenInternal: normalizeHiddenInternalMessage(optionRecord.hiddenInternal)
   });
   const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
   if (anchorIndex >= 0) {
@@ -4463,6 +4493,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
   const toolOutputFlushTimerMap = new Map();
+  const commandSessionResultItemMap = new Map();
   const compactionProgressItemMap = new Map();
   const subagentDispatchItemMap = new Map();
   const subagentRunItemMap = new Map();
@@ -4593,6 +4624,52 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       return title.replace('调用工具：', '').trim();
     }
     return '';
+  };
+
+  const resolveWorkflowItemToolName = (item) => {
+    const direct = String(item?.toolName || '').trim();
+    if (direct) return direct;
+    return normalizeToolName(item?.title);
+  };
+
+  const executeCommandToolName = 'execute_command';
+
+  const isExecuteCommandTool = (toolName) => {
+    const normalized = String(toolName || '').trim().toLowerCase();
+    return normalized === executeCommandToolName || normalized.includes('执行命令');
+  };
+
+  const normalizeCommandSessionRef = (value) => {
+    const normalized = String(value || '').trim();
+    return normalized || null;
+  };
+
+  const extractCommandSessionRef = (payload, data) => {
+    for (const source of [data, payload]) {
+      if (!source || typeof source !== 'object') continue;
+      const ref = normalizeCommandSessionRef(
+        source.command_session_id ?? source.commandSessionId
+      );
+      if (ref) return ref;
+    }
+    return null;
+  };
+
+  const buildCommandSessionTitle = (command, commandIndex = null) => {
+    const normalized = String(command || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+    const firstLine = normalized
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (firstLine) {
+      return firstLine.length > 96 ? `${firstLine.slice(0, 96)}...` : firstLine;
+    }
+    if (Number.isFinite(commandIndex)) {
+      return `${t('chat.toolWorkflow.toolLabel.executeCommand')} #${Number(commandIndex) + 1}`;
+    }
+    return t('chat.toolWorkflow.toolLabel.executeCommand');
   };
 
   const normalizeStopReason = (value) => String(value || '').trim().toLowerCase();
@@ -4908,7 +4985,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return queue[0] || null;
   };
 
-  const resolveToolOutputKey = (toolName, callId) => {
+  const resolveToolOutputKey = (toolName, callId, commandSessionId = null) => {
+    const normalizedCommandSessionId = normalizeCommandSessionRef(commandSessionId);
+    if (normalizedCommandSessionId) {
+      return `command_session:${normalizedCommandSessionId}`;
+    }
     if (callId) return `call:${callId}`;
     if (toolName) return `tool:${toolName}`;
     return 'tool:unknown';
@@ -5017,17 +5098,26 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     });
   };
 
-  const ensureToolOutputItem = (toolName, key, toolCategory, toolCallId = null) => {
+  const ensureToolOutputItem = (
+    toolName,
+    key,
+    toolCategory,
+    toolCallId = null,
+    itemTitle = null,
+    extraMeta = null
+  ) => {
     if (!key) return null;
     const existing = toolOutputItemMap.get(key);
     if (existing) return existing;
     const title = toolName ? `工具输出：${toolName}` : '工具输出';
-    const item = buildWorkflowItem(title, '', 'loading', {
+    const resolvedTitle = itemTitle || title;
+    const item = buildWorkflowItem(resolvedTitle, '', 'loading', {
       isTool: true,
       toolCategory,
       eventType: 'tool_output_delta',
       toolName: String(toolName || ''),
-      toolCallId: toolCallId || undefined
+      toolCallId: toolCallId || undefined,
+      ...(extraMeta && typeof extraMeta === 'object' ? extraMeta : {})
     });
     assistantMessage.workflowItems.push(item);
     toolOutputItemMap.set(key, item.id);
@@ -5046,6 +5136,184 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     });
     toolOutputItemMap.delete(key);
     toolOutputBufferMap.delete(key);
+  };
+
+  const resolveCommandSessionStatus = (source, fallbackStatus = 'loading') => {
+    const normalized = String(source?.status || '').trim().toLowerCase();
+    if (normalized === 'running') {
+      return 'loading';
+    }
+    if (normalized === 'failed_to_start') {
+      return 'failed';
+    }
+    if (normalized === 'exited') {
+      const exitCode = toOptionalInt(
+        source?.returncode,
+        source?.exit_code,
+        source?.exitCode
+      );
+      const failed =
+        source?.timed_out === true
+        || Boolean(pickString(source?.error))
+        || exitCode === null
+        || exitCode !== 0;
+      return failed ? 'failed' : 'completed';
+    }
+    return fallbackStatus;
+  };
+
+  const ensureCommandSessionCallItem = (commandSessionId, source, command = '') => {
+    const normalizedSessionId = normalizeCommandSessionRef(commandSessionId);
+    if (!normalizedSessionId) return null;
+    const toolCategory = resolveToolCategory(executeCommandToolName, source);
+    const commandIndex = toOptionalInt(source?.command_index, source?.commandIndex);
+    const title = buildCommandSessionTitle(command || source?.command, commandIndex);
+    const detail = buildDetail({
+      ...(source && typeof source === 'object' ? source : {}),
+      tool: executeCommandToolName,
+      command: pickString(command, source?.command)
+    });
+    const patch = {
+      title,
+      detail,
+      status: resolveCommandSessionStatus(source, 'loading'),
+      isTool: true,
+      toolCategory,
+      eventType: 'tool_call',
+      toolName: executeCommandToolName,
+      toolCallId: normalizedSessionId,
+      commandSessionId: normalizedSessionId
+    };
+    const existing = toolCallItemMap.get(normalizedSessionId);
+    if (existing) {
+      updateWorkflowItem(assistantMessage.workflowItems, existing, patch);
+      return existing;
+    }
+    const item = buildWorkflowItem(title, detail, patch.status, {
+      isTool: true,
+      toolCategory,
+      eventType: 'tool_call',
+      toolName: executeCommandToolName,
+      toolCallId: normalizedSessionId,
+      commandSessionId: normalizedSessionId
+    });
+    assistantMessage.workflowItems.push(item);
+    registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
+    return item.id;
+  };
+
+  const mergeCommandSessionSummaryIntoBuffer = (buffer, source) => {
+    if (!buffer || !source || typeof source !== 'object') return;
+    const stdoutTail = pickString(
+      source.stdout_tail,
+      source.stdoutTail,
+      source.pty_tail,
+      source.ptyTail
+    );
+    const stderrTail = pickString(source.stderr_tail, source.stderrTail);
+    const command = pickString(source.command, buffer.command);
+    if (command && !buffer.command) {
+      buffer.command = command;
+    }
+    if (stdoutTail && !buffer.stdout) {
+      buffer.stdout = stdoutTail;
+    }
+    if (stderrTail && !buffer.stderr) {
+      buffer.stderr = stderrTail;
+    }
+    const stdoutDropped = toOptionalInt(
+      source.stdout_dropped_bytes,
+      source.stdoutDroppedBytes,
+      source.pty_dropped_bytes,
+      source.ptyDroppedBytes
+    );
+    const stderrDropped = toOptionalInt(
+      source.stderr_dropped_bytes,
+      source.stderrDroppedBytes
+    );
+    if (stdoutDropped !== null && stdoutDropped > 0) {
+      buffer.stdoutDropped = Math.max(Number(buffer.stdoutDropped) || 0, stdoutDropped);
+    }
+    if (stderrDropped !== null && stderrDropped > 0) {
+      buffer.stderrDropped = Math.max(Number(buffer.stderrDropped) || 0, stderrDropped);
+    }
+  };
+
+  const upsertCommandSessionResultItem = (commandSessionId, source, failed) => {
+    const normalizedSessionId = normalizeCommandSessionRef(commandSessionId);
+    if (!normalizedSessionId) return null;
+    const toolCategory = resolveToolCategory(executeCommandToolName, source);
+    const commandIndex = toOptionalInt(source?.command_index, source?.commandIndex);
+    const title = buildCommandSessionTitle(source?.command, commandIndex);
+    const exitCode = toOptionalInt(
+      source?.returncode,
+      source?.exit_code,
+      source?.exitCode
+    );
+    const detail = buildDetail({
+      ...(source && typeof source === 'object' ? source : {}),
+      tool: executeCommandToolName,
+      command_session_id: normalizedSessionId,
+      command: pickString(source?.command),
+      returncode: exitCode,
+      exit_code: exitCode,
+      stdout: pickString(
+        source?.stdout,
+        source?.stdout_tail,
+        source?.stdoutTail,
+        source?.pty_tail,
+        source?.ptyTail
+      ),
+      stderr: pickString(source?.stderr, source?.stderr_tail, source?.stderrTail)
+    });
+    const status = failed ? 'failed' : 'completed';
+    const patch = {
+      title,
+      detail,
+      status,
+      isTool: true,
+      toolCategory,
+      eventType: 'tool_result',
+      toolName: executeCommandToolName,
+      toolCallId: normalizedSessionId,
+      commandSessionId: normalizedSessionId
+    };
+    const existing = commandSessionResultItemMap.get(normalizedSessionId);
+    if (existing) {
+      updateWorkflowItem(assistantMessage.workflowItems, existing, patch);
+      return existing;
+    }
+    const item = buildWorkflowItem(title, detail, status, {
+      isTool: true,
+      toolCategory,
+      eventType: 'tool_result',
+      toolName: executeCommandToolName,
+      toolCallId: normalizedSessionId,
+      commandSessionId: normalizedSessionId
+    });
+    assistantMessage.workflowItems.push(item);
+    commandSessionResultItemMap.set(normalizedSessionId, item.id);
+    return item.id;
+  };
+
+  const extractCommandSessionResultRows = (source) => {
+    if (!source || typeof source !== 'object') return [];
+    const dataObject =
+      source.data && typeof source.data === 'object'
+        ? source.data
+        : source;
+    if (!Array.isArray(dataObject?.results)) {
+      return [];
+    }
+    return dataObject.results
+      .map((item) => (item && typeof item === 'object' ? item : null))
+      .filter((item) => normalizeCommandSessionRef(item?.command_session_id ?? item?.commandSessionId))
+      .map((item) => ({
+        commandSessionId: normalizeCommandSessionRef(
+          item?.command_session_id ?? item?.commandSessionId
+        ),
+        source: item
+      }));
   };
 
   const isContextOverflowText = (value) => {
@@ -5316,10 +5584,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return key;
   };
 
-  const upsertSubagentRunItem = (runKey, title, detail, status, meta = {}) => {
+  const upsertSubagentRunItem = (runKey, title, detail, status, meta: Record<string, unknown> = {}) => {
     const key = String(runKey || '').trim();
     const source =
-      meta?.source && typeof meta.source === 'object'
+      meta.source && typeof meta.source === 'object'
         ? meta.source
         : safeJsonParse(detail);
     const payload =
@@ -5544,7 +5812,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   // 续传时需要把已有的工具调用记录挂载到映射，避免结果无法回填
   if (Array.isArray(assistantMessage.workflowItems)) {
     assistantMessage.workflowItems.forEach((item) => {
-      const toolName = normalizeToolName(item?.title);
+      const toolName = resolveWorkflowItemToolName(item);
       const itemStatus = String(item?.status || '').trim().toLowerCase();
       const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
       const toolCallId = normalizeToolCallRef(item?.toolCallId);
@@ -5552,7 +5820,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         registerToolItem(toolName, item.id, item?.toolCallId);
       }
       if (toolName && (itemStatus === 'loading' || itemStatus === 'pending') && eventType === 'tool_output_delta') {
-        const outputKey = resolveToolOutputKey(toolName, toolCallId);
+        const outputKey = resolveToolOutputKey(toolName, toolCallId, item?.commandSessionId);
         toolOutputItemMap.set(outputKey, item.id);
         const buffer = {
           command: extractToolOutputSection(item?.detail, 'command'),
@@ -5564,6 +5832,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (buffer.command || buffer.stdout || buffer.stderr) {
           toolOutputBufferMap.set(outputKey, buffer);
         }
+      }
+      if (toolCallId && eventType === 'tool_result' && isExecuteCommandTool(toolName)) {
+        commandSessionResultItemMap.set(toolCallId, item.id);
       }
       const approvalId = String(item?.approvalId || '').trim();
       if (approvalId && eventType === 'approval_request' && (itemStatus === 'loading' || itemStatus === 'pending')) {
@@ -5729,11 +6000,86 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         assistantMessage.workflowItems.push(buildWorkflowItem(title, buildDetail(data)));
         break;
       }
+      case 'command_session_delta': {
+        break;
+      }
+      case 'command_session_start': {
+        const commandSessionId = extractCommandSessionRef(payload, data);
+        if (!commandSessionId) {
+          break;
+        }
+        const detailSource =
+          data && typeof data === 'object'
+            ? data
+            : payload && typeof payload === 'object'
+              ? payload
+              : {};
+        ensureCommandSessionCallItem(commandSessionId, detailSource, detailSource?.command ?? '');
+        break;
+      }
+      case 'command_session_status':
+      case 'command_session_exit':
+      case 'command_session_summary': {
+        const commandSessionId = extractCommandSessionRef(payload, data);
+        if (!commandSessionId) {
+          break;
+        }
+        const detailSource =
+          data && typeof data === 'object'
+            ? data
+            : payload && typeof payload === 'object'
+              ? payload
+              : {};
+        const command = pickString(detailSource?.command);
+        ensureCommandSessionCallItem(commandSessionId, detailSource, command);
+        const outputKey = resolveToolOutputKey(
+          executeCommandToolName,
+          commandSessionId,
+          commandSessionId
+        );
+        const outputBuffer = getToolOutputBuffer(outputKey);
+        if (command && !outputBuffer.command) {
+          outputBuffer.command = command;
+        }
+        if (eventType === 'command_session_summary') {
+          mergeCommandSessionSummaryIntoBuffer(outputBuffer, detailSource);
+        }
+        const toolCategory = resolveToolCategory(executeCommandToolName, detailSource);
+        const outputItemId = ensureToolOutputItem(
+          executeCommandToolName,
+          outputKey,
+          toolCategory,
+          commandSessionId,
+          buildCommandSessionTitle(
+            command,
+            toOptionalInt(detailSource?.command_index, detailSource?.commandIndex)
+          ),
+          { commandSessionId }
+        );
+        if (outputItemId) {
+          clearToolOutputFlush(outputKey);
+          updateWorkflowItem(assistantMessage.workflowItems, outputItemId, {
+            detail: buildToolOutputDetail(outputBuffer),
+            status: resolveCommandSessionStatus(
+              detailSource,
+              eventType === 'command_session_summary' ? 'completed' : 'loading'
+            )
+          });
+        }
+        break;
+      }
       case 'tool_call': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '未知工具';
         const toolCallId = extractToolCallRef(payload, data);
         const detailSource = data && typeof data === 'object' ? data : payload ?? data;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
+        if (isExecuteCommandTool(toolName)) {
+          registerToolStats(toolName);
+          if (lastRound !== null) {
+            blockedRounds.add(lastRound);
+          }
+          break;
+        }
         const item = buildWorkflowItem(`调用工具：${toolName}`, buildDetail(detailSource), 'loading', {
           isTool: true,
           toolCategory,
@@ -5753,6 +6099,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'tool_output_delta': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '';
         const toolCallId = extractToolCallRef(payload, data);
+        const commandSessionId = extractCommandSessionRef(payload, data);
         const delta = data?.delta ?? payload?.delta ?? '';
         if (!delta) {
           break;
@@ -5762,9 +6109,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         const streamName = String(data?.stream ?? payload?.stream ?? 'stdout').toLowerCase();
         const command = typeof data?.command === 'string' ? data.command : payload?.command;
-        const toolCategory = resolveToolCategory(toolName, data ?? payload);
+        const resolvedToolName = commandSessionId ? executeCommandToolName : toolName;
+        const toolCategory = resolveToolCategory(resolvedToolName, data ?? payload);
+        if (commandSessionId) {
+          ensureCommandSessionCallItem(commandSessionId, data ?? payload ?? {}, command ?? '');
+        }
         const callId = peekToolItemId(toolName, toolCallId);
-        const outputKey = resolveToolOutputKey(toolName, toolCallId || callId);
+        const outputKey = resolveToolOutputKey(
+          resolvedToolName,
+          commandSessionId || toolCallId || callId,
+          commandSessionId
+        );
         const buffer = getToolOutputBuffer(outputKey);
         if (command && !buffer.command) {
           buffer.command = String(command);
@@ -5774,7 +6129,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         } else {
           appendToolOutput(buffer, 'stdout', delta);
         }
-        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory, toolCallId);
+        const itemId = ensureToolOutputItem(
+          resolvedToolName,
+          outputKey,
+          toolCategory,
+          commandSessionId || toolCallId,
+          commandSessionId
+            ? buildCommandSessionTitle(command, data?.command_index ?? payload?.command_index)
+            : null,
+          commandSessionId ? { commandSessionId } : null
+        );
         if (itemId) {
           scheduleToolOutputFlush(outputKey, itemId);
         }
@@ -5799,6 +6163,63 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           sandboxed && detailSource && typeof detailSource === 'object' && !('sandbox' in detailSource)
             ? { ...detailSource, sandbox: true }
             : detailSource;
+        const commandSessionRows = isExecuteCommandTool(toolName)
+          ? extractCommandSessionResultRows(detailPayload ?? result)
+          : [];
+        if (commandSessionRows.length > 0) {
+          commandSessionRows.forEach(({ commandSessionId, source }) => {
+            if (!commandSessionId) {
+              return;
+            }
+            const exitCode = toOptionalInt(
+              source?.returncode,
+              source?.exit_code,
+              source?.exitCode
+            );
+            const rowFailed =
+              source?.timed_out === true
+              || Boolean(pickString(source?.error))
+              || exitCode === null
+              || exitCode !== 0;
+            ensureCommandSessionCallItem(
+              commandSessionId,
+              { ...source, status: 'exited', exit_code: exitCode },
+              source?.command ?? ''
+            );
+            const outputKey = resolveToolOutputKey(
+              executeCommandToolName,
+              commandSessionId,
+              commandSessionId
+            );
+            const outputBuffer = getToolOutputBuffer(outputKey);
+            if (source?.command && !outputBuffer.command) {
+              outputBuffer.command = String(source.command);
+            }
+            if (source?.stdout && !outputBuffer.stdout) {
+              outputBuffer.stdout = String(source.stdout);
+            }
+            if (source?.stderr && !outputBuffer.stderr) {
+              outputBuffer.stderr = String(source.stderr);
+            }
+            const outputItemId = ensureToolOutputItem(
+              executeCommandToolName,
+              outputKey,
+              toolCategory,
+              commandSessionId,
+              buildCommandSessionTitle(
+                source?.command,
+                toOptionalInt(source?.command_index, source?.commandIndex)
+              ),
+              { commandSessionId }
+            );
+            if (outputItemId) {
+              clearToolOutputFlush(outputKey);
+            }
+            upsertCommandSessionResultItem(commandSessionId, source, rowFailed);
+            finalizeToolOutputItem(outputKey, rowFailed);
+          });
+          break;
+        }
         const detail = buildDetail(detailPayload ?? result);
         if (targetId) {
           updateWorkflowItem(assistantMessage.workflowItems, targetId, {
@@ -7098,6 +7519,7 @@ export const useChatStore = defineStore('chat', {
       const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
       messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
       messages = dedupeAssistantMessages(messages);
+      messages = attachSubagentsToMessages(messages, subagentItems);
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(messages);
       }

@@ -118,8 +118,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       groupId: options.group.value?.group_id
     })
   );
-
   const activeGroupId = computed(() => String(options.group.value?.group_id || '').trim());
+  const chatClearScopeKey = computed(() => {
+    const groupId = String(activeGroupId.value || '').trim();
+    if (groupId) return `chat:${groupId}`;
+    return `chat:${missionScopeKey.value}`;
+  });
   const motherAgentId = computed(() =>
     resolveBeeroomMotherAgentId(options.mission.value, options.group.value, options.agents.value)
   );
@@ -375,6 +379,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const appendManualChatMessage = (message: MissionChatMessage) => {
+    if (chatMessagesClearedAfter.value && Number(message.time || 0) <= chatMessagesClearedAfter.value) {
+      return;
+    }
     const current = Array.isArray(manualChatMessages.value) ? manualChatMessages.value : [];
     const existingIndex = current.findIndex((item) => item.key === message.key);
     const merged =
@@ -388,6 +395,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const replaceManualChatMessages = (messages: MissionChatMessage[]) => {
     manualChatMessages.value = [...messages]
+      .filter(
+        (message) =>
+          !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
+      )
       .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
       .slice(-MANUAL_CHAT_HISTORY_LIMIT);
   };
@@ -438,6 +449,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
             .filter((item: MissionChatMessage | null): item is MissionChatMessage => !!item)
         : [];
       const next = [...items]
+        .filter(
+          (message) =>
+            !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
+        )
         .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
         .slice(-MANUAL_CHAT_HISTORY_LIMIT);
       if (!sameManualChatMessages(manualChatMessages.value, next)) {
@@ -493,6 +508,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const clearedAfter = Date.now() / 1000;
     chatMessagesClearedAfter.value = Math.max(chatMessagesClearedAfter.value, clearedAfter);
     manualChatMessages.value = [];
+    mergeBeeroomMissionCanvasState(chatClearScopeKey.value, {
+      chatClearedAfter: chatMessagesClearedAfter.value
+    });
     try {
       const groupId = activeGroupId.value;
       if (groupId) {
@@ -1120,7 +1138,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const handleActiveGroupChanged = (value: unknown) => {
     const groupId = String(value || '').trim();
     chatAuthDenied = false;
-    chatMessagesClearedAfter.value = 0;
+    chatMessagesClearedAfter.value = Number(
+      getBeeroomMissionCanvasState(groupId ? `chat:${groupId}` : chatClearScopeKey.value)?.chatClearedAfter || 0
+    );
     chatRealtimeCursor.value = 0;
     resetDispatchRuntime();
     lastTeamRealtimeRefreshAt = 0;
@@ -1148,6 +1168,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     (currentScopeKey) => {
       const cached = getBeeroomMissionCanvasState(currentScopeKey);
       chatCollapsed.value = !!cached?.chatCollapsed;
+    },
+    { immediate: true }
+  );
+
+  watch(
+    chatClearScopeKey,
+    (currentScopeKey) => {
+      const cached = getBeeroomMissionCanvasState(currentScopeKey);
+      chatMessagesClearedAfter.value = Number(cached?.chatClearedAfter || 0);
     },
     { immediate: true }
   );
@@ -1259,6 +1288,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (normalizedType === 'chat_cleared') {
       chatMessagesClearedAfter.value = Math.max(chatMessagesClearedAfter.value, Date.now() / 1000);
       manualChatMessages.value = [];
+      mergeBeeroomMissionCanvasState(chatClearScopeKey.value, {
+        chatClearedAfter: chatMessagesClearedAfter.value
+      });
       return;
     }
     if (normalizedType === 'chat_message') {

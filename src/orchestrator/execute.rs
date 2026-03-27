@@ -881,6 +881,7 @@ impl Orchestrator {
                     request_config_overrides: prepared.config_overrides.as_ref(),
                     allow_roots: Some(tool_roots.allow_roots.clone()),
                     read_roots: Some(tool_roots.read_roots.clone()),
+                    command_sessions: Some(self.command_sessions.clone()),
                     event_emitter: Some(tool_event_emitter.clone()),
                     http: &self.http,
                 };

@@ -1,5 +1,6 @@
 use crate::monitor::MonitorState;
-use crate::orchestrator::{Orchestrator, OBSERVATION_PREFIX};
+use crate::orchestrator::Orchestrator;
+use crate::orchestrator_constants::OBSERVATION_PREFIX;
 use crate::schemas::WunderRequest;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{ChatSessionRecord, SessionRunRecord, StorageBackend};
@@ -577,9 +578,7 @@ async fn run_parent_auto_wake(
     let mut stream = Box::pin(orchestrator.stream(request).await?);
     use futures::StreamExt;
     while let Some(item) = stream.next().await {
-        let Ok(event) = item else {
-            continue;
-        };
+        let event = item.expect("stream event should be infallible");
         let event_name = event.event.trim().to_ascii_lowercase();
         if event_name == "error" {
             let payload = event.data.get("data").cloned().unwrap_or(event.data.clone());
@@ -742,8 +741,8 @@ fn build_dispatch_finish_payload(
     let status = summarize_completion_status(completion_mode, items, progress);
     let mut payload = json!({
         "status": status,
-        "dispatch_id": dispatch.dispatch_id,
-        "strategy": dispatch.strategy,
+        "dispatch_id": dispatch.dispatch_id.clone(),
+        "strategy": dispatch.strategy.clone(),
         "completion_mode": completion_mode.as_str(),
         "completion_reached": progress.completion_reached,
         "completed_reason": progress.completed_reason,
@@ -754,7 +753,7 @@ fn build_dispatch_finish_payload(
         "failed_total": failed_total,
         "selected_items": selected_items,
         "items": payload_items,
-        "label": dispatch.label,
+        "label": dispatch.label.clone(),
         "parent_user_round": dispatch.parent_user_round,
         "parent_model_round": dispatch.parent_model_round,
     });

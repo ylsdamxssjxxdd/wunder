@@ -124,6 +124,25 @@ pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
     }
 }
 
+pub fn resolve_shell_name(command: &str) -> &'static str {
+    #[cfg(windows)]
+    {
+        if should_use_cmd_shell(command) {
+            "cmd.exe"
+        } else if prefer_powershell() {
+            "powershell.exe"
+        } else {
+            "cmd.exe"
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+        "bash"
+    }
+}
+
 #[cfg(windows)]
 fn should_use_cmd_shell(command: &str) -> bool {
     contains_unquoted_operator(command, "&&")

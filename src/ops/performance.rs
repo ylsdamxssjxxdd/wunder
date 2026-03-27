@@ -470,6 +470,7 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         request_config_overrides: None,
         allow_roots: Some(context.tool_roots.allow_roots.clone()),
         read_roots: Some(context.tool_roots.read_roots.clone()),
+        command_sessions: Some(context.state.command_sessions.clone()),
         event_emitter: None,
         http: context.http.as_ref(),
     }

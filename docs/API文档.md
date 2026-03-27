@@ -130,6 +130,11 @@
 - 子智能体批量调度的运行账本统一落在 `session_runs`，新增元数据字段 `dispatch_id/run_kind/requested_by`，便于批次级聚合、追踪与恢复。
 - `status/wait` 的结果会额外返回 `completion_mode/completion_reached/completed_reason/selected_items`；运行快照中新增 `agent_state.status/message`；批次结果会补充 `winner_item/remaining_action/remaining_action_applied/settled_items`，用于对齐 Codex 协作线程的 winner 选择与剩余分支处置表达。
 - 流式事件新增 `subagent_dispatch_start/subagent_dispatch_item_update/subagent_dispatch_finish/subagent_status/subagent_interrupt/subagent_close/subagent_resume/subagent_announce`，其中批次开始/结束事件会携带 `strategy/completion_mode/remaining_action` 供前端工作流展示。
+- Codex 风格父子轮次语义：父智能体在成功派发子智能体后不必阻塞等待；父轮可以先发出 `turn_terminal` 并结束，本次对话在用户视角应视为“已结束”，子智能体继续在后台运行。
+- 当某个 `dispatch_id` 达到 `completion_mode` 收敛条件，或全部子任务完成后，系统会向父会话追加一条隐藏内部观察消息并自动唤醒父线程继续推理；该观察消息会参与轮次对齐，但在聊天历史里会标记 `hiddenInternal=true`，前端默认不渲染正文。
+- 新增会话级子智能体接口：
+  - `GET /wunder/chat/sessions/{session_id}/subagents`：返回当前父会话可见的子智能体运行项列表，支持 `limit`
+  - `POST /wunder/chat/sessions/{session_id}/subagents/control`：支持 `action=interrupt|terminate|close`，并可通过 `sessionIds[]` 或 `dispatchId` 批量控制当前父会话下的子智能体
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
@@ -141,6 +146,8 @@
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
+- `execute_command` 第一阶段实时协议已落地：`tool_output_delta` 与每条命令结果会补充 `command_session_id/command_index`，用于把一次工具调用内的多条子命令拆成独立工作流条目。
+- 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
 - 线程卸载事件：新增 `thread_closed`，表示当前 loaded runtime 已卸载；当最后一个流式订阅者离开且该线程没有 active turn 时会发出，payload 附带 `last_status` 便于前端做状态收尾。
@@ -203,7 +210,7 @@
   - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
   - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
 - `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围。
-- 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
+- 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话；无主会话时会自动创建后再发送指令。
@@ -211,7 +218,7 @@
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
 - `智能体蜂群` 入参语义增强（便于模型主动调用）：`spawn` 需 `agentId+task`，`send` 需 `message` 且 `agentId/sessionKey` 二选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/sessionKey` 二选一）。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
-- `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
+- `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
 - `会话线程控制` 的 `create/switch/back/set_main` 可同时更新主线程绑定；当工具通过流式通道返回 `thread_control` 事件时，用户前端会先合并会话摘要，再按 payload 决定是否切换到目标线程。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
@@ -2150,6 +2157,8 @@
   - `vote`：`up` / `down`
   - `created_at`：反馈时间（RFC3339）
   - `locked`：`true`
+- 当消息为 `assistant` 且由该条回复触发过子智能体派发时，`messages[].subagents[]` 会返回当前已知的子智能体运行项；典型字段包括 `session_id/run_id/dispatch_id/title/label/status/summary/terminal/failed/can_terminate/updated_at/parent_user_round/parent_model_round/agent_state/detail`。
+- 当消息为系统内部补发的隐藏观察消息时，`messages[].hiddenInternal=true`；该消息仅用于保持父子轮次与自动唤醒链路一致，前端默认应跳过渲染正文。
 
 ### 监控接口补充（管理员侧）
 

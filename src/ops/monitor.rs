@@ -2554,7 +2554,10 @@ fn should_skip_event_for_profile(log_profile: MonitorLogProfile, event_type: &st
     if log_profile.should_keep_high_volume_events() {
         return false;
     }
-    matches!(event_type, "llm_output_delta" | "tool_output_delta")
+    matches!(
+        event_type,
+        "llm_output_delta" | "tool_output_delta" | "command_session_delta"
+    )
 }
 
 fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &Value) -> bool {
@@ -2977,6 +2980,10 @@ mod tests {
             MonitorLogProfile::Normal,
             "tool_output_delta"
         ));
+        assert!(should_skip_event_for_profile(
+            MonitorLogProfile::Normal,
+            "command_session_delta"
+        ));
         assert!(!should_skip_event_for_profile(
             MonitorLogProfile::Normal,
             "llm_output"
@@ -2992,6 +2999,10 @@ mod tests {
         assert!(!should_skip_event_for_profile(
             MonitorLogProfile::Debug,
             "tool_output_delta"
+        ));
+        assert!(!should_skip_event_for_profile(
+            MonitorLogProfile::Debug,
+            "command_session_delta"
         ));
     }
 

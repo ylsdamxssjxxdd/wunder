@@ -939,9 +939,9 @@
               :style="{ height: `${messageVirtualTopSpacerHeight}px` }"
               aria-hidden="true"
             ></div>
+            <template v-for="item in visibleAgentMessages" :key="item.key">
             <div
-              v-for="item in visibleAgentMessages"
-              :key="item.key"
+              v-if="!isHiddenInternalMessage(item.message)"
               class="messenger-message"
               :class="{
                 mine: item.message.role === 'user',
@@ -1015,6 +1015,10 @@
                       )
                     "
                     @layout-change="handleMessageWorkflowLayoutChange"
+                  />
+                  <MessageSubagentPanel
+                    :session-id="chatStore.activeSessionId"
+                    :items="Array.isArray(item.message.subagents) ? item.message.subagents : []"
                   />
                 </div>
                 <div
@@ -1194,6 +1198,7 @@
                 </template>
               </div>
             </div>
+            </template>
             <div
               v-if="messageVirtualBottomSpacerHeight > 0"
               class="messenger-message-virtual-spacer"
@@ -1599,6 +1604,7 @@ import {
   MessageCompactionDivider,
   MessageFeedbackActions,
   MessageKnowledgeCitation,
+  MessageSubagentPanel,
   MessageThinking,
   MessageToolWorkflow,
   PlanPanel,
@@ -5869,6 +5875,9 @@ const messageVirtualBottomSpacerHeight = computed(() =>
 
 const isGreetingMessage = (message: Record<string, unknown>): boolean =>
   String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
+
+const isHiddenInternalMessage = (message: Record<string, unknown>): boolean =>
+  Boolean(message?.hiddenInternal);
 
 const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
   if (String(message?.role || '') !== 'assistant') return false;

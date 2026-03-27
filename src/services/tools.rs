@@ -8,6 +8,7 @@ mod apply_patch_tool;
 mod browser_tool;
 mod catalog;
 mod channel_tool;
+pub mod command_sessions;
 pub(crate) mod command_options;
 pub(crate) mod command_output_guard;
 mod context;
@@ -123,6 +124,9 @@ use command_output_guard::{
     derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
     CommandOutputCollector, CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES,
     STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+};
+use command_sessions::{
+    CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker,
 };
 use tool_error::{build_failed_tool_result, ToolErrorMeta};
 
@@ -4303,6 +4307,7 @@ fn safe_chunk_boundary(text: &str, max_bytes: usize) -> usize {
     index
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_tool_output_chunks(
     emitter: &ToolEventEmitter,
     tool_name: &str,
@@ -4311,6 +4316,7 @@ fn emit_tool_output_chunks(
     pending: &mut String,
     chunk_size: usize,
     force: bool,
+    command_session: Option<&CommandSessionTracker>,
 ) {
     if pending.is_empty() {
         return;
@@ -4336,18 +4342,29 @@ fn emit_tool_output_chunks(
         if chunk.is_empty() {
             break;
         }
-        emitter.emit(
-            "tool_output_delta",
-            json!({
-                "tool": tool_name,
-                "command": command,
-                "stream": stream_name,
-                "delta": chunk,
-            }),
-        );
+        let mut payload = serde_json::Map::new();
+        payload.insert("tool".to_string(), Value::String(tool_name.to_string()));
+        payload.insert("command".to_string(), Value::String(command.to_string()));
+        payload.insert("stream".to_string(), Value::String(stream_name.to_string()));
+        payload.insert("delta".to_string(), Value::String(chunk));
+        if let Some(command_session) = command_session {
+            command_session.decorate_legacy_payload(&mut payload);
+        }
+        emitter.emit("tool_output_delta", Value::Object(payload));
     }
 }
 
+fn command_session_stream_from_name(stream_name: &str) -> CommandSessionStream {
+    if stream_name.eq_ignore_ascii_case("pty") {
+        CommandSessionStream::Pty
+    } else if stream_name.to_ascii_lowercase().contains("err") {
+        CommandSessionStream::Stderr
+    } else {
+        CommandSessionStream::Stdout
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn read_stream_output<R>(
     mut reader: R,
     emitter: Option<ToolEventEmitter>,
@@ -4356,6 +4373,7 @@ async fn read_stream_output<R>(
     stream_name: &'static str,
     chunk_size: usize,
     capture_policy: command_output_guard::CommandOutputPolicy,
+    command_session: Option<CommandSessionTracker>,
 ) -> Result<CommandOutputCapture>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -4363,17 +4381,8 @@ where
     let read_size = chunk_size.max(256);
     let mut buffer = vec![0u8; read_size];
     let mut collector = CommandOutputCollector::new(capture_policy);
-
-    let Some(stream_emitter) = emitter.as_ref().filter(|item| item.stream_enabled()) else {
-        loop {
-            let read = reader.read(&mut buffer).await?;
-            if read == 0 {
-                break;
-            }
-            collector.push_chunk(&buffer[..read]);
-        }
-        return Ok(collector.finish());
-    };
+    let stream_emitter = emitter.as_ref().filter(|item| item.stream_enabled());
+    let command_stream = command_session_stream_from_name(stream_name);
 
     let mut pending_bytes = Vec::new();
     let mut pending_text = String::new();
@@ -4384,29 +4393,53 @@ where
         }
         let chunk = &buffer[..read];
         collector.push_chunk(chunk);
-        pending_bytes.extend_from_slice(chunk);
-        loop {
-            match std::str::from_utf8(&pending_bytes) {
-                Ok(valid) => {
-                    if !valid.is_empty() {
-                        pending_text.push_str(valid);
-                    }
-                    pending_bytes.clear();
-                    break;
-                }
-                Err(err) => {
-                    let valid_up_to = err.valid_up_to();
-                    if valid_up_to == 0 {
+        if let Some(command_session) = command_session.as_ref() {
+            command_session.emit_delta(command_stream, chunk);
+        }
+        if stream_emitter.is_some() {
+            pending_bytes.extend_from_slice(chunk);
+            loop {
+                match std::str::from_utf8(&pending_bytes) {
+                    Ok(valid) => {
+                        if !valid.is_empty() {
+                            pending_text.push_str(valid);
+                        }
+                        pending_bytes.clear();
                         break;
                     }
-                    let valid = &pending_bytes[..valid_up_to];
-                    let text = std::str::from_utf8(valid).unwrap_or_default();
-                    if !text.is_empty() {
-                        pending_text.push_str(text);
+                    Err(err) => {
+                        let valid_up_to = err.valid_up_to();
+                        if valid_up_to == 0 {
+                            break;
+                        }
+                        let valid = &pending_bytes[..valid_up_to];
+                        let text = std::str::from_utf8(valid).unwrap_or_default();
+                        if !text.is_empty() {
+                            pending_text.push_str(text);
+                        }
+                        pending_bytes.drain(..valid_up_to);
                     }
-                    pending_bytes.drain(..valid_up_to);
                 }
             }
+            if let Some(stream_emitter) = stream_emitter {
+                emit_tool_output_chunks(
+                    stream_emitter,
+                    &tool_name,
+                    &command,
+                    stream_name,
+                    &mut pending_text,
+                    chunk_size,
+                    false,
+                    command_session.as_ref(),
+                );
+            }
+        }
+    }
+
+    if let Some(stream_emitter) = stream_emitter {
+        if !pending_bytes.is_empty() {
+            pending_text.push_str(decode_command_output(&pending_bytes).as_str());
+            pending_bytes.clear();
         }
         emit_tool_output_chunks(
             stream_emitter,
@@ -4415,23 +4448,10 @@ where
             stream_name,
             &mut pending_text,
             chunk_size,
-            false,
+            true,
+            command_session.as_ref(),
         );
     }
-
-    if !pending_bytes.is_empty() {
-        pending_text.push_str(decode_command_output(&pending_bytes).as_str());
-        pending_bytes.clear();
-    }
-    emit_tool_output_chunks(
-        stream_emitter,
-        &tool_name,
-        &command,
-        stream_name,
-        &mut pending_text,
-        chunk_size,
-        true,
-    );
 
     Ok(collector.finish())
 }
@@ -4443,6 +4463,7 @@ struct CommandRunResult {
     timed_out: bool,
     stdout_capture: CommandOutputCaptureMeta,
     stderr_capture: CommandOutputCaptureMeta,
+    command_session_id: Option<String>,
 }
 
 async fn join_output_task(
@@ -4591,6 +4612,7 @@ fn decode_utf16_output(bytes: &[u8]) -> Option<String> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_spawned_child_streaming(
     context: &ToolContext<'_>,
     mut child: tokio::process::Child,
@@ -4599,6 +4621,7 @@ async fn run_spawned_child_streaming(
     timeout: Option<Duration>,
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
+    command_session: Option<CommandSessionTracker>,
 ) -> Result<CommandRunResult> {
     let chunk_size = resolve_stream_chunk_size(context.config);
     let stdout = child.stdout.take();
@@ -4608,6 +4631,7 @@ async fn run_spawned_child_streaming(
         let emitter = context.event_emitter.clone();
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
+        let command_session = command_session.clone();
         tokio::spawn(async move {
             read_stream_output(
                 stdout,
@@ -4617,6 +4641,7 @@ async fn run_spawned_child_streaming(
                 "stdout",
                 chunk_size,
                 stdout_policy,
+                command_session,
             )
             .await
         })
@@ -4625,6 +4650,7 @@ async fn run_spawned_child_streaming(
         let emitter = context.event_emitter.clone();
         let tool_name = tool_name.to_string();
         let command_text = command_text.to_string();
+        let command_session = command_session.clone();
         tokio::spawn(async move {
             read_stream_output(
                 stderr,
@@ -4634,31 +4660,50 @@ async fn run_spawned_child_streaming(
                 "stderr",
                 chunk_size,
                 stderr_policy,
+                command_session,
             )
             .await
         })
     });
 
-    let mut timed_out = false;
-    let status = if let Some(timeout) = timeout {
-        match tokio::time::timeout(timeout, child.wait()).await {
-            Ok(result) => Some(result?),
-            Err(_) => {
-                timed_out = true;
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                None
+    let result = async {
+        let mut timed_out = false;
+        let status = if let Some(timeout) = timeout {
+            match tokio::time::timeout(timeout, child.wait()).await {
+                Ok(result) => Some(result?),
+                Err(_) => {
+                    timed_out = true;
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                    None
+                }
             }
-        }
-    } else {
-        Some(child.wait().await?)
-    };
+        } else {
+            Some(child.wait().await?)
+        };
 
-    let stdout_capture = join_output_task(stdout_task).await?;
-    let stderr_capture = join_output_task(stderr_task).await?;
+        let stdout_capture = join_output_task(stdout_task).await?;
+        let stderr_capture = join_output_task(stderr_task).await?;
+        Ok::<_, anyhow::Error>((status, timed_out, stdout_capture, stderr_capture))
+    }
+    .await;
+
+    let (status, timed_out, stdout_capture, stderr_capture) = match result {
+        Ok(value) => value,
+        Err(err) => {
+            if let Some(command_session) = command_session.as_ref() {
+                command_session.emit_exit(None, false, Some(err.to_string()));
+            }
+            return Err(err);
+        }
+    };
     let stdout = render_command_output(&stdout_capture, decode_command_output);
     let stderr = render_command_output(&stderr_capture, decode_command_output);
-    let returncode = status.and_then(|value| value.code()).unwrap_or(-1);
+    let exit_code = status.and_then(|value| value.code());
+    let returncode = exit_code.unwrap_or(-1);
+    if let Some(command_session) = command_session.as_ref() {
+        command_session.emit_exit(exit_code, timed_out, None);
+    }
 
     Ok(CommandRunResult {
         returncode,
@@ -4667,9 +4712,11 @@ async fn run_spawned_child_streaming(
         timed_out,
         stdout_capture: stdout_capture.meta,
         stderr_capture: stderr_capture.meta,
+        command_session_id: command_session.map(|item| item.command_session_id().to_string()),
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_command_streaming(
     context: &ToolContext<'_>,
     command: &str,
@@ -4678,6 +4725,7 @@ async fn run_command_streaming(
     tool_name: &str,
     stdout_policy: CommandOutputPolicy,
     stderr_policy: CommandOutputPolicy,
+    command_index: usize,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
     let runtime = python_runtime::resolve_python_runtime();
@@ -4697,10 +4745,25 @@ async fn run_command_streaming(
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
     }
+    let initial_launch_mode = if used_direct {
+        CommandSessionLaunchMode::Direct
+    } else {
+        CommandSessionLaunchMode::Shell
+    };
+    let initial_shell_name = (!used_direct)
+        .then(|| command_utils::resolve_shell_name(command).to_string());
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let child = match cmd.spawn() {
-        Ok(child) => child,
+    let (child, launch_mode, shell_name) = match cmd.spawn() {
+        Ok(child) => (
+            child,
+            if used_direct {
+                CommandSessionLaunchMode::Direct
+            } else {
+                CommandSessionLaunchMode::Shell
+            },
+            (!used_direct).then(|| command_utils::resolve_shell_name(command).to_string()),
+        ),
         Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
             let mut cmd = command_utils::build_shell_command(command, cwd);
             if let Some(runtime) = runtime.as_ref() {
@@ -4708,10 +4771,56 @@ async fn run_command_streaming(
             }
             cmd.kill_on_drop(true);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-            cmd.spawn()?
+            let fallback_shell_name = command_utils::resolve_shell_name(command).to_string();
+            match cmd.spawn() {
+                Ok(child) => (
+                    child,
+                    CommandSessionLaunchMode::Shell,
+                    Some(fallback_shell_name),
+                ),
+                Err(fallback_err) => {
+                    if let Some(command_session) = CommandSessionTracker::start(
+                        context,
+                        &command_text,
+                        &cwd.to_string_lossy(),
+                        command_index,
+                        Some(fallback_shell_name),
+                        CommandSessionLaunchMode::Shell,
+                        false,
+                        false,
+                    ) {
+                        command_session.emit_failed_to_start(fallback_err.to_string());
+                    }
+                    return Err(anyhow!(fallback_err));
+                }
+            }
         }
-        Err(err) => return Err(anyhow!(err)),
+        Err(err) => {
+            if let Some(command_session) = CommandSessionTracker::start(
+                context,
+                &command_text,
+                &cwd.to_string_lossy(),
+                command_index,
+                initial_shell_name.clone(),
+                initial_launch_mode,
+                false,
+                false,
+            ) {
+                command_session.emit_failed_to_start(err.to_string());
+            }
+            return Err(anyhow!(err));
+        }
     };
+    let command_session = CommandSessionTracker::start(
+        context,
+        &command_text,
+        &cwd.to_string_lossy(),
+        command_index,
+        shell_name,
+        launch_mode,
+        false,
+        false,
+    );
     run_spawned_child_streaming(
         context,
         child,
@@ -4720,6 +4829,7 @@ async fn run_command_streaming(
         timeout,
         stdout_policy,
         stderr_policy,
+        command_session,
     )
     .await
 }
@@ -4762,6 +4872,7 @@ async fn run_ptc_python_script_streaming(
                     timeout,
                     STDOUT_CAPTURE_POLICY,
                     STDERR_CAPTURE_POLICY,
+                    None,
                 )
                 .await;
             }
@@ -4799,6 +4910,7 @@ async fn run_ptc_python_script_streaming(
                     timeout,
                     STDOUT_CAPTURE_POLICY,
                     STDERR_CAPTURE_POLICY,
+                    None,
                 )
                 .await;
             }
@@ -5010,7 +5122,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             "sandbox": false,
         }));
     }
-    for command in commands {
+    for (command_index, command) in commands.into_iter().enumerate() {
         if command.trim().is_empty() {
             continue;
         }
@@ -5043,6 +5155,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             &execute_tool_name,
             stdout_policy,
             stderr_policy,
+            command_index,
         )
         .await?;
         let command_total_bytes = run
@@ -5062,6 +5175,8 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         }
         results.push(json!({
             "command": command,
+            "command_index": command_index,
+            "command_session_id": run.command_session_id,
             "returncode": run.returncode,
             "stdout": run.stdout,
             "stderr": run.stderr,

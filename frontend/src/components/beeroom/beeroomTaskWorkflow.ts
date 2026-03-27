@@ -52,6 +52,7 @@ const PREVIEW_DETAIL_LIMIT = 42;
 const MIN_WINDOW_PADDING_S = 2;
 const ACTIVE_WINDOW_FALLBACK_S = 30;
 const TERMINAL_WINDOW_FALLBACK_S = 60;
+const ACTIVE_TASK_SELECTION_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'merging']);
 
 const TERMINAL_STATUSES = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
 
@@ -65,6 +66,28 @@ const asRecord = (value: unknown): Record<string, unknown> | null => {
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
 const normalizeStatus = (value: unknown): string => normalizeText(value).toLowerCase();
+
+const resolveTaskSessionIdentity = (task: BeeroomMissionTask | null | undefined): string =>
+  normalizeText(task?.spawned_session_id || task?.target_session_id || task?.session_run_id);
+
+export const resolveBeeroomTaskMoment = (task: BeeroomMissionTask | null | undefined): number =>
+  Number(task?.updated_time || task?.finished_time || task?.started_time || 0);
+
+export const isBeeroomTaskStatusActive = (value: unknown): boolean =>
+  ACTIVE_TASK_SELECTION_STATUSES.has(normalizeStatus(value));
+
+export const compareBeeroomMissionTasksByDisplayPriority = (
+  left: BeeroomMissionTask | null | undefined,
+  right: BeeroomMissionTask | null | undefined
+) => {
+  const activeDiff = Number(isBeeroomTaskStatusActive(right?.status)) - Number(isBeeroomTaskStatusActive(left?.status));
+  if (activeDiff !== 0) return activeDiff;
+  const timeDiff = resolveBeeroomTaskMoment(right) - resolveBeeroomTaskMoment(left);
+  if (timeDiff !== 0) return timeDiff;
+  const sessionDiff = Number(Boolean(resolveTaskSessionIdentity(right))) - Number(Boolean(resolveTaskSessionIdentity(left)));
+  if (sessionDiff !== 0) return sessionDiff;
+  return normalizeText(left?.task_id).localeCompare(normalizeText(right?.task_id), 'zh-Hans-CN');
+};
 
 const escapeHtml = (value: unknown): string =>
   String(value || '')

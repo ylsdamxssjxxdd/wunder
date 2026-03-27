@@ -238,9 +238,11 @@
                 {{ historyLoading ? t('chat.history.loadingMore') : t('chat.history.loadMore') }}
               </button>
             </div>
-            <div
+            <template
               v-for="(message, index) in chatStore.messages"
               :key="resolveMessageKey(message, index)"
+            >
+            <div
               v-if="!isHiddenInternalMessage(message)"
               :class="[
                 'message',
@@ -475,6 +477,7 @@
                 </template>
               </div>
             </div>
+            </template>
           </div>
 
           <InquiryPanel

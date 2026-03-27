@@ -5,6 +5,9 @@ import type { BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 
 import {
   buildTaskWorkflowRuntime,
+  compareBeeroomMissionTasksByDisplayPriority,
+  isBeeroomTaskStatusActive,
+  resolveBeeroomTaskMoment,
   type BeeroomTaskWorkflowPreview,
   type BeeroomWorkflowItem
 } from './beeroomTaskWorkflow';
@@ -17,16 +20,8 @@ type TaskWorkflowFetchMeta = {
 };
 
 const WORKFLOW_POLL_INTERVAL_MS = 1200;
-const ACTIVE_TASK_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'merging']);
 
 const normalizeText = (value: unknown): string => String(value || '').trim();
-
-const normalizeStatus = (value: unknown): string => normalizeText(value).toLowerCase();
-
-const isActiveTaskStatus = (value: unknown): boolean => ACTIVE_TASK_STATUSES.has(normalizeStatus(value));
-
-const resolveTaskMoment = (task: BeeroomMissionTask): number =>
-  Number(task.updated_time || task.finished_time || task.started_time || 0);
 
 const resolveTaskSessionId = (task: BeeroomMissionTask): string =>
   normalizeText(task.spawned_session_id || task.target_session_id);
@@ -60,13 +55,13 @@ const pickLatestMissionTasks = (mission: BeeroomMission | null | undefined): Bee
     const agentId = normalizeText(task.agent_id);
     if (!agentId) return;
     const current = latestByAgent.get(agentId);
-    if (!current || resolveTaskMoment(task) >= resolveTaskMoment(current)) {
+    if (!current || compareBeeroomMissionTasksByDisplayPriority(task, current) < 0) {
       latestByAgent.set(agentId, task);
     }
   });
 
   return Array.from(latestByAgent.values()).sort((left, right) => {
-    const timeDiff = resolveTaskMoment(right) - resolveTaskMoment(left);
+    const timeDiff = resolveBeeroomTaskMoment(right) - resolveBeeroomTaskMoment(left);
     if (timeDiff !== 0) return timeDiff;
     return normalizeText(left.agent_id).localeCompare(normalizeText(right.agent_id), 'zh-Hans-CN');
   });
@@ -175,7 +170,7 @@ export const useBeeroomMissionWorkflowPreview = (options: {
     const sessionId = resolveTaskSessionId(task);
     const requestKey = buildTaskRequestKey(task);
     const previous = fetchMeta.get(taskId);
-    const isActive = isActiveTaskStatus(task.status);
+    const isActive = isBeeroomTaskStatusActive(task.status);
 
     if (
       !force &&
@@ -230,7 +225,7 @@ export const useBeeroomMissionWorkflowPreview = (options: {
   const scheduleSync = () => {
     clearSyncTimer();
     if (!mounted || disposed || typeof window === 'undefined') return;
-    if (!latestMissionTasks.value.some((task) => isActiveTaskStatus(task.status))) return;
+    if (!latestMissionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status))) return;
     syncTimer = window.setTimeout(() => {
       syncTimer = null;
       if (disposed || !mounted) return;

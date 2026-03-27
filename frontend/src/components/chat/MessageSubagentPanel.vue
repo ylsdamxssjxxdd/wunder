@@ -70,6 +70,19 @@
 import { computed, ref } from 'vue';
 import { useChatStore } from '@/stores/chat';
 
+type SubagentPanelItem = Record<string, unknown> & {
+  key: string;
+  status?: string;
+  title?: string;
+  label?: string;
+  summary?: string;
+  run_id?: string;
+  session_id?: string;
+  updated_at?: string;
+  canTerminate?: boolean;
+  detail?: unknown;
+};
+
 const props = defineProps<{
   sessionId?: string | null;
   items?: Array<Record<string, unknown>>;
@@ -77,11 +90,15 @@ const props = defineProps<{
 
 const chatStore = useChatStore();
 const detailVisible = ref(false);
-const activeItem = ref<Record<string, unknown> | null>(null);
-const terminatingKeys = ref(new Set<string>());
+const activeItem = ref<SubagentPanelItem | null>(null);
+const terminatingKeys = ref<Set<string>>(new Set());
 
-const items = computed(() =>
-  Array.isArray(props.items) ? props.items.filter((item) => item && typeof item === 'object') : []
+const items = computed<SubagentPanelItem[]>(() =>
+  Array.isArray(props.items)
+    ? props.items
+        .filter((item): item is SubagentPanelItem => Boolean(item && typeof item === 'object'))
+        .map((item) => item as SubagentPanelItem)
+    : []
 );
 
 const visible = computed(() => items.value.length > 0);
@@ -129,12 +146,12 @@ const formatPayload = (value: unknown) => {
   }
 };
 
-const openDetail = (item: Record<string, unknown>) => {
+const openDetail = (item: SubagentPanelItem) => {
   activeItem.value = item;
   detailVisible.value = true;
 };
 
-const terminate = async (item: Record<string, unknown>) => {
+const terminate = async (item: SubagentPanelItem) => {
   const key = String(item.key || item.session_id || '').trim();
   if (!key || !props.sessionId) return;
   terminatingKeys.value.add(key);

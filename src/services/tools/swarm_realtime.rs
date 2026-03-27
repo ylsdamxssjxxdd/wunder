@@ -546,6 +546,7 @@ mod tests {
                 request_config_overrides: None,
                 allow_roots: None,
                 read_roots: None,
+                command_sessions: None,
                 event_emitter,
                 http: &self.http,
             }

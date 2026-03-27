@@ -19,6 +19,7 @@ use crate::services::bridge::BridgeRuntime;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::swarm::{SwarmService, TeamRunRunner};
+use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::services::user_presence::UserPresenceService;
 use crate::services::user_world::UserWorldService;
 use crate::skills::{load_skills, SkillRegistry};
@@ -110,6 +111,7 @@ pub struct AppState {
     pub gateway: Arc<GatewayHub>,
     pub cron: Arc<CronScheduler>,
     pub approval_registry: Arc<PendingApprovalRegistry>,
+    pub command_sessions: Arc<CommandSessionBroker>,
 }
 
 impl AppState {
@@ -157,6 +159,7 @@ impl AppState {
         let beeroom_realtime = Arc::new(BeeroomRealtimeService::new(storage.clone()));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
+        let command_sessions = Arc::new(CommandSessionBroker::new());
 
         if options.seed_org_units {
             org_units::seed_org_units_if_empty(user_store.as_ref())
@@ -186,6 +189,7 @@ impl AppState {
             lsp_manager.clone(),
             storage.clone(),
             approval_registry.clone(),
+            command_sessions.clone(),
             gateway.clone(),
             user_world.clone(),
             beeroom_realtime.clone(),
@@ -283,6 +287,7 @@ impl AppState {
             gateway,
             cron,
             approval_registry,
+            command_sessions,
         })
     }
 
