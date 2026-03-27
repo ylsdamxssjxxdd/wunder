@@ -11,6 +11,7 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
+use crate::services::tools::sessions_yield_tool;
 use crate::services::subagents;
 use crate::services::chat_attachments::persist_user_chat_attachments;
 
@@ -1100,6 +1101,22 @@ impl Orchestrator {
                             stop_reason = Some("question_panel".to_string());
                             should_finish = true;
                         }
+                        let turn_yield_message = if result.ok {
+                            sessions_yield_tool::extract_turn_yield_message(
+                                result.meta.as_ref(),
+                                &result.data,
+                            )
+                        } else {
+                            None
+                        };
+                        if let Some(message) = turn_yield_message.as_ref() {
+                            answer = message.clone();
+                            stop_reason = Some("yield".to_string());
+                            stop_meta = Some(
+                                sessions_yield_tool::build_turn_yield_stop_meta(message.as_str()),
+                            );
+                            should_finish = true;
+                        }
 
                         let observation = self.build_tool_observation(&name, &result);
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
@@ -1271,6 +1288,11 @@ impl Orchestrator {
                         } else {
                             None
                         };
+                        let sessions_yield_meta = turn_yield_message
+                            .as_ref()
+                            .map(|message| {
+                                sessions_yield_tool::build_turn_yield_stop_meta(message.as_str())
+                            });
                         if question_panel_finished {
                             let content = if answer.trim().is_empty() {
                                 None
@@ -1284,6 +1306,24 @@ impl Orchestrator {
                                 content,
                                 None,
                                 question_panel_meta.as_ref(),
+                                None,
+                                None,
+                                None,
+                            );
+                        }
+                        if let Some(meta) = sessions_yield_meta.as_ref() {
+                            let content = if answer.trim().is_empty() {
+                                None
+                            } else {
+                                Some(&json!(answer.clone()))
+                            };
+                            self.append_chat(
+                                &user_id,
+                                &session_id,
+                                "assistant",
+                                content,
+                                None,
+                                Some(meta),
                                 None,
                                 None,
                                 None,

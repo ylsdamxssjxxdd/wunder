@@ -2,6 +2,7 @@ use super::catalog::resolve_tool_name;
 use super::channel_tool;
 use super::context::ToolContext;
 use super::search_content_tool::search_content;
+use super::sessions_yield_tool;
 use super::{
     a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, execute_a2a_service,
     execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
@@ -104,6 +105,9 @@ pub async fn execute_builtin_tool(
             "a2ui": args.get("a2ui"),
             "content": args.get("content")
         })),
+        sessions_yield_tool::TOOL_SESSIONS_YIELD => {
+            sessions_yield_tool::execute_sessions_yield_tool(context, args).await
+        }
         "计划面板" => execute_plan_tool(context, args).await,
         "问询面板" => execute_question_panel_tool(context, args).await,
         "定时任务" => {

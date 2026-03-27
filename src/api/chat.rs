@@ -69,6 +69,14 @@ pub fn router() -> Router<Arc<AppState>> {
             get(get_session_events),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/command-sessions",
+            get(list_session_command_sessions),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/command-sessions/{command_session_id}",
+            get(get_session_command_session),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/history",
             get(get_session_history),
         )
@@ -611,6 +619,9 @@ async fn get_session_events(
         .get_record(&session_id)
         .map(|record| collect_session_event_rounds(&record))
         .unwrap_or_default();
+    let command_sessions = state
+        .command_sessions
+        .list_session_snapshots(&resolved.user.user_id, &session_id);
     let monitor_status = state.monitor.get_record(&session_id).and_then(|record| {
         record
             .get("status")
@@ -640,7 +651,72 @@ async fn get_session_events(
             "rounds": rounds,
             "running": running,
             "last_event_id": last_event_id,
-            "runtime": runtime
+            "runtime": runtime,
+            "command_sessions": command_sessions
+        }
+    })))
+}
+
+async fn list_session_command_sessions(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let items = state
+        .command_sessions
+        .list_session_snapshots(&resolved.user.user_id, &session_id);
+    Ok(Json(json!({
+        "data": {
+            "session_id": session_id,
+            "items": items
+        }
+    })))
+}
+
+async fn get_session_command_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath((session_id, command_session_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    let command_session_id = command_session_id.trim().to_string();
+    if session_id.is_empty() || command_session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let snapshot = state
+        .command_sessions
+        .snapshot_for_scope(
+            &resolved.user.user_id,
+            &session_id,
+            &command_session_id,
+        )
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.content_not_found")))?;
+    Ok(Json(json!({
+        "data": {
+            "session_id": session_id,
+            "item": snapshot
         }
     })))
 }

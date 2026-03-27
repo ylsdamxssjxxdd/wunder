@@ -41,7 +41,7 @@ pub(crate) struct CommandSessionStartSpec {
     pub interactive: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct CommandSessionSnapshot {
     pub command_session_id: String,
     pub tool_call_id: Option<String>,

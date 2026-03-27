@@ -52,6 +52,7 @@ import {
   isCompactionMarkerAssistantMessage,
   mergeCompactionMarkersIntoMessages
 } from './chatCompactionMarker';
+import { useCommandSessionStore } from './commandSessions';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -105,6 +106,7 @@ type ThreadControlSession = Record<string, unknown> & {
 type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
   streamFlushMs?: number;
+  sessionId?: string | null;
   onThreadControl?: (payload: unknown) => void | Promise<void>;
   onContextUsage?: (contextTokens: number, contextTotalTokens?: number | null) => void;
 };
@@ -1838,6 +1840,36 @@ const buildWorkflowItem = (title, detail, status = 'completed', meta = {}) => ({
   ...meta
 });
 
+const hydrateSessionCommandSessions = (sessionId, snapshots) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId || !Array.isArray(snapshots)) return;
+  useCommandSessionStore().hydrateSession(targetId, snapshots);
+};
+
+const upsertCommandSessionRuntime = (sessionId, payload) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId || !payload) return null;
+  return useCommandSessionStore().upsertSnapshot(targetId, payload);
+};
+
+const appendCommandSessionRuntimeDelta = (
+  sessionId,
+  commandSessionId,
+  stream,
+  delta,
+  meta = {}
+) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId || !commandSessionId || !delta) return null;
+  return useCommandSessionStore().appendDelta(targetId, commandSessionId, stream, delta, meta);
+};
+
+const clearSessionCommandSessions = (sessionId) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return;
+  useCommandSessionStore().clearSession(targetId);
+};
+
 // 会话级模型轮次状态，保证同一会话的轮次连续递增
 const sessionWorkflowState = new Map();
 
@@ -2854,6 +2886,7 @@ const purgeUnavailableSession = (store, sessionId) => {
   sessionDetailPrefetchInFlight.delete(targetId);
   sessionHistoryState.delete(targetId);
   sessionWorkflowState.delete(targetId);
+  clearSessionCommandSessions(targetId);
   removeDemoChatSession(targetId);
   clearChatSnapshot(targetId);
 
@@ -3654,6 +3687,7 @@ const startSessionWatcher = (store, sessionId) => {
           () => notifySessionSnapshot(store, key, sessionMessagesRef),
           {
             streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+            sessionId: key,
             onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
             onContextUsage: (contextTokens, contextTotalTokens) =>
               syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
@@ -3683,6 +3717,7 @@ const startSessionWatcher = (store, sessionId) => {
       () => notifySessionSnapshot(store, key, sessionMessagesRef),
       {
         streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+        sessionId: key,
         onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
         onContextUsage: (contextTokens, contextTotalTokens) =>
           syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
@@ -3923,6 +3958,7 @@ const startSessionWatcher = (store, sessionId) => {
           }
         }
         const payload = response?.data?.data;
+        hydrateSessionCommandSessions(key, payload?.command_sessions ?? payload?.commandSessions);
         applySessionRuntimeSnapshot(runtime, payload?.runtime);
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
@@ -4429,6 +4465,7 @@ const resetChatRuntimeState = () => {
     abortCompactRequest(sessionId);
     abortWatchStream(sessionId);
   });
+  useCommandSessionStore().reset();
   clearSessionWatcher();
   sessionRuntime.clear();
   sessionMessages.clear();
@@ -4487,6 +4524,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const roundState = normalizeSessionWorkflowState(workflowState);
   const streamFlushMs = resolveStreamFlushMs(null, options.streamFlushMs);
   const perfEnabled = chatPerf.enabled();
+  const commandSessionStore = useCommandSessionStore();
+  const processorSessionId = resolveSessionKey(options.sessionId);
   const toolItemMap = new Map();
   const toolCallItemMap = new Map();
   const approvalItemMap = new Map();
@@ -4654,6 +4693,24 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
     return null;
   };
+
+  const syncCommandSessionSnapshot = (source) => {
+    if (!source || typeof source !== 'object') return null;
+    const record = source;
+    return commandSessionStore.upsertSnapshot(
+      processorSessionId || record.session_id || record.sessionId || '',
+      record
+    );
+  };
+
+  const syncCommandSessionDelta = (commandSessionId, stream, delta, meta = {}) =>
+    commandSessionStore.appendDelta(
+      processorSessionId || '',
+      commandSessionId,
+      stream,
+      delta,
+      meta
+    );
 
   const buildCommandSessionTitle = (command, commandIndex = null) => {
     const normalized = String(command || '')
@@ -6014,6 +6071,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             : payload && typeof payload === 'object'
               ? payload
               : {};
+        syncCommandSessionSnapshot(detailSource);
         ensureCommandSessionCallItem(commandSessionId, detailSource, detailSource?.command ?? '');
         break;
       }
@@ -6030,6 +6088,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             : payload && typeof payload === 'object'
               ? payload
               : {};
+        syncCommandSessionSnapshot(detailSource);
         const command = pickString(detailSource?.command);
         ensureCommandSessionCallItem(commandSessionId, detailSource, command);
         const outputKey = resolveToolOutputKey(
@@ -6112,13 +6171,37 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const resolvedToolName = commandSessionId ? executeCommandToolName : toolName;
         const toolCategory = resolveToolCategory(resolvedToolName, data ?? payload);
         if (commandSessionId) {
+          syncCommandSessionDelta(commandSessionId, streamName, delta, {
+            command,
+            command_index: data?.command_index ?? payload?.command_index,
+            commandIndex: data?.commandIndex ?? payload?.commandIndex
+          });
           ensureCommandSessionCallItem(commandSessionId, data ?? payload ?? {}, command ?? '');
+          const outputKey = resolveToolOutputKey(
+            resolvedToolName,
+            commandSessionId,
+            commandSessionId
+          );
+          const itemId = ensureToolOutputItem(
+            resolvedToolName,
+            outputKey,
+            toolCategory,
+            commandSessionId,
+            buildCommandSessionTitle(command, data?.command_index ?? payload?.command_index),
+            { commandSessionId }
+          );
+          if (itemId) {
+            updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+              status: 'loading'
+            });
+          }
+          break;
         }
         const callId = peekToolItemId(toolName, toolCallId);
         const outputKey = resolveToolOutputKey(
           resolvedToolName,
-          commandSessionId || toolCallId || callId,
-          commandSessionId
+          toolCallId || callId,
+          null
         );
         const buffer = getToolOutputBuffer(outputKey);
         if (command && !buffer.command) {
@@ -6133,11 +6216,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           resolvedToolName,
           outputKey,
           toolCategory,
-          commandSessionId || toolCallId,
-          commandSessionId
-            ? buildCommandSessionTitle(command, data?.command_index ?? payload?.command_index)
-            : null,
-          commandSessionId ? { commandSessionId } : null
+          toolCallId,
+          null,
+          null
         );
         if (itemId) {
           scheduleToolOutputFlush(outputKey, itemId);
@@ -6181,6 +6262,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               || Boolean(pickString(source?.error))
               || exitCode === null
               || exitCode !== 0;
+            syncCommandSessionSnapshot({
+              ...source,
+              command_session_id: commandSessionId,
+              status: 'exited',
+              exit_code: exitCode
+            });
             ensureCommandSessionCallItem(
               commandSessionId,
               { ...source, status: 'exited', exit_code: exitCode },
@@ -6825,7 +6912,11 @@ const hydrateMessage = (message, workflowState) => {
       hydrated,
       workflowState,
       null,
-      { finalizeWithNow: false, streamFlushMs: STREAM_FLUSH_BASE_MS }
+      {
+        finalizeWithNow: false,
+        streamFlushMs: STREAM_FLUSH_BASE_MS,
+        sessionId: message?.session_id ?? message?.sessionId ?? null
+      }
     );
     message.workflow_events.forEach((event) => {
       processor.handleEvent(event?.event || '', event?.raw || '');
@@ -7126,6 +7217,10 @@ export const useChatStore = defineStore('chat', {
         const sessionDetail = payload?.data || null;
         const eventsPayload = eventsRes?.data?.data || null;
         const subagentItems = subagentsRes?.data?.data?.items || [];
+        hydrateSessionCommandSessions(
+          targetId,
+          eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
+        );
         applySessionRuntimeSnapshot(ensureRuntime(targetId), eventsPayload?.runtime);
         updateRuntimeLastEventId(
           ensureRuntime(targetId),
@@ -7484,6 +7579,10 @@ export const useChatStore = defineStore('chat', {
       const sessionDetail = data?.data || null;
       const eventsPayload = eventsRes?.data?.data || null;
       const subagentItems = subagentsRes?.data?.data?.items || [];
+      hydrateSessionCommandSessions(
+        targetSessionId,
+        eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
+      );
       applySessionRuntimeSnapshot(ensureRuntime(targetSessionId), eventsPayload?.runtime);
       const remoteRunning = eventsPayload?.running === true;
       const remoteLastEventId = normalizeStreamEventId(
@@ -7789,6 +7888,7 @@ export const useChatStore = defineStore('chat', {
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       sessionHistoryState.delete(resolveSessionKey(targetId));
+      clearSessionCommandSessions(targetId);
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       if (targetSession?.is_main) {
@@ -7807,6 +7907,7 @@ export const useChatStore = defineStore('chat', {
         }
       }
       sessionWorkflowState.delete(String(targetId));
+      clearSessionCommandSessions(targetId);
       removeDemoChatSession(targetId);
       clearChatSnapshot(targetId);
       if (resolvePersistedSessionId(targetAgentId) === targetId) {
@@ -8077,6 +8178,7 @@ export const useChatStore = defineStore('chat', {
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+          sessionId,
           onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
           onContextUsage: (contextTokens, contextTotalTokens) =>
             syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)
@@ -8410,6 +8512,7 @@ export const useChatStore = defineStore('chat', {
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+          sessionId,
           onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
           onContextUsage: (contextTokens, contextTotalTokens) =>
             syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)

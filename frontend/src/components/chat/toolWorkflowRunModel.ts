@@ -7,6 +7,7 @@ export type WorkflowItem = {
   eventType?: string;
   toolName?: string;
   toolCallId?: string | number;
+  commandSessionId?: string | number;
 };
 
 export type RawToolRun = {

@@ -234,9 +234,49 @@ impl CommandSessionBroker {
     }
 
     pub(crate) fn snapshot(&self, command_session_id: &str) -> Option<CommandSessionSnapshot> {
+        self.prune_expired();
         let entry = self.sessions.get(command_session_id)?;
         let snapshot = entry.value().lock().snapshot();
         Some(snapshot)
+    }
+
+    pub(crate) fn snapshot_for_scope(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        command_session_id: &str,
+    ) -> Option<CommandSessionSnapshot> {
+        let snapshot = self.snapshot(command_session_id)?;
+        if snapshot.user_id != user_id || snapshot.session_id != session_id {
+            return None;
+        }
+        Some(snapshot)
+    }
+
+    pub(crate) fn list_session_snapshots(
+        &self,
+        user_id: &str,
+        session_id: &str,
+    ) -> Vec<CommandSessionSnapshot> {
+        self.prune_expired();
+        let mut snapshots = self
+            .sessions
+            .iter()
+            .filter_map(|entry| {
+                let snapshot = entry.value().lock().snapshot();
+                if snapshot.user_id != user_id || snapshot.session_id != session_id {
+                    return None;
+                }
+                Some(snapshot)
+            })
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|left, right| {
+            left.command_index
+                .cmp(&right.command_index)
+                .then(left.started_at.cmp(&right.started_at))
+                .then(left.command_session_id.cmp(&right.command_session_id))
+        });
+        snapshots
     }
 
     fn prune_expired(&self) {
@@ -314,5 +354,35 @@ mod tests {
         assert_eq!(snapshot.exit_code, Some(0));
         assert!(snapshot.stdout_tail.contains("alpha"));
         assert!(snapshot.stderr_tail.contains("beta"));
+    }
+
+    #[test]
+    fn broker_lists_snapshots_only_for_matching_scope() {
+        let broker = CommandSessionBroker::new();
+        broker.start_session(build_start_spec());
+        broker.start_session(CommandSessionStartSpec {
+            command_session_id: Some("cmd_other".to_string()),
+            tool_call_id: Some("tool_2".to_string()),
+            user_id: "user_b".to_string(),
+            session_id: "sess_2".to_string(),
+            workspace_id: "ws_2".to_string(),
+            command_index: 1,
+            command: "pwd".to_string(),
+            cwd: "/srv".to_string(),
+            shell: Some("bash".to_string()),
+            launch_mode: CommandSessionLaunchMode::Shell,
+            tty: false,
+            interactive: false,
+        });
+
+        let scoped = broker.list_session_snapshots("user_a", "sess_1");
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].command_session_id, "cmd_test");
+        assert!(broker
+            .snapshot_for_scope("user_a", "sess_1", "cmd_test")
+            .is_some());
+        assert!(broker
+            .snapshot_for_scope("user_a", "sess_1", "cmd_other")
+            .is_none());
     }
 }

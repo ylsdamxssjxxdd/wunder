@@ -20,6 +20,7 @@ mod read_file_guard;
 mod read_image_tool;
 mod read_indentation;
 mod search_content_tool;
+pub(crate) mod sessions_yield_tool;
 mod self_status_tool;
 mod session_run_stream;
 mod skill_call;

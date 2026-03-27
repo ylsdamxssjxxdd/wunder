@@ -1,6 +1,6 @@
 use super::{
-    browser_tool, channel_tool, desktop_control, read_image_tool, self_status_tool, sleep_tool,
-    thread_control_tool, web_fetch_tool,
+    browser_tool, channel_tool, desktop_control, read_image_tool, self_status_tool,
+    sessions_yield_tool, sleep_tool, thread_control_tool, web_fetch_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -91,6 +91,19 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "multiple": {"type": "boolean", "description": t("tool.spec.question_panel.args.multiple")}
                 },
                 "required": ["routes"]
+            }),
+        },
+        ToolSpec {
+            name: sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
+            description: t("tool.spec.sessions_yield.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": t("tool.spec.sessions_yield.args.message")
+                    }
+                }
             }),
         },
         ToolSpec {
@@ -914,6 +927,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         self_status_tool::TOOL_SELF_STATUS_ALIAS.to_string(),
         self_status_tool::TOOL_SELF_STATUS.to_string(),
     );
+    map.insert(
+        sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS.to_string(),
+        sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
+    );
+    map.insert(
+        sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS_ALT.to_string(),
+        sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
+    );
     map.insert("final_response".to_string(), "最终回复".to_string());
     map.insert("update_plan".to_string(), "计划面板".to_string());
     map.insert("question_panel".to_string(), "问询面板".to_string());
@@ -1138,6 +1159,9 @@ pub fn resolve_tool_name(name: &str) -> String {
 
 fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
     match canonical {
+        sessions_yield_tool::TOOL_SESSIONS_YIELD => {
+            Some(sessions_yield_tool::TOOL_SESSIONS_YIELD_ALIAS)
+        }
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
         thread_control_tool::TOOL_THREAD_CONTROL => {

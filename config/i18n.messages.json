@@ -795,6 +795,10 @@
     "en-US": "Please choose a route from the inquiry panel, or send a message to continue.",
     "zh-CN": "请在问询面板选择路线，或直接发送消息继续。"
   },
+  "response.sessions_yield_waiting": {
+    "en-US": "Background sub-agents are continuing. I will resume automatically when new results arrive.",
+    "zh-CN": "后台子智能体正在继续执行；有新的结果后我会自动恢复。"
+  },
   "sandbox.error.image_missing": {
     "en-US": "Sandbox image is not configured; cannot execute tool.",
     "zh-CN": "沙盒镜像未配置，无法执行工具。"
@@ -2286,6 +2290,14 @@
   "tool.spec.sessions_spawn.args.cleanup": {
     "en-US": "Optional. Cleanup policy after completion (keep/delete).",
     "zh-CN": "可选。完成后的清理策略（keep/delete）。"
+  },
+  "tool.spec.sessions_yield.description": {
+    "en-US": "End the current turn intentionally after spawning background work, and continue when sub-agent results wake the parent session.",
+    "zh-CN": "在派发后台子智能体后主动结束当前轮次，等待子智能体结果回流并自动唤醒父会话继续。"
+  },
+  "tool.spec.sessions_yield.args.message": {
+    "en-US": "Optional. Short user-facing message shown before the turn yields.",
+    "zh-CN": "可选。本轮让出前向用户显示的一句简短提示。"
   },
   "tool.spec.thread_control.description": {
     "en-US": "Control conversation threads for the current user: create, switch, inspect, archive, restore, or set the main thread.",

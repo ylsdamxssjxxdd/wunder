@@ -50,6 +50,10 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicIn
 
 import { useI18n } from '@/i18n';
 import {
+  useCommandSessionStore,
+  type CommandSessionRuntimeEntry
+} from '@/stores/commandSessions';
+import {
   buildCommandCardView,
   buildPatchCallView,
   buildPatchResultView
@@ -183,6 +187,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const commandSessionStore = useCommandSessionStore();
 const expandedKeys = ref<Set<string>>(new Set());
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
 const streamFollowState = new Map<string, boolean>();
