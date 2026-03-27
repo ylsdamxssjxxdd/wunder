@@ -8,7 +8,7 @@
 
 ### 1.1 wunder-cli 已具备（现状）
 
-- **运行形态**：单二进制 `wunder-cli`；运行态落在启动目录 `WUNDER_TEMP/`（SQLite + override 配置 + session/extra_prompt）。代码入口：`wunder-cli/main.rs`、`wunder-cli/runtime.rs`。
+- **运行形态**：单二进制 `wunder-cli`；运行态落在启动目录 `WUNDER_TEMP/`（SQLite + `config/wunder.yaml` + session/extra_prompt）。代码入口：`wunder-cli/main.rs`、`wunder-cli/runtime.rs`。
 - **交互**：TTY 默认进入 TUI（alternate screen），包含状态栏、会话区、输入区、快捷键弹窗、resume 会话选择弹窗。代码入口：`wunder-cli/tui/*`。
 - **命令面**：`ask/chat/resume/tool/exec/mcp/skills/config/doctor`；交互态 slash：`/help /status /model /tool-call-mode(/mode) /session /system /resume /new /config /exit`。
 - **渲染与事件**：支持流式事件渲染（text/JSONL），并对 tool_call/tool_result 做可见化输出。代码入口：`wunder-cli/render.rs`。

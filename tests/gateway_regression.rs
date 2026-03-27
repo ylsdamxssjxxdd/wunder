@@ -47,8 +47,6 @@ impl GatewayHarness {
             })?;
             let db_path = temp_dir.join("gateway-regression.db");
             let config_path = temp_dir.join("wunder.test.yaml");
-            let override_path = temp_dir.join("override.not_used.yaml");
-
             let config_yaml = build_test_config(port, &workspace_root, &db_path);
             fs::write(&config_path, config_yaml)
                 .with_context(|| format!("write config failed: {}", config_path.display()))?;
@@ -63,7 +61,6 @@ impl GatewayHarness {
             let child = Command::new(&binary)
                 .current_dir(env!("CARGO_MANIFEST_DIR"))
                 .env("WUNDER_CONFIG_PATH", &config_path)
-                .env("WUNDER_CONFIG_OVERRIDE_PATH", &override_path)
                 .env("WUNDER_SERVER_MODE", "api")
                 .env_remove("WUNDER_PORT")
                 .env_remove("WUNDER_HOST")

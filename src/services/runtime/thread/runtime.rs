@@ -3,6 +3,9 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
+use crate::services::directory::{
+    RouteLeaseGuard, RouteLeaseService, RouteTargetKind, SessionSubmitLeaseGuard,
+};
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
@@ -12,8 +15,7 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
@@ -38,36 +40,10 @@ pub struct QueueInfo {
     pub session_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ThreadSubmitOutcome {
-    Run(Box<WunderRequest>, Option<ThreadLease>),
+    Run(Box<WunderRequest>, Option<SessionSubmitLeaseGuard>),
     Queued(QueueInfo),
-}
-
-#[derive(Debug, Clone)]
-pub struct ThreadLease {
-    session_id: String,
-    pending_sessions: Arc<StdMutex<HashSet<String>>>,
-}
-
-impl ThreadLease {
-    fn new(session_id: String, pending_sessions: Arc<StdMutex<HashSet<String>>>) -> Self {
-        Self {
-            session_id,
-            pending_sessions,
-        }
-    }
-}
-
-impl Drop for ThreadLease {
-    fn drop(&mut self) {
-        if self.session_id.trim().is_empty() {
-            return;
-        }
-        if let Ok(mut guard) = self.pending_sessions.lock() {
-            guard.remove(self.session_id.as_str());
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -76,11 +52,11 @@ pub struct ThreadRuntime {
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
+    route_leases: Arc<RouteLeaseService>,
     stream_events: StreamEventService,
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
-    running_threads: Arc<Mutex<HashSet<String>>>,
-    pending_sessions: Arc<StdMutex<HashSet<String>>>,
+    runtime_owner_id: String,
 }
 
 impl ThreadRuntime {
@@ -89,6 +65,7 @@ impl ThreadRuntime {
         user_store: Arc<UserStore>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
+        route_leases: Arc<RouteLeaseService>,
     ) -> Arc<Self> {
         let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
@@ -97,11 +74,11 @@ impl ThreadRuntime {
             user_store,
             monitor,
             orchestrator,
+            route_leases,
             stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
-            running_threads: Arc::new(Mutex::new(HashSet::new())),
-            pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
+            runtime_owner_id: format!("thread_runtime_{}", Uuid::new_v4().simple()),
         })
     }
 
@@ -483,20 +460,13 @@ impl ThreadRuntime {
             .await
     }
 
-    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<ThreadLease> {
+    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionSubmitLeaseGuard> {
         let cleaned = session_id.trim();
         if cleaned.is_empty() {
             return None;
         }
-        let mut guard = self.pending_sessions.lock().ok()?;
-        if guard.contains(cleaned) {
-            return None;
-        }
-        guard.insert(cleaned.to_string());
-        Some(ThreadLease::new(
-            cleaned.to_string(),
-            self.pending_sessions.clone(),
-        ))
+        self.route_leases
+            .try_acquire_submit_lease(cleaned, &self.runtime_owner_id)
     }
 
     async fn enqueue_task(
@@ -712,34 +682,35 @@ impl ThreadRuntime {
                     continue;
                 }
             }
-            if !self.should_attempt_task(&task).await {
+            let Some(thread_lease) = self.try_start_thread(&task).await else {
                 continue;
-            }
+            };
             let task_clone = task.clone();
             let runtime = self.clone();
             tokio::spawn(async move {
-                runtime.execute_task(task_clone).await;
+                runtime.execute_task(task_clone, thread_lease).await;
             });
         }
         Ok(())
     }
 
-    async fn should_attempt_task(&self, task: &AgentTaskRecord) -> bool {
+    async fn try_start_thread(&self, task: &AgentTaskRecord) -> Option<RouteLeaseGuard> {
         if task.status != TASK_STATUS_PENDING && task.status != TASK_STATUS_RETRY {
-            return false;
+            return None;
         }
         if !self.is_session_idle(&task.user_id, &task.session_id).await {
-            return false;
+            return None;
         }
-        let mut running = self.running_threads.lock().await;
-        if running.contains(&task.thread_id) {
-            return false;
-        }
-        running.insert(task.thread_id.clone());
-        true
+        self.route_leases.try_acquire_route_lease(
+            RouteTargetKind::Thread,
+            &task.thread_id,
+            &self.runtime_owner_id,
+            Some(&task.session_id),
+            Some(&task.user_id),
+        )
     }
 
-    async fn execute_task(&self, task: AgentTaskRecord) {
+    async fn execute_task(&self, task: AgentTaskRecord, _thread_lease: RouteLeaseGuard) {
         let started_at = now_ts();
         let _ = self
             .user_store
@@ -784,7 +755,6 @@ impl ThreadRuntime {
                         TASK_STATUS_FAILED,
                     )
                     .await;
-                self.finish_thread(&task.thread_id).await;
                 return;
             }
         };
@@ -856,7 +826,6 @@ impl ThreadRuntime {
                 }
             }
         }
-        self.finish_thread(&task.thread_id).await;
         let _ = self.queue_tx.try_send(());
     }
 
@@ -918,11 +887,6 @@ impl ThreadRuntime {
         )
         .await;
         Ok(())
-    }
-
-    async fn finish_thread(&self, thread_id: &str) {
-        let mut running = self.running_threads.lock().await;
-        running.remove(thread_id);
     }
 }
 

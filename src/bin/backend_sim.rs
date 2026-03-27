@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     let args = SimArgs::parse_from_env(env::args().skip(1).collect())?;
     let run_id = Uuid::new_v4().simple().to_string();
     let runtime_dir = PathBuf::from("temp_dir/backend_sim/runtime").join(&run_id);
-    let config_store = ConfigStore::new(ConfigStore::override_path_default());
+    let config_store = ConfigStore::new(ConfigStore::config_path_default());
     let mut config = config_store.get().await;
     config.storage.backend = "sqlite".to_string();
     config.storage.db_path = runtime_dir

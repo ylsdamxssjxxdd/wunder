@@ -3,6 +3,7 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::services::directory::{RouteLeaseGuard, RouteLeaseService, RouteTargetKind};
 use crate::services::projection::beeroom::BeeroomProjectionService;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord};
@@ -55,6 +56,7 @@ const TEAM_TASK_STATUS_CANCELLED: &str = "cancelled";
 struct ActiveRunControl {
     cancel: Arc<AtomicBool>,
     sessions: Arc<Mutex<HashSet<String>>>,
+    _route_lease: RouteLeaseGuard,
     handle: JoinHandle<()>,
 }
 
@@ -65,11 +67,13 @@ pub struct MissionRuntime {
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
+    route_leases: Arc<RouteLeaseService>,
     beeroom_projection: Arc<BeeroomProjectionService>,
     stream_events: Arc<StreamEventService>,
     queue_tx: mpsc::Sender<String>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRunControl>>>,
+    runtime_owner_id: String,
 }
 
 impl MissionRuntime {
@@ -79,6 +83,7 @@ impl MissionRuntime {
         workspace: Arc<WorkspaceManager>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
+        route_leases: Arc<RouteLeaseService>,
         beeroom_projection: Arc<BeeroomProjectionService>,
     ) -> Arc<Self> {
         let (queue_tx, queue_rx) = mpsc::channel(RUNNER_CHANNEL_CAPACITY);
@@ -89,11 +94,13 @@ impl MissionRuntime {
             workspace,
             monitor,
             orchestrator,
+            route_leases,
             beeroom_projection,
             stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
+            runtime_owner_id: format!("mission_runtime_{}", Uuid::new_v4().simple()),
         })
     }
 
@@ -228,7 +235,7 @@ impl MissionRuntime {
                 if !should_resume {
                     available_slots = available_slots.saturating_sub(1);
                 }
-                to_spawn.push(run.team_run_id);
+                to_spawn.push((run.team_run_id, run.user_id));
             }
         }
 
@@ -237,10 +244,19 @@ impl MissionRuntime {
         }
 
         let mut active = self.active_runs.lock().await;
-        for team_run_id in to_spawn {
+        for (team_run_id, user_id) in to_spawn {
             if active.contains_key(&team_run_id) {
                 continue;
             }
+            let Some(route_lease) = self.route_leases.try_acquire_route_lease(
+                RouteTargetKind::Mission,
+                &team_run_id,
+                &self.runtime_owner_id,
+                None,
+                Some(&user_id),
+            ) else {
+                continue;
+            };
             let cancel = Arc::new(AtomicBool::new(false));
             let sessions = Arc::new(Mutex::new(HashSet::new()));
             let runner = self.clone();
@@ -260,6 +276,7 @@ impl MissionRuntime {
                 ActiveRunControl {
                     cancel,
                     sessions,
+                    _route_lease: route_lease,
                     handle,
                 },
             );

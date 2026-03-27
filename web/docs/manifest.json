@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-27T02:56:41.936436+00:00",
+  "generated_at": "2026-03-27T08:21:18.650015+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -6471,7 +6471,7 @@
         {
           "id": "section-7",
           "level": 3,
-          "text": "data/config/wunder.override.yaml"
+          "text": "WUNDERTEMP/config/wunder.yaml"
         },
         {
           "id": "section-8",
@@ -6952,7 +6952,7 @@
       "language": "zh-CN",
       "title": "故障排查",
       "summary": "按“入口 -> 鉴权 -> 配置 -> 依赖 -> 实时通道”顺序排查，可快速定位大部分 Wunder 故障。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-03-27",
       "read_when": [
         "Wunder 跑不起来或行为异常",
         "你已确认不是单纯使用问题"

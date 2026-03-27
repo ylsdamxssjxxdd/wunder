@@ -26,7 +26,7 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
-- `data/config/wunder.override.yaml`
+- `WUNDER_TEMP/config/wunder.yaml`（CLI/Desktop 运行时副本）
 - `config/mcp_config.json`
 
 ## 它们分别负责什么
@@ -41,9 +41,9 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 - 示例配置和兜底模板
 - 正式配置缺失时，系统会按当前逻辑回退到这里
 
-### `data/config/wunder.override.yaml`
+### `WUNDER_TEMP/config/wunder.yaml`
 
-- 运行时覆盖配置
+- CLI/Desktop 运行时实际使用的配置文件
 - 通常对应管理端保存后的内容
 - 不建议手工和基础配置混着改
 
@@ -70,14 +70,14 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 
 ## 配置不生效时先查这三件事
 
-1. 你改的是基础配置还是 override 配置
+1. 你改的是仓库配置还是运行时副本
 2. 当前运行实例实际读取的是哪个路径
 3. 这个配置到底是 server、desktop 还是 extra_mcp 在消费
 
 ## 常见误区
 
 - 把 `wunder-example.yaml` 当正式配置长期改。
-- 管理端写入的 override 和手工改的基础配置相互打架。
+- 不要同时修改仓库 `config/wunder.yaml` 与运行时副本 `WUNDER_TEMP/config/wunder.yaml`，先确认当前实例实际使用哪一个文件。
 - 以为所有配置都由 server 进程读取，实际上 `extra_mcp` 有自己的配置文件。
 
 ## 延伸阅读

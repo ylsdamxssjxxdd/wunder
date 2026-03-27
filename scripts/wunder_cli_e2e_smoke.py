@@ -55,8 +55,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="qwen3.5-122b", help="Configured wunder model name.")
     parser.add_argument(
         "--seed-config",
-        default="data/config/wunder.override.yaml",
-        help="Config file copied into <temp-root>/config/wunder.override.yaml before the run.",
+        default="config/wunder.yaml",
+        help="Config file copied into <temp-root>/config/wunder.yaml before the run.",
     )
     parser.add_argument(
         "--temp-root",
@@ -140,12 +140,12 @@ def run_command(
     )
 
 
-def seed_override_config(root: Path, temp_root: Path, seed_config: Path) -> Path:
+def seed_runtime_config(root: Path, temp_root: Path, seed_config: Path) -> Path:
     config_dir = temp_root / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
-    override_path = config_dir / "wunder.override.yaml"
-    shutil.copyfile(seed_config, override_path)
-    return override_path
+    config_path = config_dir / "wunder.yaml"
+    shutil.copyfile(seed_config, config_path)
+    return config_path
 
 
 def find_generated_project(task_root: Path) -> Path | None:
@@ -238,7 +238,7 @@ def main() -> int:
     if args.clean and temp_root.exists():
         shutil.rmtree(temp_root)
     temp_root.mkdir(parents=True, exist_ok=True)
-    seed_override_config(root, temp_root, seed_config)
+    seed_runtime_config(root, temp_root, seed_config)
 
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S")
     run_root = temp_root / "runs" / run_id

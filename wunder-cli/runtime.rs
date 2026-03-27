@@ -68,13 +68,11 @@ impl CliRuntime {
         let vector_root = wunder_home.join("vector_knowledge");
         ensure_runtime_dirs(&temp_root, &wunder_home, &user_tools_root, &vector_root)?;
 
-        let base_config = prepare_base_config_path(global, &repo_root, &temp_root)?;
-        let override_path = temp_root.join("config/wunder.override.yaml");
+        let config_path = prepare_runtime_config_path(global, &repo_root, &temp_root)?;
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
 
-        set_env_path("WUNDER_CONFIG_PATH", &base_config);
-        set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
+        set_env_path("WUNDER_CONFIG_PATH", &config_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
         set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
@@ -83,7 +81,7 @@ impl CliRuntime {
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
-        let config_store = ConfigStore::new(override_path.clone());
+        let config_store = ConfigStore::new(config_path.clone());
         let launch_dir_for_update = launch_dir.clone();
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
@@ -368,7 +366,7 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
     }
 }
 
-fn prepare_base_config_path(
+fn prepare_runtime_config_path(
     global: &GlobalArgs,
     repo_root: &Path,
     temp_root: &Path,
@@ -376,11 +374,25 @@ fn prepare_base_config_path(
     if let Some(path) = global.config_path.clone() {
         return Ok(path);
     }
+    let runtime_config = temp_root.join("config/wunder.yaml");
+    if runtime_config.exists() {
+        return Ok(runtime_config);
+    }
     let repo_config = repo_root.join("config/wunder.yaml");
     if repo_config.exists() {
-        return Ok(repo_config);
+        if let Some(parent) = runtime_config.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&repo_config, &runtime_config).with_context(|| {
+            format!(
+                "copy cli config failed: {} -> {}",
+                repo_config.display(),
+                runtime_config.display()
+            )
+        })?;
+        return Ok(runtime_config);
     }
-    let generated = temp_root.join("config/wunder.base.yaml");
+    let generated = runtime_config;
     ensure_generated_base_config(&generated)?;
     Ok(generated)
 }

@@ -8,6 +8,7 @@
 - [runtime.rs](C:/Users/sjxx/Desktop/wunder/src/services/runtime/mission/runtime.rs) 仍是全局扫描型 MissionRuntime，不是 mission owner 模式。
 - [x] [state.rs](C:/Users/sjxx/Desktop/wunder/src/core/state.rs) 已收敛为 `kernel / projection / control` 三层注入，旧的平铺 runtime/projection/control 字段已移除。
 - [x] `presence` 已迁移到 [src/services/presence/](C:/Users/sjxx/Desktop/wunder/src/services/presence)；控制平面不再使用单体 `user_presence.rs`。
+- [x] `realtime_world` inspection API 已落地 session/mission 观测接口，可直接看 route lease、watch 态与任务摘要。
 
 ## 2. 后端改造目标
 
@@ -23,18 +24,18 @@
 - [ ] `submit_user_request` 迁入 thread runtime manager。
 - [ ] `resolve_main_session_id` / `resolve_or_create_main_session_id` 迁入 thread registry。
 - [ ] `set_main_session` 迁入 thread binding service。
-- [ ] `pending_sessions` 与 `running_threads` 收敛成 thread owner state。
+- [x] `pending_sessions` 与 `running_threads` 收敛成 thread owner state（当前通过 route lease 实现）。
 - [ ] `stream_events` 的 thread 公共事件改由 `thread/public_events.rs` 统一发射。
 
 ### 3.2 Thread Runtime 一期收口内容
 
-- [ ] 旧入口直接改接 thread runtime，不再保留并行实现。
+- [x] 旧入口直接改接 thread runtime，不再保留并行实现。
 - [ ] 保留 wake/queue 接口，但语义统一归入 thread runtime 主路径。
-- [ ] 删除旧 `AgentRuntime` 名称与文件残留，避免双主语并存。
+- [x] 删除旧 `AgentRuntime` 名称与文件残留，避免双主语并存。
 
 ### 3.3 需要新增的后端文件
 
-- [ ] `src/services/runtime/thread/runtime.rs`
+- [x] `src/services/runtime/thread/runtime.rs`
 - [ ] `src/services/runtime/thread/state.rs`
 - [ ] `src/services/runtime/thread/submit.rs`
 - [ ] `src/services/runtime/thread/public_events.rs`
@@ -70,7 +71,7 @@
 
 ### 4.3 需要新增的文件
 
-- [ ] `src/services/runtime/mission/runtime.rs`
+- [x] `src/services/runtime/mission/runtime.rs`
 - [ ] `src/services/runtime/mission/assignment.rs`
 - [ ] `src/services/runtime/mission/scheduler.rs`
 - [ ] `src/services/runtime/mission/merge.rs`
@@ -119,7 +120,7 @@
 
 ### 6.1 Directory
 
-- [ ] 新增 `thread_routes`、`mission_routes`、`projection_routes` 路由 lease 逻辑。
+- [x] 新增 `thread_routes`、`mission_routes`、`projection_routes` 路由 lease 逻辑（当前以内存控制面基线落地）。
 - [ ] 新增 `AgentDirectoryService`。
 - [ ] 所有执行命令先找 owner，再执行业务。
 
@@ -151,7 +152,7 @@
 ### 7.2 API 路由
 
 - [ ] 保留 [mod.rs](C:/Users/sjxx/Desktop/wunder/src/api/mod.rs) 当前入口不变。
-- [ ] 新增 `realtime_world.rs`，统一 target-aware 协议。
+- [x] 新增 `realtime_world.rs`，统一 inspection 入口，并已支持 session/mission target 快照。
 - [ ] 旧 `chat_ws` / `beeroom_ws` / `user_world_ws` 先转发到新 runtime 层。
 
 ### 7.3 验收
@@ -164,6 +165,6 @@
 - [ ] Thread owner 单写者测试
 - [ ] Mission assign/finalize 顺序测试
 - [ ] Projection snapshot/replay 测试
-- [ ] Route lease fencing 测试
-- [ ] Presence connect/watch 生命周期测试
+- [x] Route lease fencing 测试
+- [x] Presence connect/watch 生命周期测试
 - [ ] 慢客户端 backpressure 降级测试

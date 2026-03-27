@@ -14,6 +14,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
 use crate::services::bridge::BridgeRuntime;
+use crate::services::directory::RouteLeaseService;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::presence::PresenceService;
@@ -204,6 +205,7 @@ pub struct AppProjectionServices {
 #[derive(Clone)]
 pub struct AppControlServices {
     pub presence: Arc<PresenceService>,
+    pub route_leases: Arc<RouteLeaseService>,
     pub channels: Arc<ChannelHub>,
     pub gateway: Arc<GatewayHub>,
     pub cron: Arc<CronScheduler>,
@@ -277,6 +279,7 @@ impl AppState {
             user_store.clone(),
         ));
         let presence = Arc::new(PresenceService::new());
+        let route_leases = Arc::new(RouteLeaseService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
         let beeroom_projection = Arc::new(BeeroomProjectionService::new(storage.clone()));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
@@ -326,6 +329,7 @@ impl AppState {
             workspace.clone(),
             monitor.clone(),
             orchestrator.clone(),
+            route_leases.clone(),
             beeroom_projection.clone(),
         );
         if options.resolved_start_mission_runtime() {
@@ -337,6 +341,7 @@ impl AppState {
             user_store.clone(),
             monitor.clone(),
             orchestrator.clone(),
+            route_leases.clone(),
         );
         if options.resolved_start_thread_runtime() {
             thread_runtime.clone().start();
@@ -403,6 +408,7 @@ impl AppState {
             },
             control: AppControlServices {
                 presence,
+                route_leases,
                 channels,
                 gateway,
                 cron,

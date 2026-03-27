@@ -86,7 +86,7 @@ source_docs:
 
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
-- `data/config/wunder.override.yaml`
+- `WUNDER_TEMP/config/wunder.yaml`（CLI/Desktop 运行时）
 - `config/mcp_config.json`
 
 ## 常见环境变量
@@ -98,7 +98,7 @@ source_docs:
 - `WUNDER_SANDBOX_ENDPOINT`
 - `WUNDER_MCP_HOST`
 - `WUNDER_CONFIG_PATH`
-- `WUNDER_CONFIG_OVERRIDE_PATH`
+- `WUNDER_USER_TOOLS_ROOT`
 
 ## Docker 下的浏览器运行时
 

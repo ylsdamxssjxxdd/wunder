@@ -188,7 +188,7 @@ impl TuiApp {
                 self.session_stats.context_used_tokens,
                 max_context,
             ),
-            "override_path": self.runtime.temp_root.join("config/wunder.override.yaml"),
+            "config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
         });
 
         for line in serde_json::to_string_pretty(&payload)?.lines() {

@@ -1,18 +1,20 @@
 <template>
-  <button
+  <div
     class="beeroom-node-card"
     :class="[
       `is-${node.status}`,
       { 'is-mother': node.role === 'mother', 'is-selected': node.selected, 'is-condensed': condensed }
     ]"
     :aria-label="`${node.name} ${node.roleLabel} ${node.statusLabel}`"
-    type="button"
+    :data-node-id="node.id"
+    role="button"
+    tabindex="0"
+    draggable="false"
     :style="cardStyle"
-    @pointerdown.stop="handlePointerDown"
-    @pointerup.stop="handlePointerRelease"
-    @pointercancel.stop="handlePointerRelease"
     @click.stop="emit('click')"
     @dblclick.stop="emit('dblclick')"
+    @keydown.enter.prevent="emit('click')"
+    @keydown.space.prevent="emit('click')"
     @dragstart.prevent
   >
     <div class="beeroom-node-card-body">
@@ -61,7 +63,7 @@
       </div>
       <div v-else class="beeroom-node-workflow-empty">{{ emptyLabel }}</div>
     </div>
-  </button>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -78,22 +80,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'click'): void;
   (event: 'dblclick'): void;
-  (event: 'pointerdown', value: PointerEvent): void;
 }>();
-
-function handlePointerDown(event: PointerEvent) {
-  event.preventDefault();
-  const target = event.currentTarget as HTMLElement | null;
-  target?.setPointerCapture?.(event.pointerId);
-  emit('pointerdown', event);
-}
-
-function handlePointerRelease(event: PointerEvent) {
-  const target = event.currentTarget as HTMLElement | null;
-  if (target?.hasPointerCapture?.(event.pointerId)) {
-    target.releasePointerCapture(event.pointerId);
-  }
-}
 
 const cardStyle = computed(() => ({
   '--node-accent': props.node.accentColor,
@@ -119,18 +106,16 @@ const visibleWorkflowLines = computed(() =>
   padding: 14px 14px 12px 16px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(23, 26, 35, 0.96), rgba(14, 16, 22, 0.95));
+  background: linear-gradient(180deg, rgba(18, 22, 31, 0.98), rgba(12, 15, 22, 0.98));
   color: #e5e7eb;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
   -webkit-user-drag: none;
   touch-action: none;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 18px 34px rgba(2, 6, 23, 0.3);
+  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.18);
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease,
@@ -150,36 +135,34 @@ const visibleWorkflowLines = computed(() =>
 }
 
 .beeroom-node-card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 58px),
-    radial-gradient(circle at top right, rgba(96, 165, 250, 0.08), transparent 34%);
-  pointer-events: none;
+  display: none;
 }
 
 .beeroom-node-card:hover,
 .beeroom-node-card:focus-visible {
-  border-color: rgba(96, 165, 250, 0.42);
+  border-color: rgba(96, 165, 250, 0.34);
   transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 22px 40px rgba(2, 6, 23, 0.36);
+  box-shadow: 0 14px 26px rgba(2, 6, 23, 0.22);
   outline: none;
 }
 
 .beeroom-node-card.is-selected {
-  border-color: rgba(96, 165, 250, 0.62);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 0 0 1px rgba(96, 165, 250, 0.32),
-    0 22px 42px rgba(8, 47, 73, 0.3);
+  border-color: rgba(96, 165, 250, 0.56);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.2);
 }
 
 .beeroom-node-card.is-mother {
   border-color: rgba(245, 158, 11, 0.3);
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(14, 16, 22, 0.95));
+  background: linear-gradient(180deg, rgba(26, 33, 45, 0.98), rgba(12, 15, 22, 0.98));
+}
+
+.beeroom-node-card:active {
+  cursor: grabbing;
+}
+
+.beeroom-node-card.is-dragging {
+  z-index: 8;
+  transition: none;
 }
 
 .beeroom-node-card-body {
@@ -272,7 +255,7 @@ const visibleWorkflowLines = computed(() =>
   height: 7px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.96);
-  box-shadow: 0 0 0 4px rgba(148, 163, 184, 0.16);
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.16);
 }
 
 .beeroom-node-card.is-running .beeroom-node-status,
@@ -287,7 +270,7 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-card.is-queued .beeroom-node-status-dot,
 .beeroom-node-card.is-awaiting_idle .beeroom-node-status-dot {
   background: rgba(239, 68, 68, 0.98);
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.18);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18);
 }
 
 .beeroom-node-card.is-failed .beeroom-node-status,
@@ -304,7 +287,7 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-card.is-timeout .beeroom-node-status-dot,
 .beeroom-node-card.is-cancelled .beeroom-node-status-dot {
   background: rgba(248, 113, 113, 0.98);
-  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.18);
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.18);
 }
 
 .beeroom-node-card.is-completed .beeroom-node-status,
@@ -317,7 +300,7 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-card.is-completed .beeroom-node-status-dot,
 .beeroom-node-card.is-success .beeroom-node-status-dot {
   background: rgba(59, 130, 246, 0.98);
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
 .beeroom-node-metrics {
@@ -382,7 +365,7 @@ const visibleWorkflowLines = computed(() =>
   border-radius: 999px;
   background: var(--node-accent);
   margin-top: 5px;
-  box-shadow: 0 0 0 4px rgba(15, 23, 42, 0.3);
+  box-shadow: none;
 }
 
 .beeroom-node-workflow-step-text {

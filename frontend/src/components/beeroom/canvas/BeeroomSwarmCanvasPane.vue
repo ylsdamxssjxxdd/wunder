@@ -6,21 +6,8 @@
       @wheel.prevent="handleViewportWheel"
       @pointerdown="handleViewportPointerDown"
     >
+      <div class="beeroom-canvas-grid" :style="surfaceGridStyle" aria-hidden="true"></div>
       <div class="beeroom-swarm-world" :style="worldStyle">
-        <svg
-          class="beeroom-swarm-grid-layer"
-          :viewBox="`0 0 ${worldSize.width} ${worldSize.height}`"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <defs>
-            <pattern :id="gridPatternId" width="32" height="32" patternUnits="userSpaceOnUse">
-              <path d="M 32 0 L 0 0 0 32" fill="none" stroke="rgba(148, 163, 184, 0.1)" stroke-width="1" />
-            </pattern>
-          </defs>
-          <rect :width="worldSize.width" :height="worldSize.height" :fill="`url(#${gridPatternId})`" />
-        </svg>
-
         <svg
           class="beeroom-swarm-edge-layer"
           :viewBox="`0 0 ${worldSize.width} ${worldSize.height}`"
@@ -45,7 +32,7 @@
           </g>
         </svg>
 
-        <div class="beeroom-swarm-node-layer">
+        <div class="beeroom-swarm-node-layer" @pointerdown.capture="handleNodeLayerPointerDown">
           <BeeroomSwarmNodeCard
             v-for="node in worldNodes"
             :key="node.id"
@@ -53,7 +40,6 @@
             :condensed="condensedNodeCards"
             :empty-label="workflowEmptyLabel"
             :style="{ left: `${node.left}px`, top: `${node.top}px` }"
-            @pointerdown="handleNodePointerDown(node.id, $event)"
             @click="handleNodeClick(node.id)"
             @dblclick="emit('open-agent', node.agentId)"
           />
@@ -269,13 +255,15 @@ const nodePositionOverrides = ref<Record<string, BeeroomCanvasPositionOverride>>
 const viewportState = ref<SwarmViewportState>(createDefaultSwarmViewportState());
 const pendingViewportRestore = ref<BeeroomCanvasViewportState | null>(null);
 const pendingFitView = ref(false);
+const worldOriginAnchor = ref<{ x: number; y: number } | null>(null);
 
 let resizeObserver: ResizeObserver | null = null;
 let viewportSaveTimer: number | null = null;
 let dragState: DragState | null = null;
 let panState: PanState | null = null;
+let releaseInteractionListeners: (() => void) | null = null;
+let dragPointerTarget: HTMLElement | null = null;
 let suppressSelection = false;
-const gridPatternId = `beeroom-grid-${Math.random().toString(36).slice(2, 8)}`;
 
 const scopeKey = computed(() =>
   resolveBeeroomSwarmScopeKey({
@@ -292,6 +280,19 @@ const projection = computed(() =>
     agents: props.agents,
     selectedNodeId: selectedNodeId.value,
     nodePositionOverrides: nodePositionOverrides.value,
+    workflowItemsByTask: props.workflowItemsByTask,
+    workflowPreviewByTask: props.workflowPreviewByTask,
+    t
+  })
+);
+
+const baseProjection = computed(() =>
+  buildBeeroomSwarmProjection({
+    group: props.group,
+    mission: props.mission,
+    agents: props.agents,
+    selectedNodeId: selectedNodeId.value,
+    nodePositionOverrides: {},
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     t
@@ -325,13 +326,22 @@ const canvasStatusSummary = computed(() => {
 
 const worldMetrics = computed(() => {
   const bounds = projection.value.bounds;
+  const baseBounds = baseProjection.value.bounds;
+  const stableBounds = {
+    minX: Math.min(baseBounds.minX, bounds.minX),
+    minY: Math.min(baseBounds.minY, bounds.minY),
+    maxX: Math.max(baseBounds.maxX, bounds.maxX),
+    maxY: Math.max(baseBounds.maxY, bounds.maxY)
+  };
+  const stableWidth = Math.max(0, stableBounds.maxX - stableBounds.minX);
+  const stableHeight = Math.max(0, stableBounds.maxY - stableBounds.minY);
   const width = Math.max(NODE_WIDTH + WORLD_PADDING * 2, Math.ceil(bounds.width + WORLD_PADDING * 2));
   const height = Math.max(NODE_HEIGHT + WORLD_PADDING * 2, Math.ceil(bounds.height + WORLD_PADDING * 2));
   return {
-    width,
-    height,
-    originX: Math.round(WORLD_PADDING - bounds.minX),
-    originY: Math.round(WORLD_PADDING - bounds.minY)
+    width: Math.max(width, Math.ceil(stableWidth + WORLD_PADDING * 2)),
+    height: Math.max(height, Math.ceil(stableHeight + WORLD_PADDING * 2)),
+    originX: Math.round(WORLD_PADDING - stableBounds.minX),
+    originY: Math.round(WORLD_PADDING - stableBounds.minY)
   };
 });
 
@@ -393,6 +403,36 @@ const worldStyle = computed(() => ({
   height: `${worldSize.value.height}px`,
   transform: `translate(${Math.round(viewportState.value.offsetX)}px, ${Math.round(viewportState.value.offsetY)}px) scale(${viewportState.value.scale})`
 }));
+
+const surfaceGridStyle = computed(() => {
+  const scale = clampSwarmScale(viewportState.value.scale);
+  const minorStep = Math.max(20, Math.round(32 * scale));
+  const majorStep = minorStep * 5;
+  const normalizeOffset = (value: number, size: number) => {
+    const remainder = Math.round(value) % size;
+    return remainder < 0 ? remainder + size : remainder;
+  };
+  return {
+    backgroundImage: [
+      'linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px)',
+      'linear-gradient(90deg, rgba(148, 163, 184, 0.14) 1px, transparent 1px)',
+      'linear-gradient(rgba(148, 163, 184, 0.24) 1px, transparent 1px)',
+      'linear-gradient(90deg, rgba(148, 163, 184, 0.24) 1px, transparent 1px)'
+    ].join(', '),
+    backgroundSize: [
+      `${minorStep}px ${minorStep}px`,
+      `${minorStep}px ${minorStep}px`,
+      `${majorStep}px ${majorStep}px`,
+      `${majorStep}px ${majorStep}px`
+    ].join(', '),
+    backgroundPosition: [
+      `0 ${normalizeOffset(viewportState.value.offsetY, minorStep)}px`,
+      `${normalizeOffset(viewportState.value.offsetX, minorStep)}px 0`,
+      `0 ${normalizeOffset(viewportState.value.offsetY, majorStep)}px`,
+      `${normalizeOffset(viewportState.value.offsetX, majorStep)}px 0`
+    ].join(', ')
+  };
+});
 
 const workflowEmptyLabel = computed(() => t('chat.toolWorkflow.empty'));
 
@@ -500,6 +540,7 @@ const hydrateCanvasState = () => {
   selectedNodeId.value = String(cached?.activeNodeId || '').trim();
   pendingViewportRestore.value = cached?.viewport || null;
   pendingFitView.value = !cached?.viewport;
+  worldOriginAnchor.value = null;
 };
 
 const fitView = async (force = false) => {
@@ -586,11 +627,17 @@ const handleNodeClick = (nodeId: string) => {
   saveNodeState();
 };
 
-const handleNodePointerDown = (nodeId: string, event: PointerEvent) => {
+const handleNodePointerDown = (nodeId: string, event: PointerEvent, pointerTarget?: HTMLElement | null) => {
   if (event.button !== 0) return;
   event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
   const node = projection.value.nodes.find((item) => item.id === nodeId);
   if (!node) return;
+  panState = null;
+  dragPointerTarget = pointerTarget || null;
+  dragPointerTarget?.setPointerCapture?.(event.pointerId);
+  dragPointerTarget?.classList.add('is-dragging');
   dragState = {
     nodeId,
     pointerId: event.pointerId,
@@ -600,10 +647,26 @@ const handleNodePointerDown = (nodeId: string, event: PointerEvent) => {
     originY: node.y,
     moved: false
   };
+  bindInteractionListeners();
+};
+
+const handleNodeLayerPointerDown = (event: PointerEvent) => {
+  const target = event.target as HTMLElement | null;
+  const card = target?.closest?.('.beeroom-node-card') as HTMLElement | null;
+  const nodeId = String(card?.dataset.nodeId || '').trim();
+  if (!card || !nodeId) {
+    return;
+  }
+  handleNodePointerDown(nodeId, event, card);
 };
 
 const handleViewportPointerDown = (event: PointerEvent) => {
   if (event.button !== 0) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest?.('.beeroom-node-card')) return;
+  if (dragState) return;
+  event.preventDefault();
+  bindInteractionListeners();
   panState = {
     pointerId: event.pointerId,
     startX: event.clientX,
@@ -615,6 +678,7 @@ const handleViewportPointerDown = (event: PointerEvent) => {
 };
 
 const clearInteractions = () => {
+  const dragPointerId = dragState?.pointerId ?? null;
   if (dragState?.moved) {
     suppressSelection = true;
     saveNodeState();
@@ -622,8 +686,37 @@ const clearInteractions = () => {
   if (panState?.moved) {
     scheduleViewportStateSave(60);
   }
+  if (dragPointerTarget && dragPointerId !== null && dragPointerTarget.hasPointerCapture?.(dragPointerId)) {
+    dragPointerTarget.releasePointerCapture(dragPointerId);
+  }
+  if (dragPointerTarget) {
+    dragPointerTarget.classList.remove('is-dragging');
+  }
+  dragPointerTarget = null;
   dragState = null;
   panState = null;
+  releaseInteractionListeners?.();
+};
+
+const bindInteractionListeners = () => {
+  if (releaseInteractionListeners || typeof document === 'undefined') {
+    return;
+  }
+  const move = (event: PointerEvent) => {
+    handleGlobalPointerMove(event);
+  };
+  const up = (event: PointerEvent) => {
+    handleGlobalPointerUp(event);
+  };
+  document.addEventListener('pointermove', move, true);
+  document.addEventListener('pointerup', up, true);
+  document.addEventListener('pointercancel', up, true);
+  releaseInteractionListeners = () => {
+    document.removeEventListener('pointermove', move, true);
+    document.removeEventListener('pointerup', up, true);
+    document.removeEventListener('pointercancel', up, true);
+    releaseInteractionListeners = null;
+  };
 };
 
 const handleGlobalPointerMove = (event: PointerEvent) => {
@@ -657,7 +750,11 @@ const handleGlobalPointerMove = (event: PointerEvent) => {
 };
 
 const handleGlobalPointerUp = (event: PointerEvent) => {
-  if ((dragState && event.pointerId === dragState.pointerId) || (panState && event.pointerId === panState.pointerId)) {
+  if (dragState && event.pointerId === dragState.pointerId) {
+    clearInteractions();
+    return;
+  }
+  if (panState && event.pointerId === panState.pointerId) {
     clearInteractions();
   }
 };
@@ -723,6 +820,33 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => [worldMetrics.value.originX, worldMetrics.value.originY] as const,
+  ([nextOriginX, nextOriginY]) => {
+    const anchor = worldOriginAnchor.value;
+    worldOriginAnchor.value = { x: nextOriginX, y: nextOriginY };
+    if (!anchor) {
+      return;
+    }
+    if (pendingViewportRestore.value || pendingFitView.value) {
+      return;
+    }
+    const deltaX = nextOriginX - anchor.x;
+    const deltaY = nextOriginY - anchor.y;
+    if (!deltaX && !deltaY) {
+      return;
+    }
+    const scale = clampSwarmScale(viewportState.value.scale);
+    viewportState.value = {
+      ...viewportState.value,
+      offsetX: Math.round(viewportState.value.offsetX - deltaX * scale),
+      offsetY: Math.round(viewportState.value.offsetY - deltaY * scale)
+    };
+    scheduleViewportStateSave(60);
+  },
+  { immediate: true }
+);
+
 onMounted(() => {
   updateContainerSize();
   if (typeof ResizeObserver !== 'undefined') {
@@ -734,9 +858,6 @@ onMounted(() => {
     }
   }
   window.addEventListener('resize', handleWindowResize);
-  window.addEventListener('pointermove', handleGlobalPointerMove);
-  window.addEventListener('pointerup', handleGlobalPointerUp);
-  window.addEventListener('pointercancel', handleGlobalPointerUp);
 });
 
 onBeforeUnmount(() => {
@@ -744,9 +865,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   window.removeEventListener('resize', handleWindowResize);
-  window.removeEventListener('pointermove', handleGlobalPointerMove);
-  window.removeEventListener('pointerup', handleGlobalPointerUp);
-  window.removeEventListener('pointercancel', handleGlobalPointerUp);
+  releaseInteractionListeners?.();
   clearInteractions();
 });
 </script>
@@ -755,6 +874,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-graph-shell {
   position: relative;
   display: flex;
+  flex: 1;
   min-width: 0;
   min-height: 0;
 }
@@ -763,20 +883,12 @@ onBeforeUnmount(() => {
   content: '';
   position: absolute;
   inset: 0;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 0 24px rgba(15, 23, 42, 0.2);
+  border: 1px solid rgba(148, 163, 184, 0.08);
   pointer-events: none;
 }
 
 .beeroom-canvas-graph-shell::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 96px),
-    linear-gradient(135deg, transparent 0%, rgba(239, 68, 68, 0.02) 48%, transparent 100%);
-  opacity: 0.56;
-  pointer-events: none;
+  display: none;
 }
 
 .beeroom-canvas-surface {
@@ -788,6 +900,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow: hidden;
   touch-action: none;
+  background: linear-gradient(180deg, rgba(8, 11, 17, 0.98), rgba(7, 10, 15, 0.98));
   cursor: grab;
 }
 
@@ -803,18 +916,27 @@ onBeforeUnmount(() => {
   will-change: transform;
 }
 
-.beeroom-swarm-grid-layer,
+.beeroom-canvas-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
 .beeroom-swarm-edge-layer {
   position: absolute;
   inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
   overflow: visible;
+  pointer-events: none;
 }
 
 .beeroom-swarm-node-layer {
   position: absolute;
   inset: 0;
+  z-index: 2;
 }
 
 .beeroom-swarm-edge {
@@ -866,11 +988,9 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(12, 13, 18, 0.88);
+  background: rgba(10, 13, 19, 0.94);
   color: rgba(229, 231, 235, 0.86);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 12px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.16);
 }
 
 .beeroom-canvas-legend-item {
@@ -913,11 +1033,9 @@ onBeforeUnmount(() => {
   padding: 5px;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(12, 13, 18, 0.72);
-  opacity: 0.78;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 8px 16px rgba(0, 0, 0, 0.16);
+  background: rgba(10, 13, 19, 0.88);
+  opacity: 0.94;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
 }
 
 .beeroom-canvas-tool-btn {
@@ -970,7 +1088,7 @@ onBeforeUnmount(() => {
   align-self: flex-start;
   padding: 2px 6px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(22, 24, 31, 0.94), rgba(15, 17, 23, 0.9));
+  background: rgba(10, 13, 19, 0.94);
   border: 1px solid rgba(148, 163, 184, 0.24);
   color: rgba(209, 213, 219, 0.86);
   font-size: 9px;
@@ -984,10 +1102,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  background: linear-gradient(180deg, rgba(15, 17, 23, 0.94), rgba(10, 11, 16, 0.9));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    0 10px 26px rgba(0, 0, 0, 0.28);
+  background: rgba(10, 13, 19, 0.94);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
   cursor: pointer;
   pointer-events: auto;
 }

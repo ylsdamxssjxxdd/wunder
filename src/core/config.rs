@@ -1,4 +1,4 @@
-// Config loading and YAML override merging.
+// Config loading and YAML utilities.
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -1673,107 +1673,34 @@ where
     deserializer.deserialize_option(OptionalUsizeVisitor)
 }
 
+pub fn config_path_default() -> PathBuf {
+    let path = env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
+    resolve_yaml_variant_path(Path::new(&path))
+}
+
+pub fn resolve_config_path(path: &Path) -> PathBuf {
+    resolve_yaml_variant_path(path)
+}
+
 pub fn load_config() -> Config {
-    // Load base config and then apply override config if present.
-    let base_path =
-        env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
-    let override_path = env::var("WUNDER_CONFIG_OVERRIDE_PATH")
-        .unwrap_or_else(|_| "data/config/wunder.override.yaml".to_string());
-    let override_path = resolve_yaml_variant_path(Path::new(&override_path));
+    load_config_from_path(&config_path_default())
+}
 
-    let base_value = read_yaml(&base_path);
-    let mut merged = base_value.clone();
-    if override_path.exists() {
-        let override_value = read_yaml_path(&override_path);
-        warn_on_shadowed_empty_overrides(&base_value, &override_value, &override_path);
-        // Apply override values without blanking existing keys.
-        merge_yaml(&mut merged, override_value);
-    }
-
-    expand_yaml_env(&mut merged);
-
-    serde_yaml::from_value::<Config>(merged).unwrap_or_else(|err| {
-        warn!("failed to parse merged config, falling back to defaults: {err}");
+pub fn load_config_from_path(path: &Path) -> Config {
+    let mut value = load_config_value_from_path(path);
+    expand_yaml_env(&mut value);
+    serde_yaml::from_value::<Config>(value).unwrap_or_else(|err| {
+        warn!("failed to parse config, falling back to defaults: {err}");
         Config::default()
     })
 }
 
-pub fn load_base_config_value() -> Value {
-    let base_path =
-        env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
-    let mut base = read_yaml(&base_path);
-    expand_yaml_env(&mut base);
-    base
+pub fn load_config_value_from_path(path: &Path) -> Value {
+    read_yaml_path(path)
 }
 
-fn warn_on_shadowed_empty_overrides(base: &Value, override_value: &Value, override_path: &Path) {
-    let shadowed = collect_shadowed_empty_override_paths(base, override_value);
-    if shadowed.is_empty() {
-        return;
-    }
-    warn!(
-        "config override {} masks non-empty base config sections with empty lists: {}. \
-remove or edit this override file if the admin UI unexpectedly shows empty MCP/skills/knowledge data",
-        override_path.display(),
-        shadowed.join(", ")
-    );
-}
-
-fn collect_shadowed_empty_override_paths(
-    base: &Value,
-    override_value: &Value,
-) -> Vec<&'static str> {
-    let mut shadowed = Vec::new();
-    for (label, path) in [
-        (
-            "tools.builtin.enabled",
-            &["tools", "builtin", "enabled"][..],
-        ),
-        ("mcp.servers", &["mcp", "servers"][..]),
-        ("skills.enabled", &["skills", "enabled"][..]),
-        ("knowledge.bases", &["knowledge", "bases"][..]),
-    ] {
-        if yaml_value_is_non_empty_sequence(yaml_value_at_path(base, path))
-            && yaml_value_is_empty_sequence(yaml_value_at_path(override_value, path))
-        {
-            shadowed.push(label);
-        }
-    }
-    shadowed
-}
-
-fn yaml_value_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
-    let mut current = value;
-    for segment in path {
-        let Value::Mapping(map) = current else {
-            return None;
-        };
-        current = map.get(Value::String((*segment).to_string()))?;
-    }
-    Some(current)
-}
-
-fn yaml_value_is_non_empty_sequence(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::Sequence(items)) if !items.is_empty())
-}
-
-fn yaml_value_is_empty_sequence(value: Option<&Value>) -> bool {
-    matches!(value, Some(Value::Sequence(items)) if items.is_empty())
-}
-
-fn read_yaml(path: &str) -> Value {
-    // Missing config files are allowed during bootstrap.
-    let content = match read_yaml_content_with_fallback(path) {
-        Ok(text) => text,
-        Err(err) => {
-            warn!("failed to read config file: {path}, {err}");
-            return Value::Null;
-        }
-    };
-    serde_yaml::from_str(&content).unwrap_or_else(|err| {
-        warn!("failed to parse YAML: {path}, {err}");
-        Value::Null
-    })
+pub fn merge_config_value(base: &mut Value, override_value: Value) {
+    merge_yaml(base, override_value);
 }
 
 fn read_yaml_path(path: &Path) -> Value {
@@ -2039,72 +1966,25 @@ sandbox:
     }
 
     #[test]
-    fn test_collect_shadowed_empty_override_paths_detects_hidden_catalog_lists() {
-        let base = serde_yaml::from_str::<Value>(
-            r#"
-tools:
-  builtin:
-    enabled: [final_response]
-mcp:
-  servers:
-    - name: extra_mcp
-skills:
-  enabled: [writer]
-knowledge:
-  bases:
-    - name: handbook
-"#,
+    fn test_load_config_from_path_uses_single_file_only() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-config-single-file-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        let config_path = root.join("wunder.yaml");
+        fs::write(
+            &config_path,
+            "mcp:\n  servers:\n    - name: extra_mcp\n      endpoint: http://127.0.0.1:9010/mcp\n      enabled: true\n",
         )
-        .expect("parse base yaml");
-        let override_value = serde_yaml::from_str::<Value>(
-            r#"
-tools:
-  builtin:
-    enabled: []
-mcp:
-  servers: []
-skills:
-  enabled: []
-knowledge:
-  bases: []
-"#,
-        )
-        .expect("parse override yaml");
+        .expect("write config");
 
-        assert_eq!(
-            collect_shadowed_empty_override_paths(&base, &override_value),
-            vec![
-                "tools.builtin.enabled",
-                "mcp.servers",
-                "skills.enabled",
-                "knowledge.bases"
-            ]
-        );
-    }
+        let config = load_config_from_path(&config_path);
 
-    #[test]
-    fn test_collect_shadowed_empty_override_paths_ignores_missing_or_non_empty_entries() {
-        let base = serde_yaml::from_str::<Value>(
-            r#"
-mcp:
-  servers:
-    - name: extra_mcp
-skills:
-  enabled: [writer]
-"#,
-        )
-        .expect("parse base yaml");
-        let override_value = serde_yaml::from_str::<Value>(
-            r#"
-mcp:
-  servers:
-    - name: extra_mcp
-skills: {}
-"#,
-        )
-        .expect("parse override yaml");
+        assert_eq!(config.mcp.servers.len(), 1);
+        assert_eq!(config.mcp.servers[0].name, "extra_mcp");
 
-        assert!(collect_shadowed_empty_override_paths(&base, &override_value).is_empty());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -2152,8 +2032,8 @@ skills: {}
             uuid::Uuid::new_v4().simple()
         ));
         fs::create_dir_all(&root).expect("create temp dir");
-        let yaml_path = root.join("wunder.override.yaml");
-        let yml_path = root.join("wunder.override.yml");
+        let yaml_path = root.join("wunder.yaml");
+        let yml_path = root.join("wunder.yml");
         fs::write(&yml_path, "observability:\n  log_level: DEBUG\n").expect("write yml config");
 
         let content = read_yaml_content_with_fallback(&yaml_path.display().to_string())
@@ -2170,7 +2050,7 @@ skills: {}
             uuid::Uuid::new_v4().simple()
         ));
         fs::create_dir_all(&root).expect("create temp dir");
-        let yaml_path = root.join("wunder.override.yaml");
+        let yaml_path = root.join("wunder.yaml");
         fs::write(&yaml_path, "\u{feff}observability:\n  log_level: DEBUG\n")
             .expect("write bom yaml");
 

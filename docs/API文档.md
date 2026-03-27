@@ -1,4 +1,4 @@
-﻿# wunder API 文档
+# wunder API 文档
 
 ## 4. API 设计
 
@@ -14,13 +14,13 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；同时通过 `./config/data:/app/data` 兼容旧的 `/app/data/*` 写路径。`WUNDER_CONFIG_OVERRIDE_PATH` / `WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
+- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；同时通过 `./config/data:/app/data` 兼容旧的 `/app/data/*` 写路径。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
-- 配置分层：基础配置优先读取 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会写入 `WUNDER_CONFIG_OVERRIDE_PATH` 指向的文件（docker compose 默认 `/app/config/data/config/wunder.override.yaml`，宿主机对应 `config/data/config/wunder.override.yaml`）。
+- 配置加载：运行时只读取单一配置文件 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会直接写回当前生效的配置文件，不再额外维护独立覆盖层。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - ARM compose 防漂移：`docker-compose-arm.yml` 的 Rust 构建链路显式声明 `build.platforms=linux/arm64`，并在 `wunder-server`/`wunder-sandbox`/`extra-mcp`/`wunder-frontend`/`wunder-nginx` 启动时执行架构自检；若运行时非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
@@ -98,6 +98,132 @@
   - 语音消息约定：当 `content_type=voice`（或 `audio/*`）时，`content` 推荐传 JSON 字符串，至少包含 `path`（容器相对路径）；可选字段 `duration_ms/mime_type/name/size/container_id/owner_user_id`。
   - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
   - 群聊对象返回 `announcement/announcement_updated_at` 字段；群详情额外返回 `members[]`。
+
+### 4.0.3 实时控制面观测接口
+
+- 目标：为 agent-first 实时控制面提供直接的 route/watch/mission inspection 入口，便于管理员和联调工具判断“谁在持有 owner、谁在 watch、mission 现在推进到哪一层”。
+- 鉴权：
+  - `/wunder/realtime/metrics` 仅管理员可访问。
+  - `/wunder/realtime/sessions/{session_id}` 普通用户仅可访问自己的会话；管理员可访问任意已知 session。
+  - `/wunder/realtime/missions/{team_run_id}` 普通用户仅可访问自己的 mission；管理员可访问任意 mission。
+
+#### `GET /wunder/realtime/metrics`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.presence.projection_watch_metrics`
+    - `total_watch_count`
+    - `total_target_count`
+    - `session_watch_count`
+    - `beeroom_group_watch_count`
+    - `user_world_conversation_watch_count`
+  - `data.route_leases`
+    - `submit_lease_count`
+    - `active_route_count`
+    - `thread_route_count`
+    - `mission_route_count`
+    - `projection_route_count`
+  - `data.timestamp`
+
+#### `GET /wunder/realtime/sessions/{session_id}`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.session_id`
+  - `data.thread_id`
+  - `data.submit_lease`
+    - `session_id`
+    - `owner_id`
+    - `epoch`
+    - `acquired_at`
+    - `updated_at`
+  - `data.thread_route`
+    - `target_kind=thread`
+    - `target_id`
+    - `owner_id`
+    - `session_id`
+    - `user_id`
+    - `epoch`
+    - `acquired_at`
+    - `updated_at`
+  - `data.session_watch`
+    - `target_kind=session`
+    - `target_id`
+    - `watch_count`
+    - `user_count`
+    - `last_seen_at`
+  - `data.monitor`
+    - `status`
+    - `busy`
+    - `updated_time`
+    - `thread_status`
+    - `active_turn_id`
+    - `subscriber_count`
+  - `data.timestamp`
+
+#### `GET /wunder/realtime/missions/{team_run_id}`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.mission`
+    - `mission_id/team_run_id`
+    - `user_id`
+    - `hive_id`
+    - `parent_session_id`
+    - `parent_agent_id`
+    - `mother_agent_id`
+    - `strategy`
+    - `status`
+    - `task_total/task_success/task_failed`
+    - `context_tokens_total/context_tokens_peak/model_round_total`
+    - `started_time/finished_time/elapsed_s`
+    - `summary/error/updated_time`
+  - `data.mission_route`
+    - `target_kind=mission`
+    - `target_id`
+    - `owner_id`
+    - `session_id`
+    - `user_id`
+    - `epoch`
+    - `acquired_at`
+    - `updated_at`
+  - `data.beeroom_group_watch`
+    - `target_kind=beeroom_group`
+    - `target_id`
+    - `watch_count`
+    - `user_count`
+    - `last_seen_at`
+  - `data.parent_session_watch`
+    - `target_kind=session`
+    - `target_id`
+    - `watch_count`
+    - `user_count`
+    - `last_seen_at`
+  - `data.task_summary`
+    - `total`
+    - `queued`
+    - `running`
+    - `success`
+    - `failed`
+    - `timeout`
+    - `cancelled`
+    - `unknown`
+    - `terminal`
+    - `active`
+    - `highest_priority`
+    - `latest_updated_time`
+  - `data.latest_task`
+    - `task_id`
+    - `agent_id`
+    - `status`
+    - `priority`
+    - `target_session_id`
+    - `spawned_session_id`
+    - `session_run_id`
+    - `result_summary`
+    - `error`
+    - `updated_time`
+  - `data.timestamp`
 
 ### 4.1 `/wunder` 请求
 

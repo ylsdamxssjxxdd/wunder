@@ -124,7 +124,7 @@ See `docs/方案/API-Documentation.md`.
 - SQLite persistence:
   - `data/wunder.db` (history, tool logs, artifacts, monitor, logs, locks, SSE overflow)
 - Admin override config:
-  - `data/config/wunder.override.yaml`
+  - `config/wunder.yaml`
 - Legacy `data/historys/` kept for migration.
 - `data/user_tools/{user_id}/config.json`: custom tools config and extra prompt.
 - `data/user_tools/{user_id}/skills/`: user skills.
@@ -203,7 +203,7 @@ wunder/
 ## 7. Config specification (base + override)
 
 Base config: `config/wunder.yaml` (override with `WUNDER_CONFIG_PATH`).
-Admin override: `data/config/wunder.override.yaml` (override with `WUNDER_CONFIG_OVERRIDE_PATH`).
+Admin config: `config/wunder.yaml` (path configurable with `WUNDER_CONFIG_PATH`).
 
 ```yaml
 server:

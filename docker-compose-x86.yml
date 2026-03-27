@@ -32,7 +32,6 @@ services:
       - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
-      - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/config/data/config/wunder.override.yaml}
       - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/config/data/user_tools}
       - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/config/data/vector_knowledge}
       - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/app/config/data/temp_dir}
@@ -90,7 +89,6 @@ services:
       - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}
       - WUNDER_WEAVIATE_API_KEY=${WUNDER_WEAVIATE_API_KEY:-}
       - WUNDER_CONFIG_PATH=${WUNDER_CONFIG_PATH:-/app/config/wunder.yaml}
-      - WUNDER_CONFIG_OVERRIDE_PATH=${WUNDER_CONFIG_OVERRIDE_PATH:-/app/config/data/config/wunder.override.yaml}
       - WUNDER_USER_TOOLS_ROOT=${WUNDER_USER_TOOLS_ROOT:-/app/config/data/user_tools}
       - WUNDER_VECTOR_KNOWLEDGE_ROOT=${WUNDER_VECTOR_KNOWLEDGE_ROOT:-/app/config/data/vector_knowledge}
       - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/app/config/data/temp_dir}

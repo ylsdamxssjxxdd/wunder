@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 use url::Url;
-use wunder_server::config::{Config, LlmConfig};
+use wunder_server::config::{merge_config_value, Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
 use wunder_server::state::{AppState, AppStateInitOptions};
@@ -204,9 +204,7 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        let base_config = prepare_base_config_path(&repo_root, &temp_root)?;
-        let override_path = temp_root.join("config/wunder.override.yaml");
-        ensure_desktop_override_seeded(&override_path, &app_dir, &repo_root)?;
+        let config_path = prepare_runtime_config_path(&repo_root, &temp_root, &app_dir)?;
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
@@ -228,8 +226,7 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
-        set_env_path("WUNDER_CONFIG_PATH", &base_config);
-        set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
+        set_env_path("WUNDER_CONFIG_PATH", &config_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
         set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
@@ -259,7 +256,7 @@ impl DesktopRuntime {
         let desktop_token = settings.desktop_token.clone();
 
         step_start = Instant::now();
-        let config_store = ConfigStore::new(override_path);
+        let config_store = ConfigStore::new(config_path);
         let workspace_for_update = workspace_root.clone();
         let temp_root_for_update = temp_root.clone();
         let repo_root_for_update = repo_root.clone();
@@ -1056,30 +1053,43 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
     }
 }
 
-fn prepare_base_config_path(repo_root: &Path, temp_root: &Path) -> Result<PathBuf> {
+fn prepare_runtime_config_path(
+    repo_root: &Path,
+    temp_root: &Path,
+    app_dir: &Path,
+) -> Result<PathBuf> {
+    let runtime_config = temp_root.join("config/wunder.yaml");
+    if runtime_config.exists() {
+        return Ok(runtime_config);
+    }
+    let parent = runtime_config
+        .parent()
+        .ok_or_else(|| anyhow!("invalid desktop config path: {}", runtime_config.display()))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create desktop config dir failed: {}", parent.display()))?;
+
     let repo_config = repo_root.join("config/wunder.yaml");
     if repo_config.exists() {
-        return Ok(repo_config);
+        fs::copy(&repo_config, &runtime_config).with_context(|| {
+            format!(
+                "copy desktop config failed: {} -> {}",
+                repo_config.display(),
+                runtime_config.display()
+            )
+        })?;
+    } else {
+        ensure_generated_base_config(&runtime_config)?;
     }
-    let generated = temp_root.join("config/wunder.base.yaml");
-    ensure_generated_base_config(&generated)?;
-    Ok(generated)
+
+    if let Some(source_path) = resolve_desktop_preconfig_path(app_dir, repo_root) {
+        merge_desktop_preconfig(&runtime_config, &source_path)?;
+    }
+
+    Ok(runtime_config)
 }
 
-fn ensure_desktop_override_seeded(
-    override_path: &Path,
-    app_dir: &Path,
-    repo_root: &Path,
-) -> Result<()> {
-    if override_path.exists() {
-        return Ok(());
-    }
-
-    let Some(source_path) = resolve_desktop_preconfig_path(app_dir, repo_root) else {
-        return Ok(());
-    };
-
-    let content = fs::read_to_string(&source_path)
+fn merge_desktop_preconfig(config_path: &Path, source_path: &Path) -> Result<()> {
+    let content = fs::read_to_string(source_path)
         .with_context(|| format!("read desktop preconfig failed: {}", source_path.display()))?;
     if content.trim().is_empty() {
         warn!(
@@ -1089,24 +1099,31 @@ fn ensure_desktop_override_seeded(
         return Ok(());
     }
 
-    let parent = override_path
-        .parent()
-        .ok_or_else(|| anyhow!("invalid desktop override path: {}", override_path.display()))?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("create desktop override dir failed: {}", parent.display()))?;
-    fs::write(override_path, content).with_context(|| {
+    let mut config_value = read_yaml_value_raw(config_path)?;
+    let preconfig_value = serde_yaml::from_str(&content)
+        .with_context(|| format!("parse desktop preconfig failed: {}", source_path.display()))?;
+    merge_config_value(&mut config_value, preconfig_value);
+    let merged_text =
+        serde_yaml::to_string(&config_value).context("serialize merged desktop config failed")?;
+    fs::write(config_path, merged_text).with_context(|| {
         format!(
-            "seed desktop override failed: {} -> {}",
+            "seed desktop config failed: {} -> {}",
             source_path.display(),
-            override_path.display()
+            config_path.display()
         )
     })?;
     info!(
-        "seed desktop override config from {} to {}",
+        "seed desktop config from {} to {}",
         source_path.display(),
-        override_path.display()
+        config_path.display()
     );
     Ok(())
+}
+
+fn read_yaml_value_raw(path: &Path) -> Result<serde_yaml::Value> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("read yaml failed: {}", path.display()))?;
+    serde_yaml::from_str(&content).with_context(|| format!("parse yaml failed: {}", path.display()))
 }
 
 fn resolve_desktop_preconfig_path(app_dir: &Path, repo_root: &Path) -> Option<PathBuf> {
@@ -1157,8 +1174,8 @@ fn resolve_appimage_dir() -> Option<PathBuf> {
 
 fn desktop_preconfig_candidates(root: &Path) -> Vec<PathBuf> {
     [
-        "wunder.override.yaml",
-        "wunder.override.yml",
+        "wunder.yaml",
+        "wunder.yml",
         "预配置文件.yml",
         "预配置文件.yaml",
     ]
@@ -1720,14 +1737,14 @@ mod tests {
     }
 
     #[test]
-    fn seed_desktop_override_uses_repo_preconfig_when_missing() {
+    fn seed_desktop_config_uses_repo_preconfig_when_missing() {
         let root = std::env::temp_dir().join(format!(
             "wunder-desktop-seed-{}",
             uuid::Uuid::new_v4().simple()
         ));
         let app_dir = root.join("app");
         let repo_root = root.join("repo");
-        let override_path = root.join("temp/config/wunder.override.yaml");
+        let config_path = root.join("temp/config/wunder.yaml");
         let docs_dir = repo_root.join("docs/分发");
 
         fs::create_dir_all(&app_dir).expect("create app dir");
@@ -1738,42 +1755,40 @@ mod tests {
         )
         .expect("write preconfig");
 
-        ensure_desktop_override_seeded(&override_path, &app_dir, &repo_root)
-            .expect("seed override");
+        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
 
-        let content = fs::read_to_string(&override_path).expect("read override");
+        let content = fs::read_to_string(&config_path).expect("read config");
         assert!(content.contains("seeded_model"));
 
         let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
-    fn seed_desktop_override_keeps_existing_override() {
+    fn seed_desktop_config_keeps_existing_config() {
         let root = std::env::temp_dir().join(format!(
             "wunder-desktop-seed-{}",
             uuid::Uuid::new_v4().simple()
         ));
         let app_dir = root.join("app");
         let repo_root = root.join("repo");
-        let override_path = root.join("temp/config/wunder.override.yaml");
+        let config_path = root.join("temp/config/wunder.yaml");
         let docs_dir = repo_root.join("docs/分发");
 
         fs::create_dir_all(&app_dir).expect("create app dir");
         fs::create_dir_all(&docs_dir).expect("create docs dir");
-        fs::create_dir_all(override_path.parent().expect("override parent"))
-            .expect("create override dir");
-        fs::write(&override_path, "llm:\n  default: existing_model\n")
-            .expect("write existing override");
+        fs::create_dir_all(config_path.parent().expect("config parent"))
+            .expect("create config dir");
+        fs::write(&config_path, "llm:\n  default: existing_model\n")
+            .expect("write existing config");
         fs::write(
             docs_dir.join("预配置文件.yml"),
             "llm:\n  default: seeded_model\n",
         )
         .expect("write preconfig");
 
-        ensure_desktop_override_seeded(&override_path, &app_dir, &repo_root)
-            .expect("seed override");
+        prepare_runtime_config_path(&repo_root, &root.join("temp"), &app_dir).expect("seed config");
 
-        let content = fs::read_to_string(&override_path).expect("read override");
+        let content = fs::read_to_string(&config_path).expect("read config");
         assert!(content.contains("existing_model"));
         assert!(!content.contains("seeded_model"));
 

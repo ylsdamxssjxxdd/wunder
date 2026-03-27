@@ -3103,7 +3103,6 @@ pub(crate) async fn collect_debug_config_payload(
         },
         "env_paths": {
             "WUNDER_CONFIG_PATH": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
-            "WUNDER_CONFIG_OVERRIDE_PATH": std::env::var("WUNDER_CONFIG_OVERRIDE_PATH").unwrap_or_default(),
             "WUNDER_PROMPTS_ROOT": std::env::var("WUNDER_PROMPTS_ROOT").unwrap_or_default(),
             "WUNDER_I18N_MESSAGES_PATH": std::env::var("WUNDER_I18N_MESSAGES_PATH").unwrap_or_default(),
             "WUNDER_HOME": std::env::var("WUNDER_HOME").unwrap_or_default(),
@@ -3124,7 +3123,7 @@ pub(crate) async fn collect_debug_config_payload(
             "source_chain": source_chain,
         },
         "checks": {
-            "override_exists": runtime.temp_root.join("config/wunder.override.yaml").exists(),
+            "config_exists": runtime.temp_root.join("config/wunder.yaml").exists(),
             "skills_path_count": config.skills.paths.len(),
             "allow_paths_count": config.security.allow_paths.len(),
             "allow_commands_count": config.security.allow_commands.len(),
@@ -5986,7 +5985,7 @@ async fn config_show(runtime: &CliRuntime, global: &GlobalArgs) -> Result<()> {
         "max_context": max_context,
         "context_used": stats.context_used_tokens.max(0),
         "context_left_percent": context_left_percent(stats.context_used_tokens, max_context),
-        "override_path": runtime.temp_root.join("config/wunder.override.yaml"),
+        "config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
     });
     println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
@@ -6292,13 +6291,8 @@ async fn handle_doctor(
     };
     let checks = vec![
         (
-            "base_config",
+            "config",
             std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
-            true,
-        ),
-        (
-            "override_config",
-            std::env::var("WUNDER_CONFIG_OVERRIDE_PATH").unwrap_or_default(),
             true,
         ),
         (
@@ -6393,18 +6387,12 @@ async fn handle_doctor(
         if is_zh {
             format!(
                 "- 覆盖配置存在: {}",
-                runtime
-                    .temp_root
-                    .join("config/wunder.override.yaml")
-                    .exists()
+                runtime.temp_root.join("config/wunder.yaml").exists()
             )
         } else {
             format!(
-                "- override_config_exists: {}",
-                runtime
-                    .temp_root
-                    .join("config/wunder.override.yaml")
-                    .exists()
+                "- config_exists: {}",
+                runtime.temp_root.join("config/wunder.yaml").exists()
             )
         }
     );
@@ -6422,8 +6410,7 @@ async fn handle_doctor(
         };
         let check_name = if is_zh {
             match name {
-                "base_config" => "基础配置",
-                "override_config" => "覆盖配置",
+                "config" => "配置文件",
                 "i18n_messages" => "i18n 消息文件",
                 "prompts_root" => "提示词根目录",
                 "skill_runner" => "技能运行器",
@@ -6443,8 +6430,7 @@ async fn handle_doctor(
             "approval_mode_config": config.security.approval_mode,
             "approval_mode_effective": resolve_effective_approval_mode(&config, global.approval_mode),
             "exec_policy_mode": config.security.exec_policy_mode,
-            "base_config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
-            "override_config_path": std::env::var("WUNDER_CONFIG_OVERRIDE_PATH").unwrap_or_default(),
+            "config_path": std::env::var("WUNDER_CONFIG_PATH").unwrap_or_default(),
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }

@@ -12,6 +12,7 @@ pub mod default_agent_protocol;
 pub mod default_agent_sync;
 pub mod default_tool_profile;
 pub mod desktop_lan;
+pub mod directory;
 pub mod doc2md;
 pub mod external;
 pub mod external_auth;

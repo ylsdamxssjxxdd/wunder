@@ -7,7 +7,7 @@
 - Routes are split by `src/api` modules (core/admin/workspace/user_tools/a2a) and share unified builders in Rust.
 - Tool list and prompt injection share the same tool spec builder to stay consistent.
 - Startup optimization: MCP, monitor, and orchestrator are lazily initialized; first calls may have cold-start delay.
-- Config layering: base `config/wunder.yaml` (`WUNDER_CONFIG_PATH` to override); admin updates go to `data/config/wunder.override.yaml` (`WUNDER_CONFIG_OVERRIDE_PATH`).
+- Config loading uses a single `config/wunder.yaml` (`WUNDER_CONFIG_PATH` to override); admin updates persist back to the same file.
 - Auth: all `/wunder` and `/wunder/mcp` require `X-API-Key` or `Authorization: Bearer <key>`; key in `security.api_key`.
 - Default admin account is `admin/admin`, auto-created on startup and protected from deletion.
 - Frontends: admin debug UI on `http://127.0.0.1:18000`, debug frontend on `http://127.0.0.1:18001` (Vite), user frontend on `http://127.0.0.1:18002` (Nginx).

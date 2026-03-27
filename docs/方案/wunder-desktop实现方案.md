@@ -1,4 +1,4 @@
-﻿# wunder-desktop实现方案
+# wunder-desktop实现方案
 
 ## 0. 目标与约束（对齐本次需求）
 
@@ -107,7 +107,7 @@ APP_DIR/
   WUNDER_TEMPD/
     wunder_desktop.sqlite3
     config/
-      wunder.override.yaml
+      wunder.yaml
       desktop.settings.json
     sessions/
       current_session.json
@@ -130,7 +130,7 @@ APP_DIR/
 ## 4.2 环境变量覆盖（desktop 启动时注入）
 
 - `WUNDER_CONFIG_PATH`
-- `WUNDER_CONFIG_OVERRIDE_PATH=./WUNDER_TEMPD/config/wunder.override.yaml`
+- `WUNDER_CONFIG_PATH=./WUNDER_TEMPD/config/wunder.yaml`
 - `WUNDER_USER_TOOLS_ROOT=./WUNDER_TEMPD/user_tools`
 - `WUNDER_VECTOR_KNOWLEDGE_ROOT=./WUNDER_TEMPD/vector_knowledge`
 - `WUNDER_PROMPTS_ROOT=<repo_or_bundle>`（指向包含 `prompts/` 子目录的根路径）
@@ -343,7 +343,7 @@ desktop 默认配置建议：
 - release 版本启用 `windows_subsystem = "windows"`，Windows 双击不再弹出终端窗口。
 - 运行后自动创建 `WUNDER_TEMPD` 与默认 `WUNDER_WORK`，并落盘：
   - `WUNDER_TEMPD/wunder_desktop.sqlite3`
-  - `WUNDER_TEMPD/config/wunder.override.yaml`
+  - `WUNDER_TEMPD/config/wunder.yaml`
   - `WUNDER_TEMPD/config/desktop.settings.json`
 - 已复用 `src/` 核心能力：提示词、智能体编排链路、工具系统、MCP/Skills、WS/SSE 流式链路。
 - 桌面端 UI 已回归用户侧前端布局（不再使用桌面专属侧边栏）。

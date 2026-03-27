@@ -52,7 +52,7 @@ use tracing::{error, info, warn};
 async fn main() -> anyhow::Result<()> {
     core::rustls_provider::install_process_default_provider();
     // 初始化配置存储，用于鉴权与路由行为保持一致。
-    let config_store = ConfigStore::new(ConfigStore::override_path_default());
+    let config_store = ConfigStore::new(ConfigStore::config_path_default());
     let config = config_store.get().await;
     init_tracing(&config);
     let server_mode = resolve_server_mode(&config);

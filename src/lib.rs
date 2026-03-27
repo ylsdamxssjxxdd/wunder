@@ -22,8 +22,8 @@ pub use core::{
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
-    a2a_store, attachment, browser, cron, desktop_lan, doc2md, history, knowledge, llm, mcp,
-    memory, org_units, presence, projection, prompting, runtime, sim_lab, skills, swarm, tools,
-    user_access, user_prompt_templates, user_store, user_tools, user_world, vector_knowledge,
-    workspace,
+    a2a_store, attachment, browser, cron, desktop_lan, directory, doc2md, history, knowledge, llm,
+    mcp, memory, org_units, presence, projection, prompting, runtime, sim_lab, skills, swarm,
+    tools, user_access, user_prompt_templates, user_store, user_tools, user_world,
+    vector_knowledge, workspace,
 };

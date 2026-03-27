@@ -1,9 +1,9 @@
-﻿# wunder-cli 真实可用性与自动化测试方案
+# wunder-cli 真实可用性与自动化测试方案
 
 ## 1. 2026-03-08 真实实测摘要
 
 - 实测模型：`qwen3.5-122b`
-- 运行方式：使用独立 `temp_root`，将项目内现有 `data/config/wunder.override.yaml` 复制到测试根目录，避免污染日常 CLI 状态。
+- 运行方式：使用独立 `temp_root`，将项目内现有 `config/wunder.yaml` 复制到测试根目录，避免污染日常 CLI 状态。
 - 长任务内容：让 `wunder-cli` 在隔离工作区内从零生成一个 Rust CLI `diff-lens`，要求支持 unified diff 统计、`--json` 输出、README 与单元测试，并在任务内自行运行 `cargo test`。
 - 本轮结果：模型可以稳定完成多步任务流，实际调用了 `执行命令 / 写入文件 / 读取文件 / 应用补丁 / 列出文件` 等工具，最终产物可独立通过本地复核：
   - `cargo test`

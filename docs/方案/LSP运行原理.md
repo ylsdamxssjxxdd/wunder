@@ -9,7 +9,7 @@
 
 ### 2.1 配置文件
 
-在 `config/wunder.yaml` 或运行时写入的覆盖文件 `data/config/wunder.override.yaml` 中配置：
+在 `config/wunder.yaml` 中配置：
 
 - `lsp.enabled`：总开关。
 - `lsp.timeout_s`：请求超时（秒）。
@@ -30,7 +30,7 @@
 
 ### 2.2 管理员侧配置
 
-管理员侧 LSP 页面支持读取/保存配置并查看状态。保存操作会调用 `POST /wunder/admin/lsp`，并写入覆盖配置文件（`data/config/wunder.override.yaml`）。
+管理员侧 LSP 页面支持读取/保存配置并查看状态。保存操作会调用 `POST /wunder/admin/lsp`，并直接写回当前配置文件（默认 `config/wunder.yaml`）。
 
 注意：页面里的“服务器列表”需要填写 JSON 数组（不是 YAML），示例：
 

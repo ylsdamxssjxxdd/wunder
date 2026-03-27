@@ -113,7 +113,7 @@ where
     config.skills.enabled.clear();
     configure(&mut config, temp_dir.path());
 
-    let config_store = ConfigStore::new(temp_dir.path().join("wunder.override.yaml"));
+    let config_store = ConfigStore::new(temp_dir.path().join("wunder.yaml"));
     let config_for_store = config.clone();
     config_store
         .update(|current| *current = config_for_store.clone())

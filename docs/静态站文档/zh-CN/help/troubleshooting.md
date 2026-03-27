@@ -36,7 +36,7 @@ source_docs:
 优先检查：
 
 - 实际加载的是 `config/wunder.yaml` 还是示例文件
-- 管理端是否写入 `data/config/wunder.override.yaml`
+- 当前实例是否实际读取 `config/wunder.yaml` 或本地运行时 `WUNDER_TEMP/config/wunder.yaml`
 - 你改的是 server 配置、extra_mcp 配置，还是前端配置
 
 ### 3) 服务启动成功但能力不可用

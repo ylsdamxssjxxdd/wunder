@@ -180,7 +180,7 @@ src/                 # Rust server (Axum)
   storage/           # SQLite/PostgreSQL persistence
 config/              # base config (wunder.yaml)
 prompts/             # prompt templates
-data/config/         # admin overrides (wunder.override.yaml)
+config/              # main runtime config (wunder.yaml, examples, fonts, i18n)
 workspaces/     # per-user workspaces
 skills/              # built-in skills
 knowledge/           # shared knowledge base

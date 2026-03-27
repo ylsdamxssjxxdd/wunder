@@ -192,14 +192,8 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 24px;
   color: #e5e7eb;
-  background:
-    radial-gradient(circle at top left, rgba(99, 102, 241, 0.08), transparent 42%),
-    radial-gradient(circle at bottom right, rgba(56, 189, 248, 0.06), transparent 48%),
-    linear-gradient(180deg, rgba(6, 8, 12, 0.995), rgba(7, 9, 14, 0.992));
-  box-shadow:
-    0 22px 54px rgba(0, 0, 0, 0.36),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: linear-gradient(180deg, rgba(8, 11, 17, 0.995), rgba(7, 10, 15, 0.995));
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.24);
 }
 
 .beeroom-canvas-screen:fullscreen {
@@ -211,18 +205,7 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-screen::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-    linear-gradient(rgba(148, 163, 184, 0.13) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.13) 1px, transparent 1px);
-  background-size: 40px 40px, 40px 40px, 200px 200px, 200px 200px;
-  background-position: 0 0, 0 0, -1px -1px, -1px -1px;
-  opacity: 0.36;
-  pointer-events: none;
+  display: none;
 }
 
 .beeroom-canvas-screen::after {
@@ -230,10 +213,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
-    inset 0 0 36px rgba(15, 23, 42, 0.34);
+  border: 1px solid rgba(148, 163, 184, 0.08);
   pointer-events: none;
 }
 
@@ -260,20 +240,12 @@ onBeforeUnmount(() => {
   min-height: 0;
   border-radius: inherit;
   overflow: hidden;
-  background: linear-gradient(180deg, rgba(8, 11, 17, 0.98), rgba(7, 9, 14, 0.975));
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 20px 38px rgba(0, 0, 0, 0.26);
+  background: linear-gradient(180deg, rgba(8, 11, 17, 0.985), rgba(7, 10, 15, 0.985));
   transition: grid-template-columns var(--beeroom-motion-slow) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-board::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 70px);
-  pointer-events: none;
+  display: none;
 }
 
 .beeroom-canvas-board::after {

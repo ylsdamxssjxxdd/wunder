@@ -77,7 +77,7 @@ path = "wunder-cli/main.rs"
 ./WUNDER_TEMP/
   wunder_cli.sqlite3
   config/
-    wunder.override.yaml
+    wunder.yaml
   sessions/
     current_session.json
   user_tools/
@@ -101,8 +101,8 @@ path = "wunder-cli/main.rs"
 
 ## 5.1 分层优先级（低 -> 高）
 
-1. 基础配置：默认读取 `config/wunder.yaml`，可由 `--config` 指定；若仓库配置缺失，CLI 会自动生成 `WUNDER_TEMP/config/wunder.base.yaml` 作为兜底。
-2. 本地覆盖：`WUNDER_TEMP/config/wunder.override.yaml`
+1. 基础配置：默认读取 `config/wunder.yaml`，可由 `--config` 指定；若仓库配置缺失，CLI 会自动生成 `WUNDER_TEMP/config/wunder.yaml` 作为兜底。
+2. 运行时配置：`WUNDER_TEMP/config/wunder.yaml`
 3. CLI flag（当前进程）
 4. 请求级 `config_overrides`（单次请求）
 
@@ -124,7 +124,7 @@ path = "wunder-cli/main.rs"
 CLI 初始化时设置：
 
 - `WUNDER_CONFIG_PATH`
-- `WUNDER_CONFIG_OVERRIDE_PATH`
+- `WUNDER_CONFIG_PATH`
 - `WUNDER_I18N_MESSAGES_PATH`
 - `WUNDER_PROMPTS_ROOT`（可选，用于覆盖提示词根目录；指向包含 `prompts/` 子目录的路径）
 - `WUNDER_SKILL_RUNNER_PATH`

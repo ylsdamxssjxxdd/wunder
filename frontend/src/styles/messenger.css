@@ -1465,7 +1465,8 @@ button.messenger-chat-header-model {
 
 .messenger-chat-body.is-settings.is-beeroom.is-beeroom-canvas {
   overflow: hidden;
-  padding: 12px;
+  gap: 0;
+  padding: 0;
 }
 
 .messenger-chat-body.is-helper-workspace {
@@ -1557,6 +1558,7 @@ button.messenger-chat-header-model {
 .messenger-chat-settings--beeroom-canvas {
   height: 100%;
   min-height: 0;
+  gap: 0;
   overflow: hidden;
 }
 
