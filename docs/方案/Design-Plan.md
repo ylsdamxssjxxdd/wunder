@@ -130,6 +130,7 @@ See `docs/方案/API-Documentation.md`.
 - `data/user_tools/{user_id}/skills/`: user skills.
 - `data/user_tools/{user_id}/knowledge/`: user knowledge roots.
 - Context compaction triggered by `history_compaction_ratio` and safe budget; structured summary + artifact index.
+- `history_compaction_reset` now has runtime semantics: `zero` keeps only the compaction summary, `current` keeps summary + current user message, and `keep` also preserves the recent user tail window for replay.
 - Workspace tree cache with versioning and dirty flags.
 - Artifacts index records file changes/commands/outputs for prompt injection.
 - Skills: usage protocol and SKILL.md path list injected to prompt.

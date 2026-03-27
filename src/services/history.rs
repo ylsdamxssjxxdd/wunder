@@ -648,4 +648,102 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0]["content"], json!("current question"));
     }
+
+    #[test]
+    fn filter_history_items_keeps_recent_tail_before_summary_when_boundary_allows_it() {
+        let summary = json!({
+            "role": "user",
+            "content": "summary",
+            "timestamp": "2026-03-27T00:00:06Z",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                "compacted_until": "2026-03-27T00:00:02Z"
+            }
+        });
+        let tail_user = json!({
+            "role": "user",
+            "content": "tail question",
+            "timestamp": "2026-03-27T00:00:03Z"
+        });
+        let tail_assistant = json!({
+            "role": "assistant",
+            "content": "tail answer",
+            "timestamp": "2026-03-27T00:00:04Z"
+        });
+        let current_user = json!({
+            "role": "user",
+            "content": "current question",
+            "timestamp": "2026-03-27T00:00:07Z"
+        });
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "old question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "old answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            tail_user.clone(),
+            tail_assistant.clone(),
+            summary,
+            current_user.clone(),
+        ];
+
+        let (filtered, _, compacted_until_ts, summary_index) = filter_history_items(&history);
+
+        assert_eq!(summary_index, 4);
+        assert!(compacted_until_ts.is_some());
+        assert_eq!(filtered, vec![tail_user, tail_assistant, current_user]);
+    }
+
+    #[test]
+    fn filter_history_items_only_keeps_current_turn_when_boundary_is_after_tail() {
+        let summary = json!({
+            "role": "user",
+            "content": "summary",
+            "timestamp": "2026-03-27T00:00:06Z",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                "compacted_until": "2026-03-27T00:00:04Z"
+            }
+        });
+        let current_user = json!({
+            "role": "user",
+            "content": "current question",
+            "timestamp": "2026-03-27T00:00:07Z"
+        });
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "old question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "old answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "tail question",
+                "timestamp": "2026-03-27T00:00:03Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "tail answer",
+                "timestamp": "2026-03-27T00:00:04Z"
+            }),
+            summary,
+            current_user.clone(),
+        ];
+
+        let (filtered, _, compacted_until_ts, summary_index) = filter_history_items(&history);
+
+        assert_eq!(summary_index, 4);
+        assert!(compacted_until_ts.is_some());
+        assert_eq!(filtered, vec![current_user]);
+    }
 }

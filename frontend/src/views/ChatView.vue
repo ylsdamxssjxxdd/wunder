@@ -167,12 +167,12 @@
               <div class="history-info">
                 <span
                   v-if="isSessionBusy(session.id)"
-                  class="history-status"
-                  :title="t('chat.session.running')"
-                  :aria-label="t('chat.session.running')"
+                  :class="['history-status', isSessionWaiting(session.id) ? 'is-waiting' : 'is-running']"
+                  :title="resolveSessionBusyLabel(session.id)"
+                  :aria-label="resolveSessionBusyLabel(session.id)"
                   role="status"
                 >
-                  <span class="agent-running-dot" aria-hidden="true"></span>
+                  <span :class="isSessionWaiting(session.id) ? 'agent-waiting-dot' : 'agent-running-dot'" aria-hidden="true"></span>
                 </span>
                 <div class="history-title-text">
                   <span class="history-title-name">{{ formatTitle(session.title) }}</span>
@@ -241,6 +241,7 @@
             <div
               v-for="(message, index) in chatStore.messages"
               :key="resolveMessageKey(message, index)"
+              v-if="!isHiddenInternalMessage(message)"
               :class="[
                 'message',
                 message.role === 'user' ? 'from-user' : 'from-ai',
@@ -338,6 +339,11 @@
                   :items="message.workflowItems || []"
                   :loading="Boolean(message.workflowStreaming)"
                   :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
+                />
+                <MessageSubagentPanel
+                  v-if="message.role === 'assistant'"
+                  :session-id="chatStore.activeSessionId"
+                  :items="Array.isArray(message.subagents) ? message.subagents : []"
                 />
                 <div
                   v-if="shouldShowMessageText(message)"
@@ -655,12 +661,12 @@
               <div class="history-info">
                 <span
                   v-if="isSessionBusy(session.id)"
-                  class="history-status"
-                  :title="t('chat.session.running')"
-                  :aria-label="t('chat.session.running')"
+                  :class="['history-status', isSessionWaiting(session.id) ? 'is-waiting' : 'is-running']"
+                  :title="resolveSessionBusyLabel(session.id)"
+                  :aria-label="resolveSessionBusyLabel(session.id)"
                   role="status"
                 >
-                  <span class="agent-running-dot" aria-hidden="true"></span>
+                  <span :class="isSessionWaiting(session.id) ? 'agent-waiting-dot' : 'agent-running-dot'" aria-hidden="true"></span>
                 </span>
                 <div class="history-title-text">
                   <span class="history-title-name">{{ formatTitle(session.title) }}</span>
@@ -724,6 +730,7 @@ import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider.vue';
 import MessageFeedbackActions from '@/components/chat/MessageFeedbackActions.vue';
 import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
+import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
@@ -1505,6 +1512,8 @@ const handleSetMainSession = async (session) => {
   if (!sessionId) return;
   await chatStore.setMainSession(sessionId);
 };
+
+const isHiddenInternalMessage = (message) => Boolean(message?.hiddenInternal);
 
 const shouldShowMessageText = (message) => {
   if (!message) return false;
@@ -2646,6 +2655,25 @@ const resolveSessionActivityTimestampMs = (session) => {
 
 const isSessionBusy = (sessionId) =>
   Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
+
+const resolveSessionRuntimeStatus = (sessionId) =>
+  String(chatStore.sessionRuntimeStatus?.(sessionId) || '').trim().toLowerCase();
+
+const isSessionWaiting = (sessionId) => {
+  const status = resolveSessionRuntimeStatus(sessionId);
+  return status === 'waiting_approval' || status === 'waiting_user_input';
+};
+
+const resolveSessionBusyLabel = (sessionId) => {
+  const status = resolveSessionRuntimeStatus(sessionId);
+  if (status === 'waiting_approval') {
+    return t('chat.session.waitingApproval');
+  }
+  if (status === 'waiting_user_input') {
+    return t('chat.session.waitingUserInput');
+  }
+  return t('chat.session.running');
+};
 
 const activeSessionBusy = computed(() => {
   const sessionId = String(chatStore.activeSessionId || '').trim();

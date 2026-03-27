@@ -548,6 +548,16 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "runId": {"type": "string", "description": "Target run id."},
                     "runIds": {"type": "array", "description": "Target run ids.", "items": {"type": "string"}},
                     "dispatchId": {"type": "string", "description": "Dispatch id returned by batch_spawn."},
+                    "strategy": {
+                        "type": "string",
+                        "description": "Batch dispatch strategy. first_success aligns with Codex-style early convergence.",
+                        "enum": ["parallel_all", "first_success", "review_then_merge"]
+                    },
+                    "remainingAction": {
+                        "type": "string",
+                        "description": "How to handle unfinished sibling subagents after early convergence. first_success defaults to interrupt; wait keeps siblings unless specified.",
+                        "enum": ["keep", "interrupt", "close"]
+                    },
                     "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
                     "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
                     "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
@@ -575,6 +585,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
                     "waitSeconds": {"type": "number", "description": "Wait time for batch/status polling."},
                     "pollIntervalSeconds": {"type": "number", "description": "Polling interval for wait."},
+                    "waitMode": {
+                        "type": "string",
+                        "description": "Wait completion mode for subagent wait. all waits every target, any returns on first terminal target, first_success returns on the first success or when all targets finish.",
+                        "enum": ["all", "any", "first_success"]
+                    },
                     "dispatchLabel": {"type": "string", "description": "Optional label for the dispatch batch."},
                     "cascade": {"type": "boolean", "description": "Apply close/resume recursively to descendants."}
                 },

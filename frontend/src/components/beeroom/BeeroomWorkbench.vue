@@ -1,35 +1,33 @@
-﻿<template>
-  <section class="beeroom-workbench" :class="{ 'beeroom-workbench--canvas': isCanvasView }">
+<template>
+  <section class="beeroom-workbench">
     <div v-if="loading && !group" class="beeroom-state beeroom-state--loading">{{ t('common.loading') }}</div>
     <div v-else-if="!group" class="beeroom-state">
       <i class="fa-solid fa-hexagon-nodes" aria-hidden="true"></i>
       <span>{{ t('beeroom.empty.selectGroup') }}</span>
     </div>
     <template v-else>
-      <header v-if="isTextView" class="beeroom-hero">
-        <div class="beeroom-hero-main">
-          <div class="beeroom-eyebrow">
-            <span class="beeroom-eyebrow-badge">{{ t('messenger.section.swarms') }}</span>
-            <span class="beeroom-eyebrow-id">{{ group.group_id }}</span>
-          </div>
-          <div class="beeroom-title-row">
-            <h2 class="beeroom-title">{{ group.name || group.group_id }}</h2>
+      <header class="beeroom-workbench-toolbar">
+        <div class="beeroom-workbench-main">
+          <div class="beeroom-workbench-topline">
+            <span class="beeroom-workbench-badge">{{ t('messenger.section.swarms') }}</span>
             <span class="beeroom-status-chip" :class="resolveGroupTone(group.status)">
               {{ resolveGroupStatus(group.status) }}
             </span>
+            <span class="beeroom-workbench-group-id">#{{ group.group_id }}</span>
           </div>
-          <p class="beeroom-description">
+          <h2 class="beeroom-workbench-title">{{ group.name || group.group_id }}</h2>
+          <p class="beeroom-workbench-description">
             {{ group.description || t('beeroom.empty.description') }}
           </p>
-          <div class="beeroom-meta-row">
-            <span>{{ t('beeroom.summary.motherAgent') }}: {{ group.mother_agent_name || group.mother_agent_id || t('common.none') }}</span>
+          <div class="beeroom-workbench-meta">
+            <span>{{ t('beeroom.summary.motherAgent') }}: {{ motherAgentLabel }}</span>
             <span>{{ t('beeroom.summary.latestMission') }}: {{ latestMissionLabel }}</span>
-            <span v-if="error" class="beeroom-meta-error">{{ error }}</span>
+            <span v-if="error" class="beeroom-workbench-error">{{ error }}</span>
           </div>
         </div>
 
-        <div class="beeroom-hero-actions">
-          <button class="beeroom-action-btn" type="button" @click="$emit('refresh')">
+        <div class="beeroom-workbench-actions">
+          <button class="beeroom-action-btn" type="button" @click="emit('refresh')">
             <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
             <span>{{ refreshing ? t('common.loading') : t('common.refresh') }}</span>
           </button>
@@ -45,109 +43,36 @@
         </div>
       </header>
 
-      <div v-if="isTextView" class="beeroom-summary-grid">
-        <article v-for="card in summaryCards" :key="card.key" class="beeroom-summary-card">
-          <div class="beeroom-summary-label">{{ card.label }}</div>
-          <div class="beeroom-summary-value">{{ card.value }}</div>
-          <div class="beeroom-summary-hint">{{ card.hint }}</div>
+      <div class="beeroom-workbench-summary">
+        <article v-for="card in summaryCards" :key="card.key" class="beeroom-workbench-summary-card">
+          <div class="beeroom-workbench-summary-label">{{ card.label }}</div>
+          <div class="beeroom-workbench-summary-value">{{ card.value }}</div>
+          <div class="beeroom-workbench-summary-hint">{{ card.hint }}</div>
         </article>
       </div>
 
-      <div v-if="isTextView" class="beeroom-content-grid">
-        <section v-if="isTextView" class="beeroom-panel beeroom-panel--members">
-          <div class="beeroom-panel-head">
-            <div>
-              <div class="beeroom-panel-title">{{ t('beeroom.members.title') }}</div>
-              <div class="beeroom-panel-subtitle">{{ t('beeroom.members.subtitle') }}</div>
-            </div>
-            <span class="beeroom-panel-tag">{{ agents.length }}</span>
-          </div>
-
-          <div v-if="!agents.length" class="beeroom-panel-empty">{{ t('beeroom.members.empty') }}</div>
-          <div v-else class="beeroom-member-list">
-            <article
-              v-for="member in agents"
-              :key="member.agent_id"
-              class="beeroom-member-card"
-              @dblclick="$emit('open-agent', member.agent_id)"
-            >
-              <div class="beeroom-member-head">
-                <div class="beeroom-member-avatar">
-                  <img
-                    v-if="resolveMemberAvatarImage(member)"
-                    class="beeroom-member-avatar-image"
-                    :src="resolveMemberAvatarImage(member)"
-                    alt=""
-                  />
-                  <span v-else>{{ avatarLabel(resolveDisplayAgentName(member.agent_id, member.name)) }}</span>
-                </div>
-                <div class="beeroom-member-main">
-                  <div class="beeroom-member-name-row">
-                    <span class="beeroom-member-name">
-                      {{ resolveDisplayAgentName(member.agent_id, member.name) }}
-                    </span>
-                    <span class="beeroom-member-state" :class="member.idle === false ? 'active' : 'idle'">
-                      {{ member.idle === false ? t('beeroom.members.active') : t('beeroom.members.idle') }}
-                    </span>
-                  </div>
-                  <div class="beeroom-member-desc">
-                    {{ member.description || t('beeroom.members.noDescription') }}
-                  </div>
-                </div>
-              </div>
-              <div class="beeroom-member-foot">
-                <span>{{ t('beeroom.members.sessions', { count: member.active_session_total || 0 }) }}</span>
-                <span>{{ member.approval_mode || '-' }}</span>
-                <button class="beeroom-inline-link" type="button" @click="$emit('open-agent', member.agent_id)">
-                  {{ t('beeroom.canvas.openChat') }}
-                </button>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <section class="beeroom-panel beeroom-panel--missions">
-          <div class="beeroom-panel-head">
-            <div>
-              <div class="beeroom-panel-title">{{ t('beeroom.missions.title') }}</div>
-              <div class="beeroom-panel-subtitle">{{ t('beeroom.missions.subtitle') }}</div>
-            </div>
-            <span class="beeroom-panel-tag">{{ missions.length }}</span>
-          </div>
-
-          <div v-if="!missions.length" class="beeroom-panel-empty">{{ t('beeroom.missions.empty') }}</div>
-          <div v-else class="beeroom-mission-buckets">
-            <section v-for="bucket in missionBuckets" :key="bucket.key" class="beeroom-mission-bucket">
-              <div class="beeroom-mission-bucket-head">
-                <span>{{ bucket.label }}</span>
-                <span class="beeroom-mission-bucket-count">{{ bucket.items.length }}</span>
-              </div>
-              <button
-                v-for="mission in bucket.items"
-                :key="mission.mission_id || mission.team_run_id"
-                class="beeroom-mission-card"
-                :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
-                type="button"
-                @click="selectedMissionId = mission.mission_id || mission.team_run_id"
-              >
-                <div class="beeroom-mission-card-head">
-                  <span class="beeroom-mission-card-id">#{{ shortMissionId(mission.mission_id || mission.team_run_id) }}</span>
-                  <span class="beeroom-status-chip" :class="resolveMissionTone(mission.completion_status || mission.status)">
-                    {{ resolveMissionStatus(mission.completion_status || mission.status) }}
-                  </span>
-                </div>
-                <div class="beeroom-mission-card-summary">{{ mission.summary || mission.strategy || t('beeroom.missions.noSummary') }}</div>
-                <div class="beeroom-mission-card-foot">
-                  <span>{{ t('beeroom.missions.taskCount', { count: mission.task_total || 0 }) }}</span>
-                  <span>{{ formatDateTime(mission.updated_time || mission.started_time) }}</span>
-                </div>
-              </button>
-            </section>
-          </div>
-        </section>
+      <div v-if="orderedMissions.length" class="beeroom-workbench-missions">
+        <button
+          v-for="mission in orderedMissions"
+          :key="mission.mission_id || mission.team_run_id"
+          class="beeroom-workbench-mission-chip"
+          :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
+          type="button"
+          :aria-pressed="selectedMissionId === (mission.mission_id || mission.team_run_id)"
+          @click="selectedMissionId = mission.mission_id || mission.team_run_id"
+        >
+          <span class="beeroom-workbench-mission-chip-title">{{ resolveMissionTitle(mission) }}</span>
+          <span class="beeroom-workbench-mission-chip-meta">
+            #{{ shortMissionId(mission.mission_id || mission.team_run_id) }}
+            ·
+            {{ resolveMissionStatus(mission.completion_status || mission.status) }}
+            ·
+            {{ formatDateTime(mission.updated_time || mission.started_time) }}
+          </span>
+        </button>
       </div>
 
-      <div v-if="isCanvasView" class="beeroom-workbench-stage">
+      <div class="beeroom-workbench-stage">
         <BeeroomMissionCanvas
           class="beeroom-workbench-canvas"
           :group="group"
@@ -159,105 +84,43 @@
         />
       </div>
 
-      <section v-if="isTextView" class="beeroom-panel beeroom-panel--detail">
-        <div class="beeroom-panel-head">
-          <div>
-            <div class="beeroom-panel-title">{{ t('beeroom.missionDetail.title') }}</div>
-            <div class="beeroom-panel-subtitle">{{ t('beeroom.missionDetail.subtitle') }}</div>
-          </div>
-          <span v-if="selectedMission" class="beeroom-panel-tag">
-            {{ t('beeroom.missions.taskCount', { count: selectedMission.task_total || 0 }) }}
-          </span>
-        </div>
-
-        <div v-if="!selectedMission" class="beeroom-panel-empty">{{ t('beeroom.missionDetail.empty') }}</div>
-        <template v-else>
-          <div class="beeroom-detail-head">
+      <el-dialog
+        v-model="moveDialogVisible"
+        width="420px"
+        :show-close="false"
+        append-to-body
+        class="messenger-modal messenger-modal--beeroom"
+      >
+        <template #header>
+          <div class="messenger-modal-header">
             <div>
-              <div class="beeroom-detail-title">
-                {{ selectedMission.summary || selectedMission.strategy || selectedMission.mission_id }}
-              </div>
-              <div class="beeroom-detail-meta">
-                <span>{{ t('beeroom.summary.motherAgent') }}: {{ selectedMission.mother_agent_id || group.mother_agent_id || t('common.none') }}</span>
-                <span>{{ t('beeroom.missionDetail.entryAgent') }}: {{ selectedMission.entry_agent_id || t('common.none') }}</span>
-                <span>{{ t('beeroom.missionDetail.parentSession') }}: {{ selectedMission.parent_session_id || '-' }}</span>
-              </div>
+              <div class="messenger-modal-title">{{ t('beeroom.dialog.moveTitle') }}</div>
+              <div class="messenger-modal-subtitle">{{ t('beeroom.dialog.moveSubtitle') }}</div>
             </div>
-            <div class="beeroom-detail-stats">
-              <span>{{ t('beeroom.missionDetail.success', { count: selectedMission.task_success || 0 }) }}</span>
-              <span>{{ t('beeroom.missionDetail.failed', { count: selectedMission.task_failed || 0 }) }}</span>
-              <span>{{ t('beeroom.missionDetail.tokens', { count: selectedMission.context_tokens_total || 0 }) }}</span>
-            </div>
-          </div>
-
-          <div class="beeroom-task-grid">
-            <article
-              v-for="task in selectedMission.tasks || []"
-              :key="task.task_id"
-              class="beeroom-task-card"
-              @dblclick="$emit('open-agent', task.agent_id)"
-            >
-              <div class="beeroom-task-head">
-                <span class="beeroom-task-name">{{ resolveAgentName(task.agent_id) }}</span>
-                <span class="beeroom-status-chip" :class="resolveMissionTone(task.status)">
-                  {{ resolveMissionStatus(task.status) }}
-                </span>
-              </div>
-              <div class="beeroom-task-meta">
-                <span>{{ t('beeroom.task.priority') }} {{ task.priority ?? 0 }}</span>
-                <span>{{ t('beeroom.task.runId') }} {{ shortMissionId(task.session_run_id || '-') }}</span>
-                <button class="beeroom-inline-link" type="button" @click="$emit('open-agent', task.agent_id)">
-                  {{ t('beeroom.canvas.openChat') }}
-                </button>
-              </div>
-              <div class="beeroom-task-body">
-                {{ task.result_summary || task.error || t('beeroom.task.pending') }}
-              </div>
-            </article>
+            <button class="messenger-dialog-close" type="button" @click="moveDialogVisible = false">&times;</button>
           </div>
         </template>
-      </section>
-    </template>
 
-    <el-dialog
-      v-model="moveDialogVisible"
-      class="messenger-dialog"
-      width="520px"
-      top="12vh"
-      append-to-body
-    >
-      <template #header>
-        <div class="messenger-dialog-header">
-          <div class="messenger-dialog-title">{{ t('beeroom.dialog.moveTitle') }}</div>
-          <button class="messenger-dialog-close" type="button" @click="moveDialogVisible = false">&times;</button>
-        </div>
-      </template>
-      <div class="messenger-dialog-body">
         <div class="beeroom-move-copy">{{ t('beeroom.dialog.moveCount', { count: moveAgentIds.length }) }}</div>
-        <el-select
-          v-model="moveAgentIds"
-          multiple
-          filterable
-          class="messenger-form-full"
-          :placeholder="t('beeroom.dialog.moveTargetPlaceholder')"
-        >
-          <el-option
-            v-for="agent in availableAgents"
-            :key="agent.id"
-            :label="agent.name || agent.id"
-            :value="agent.id"
-          />
-        </el-select>
-      </div>
-      <template #footer>
-        <div class="messenger-dialog-footer">
-          <el-button @click="moveDialogVisible = false">{{ t('common.cancel') }}</el-button>
-          <el-button type="primary" :disabled="!moveAgentIds.length" @click="submitMoveAgents">
-            {{ t('common.confirm') }}
-          </el-button>
-        </div>
-      </template>
-    </el-dialog>
+        <el-checkbox-group v-model="moveAgentIds" class="messenger-dialog-grid">
+          <el-checkbox v-for="agent in availableAgents" :key="agent.id" :value="agent.id" class="messenger-dialog-check">
+            <div class="messenger-dialog-check-main">
+              <span>{{ resolveDisplayAgentName(agent.id, agent.name) }}</span>
+              <span class="messenger-dialog-check-meta">{{ agent.id }}</span>
+            </div>
+          </el-checkbox>
+        </el-checkbox-group>
+
+        <template #footer>
+          <div class="messenger-modal-footer">
+            <el-button @click="moveDialogVisible = false">{{ t('common.cancel') }}</el-button>
+            <el-button type="primary" :disabled="!moveAgentIds.length" @click="submitMoveAgents">
+              {{ t('beeroom.action.moveAgents') }}
+            </el-button>
+          </div>
+        </template>
+      </el-dialog>
+    </template>
   </section>
 </template>
 
@@ -267,15 +130,11 @@ import { computed, ref, watch } from 'vue';
 import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
 import { useI18n } from '@/i18n';
 import {
-  parseAgentAvatarIconConfig,
-  resolveAgentAvatarImageByConfig,
-  resolveAgentAvatarInitial
-} from '@/utils/agentAvatar';
-import {
   type BeeroomGroup,
   type BeeroomMember,
   type BeeroomMission
 } from '@/stores/beeroom';
+
 const selectedMissionCacheByGroup = new Map<string, string>();
 
 type AgentOption = {
@@ -291,7 +150,6 @@ const props = defineProps<{
   loading: boolean;
   refreshing: boolean;
   error: string;
-  viewMode?: 'text' | 'canvas';
 }>();
 
 const emit = defineEmits<{
@@ -302,12 +160,10 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const isCanvasView = computed(() => true);
-const isTextView = computed(() => false);
-
 const selectedMissionId = ref('');
 const moveDialogVisible = ref(false);
 const moveAgentIds = ref<string[]>([]);
+
 const resolveGroupScopeKey = (value: unknown) => String(value || '').trim();
 
 const formatDateTime = (value: unknown) => {
@@ -341,10 +197,6 @@ const resolveDisplayAgentName = (agentId: unknown, fallbackName?: unknown) => {
   return String(fallbackName || agentId || '-').trim() || '-';
 };
 
-const avatarLabel = (value: unknown) => resolveAgentAvatarInitial(value);
-const resolveMemberAvatarImage = (member: BeeroomMember): string =>
-  resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(member?.icon));
-
 const resolveGroupTone = (value: unknown) => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'active') return 'tone-running';
@@ -357,17 +209,6 @@ const resolveGroupStatus = (value: unknown) => {
   if (normalized === 'active') return t('beeroom.status.active');
   if (normalized === 'archived') return t('beeroom.status.archived');
   return normalized || t('beeroom.status.unknown');
-};
-
-const resolveMissionTone = (value: unknown) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'completed' || normalized === 'success') return 'tone-success';
-  if (normalized === 'failed' || normalized === 'error' || normalized === 'timeout' || normalized === 'cancelled') {
-    return 'tone-danger';
-  }
-  if (normalized === 'awaiting_idle') return 'tone-warn';
-  if (normalized === 'running' || normalized === 'queued') return 'tone-running';
-  return 'tone-default';
 };
 
 const resolveMissionStatus = (value: unknown) => {
@@ -386,11 +227,26 @@ const resolveMissionStatus = (value: unknown) => {
   return t(keyMap[normalized] || 'beeroom.status.unknown');
 };
 
+const resolveMissionMoment = (mission: BeeroomMission) =>
+  Number(mission.updated_time || mission.finished_time || mission.started_time || 0);
+
+const resolveMissionTitle = (mission: BeeroomMission) =>
+  String(mission.summary || mission.strategy || '').trim() ||
+  `${t('beeroom.summary.latestMission')} #${shortMissionId(mission.mission_id || mission.team_run_id)}`;
+
+const orderedMissions = computed(() =>
+  [...props.missions].sort((left, right) => resolveMissionMoment(right) - resolveMissionMoment(left))
+);
+
 const latestMissionLabel = computed(() => {
-  const latestMission = props.group?.latest_mission;
+  const latestMission = props.group?.latest_mission || orderedMissions.value[0] || null;
   if (!latestMission) return t('beeroom.missions.empty');
   return resolveMissionStatus(latestMission.completion_status || latestMission.status);
 });
+
+const motherAgentLabel = computed(() =>
+  resolveDisplayAgentName(props.group?.mother_agent_id, props.group?.mother_agent_name)
+);
 
 const summaryCards = computed(() => [
   {
@@ -414,53 +270,20 @@ const summaryCards = computed(() => [
   {
     key: 'missions',
     label: t('beeroom.summary.runningTeams'),
-    value: props.group?.running_mission_total ?? 0,
+    value: props.group?.running_mission_total ?? orderedMissions.value.length,
     hint: t('beeroom.summary.runningTeamsHint')
   }
 ]);
 
-const missionBuckets = computed(() => {
-  const buckets = [
-    { key: 'running', label: t('beeroom.bucket.running'), items: [] as BeeroomMission[] },
-    { key: 'awaiting_idle', label: t('beeroom.bucket.awaitingIdle'), items: [] as BeeroomMission[] },
-    { key: 'completed', label: t('beeroom.bucket.completed'), items: [] as BeeroomMission[] },
-    { key: 'risk', label: t('beeroom.bucket.risk'), items: [] as BeeroomMission[] }
-  ];
-  props.missions.forEach((mission) => {
-    const status = String(mission.completion_status || mission.status || '').trim().toLowerCase();
-    if (status === 'completed' || status === 'success') {
-      buckets[2].items.push(mission);
-      return;
-    }
-    if (status === 'awaiting_idle') {
-      buckets[1].items.push(mission);
-      return;
-    }
-    if (status === 'failed' || status === 'error' || status === 'timeout' || status === 'cancelled') {
-      buckets[3].items.push(mission);
-      return;
-    }
-    buckets[0].items.push(mission);
-  });
-  return buckets;
-});
-
 const selectedMission = computed(() => {
   const selectedId = String(selectedMissionId.value || '').trim();
-  if (!selectedId) return props.missions[0] || null;
+  if (!selectedId) return orderedMissions.value[0] || null;
   return (
-    props.missions.find((item) => String(item.mission_id || item.team_run_id || '').trim() === selectedId) ||
-    props.missions[0] ||
+    orderedMissions.value.find((item) => String(item.mission_id || item.team_run_id || '').trim() === selectedId) ||
+    orderedMissions.value[0] ||
     null
   );
 });
-
-const resolveAgentName = (agentId: unknown) => {
-  const normalized = String(agentId || '').trim();
-  if (!normalized) return '-';
-  const member = props.agents.find((item) => item.agent_id === normalized);
-  return resolveDisplayAgentName(normalized, member?.name);
-};
 
 const submitMoveAgents = () => {
   emit('move-agents', [...moveAgentIds.value]);
@@ -469,10 +292,10 @@ const submitMoveAgents = () => {
 };
 
 watch(
-  () => [props.group?.group_id, props.missions.map((item) => item.mission_id || item.team_run_id).join(',')],
+  () => [props.group?.group_id, orderedMissions.value.map((item) => item.mission_id || item.team_run_id).join(',')],
   () => {
     const groupId = resolveGroupScopeKey(props.group?.group_id);
-    const missionIds = props.missions
+    const missionIds = orderedMissions.value
       .map((item) => String(item.mission_id || item.team_run_id || '').trim())
       .filter(Boolean);
     const cachedMissionId = groupId ? String(selectedMissionCacheByGroup.get(groupId) || '').trim() : '';
@@ -497,8 +320,7 @@ watch(
 watch(selectedMissionId, (value) => {
   const groupId = resolveGroupScopeKey(props.group?.group_id);
   const missionId = String(value || '').trim();
-  if (!groupId) return;
-  if (!missionId) return;
+  if (!groupId || !missionId) return;
   selectedMissionCacheByGroup.set(groupId, missionId);
 });
 </script>
@@ -507,24 +329,8 @@ watch(selectedMissionId, (value) => {
 .beeroom-workbench {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   min-height: 100%;
-}
-
-.beeroom-workbench--canvas {
-  flex: 1;
-  height: 100%;
-  min-height: 0;
-  gap: 0;
-  overflow: hidden;
-}
-
-.beeroom-workbench-canvas {
-  display: flex;
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
 }
 
 .beeroom-workbench-stage {
@@ -532,16 +338,146 @@ watch(selectedMissionId, (value) => {
   display: flex;
   flex: 1;
   width: 100%;
-  height: 100%;
   min-height: 0;
 }
 
+.beeroom-workbench-canvas {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.beeroom-state {
+  display: flex;
+  min-height: 320px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed var(--hula-border);
+  border-radius: 18px;
+  color: var(--hula-muted);
+  background: var(--hula-center-bg);
+}
+
+.beeroom-workbench-toolbar,
+.beeroom-workbench-summary-card {
+  border: 1px solid var(--hula-border);
+  background: var(--hula-center-bg);
+  border-radius: 18px;
+}
+
+.beeroom-workbench-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+}
+
+.beeroom-workbench-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.beeroom-workbench-topline,
+.beeroom-workbench-meta,
+.beeroom-workbench-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+}
+
+.beeroom-workbench-badge,
+.beeroom-workbench-group-id {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--hula-muted);
+  font-size: 12px;
+}
+
+.beeroom-workbench-badge {
+  background: var(--hula-accent-soft);
+  color: var(--hula-accent);
+}
+
+.beeroom-workbench-title {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.beeroom-workbench-description,
+.beeroom-workbench-meta,
+.beeroom-workbench-summary-hint,
+.beeroom-workbench-mission-chip-meta {
+  color: var(--hula-muted);
+}
+
+.beeroom-workbench-error {
+  color: var(--hula-danger);
+}
+
+.beeroom-workbench-actions {
+  justify-content: flex-end;
+}
+
+.beeroom-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--hula-border);
+  background: var(--hula-center-bg);
+  color: var(--hula-text);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.beeroom-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.beeroom-action-btn--primary {
+  border-color: var(--hula-accent);
+  background: var(--hula-accent-soft);
+  color: var(--hula-accent);
+}
+
+.beeroom-workbench-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.beeroom-workbench-summary-card {
+  padding: 16px;
+}
+
+.beeroom-workbench-summary-label {
+  color: var(--hula-muted);
+  font-size: 12px;
+}
+
+.beeroom-workbench-summary-value {
+  margin-top: 10px;
+  font-size: 28px;
+  font-weight: 700;
+}
+
 .beeroom-workbench-missions {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 14px;
-  z-index: 4;
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -580,282 +516,20 @@ watch(selectedMissionId, (value) => {
 }
 
 .beeroom-workbench-mission-chip-title {
+  max-width: 280px;
   color: #f8fafc;
   font-size: 12px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .beeroom-workbench-mission-chip-meta {
-  color: rgba(191, 219, 254, 0.74);
   font-size: 11px;
   white-space: nowrap;
 }
 
-.beeroom-state {
-  display: flex;
-  min-height: 320px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  border: 1px dashed var(--hula-border);
-  border-radius: 18px;
-  color: var(--hula-muted);
-  background: var(--hula-center-bg);
-}
-
-.beeroom-hero,
-.beeroom-panel,
-.beeroom-summary-card {
-  border: 1px solid var(--hula-border);
-  background: var(--hula-center-bg);
-  border-radius: 18px;
-}
-
-.beeroom-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px;
-}
-
-.beeroom-hero-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-}
-
-.beeroom-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--hula-muted);
-  font-size: 12px;
-}
-
-.beeroom-eyebrow-badge,
-.beeroom-panel-tag,
-.beeroom-mission-bucket-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: var(--hula-accent-soft);
-  color: var(--hula-accent);
-}
-
-.beeroom-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-}
-
-.beeroom-title {
-  margin: 0;
-  font-size: 24px;
-  line-height: 1.2;
-}
-
-.beeroom-description,
-.beeroom-panel-subtitle,
-.beeroom-summary-hint,
-.beeroom-member-desc,
-.beeroom-task-body,
-.beeroom-mission-card-summary,
-.beeroom-detail-meta,
-.beeroom-meta-row,
-.beeroom-task-meta,
-.beeroom-mission-card-foot {
-  color: var(--hula-muted);
-}
-
-.beeroom-meta-row,
-.beeroom-detail-meta,
-.beeroom-detail-stats,
-.beeroom-task-meta,
-.beeroom-mission-card-foot,
-.beeroom-member-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 14px;
-  font-size: 12px;
-}
-
-.beeroom-meta-error {
-  color: var(--hula-danger);
-}
-
-.beeroom-inline-link {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--hula-accent);
-  cursor: pointer;
-}
-
-.beeroom-hero-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.beeroom-action-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 40px;
-  padding: 0 14px;
-  border: 1px solid var(--hula-border);
-  background: var(--hula-center-bg);
-  color: var(--hula-text);
-  border-radius: 12px;
-  cursor: pointer;
-}
-
-.beeroom-action-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.beeroom-action-btn--primary {
-  border-color: var(--hula-accent);
-  background: var(--hula-accent-soft);
-  color: var(--hula-accent);
-}
-
-.beeroom-summary-grid,
-.beeroom-content-grid,
-.beeroom-task-grid,
-.beeroom-member-list {
-  display: grid;
-  gap: 14px;
-}
-
-.beeroom-summary-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.beeroom-summary-card {
-  padding: 16px;
-}
-
-.beeroom-summary-label {
-  color: var(--hula-muted);
-  font-size: 12px;
-}
-
-.beeroom-summary-value {
-  margin-top: 10px;
-  font-size: 28px;
-  font-weight: 700;
-}
-
-.beeroom-content-grid {
-  grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
-}
-
-.beeroom-content-grid--canvas {
-  grid-template-columns: 1fr;
-}
-
-.beeroom-panel {
-  padding: 16px;
-}
-
-.beeroom-panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.beeroom-panel-title,
-.beeroom-detail-title {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-.beeroom-panel-empty {
-  display: flex;
-  min-height: 160px;
-  align-items: center;
-  justify-content: center;
-  color: var(--hula-muted);
-}
-
-.beeroom-member-card,
-.beeroom-task-card,
-.beeroom-mission-card,
-.beeroom-mission-bucket {
-  border: 1px solid var(--hula-border);
-  border-radius: 14px;
-  background: var(--hula-main-bg);
-}
-
-.beeroom-member-card,
-.beeroom-task-card,
-.beeroom-mission-card {
-  padding: 14px;
-}
-
-.beeroom-member-head,
-.beeroom-task-head,
-.beeroom-mission-card-head,
-.beeroom-member-name-row,
-.beeroom-detail-head,
-.beeroom-mission-bucket-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.beeroom-member-head {
-  align-items: flex-start;
-}
-
-.beeroom-member-avatar {
-  display: inline-flex;
-  width: 36px;
-  height: 36px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  background: var(--hula-accent-soft);
-  color: var(--hula-accent);
-  font-weight: 700;
-}
-
-.beeroom-member-avatar-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: inherit;
-  display: block;
-}
-
-.beeroom-member-main {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.beeroom-member-name,
-.beeroom-task-name,
-.beeroom-mission-card-id {
-  font-weight: 700;
-}
-
-.beeroom-member-state,
 .beeroom-status-chip {
   display: inline-flex;
   align-items: center;
@@ -866,14 +540,12 @@ watch(selectedMissionId, (value) => {
   font-size: 12px;
 }
 
-.beeroom-member-state.idle,
 .beeroom-status-chip.tone-default,
 .beeroom-status-chip.tone-muted {
   background: rgba(148, 163, 184, 0.14);
   color: #64748b;
 }
 
-.beeroom-member-state.active,
 .beeroom-status-chip.tone-running {
   background: rgba(59, 130, 246, 0.14);
   color: #2563eb;
@@ -894,68 +566,33 @@ watch(selectedMissionId, (value) => {
   color: #b45309;
 }
 
-.beeroom-mission-buckets {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.beeroom-mission-bucket {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  min-height: 220px;
-}
-
-.beeroom-mission-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-  cursor: pointer;
-}
-
-.beeroom-mission-card.active {
-  border-color: var(--hula-accent);
-}
-
-.beeroom-task-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-}
-
 .beeroom-move-copy {
   margin-bottom: 12px;
   color: var(--hula-muted);
 }
 
-@media (max-width: 1360px) {
-  .beeroom-summary-grid,
-  .beeroom-mission-buckets {
+@media (max-width: 1280px) {
+  .beeroom-workbench-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .beeroom-content-grid {
-    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 860px) {
-  .beeroom-hero {
+@media (max-width: 900px) {
+  .beeroom-workbench-toolbar {
     flex-direction: column;
   }
 
-  .beeroom-hero-actions,
-  .beeroom-summary-grid,
-  .beeroom-mission-buckets {
+  .beeroom-workbench-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .beeroom-workbench-summary {
     grid-template-columns: 1fr;
   }
 
-  .beeroom-hero-actions {
-    flex-direction: row;
-    flex-wrap: wrap;
+  .beeroom-workbench-mission-chip {
+    min-width: 220px;
   }
 }
 </style>
-

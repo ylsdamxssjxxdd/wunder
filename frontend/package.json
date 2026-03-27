@@ -22,7 +22,6 @@
     "test:realtime-pulse": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/realtime-pulse-regression.test.js"
   },
   "dependencies": {
-    "@antv/g6": "^5.0.51",
     "axios": "^1.7.9",
     "echarts": "^5.5.0",
     "element-plus": "^2.8.8",

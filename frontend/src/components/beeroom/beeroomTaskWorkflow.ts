@@ -20,6 +20,13 @@ export type BeeroomWorkflowPreviewStep = {
   tone: BeeroomWorkflowTone;
 };
 
+export type BeeroomNodeWorkflowLine = {
+  key: string;
+  main: string;
+  detail: string;
+  title: string;
+};
+
 export type BeeroomTaskWorkflowPreview = {
   badge: string;
   badgeTone: BeeroomWorkflowTone;
@@ -513,4 +520,19 @@ export const buildNodeWorkflowHtml = (
     </div>
   `;
 };
+
+export const buildNodeWorkflowPreviewLines = (items: BeeroomWorkflowItem[]): BeeroomNodeWorkflowLine[] =>
+  items
+    .filter((item) => item.eventType === 'tool_call')
+    .slice()
+    .reverse()
+    .map((item, index) => {
+      const parts = resolveNodeWorkflowLineParts(item);
+      return {
+        key: `${item.id || 'tool'}:${index}`,
+        main: parts.main,
+        detail: parts.detail,
+        title: resolveNodeWorkflowLineText(item)
+      } satisfies BeeroomNodeWorkflowLine;
+    });
 

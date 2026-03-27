@@ -3,6 +3,8 @@ use super::*;
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
 const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
+pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
+    "compaction_skip_persist_current_user";
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -17,6 +19,45 @@ struct RebuiltContextGuardStats {
     summary_tokens_after: i64,
     summary_removed: bool,
     fallback_trim_applied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+enum CompactionResetMode {
+    Zero,
+    Current,
+    Keep,
+}
+
+impl CompactionResetMode {
+    fn from_config(raw: Option<&str>) -> Self {
+        match raw.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+            "current" => Self::Current,
+            "keep" => Self::Keep,
+            _ => Self::Zero,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Zero => "zero",
+            Self::Current => "current",
+            Self::Keep => "keep",
+        }
+    }
+
+    fn keep_recent_user_window(self) -> bool {
+        matches!(self, Self::Keep)
+    }
+
+    fn skip_persist_current_user(self) -> bool {
+        matches!(self, Self::Zero)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct CompactionBoundarySelection {
+    boundary_index: Option<usize>,
+    boundary_ts_override: Option<f64>,
 }
 
 impl Orchestrator {
@@ -184,21 +225,8 @@ impl Orchestrator {
             return Ok(messages);
         }
 
-        let reset_mode = if should_compact_by_history {
-            let mode = llm_config
-                .history_compaction_reset
-                .as_deref()
-                .unwrap_or("")
-                .trim()
-                .to_lowercase();
-            if matches!(mode.as_str(), "zero" | "current" | "keep") {
-                mode
-            } else {
-                "zero".to_string()
-            }
-        } else {
-            String::new()
-        };
+        let configured_reset_mode =
+            CompactionResetMode::from_config(llm_config.history_compaction_reset.as_deref());
 
         let summary_text = if should_compact_by_history {
             i18n::t("compaction.reason.history_threshold")
@@ -232,6 +260,15 @@ impl Orchestrator {
         let current_user_message = current_user_index
             .and_then(|index| messages.get(index))
             .cloned();
+        let current_user_has_non_text = current_user_message
+            .as_ref()
+            .is_some_and(message_has_non_text_content);
+        let reset_mode =
+            if configured_reset_mode == CompactionResetMode::Zero && current_user_has_non_text {
+                CompactionResetMode::Current
+            } else {
+                configured_reset_mode
+            };
         let mut source_messages: Vec<Value> = Vec::new();
         for (index, message) in messages.iter().enumerate() {
             if system_message.is_some() && index == 0 {
@@ -335,7 +372,7 @@ impl Orchestrator {
                 "presampling_limit": compaction_decision.presampling_limit,
                 "message_budget": message_budget,
                 "total_tokens": total_tokens,
-                "reset_mode": reset_mode,
+                "reset_mode": reset_mode.as_str(),
                 "context_guard_applied": guard_stats.applied,
                 "context_guard_tokens_before": guard_stats.tokens_before,
                 "context_guard_tokens_after": guard_stats.tokens_after,
@@ -371,8 +408,6 @@ impl Orchestrator {
 
         let mut compacted_until_ts: Option<f64> = None;
         let mut compacted_until: Option<String> = None;
-        let mut current_question_ts: Option<f64> = None;
-        let mut skipped_question = false;
         let question_text = current_question.trim();
         let current_user_signature = current_user_message
             .as_ref()
@@ -403,28 +438,21 @@ impl Orchestrator {
             .await
             .unwrap_or_default();
         let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
-        let mut boundary_item: Option<Value> = None;
-        for item in history_items.iter().rev() {
-            if !skipped_question && !question_candidates.is_empty() {
-                let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-                let content =
-                    self.extract_memory_summary_text(item.get("content").unwrap_or(&Value::Null));
-                if role == "user"
-                    && !content.is_empty()
-                    && question_candidates
-                        .iter()
-                        .any(|candidate| candidate == content.trim())
-                {
-                    skipped_question = true;
-                    current_question_ts = HistoryManager::get_item_timestamp(item);
-                    continue;
-                }
-            }
-            boundary_item = Some(item.clone());
-            break;
-        }
-        if let Some(boundary_item) = boundary_item {
-            compacted_until_ts = HistoryManager::get_item_timestamp(&boundary_item);
+        let current_question_index =
+            locate_matching_history_user_index(&history_items, &question_candidates);
+        let boundary = select_compaction_boundary(
+            &history_items,
+            current_question_index,
+            reset_mode,
+            COMPACTION_RECENT_USER_WINDOW_TOKENS,
+        );
+        if let Some(value) = boundary.boundary_ts_override {
+            compacted_until_ts = Some(value);
+        } else if let Some(boundary_item) = boundary
+            .boundary_index
+            .and_then(|index| history_items.get(index))
+        {
+            compacted_until_ts = HistoryManager::get_item_timestamp(boundary_item);
             compacted_until = boundary_item
                 .get("timestamp")
                 .and_then(Value::as_str)
@@ -538,10 +566,14 @@ impl Orchestrator {
         let (summary_text, fresh_memory_injected) =
             merge_compaction_summary_with_fresh_memory(&summary_text, &fresh_memory_block);
         let mut summary_text = summary_text;
-        let recent_user_messages = collect_recent_user_messages_for_compaction(
-            &source_messages,
-            COMPACTION_RECENT_USER_WINDOW_TOKENS,
-        );
+        let recent_user_messages = if reset_mode.keep_recent_user_window() {
+            collect_recent_user_messages_for_compaction(
+                &source_messages,
+                COMPACTION_RECENT_USER_WINDOW_TOKENS,
+            )
+        } else {
+            Vec::new()
+        };
         let recent_user_messages_retained = recent_user_messages.len();
         let recent_user_tokens_retained = estimate_messages_tokens(&recent_user_messages);
         let mut base_messages: Vec<Value> = Vec::new();
@@ -598,6 +630,10 @@ impl Orchestrator {
         if let Some(value) = compacted_until.clone() {
             meta.insert("compacted_until".to_string(), Value::String(value));
         }
+        meta.insert(
+            "reset_mode".to_string(),
+            Value::String(reset_mode.as_str().to_string()),
+        );
         let meta_value = Value::Object(meta);
         self.append_chat(
             user_id,
@@ -613,49 +649,18 @@ impl Orchestrator {
 
         let mut current_user_message_for_history_trimmed = false;
         let current_user_message_for_history = current_user_message.as_ref().map(|message| {
-            if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
-                current_user_message_for_history_trimmed = true;
-                trimmed
-            } else {
-                message.clone()
+            let mut candidate =
+                if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
+                    current_user_message_for_history_trimmed = true;
+                    trimmed
+                } else {
+                    message.clone()
+                };
+            if reset_mode.skip_persist_current_user() {
+                mark_current_user_message_skip_persist(&mut candidate);
             }
+            candidate
         });
-
-        if skipped_question {
-            let should_reappend = compacted_until_ts.is_none()
-                || current_question_ts.is_none()
-                || current_question_ts <= compacted_until_ts;
-            if should_reappend {
-                if let Some(current_user_message) = current_user_message_for_history.as_ref() {
-                    if let Some(content) = current_user_message.get("content") {
-                        self.append_chat(
-                            user_id,
-                            session_id,
-                            "user",
-                            Some(content),
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                        );
-                    }
-                } else if !question_text.is_empty() {
-                    let question_value = Value::String(question_text.to_string());
-                    self.append_chat(
-                        user_id,
-                        session_id,
-                        "user",
-                        Some(&question_value),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
-                }
-            }
-        }
 
         let mut rebuilt = Vec::new();
         if let Some(system_message) = system_message {
@@ -721,7 +726,9 @@ impl Orchestrator {
             "limit": limit,
             "presampling_limit": compaction_decision.presampling_limit,
             "message_budget": message_budget,
-            "reset_mode": reset_mode,
+            "reset_mode": reset_mode.as_str(),
+            "configured_reset_mode": configured_reset_mode.as_str(),
+            "current_user_non_text_preserved": current_user_has_non_text,
             "context_guard_applied": guard_stats.applied,
             "context_guard_tokens_before": guard_stats.tokens_before,
             "context_guard_tokens_after": guard_stats.tokens_after,
@@ -1771,6 +1778,144 @@ fn starts_with_compaction_prefix(text: &str) -> bool {
         .any(|prefix| !prefix.is_empty() && cleaned.starts_with(prefix))
 }
 
+fn message_has_non_text_content(message: &Value) -> bool {
+    let content = message.get("content").unwrap_or(&Value::Null);
+    match content {
+        Value::Array(parts) => parts.iter().any(|part| {
+            let Some(obj) = part.as_object() else {
+                return false;
+            };
+            let part_type = obj
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            part_type != "text" && (!part_type.is_empty() || obj.contains_key("image_url"))
+        }),
+        Value::Object(map) => {
+            let part_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            part_type != "text" && (!part_type.is_empty() || map.contains_key("image_url"))
+        }
+        _ => false,
+    }
+}
+
+fn mark_current_user_message_skip_persist(message: &mut Value) {
+    let Some(map) = message.as_object_mut() else {
+        return;
+    };
+    let meta = map
+        .entry("meta".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(meta_obj) = meta.as_object_mut() else {
+        return;
+    };
+    meta_obj.insert(
+        COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY.to_string(),
+        Value::Bool(true),
+    );
+}
+
+fn locate_matching_history_user_index(
+    history_items: &[Value],
+    question_candidates: &[String],
+) -> Option<usize> {
+    if question_candidates.is_empty() {
+        return None;
+    }
+    history_items.iter().rposition(|item| {
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" {
+            return false;
+        }
+        let content = extract_guard_content_text(item.get("content").unwrap_or(&Value::Null));
+        !content.is_empty()
+            && question_candidates
+                .iter()
+                .any(|candidate| candidate.trim() == content.trim())
+    })
+}
+
+fn select_recent_user_window_start_index(
+    history_items: &[Value],
+    token_limit: i64,
+) -> Option<usize> {
+    if token_limit <= 0 {
+        return None;
+    }
+    let mut remaining = token_limit.max(0);
+    let mut earliest_index: Option<usize> = None;
+
+    for (index, item) in history_items.iter().enumerate().rev() {
+        if remaining <= 0 {
+            break;
+        }
+        if item.get("role").and_then(Value::as_str) != Some("user") {
+            continue;
+        }
+        let content = item.get("content").cloned().unwrap_or(Value::Null);
+        let text = extract_guard_content_text(&content);
+        if text.is_empty() || starts_with_compaction_prefix(&text) {
+            continue;
+        }
+        let message = json!({ "role": "user", "content": content });
+        let message_tokens = estimate_message_tokens(&message).max(1);
+        earliest_index = Some(index);
+        if message_tokens >= remaining {
+            break;
+        }
+        remaining = remaining.saturating_sub(message_tokens);
+    }
+
+    earliest_index
+}
+
+fn select_compaction_boundary(
+    history_items: &[Value],
+    current_question_index: Option<usize>,
+    reset_mode: CompactionResetMode,
+    recent_user_window_tokens: i64,
+) -> CompactionBoundarySelection {
+    let last_index = history_items.len().checked_sub(1);
+    match reset_mode {
+        CompactionResetMode::Zero => CompactionBoundarySelection {
+            boundary_index: current_question_index.or(last_index),
+            boundary_ts_override: None,
+        },
+        CompactionResetMode::Current => CompactionBoundarySelection {
+            boundary_index: current_question_index
+                .and_then(|index| index.checked_sub(1))
+                .or(last_index),
+            boundary_ts_override: None,
+        },
+        CompactionResetMode::Keep => {
+            match select_recent_user_window_start_index(history_items, recent_user_window_tokens) {
+                Some(0) => CompactionBoundarySelection {
+                    boundary_index: None,
+                    boundary_ts_override: history_items
+                        .first()
+                        .and_then(HistoryManager::get_item_timestamp)
+                        .map(|value| value - 0.001),
+                },
+                Some(index) => CompactionBoundarySelection {
+                    boundary_index: index.checked_sub(1),
+                    boundary_ts_override: None,
+                },
+                None => CompactionBoundarySelection {
+                    boundary_index: last_index,
+                    boundary_ts_override: None,
+                },
+            }
+        }
+    }
+}
+
 fn locate_compaction_summary_message_index(messages: &[Value]) -> Option<usize> {
     messages.iter().position(|message| {
         if message.get("role").and_then(Value::as_str) != Some("user") {
@@ -2222,6 +2367,118 @@ mod tests {
         assert_eq!(kept.len(), 1);
         let kept_tokens = estimate_message_tokens(&kept[0]);
         assert!(kept_tokens <= token_limit.max(1));
+    }
+
+    #[test]
+    fn test_select_compaction_boundary_index_zero_mode_targets_current_question() {
+        let history_items = vec![
+            json!({ "role": "user", "content": "older question" }),
+            json!({ "role": "assistant", "content": "older answer" }),
+            json!({ "role": "user", "content": "current question" }),
+        ];
+        let current_index =
+            locate_matching_history_user_index(&history_items, &[String::from("current question")]);
+        let boundary = select_compaction_boundary(
+            &history_items,
+            current_index,
+            CompactionResetMode::Zero,
+            COMPACTION_RECENT_USER_WINDOW_TOKENS,
+        );
+        assert_eq!(current_index, Some(2));
+        assert_eq!(boundary.boundary_index, Some(2));
+    }
+
+    #[test]
+    fn test_select_compaction_boundary_index_current_mode_stops_before_current_question() {
+        let history_items = vec![
+            json!({ "role": "user", "content": "older question" }),
+            json!({ "role": "assistant", "content": "older answer" }),
+            json!({ "role": "user", "content": "current question" }),
+        ];
+        let current_index =
+            locate_matching_history_user_index(&history_items, &[String::from("current question")]);
+        let boundary = select_compaction_boundary(
+            &history_items,
+            current_index,
+            CompactionResetMode::Current,
+            COMPACTION_RECENT_USER_WINDOW_TOKENS,
+        );
+        assert_eq!(boundary.boundary_index, Some(1));
+    }
+
+    #[test]
+    fn test_select_compaction_boundary_index_keep_mode_retains_recent_tail_window() {
+        let history_items = vec![
+            json!({ "role": "user", "content": "older question" }),
+            json!({ "role": "assistant", "content": "older answer" }),
+            json!({ "role": "user", "content": "middle question" }),
+            json!({ "role": "assistant", "content": "middle answer" }),
+            json!({ "role": "user", "content": "current question" }),
+        ];
+        let keep_tokens = estimate_message_tokens(&json!({
+            "role": "user",
+            "content": "middle question"
+        })) + estimate_message_tokens(&json!({
+            "role": "user",
+            "content": "current question"
+        }));
+        let boundary = select_compaction_boundary(
+            &history_items,
+            locate_matching_history_user_index(&history_items, &[String::from("current question")]),
+            CompactionResetMode::Keep,
+            keep_tokens,
+        );
+        assert_eq!(boundary.boundary_index, Some(1));
+    }
+
+    #[test]
+    fn test_select_compaction_boundary_index_keep_mode_supports_full_window() {
+        let history_items = vec![
+            json!({
+                "role": "user",
+                "content": "older question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "older answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "current question",
+                "timestamp": "2026-03-27T00:00:03Z"
+            }),
+        ];
+        let keep_tokens = estimate_message_tokens(&json!({
+            "role": "user",
+            "content": "older question"
+        })) + estimate_message_tokens(&json!({
+            "role": "user",
+            "content": "current question"
+        })) + 32;
+        let boundary = select_compaction_boundary(
+            &history_items,
+            locate_matching_history_user_index(&history_items, &[String::from("current question")]),
+            CompactionResetMode::Keep,
+            keep_tokens,
+        );
+        assert_eq!(boundary.boundary_index, None);
+        assert!(boundary.boundary_ts_override.is_some());
+    }
+
+    #[test]
+    fn test_mark_current_user_message_skip_persist_sets_meta_flag() {
+        let mut message = json!({ "role": "user", "content": "current question" });
+        mark_current_user_message_skip_persist(&mut message);
+        assert_eq!(
+            message
+                .get("meta")
+                .and_then(Value::as_object)
+                .and_then(|meta| meta.get(COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]

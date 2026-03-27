@@ -11,6 +11,7 @@ use crate::orchestrator_constants::{
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
+use crate::services::subagents;
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
@@ -70,6 +71,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/sessions/{session_id}/history",
             get(get_session_history),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/subagents",
+            get(list_session_subagents),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/subagents/control",
+            post(control_session_subagents),
         )
         .route(
             "/wunder/chat/sessions/{session_id}/tools",
@@ -213,6 +222,21 @@ struct HistoryPageQuery {
     before_id: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionSubagentQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionSubagentControlRequest {
+    action: String,
+    #[serde(default, rename = "sessionIds", alias = "session_ids")]
+    session_ids: Vec<String>,
+    #[serde(default, rename = "dispatchId", alias = "dispatch_id")]
+    dispatch_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -497,6 +521,73 @@ async fn get_session(
     })))
 }
 
+async fn list_session_subagents(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<SessionSubagentQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let items = subagents::list_parent_subagents(
+        state.storage.as_ref(),
+        Some(state.monitor.as_ref()),
+        &resolved.user.user_id,
+        &session_id,
+        query.limit,
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "session_id": session_id,
+            "items": items,
+        }
+    })))
+}
+
+async fn control_session_subagents(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SessionSubagentControlRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let result = subagents::control_parent_subagents(
+        state.storage.as_ref(),
+        Some(state.monitor.as_ref()),
+        &resolved.user.user_id,
+        &session_id,
+        &payload.action,
+        &payload.session_ids,
+        payload.dispatch_id.as_deref(),
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": result })))
+}
+
 async fn get_session_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -526,11 +617,14 @@ async fn get_session_events(
             .and_then(Value::as_str)
             .map(ToString::to_string)
     });
+    let runtime = state
+        .orchestrator
+        .get_tool_session_runtime_snapshot(&session_id);
     let running = is_session_stream_active_or_queued(
         &state.user_store,
         monitor_status.as_deref(),
         &session_id,
-    );
+    ) || is_session_runtime_active(runtime.as_ref());
     let last_event_id = {
         let storage = state.storage.clone();
         let session_id = session_id.clone();
@@ -545,7 +639,8 @@ async fn get_session_events(
             "id": session_id,
             "rounds": rounds,
             "running": running,
-            "last_event_id": last_event_id
+            "last_event_id": last_event_id,
+            "runtime": runtime
         }
     })))
 }
@@ -1329,6 +1424,15 @@ fn is_session_stream_active_or_queued(
         || has_active_queue_task(user_store, session_id)
 }
 
+fn is_session_runtime_active(runtime: Option<&Value>) -> bool {
+    matches!(
+        runtime
+            .and_then(|snapshot| snapshot.get("thread_status"))
+            .and_then(Value::as_str),
+        Some("running" | "waiting_approval" | "waiting_user_input")
+    )
+}
+
 fn normalize_queue_task_attachments(value: Option<&Value>) -> Option<Value> {
     match value {
         Some(Value::Array(items)) if items.is_empty() => None,
@@ -1388,11 +1492,60 @@ fn build_projected_queue_user_message(task: &crate::storage::AgentTaskRecord) ->
 }
 
 fn build_projected_queue_assistant_message(task: &crate::storage::AgentTaskRecord) -> Value {
-    json!({
+    let workflow_events = build_projected_queue_workflow_events(task);
+    let mut message = json!({
         "role": "assistant",
         "content": "",
         "created_at": format_ts(task.created_at),
         "stream_incomplete": true,
+    });
+    if !workflow_events.is_empty() {
+        if let Value::Object(ref mut map) = message {
+            map.insert("workflow_events".to_string(), Value::Array(workflow_events));
+        }
+    }
+    message
+}
+
+fn build_projected_queue_workflow_events(task: &crate::storage::AgentTaskRecord) -> Vec<Value> {
+    let mut events = vec![build_projected_queue_workflow_event(
+        task,
+        "queue_enter",
+        task.created_at,
+    )];
+    if task.status == "running" {
+        let queue_start_ts = task
+            .started_at
+            .unwrap_or(task.updated_at.max(task.created_at));
+        events.push(build_projected_queue_workflow_event(
+            task,
+            "queue_start",
+            queue_start_ts,
+        ));
+    }
+    events
+}
+
+fn build_projected_queue_workflow_event(
+    task: &crate::storage::AgentTaskRecord,
+    event_type: &str,
+    timestamp: f64,
+) -> Value {
+    let mut data = json!({
+        "queue_id": task.task_id,
+        "thread_id": task.thread_id,
+        "session_id": task.session_id,
+        "agent_id": task.agent_id,
+        "user_id": task.user_id,
+        "retry_count": task.retry_count,
+    });
+    if let Value::Object(ref mut map) = data {
+        map.insert("status".to_string(), json!(task.status));
+    }
+    json!({
+        "event": event_type,
+        "timestamp": format_ts(timestamp),
+        "data": data,
     })
 }
 
@@ -2010,6 +2163,11 @@ fn map_history_message(item: Value, message_feedback: &HashMap<i64, Value>) -> O
         "content": content,
         "created_at": created_at,
     });
+    if is_hidden_internal_history_message(&item) {
+        if let Value::Object(ref mut map) = message {
+            map.insert("hiddenInternal".to_string(), Value::Bool(true));
+        }
+    }
     if let Some(panel) = extract_question_panel(&item) {
         if let Value::Object(ref mut map) = message {
             map.insert("questionPanel".to_string(), panel);
@@ -2160,6 +2318,22 @@ fn extract_question_panel(item: &Value) -> Option<Value> {
     meta.get("question_panel")
         .or_else(|| meta.get("questionPanel"))
         .cloned()
+}
+
+fn is_hidden_internal_history_message(item: &Value) -> bool {
+    item.get("meta")
+        .and_then(Value::as_object)
+        .map(|meta| {
+            meta.get("type")
+                .and_then(Value::as_str)
+                .map(|value| value == subagents::HIDDEN_HISTORY_META_TYPE)
+                .unwrap_or(false)
+                || meta
+                    .get("hidden")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false)
 }
 
 fn is_tool_payload_text(text: &str) -> bool {
@@ -3155,15 +3329,17 @@ fn error_response(status: StatusCode, message: String) -> Response {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_session_running_state, build_projected_queue_user_message,
-        collect_session_event_rounds, count_system_prompt_memory_items,
-        extract_system_prompt_memory_preview, extract_system_prompt_memory_total_count,
-        has_active_queue_task, is_session_stream_active_or_queued, project_queued_session_messages,
+        apply_session_running_state, build_projected_queue_assistant_message,
+        build_projected_queue_user_message, collect_session_event_rounds,
+        count_system_prompt_memory_items, extract_system_prompt_memory_preview,
+        extract_system_prompt_memory_total_count, has_active_queue_task,
+        is_session_stream_active_or_queued, project_queued_session_messages,
         should_merge_round_event,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
     use serde_json::json;
+    use serde_json::Value;
     use std::sync::Arc;
 
     fn build_user_store() -> UserStore {
@@ -3367,6 +3543,22 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn projected_queue_assistant_message_contains_queue_workflow() {
+        let task = build_queue_task("task_proj_4", "sess_proj_4", "pending", "queued now", 9.0);
+        let message = build_projected_queue_assistant_message(&task);
+        let events = message
+            .get("workflow_events")
+            .and_then(Value::as_array)
+            .expect("workflow events");
+
+        assert_eq!(message["role"], json!("assistant"));
+        assert_eq!(message["stream_incomplete"], json!(true));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["event"], json!("queue_enter"));
+        assert_eq!(events[0]["data"]["queue_id"], json!("task_proj_4"));
     }
 
     #[test]

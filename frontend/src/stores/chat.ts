@@ -4,12 +4,14 @@ import {
   archiveSession as archiveSessionApi,
   cancelMessageStream,
   compactSession as compactSessionApi,
+  controlSessionSubagents as controlSessionSubagentsApi,
   createSession,
   deleteSession as deleteSessionApi,
   fetchChatTransportProfile,
   getSession,
   getSessionEvents,
   getSessionHistoryPage,
+  getSessionSubagents,
   listSessions,
   openChatSocket,
   renameSession as renameSessionApi,
@@ -24,7 +26,11 @@ import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
-import { isSessionBusyFromSignals } from '@/utils/chatSessionRuntime';
+import {
+  isSessionBusyFromSignals,
+  isThreadRuntimeWaiting,
+  normalizeThreadRuntimeStatus
+} from '@/utils/chatSessionRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import {
   normalizeMessageFeedback,
@@ -65,6 +71,8 @@ type SnapshotAssistantMessage = {
   planVisible?: boolean;
   isGreeting?: boolean;
   attachments?: unknown[];
+  subagents?: unknown[];
+  hiddenInternal?: boolean;
 };
 
 type DemoChatCachePatch = {
@@ -122,6 +130,29 @@ type QuestionPanelApplyOptions = {
 type InquiryPanelPatch = {
   status?: unknown;
   selected?: unknown[];
+};
+
+type MessageSubagentItem = {
+  key: string;
+  session_id: string;
+  run_id: string;
+  dispatch_id: string;
+  title: string;
+  label: string;
+  status: string;
+  summary: string;
+  terminal: boolean;
+  failed: boolean;
+  canTerminate: boolean;
+  updated_at: string;
+  updated_at_ms: number | null;
+  parent_user_round: number | null;
+  parent_model_round: number | null;
+  detail: Record<string, unknown>;
+  agent_state: {
+    status: string;
+    message: string;
+  };
 };
 
 type DesktopOverlayBridge = {
@@ -349,6 +380,135 @@ const resolveInteractionDuration = (startMs, endMs) => {
 const normalizeInteractionTimestamp = (value) => {
   const millis = resolveTimestampMs(value);
   return Number.isFinite(millis) ? millis : null;
+};
+
+const normalizeSubagentEventStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'running';
+  return normalized;
+};
+
+const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
+  if (!payload || typeof payload !== 'object') return null;
+  const source = payload as Record<string, unknown>;
+  const sessionId = String(source.session_id ?? source.sessionId ?? '').trim();
+  const runId = String(source.run_id ?? source.runId ?? '').trim();
+  const key = runId || sessionId;
+  if (!key) return null;
+  const label = String(
+    source.label ?? source.spawn_label ?? source.spawnLabel ?? source.title ?? ''
+  ).trim();
+  const title = label || sessionId || runId || '子智能体';
+  const status = normalizeSubagentEventStatus(source.status);
+  const summary = String(
+    source.summary ??
+      source.agent_state?.message ??
+      source.agentState?.message ??
+      source.result ??
+      source.error ??
+      ''
+  ).trim();
+  const updatedAtMs = normalizeInteractionTimestamp(
+    source.updated_time ??
+      source.updatedTime ??
+      source.finished_time ??
+      source.finishedTime ??
+      source.started_time ??
+      source.startedTime
+  );
+  const updatedAt = resolveTimestampIso(updatedAtMs);
+  const agentStateStatus = String(
+    source.agent_state?.status ?? source.agentState?.status ?? status
+  ).trim();
+  const agentStateMessage = String(
+    source.agent_state?.message ?? source.agentState?.message ?? summary
+  ).trim();
+  return {
+    key,
+    session_id: sessionId,
+    run_id: runId,
+    dispatch_id: String(source.dispatch_id ?? source.dispatchId ?? '').trim(),
+    title,
+    label,
+    status,
+    summary,
+    terminal: Boolean(source.terminal),
+    failed: Boolean(source.failed),
+    canTerminate: Boolean(source.can_terminate ?? source.canTerminate ?? !source.terminal),
+    updated_at: updatedAt,
+    updated_at_ms: updatedAtMs,
+    parent_user_round: normalizeStreamRound(
+      source.parent_user_round ?? source.parentUserRound
+    ),
+    parent_model_round: normalizeStreamRound(
+      source.parent_model_round ?? source.parentModelRound
+    ),
+    detail: { ...source },
+    agent_state: {
+      status: agentStateStatus,
+      message: agentStateMessage
+    }
+  };
+};
+
+const normalizeMessageSubagents = (items): MessageSubagentItem[] => {
+  if (!Array.isArray(items)) return [];
+  const map = new Map<string, MessageSubagentItem>();
+  items.forEach((item) => {
+    const normalized = normalizeMessageSubagent(item);
+    if (!normalized) return;
+    const existing = map.get(normalized.key);
+    if (
+      !existing ||
+      (Number(existing.updated_at_ms || 0) <= Number(normalized.updated_at_ms || 0))
+    ) {
+      map.set(normalized.key, normalized);
+    }
+  });
+  return Array.from(map.values()).sort((left, right) => {
+    const leftTime = Number(left.updated_at_ms || 0);
+    const rightTime = Number(right.updated_at_ms || 0);
+    return rightTime - leftTime;
+  });
+};
+
+const upsertMessageSubagent = (message, payload) => {
+  if (!message || message.role !== 'assistant') return null;
+  const normalized = normalizeMessageSubagent(payload);
+  if (!normalized) return null;
+  const items = normalizeMessageSubagents(message.subagents);
+  const index = items.findIndex((item) => item.key === normalized.key);
+  if (index >= 0) {
+    items[index] = normalized;
+  } else {
+    items.push(normalized);
+  }
+  message.subagents = normalizeMessageSubagents(items);
+  return normalized;
+};
+
+const attachSubagentsToMessages = (messages, subagents) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return messages;
+  }
+  const normalized = normalizeMessageSubagents(subagents);
+  messages.forEach((message) => {
+    if (!message || message.role !== 'assistant') return;
+    message.subagents = [];
+  });
+  normalized.forEach((item) => {
+    const target =
+      (item.parent_user_round
+        ? findAssistantMessageByUserRound(messages, item.parent_user_round)
+        : null) ||
+      (item.parent_model_round
+        ? findAssistantMessageByRound(messages, item.parent_model_round)
+        : null) ||
+      [...messages].reverse().find((message) => message?.role === 'assistant');
+    if (!target) return;
+    upsertMessageSubagent(target, item);
+  });
+  return messages;
 };
 
 const normalizeUsagePayload = (payload) => {
@@ -619,7 +779,7 @@ const resolveTimestampIso = (value) => {
   return millis === null ? '' : new Date(millis).toISOString();
 };
 
-const buildMessage = (role, content, createdAt = undefined) => ({
+const buildMessage = (role, content, createdAt = undefined, extra = undefined) => ({
   role,
   content,
   created_at: resolveTimestampIso(createdAt) || new Date().toISOString(),
@@ -629,8 +789,11 @@ const buildMessage = (role, content, createdAt = undefined) => ({
   planVisible: false,
   questionPanel: null,
   feedback: null,
-  stats: role === 'assistant' ? buildMessageStats() : null
+  stats: role === 'assistant' ? buildMessageStats() : null,
+  ...(extra && typeof extra === 'object' ? extra : {})
 });
+
+const normalizeHiddenInternalMessage = (value) => Boolean(value);
 
 const resolveGreetingContent = (override) => {
   const trimmed = String(override || '').trim();
@@ -982,6 +1145,9 @@ const normalizeSnapshotMessage = (message) => {
           : String(message.content || ''),
     created_at: message.created_at || ''
   };
+  if (normalizeHiddenInternalMessage(message.hiddenInternal)) {
+    base.hiddenInternal = true;
+  }
   if (message.role === 'assistant') {
     base.reasoning = normalizedAssistant?.reasoning || '';
     base.reasoningStreaming = normalizeFlag(message.reasoningStreaming);
@@ -997,6 +1163,10 @@ const normalizeSnapshotMessage = (message) => {
     }
     if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
       base.workflowItems = message.workflowItems;
+    }
+    const subagents = normalizeMessageSubagents(message.subagents);
+    if (subagents.length > 0) {
+      base.subagents = subagents;
     }
     const plan = normalizePlanPayload(message.plan);
     if (plan) {
@@ -1038,6 +1208,9 @@ const buildSnapshotMessages = (messages = []) => {
         hasWorkflowItems || normalized.stream_incomplete || normalized.workflowStreaming;
       if (!shouldKeepWorkflow) {
         delete normalized.workflowItems;
+      }
+      if (Array.isArray(normalized.subagents) && normalized.subagents.length === 0) {
+        delete normalized.subagents;
       }
       return normalized;
     })
@@ -1163,6 +1336,7 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const hasSnapshotPlan = hasPlanSteps(snapshotPlan);
   const snapshotFeedback = normalizeMessageFeedback(snapshot.feedback);
   const snapshotStats = normalizeMessageStats(snapshot.stats);
+  const snapshotSubagents = normalizeMessageSubagents(snapshot.subagents);
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1177,7 +1351,8 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       snapshotRound !== null ||
       snapshotEventId !== null ||
       snapshot.questionPanel ||
-      snapshotFeedback
+      snapshotFeedback ||
+      snapshotSubagents.length > 0
   );
   if (!shouldMergeContent && !shouldMergeFlags && !snapshotStats) {
     return false;
@@ -1222,6 +1397,9 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     }
     if (snapshotFeedback) {
       target.feedback = snapshotFeedback;
+    }
+    if (snapshotSubagents.length > 0) {
+      target.subagents = snapshotSubagents;
     }
   }
   if (snapshotStats) {
@@ -1718,10 +1896,12 @@ const handleApprovalEvent = (store, eventType, payload, requestId, sessionId) =>
   if (!store) return;
   if (eventType === 'approval_request') {
     store.enqueueApprovalRequest(requestId, sessionId, payload);
+    syncSessionPendingApprovalRuntime(store, sessionId);
     return;
   }
   if (eventType === 'approval_result') {
     store.resolveApprovalResult(payload);
+    syncSessionPendingApprovalRuntime(store, sessionId);
   }
 };
 
@@ -2716,7 +2896,14 @@ const ensureRuntime = (sessionId) => {
       slowClientResumeTimer: null,
       slowClientResumeAfterEventId: 0,
       stopRequested: false,
-      lastEventId: 0
+      lastEventId: 0,
+      threadStatus: 'not_loaded',
+      loaded: false,
+      activeTurnId: '',
+      pendingApprovalIds: [],
+      pendingApprovalCount: 0,
+      waitingForUserInput: false,
+      lastThreadStatusAt: 0
     });
   }
   return sessionRuntime.get(key);
@@ -2727,6 +2914,148 @@ const getRuntime = (sessionId) => {
   if (!key) return null;
   return sessionRuntime.get(key) || null;
 };
+
+function resolveRuntimeSessionId(sessionId, payload) {
+  const direct = resolveSessionKey(sessionId ?? payload?.session_id ?? payload?.sessionId);
+  if (direct) return direct;
+  const threadId = String(payload?.thread_id ?? payload?.threadId ?? '').trim();
+  if (!threadId.startsWith('thread_')) return null;
+  return resolveSessionKey(threadId.slice('thread_'.length));
+}
+
+function normalizeRuntimeApprovalIds(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function resolveRuntimeLoading(store, sessionId, runtime) {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return false;
+  if (Boolean(store?.loadingBySession?.[key])) {
+    return true;
+  }
+  return Boolean(runtime?.sendController || runtime?.resumeController || runtime?.compactController);
+}
+
+function applyRuntimeDerivedStatus(store, sessionId, runtime) {
+  if (!runtime) return 'not_loaded';
+  if (runtime.waitingForUserInput) {
+    runtime.threadStatus = 'waiting_user_input';
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  if (Number(runtime.pendingApprovalCount) > 0) {
+    runtime.threadStatus = 'waiting_approval';
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  const loading = resolveRuntimeLoading(store, sessionId, runtime);
+  const current = normalizeThreadRuntimeStatus(runtime.threadStatus);
+  if (loading) {
+    runtime.threadStatus = 'running';
+    runtime.loaded = true;
+    return runtime.threadStatus;
+  }
+  if (current === 'system_error') {
+    return current;
+  }
+  runtime.threadStatus = runtime.loaded ? 'idle' : 'not_loaded';
+  return runtime.threadStatus;
+}
+
+function applySessionRuntimeSnapshot(runtime, snapshot) {
+  if (!runtime || !snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return false;
+  }
+  const source = snapshot as Record<string, unknown>;
+  const turn =
+    source.turn && typeof source.turn === 'object' && !Array.isArray(source.turn)
+      ? (source.turn as Record<string, unknown>)
+      : {};
+  const pendingApprovalIds = normalizeRuntimeApprovalIds(
+    turn.pending_approval_ids ?? turn.pendingApprovalIds
+  );
+  const waitingForUserInput = normalizeFlag(
+    turn.waiting_for_user_input ?? turn.waitingForUserInput
+  );
+  const explicitApprovalCount = Number.parseInt(
+    String(turn.pending_approval_count ?? turn.pendingApprovalCount ?? ''),
+    10
+  );
+  runtime.loaded =
+    source.loaded === undefined
+      ? runtime.loaded || normalizeThreadRuntimeStatus(source.thread_status ?? source.status) !== 'not_loaded'
+      : normalizeFlag(source.loaded);
+  runtime.activeTurnId = String(
+    source.active_turn_id ?? source.activeTurnId ?? turn.turn_id ?? turn.turnId ?? ''
+  ).trim();
+  runtime.pendingApprovalIds = pendingApprovalIds;
+  runtime.pendingApprovalCount =
+    Number.isFinite(explicitApprovalCount) && explicitApprovalCount >= 0
+      ? explicitApprovalCount
+      : pendingApprovalIds.length;
+  runtime.waitingForUserInput = waitingForUserInput;
+  runtime.threadStatus = normalizeThreadRuntimeStatus(source.thread_status ?? source.status);
+  runtime.lastThreadStatusAt = Date.now();
+  if (runtime.waitingForUserInput) {
+    runtime.threadStatus = 'waiting_user_input';
+    runtime.loaded = true;
+  } else if (runtime.pendingApprovalCount > 0) {
+    runtime.threadStatus = 'waiting_approval';
+    runtime.loaded = true;
+  } else if (runtime.threadStatus === 'not_loaded') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+  }
+  return true;
+}
+
+function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread_status') {
+  const targetId = resolveRuntimeSessionId(sessionId, payload);
+  if (!targetId) return null;
+  const runtime = ensureRuntime(targetId);
+  if (!runtime) return null;
+  const applied = applySessionRuntimeSnapshot(runtime, payload);
+  if (!applied && eventType === 'thread_closed') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+    runtime.pendingApprovalIds = [];
+    runtime.pendingApprovalCount = 0;
+    runtime.waitingForUserInput = false;
+    runtime.threadStatus = 'not_loaded';
+    runtime.lastThreadStatusAt = Date.now();
+  } else if (applied && eventType === 'thread_closed') {
+    runtime.loaded = false;
+    runtime.activeTurnId = '';
+    runtime.pendingApprovalIds = [];
+    runtime.pendingApprovalCount = 0;
+    runtime.waitingForUserInput = false;
+    runtime.threadStatus = 'not_loaded';
+  }
+  return runtime;
+}
+
+function syncSessionPendingApprovalRuntime(store, sessionId) {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const runtime = ensureRuntime(key);
+  if (!runtime) return null;
+  const approvals = Array.isArray(store?.pendingApprovals)
+    ? store.pendingApprovals.filter((item) => resolveSessionKey(item?.session_id) === key)
+    : [];
+  runtime.pendingApprovalIds = approvals
+    .map((item) => String(item?.approval_id || '').trim())
+    .filter(Boolean);
+  runtime.pendingApprovalCount = runtime.pendingApprovalIds.length;
+  applyRuntimeDerivedStatus(store, key, runtime);
+  return runtime;
+}
 
 const getSessionMessages = (sessionId) => {
   const key = resolveSessionKey(sessionId);
@@ -2854,6 +3183,16 @@ const setSessionLoading = (store, sessionId, value) => {
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
+  const runtime = ensureRuntime(key);
+  if (!runtime) return;
+  if (value) {
+    runtime.loaded = true;
+    if (!isThreadRuntimeWaiting(runtime.threadStatus)) {
+      runtime.threadStatus = 'running';
+    }
+    return;
+  }
+  applyRuntimeDerivedStatus(store, key, runtime);
 };
 
 let sessionWatchSessionId = '';
@@ -3109,7 +3448,15 @@ const hasAnchoredWatchUserMessage = (messages, anchor, content) => {
   return String(previous.content || '') === content;
 };
 
-const insertWatchUserMessage = (store, sessionId, messages, content, eventTimestampMs, anchor) => {
+const insertWatchUserMessage = (
+  store,
+  sessionId,
+  messages,
+  content,
+  eventTimestampMs,
+  anchor,
+  options = {}
+) => {
   if (hasAnchoredWatchUserMessage(messages, anchor, content)) {
     return;
   }
@@ -3119,7 +3466,9 @@ const insertWatchUserMessage = (store, sessionId, messages, content, eventTimest
   const createdAt = Number.isFinite(eventTimestampMs)
     ? new Date(eventTimestampMs).toISOString()
     : undefined;
-  const userMessage = buildMessage('user', content, createdAt);
+  const userMessage = buildMessage('user', content, createdAt, {
+    hiddenInternal: normalizeHiddenInternalMessage(options.hiddenInternal)
+  });
   const anchorIndex = anchor ? messages.indexOf(anchor) : -1;
   if (anchorIndex >= 0) {
     messages.splice(anchorIndex, 0, userMessage);
@@ -3469,6 +3818,14 @@ const startSessionWatcher = (store, sessionId) => {
     return '';
   };
 
+  const resolveHiddenInternalUserEvent = (payload, data) =>
+    Boolean(
+      data?.hidden_internal_user ??
+        data?.hiddenInternalUser ??
+        payload?.hidden_internal_user ??
+        payload?.hiddenInternalUser
+    );
+
   const markWatchdogEvent = () => {
     runtime.watchLastEventAt = Date.now();
   };
@@ -3536,6 +3893,7 @@ const startSessionWatcher = (store, sessionId) => {
           }
         }
         const payload = response?.data?.data;
+        applySessionRuntimeSnapshot(runtime, payload?.runtime);
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
         const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
@@ -3598,6 +3956,15 @@ const startSessionWatcher = (store, sessionId) => {
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
     const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+      const normalizedEventId = normalizeStreamEventId(eventId);
+      if (normalizedEventId !== null) {
+        updateRuntimeLastEventId(runtime, normalizedEventId);
+        lastEventId = Math.max(lastEventId, normalizedEventId);
+      }
+      applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
+      return;
+    }
     if (
       (runtime.sendController || runtime.resumeController) &&
       !isWatchSidebandEventType(normalizedEventType)
@@ -3632,6 +3999,7 @@ const startSessionWatcher = (store, sessionId) => {
         return;
       }
       if (role === 'user') {
+        const hiddenInternal = resolveHiddenInternalUserEvent(payload, data);
         if (normalizedEventId !== null) {
           const duplicateByEventId = sessionMessagesRef.some(
             (message) =>
@@ -3644,7 +4012,9 @@ const startSessionWatcher = (store, sessionId) => {
           const createdAt = Number.isFinite(eventTimestampMs)
             ? new Date(eventTimestampMs).toISOString()
             : undefined;
-          const userMessage = buildMessage('user', content, createdAt);
+          const userMessage = buildMessage('user', content, createdAt, {
+            hiddenInternal
+          });
           assignStreamEventId(userMessage, eventId);
           sessionMessagesRef.push(userMessage);
           clearSupersededPendingAssistantMessages(sessionMessagesRef);
@@ -3653,7 +4023,9 @@ const startSessionWatcher = (store, sessionId) => {
           notifySessionSnapshot(store, key, sessionMessagesRef, true);
           return;
         }
-        insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null);
+        insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null, {
+          hiddenInternal
+        });
         return;
       }
       if (normalizedEventId !== null) {
@@ -3744,12 +4116,15 @@ const startSessionWatcher = (store, sessionId) => {
     }
     const roundNumber = resolveWatchRoundNumber(eventType, payload, data, isRoundStart);
     const userContent = extractWatchUserContent(normalizedEventType, payload, data);
+    const hiddenInternalUser = resolveHiddenInternalUserEvent(payload, data);
     const shouldPreinsertUserMessage =
       (isRoundStart || normalizedEventType === 'received') && Boolean(userContent);
     if (shouldPreinsertUserMessage) {
       // Insert the new user turn before allocating the assistant round so stale pending
       // assistant content from the previous turn cannot be reused as the current response shell.
-      insertWatchUserMessage(store, key, sessionMessagesRef, userContent, eventTimestampMs, null);
+      insertWatchUserMessage(store, key, sessionMessagesRef, userContent, eventTimestampMs, null, {
+        hiddenInternal: hiddenInternalUser
+      });
     }
     const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber, {
       preferFreshRound: isRoundStart || Boolean(userContent)
@@ -3764,7 +4139,8 @@ const startSessionWatcher = (store, sessionId) => {
           sessionMessagesRef,
           userContent,
           eventTimestampMs,
-          state.message
+          state.message,
+          { hiddenInternal: hiddenInternalUser }
         );
         state.userInserted = true;
       }
@@ -4125,6 +4501,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   assistantMessage.planVisible =
     Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
   assistantMessage.questionPanel = normalizeInquiryPanelState(assistantMessage.questionPanel);
+  assistantMessage.subagents = normalizeMessageSubagents(assistantMessage.subagents);
   const stats = ensureMessageStats(assistantMessage);
   if (stats) {
     const seededRound = initialRound ?? 1;
@@ -4581,6 +4958,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
     return parts.join('\n\n');
   };
+
+  const extractToolOutputSection = (detail, tag) => {
+    const normalized = String(detail || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (!normalized) return '';
+    const pattern = new RegExp(
+      `\\[${tag}\\]\\n([\\s\\S]*?)(?=\\n\\n\\[(?:command|stdout|stderr)\\]\\n|$)`,
+      'i'
+    );
+    const match = normalized.match(pattern);
+    return String(match?.[1] || '').trim();
+  };
   const TOOL_OUTPUT_FLUSH_MS = 120;
 
   const clearToolOutputFlush = (key) => {
@@ -4919,52 +5307,43 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const ensureSubagentDispatchItem = (dispatchId, title, detail, status = 'loading') => {
     const key = String(dispatchId || '').trim();
     if (!key) return null;
-    const existing = subagentDispatchItemMap.get(key);
-    if (existing) {
-      updateWorkflowItem(assistantMessage.workflowItems, existing, {
-        title,
-        detail,
-        status,
-        eventType: 'subagent_dispatch'
-      });
-      return existing;
-    }
-    const item = buildWorkflowItem(title, detail, status, {
-      eventType: 'subagent_dispatch'
+    const payload = safeJsonParse(detail);
+    subagentDispatchItemMap.set(key, {
+      title,
+      status,
+      detail: payload && typeof payload === 'object' ? payload : detail
     });
-    assistantMessage.workflowItems.push(item);
-    subagentDispatchItemMap.set(key, item.id);
-    return item.id;
+    return key;
   };
 
   const upsertSubagentRunItem = (runKey, title, detail, status, meta = {}) => {
     const key = String(runKey || '').trim();
-    if (!key) {
-      assistantMessage.workflowItems.push(
-        buildWorkflowItem(title, detail, status, {
-          eventType: 'subagent_dispatch_item_update',
-          ...meta
-        })
-      );
+    const source =
+      meta?.source && typeof meta.source === 'object'
+        ? meta.source
+        : safeJsonParse(detail);
+    const payload =
+      source && typeof source === 'object'
+        ? {
+            ...source,
+            title,
+            label: source.label ?? source.spawn_label ?? source.title ?? title,
+            status: source.status ?? status
+          }
+        : {
+            run_id: key,
+            title,
+            label: title,
+            status,
+            summary: detail
+          };
+    if (!key && !payload.session_id && !payload.run_id) {
       return;
     }
-    const existing = subagentRunItemMap.get(key);
-    if (existing) {
-      updateWorkflowItem(assistantMessage.workflowItems, existing, {
-        title,
-        detail,
-        status,
-        eventType: 'subagent_dispatch_item_update',
-        ...meta
-      });
-      return;
+    const normalized = upsertMessageSubagent(assistantMessage, payload);
+    if (normalized) {
+      subagentRunItemMap.set(normalized.key, normalized.key);
     }
-    const item = buildWorkflowItem(title, detail, status, {
-      eventType: 'subagent_dispatch_item_update',
-      ...meta
-    });
-    assistantMessage.workflowItems.push(item);
-    subagentRunItemMap.set(key, item.id);
   };
 
   const updateRoundState = (roundNumber) => {
@@ -5166,8 +5545,29 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   if (Array.isArray(assistantMessage.workflowItems)) {
     assistantMessage.workflowItems.forEach((item) => {
       const toolName = normalizeToolName(item?.title);
-      if (toolName && item?.status === 'loading') {
+      const itemStatus = String(item?.status || '').trim().toLowerCase();
+      const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
+      const toolCallId = normalizeToolCallRef(item?.toolCallId);
+      if (toolName && (itemStatus === 'loading' || itemStatus === 'pending') && eventType === 'tool_call') {
         registerToolItem(toolName, item.id, item?.toolCallId);
+      }
+      if (toolName && (itemStatus === 'loading' || itemStatus === 'pending') && eventType === 'tool_output_delta') {
+        const outputKey = resolveToolOutputKey(toolName, toolCallId);
+        toolOutputItemMap.set(outputKey, item.id);
+        const buffer = {
+          command: extractToolOutputSection(item?.detail, 'command'),
+          stdout: extractToolOutputSection(item?.detail, 'stdout'),
+          stderr: extractToolOutputSection(item?.detail, 'stderr'),
+          stdoutDropped: 0,
+          stderrDropped: 0
+        };
+        if (buffer.command || buffer.stdout || buffer.stderr) {
+          toolOutputBufferMap.set(outputKey, buffer);
+        }
+      }
+      const approvalId = String(item?.approvalId || '').trim();
+      if (approvalId && eventType === 'approval_request' && (itemStatus === 'loading' || itemStatus === 'pending')) {
+        approvalItemMap.set(approvalId, item.id);
       }
     });
   }
@@ -5429,25 +5829,46 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'approval_request': {
         const approvalId = String(data?.approval_id ?? payload?.approval_id ?? '').trim();
         const toolName = String(data?.tool ?? payload?.tool ?? '').trim();
+        const toolCallId = extractToolCallRef(payload, data);
+        const toolItemId = peekToolItemId(toolName, toolCallId);
         const title = toolName ? `等待审批：${toolName}` : '等待审批';
-        const item = buildWorkflowItem(title, buildDetail(data ?? payload), 'loading');
+        const item = buildWorkflowItem(title, buildDetail(data ?? payload), 'pending', {
+          eventType: 'approval_request',
+          approvalId: approvalId || undefined,
+          toolCallId: toolCallId || undefined
+        });
         assistantMessage.workflowItems.push(item);
         if (approvalId) {
           approvalItemMap.set(approvalId, item.id);
+        }
+        if (toolItemId) {
+          updateWorkflowItem(assistantMessage.workflowItems, toolItemId, {
+            status: 'pending'
+          });
         }
         break;
       }
       case 'approval_result': {
         const approvalId = String(data?.approval_id ?? payload?.approval_id ?? '').trim();
+        const toolName = String(data?.tool ?? payload?.tool ?? '').trim();
+        const toolCallId = extractToolCallRef(payload, data);
+        const toolItemId = peekToolItemId(toolName, toolCallId);
         const statusRaw = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
         const itemStatus = statusRaw === 'approved' ? 'completed' : 'failed';
         const targetId = approvalId ? approvalItemMap.get(approvalId) : null;
         if (targetId) {
           updateWorkflowItem(assistantMessage.workflowItems, targetId, {
             status: itemStatus,
-            detail: buildDetail(data ?? payload)
+            detail: buildDetail(data ?? payload),
+            eventType: 'approval_result',
+            toolCallId: toolCallId || undefined
           });
           approvalItemMap.delete(approvalId);
+          if (toolItemId) {
+            updateWorkflowItem(assistantMessage.workflowItems, toolItemId, {
+              status: statusRaw === 'approved' ? 'loading' : 'failed'
+            });
+          }
         } else {
           assistantMessage.workflowItems.push(
             buildWorkflowItem('审批结果', buildDetail(data ?? payload), itemStatus)
@@ -5845,12 +6266,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const label = String(source?.label ?? '').trim();
         const title = label ? `子智能体调度：${label}` : '子智能体调度';
         const detail = buildDetail(source);
-        const itemId = ensureSubagentDispatchItem(dispatchId, title, detail, 'loading');
-        if (!itemId) {
-          assistantMessage.workflowItems.push(
-            buildWorkflowItem(title, detail, 'loading', { eventType: 'subagent_dispatch_start' })
-          );
-        }
+        ensureSubagentDispatchItem(dispatchId, title, detail, 'loading');
         break;
       }
       case 'subagent_dispatch_item_update': {
@@ -5865,7 +6281,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           title,
           buildDetail(source),
           normalizeSubagentWorkflowStatus(source?.status),
-          { eventType: 'subagent_dispatch_item_update' }
+          { eventType: 'subagent_dispatch_item_update', source }
         );
         break;
       }
@@ -5875,12 +6291,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const title = '子智能体调度结果';
         const detail = buildDetail(source);
         const status = normalizeSubagentWorkflowStatus(source?.status);
-        const itemId = ensureSubagentDispatchItem(dispatchId, title, detail, status);
-        if (!itemId) {
-          assistantMessage.workflowItems.push(
-            buildWorkflowItem(title, detail, status, { eventType: 'subagent_dispatch_finish' })
-          );
-        }
+        ensureSubagentDispatchItem(dispatchId, title, detail, status);
         break;
       }
       case 'subagent_status':
@@ -5896,13 +6307,20 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           subagent_resume: '子智能体恢复',
           subagent_announce: '子智能体回执'
         };
-        assistantMessage.workflowItems.push(
-          buildWorkflowItem(
-            titleMap[eventType] || '子智能体事件',
-            buildDetail(source),
-            normalizeSubagentWorkflowStatus((data ?? payload ?? {})?.status),
-            { eventType }
-          )
+        const sourceObject = source && typeof source === 'object' ? source : {};
+        const runKey = String(
+          sourceObject?.run_id ??
+            sourceObject?.runId ??
+            sourceObject?.session_id ??
+            sourceObject?.sessionId ??
+            ''
+        ).trim();
+        upsertSubagentRunItem(
+          runKey,
+          titleMap[eventType] || '子智能体事件',
+          buildDetail(sourceObject),
+          normalizeSubagentWorkflowStatus((data ?? payload ?? {})?.status),
+          { eventType, source: sourceObject }
         );
         break;
       }
@@ -5972,6 +6390,8 @@ const hydrateMessage = (message, workflowState) => {
     stream_incomplete: normalizeFlag(message?.stream_incomplete),
     reasoning: normalizedOutput.reasoning,
     reasoningStreaming: normalizeFlag(message?.reasoningStreaming),
+    hiddenInternal: normalizeHiddenInternalMessage(message?.hiddenInternal),
+    subagents: normalizeMessageSubagents(message?.subagents),
     feedback: normalizeMessageFeedback(message?.feedback),
     stats: normalizeMessageStats(message.stats) || buildMessageStats()
   };
@@ -6017,7 +6437,15 @@ export const useChatStore = defineStore('chat', {
       if (!key) return false;
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
-      return isSessionBusyFromSignals(state.loadingBySession[key], messages);
+      return isSessionBusyFromSignals(
+        state.loadingBySession[key],
+        messages,
+        getRuntime(key)?.threadStatus
+      );
+    },
+    sessionRuntimeStatus: () => (sessionId) => {
+      const runtime = getRuntime(sessionId);
+      return normalizeThreadRuntimeStatus(runtime?.threadStatus);
     },
     historyLoading: () => (sessionId) => {
       const state = getHistoryState(sessionId);
@@ -6077,16 +6505,24 @@ export const useChatStore = defineStore('chat', {
       const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
       const filtered = current.filter((item) => item?.approval_id !== approval.approval_id);
       this.pendingApprovals = [...filtered, approval];
+      syncSessionPendingApprovalRuntime(this, approval.session_id);
       return approval;
     },
     resolveApprovalResult(payload) {
       const approvalId = normalizeApprovalResultId(payload);
       if (!approvalId) return false;
       const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      const resolvedSessions = new Set(
+        current
+          .filter((item) => item?.approval_id === approvalId)
+          .map((item) => resolveSessionKey(item?.session_id))
+          .filter(Boolean)
+      );
       const next = current.filter((item) => item?.approval_id !== approvalId);
       const changed = next.length !== current.length;
       if (changed) {
         this.pendingApprovals = next;
+        resolvedSessions.forEach((sessionId) => syncSessionPendingApprovalRuntime(this, sessionId));
       }
       return changed;
     },
@@ -6095,9 +6531,14 @@ export const useChatStore = defineStore('chat', {
       const targetRequestId = String(options.requestId || '').trim();
       const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
       if (!targetSessionId && !targetRequestId) {
+        const sessionIds = Array.from(
+          new Set(current.map((item) => resolveSessionKey(item?.session_id)).filter(Boolean))
+        );
         this.pendingApprovals = [];
+        sessionIds.forEach((sessionId) => syncSessionPendingApprovalRuntime(this, sessionId));
         return;
       }
+      const resolvedSessions = new Set<string>();
       this.pendingApprovals = current.filter((item) => {
         if (!item) return false;
         if (targetSessionId && String(item.session_id || '').trim() !== targetSessionId) {
@@ -6106,8 +6547,13 @@ export const useChatStore = defineStore('chat', {
         if (targetRequestId && String(item.request_id || '').trim() !== targetRequestId) {
           return true;
         }
+        const resolved = resolveSessionKey(item.session_id);
+        if (resolved) {
+          resolvedSessions.add(resolved);
+        }
         return false;
       });
+      resolvedSessions.forEach((sessionId) => syncSessionPendingApprovalRuntime(this, sessionId));
     },
     async respondApproval(decision: ApprovalDecision, approvalId = '') {
       const normalizedDecision = String(decision || '').trim().toLowerCase();
@@ -6139,6 +6585,7 @@ export const useChatStore = defineStore('chat', {
         }
       }
       this.pendingApprovals = current.filter((item) => item?.approval_id !== targetApprovalId);
+      syncSessionPendingApprovalRuntime(this, target.session_id);
       return true;
     },
     getPersistedState() {
@@ -6235,15 +6682,17 @@ export const useChatStore = defineStore('chat', {
       const request = (async () => {
         let sessionRes = null;
         let eventsRes = null;
+        let subagentsRes = null;
         try {
-          [sessionRes, eventsRes] = await Promise.all([
+          [sessionRes, eventsRes, subagentsRes] = await Promise.all([
             getSession(targetId),
             getSessionEvents(targetId).catch((error) => {
               if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
                 throw error;
               }
               return null;
-            })
+            }),
+            getSessionSubagents(targetId).catch(() => null)
           ]);
         } catch (error) {
           if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
@@ -6254,10 +6703,18 @@ export const useChatStore = defineStore('chat', {
         }
         const payload = sessionRes?.data;
         const sessionDetail = payload?.data || null;
-        const rounds = eventsRes?.data?.data?.rounds || [];
+        const eventsPayload = eventsRes?.data?.data || null;
+        const subagentItems = subagentsRes?.data?.data?.items || [];
+        applySessionRuntimeSnapshot(ensureRuntime(targetId), eventsPayload?.runtime);
+        updateRuntimeLastEventId(
+          ensureRuntime(targetId),
+          normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId)
+        );
+        const rounds = eventsPayload?.rounds || [];
         const workflowState = buildSessionWorkflowState();
         const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
         let messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
+        messages = attachSubagentsToMessages(messages, subagentItems);
         messages = dedupeAssistantMessages(messages);
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {
@@ -6306,6 +6763,40 @@ export const useChatStore = defineStore('chat', {
         selected: Array.isArray(patch.selected) ? patch.selected : panel.selected
       };
       this.scheduleSnapshot(true);
+    },
+    async refreshSessionSubagents(sessionId) {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) return [];
+      const { data } = await getSessionSubagents(targetSessionId);
+      const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+      const targetMessages =
+        resolveSessionKey(this.activeSessionId) === targetSessionId
+          ? this.messages
+          : getSessionMessages(targetSessionId) || [];
+      if (Array.isArray(targetMessages) && targetMessages.length > 0) {
+        attachSubagentsToMessages(targetMessages, items);
+        cacheSessionMessages(targetSessionId, targetMessages);
+        touchSessionUpdatedAt(this, targetSessionId, Date.now());
+        notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+      }
+      return items;
+    },
+    async controlSubagent(sessionId, subagent, action = 'terminate') {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) return null;
+      const sessionIdList = Array.isArray(subagent)
+        ? subagent
+        : [subagent?.session_id ?? subagent?.sessionId ?? subagent];
+      const sessionIds = sessionIdList
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+      if (sessionIds.length === 0) return null;
+      const { data } = await controlSessionSubagentsApi(targetSessionId, {
+        action,
+        session_ids: sessionIds
+      });
+      await this.refreshSessionSubagents(targetSessionId);
+      return data?.data || null;
     },
     async ensureAssistantMessageHistoryId(sessionId, message = null) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
@@ -6549,15 +7040,17 @@ export const useChatStore = defineStore('chat', {
       }
       let sessionRes = null;
       let eventsRes = null;
+      let subagentsRes = null;
       try {
-        [sessionRes, eventsRes] = await Promise.all([
+        [sessionRes, eventsRes, subagentsRes] = await Promise.all([
           getSession(targetSessionId),
           getSessionEvents(targetSessionId).catch((error) => {
             if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
               throw error;
             }
             return null;
-          })
+          }),
+          getSessionSubagents(targetSessionId).catch(() => null)
         ]);
       } catch (error) {
         if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
@@ -6569,6 +7062,8 @@ export const useChatStore = defineStore('chat', {
       const data = sessionRes?.data;
       const sessionDetail = data?.data || null;
       const eventsPayload = eventsRes?.data?.data || null;
+      const subagentItems = subagentsRes?.data?.data?.items || [];
+      applySessionRuntimeSnapshot(ensureRuntime(targetSessionId), eventsPayload?.runtime);
       const remoteRunning = eventsPayload?.running === true;
       const remoteLastEventId = normalizeStreamEventId(
         eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
@@ -6598,6 +7093,7 @@ export const useChatStore = defineStore('chat', {
       let messages = rawMessages.map((message) =>
         hydrateMessage(message, workflowState)
       );
+      messages = attachSubagentsToMessages(messages, subagentItems);
       messages = mergeSnapshotIntoMessages(messages, snapshot);
       const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
       messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
@@ -6609,7 +7105,9 @@ export const useChatStore = defineStore('chat', {
         clearCompletedAssistantStreamingState(finalCachedMessages);
       }
       if (remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
-        messages = finalCachedMessages;
+        messages = dedupeAssistantMessages(
+          mergeSnapshotIntoMessages(finalCachedMessages, { messages })
+        );
       }
       dismissStaleInquiryPanels(messages);
       const nextMessages = ensureGreetingMessage(messages, {
@@ -6635,7 +7133,22 @@ export const useChatStore = defineStore('chat', {
       syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
       const pendingMessage = findPendingAssistantMessage(this.messages);
       if (pendingMessage && remoteRunning) {
-        this.resumeStream(targetSessionId, pendingMessage);
+        const resumeAfterEventId =
+          normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
+        if (
+          resumeAfterEventId !== null &&
+          resumeAfterEventId > 0 &&
+          normalizeStreamEventId(pendingMessage.stream_event_id) === null
+        ) {
+          pendingMessage.stream_event_id = resumeAfterEventId;
+        }
+        this.resumeStream(
+          targetSessionId,
+          pendingMessage,
+          resumeAfterEventId !== null && resumeAfterEventId > 0
+            ? { afterEventId: resumeAfterEventId }
+            : {}
+        );
       } else if (!remoteRunning) {
         setSessionLoading(this, targetSessionId, false);
       }
@@ -7170,6 +7683,7 @@ export const useChatStore = defineStore('chat', {
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
+          const normalizedEventType = String(eventType || '').trim().toLowerCase();
           handleApprovalEvent(
             this,
             eventType,
@@ -7177,6 +7691,11 @@ export const useChatStore = defineStore('chat', {
             runtime?.sendRequestId || '',
             sessionId
           );
+          if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+            updateRuntimeLastEventId(runtime, eventId);
+            applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
+            return;
+          }
           if (perfEnabled) {
             chatPerf.count('chat_stream_event', 1, { eventType, sessionId });
           }
@@ -7493,6 +8012,8 @@ export const useChatStore = defineStore('chat', {
       try {
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
+          const approvalPayload = payload?.data ?? payload;
+          const normalizedEventType = String(eventType || '').trim().toLowerCase();
           if (perfEnabled) {
             chatPerf.count('chat_resume_event', 1, { eventType, sessionId });
           }
@@ -7502,10 +8023,15 @@ export const useChatStore = defineStore('chat', {
           handleApprovalEvent(
             this,
             eventType,
-            payload?.data ?? payload,
+            approvalPayload,
             runtime?.resumeRequestId || '',
             sessionId
           );
+          if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+            updateRuntimeLastEventId(runtime, eventId);
+            applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
+            return;
+          }
           assignStreamEventId(message, eventId);
           updateRuntimeLastEventId(runtime, eventId);
           if (eventType === 'final') {

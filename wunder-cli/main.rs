@@ -4617,6 +4617,8 @@ async fn run_tool_direct(
         session_id: &session_id,
         workspace_id: &runtime.user_id,
         agent_id: None,
+        user_round: None,
+        model_round: None,
         is_admin: false,
         storage: runtime.state.storage.clone(),
         orchestrator: Some(runtime.state.orchestrator.clone()),

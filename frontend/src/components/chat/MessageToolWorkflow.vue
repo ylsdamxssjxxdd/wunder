@@ -317,7 +317,8 @@ const normalizeStatus = (status: unknown): string => {
 };
 
 const statusLabel = (status: string): string => {
-  if (status === 'loading' || status === 'pending') return t('chat.toolWorkflow.statusRunning');
+  if (status === 'pending') return t('chat.toolWorkflow.statusWaiting');
+  if (status === 'loading') return t('chat.toolWorkflow.statusRunning');
   if (status === 'failed') return t('chat.toolWorkflow.statusFailed');
   return t('chat.toolWorkflow.statusSuccess');
 };

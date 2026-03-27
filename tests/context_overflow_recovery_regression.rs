@@ -38,6 +38,14 @@ struct TestContext {
 }
 
 async fn build_test_context(username: &str) -> TestContext {
+    build_test_context_with_compaction(username, 32_768, None).await
+}
+
+async fn build_test_context_with_compaction(
+    username: &str,
+    max_context: u32,
+    reset_mode: Option<&str>,
+) -> TestContext {
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let (base_url, mock_state) = spawn_mindie_overflow_mock_server().await;
 
@@ -67,14 +75,14 @@ async fn build_test_context(username: &str) -> TestContext {
             timeout_s: Some(20),
             retry: Some(0),
             max_rounds: Some(8),
-            max_context: Some(32_768),
+            max_context: Some(max_context),
             max_output: Some(512),
             support_vision: Some(false),
             support_hearing: Some(false),
             stream: Some(false),
             stream_include_usage: Some(false),
             history_compaction_ratio: Some(0.9),
-            history_compaction_reset: None,
+            history_compaction_reset: reset_mode.map(str::to_string),
             tool_call_mode: Some("tool_call".to_string()),
             reasoning_effort: None,
             model_type: Some("llm".to_string()),
@@ -316,6 +324,22 @@ fn build_pressure_question(round: usize, repeat: usize) -> String {
     )
 }
 
+async fn create_test_session(context: &TestContext, title: &str) -> String {
+    let (status, created_session) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/chat/sessions",
+        Some(json!({ "title": title })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    created_session["data"]["id"]
+        .as_str()
+        .expect("session id")
+        .to_string()
+}
+
 async fn run_pressure_rounds(
     context: &TestContext,
     session_id: &str,
@@ -344,21 +368,30 @@ async fn run_pressure_rounds(
     }
 }
 
+fn latest_compaction_summary_item(history: &[Value]) -> Option<&Value> {
+    history
+        .iter()
+        .rev()
+        .find(|item| HistoryManager::is_compaction_summary_item(item))
+}
+
+fn count_content_containing(items: &[Value], marker: &str) -> usize {
+    items
+        .iter()
+        .filter(|item| {
+            item.get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains(marker))
+        })
+        .count()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let context = build_test_context("mindie_context_recovery_user").await;
-    let (status, created_session) = send_json(
-        &context.app,
-        &context.token,
-        Method::POST,
-        "/wunder/chat/sessions",
-        Some(json!({ "title": "MindIE context overflow regression" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let session_id = created_session["data"]["id"].as_str().expect("session id");
+    let session_id = create_test_session(&context, "MindIE context overflow regression").await;
 
-    run_pressure_rounds(&context, session_id, 12, 600).await;
+    run_pressure_rounds(&context, &session_id, 12, 600).await;
 
     let overflow_calls = context.mock_state.overflow_calls.load(Ordering::Relaxed);
     let success_calls = context.mock_state.success_calls.load(Ordering::Relaxed);
@@ -371,20 +404,20 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let persisted_limit_hint = context
         .state
         .workspace
-        .load_session_context_limit_hint(&context.user_id, session_id);
+        .load_session_context_limit_hint(&context.user_id, &session_id);
     assert_eq!(persisted_limit_hint, Some(MOCK_CONTEXT_LIMIT));
     assert!(
         !context
             .state
             .workspace
-            .load_session_context_overflow(&context.user_id, session_id),
+            .load_session_context_overflow(&context.user_id, &session_id),
         "context overflow marker should be cleared after successful recovery"
     );
 
     let raw_history = context
         .state
         .workspace
-        .load_history(&context.user_id, session_id, 0)
+        .load_history(&context.user_id, &session_id, 0)
         .expect("load raw history");
     assert!(
         raw_history
@@ -396,7 +429,7 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let replay_messages = HistoryManager.load_history_messages(
         context.state.workspace.as_ref(),
         &context.user_id,
-        session_id,
+        &session_id,
         0,
     );
     assert!(
@@ -420,21 +453,114 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_reset_modes_align_history_replay_shapes() {
+    const ROUNDS: usize = 3;
+    const REPEAT: usize = 560;
+
+    for mode in ["zero", "current", "keep"] {
+        let context = build_test_context_with_compaction(
+            &format!("mindie_compaction_reset_{mode}"),
+            5_000,
+            Some(mode),
+        )
+        .await;
+        let session_id = create_test_session(&context, &format!("Compaction reset {mode}")).await;
+
+        run_pressure_rounds(&context, &session_id, ROUNDS, REPEAT).await;
+
+        let raw_history = context
+            .state
+            .workspace
+            .load_history(&context.user_id, &session_id, 0)
+            .expect("load raw history");
+        let summary_item = latest_compaction_summary_item(&raw_history)
+            .expect("expected latest compaction summary item");
+        assert_eq!(
+            summary_item
+                .get("meta")
+                .and_then(Value::as_object)
+                .and_then(|meta| meta.get("reset_mode"))
+                .and_then(Value::as_str),
+            Some(mode),
+            "mode={mode} latest summary should record effective reset mode"
+        );
+
+        let latest_marker = format!("[mindie-overflow-regression] round={ROUNDS}");
+        let previous_marker = format!("[mindie-overflow-regression] round={}", ROUNDS - 1);
+        let raw_latest_count = count_content_containing(&raw_history, &latest_marker);
+        let replay_messages = HistoryManager.load_history_messages(
+            context.state.workspace.as_ref(),
+            &context.user_id,
+            &session_id,
+            0,
+        );
+        let replay_latest_count = count_content_containing(&replay_messages, &latest_marker);
+        let replay_previous_count = count_content_containing(&replay_messages, &previous_marker);
+
+        assert_eq!(
+            replay_messages
+                .first()
+                .and_then(|item| item.get("role"))
+                .and_then(Value::as_str),
+            Some("user"),
+            "mode={mode} replay should still begin with summary/tail user context"
+        );
+
+        match mode {
+            "zero" => {
+                assert_eq!(
+                    raw_latest_count, 0,
+                    "zero mode should not persist the current user message after compaction"
+                );
+                assert_eq!(
+                    replay_latest_count, 0,
+                    "zero mode replay should rely on summary instead of re-injecting the current question"
+                );
+                assert_eq!(
+                    replay_previous_count, 0,
+                    "zero mode should not keep previous user tail messages alive"
+                );
+            }
+            "current" => {
+                assert_eq!(
+                    raw_latest_count, 1,
+                    "current mode should persist the current user message exactly once"
+                );
+                assert_eq!(
+                    replay_latest_count, 1,
+                    "current mode replay should keep the current user message"
+                );
+                assert_eq!(
+                    replay_previous_count, 0,
+                    "current mode should not keep older user tail messages"
+                );
+            }
+            "keep" => {
+                assert_eq!(
+                    raw_latest_count, 1,
+                    "keep mode should persist the current user message exactly once"
+                );
+                assert_eq!(
+                    replay_latest_count, 1,
+                    "keep mode replay should keep the current user message"
+                );
+                assert!(
+                    replay_previous_count >= 1,
+                    "keep mode should replay at least one previous user tail message"
+                );
+            }
+            _ => unreachable!("unexpected reset mode"),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "long-running stress regression; run manually when validating deployment"]
 async fn mindie_context_overflow_recovery_stays_alive_for_50_rounds() {
     let context = build_test_context("mindie_context_recovery_50_rounds").await;
-    let (status, created_session) = send_json(
-        &context.app,
-        &context.token,
-        Method::POST,
-        "/wunder/chat/sessions",
-        Some(json!({ "title": "MindIE 50 rounds context stress" })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let session_id = created_session["data"]["id"].as_str().expect("session id");
+    let session_id = create_test_session(&context, "MindIE 50 rounds context stress").await;
 
-    run_pressure_rounds(&context, session_id, 50, 600).await;
+    run_pressure_rounds(&context, &session_id, 50, 600).await;
 
     let overflow_calls = context.mock_state.overflow_calls.load(Ordering::Relaxed);
     let success_calls = context.mock_state.success_calls.load(Ordering::Relaxed);

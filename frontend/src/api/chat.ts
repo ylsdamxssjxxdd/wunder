@@ -109,6 +109,8 @@ export const getSessionEvents = (id: string, options: { signal?: AbortSignal } =
   api.get(`/chat/sessions/${id}/events`, options);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
   api.get(`/chat/sessions/${id}/history`, { params });
+export const getSessionSubagents = (id: string, params: QueryParams = {}) =>
+  api.get(`/chat/sessions/${id}/subagents`, { params });
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
 export const archiveSession = (id: string) => api.post(`/chat/sessions/${id}/archive`);
 export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/restore`);
@@ -124,6 +126,8 @@ export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);
 export const fetchRealtimeSystemPrompt = (payload: unknown) => api.post('/chat/system-prompt', payload);
 export const updateSessionTools = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/tools`, payload);
+export const controlSessionSubagents = (id: string, payload: unknown) =>
+  api.post(`/chat/sessions/${id}/subagents/control`, payload);
 export const convertChatAttachment = (file: File) => {
   const formData = new FormData();
   formData.append('file', file);

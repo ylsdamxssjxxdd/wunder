@@ -26,12 +26,12 @@
 - ARM compose 防漂移：`docker-compose-arm.yml` 的 Rust 构建链路显式声明 `build.platforms=linux/arm64`，并在 `wunder-server`/`wunder-sandbox`/`extra-mcp`/`wunder-frontend`/`wunder-nginx` 启动时执行架构自检；若运行时非 arm64 会立即失败并提示重建命令，避免误用旧的 x86 镜像标签。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录），并统一返回默认智能体标识 `agent_id=__default__`；前端登录后跳转 `/app/chat?section=messages&entry=default`（desktop 为 `/desktop/chat?section=messages&entry=default`）。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，接口返回默认智能体 `agent_id=__default__` 且 `focus_mode=false`，前端跳转 `/app/chat?section=messages&entry=default`（desktop 为 `/desktop/chat?section=messages&entry=default`）；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）并隐藏左/中栏聚焦该智能体。
 - 用户资料接口：`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
+- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时聚焦单个已命中的智能体，并隐藏左/中栏；普通默认外链入口仍进入 `/app/chat`（desktop `/desktop/chat`）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
 - QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
@@ -122,11 +122,14 @@
 ## 4.x 子智能体控制补充（2026-03-26）
 
 - `subagent_control` 现支持 `action=batch_spawn|status|wait|interrupt|close|resume`，与既有 `list|history|send|spawn` 共用同一入口。
-- `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；可选 `waitSeconds/pollIntervalSeconds` 在同次工具调用中直接收敛整批结果。
+- `batch_spawn` 支持一次派发多个子智能体任务，返回稳定 `dispatch_id`；支持 `strategy=parallel_all|first_success|review_then_merge`，其中 `first_success` 用于对齐 Codex 式的“首个成功即先返回”协作收敛语义，并会在同次等待收敛时默认对未完成兄弟分支执行 `remainingAction=interrupt`。
+- `wait` 现支持 `waitMode=all|any|first_success`：`all` 等待全部目标结束，`any` 在首个目标进入终态后返回，`first_success` 在首个成功出现后返回，否则继续等到全部结束或超时。
+- `batch_spawn/wait` 现支持 `remainingAction=keep|interrupt|close`：用于在 `first_success/any` 这类提前收敛场景下处理尚未结束的兄弟分支；`wait` 默认 `keep`，`batch_spawn.strategy=first_success` 默认 `interrupt`。
 - `status/wait` 支持按 `runId/runIds/sessionId/sessionIds/dispatchId/parentId` 查询或等待；未显式传目标时，`status` 默认查询当前会话下最近子会话运行态。
 - `interrupt` 基于 monitor 对目标子会话发起取消；`close/resume` 直接切换子会话 `status=closed|active`，并可通过 `cascade=true` 递归作用到后代子会话。
 - 子智能体批量调度的运行账本统一落在 `session_runs`，新增元数据字段 `dispatch_id/run_kind/requested_by`，便于批次级聚合、追踪与恢复。
-- 流式事件新增 `subagent_dispatch_start/subagent_dispatch_item_update/subagent_dispatch_finish/subagent_status/subagent_interrupt/subagent_close/subagent_resume/subagent_announce`，前端按工作流事件展示。
+- `status/wait` 的结果会额外返回 `completion_mode/completion_reached/completed_reason/selected_items`；运行快照中新增 `agent_state.status/message`；批次结果会补充 `winner_item/remaining_action/remaining_action_applied/settled_items`，用于对齐 Codex 协作线程的 winner 选择与剩余分支处置表达。
+- 流式事件新增 `subagent_dispatch_start/subagent_dispatch_item_update/subagent_dispatch_finish/subagent_status/subagent_interrupt/subagent_close/subagent_resume/subagent_announce`，其中批次开始/结束事件会携带 `strategy/completion_mode/remaining_action` 供前端工作流展示。
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
@@ -137,7 +140,9 @@
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
-- 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `thread_id/subscriber_count/loaded/active_turn_id`。
+- 工具工作流关联语义：`tool_call/tool_output_delta/tool_result/approval_request/approval_result` 现在会尽量附带稳定的 `tool_call_id`；当上游没有原生 call id 时，服务端会补发合成 id，便于前端将命令输出、审批等待与最终结果持续合并到同一张工作流卡片。
+- 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
+- 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
 - 线程卸载事件：新增 `thread_closed`，表示当前 loaded runtime 已卸载；当最后一个流式订阅者离开且该线程没有 active turn 时会发出，payload 附带 `last_status` 便于前端做状态收尾。
 - `context_usage` 事件在模型配置存在有效上下文上限时会额外附带 `max_context`，用于前端展示“上下文占用/上限”。
 - 审批作用域：待审批请求现在由共享注册表统一管理，但 `chat/ws` 的 `approval` 与 `cancel` 只会消费 `source=chat_ws` 的待审批项，不会误清理渠道侧审批；渠道内回复 `1/2/3` 也只会作用于 `source=channel` 的审批上下文。
@@ -950,6 +955,8 @@
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
+  - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
+  - 说明：`history_compaction_reset` 控制压缩后保留多少实时上下文：`zero` 仅保留压缩摘要继续推理；`current` 保留压缩摘要与当前用户问题；`keep` 额外保留最近用户消息窗口（最多约 20k token）。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
@@ -2134,6 +2141,11 @@
 - `GET /wunder/chat/sessions/{session_id}`
 - `GET /wunder/chat/sessions/{session_id}/history`
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
+- 当会话仅处于队列等待阶段、最新用户消息尚未落入历史时，`GET /wunder/chat/sessions/{session_id}` 会基于活跃 `agent_tasks` 追加一组临时消息视图：
+  - 最新用户消息会按请求体中的 `question/attachments` 投影到 `data.messages[]`
+  - 对应助手占位会带 `stream_incomplete=true`
+  - 对应助手占位会附带队列 workflow 事件（如 `queue_enter`，必要时包含 `queue_start`），便于刷新后立即恢复“排队中/开始处理”的可见状态
+  - 该投影仅用于刷新/重连后的实时态恢复，不写回历史；一旦真实历史落库，会以真实消息为准
 - 当消息为 `assistant` 且已反馈时，`messages[].feedback` 结构如下：
   - `vote`：`up` / `down`
   - `created_at`：反馈时间（RFC3339）

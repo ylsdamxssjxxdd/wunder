@@ -10,6 +10,7 @@ use uuid::Uuid;
 const SUBAGENT_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SUBAGENT_WAIT_MIN_POLL_S: f64 = 0.2;
 const SUBAGENT_WAIT_MAX_POLL_S: f64 = 5.0;
+const SUBAGENT_SUMMARY_MAX_CHARS: usize = 160;
 
 #[derive(Debug, Deserialize)]
 struct SubagentControlArgs {
@@ -63,6 +64,22 @@ struct SubagentWaitArgs {
         alias = "poll_interval_seconds"
     )]
     poll_interval_seconds: Option<f64>,
+    #[serde(
+        default,
+        rename = "waitMode",
+        alias = "wait_mode",
+        alias = "completionMode",
+        alias = "completion_mode"
+    )]
+    wait_mode: Option<String>,
+    #[serde(
+        default,
+        rename = "remainingAction",
+        alias = "remaining_action",
+        alias = "loserAction",
+        alias = "loser_action"
+    )]
+    remaining_action: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +137,16 @@ struct SubagentBatchSpawnArgs {
         alias = "poll_interval_seconds"
     )]
     poll_interval_seconds: Option<f64>,
+    #[serde(default)]
+    strategy: Option<String>,
+    #[serde(
+        default,
+        rename = "remainingAction",
+        alias = "remaining_action",
+        alias = "loserAction",
+        alias = "loser_action"
+    )]
+    remaining_action: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -139,6 +166,67 @@ struct SubagentRunSnapshot {
     failed: bool,
     updated_time: f64,
     payload: Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WaitCompletionMode {
+    All,
+    Any,
+    FirstSuccess,
+}
+
+impl WaitCompletionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Any => "any",
+            Self::FirstSuccess => "first_success",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BatchDispatchStrategy {
+    ParallelAll,
+    FirstSuccess,
+    ReviewThenMerge,
+}
+
+impl BatchDispatchStrategy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ParallelAll => "parallel_all",
+            Self::FirstSuccess => "first_success",
+            Self::ReviewThenMerge => "review_then_merge",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemainingBranchAction {
+    Keep,
+    Interrupt,
+    Close,
+}
+
+impl RemainingBranchAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Interrupt => "interrupt",
+            Self::Close => "close",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WaitProgressState {
+    completion_reached: bool,
+    all_finished: bool,
+    matched_total: i64,
+    matched_success_total: i64,
+    matched_failed_total: i64,
+    completed_reason: &'static str,
 }
 
 pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -176,6 +264,9 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
 async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentBatchSpawnArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let strategy = parse_batch_dispatch_strategy(payload.strategy.as_deref());
+    let remaining_action = parse_remaining_branch_action(payload.remaining_action.as_deref())
+        .unwrap_or_else(|| default_remaining_branch_action_for_strategy(strategy));
     let mut tasks = payload.tasks.clone();
     if tasks.is_empty() {
         if let Some(task) = normalize_optional_string(payload.task.clone()) {
@@ -205,6 +296,8 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         &dispatch_id,
         tasks.len() as i64,
         dispatch_label.as_deref(),
+        strategy,
+        remaining_action,
     );
 
     let mut startup_items = Vec::with_capacity(tasks.len());
@@ -238,9 +331,23 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                     child_agent_id,
                     model_name,
                     request,
-                    announce,
+                    mut announce,
                 } = prepared;
                 let run_id = format!("run_{}", Uuid::new_v4().simple());
+                announce.dispatch_id = Some(dispatch_id.clone());
+                announce.strategy = Some(strategy.as_str().to_string());
+                announce.completion_mode =
+                    Some(completion_mode_from_strategy(strategy).as_str().to_string());
+                announce.remaining_action = Some(remaining_action.as_str().to_string());
+                announce.parent_user_round = context.user_round;
+                announce.parent_model_round = context.model_round;
+                announce.parent_turn_ref = crate::services::subagents::encode_parent_turn_ref(
+                    context.user_round,
+                    context.model_round,
+                );
+                announce.emit_parent_events = true;
+                announce.auto_wake = true;
+                announce.persist_history_message = false;
                 match super::spawn_session_run(
                     context,
                     request,
@@ -319,21 +426,27 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }
 
     if run_ids.is_empty() {
-        let result = json!({
+        let result = decorate_dispatch_result(
+            json!({
             "status": "error",
             "dispatch_id": dispatch_id.clone(),
             "requested_total": startup_items.len(),
             "accepted_total": 0,
             "startup_failed_total": startup_failed_items.len(),
             "items": startup_items,
-        });
+            }),
+            strategy,
+            dispatch_label.as_deref(),
+            remaining_action,
+        );
         emit_control_event(context, "subagent_dispatch_finish", &result);
         return Ok(result);
     }
 
     let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
     if wait_seconds <= 0.0 {
-        let result = json!({
+        let result = decorate_dispatch_result(
+            json!({
             "status": if startup_failed_items.is_empty() { "accepted" } else { "partial" },
             "dispatch_id": dispatch_id.clone(),
             "requested_total": startup_items.len(),
@@ -341,7 +454,11 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             "startup_failed_total": startup_failed_items.len(),
             "run_ids": run_ids,
             "items": startup_items,
-        });
+            }),
+            strategy,
+            dispatch_label.as_deref(),
+            remaining_action,
+        );
         emit_control_event(context, "subagent_dispatch_finish", &result);
         return Ok(result);
     }
@@ -363,15 +480,23 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         payload
             .poll_interval_seconds
             .unwrap_or(SUBAGENT_WAIT_DEFAULT_POLL_S),
+        completion_mode_from_strategy(strategy),
         true,
     )
     .await?;
-    let merged = merge_wait_result(
+    let mut merged = merge_wait_result(
         wait_result,
         &dispatch_id,
         startup_items.len() as i64,
         run_ids.len() as i64,
         startup_failed_items,
+    );
+    apply_remaining_settlement(context, &mut merged, remaining_action);
+    let merged = decorate_dispatch_result(
+        merged,
+        strategy,
+        dispatch_label.as_deref(),
+        remaining_action,
     );
     emit_control_event(context, "subagent_dispatch_finish", &merged);
     Ok(merged)
@@ -381,12 +506,14 @@ async fn status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentStatusArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let selector = resolve_targets(&payload.target, Some(context.session_id))?;
+    let snapshots = collect_snapshots(context, &selector)?;
     let summary = summarize_snapshots(
         &selector,
-        collect_snapshots(context, &selector)?,
+        snapshots.clone(),
         0.0,
         0.0,
-        true,
+        WaitCompletionMode::All,
+        evaluate_wait_progress(WaitCompletionMode::All, &snapshots),
         false,
     );
     emit_control_event(context, "subagent_status", &summary);
@@ -397,16 +524,21 @@ async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentWaitArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let selector = resolve_targets(&payload.target, None)?;
-    let result = wait_for_targets(
+    let wait_mode = parse_wait_completion_mode(payload.wait_mode.as_deref());
+    let remaining_action = parse_remaining_branch_action(payload.remaining_action.as_deref())
+        .unwrap_or(RemainingBranchAction::Keep);
+    let mut result = wait_for_targets(
         context,
         selector,
         payload.wait_seconds.unwrap_or(0.0).max(0.0),
         payload
             .poll_interval_seconds
             .unwrap_or(SUBAGENT_WAIT_DEFAULT_POLL_S),
+        wait_mode,
         true,
     )
     .await?;
+    apply_remaining_settlement(context, &mut result, remaining_action);
     if result.get("dispatch_id").and_then(Value::as_str).is_some() {
         emit_control_event(context, "subagent_dispatch_finish", &result);
     } else {
@@ -598,6 +730,8 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
             resolve_effective_status(&record.status, runtime_status.as_deref(), &session_status);
         let terminal = is_terminal_status(&status);
         let failed = is_failed_status(&status);
+        let message =
+            run_message_for_status(&status, record.result.as_deref(), record.error.as_deref());
         Ok(SubagentRunSnapshot {
             key: record.run_id.clone(),
             status: status.clone(),
@@ -625,6 +759,10 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
                 "elapsed_s": record.elapsed_s,
                 "result": record.result,
                 "error": record.error,
+                "agent_state": {
+                    "status": collab_agent_status(&status),
+                    "message": message,
+                },
                 "updated_time": record.updated_time,
                 "title": session.as_ref().map(|entry| entry.title.clone()),
                 "spawn_label": session.as_ref().and_then(|entry| entry.spawn_label.clone()),
@@ -643,6 +781,10 @@ fn build_run_snapshot(context: &ToolContext<'_>, run_id: &str) -> Result<Subagen
                 "status": "not_found",
                 "terminal": true,
                 "failed": true,
+                "agent_state": {
+                    "status": "not_found",
+                    "message": "run not found",
+                },
                 "error": "run not found",
             }),
         })
@@ -695,6 +837,10 @@ fn build_session_snapshot(
             "session_status": session_status,
             "terminal": terminal,
             "failed": failed,
+            "agent_state": {
+                "status": collab_agent_status(&status),
+                "message": serde_json::Value::Null,
+            },
             "session_id": session.session_id,
             "parent_session_id": session.parent_session_id,
             "agent_id": session.agent_id,
@@ -711,6 +857,7 @@ async fn wait_for_targets(
     selector: ResolvedTargetSet,
     wait_seconds: f64,
     poll_interval_seconds: f64,
+    completion_mode: WaitCompletionMode,
     emit_progress: bool,
 ) -> Result<Value> {
     let poll_interval = normalize_poll_interval(poll_interval_seconds);
@@ -724,24 +871,34 @@ async fn wait_for_targets(
                 snapshots,
                 wait_seconds,
                 0.0,
-                true,
+                completion_mode,
+                WaitProgressState {
+                    completion_reached: true,
+                    all_finished: true,
+                    matched_total: 0,
+                    matched_success_total: 0,
+                    matched_failed_total: 0,
+                    completed_reason: "empty",
+                },
                 false,
             ));
         }
         let elapsed_s = started_at.elapsed().as_secs_f64();
-        let all_finished = snapshots.iter().all(|item| item.terminal);
-        let timed_out = wait_seconds > 0.0 && elapsed_s >= wait_seconds && !all_finished;
+        let progress_state = evaluate_wait_progress(completion_mode, &snapshots);
+        let timed_out =
+            wait_seconds > 0.0 && elapsed_s >= wait_seconds && !progress_state.completion_reached;
         emit_wait_updates(context, &selector, &snapshots, &mut status_index);
         if emit_progress {
             emit_wait_progress(context, &selector, &snapshots, elapsed_s);
         }
-        if all_finished || timed_out || wait_seconds <= 0.0 {
+        if progress_state.completion_reached || timed_out || wait_seconds <= 0.0 {
             return Ok(summarize_snapshots(
                 &selector,
                 snapshots,
                 wait_seconds,
                 elapsed_s,
-                all_finished,
+                completion_mode,
+                progress_state,
                 timed_out,
             ));
         }
@@ -754,7 +911,8 @@ fn summarize_snapshots(
     snapshots: Vec<SubagentRunSnapshot>,
     wait_seconds: f64,
     elapsed_s: f64,
-    all_finished: bool,
+    completion_mode: WaitCompletionMode,
+    progress_state: WaitProgressState,
     timed_out: bool,
 ) -> Value {
     let total = snapshots.len() as i64;
@@ -772,34 +930,36 @@ fn summarize_snapshots(
         .iter()
         .filter(|item| matches!(item.status.as_str(), "running" | "waiting" | "cancelling"))
         .count() as i64;
-    let status = if total == 0 {
-        "empty"
-    } else if timed_out {
-        "timeout"
-    } else if all_finished {
-        if failed_total == 0 {
-            "ok"
-        } else {
-            "partial"
-        }
-    } else {
-        "running"
-    };
+    let selected_items = collect_selected_items(completion_mode, &snapshots);
+    let status = summarize_wait_status(
+        total,
+        failed_total,
+        timed_out,
+        completion_mode,
+        progress_state,
+    );
     json!({
         "status": status,
         "dispatch_id": selector.dispatch_id.clone(),
         "parent_id": selector.parent_id.clone(),
+        "completion_mode": completion_mode.as_str(),
+        "completion_reached": progress_state.completion_reached,
+        "completed_reason": progress_state.completed_reason,
         "wait_seconds": wait_seconds,
         "elapsed_s": elapsed_s,
-        "all_finished": all_finished,
+        "all_finished": progress_state.all_finished,
         "total": total,
         "done_total": done_total,
         "success_total": success_total,
         "failed_total": failed_total,
         "queued_total": queued_total,
         "running_total": running_total,
+        "selected_total": progress_state.matched_total,
+        "selected_success_total": progress_state.matched_success_total,
+        "selected_failed_total": progress_state.matched_failed_total,
         "run_ids": selector.run_ids.clone(),
         "session_ids": selector.session_ids.clone(),
+        "selected_items": selected_items,
         "items": snapshots.into_iter().map(|item| item.payload).collect::<Vec<_>>(),
     })
 }
@@ -938,6 +1098,8 @@ fn emit_dispatch_start(
     dispatch_id: &str,
     total: i64,
     label: Option<&str>,
+    strategy: BatchDispatchStrategy,
+    remaining_action: RemainingBranchAction,
 ) {
     emit_control_event(
         context,
@@ -947,6 +1109,9 @@ fn emit_dispatch_start(
             "parent_session_id": context.session_id,
             "total": total,
             "label": label,
+            "strategy": strategy.as_str(),
+            "completion_mode": completion_mode_from_strategy(strategy).as_str(),
+            "remaining_action": remaining_action.as_str(),
         }),
     );
 }
@@ -1074,6 +1239,513 @@ fn normalize_poll_interval(value: f64) -> f64 {
     value.clamp(SUBAGENT_WAIT_MIN_POLL_S, SUBAGENT_WAIT_MAX_POLL_S)
 }
 
+fn parse_wait_completion_mode(value: Option<&str>) -> WaitCompletionMode {
+    match value.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "any" | "one" | "first" | "first_terminal" => WaitCompletionMode::Any,
+        "first_success" | "success" => WaitCompletionMode::FirstSuccess,
+        _ => WaitCompletionMode::All,
+    }
+}
+
+fn parse_batch_dispatch_strategy(value: Option<&str>) -> BatchDispatchStrategy {
+    match value.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "first_success" | "success" => BatchDispatchStrategy::FirstSuccess,
+        "review_then_merge" | "merge" | "collect" => BatchDispatchStrategy::ReviewThenMerge,
+        _ => BatchDispatchStrategy::ParallelAll,
+    }
+}
+
+fn parse_remaining_branch_action(value: Option<&str>) -> Option<RemainingBranchAction> {
+    match value.unwrap_or("").trim().to_ascii_lowercase().as_str() {
+        "" => None,
+        "keep" | "none" => Some(RemainingBranchAction::Keep),
+        "interrupt" | "cancel" | "stop" => Some(RemainingBranchAction::Interrupt),
+        "close" | "shutdown" => Some(RemainingBranchAction::Close),
+        _ => None,
+    }
+}
+
+fn default_remaining_branch_action_for_strategy(
+    strategy: BatchDispatchStrategy,
+) -> RemainingBranchAction {
+    match strategy {
+        BatchDispatchStrategy::ParallelAll | BatchDispatchStrategy::ReviewThenMerge => {
+            RemainingBranchAction::Keep
+        }
+        BatchDispatchStrategy::FirstSuccess => RemainingBranchAction::Interrupt,
+    }
+}
+
+fn completion_mode_from_strategy(strategy: BatchDispatchStrategy) -> WaitCompletionMode {
+    match strategy {
+        BatchDispatchStrategy::ParallelAll | BatchDispatchStrategy::ReviewThenMerge => {
+            WaitCompletionMode::All
+        }
+        BatchDispatchStrategy::FirstSuccess => WaitCompletionMode::FirstSuccess,
+    }
+}
+
+fn evaluate_wait_progress(
+    completion_mode: WaitCompletionMode,
+    snapshots: &[SubagentRunSnapshot],
+) -> WaitProgressState {
+    let all_finished = snapshots.iter().all(|item| item.terminal);
+    let terminal_total = snapshots.iter().filter(|item| item.terminal).count() as i64;
+    let success_total = snapshots
+        .iter()
+        .filter(|item| item.status == "success")
+        .count() as i64;
+    let failed_total = snapshots
+        .iter()
+        .filter(|item| item.terminal && item.failed)
+        .count() as i64;
+    match completion_mode {
+        WaitCompletionMode::All => WaitProgressState {
+            completion_reached: all_finished,
+            all_finished,
+            matched_total: terminal_total,
+            matched_success_total: success_total,
+            matched_failed_total: failed_total,
+            completed_reason: if all_finished {
+                "all_finished"
+            } else {
+                "pending"
+            },
+        },
+        WaitCompletionMode::Any => WaitProgressState {
+            completion_reached: terminal_total > 0,
+            all_finished,
+            matched_total: terminal_total,
+            matched_success_total: success_total,
+            matched_failed_total: failed_total,
+            completed_reason: if terminal_total > 0 {
+                "first_terminal"
+            } else {
+                "pending"
+            },
+        },
+        WaitCompletionMode::FirstSuccess => WaitProgressState {
+            completion_reached: success_total > 0 || all_finished,
+            all_finished,
+            matched_total: if success_total > 0 {
+                success_total
+            } else {
+                terminal_total
+            },
+            matched_success_total: success_total,
+            matched_failed_total: if success_total > 0 { 0 } else { failed_total },
+            completed_reason: if success_total > 0 {
+                "first_success"
+            } else if all_finished {
+                "all_finished_without_success"
+            } else {
+                "pending"
+            },
+        },
+    }
+}
+
+fn collect_selected_items(
+    completion_mode: WaitCompletionMode,
+    snapshots: &[SubagentRunSnapshot],
+) -> Vec<Value> {
+    match completion_mode {
+        WaitCompletionMode::All | WaitCompletionMode::Any => snapshots
+            .iter()
+            .filter(|item| item.terminal)
+            .map(|item| item.payload.clone())
+            .collect(),
+        WaitCompletionMode::FirstSuccess => {
+            let selected = snapshots
+                .iter()
+                .filter(|item| item.status == "success")
+                .map(|item| item.payload.clone())
+                .collect::<Vec<_>>();
+            if selected.is_empty() {
+                snapshots
+                    .iter()
+                    .filter(|item| item.terminal)
+                    .map(|item| item.payload.clone())
+                    .collect()
+            } else {
+                selected
+            }
+        }
+    }
+}
+
+fn summarize_wait_status(
+    total: i64,
+    failed_total: i64,
+    timed_out: bool,
+    completion_mode: WaitCompletionMode,
+    progress_state: WaitProgressState,
+) -> &'static str {
+    if total == 0 {
+        return "empty";
+    }
+    if timed_out {
+        return "timeout";
+    }
+    match completion_mode {
+        WaitCompletionMode::All => {
+            if progress_state.all_finished {
+                if failed_total == 0 {
+                    "ok"
+                } else {
+                    "partial"
+                }
+            } else {
+                "running"
+            }
+        }
+        WaitCompletionMode::Any => {
+            if !progress_state.completion_reached {
+                "running"
+            } else if progress_state.matched_success_total > 0
+                && progress_state.matched_failed_total == 0
+            {
+                "ok"
+            } else {
+                "partial"
+            }
+        }
+        WaitCompletionMode::FirstSuccess => {
+            if progress_state.matched_success_total > 0 {
+                "ok"
+            } else if progress_state.all_finished {
+                "partial"
+            } else {
+                "running"
+            }
+        }
+    }
+}
+
+fn collab_agent_status(status: &str) -> &'static str {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "queued" | "accepted" | "active" => "pending_init",
+        "running" | "waiting" => "running",
+        "cancelling" | "cancelled" => "interrupted",
+        "success" | "idle" => "completed",
+        "error" | "timeout" | "failed" => "errored",
+        "closed" => "shutdown",
+        "not_found" => "not_found",
+        _ => "running",
+    }
+}
+
+fn run_message_for_status(
+    status: &str,
+    result: Option<&str>,
+    error: Option<&str>,
+) -> Option<String> {
+    let source = if status == "success" {
+        result
+    } else if is_failed_status(status) {
+        error
+    } else {
+        None
+    }?;
+    let text = source.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(truncate_text(text, SUBAGENT_SUMMARY_MAX_CHARS))
+    }
+}
+
+fn apply_remaining_settlement(
+    context: &ToolContext<'_>,
+    result: &mut Value,
+    action: RemainingBranchAction,
+) {
+    let Some(object) = result.as_object_mut() else {
+        return;
+    };
+    object.insert("remaining_action".to_string(), json!(action.as_str()));
+    let completed_reason = object
+        .get("completed_reason")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let items = object
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let pending_items = collect_pending_settlement_items(completed_reason, &items);
+    object.insert(
+        "remaining_active_total".to_string(),
+        json!(pending_items.len() as i64),
+    );
+    if pending_items.is_empty() || action == RemainingBranchAction::Keep {
+        object.insert("remaining_action_applied".to_string(), json!(false));
+        object.insert("settled_total".to_string(), json!(0));
+        object.insert("settled_items".to_string(), json!(Vec::<Value>::new()));
+        return;
+    }
+
+    let settled_items = pending_items
+        .iter()
+        .map(|item| match action {
+            RemainingBranchAction::Keep => {
+                json!({ "status": "noop", "updated": false, "action": action.as_str() })
+            }
+            RemainingBranchAction::Interrupt => interrupt_remaining_session(context, item),
+            RemainingBranchAction::Close => close_remaining_session(context, item),
+        })
+        .collect::<Vec<_>>();
+    object.insert("remaining_action_applied".to_string(), json!(true));
+    object.insert(
+        "settled_total".to_string(),
+        json!(settled_items.len() as i64),
+    );
+    object.insert("settled_items".to_string(), json!(settled_items));
+}
+
+fn collect_pending_settlement_items(completed_reason: &str, items: &[Value]) -> Vec<Value> {
+    if !matches!(completed_reason, "first_success" | "first_terminal") {
+        return Vec::new();
+    }
+    items
+        .iter()
+        .filter(|item| {
+            !item
+                .get("terminal")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter(|item| {
+            item.get("session_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+        })
+        .cloned()
+        .collect()
+}
+
+fn interrupt_remaining_session(context: &ToolContext<'_>, item: &Value) -> Value {
+    let session_id = item
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if session_id.is_empty() {
+        return json!({
+            "action": RemainingBranchAction::Interrupt.as_str(),
+            "status": "error",
+            "updated": false,
+            "error": "session_id is required",
+        });
+    }
+    let previous_status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let Some(monitor) = context.monitor.as_ref() else {
+        return json!({
+            "session_id": session_id,
+            "action": RemainingBranchAction::Interrupt.as_str(),
+            "status": "error",
+            "updated": false,
+            "previous_status": previous_status,
+            "error": "monitor unavailable",
+        });
+    };
+    let updated = monitor.cancel(session_id);
+    let payload = json!({
+        "session_id": session_id,
+        "run_id": item.get("run_id").cloned().unwrap_or(Value::Null),
+        "dispatch_id": item.get("dispatch_id").cloned().unwrap_or(Value::Null),
+        "action": RemainingBranchAction::Interrupt.as_str(),
+        "status": if updated { "cancelling" } else { "unchanged" },
+        "updated": updated,
+        "previous_status": previous_status,
+    });
+    emit_control_event(context, "subagent_interrupt", &payload);
+    payload
+}
+
+fn close_remaining_session(context: &ToolContext<'_>, item: &Value) -> Value {
+    let session_id = item
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if session_id.is_empty() {
+        return json!({
+            "action": RemainingBranchAction::Close.as_str(),
+            "status": "error",
+            "updated": false,
+            "error": "session_id is required",
+        });
+    }
+    let previous_status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    match update_session_status(context, session_id, "closed", true) {
+        Ok(mut payload) => {
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "action".to_string(),
+                    json!(RemainingBranchAction::Close.as_str()),
+                );
+                object.insert("previous_status".to_string(), json!(previous_status));
+                object.insert(
+                    "run_id".to_string(),
+                    item.get("run_id").cloned().unwrap_or(Value::Null),
+                );
+                object.insert(
+                    "dispatch_id".to_string(),
+                    item.get("dispatch_id").cloned().unwrap_or(Value::Null),
+                );
+            }
+            emit_control_event(context, "subagent_close", &payload);
+            payload
+        }
+        Err(err) => json!({
+            "session_id": session_id,
+            "action": RemainingBranchAction::Close.as_str(),
+            "status": "error",
+            "updated": false,
+            "previous_status": previous_status,
+            "error": err.to_string(),
+        }),
+    }
+}
+
+fn decorate_dispatch_result(
+    mut result: Value,
+    strategy: BatchDispatchStrategy,
+    label: Option<&str>,
+    remaining_action: RemainingBranchAction,
+) -> Value {
+    let Some(object) = result.as_object_mut() else {
+        return result;
+    };
+    object.insert("strategy".to_string(), json!(strategy.as_str()));
+    object.insert(
+        "completion_mode".to_string(),
+        json!(completion_mode_from_strategy(strategy).as_str()),
+    );
+    object.insert("label".to_string(), json!(label));
+    object.insert(
+        "remaining_action".to_string(),
+        json!(remaining_action.as_str()),
+    );
+    let selected_items = object
+        .get("selected_items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let items = object
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(summary) = build_dispatch_summary(strategy, &items, &selected_items) {
+        object.insert("summary".to_string(), json!(summary));
+    }
+    if strategy == BatchDispatchStrategy::FirstSuccess {
+        if let Some(selected_item) = select_preferred_dispatch_item(&selected_items, true)
+            .or_else(|| select_preferred_dispatch_item(&items, true))
+        {
+            object.insert("winner_item".to_string(), selected_item.clone());
+            object.insert("selected_item".to_string(), selected_item);
+        }
+    }
+    result
+}
+
+fn build_dispatch_summary(
+    strategy: BatchDispatchStrategy,
+    items: &[Value],
+    selected_items: &[Value],
+) -> Option<String> {
+    match strategy {
+        BatchDispatchStrategy::ParallelAll => None,
+        BatchDispatchStrategy::FirstSuccess => {
+            let preferred = select_preferred_dispatch_item(selected_items, true)
+                .or_else(|| select_preferred_dispatch_item(items, true))?;
+            build_dispatch_item_summary_line(&preferred)
+        }
+        BatchDispatchStrategy::ReviewThenMerge => {
+            let lines = items
+                .iter()
+                .filter_map(build_dispatch_item_summary_line)
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                None
+            } else {
+                Some(lines.join("\n"))
+            }
+        }
+    }
+}
+
+fn select_preferred_dispatch_item(items: &[Value], prefer_success: bool) -> Option<Value> {
+    let preferred = items
+        .iter()
+        .filter(|item| {
+            !prefer_success || item.get("status").and_then(Value::as_str) == Some("success")
+        })
+        .min_by(|left, right| dispatch_item_sort_key(left).cmp(&dispatch_item_sort_key(right)))
+        .cloned();
+    if preferred.is_some() || prefer_success {
+        preferred
+    } else {
+        items
+            .iter()
+            .min_by(|left, right| dispatch_item_sort_key(left).cmp(&dispatch_item_sort_key(right)))
+            .cloned()
+    }
+}
+
+fn dispatch_item_sort_key(item: &Value) -> (i64, String) {
+    let index = item
+        .get("index")
+        .and_then(Value::as_i64)
+        .unwrap_or(i64::MAX);
+    let key = item
+        .get("run_id")
+        .or_else(|| item.get("session_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    (index, key)
+}
+
+fn build_dispatch_item_summary_line(item: &Value) -> Option<String> {
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let label = item
+        .get("label")
+        .or_else(|| item.get("spawn_label"))
+        .or_else(|| item.get("title"))
+        .or_else(|| item.get("session_id"))
+        .or_else(|| item.get("run_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("subagent");
+    let detail = item
+        .get("agent_state")
+        .and_then(Value::as_object)
+        .and_then(|state| state.get("message"))
+        .and_then(Value::as_str)
+        .or_else(|| item.get("result").and_then(Value::as_str))
+        .or_else(|| item.get("error").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_text(value, SUBAGENT_SUMMARY_MAX_CHARS))
+        .unwrap_or_else(|| status.to_string());
+    Some(format!("[{label}][{status}] {detail}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,5 +1860,149 @@ mod tests {
             merged.get("items").and_then(Value::as_array).map(Vec::len),
             Some(3)
         );
+    }
+
+    #[test]
+    fn wait_progress_any_mode_completes_on_first_terminal() {
+        let progress = evaluate_wait_progress(
+            WaitCompletionMode::Any,
+            &[
+                snapshot("run-1", "running", false),
+                snapshot("run-2", "error", true),
+            ],
+        );
+        assert!(progress.completion_reached);
+        assert!(!progress.all_finished);
+        assert_eq!(progress.matched_total, 1);
+        assert_eq!(progress.completed_reason, "first_terminal");
+    }
+
+    #[test]
+    fn wait_progress_first_success_prefers_success_before_all_done() {
+        let progress = evaluate_wait_progress(
+            WaitCompletionMode::FirstSuccess,
+            &[
+                snapshot("run-1", "success", true),
+                snapshot("run-2", "running", false),
+                snapshot("run-3", "error", true),
+            ],
+        );
+        assert!(progress.completion_reached);
+        assert_eq!(progress.matched_total, 1);
+        assert_eq!(progress.matched_success_total, 1);
+        assert_eq!(progress.completed_reason, "first_success");
+    }
+
+    #[test]
+    fn dispatch_summary_first_success_picks_earliest_success() {
+        let summary = build_dispatch_summary(
+            BatchDispatchStrategy::FirstSuccess,
+            &[
+                json!({"index": 3, "label": "late", "status": "success", "result": "second"}),
+                json!({"index": 1, "label": "early", "status": "success", "result": "first"}),
+            ],
+            &[],
+        )
+        .expect("summary should exist");
+        assert_eq!(summary, "[early][success] first");
+    }
+
+    #[test]
+    fn dispatch_summary_review_then_merge_collects_lines() {
+        let summary = build_dispatch_summary(
+            BatchDispatchStrategy::ReviewThenMerge,
+            &[
+                json!({"label": "alpha", "status": "success", "result": "done"}),
+                json!({"label": "beta", "status": "error", "error": "failed"}),
+            ],
+            &[],
+        )
+        .expect("summary should exist");
+        assert_eq!(summary, "[alpha][success] done\n[beta][error] failed");
+    }
+
+    #[test]
+    fn collab_agent_status_maps_wunder_states() {
+        assert_eq!(collab_agent_status("queued"), "pending_init");
+        assert_eq!(collab_agent_status("cancelled"), "interrupted");
+        assert_eq!(collab_agent_status("success"), "completed");
+        assert_eq!(collab_agent_status("closed"), "shutdown");
+        assert_eq!(collab_agent_status("error"), "errored");
+    }
+
+    #[test]
+    fn first_success_strategy_defaults_to_interrupt_remaining() {
+        assert_eq!(
+            default_remaining_branch_action_for_strategy(BatchDispatchStrategy::FirstSuccess),
+            RemainingBranchAction::Interrupt
+        );
+        assert_eq!(
+            default_remaining_branch_action_for_strategy(BatchDispatchStrategy::ReviewThenMerge),
+            RemainingBranchAction::Keep
+        );
+    }
+
+    #[test]
+    fn collect_pending_settlement_items_only_returns_active_items_for_early_completion() {
+        let items = collect_pending_settlement_items(
+            "first_success",
+            &[
+                json!({"session_id": "sess_winner", "status": "success", "terminal": true}),
+                json!({"session_id": "sess_running", "status": "running", "terminal": false}),
+                json!({"session_id": "sess_waiting", "status": "waiting", "terminal": false}),
+            ],
+        );
+        assert_eq!(items.len(), 2);
+        assert_eq!(
+            items[0].get("session_id").and_then(Value::as_str),
+            Some("sess_running")
+        );
+        assert_eq!(
+            items[1].get("session_id").and_then(Value::as_str),
+            Some("sess_waiting")
+        );
+        assert!(collect_pending_settlement_items("all_finished", &items).is_empty());
+    }
+
+    #[test]
+    fn decorate_dispatch_result_adds_winner_item_for_first_success() {
+        let result = decorate_dispatch_result(
+            json!({
+                "items": [
+                    {"index": 2, "label": "beta", "status": "success", "result": "second"},
+                    {"index": 1, "label": "alpha", "status": "success", "result": "first"}
+                ],
+                "selected_items": [],
+            }),
+            BatchDispatchStrategy::FirstSuccess,
+            Some("race"),
+            RemainingBranchAction::Interrupt,
+        );
+        assert_eq!(result.get("winner_item"), result.get("selected_item"));
+        assert_eq!(
+            result
+                .get("winner_item")
+                .and_then(|value| value.get("label"))
+                .and_then(Value::as_str),
+            Some("alpha")
+        );
+        assert_eq!(
+            result.get("remaining_action").and_then(Value::as_str),
+            Some("interrupt")
+        );
+    }
+
+    fn snapshot(key: &str, status: &str, terminal: bool) -> SubagentRunSnapshot {
+        SubagentRunSnapshot {
+            key: key.to_string(),
+            status: status.to_string(),
+            terminal,
+            failed: is_failed_status(status),
+            updated_time: 0.0,
+            payload: json!({
+                "run_id": key,
+                "status": status,
+            }),
+        }
     }
 }

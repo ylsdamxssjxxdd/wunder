@@ -449,6 +449,8 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         session_id,
         workspace_id: &context.workspace_id,
         agent_id: None,
+        user_round: None,
+        model_round: None,
         is_admin: true,
         storage: context.state.storage.clone(),
         orchestrator: Some(context.orchestrator.clone()),

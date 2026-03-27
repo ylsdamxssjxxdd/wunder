@@ -1044,6 +1044,8 @@ mod tests {
                 session_id,
                 workspace_id: "workspace-test",
                 agent_id,
+                user_round: None,
+                model_round: None,
                 is_admin: false,
                 storage: self.storage.clone(),
                 orchestrator: None,

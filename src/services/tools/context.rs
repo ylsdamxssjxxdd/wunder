@@ -15,7 +15,7 @@ use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
 use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +26,7 @@ type ToolEventCallback = dyn Fn(&str, Value) + Send + Sync;
 pub struct ToolEventEmitter {
     callback: Arc<ToolEventCallback>,
     stream: bool,
+    default_fields: Arc<Map<String, Value>>,
 }
 
 impl ToolEventEmitter {
@@ -36,10 +37,32 @@ impl ToolEventEmitter {
         Self {
             callback: Arc::new(callback),
             stream,
+            default_fields: Arc::new(Map::new()),
         }
     }
 
-    pub fn emit(&self, event_type: &str, data: Value) {
+    pub fn with_field(&self, key: impl Into<String>, value: Value) -> Self {
+        let key = key.into();
+        if key.trim().is_empty() {
+            return self.clone();
+        }
+        let mut default_fields = self.default_fields.as_ref().clone();
+        default_fields.insert(key, value);
+        Self {
+            callback: Arc::clone(&self.callback),
+            stream: self.stream,
+            default_fields: Arc::new(default_fields),
+        }
+    }
+
+    pub fn emit(&self, event_type: &str, mut data: Value) {
+        if !self.default_fields.is_empty() {
+            if let Value::Object(ref mut map) = data {
+                for (key, value) in self.default_fields.iter() {
+                    map.entry(key.clone()).or_insert_with(|| value.clone());
+                }
+            }
+        }
         (self.callback)(event_type, data);
     }
 
@@ -53,6 +76,8 @@ pub struct ToolContext<'a> {
     pub session_id: &'a str,
     pub workspace_id: &'a str,
     pub agent_id: Option<&'a str>,
+    pub user_round: Option<i64>,
+    pub model_round: Option<i64>,
     pub is_admin: bool,
     pub storage: Arc<dyn StorageBackend>,
     pub orchestrator: Option<Arc<Orchestrator>>,
@@ -74,6 +99,40 @@ pub struct ToolContext<'a> {
     pub read_roots: Option<Arc<Vec<PathBuf>>>,
     pub event_emitter: Option<ToolEventEmitter>,
     pub http: &'a reqwest::Client,
+}
+
+impl<'a> ToolContext<'a> {
+    pub fn with_event_emitter(&self, event_emitter: Option<ToolEventEmitter>) -> ToolContext<'a> {
+        ToolContext {
+            user_id: self.user_id,
+            session_id: self.session_id,
+            workspace_id: self.workspace_id,
+            agent_id: self.agent_id,
+            user_round: self.user_round,
+            model_round: self.model_round,
+            is_admin: self.is_admin,
+            storage: Arc::clone(&self.storage),
+            orchestrator: self.orchestrator.as_ref().map(Arc::clone),
+            monitor: self.monitor.as_ref().map(Arc::clone),
+            beeroom_realtime: self.beeroom_realtime.as_ref().map(Arc::clone),
+            workspace: Arc::clone(&self.workspace),
+            lsp_manager: Arc::clone(&self.lsp_manager),
+            config: self.config,
+            a2a_store: self.a2a_store,
+            skills: self.skills,
+            gateway: self.gateway.as_ref().map(Arc::clone),
+            user_world: self.user_world.as_ref().map(Arc::clone),
+            cron_wake_signal: self.cron_wake_signal.clone(),
+            user_tool_manager: self.user_tool_manager.as_ref().map(Arc::clone),
+            user_tool_bindings: self.user_tool_bindings,
+            user_tool_store: self.user_tool_store,
+            request_config_overrides: self.request_config_overrides,
+            allow_roots: self.allow_roots.as_ref().map(Arc::clone),
+            read_roots: self.read_roots.as_ref().map(Arc::clone),
+            event_emitter,
+            http: self.http,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -281,11 +340,13 @@ pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_allow_roots, resolve_path_in_roots};
+    use super::{build_allow_roots, resolve_path_in_roots, ToolEventEmitter};
     use crate::config::Config;
     use crate::path_utils::normalize_existing_path;
+    use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
     fn filesystem_root_for(path: &Path) -> PathBuf {
@@ -333,5 +394,54 @@ mod tests {
             normalize_existing_path(&resolved),
             normalize_existing_path(&target)
         );
+    }
+
+    #[test]
+    fn tool_event_emitter_merges_default_fields_into_object_payload() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&captured);
+        let emitter = ToolEventEmitter::new(
+            move |event_type, data| {
+                sink.lock()
+                    .expect("capture lock")
+                    .push((event_type.to_string(), data));
+            },
+            true,
+        )
+        .with_field("tool_call_id", json!("call_demo"));
+
+        emitter.emit(
+            "tool_output_delta",
+            json!({ "tool": "execute_command", "delta": "ok" }),
+        );
+
+        let entries = captured.lock().expect("capture lock");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "tool_output_delta");
+        assert_eq!(entries[0].1["tool_call_id"], "call_demo");
+    }
+
+    #[test]
+    fn tool_event_emitter_keeps_explicit_payload_fields() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&captured);
+        let emitter = ToolEventEmitter::new(
+            move |event_type, data| {
+                sink.lock()
+                    .expect("capture lock")
+                    .push((event_type.to_string(), data));
+            },
+            true,
+        )
+        .with_field("tool_call_id", json!("call_default"));
+
+        emitter.emit(
+            "tool_output_delta",
+            json!({ "tool": "execute_command", "tool_call_id": "call_explicit" }),
+        );
+
+        let entries = captured.lock().expect("capture lock");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].1["tool_call_id"], "call_explicit");
     }
 }

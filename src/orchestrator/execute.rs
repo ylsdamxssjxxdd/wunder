@@ -11,6 +11,7 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
+use crate::services::subagents;
 use crate::services::chat_attachments::persist_user_chat_attachments;
 
 struct PlannedToolCall {
@@ -169,6 +170,22 @@ impl Orchestrator {
         let question = prepared.question.clone();
         let display_question_override =
             extract_channel_display_question_override(prepared.config_overrides.as_ref());
+        let hide_start_question = subagents::config_flag(
+            prepared.config_overrides.as_ref(),
+            subagents::HIDE_START_QUESTION_CONFIG_KEY,
+        );
+        let skip_stream_clear = subagents::config_flag(
+            prepared.config_overrides.as_ref(),
+            subagents::SKIP_STREAM_CLEAR_CONFIG_KEY,
+        );
+        let hidden_internal_user = subagents::config_flag(
+            prepared.config_overrides.as_ref(),
+            subagents::HIDDEN_USER_MESSAGE_CONFIG_KEY,
+        );
+        let skip_auto_memory_extract = subagents::config_flag(
+            prepared.config_overrides.as_ref(),
+            subagents::SKIP_AUTO_MEMORY_CONFIG_KEY,
+        );
         let display_question = display_question_override
             .clone()
             .unwrap_or_else(|| question.clone());
@@ -220,7 +237,7 @@ impl Orchestrator {
                 }
             }
 
-            if prepared.stream && !is_admin {
+            if prepared.stream && !is_admin && !skip_stream_clear {
                 let cleanup_session = session_id.clone();
                 let storage = self.storage.clone();
                 match tokio::task::spawn_blocking(move || {
@@ -277,9 +294,15 @@ impl Orchestrator {
             let mut start_payload = json!({
                 "stage": "start",
                 "summary": i18n::t("monitor.summary.received"),
-                "question": display_question.clone()
             });
             if let Value::Object(ref mut map) = start_payload {
+                if !hide_start_question {
+                    map.insert("question".to_string(), json!(display_question.clone()));
+                }
+                if hidden_internal_user {
+                    map.insert("user_message".to_string(), json!(question.clone()));
+                    map.insert("hidden_internal_user".to_string(), Value::Bool(true));
+                }
                 request_round.insert_into(map);
             }
             emitter.emit("progress", start_payload).await;
@@ -515,24 +538,31 @@ impl Orchestrator {
                 emitter.emit("progress", llm_call_payload).await;
 
                 if !user_message_appended {
-                    let user_content = if let Some(display_override) =
-                        display_question_override.as_ref()
-                    {
+                    let user_content = if current_user_message_marked_skip_persist(&messages) {
+                        None
+                    } else if let Some(display_override) = display_question_override.as_ref() {
                         Some(Value::String(display_override.clone()))
                     } else {
                         resolve_user_content_for_persist(&messages, &user_message)
                     };
-                    self.append_chat(
-                        &user_id,
-                        &session_id,
-                        "user",
-                        user_content.as_ref(),
-                        prepared.attachments.as_deref(),
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
+                    let hidden_user_meta = if hidden_internal_user {
+                        Some(subagents::build_hidden_user_meta())
+                    } else {
+                        None
+                    };
+                    if user_content.is_some() {
+                        self.append_chat(
+                            &user_id,
+                            &session_id,
+                            "user",
+                            user_content.as_ref(),
+                            prepared.attachments.as_deref(),
+                            hidden_user_meta.as_ref(),
+                            None,
+                            None,
+                            None,
+                        );
+                    }
                     user_message_appended = true;
                 }
 
@@ -830,6 +860,8 @@ impl Orchestrator {
                     session_id: &session_id,
                     workspace_id: &prepared.workspace_id,
                     agent_id: prepared.agent_id.as_deref(),
+                    user_round: round_info.user_round,
+                    model_round: round_info.model_round,
                     is_admin,
                     storage: self.storage.clone(),
                     orchestrator: Some(Arc::new(self.clone())),
@@ -928,6 +960,19 @@ impl Orchestrator {
                     budgeted_exec_calls.push(planned);
                 }
                 let mut exec_calls = budgeted_exec_calls;
+                for planned in &mut exec_calls {
+                    let missing_call_id = planned
+                        .call
+                        .id
+                        .as_deref()
+                        .map(str::trim)
+                        .map(|value| value.is_empty())
+                        .unwrap_or(true);
+                    if missing_call_id {
+                        planned.call.id =
+                            Some(format!("call_{}", Uuid::new_v4().simple()));
+                    }
+                }
 
                 self.ensure_not_cancelled(&session_id)?;
 
@@ -1082,16 +1127,18 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        let tool_call_id = if uses_native_tool_api(tool_call_mode, &llm_config) {
-                            id.as_deref()
-                                .map(str::trim)
-                                .filter(|value| !value.is_empty())
-                                .map(ToString::to_string)
+                        let event_tool_call_id = id
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToString::to_string);
+                        let history_tool_call_id = if uses_native_tool_api(tool_call_mode, &llm_config) {
+                            event_tool_call_id.clone()
                         } else {
                             None
                         };
                         if uses_native_tool_api(tool_call_mode, &llm_config) {
-                            if let Some(tool_call_id) = tool_call_id.as_ref() {
+                            if let Some(tool_call_id) = history_tool_call_id.as_ref() {
                                 messages.push(json!({
                                     "role": "tool",
                                     "tool_call_id": tool_call_id,
@@ -1124,7 +1171,7 @@ impl Orchestrator {
                             None,
                             None,
                             None,
-                            tool_call_id.as_deref(),
+                            history_tool_call_id.as_deref(),
                         );
 
                         self.append_tool_log(
@@ -1149,7 +1196,7 @@ impl Orchestrator {
 
                         let mut tool_result_payload = result.to_event_payload(&name);
                         if let Value::Object(ref mut map) = tool_result_payload {
-                            if let Some(tool_call_id) = tool_call_id.as_ref() {
+                            if let Some(tool_call_id) = event_tool_call_id.as_ref() {
                                 map.insert(
                                     "tool_call_id".to_string(),
                                     Value::String(tool_call_id.clone()),
@@ -1646,7 +1693,7 @@ impl Orchestrator {
                 )
                 .await;
             }
-            if !waiting_question_panel && !answer.trim().is_empty() {
+            if !waiting_question_panel && !answer.trim().is_empty() && !skip_auto_memory_extract {
                 self.spawn_auto_memory_extraction(
                     &user_id,
                     prepared.agent_id.as_deref(),
@@ -1757,6 +1804,24 @@ impl Orchestrator {
             let execution_lock = Arc::clone(&execution_lock);
             async move {
                 let PlannedToolCall { mut call, name } = planned;
+                let event_tool_call_id = call
+                    .id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string);
+                let scoped_tool_context = tool_context.with_event_emitter(
+                    tool_context.event_emitter.as_ref().map(|event_emitter| {
+                        if let Some(tool_call_id) = event_tool_call_id.as_ref() {
+                            event_emitter.with_field(
+                                "tool_call_id",
+                                Value::String(tool_call_id.clone()),
+                            )
+                        } else {
+                            event_emitter.clone()
+                        }
+                    }),
+                );
                 let recovered_args =
                     crate::core::tool_args::recover_tool_args_value_with_meta(&call.arguments);
                 call.arguments = recovered_args.value.clone();
@@ -1841,19 +1906,20 @@ impl Orchestrator {
                         });
                     }
                 }
-                let workspace_version_before =
-                    tool_context.workspace.get_tree_version(tool_context.workspace_id);
+                let workspace_version_before = scoped_tool_context
+                    .workspace
+                    .get_tree_version(scoped_tool_context.workspace_id);
                 let policy_decision = crate::exec_policy::evaluate_tool_call(
-                    tool_context.config,
+                    scoped_tool_context.config,
                     &name,
                     &args,
-                    Some(tool_context.session_id),
-                    Some(tool_context.user_id),
+                    Some(scoped_tool_context.session_id),
+                    Some(scoped_tool_context.user_id),
                 );
                 let policy_meta = policy_decision.as_ref().map(|decision| decision.to_value());
                 let started_at = Instant::now();
                 let tool_timeout =
-                    orchestrator.resolve_tool_timeout(tool_context.config, &name, &args, is_admin);
+                    orchestrator.resolve_tool_timeout(scoped_tool_context.config, &name, &args, is_admin);
                 let supports_parallel_execution = tool_call_supports_parallel(&name, &args);
                 let mut result = if !allowed_tool_names.contains(&name) {
                     ToolResultPayload::error(
@@ -1903,6 +1969,12 @@ impl Orchestrator {
                                     if let Value::Object(ref mut map) = event_payload {
                                         if let Some(meta) = policy_meta.clone() {
                                             map.insert("policy".to_string(), meta);
+                                        }
+                                        if let Some(tool_call_id) = event_tool_call_id.as_ref() {
+                                            map.insert(
+                                                "tool_call_id".to_string(),
+                                                Value::String(tool_call_id.clone()),
+                                            );
                                         }
                                         round_info.insert_into(map);
                                     }
@@ -1973,6 +2045,12 @@ impl Orchestrator {
                                 "summary": approval_summary.clone().unwrap_or_default(),
                             });
                             if let Value::Object(ref mut map) = event_payload {
+                                if let Some(tool_call_id) = event_tool_call_id.as_ref() {
+                                    map.insert(
+                                        "tool_call_id".to_string(),
+                                        Value::String(tool_call_id.clone()),
+                                    );
+                                }
                                 round_info.insert_into(map);
                             }
                             emitter.emit("approval_result", event_payload).await;
@@ -2014,11 +2092,11 @@ impl Orchestrator {
                             ApprovalResponse::ApproveSession => {
                                 let args_approved = args_with_approved_flag(&args);
                                 let _ = crate::exec_policy::evaluate_tool_call(
-                                    tool_context.config,
+                                    scoped_tool_context.config,
                                     &name,
                                     &args_approved,
-                                    Some(tool_context.session_id),
-                                    Some(tool_context.user_id),
+                                    Some(scoped_tool_context.session_id),
+                                    Some(scoped_tool_context.user_id),
                                 );
                                 Some(ApprovalResponse::ApproveSession)
                             }
@@ -2029,7 +2107,7 @@ impl Orchestrator {
                             let result = tokio::select! {
                                 res = orchestrator.execute_tool_with_parallel_guard(
                                     Arc::clone(&execution_lock),
-                                    tool_context,
+                                    &scoped_tool_context,
                                     &name,
                                     &args,
                                     tool_timeout,
@@ -2085,7 +2163,7 @@ impl Orchestrator {
                         let result = tokio::select! {
                             res = orchestrator.execute_tool_with_parallel_guard(
                                 Arc::clone(&execution_lock),
-                                tool_context,
+                                &scoped_tool_context,
                                 &name,
                                 &args,
                                 tool_timeout,
@@ -2121,7 +2199,7 @@ impl Orchestrator {
                     let result = tokio::select! {
                         res = orchestrator.execute_tool_with_parallel_guard(
                             Arc::clone(&execution_lock),
-                            tool_context,
+                            &scoped_tool_context,
                             &name,
                             &args,
                             tool_timeout,
@@ -2149,8 +2227,9 @@ impl Orchestrator {
                         }
                     }
                 };
-                let workspace_version_after =
-                    tool_context.workspace.get_tree_version(tool_context.workspace_id);
+                let workspace_version_after = scoped_tool_context
+                    .workspace
+                    .get_tree_version(scoped_tool_context.workspace_id);
                 if workspace_version_after > workspace_version_before {
                     result.insert_meta("workspace_version", json!(workspace_version_after));
                     result.insert_meta("workspace_changed", Value::Bool(true));
@@ -2529,6 +2608,9 @@ fn resolve_user_content_for_persist(
     messages: &[Value],
     fallback_user_message: &Value,
 ) -> Option<Value> {
+    if current_user_message_marked_skip_persist(messages) {
+        return None;
+    }
     if let Some(index) = Orchestrator::locate_current_user_index(messages) {
         if let Some(content) = messages
             .get(index)
@@ -2538,6 +2620,19 @@ fn resolve_user_content_for_persist(
         }
     }
     fallback_user_message.get("content").cloned()
+}
+
+fn current_user_message_marked_skip_persist(messages: &[Value]) -> bool {
+    let Some(index) = Orchestrator::locate_current_user_index(messages) else {
+        return false;
+    };
+    messages
+        .get(index)
+        .and_then(|message| message.get("meta"))
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get(super::memory::COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn build_max_rounds_user_guidance(max_rounds: Option<i64>) -> String {
@@ -3201,6 +3296,22 @@ mod tests {
             .and_then(|value| value.as_str().map(ToString::to_string))
             .unwrap_or_default();
         assert_eq!(content, "raw question");
+    }
+
+    #[test]
+    fn resolve_user_content_for_persist_skips_zero_mode_marker() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system" }),
+            json!({
+                "role": "user",
+                "content": "current question",
+                "meta": {
+                    super::memory::COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: true
+                }
+            }),
+        ];
+        let fallback = json!({ "role": "user", "content": "raw question" });
+        assert_eq!(resolve_user_content_for_persist(&messages, &fallback), None);
     }
 
     #[test]

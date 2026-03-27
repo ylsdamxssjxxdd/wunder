@@ -69,6 +69,7 @@ use crate::knowledge;
 use crate::llm::embed_texts;
 use crate::lsp::LspDiagnostic;
 use crate::mcp;
+use crate::services::subagents;
 use crate::monitor::MonitorState;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
@@ -1184,6 +1185,16 @@ enum SessionCleanup {
 struct AnnounceConfig {
     parent_session_id: String,
     label: Option<String>,
+    dispatch_id: Option<String>,
+    strategy: Option<String>,
+    completion_mode: Option<String>,
+    remaining_action: Option<String>,
+    parent_turn_ref: Option<String>,
+    parent_user_round: Option<i64>,
+    parent_model_round: Option<i64>,
+    emit_parent_events: bool,
+    auto_wake: bool,
+    persist_history_message: bool,
 }
 
 #[allow(dead_code)]
@@ -2911,6 +2922,16 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         .map(|parent_session_id| AnnounceConfig {
             parent_session_id,
             label: announce_label,
+            dispatch_id: None,
+            strategy: None,
+            completion_mode: None,
+            remaining_action: None,
+            parent_turn_ref: None,
+            parent_user_round: None,
+            parent_model_round: None,
+            emit_parent_events: false,
+            auto_wake: false,
+            persist_history_message: true,
         });
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -3042,7 +3063,7 @@ fn prepare_child_session(
         agent_id: child_agent_id.clone(),
         tool_overrides: parent_tool_names.clone(),
         parent_session_id: Some(cleaned_parent_session_id.to_string()),
-        parent_message_id: None,
+        parent_message_id: subagents::encode_parent_turn_ref(context.user_round, context.model_round),
         spawn_label: label.clone(),
         spawned_by: Some("model".to_string()),
     };
@@ -3073,6 +3094,16 @@ fn prepare_child_session(
         announce: AnnounceConfig {
             parent_session_id: cleaned_parent_session_id.to_string(),
             label,
+            dispatch_id: None,
+            strategy: None,
+            completion_mode: None,
+            remaining_action: None,
+            parent_turn_ref: subagents::encode_parent_turn_ref(context.user_round, context.model_round),
+            parent_user_round: context.user_round,
+            parent_model_round: context.model_round,
+            emit_parent_events: true,
+            auto_wake: true,
+            persist_history_message: false,
         },
     })
 }
@@ -3260,6 +3291,7 @@ async fn spawn_session_run(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
     let user_id = request.user_id.clone();
+    let request_config_overrides = request.config_overrides.clone();
     let now = now_ts();
     let record = SessionRunRecord {
         run_id: run_id.clone(),
@@ -3320,9 +3352,10 @@ async fn spawn_session_run(
         // Use a dedicated runtime so high fan-out runs do not contend with the main runtime worker pool.
         let mut run_request = request;
         run_request.stream = true;
+        let child_orchestrator = orchestrator.clone();
         let mut run_handle = tokio::task::spawn_blocking(move || {
             session_run_runtime()
-                .block_on(session_run_stream::run_request(orchestrator, run_request))
+                .block_on(session_run_stream::run_request(child_orchestrator, run_request))
         });
         let mut timeout_triggered = false;
         let run_result = if let Some(timeout_s) = run_timeout_s.filter(|value| *value > 0.0) {
@@ -3384,7 +3417,7 @@ async fn spawn_session_run(
         }
 
         if let Some(announce) = announce {
-            if !should_skip_announce(answer.as_deref()) {
+            if announce.persist_history_message && !should_skip_announce(answer.as_deref()) {
                 append_child_announce(
                     &workspace,
                     &storage,
@@ -3399,6 +3432,34 @@ async fn spawn_session_run(
                     model_name.as_deref(),
                     announce.label.as_deref(),
                 );
+            }
+            if announce.emit_parent_events || announce.auto_wake {
+                let parent_dispatch = subagents::ParentDispatchConfig {
+                    parent_session_id: announce.parent_session_id.clone(),
+                    dispatch_id: announce.dispatch_id.clone(),
+                    strategy: announce.strategy.clone(),
+                    completion_mode: announce.completion_mode.clone(),
+                    remaining_action: announce.remaining_action.clone(),
+                    label: announce.label.clone(),
+                    parent_turn_ref: announce.parent_turn_ref.clone(),
+                    parent_user_round: announce.parent_user_round,
+                    parent_model_round: announce.parent_model_round,
+                    emit_parent_events: announce.emit_parent_events,
+                    auto_wake: announce.auto_wake,
+                };
+                subagents::handle_child_completion(
+                    storage.clone(),
+                    monitor.as_ref().map(Arc::clone),
+                    orchestrator.clone(),
+                    user_id.clone(),
+                    session_id.clone(),
+                    run_id.clone(),
+                    answer.clone(),
+                    error.clone(),
+                    request_config_overrides.clone(),
+                    parent_dispatch,
+                )
+                .await;
             }
         }
         if matches!(cleanup, SessionCleanup::Delete) {

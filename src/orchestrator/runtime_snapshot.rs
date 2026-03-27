@@ -14,14 +14,19 @@ impl Orchestrator {
             return None;
         }
 
+        let derived_active_status = active_turn_snapshot.as_ref().map(|snapshot| {
+            if snapshot.waiting_for_user_input {
+                ThreadRuntimeStatus::WaitingUserInput
+            } else if !snapshot.pending_approval_ids.is_empty() {
+                ThreadRuntimeStatus::WaitingApproval
+            } else {
+                ThreadRuntimeStatus::Running
+            }
+        });
         let thread_status = thread_snapshot
             .as_ref()
             .map(|snapshot| snapshot.status.as_str().to_string())
-            .or_else(|| {
-                active_turn_snapshot
-                    .as_ref()
-                    .map(|_| ThreadRuntimeStatus::Running.as_str().to_string())
-            })
+            .or_else(|| derived_active_status.map(|status| status.as_str().to_string()))
             .unwrap_or_else(|| ThreadRuntimeStatus::NotLoaded.as_str().to_string());
         let subscriber_count = thread_snapshot
             .as_ref()
@@ -48,9 +53,9 @@ impl Orchestrator {
         Some(json!({
             "session_id": cleaned_session,
             "thread_status": thread_status,
-            "loaded": thread_snapshot.is_some(),
+            "loaded": thread_snapshot.is_some() || active_turn_snapshot.is_some(),
             "subscriber_count": subscriber_count,
-            "active_turn_id": runtime_active_turn_id,
+            "active_turn_id": turn_id,
             "turn": {
                 "turn_id": turn_id,
                 "pending_approval_ids": pending_approval_ids,

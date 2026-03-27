@@ -361,7 +361,7 @@
           'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
           'is-helper-workspace': showHelperAppsWorkspace,
           'is-beeroom': sessionHub.activeSection === 'swarms',
-          'is-beeroom-canvas': sessionHub.activeSection === 'swarms' && beeroomWorkbenchMode === 'canvas',
+          'is-beeroom-canvas': sessionHub.activeSection === 'swarms',
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
@@ -418,7 +418,6 @@
               :loading="beeroomStore.detailLoading || beeroomStore.loading"
               :refreshing="beeroomStore.refreshing"
               :error="beeroomStore.error"
-              :view-mode="beeroomWorkbenchMode"
               @refresh="refreshActiveBeeroom"
               @move-agents="handleBeeroomMoveAgents"
               @open-agent="openAgentById"
@@ -3645,15 +3644,11 @@ const selectedBeeroomGroup = computed<BeeroomGroup | null>(
   () => beeroomStore.activeGroup || beeroomStore.activeGroupSummary || null
 );
 
-const beeroomWorkbenchMode = ref<'text' | 'canvas'>('canvas');
-
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
 );
-const settingsPanelRenderKey = computed(() =>
-  ['settings', sessionHub.activeSection, beeroomWorkbenchMode.value].join(':')
-);
+const settingsPanelRenderKey = computed(() => ['settings', sessionHub.activeSection].join(':'));
 const showChatComposerFooter = computed(() => {
   const routeSection = resolveSectionFromRoute(route.path, route.query.section);
   if (routeSection !== 'messages') {
@@ -10945,9 +10940,6 @@ watch(
       stopBeeroomRealtimeSync?.();
       startRealtimePulse?.();
       triggerRealtimePulseRefresh?.(`enter-${section}`);
-    }
-    if (section !== 'swarms') {
-      beeroomWorkbenchMode.value = 'text';
     }
     if (
       section === 'tools' &&

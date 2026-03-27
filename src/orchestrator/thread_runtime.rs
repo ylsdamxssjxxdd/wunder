@@ -251,6 +251,7 @@ impl ThreadRuntimeRegistry {
 
 pub(super) fn thread_status_payload(snapshot: &ThreadRuntimeSnapshot) -> Value {
     json!({
+        "session_id": snapshot.session_id,
         "thread_id": format!("thread_{}", snapshot.session_id),
         "status": snapshot.status.as_str(),
         "loaded": snapshot.status != ThreadRuntimeStatus::NotLoaded,
@@ -261,6 +262,7 @@ pub(super) fn thread_status_payload(snapshot: &ThreadRuntimeSnapshot) -> Value {
 
 pub(super) fn thread_closed_payload(event: &ThreadRuntimeCloseEvent) -> Value {
     json!({
+        "session_id": event.session_id,
         "thread_id": format!("thread_{}", event.session_id),
         "status": ThreadRuntimeStatus::NotLoaded.as_str(),
         "loaded": false,
@@ -272,6 +274,7 @@ pub(super) fn thread_closed_payload(event: &ThreadRuntimeCloseEvent) -> Value {
 
 pub(super) fn thread_not_loaded_payload(event: &ThreadRuntimeCloseEvent) -> Value {
     json!({
+        "session_id": event.session_id,
         "thread_id": format!("thread_{}", event.session_id),
         "status": ThreadRuntimeStatus::NotLoaded.as_str(),
         "loaded": false,
@@ -330,6 +333,7 @@ mod tests {
         let _ = registry.attach_subscriber("sess_1");
         let update = registry.begin_turn("sess_1", "turn_1");
         let payload = thread_status_payload(&update.status.expect("status snapshot"));
+        assert_eq!(payload["session_id"], "sess_1");
         assert_eq!(payload["status"], "running");
         assert_eq!(payload["loaded"], true);
         assert_eq!(payload["subscriber_count"], 1);
@@ -353,6 +357,7 @@ mod tests {
             session_id: "sess_1".to_string(),
             last_status: ThreadRuntimeStatus::WaitingUserInput,
         });
+        assert_eq!(payload["session_id"], "sess_1");
         assert_eq!(payload["status"], "not_loaded");
         assert_eq!(payload["last_status"], "waiting_user_input");
         assert_eq!(payload["loaded"], false);
@@ -364,6 +369,7 @@ mod tests {
             session_id: "sess_1".to_string(),
             last_status: ThreadRuntimeStatus::Idle,
         });
+        assert_eq!(payload["session_id"], "sess_1");
         assert_eq!(payload["status"], "not_loaded");
         assert_eq!(payload["subscriber_count"], 0);
         assert_eq!(payload["loaded"], false);
