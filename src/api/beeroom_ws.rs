@@ -7,8 +7,7 @@ use crate::api::ws_helpers::{
 };
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
-use crate::services::presence::ProjectionTargetKind;
-use crate::services::projection::beeroom::BeeroomProjectionEvent;
+use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
@@ -36,7 +35,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/beeroom/ws", get(beeroom_ws))
         .route(
             "/wunder/beeroom/realtime/metrics",
-            get(beeroom_projection_metrics),
+            get(beeroom_realtime_metrics),
         )
         .route(
             "/wunder/beeroom/groups/{group_id}/chat/stream",
@@ -202,7 +201,7 @@ async fn beeroom_chat_stream(
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-async fn beeroom_projection_metrics(
+async fn beeroom_realtime_metrics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<WsQuery>,
@@ -322,14 +321,6 @@ async fn handle_ws(
                                 },
                             );
                         }
-                        state.control.presence.watch_projection(
-                            &connection_id,
-                            &request_id,
-                            &user_id,
-                            ProjectionTargetKind::BeeroomGroup,
-                            &group.hive_id,
-                            Utc::now().timestamp_millis() as f64 / 1000.0,
-                        );
                         let state_snapshot = state.clone();
                         let user_snapshot = user_id.clone();
                         let req_snapshot = request_id.clone();
@@ -359,10 +350,6 @@ async fn handle_ws(
                         if let Some(task) = watch_tasks.lock().await.remove(&target_id) {
                             task.cancel.cancel();
                         }
-                        state
-                            .control
-                            .presence
-                            .unwatch_projection(&connection_id, &target_id);
                         let final_event = StreamEvent {
                             event: "final".to_string(),
                             data: json!({ "ok": true, "cancelled": target_id }),
@@ -646,7 +633,7 @@ fn resolve_request_id(value: Option<&str>) -> String {
 fn should_forward_projection_event(
     expected_group_id: &str,
     current_event_id: i64,
-    event: &BeeroomProjectionEvent,
+    event: &BeeroomRealtimeEvent,
 ) -> bool {
     event.group_id == expected_group_id && event.event_id > current_event_id
 }
@@ -667,12 +654,12 @@ fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>
 #[cfg(test)]
 mod tests {
     use super::{resolve_after_event_id, should_forward_projection_event};
-    use crate::services::projection::beeroom::BeeroomProjectionEvent;
+    use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
     use axum::http::{HeaderMap, HeaderValue};
     use serde_json::json;
 
-    fn sample_event(group_id: &str, event_id: i64) -> BeeroomProjectionEvent {
-        BeeroomProjectionEvent {
+    fn sample_event(group_id: &str, event_id: i64) -> BeeroomRealtimeEvent {
+        BeeroomRealtimeEvent {
             event_id,
             user_id: "user-a".to_string(),
             group_id: group_id.to_string(),

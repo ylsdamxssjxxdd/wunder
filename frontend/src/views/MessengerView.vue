@@ -712,75 +712,13 @@
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
             </template>
 
-            <template v-else-if="sessionHub.activeSection === 'tools'">
-              <div v-if="toolsCatalogLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-              <template v-else-if="selectedToolCategory === 'admin'">
-                <div class="messenger-entity-panel messenger-entity-panel--fill">
-                  <div class="messenger-entity-title">{{ t('messenger.tools.adminTitle') }}</div>
-                  <div class="messenger-entity-meta">{{ t('messenger.tools.adminDesc') }}</div>
-                  <div class="messenger-tools-admin-groups">
-                    <section
-                      v-for="group in adminToolGroups"
-                      :key="`admin-tool-group-${group.key}`"
-                      class="messenger-tools-admin-group"
-                    >
-                      <div class="messenger-entity-meta messenger-tools-admin-group-title">
-                        {{ group.title }}
-                      </div>
-                      <div class="messenger-tool-tag-list">
-                        <template v-for="item in group.items" :key="`tool-admin-${group.key}-${item.name}`">
-                          <el-tooltip
-                            placement="top-start"
-                            :show-after="120"
-                            :content="resolveAdminToolDetail(item)"
-                            popper-class="messenger-tool-detail-popper"
-                          >
-                            <span class="messenger-tool-tag messenger-tool-tag--detail">
-                              {{ item.name }}
-                            </span>
-                          </el-tooltip>
-                        </template>
-                        <span v-if="!group.items.length" class="messenger-list-empty">
-                          {{ t('common.none') }}
-                        </span>
-                      </div>
-                    </section>
-                  </div>
-                </div>
-              </template>
-              <template
-                v-else-if="
-                  selectedToolCategory === 'mcp' ||
-                  selectedToolCategory === 'skills' ||
-                  selectedToolCategory === 'knowledge'
-                "
-              >
-                <div class="messenger-tools-pane-host user-tools-dialog">
-                  <UserMcpPane
-                    v-show="selectedToolCategory === 'mcp'"
-                    :visible="true"
-                    :active="selectedToolCategory === 'mcp'"
-                    :status="toolPaneStatus"
-                    @status="toolPaneStatus = String($event || '')"
-                  />
-                  <UserSkillPane
-                    v-show="selectedToolCategory === 'skills'"
-                    :visible="true"
-                    :active="selectedToolCategory === 'skills'"
-                    :status="toolPaneStatus"
-                    @status="toolPaneStatus = String($event || '')"
-                  />
-                  <UserKnowledgePane
-                    v-show="selectedToolCategory === 'knowledge'"
-                    :visible="true"
-                    :active="selectedToolCategory === 'knowledge'"
-                    :status="toolPaneStatus"
-                    @status="toolPaneStatus = String($event || '')"
-                  />
-                </div>
-              </template>
-              <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
-            </template>
+            <MessengerToolsSection
+              v-else-if="sessionHub.activeSection === 'tools'"
+              :tools-catalog-loading="toolsCatalogLoading"
+              :selected-tool-category="selectedToolCategory"
+              :admin-tool-groups="adminToolGroups"
+              :resolve-admin-tool-detail="resolveAdminToolDetail"
+            />
 
             <template v-else-if="sessionHub.activeSection === 'files'">
               <div class="messenger-files-panel">
@@ -1072,12 +1010,25 @@
                                       :key="`${section.key}-${item.name}`"
                                       :class="['ability-item', section.kind]"
                                     >
-                                      <div class="ability-item-name">{{ item.name }}</div>
-                                      <div
-                                        class="ability-item-desc"
-                                        :class="{ 'is-empty': !item.description }"
-                                      >
-                                        {{ item.description || t('chat.ability.noDesc') }}
+                                      <AbilityIconBadge
+                                        :name="item.name"
+                                        :description="item.description"
+                                        :kind="section.kind"
+                                        :group="section.key"
+                                        :source="section.key"
+                                        size="xs"
+                                      />
+                                      <div class="ability-item-copy">
+                                        <div class="ability-item-head">
+                                          <div class="ability-item-name">{{ item.name }}</div>
+                                          <span class="ability-item-chip">{{ section.title }}</span>
+                                        </div>
+                                        <div
+                                          class="ability-item-desc"
+                                          :class="{ 'is-empty': !item.description }"
+                                        >
+                                          {{ item.description || t('chat.ability.noDesc') }}
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
@@ -1584,6 +1535,7 @@ import {
 } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
+import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialog.vue';
 import {
@@ -1597,6 +1549,7 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
+import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import {
@@ -1632,10 +1585,7 @@ import {
   MessengerWorldComposer,
   preloadAgentSettingsPanels,
   UserChannelSettingsPanel,
-  UserKnowledgePane,
-  UserMcpPane,
-  UserPromptSettingsPanel,
-  UserSkillPane
+  UserPromptSettingsPanel
 } from '@/views/messenger/lazyPanels';
 import {
   resolveFileContainerLifecycleText,
@@ -1939,7 +1889,6 @@ const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
-const toolPaneStatus = ref('');
 const fileScope = ref<'agent' | 'user'>('agent');
 const selectedFileContainerId = ref(USER_CONTAINER_ID);
 const fileContainerLatestUpdatedAt = ref(0);
@@ -7141,7 +7090,6 @@ const switchSection = (
   sessionHub.setKeyword('');
   worldHistoryDialogVisible.value = false;
   agentPromptPreviewVisible.value = false;
-  toolPaneStatus.value = '';
   if (section === 'more') {
     settingsPanelMode.value =
       explicitSettingsPanelMode !== 'general'
@@ -8826,7 +8774,6 @@ const loadOrgUnits = async () => {
 };
 
 const selectToolCategory = (category: 'admin' | 'mcp' | 'skills' | 'knowledge') => {
-  toolPaneStatus.value = '';
   selectedToolCategory.value = category;
 };
 

@@ -75,24 +75,52 @@
             </div>
             <div v-if="!enabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
             <div v-else class="messenger-skill-list">
-              <div
+              <el-tooltip
                 v-for="item in enabledSkills"
                 :key="`enabled-${item.name}`"
-                class="messenger-skill-item is-enabled"
-                role="button"
-                tabindex="0"
-                @click="openSkillDetail(item.name)"
-                @keydown.enter.prevent="openSkillDetail(item.name)"
-                @keydown.space.prevent="openSkillDetail(item.name)"
+                placement="left-start"
+                :show-after="100"
+                popper-class="ability-card-popper"
               >
-                <div class="messenger-skill-item-title-row">
-                  <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                  <span class="messenger-skill-status-tag">{{ t('common.enabled') }}</span>
+                <template #content>
+                  <AbilityTooltipCard
+                    :name="item.name"
+                    :description="item.description"
+                    kind="skill"
+                    group="skills"
+                    source="skill"
+                    :chips="[t('toolManager.system.skills'), t('common.enabled')]"
+                  />
+                </template>
+                <div
+                  class="messenger-skill-item is-enabled"
+                  role="button"
+                  tabindex="0"
+                  @click="openSkillDetail(item.name)"
+                  @keydown.enter.prevent="openSkillDetail(item.name)"
+                  @keydown.space.prevent="openSkillDetail(item.name)"
+                >
+                  <div class="ability-entry">
+                    <AbilityIconBadge
+                      :name="item.name"
+                      :description="item.description"
+                      kind="skill"
+                      group="skills"
+                      source="skill"
+                      size="sm"
+                    />
+                    <div class="messenger-skill-item-copy ability-entry__copy">
+                      <div class="messenger-skill-item-title-row">
+                        <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
+                        <span class="messenger-skill-status-tag">{{ t('common.enabled') }}</span>
+                      </div>
+                      <div class="messenger-skill-item-desc">
+                        {{ item.description || t('chat.ability.noDesc') }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="messenger-skill-item-desc">
-                  {{ item.description || t('chat.ability.noDesc') }}
-                </div>
-              </div>
+              </el-tooltip>
             </div>
           </div>
 
@@ -103,24 +131,52 @@
             </div>
             <div v-if="!disabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
             <div v-else class="messenger-skill-list">
-              <div
+              <el-tooltip
                 v-for="item in disabledSkills"
                 :key="`disabled-${item.name}`"
-                class="messenger-skill-item is-disabled"
-                role="button"
-                tabindex="0"
-                @click="openSkillDetail(item.name)"
-                @keydown.enter.prevent="openSkillDetail(item.name)"
-                @keydown.space.prevent="openSkillDetail(item.name)"
+                placement="left-start"
+                :show-after="100"
+                popper-class="ability-card-popper"
               >
-                <div class="messenger-skill-item-title-row">
-                  <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                  <span class="messenger-skill-status-tag">{{ t('common.disabled') }}</span>
+                <template #content>
+                  <AbilityTooltipCard
+                    :name="item.name"
+                    :description="item.description"
+                    kind="skill"
+                    group="skills"
+                    source="skill"
+                    :chips="[t('toolManager.system.skills'), t('common.disabled')]"
+                  />
+                </template>
+                <div
+                  class="messenger-skill-item is-disabled"
+                  role="button"
+                  tabindex="0"
+                  @click="openSkillDetail(item.name)"
+                  @keydown.enter.prevent="openSkillDetail(item.name)"
+                  @keydown.space.prevent="openSkillDetail(item.name)"
+                >
+                  <div class="ability-entry">
+                    <AbilityIconBadge
+                      :name="item.name"
+                      :description="item.description"
+                      kind="skill"
+                      group="skills"
+                      source="skill"
+                      size="sm"
+                    />
+                    <div class="messenger-skill-item-copy ability-entry__copy">
+                      <div class="messenger-skill-item-title-row">
+                        <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
+                        <span class="messenger-skill-status-tag">{{ t('common.disabled') }}</span>
+                      </div>
+                      <div class="messenger-skill-item-desc">
+                        {{ item.description || t('chat.ability.noDesc') }}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div class="messenger-skill-item-desc">
-                  {{ item.description || t('chat.ability.noDesc') }}
-                </div>
-              </div>
+              </el-tooltip>
             </div>
           </div>
         </div>
@@ -153,6 +209,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
+import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
+import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { useI18n } from '@/i18n';
 import { copyText } from '@/utils/clipboard';

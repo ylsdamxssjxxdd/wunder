@@ -6,7 +6,6 @@ use crate::api::ws_helpers::{
 };
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
-use crate::services::presence::ProjectionTargetKind;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -176,14 +175,6 @@ async fn handle_ws(
                                 },
                             );
                         }
-                        state.control.presence.watch_projection(
-                            &connection_id,
-                            &request_id,
-                            &user_id,
-                            ProjectionTargetKind::UserWorldConversation,
-                            &conversation_id,
-                            Utc::now().timestamp_millis() as f64 / 1000.0,
-                        );
                         let state_snapshot = state.clone();
                         let user_snapshot = user_id.clone();
                         let req_snapshot = request_id.clone();
@@ -341,10 +332,6 @@ async fn handle_ws(
                         if let Some(task) = watch_tasks.lock().await.remove(&target_id) {
                             task.cancel.cancel();
                         }
-                        state
-                            .control
-                            .presence
-                            .unwatch_projection(&connection_id, &target_id);
                         let final_event = StreamEvent {
                             event: "final".to_string(),
                             data: json!({ "ok": true, "cancelled": target_id }),

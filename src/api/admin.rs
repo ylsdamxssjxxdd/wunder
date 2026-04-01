@@ -9,6 +9,7 @@ use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig, UserAgentPresetConfig,
 };
+use crate::core::repo_assets;
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::i18n;
 use crate::knowledge;
@@ -1022,7 +1023,8 @@ fn resolve_builtin_skills_root() -> Option<PathBuf> {
             return Some(normalized);
         }
     }
-    let fallback = PathBuf::from("skills");
+    let repo_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let fallback = repo_assets::builtin_skills_root(&repo_root);
     if fallback.exists() && fallback.is_dir() {
         return Some(normalize_existing_path(&fallback));
     }
@@ -1798,7 +1800,7 @@ async fn cleanup_removed_literal_roots(bases: Vec<(String, String)>, next: &[Kno
         Ok(dir) => dir,
         Err(_) => PathBuf::from("."),
     };
-    let knowledge_root = current_dir.join("knowledge");
+    let knowledge_root = repo_assets::builtin_knowledge_root(&current_dir);
     let knowledge_root_compare =
         normalize_path_for_compare(&normalize_existing_path(&knowledge_root));
 
@@ -1839,12 +1841,16 @@ async fn cleanup_removed_literal_roots(bases: Vec<(String, String)>, next: &[Kno
         }
 
         if root_key == knowledge_root_compare {
-            info!("Skip removing literal knowledge root for {name}: root points to ./knowledge");
+            info!(
+                "Skip removing literal knowledge root for {name}: root points to {}",
+                knowledge_root.to_string_lossy()
+            );
             continue;
         }
         if !is_within_root(&knowledge_root, &root_abs) {
             info!(
-                "Skip removing literal knowledge root for {name}: root is outside ./knowledge ({})",
+                "Skip removing literal knowledge root for {name}: root is outside {} ({})",
+                knowledge_root.to_string_lossy(),
                 root_abs.to_string_lossy()
             );
             continue;
@@ -6166,7 +6172,7 @@ fn normalize_admin_knowledge_bases(
             base.embedding_model = Some(embedding_model);
         } else {
             if base.root.trim().is_empty() {
-                base.root = format!("./knowledge/{}", base.name);
+                base.root = repo_assets::default_literal_knowledge_root(&base.name);
             } else {
                 base.root = base.root.trim().to_string();
             }

@@ -79,7 +79,7 @@ OUTPUT_DIR=target/arm64-20/dist \
 Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资源拷贝到 `desktop/electron/resources`：
 - `wunder-desktop-bridge`（桥接程序）
 - `frontend/dist`（前端静态资源）
-- `config/`、`prompts/`、`skills/`、`scripts/`（如存在）
+- `config/`、`scripts/`（如存在）
 
 图标现在采用单一源文件（优先）：`images/eva01-head.svg`（若缺失则回退 `images/eva01-head.ico`）。  
 `prepare-resources` 前会自动执行 `scripts/sync-icons.js`，统一生成并同步：

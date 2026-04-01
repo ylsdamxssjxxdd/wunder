@@ -13,7 +13,6 @@ use crate::api::ws_log::{
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
-use crate::services::presence::ProjectionTargetKind;
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::state::AppState;
 use crate::user_store::UserStore;
@@ -440,17 +439,6 @@ async fn handle_ws(
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        let connection_id_cleanup = connection_id.clone();
-                        if let Some(session_id) = request.session_id.as_deref() {
-                            state.control.presence.watch_projection(
-                                &connection_id,
-                                &request_id,
-                                &user.user_id,
-                                ProjectionTargetKind::Session,
-                                session_id,
-                                Utc::now().timestamp_millis() as f64 / 1000.0,
-                            );
-                        }
                         tokio::spawn(async move {
                             let _lease = lease;
                             match state_snapshot.kernel.orchestrator.stream(request).await {
@@ -494,18 +482,12 @@ async fn handle_ws(
                                     }
                                 }
                             }
-                            if cleanup_ws_task(
+                            let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,
                                 &task_id_cleanup,
                             )
-                            .await
-                            {
-                                state_snapshot.control.presence.unwatch_projection(
-                                    &connection_id_cleanup,
-                                    &request_id_cleanup,
-                                );
-                            }
+                            .await;
                         });
                     }
                     "resume" => {
@@ -580,22 +562,12 @@ async fn handle_ws(
                         }
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
-                        let state_cleanup = state.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), false)
                                 .await;
                         let tasks_cleanup = tasks.clone();
                         let request_id_cleanup = request_id.clone();
                         let task_id_cleanup = task_id.clone();
-                        let connection_id_cleanup = connection_id.clone();
-                        state.control.presence.watch_projection(
-                            &connection_id,
-                            &request_id,
-                            &user.user_id,
-                            ProjectionTargetKind::Session,
-                            &session_id,
-                            Utc::now().timestamp_millis() as f64 / 1000.0,
-                        );
                         tokio::spawn(async move {
                             resume_stream_events(
                                 state_snapshot,
@@ -607,18 +579,12 @@ async fn handle_ws(
                                 false,
                             )
                             .await;
-                            if cleanup_ws_task(
+                            let _ = cleanup_ws_task(
                                 &tasks_cleanup,
                                 &request_id_cleanup,
                                 &task_id_cleanup,
                             )
-                            .await
-                            {
-                                state_cleanup.control.presence.unwatch_projection(
-                                    &connection_id_cleanup,
-                                    &request_id_cleanup,
-                                );
-                            }
+                            .await;
                         });
                     }
                     "cancel" => {
@@ -666,10 +632,6 @@ async fn handle_ws(
                             if let Some(request_id) = request_id.as_deref() {
                                 if let Some(entry) = guard.remove(request_id) {
                                     entry.cancel.cancel();
-                                    state
-                                        .control
-                                        .presence
-                                        .unwatch_projection(&connection_id, request_id);
                                     if entry.cancel_session {
                                         cancel_session_id = entry.session_id;
                                     }
@@ -688,10 +650,6 @@ async fn handle_ws(
                                 for key in targets {
                                     if let Some(entry) = guard.remove(&key) {
                                         entry.cancel.cancel();
-                                        state
-                                            .control
-                                            .presence
-                                            .unwatch_projection(&connection_id, &key);
                                     }
                                 }
                                 cancel_session_id = Some(session_id.to_string());

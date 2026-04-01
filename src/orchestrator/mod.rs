@@ -28,8 +28,8 @@ use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::PromptComposer;
 use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::inner_visible::InnerVisibleService;
-use crate::services::projection::beeroom::BeeroomProjectionService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
@@ -122,7 +122,7 @@ pub struct Orchestrator {
     active_turns: Arc<ActiveTurnRegistry>,
     thread_runtime: Arc<ThreadRuntimeRegistry>,
     user_world: Arc<UserWorldService>,
-    beeroom_projection: Arc<BeeroomProjectionService>,
+    beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
     http: reqwest::Client,
 }
@@ -144,7 +144,7 @@ impl Orchestrator {
         command_sessions: Arc<CommandSessionBroker>,
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
-        beeroom_projection: Arc<BeeroomProjectionService>,
+        beeroom_realtime: Arc<BeeroomRealtimeService>,
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
         Self {
@@ -164,7 +164,7 @@ impl Orchestrator {
             active_turns: Arc::new(ActiveTurnRegistry::new()),
             thread_runtime: Arc::new(ThreadRuntimeRegistry::new()),
             user_world,
-            beeroom_projection,
+            beeroom_realtime,
             cron_wake_signal,
             http: reqwest::Client::new(),
         }

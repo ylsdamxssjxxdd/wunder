@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wunder_server::config::Config;
 use wunder_server::config_store::ConfigStore;
+use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 
 pub const CLI_DEFAULT_USER_ID: &str = "cli_user";
@@ -75,6 +76,10 @@ impl CliRuntime {
         set_env_path("WUNDER_CONFIG_PATH", &config_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
         set_env_prompts_root_if_unset(&repo_root);
+        set_env_path(
+            "WUNDER_BUILTIN_SKILLS_ROOT",
+            &repo_assets::builtin_skills_root(&repo_root),
+        );
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_HOME", &wunder_home);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
@@ -319,7 +324,7 @@ fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
 }
 
 fn looks_like_repo_root(candidate: &Path) -> bool {
-    candidate.join("config/wunder.yaml").is_file() || candidate.join("prompts").is_dir()
+    repo_assets::looks_like_repo_root(candidate)
 }
 
 fn ensure_runtime_dirs(
@@ -361,7 +366,7 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
     {
         return;
     }
-    if repo_root.join("prompts").is_dir() {
+    if repo_assets::builtin_prompts_root(repo_root).is_dir() {
         set_env_path("WUNDER_PROMPTS_ROOT", repo_root);
     }
 }
@@ -453,7 +458,7 @@ fn apply_cli_defaults(
     let user_skills = wunder_home.join("skills");
     let project_wunder_skills = launch_dir.join(".wunder").join("skills");
     let launch_skills = launch_dir.join("skills");
-    let repo_skills = repo_root.join("skills");
+    let repo_skills = repo_assets::builtin_skills_root(repo_root);
     let mut skill_paths = vec![
         user_skills,
         project_wunder_skills,
@@ -481,7 +486,11 @@ fn apply_cli_defaults(
         .collect::<Vec<_>>();
     allow_paths.push(wunder_home.to_string_lossy().to_string());
     allow_paths.push(launch_dir.join(".wunder").to_string_lossy().to_string());
-    allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
+    allow_paths.push(
+        repo_assets::builtin_skills_root(repo_root)
+            .to_string_lossy()
+            .to_string(),
+    );
     allow_paths.push(launch_dir.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
 }

@@ -94,9 +94,32 @@
                     </button>
                   </div>
                   <div class="messenger-tool-options">
-                    <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                      <span :title="option.hint">{{ option.label }}</span>
-                    </el-checkbox>
+                    <div
+                      v-for="option in group.options"
+                      :key="option.value"
+                      class="messenger-tool-option-item"
+                      @contextmenu.prevent="showToolDetail($event, group, option)"
+                    >
+                      <el-checkbox :value="option.value">
+                        <div class="messenger-tool-option-label">
+                          <AbilityIconBadge
+                            :name="option.label"
+                            :description="option.description"
+                            :hint="option.hint"
+                            :kind="resolveGroupAbilityKind(group.key)"
+                            :group="group.key"
+                            :source="group.key"
+                            size="sm"
+                          />
+                          <div class="messenger-tool-option-copy">
+                            <span class="messenger-tool-option-name">{{ option.label }}</span>
+                            <span class="messenger-tool-option-desc">
+                              {{ resolveToolOptionSummary(option) || t('chat.ability.noDesc') }}
+                            </span>
+                          </div>
+                        </div>
+                      </el-checkbox>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -296,6 +319,27 @@
         </template>
       </el-dialog>
 
+      <Teleport to="body">
+        <div
+          v-if="detailOption"
+          class="messenger-tool-detail-overlay"
+          @mousedown="dismissDetail"
+          @contextmenu.prevent="dismissDetail"
+        >
+          <div class="messenger-tool-detail-popup" :style="detailPopupStyle" @mousedown.stop>
+            <AbilityTooltipCard
+              :name="detailOption.option.label"
+              :description="detailOption.option.description"
+              :hint="detailOption.option.hint"
+              :kind="detailOption.kind"
+              :group="detailOption.groupKey"
+              :source="detailOption.groupKey"
+              :chips="[detailOption.groupLabel]"
+            />
+          </div>
+        </div>
+      </Teleport>
+
     </template>
   </div>
 </template>
@@ -310,6 +354,8 @@ import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
+import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
+import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -325,6 +371,7 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { isAbilitySkillGroup, resolveAbilitySummary } from '@/utils/abilityVisuals';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
@@ -505,6 +552,43 @@ const nextAgentLoadRequestId = (): number => {
   latestAgentLoadRequestId += 1;
   return latestAgentLoadRequestId;
 };
+
+const resolveGroupAbilityKind = (groupKey: string): 'tool' | 'skill' =>
+  isAbilitySkillGroup(groupKey) ? 'skill' : 'tool';
+
+const resolveToolOptionSummary = (option: ToolOption): string =>
+  resolveAbilitySummary(option.description, option.hint);
+
+type DetailPopupData = {
+  option: ToolOption;
+  kind: 'tool' | 'skill';
+  groupKey: string;
+  groupLabel: string;
+};
+
+const detailOption = ref<DetailPopupData | null>(null);
+const detailPos = ref({ x: 0, y: 0 });
+
+function showToolDetail(event: MouseEvent, group: AgentToolGroup<ToolOption>, option: ToolOption): void {
+  const x = Math.min(event.clientX, window.innerWidth - 380);
+  const y = Math.min(event.clientY, window.innerHeight - 220);
+  detailPos.value = { x, y };
+  detailOption.value = {
+    option,
+    kind: resolveGroupAbilityKind(group.key),
+    groupKey: group.key,
+    groupLabel: group.label
+  };
+}
+
+function dismissDetail(): void {
+  detailOption.value = null;
+}
+
+const detailPopupStyle = computed(() => ({
+  left: `${detailPos.value.x}px`,
+  top: `${detailPos.value.y}px`
+}));
 
 const isAgentLoadRequestActive = (requestId: number): boolean =>
   !panelDisposed && requestId === latestAgentLoadRequestId;

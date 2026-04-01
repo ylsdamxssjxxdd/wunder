@@ -190,7 +190,7 @@ const SUPPORTED_UPLOAD_EXTENSIONS = [
 ];
 const SUPPORTED_UPLOAD_ACCEPT = SUPPORTED_UPLOAD_EXTENSIONS.join(",");
 const DEFAULT_ROOT_PLACEHOLDER =
-  knowledgeModalRoot?.getAttribute("placeholder") || "可留空，自动创建 ./knowledge/<名称>";
+  knowledgeModalRoot?.getAttribute("placeholder") || "可留空，自动创建 ./config/knowledge/<名称>";
 
 const normalizeBaseType = (value) => {
   const raw = String(value || "").trim().toLowerCase();

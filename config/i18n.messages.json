@@ -324,12 +324,12 @@
     "zh-CN": "删除技能失败: {detail}"
   },
   "error.skill_delete_restricted": {
-    "en-US": "Only skills under the skills directory can be deleted",
-    "zh-CN": "仅支持删除 skills 目录内的技能"
+    "en-US": "Only skills under the config/skills directory can be deleted",
+    "zh-CN": "仅支持删除 config/skills 目录内的技能"
   },
   "error.skill_builtin_readonly": {
-    "en-US": "Built-in skill is read-only. Modify source files under skills/",
-    "zh-CN": "内置技能为只读，请直接修改源码 skills 目录"
+    "en-US": "Built-in skill is read-only. Modify source files under config/skills/",
+    "zh-CN": "内置技能为只读，请直接修改源码 config/skills 目录"
   },
   "error.skill_builtin_upload_conflict": {
     "en-US": "Upload path conflicts with built-in skill directory",
@@ -364,8 +364,8 @@
     "zh-CN": "仅支持上传 .zip 或 .skill 压缩包"
   },
   "error.skills_dir_missing": {
-    "en-US": "skills directory not found",
-    "zh-CN": "skills 目录不存在"
+    "en-US": "config/skills directory not found",
+    "zh-CN": "config/skills 目录不存在"
   },
   "error.system_prompt_failed": {
     "en-US": "Failed to build system prompt: {detail}",

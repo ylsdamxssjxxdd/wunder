@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::core::repo_assets;
 use crate::i18n;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -6,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./data/prompt_templates";
+const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./config/data/prompt_templates";
 const DEFAULT_USER_PROMPT_ROOT: &str = "./data/user_prompt_templates";
 const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 const USER_ACTIVE_PACK_CACHE_MAX_ITEMS: usize = 512;
@@ -119,7 +120,7 @@ pub fn resolve_system_active_pack_id(config: &Config) -> String {
 
 pub fn resolve_system_pack_root(config: &Config, pack_id: &str) -> PathBuf {
     if pack_id.trim().eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        return resolve_prompts_root();
+        return resolve_default_prompt_pack_root();
     }
     resolve_system_packs_root(config).join(pack_id.trim())
 }
@@ -265,11 +266,15 @@ fn resolve_user_prompt_templates_root(_config: &Config) -> PathBuf {
 pub fn resolve_prompts_root() -> PathBuf {
     for candidate in resolve_prompts_root_candidates() {
         let normalized = normalize_prompts_root(candidate);
-        if normalized.join("prompts").is_dir() {
+        if repo_assets::looks_like_repo_root(&normalized) {
             return normalized;
         }
     }
     normalize_prompts_root(PathBuf::from("."))
+}
+
+pub fn resolve_default_prompt_pack_root() -> PathBuf {
+    repo_assets::default_prompt_pack_root(&resolve_prompts_root())
 }
 
 fn resolve_prompts_root_candidates() -> Vec<PathBuf> {
@@ -313,20 +318,7 @@ fn push_candidate(candidates: &mut Vec<PathBuf>, candidate: Option<PathBuf>) {
 }
 
 fn normalize_prompts_root(root: PathBuf) -> PathBuf {
-    if root.join("prompts").is_dir() {
-        return root;
-    }
-    let looks_like_prompts_dir = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("prompts"))
-        .unwrap_or(false);
-    if looks_like_prompts_dir && (root.join("zh").is_dir() || root.join("en").is_dir()) {
-        if let Some(parent) = root.parent() {
-            return parent.to_path_buf();
-        }
-    }
-    root
+    repo_assets::normalize_repo_root_candidate(&root)
 }
 
 fn now_ts() -> f64 {

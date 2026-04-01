@@ -460,7 +460,7 @@ fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
     }
     let root = config.prompt_templates.root.trim();
     let root = if root.is_empty() {
-        PathBuf::from("./data/prompt_templates")
+        PathBuf::from("./config/data/prompt_templates")
     } else {
         PathBuf::from(root)
     };
@@ -986,7 +986,7 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
     let mut resolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        user_prompt_templates::resolve_prompts_root().join(path)
+        user_prompt_templates::resolve_default_prompt_pack_root().join(path)
     };
     let locale = match i18n::get_language().to_ascii_lowercase() {
         language if language.starts_with("en") => Some("en"),

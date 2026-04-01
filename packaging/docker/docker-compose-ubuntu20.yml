@@ -16,7 +16,7 @@ x-build-volumes: &build-volumes
   - ../../:/app
   - ../../config/data:/app/data
   - ../../config/data/workspaces:/workspaces
-  - ../../fonts:/usr/share/fonts/wunder:ro
+  - ../../config/fonts:/usr/share/fonts/wunder:ro
 
 services:
   wunder-build-x86:

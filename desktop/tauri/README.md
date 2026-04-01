@@ -79,11 +79,9 @@ powershell -ExecutionPolicy Bypass -File desktop/tauri/scripts/build-win7-gnu.ps
 
 - Tauri 安装包会携带以下运行资源：
   - `config/`
-  - `prompts/`
-  - `skills/`
   - `scripts/`
   - `frontend/dist/`
-- 运行时会将内置 `skills/` 同步到本地工作区：`<userData>/WUNDER_WORK/skills`
+- 运行时会将内置 `config/skills/` 同步到本地工作区：`<userData>/WUNDER_WORK/skills`
   - 同名内置技能会被覆盖为最新打包版本（用于升级后保持一致）
   - 用户上传的自定义技能请放在 `admin_skills` 或 `user_tools/<user>/skills`，不会被内置同步覆盖
 

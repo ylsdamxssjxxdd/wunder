@@ -48,7 +48,7 @@ source_docs:
 重点约束：
 
 - `default` 包只读
-- 非 default 包默认落在 `./data/prompt_templates`
+- 非 default 包默认落在 `./config/data/prompt_templates`
 
 ## 用户侧模板接口
 

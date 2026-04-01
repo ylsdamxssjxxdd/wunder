@@ -189,8 +189,6 @@ copyDirIfExists(path.join(repoRoot, 'config'), path.join(outputRoot, 'config'))
 if (fs.existsSync(desktopPreconfigSource)) {
   copyFile(desktopPreconfigSource, path.join(outputRoot, 'config', 'wunder.desktop.preconfig.yaml'))
 }
-copyDirIfExists(path.join(repoRoot, 'prompts'), path.join(outputRoot, 'prompts'))
-copyDirIfExists(path.join(repoRoot, 'skills'), path.join(outputRoot, 'skills'))
 copyDirIfExists(path.join(repoRoot, 'scripts'), path.join(outputRoot, 'scripts'))
 
 console.log(`[prepare] resources ready at: ${outputRoot}`)

@@ -23,7 +23,7 @@ services:
       - ./config/data/workspaces:/workspaces
       - ./config/data/browser:/app/config/data/browser
       - ./config/data/ms-playwright:/ms-playwright
-      - ./fonts:/usr/share/fonts/wunder:ro
+      - ./config/fonts:/usr/share/fonts/wunder:ro
     environment:
       - TZ=Asia/Shanghai
       - WUNDER_SANDBOX_ENDPOINT=${WUNDER_SANDBOX_ENDPOINT:-http://wunder-sandbox:9001}
@@ -102,7 +102,7 @@ services:
       - ./config/data/workspaces:/workspaces
       - ./config/data/browser:/app/config/data/browser
       - ./config/data/ms-playwright:/ms-playwright
-      - ./fonts:/usr/share/fonts/wunder:ro
+      - ./config/fonts:/usr/share/fonts/wunder:ro
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]

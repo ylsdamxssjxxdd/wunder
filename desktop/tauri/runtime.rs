@@ -11,6 +11,7 @@ use url::Url;
 use wunder_server::config::{merge_config_value, Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
+use wunder_server::repo_assets;
 use wunder_server::state::{AppState, AppStateInitOptions};
 use wunder_server::storage::{
     normalize_workspace_container_id, UserTokenRecord, MAX_SANDBOX_CONTAINER_ID,
@@ -148,7 +149,7 @@ impl DesktopRuntime {
         if let Err(err) = seed_workspace_skills(&repo_root, &workspace_root) {
             warn!(
                 "seed desktop workspace skills failed: {} -> {}: {err}",
-                repo_root.join("skills").display(),
+                repo_assets::builtin_skills_root(&repo_root).display(),
                 workspace_root.join("skills").display()
             );
         }
@@ -212,7 +213,7 @@ impl DesktopRuntime {
         if let Err(err) = seed_user_tool_skills(&repo_root, &user_tools_root, &user_id) {
             warn!(
                 "seed desktop user tool skills failed: {} -> {}: {err}",
-                repo_root.join("skills").display(),
+                repo_assets::builtin_skills_root(&repo_root).display(),
                 user_tools_root.display()
             );
         }
@@ -242,7 +243,10 @@ impl DesktopRuntime {
             set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
         }
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
-        set_env_path(BUILTIN_SKILLS_ROOT_ENV, &repo_root.join("skills"));
+        set_env_path(
+            BUILTIN_SKILLS_ROOT_ENV,
+            &repo_assets::builtin_skills_root(&repo_root),
+        );
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
         log_startup_segment(
@@ -467,8 +471,7 @@ fn resolve_frontend_root(
 }
 
 fn has_runtime_resource_layout(root: &Path) -> bool {
-    root.join("config/wunder.yaml").is_file()
-        && (root.join("skills").is_dir() || root.join("prompts").is_dir())
+    repo_assets::looks_like_repo_root(root)
 }
 
 fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
@@ -487,7 +490,7 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
 }
 
 fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> {
-    let source = repo_root.join("skills");
+    let source = repo_assets::builtin_skills_root(repo_root);
     if !source.is_dir() {
         return Ok(());
     }
@@ -496,7 +499,7 @@ fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> 
 }
 
 fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str) -> Result<()> {
-    let source = repo_root.join("skills");
+    let source = repo_assets::builtin_skills_root(repo_root);
     if !source.is_dir() {
         return Ok(());
     }
@@ -1048,7 +1051,7 @@ fn set_env_prompts_root_if_unset(repo_root: &Path) {
     {
         return;
     }
-    if repo_root.join("prompts").is_dir() {
+    if repo_assets::builtin_prompts_root(repo_root).is_dir() {
         set_env_path("WUNDER_PROMPTS_ROOT", repo_root);
     }
 }
@@ -1259,7 +1262,7 @@ fn apply_desktop_defaults(
         config.security.api_key = Some(defaults.desktop_token.to_string());
     }
 
-    let repo_skills = repo_root.join("skills");
+    let repo_skills = repo_assets::builtin_skills_root(repo_root);
     let admin_custom_skills = temp_root.join("admin_skills");
     let mut skill_paths = vec![repo_skills, admin_custom_skills];
     for existing in &config.skills.paths {
@@ -1311,7 +1314,11 @@ fn apply_desktop_defaults(
         .filter(|path| !is_legacy_eva_skills_path(path))
         .cloned()
         .collect::<Vec<_>>();
-    allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
+    allow_paths.push(
+        repo_assets::builtin_skills_root(repo_root)
+            .to_string_lossy()
+            .to_string(),
+    );
     allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const DEFAULT_PACK_ID: &str = "default";
-const DEFAULT_PACKS_ROOT: &str = "./data/prompt_templates";
+const DEFAULT_PACKS_ROOT: &str = "./config/data/prompt_templates";
 
 const SYSTEM_SEGMENTS: &[(&str, &str)] = &[
     ("role", "role.txt"),

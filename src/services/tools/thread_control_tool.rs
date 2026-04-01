@@ -1050,7 +1050,7 @@ mod tests {
                 storage: self.storage.clone(),
                 orchestrator: None,
                 monitor: None,
-                beeroom_projection: None,
+                beeroom_realtime: None,
                 workspace: self.workspace.clone(),
                 lsp_manager: self.lsp_manager.clone(),
                 config: &self.config,

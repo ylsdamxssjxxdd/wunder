@@ -3,9 +3,6 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::{Orchestrator, OrchestratorError};
 use crate::schemas::WunderRequest;
-use crate::services::directory::{
-    RouteLeaseGuard, RouteLeaseService, RouteTargetKind, SessionSubmitLeaseGuard,
-};
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{
     AgentTaskRecord, AgentThreadRecord, ChatSessionRecord, UpdateAgentTaskStatusParams,
@@ -15,7 +12,8 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
@@ -42,8 +40,34 @@ pub struct QueueInfo {
 
 #[derive(Debug)]
 pub enum ThreadSubmitOutcome {
-    Run(Box<WunderRequest>, Option<SessionSubmitLeaseGuard>),
+    Run(Box<WunderRequest>, Option<SessionLease>),
     Queued(QueueInfo),
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionLease {
+    session_id: String,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
+}
+
+impl SessionLease {
+    fn new(session_id: String, pending_sessions: Arc<StdMutex<HashSet<String>>>) -> Self {
+        Self {
+            session_id,
+            pending_sessions,
+        }
+    }
+}
+
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        if self.session_id.trim().is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.pending_sessions.lock() {
+            guard.remove(self.session_id.as_str());
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -52,11 +76,11 @@ pub struct ThreadRuntime {
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
-    route_leases: Arc<RouteLeaseService>,
     stream_events: StreamEventService,
     queue_tx: mpsc::Sender<()>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<()>>>>,
-    runtime_owner_id: String,
+    running_threads: Arc<Mutex<HashSet<String>>>,
+    pending_sessions: Arc<StdMutex<HashSet<String>>>,
 }
 
 impl ThreadRuntime {
@@ -65,7 +89,6 @@ impl ThreadRuntime {
         user_store: Arc<UserStore>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
-        route_leases: Arc<RouteLeaseService>,
     ) -> Arc<Self> {
         let stream_events = StreamEventService::new(user_store.storage_backend());
         let (queue_tx, queue_rx) = mpsc::channel(64);
@@ -74,11 +97,11 @@ impl ThreadRuntime {
             user_store,
             monitor,
             orchestrator,
-            route_leases,
             stream_events,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
-            runtime_owner_id: format!("thread_runtime_{}", Uuid::new_v4().simple()),
+            running_threads: Arc::new(Mutex::new(HashSet::new())),
+            pending_sessions: Arc::new(StdMutex::new(HashSet::new())),
         })
     }
 
@@ -460,13 +483,20 @@ impl ThreadRuntime {
             .await
     }
 
-    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionSubmitLeaseGuard> {
+    async fn try_acquire_session_lease(&self, session_id: &str) -> Option<SessionLease> {
         let cleaned = session_id.trim();
         if cleaned.is_empty() {
             return None;
         }
-        self.route_leases
-            .try_acquire_submit_lease(cleaned, &self.runtime_owner_id)
+        let mut guard = self.pending_sessions.lock().ok()?;
+        if guard.contains(cleaned) {
+            return None;
+        }
+        guard.insert(cleaned.to_string());
+        Some(SessionLease::new(
+            cleaned.to_string(),
+            self.pending_sessions.clone(),
+        ))
     }
 
     async fn enqueue_task(
@@ -677,40 +707,39 @@ impl ThreadRuntime {
                 let age = now_ts() - task.created_at;
                 if age > ttl_s {
                     let _ = self
-                        .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
-                        .await;
+                    .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
+                    .await;
                     continue;
                 }
             }
-            let Some(thread_lease) = self.try_start_thread(&task).await else {
+            if !self.should_attempt_task(&task).await {
                 continue;
-            };
+            }
             let task_clone = task.clone();
             let runtime = self.clone();
             tokio::spawn(async move {
-                runtime.execute_task(task_clone, thread_lease).await;
+                runtime.execute_task(task_clone).await;
             });
         }
         Ok(())
     }
 
-    async fn try_start_thread(&self, task: &AgentTaskRecord) -> Option<RouteLeaseGuard> {
+    async fn should_attempt_task(&self, task: &AgentTaskRecord) -> bool {
         if task.status != TASK_STATUS_PENDING && task.status != TASK_STATUS_RETRY {
-            return None;
+            return false;
         }
         if !self.is_session_idle(&task.user_id, &task.session_id).await {
-            return None;
+            return false;
         }
-        self.route_leases.try_acquire_route_lease(
-            RouteTargetKind::Thread,
-            &task.thread_id,
-            &self.runtime_owner_id,
-            Some(&task.session_id),
-            Some(&task.user_id),
-        )
+        let mut running = self.running_threads.lock().await;
+        if running.contains(&task.thread_id) {
+            return false;
+        }
+        running.insert(task.thread_id.clone());
+        true
     }
 
-    async fn execute_task(&self, task: AgentTaskRecord, _thread_lease: RouteLeaseGuard) {
+    async fn execute_task(&self, task: AgentTaskRecord) {
         let started_at = now_ts();
         let _ = self
             .user_store
@@ -755,6 +784,7 @@ impl ThreadRuntime {
                         TASK_STATUS_FAILED,
                     )
                     .await;
+                self.finish_thread(&task.thread_id).await;
                 return;
             }
         };
@@ -826,6 +856,7 @@ impl ThreadRuntime {
                 }
             }
         }
+        self.finish_thread(&task.thread_id).await;
         let _ = self.queue_tx.try_send(());
     }
 
@@ -887,6 +918,11 @@ impl ThreadRuntime {
         )
         .await;
         Ok(())
+    }
+
+    async fn finish_thread(&self, thread_id: &str) {
+        let mut running = self.running_threads.lock().await;
+        running.remove(thread_id);
     }
 }
 

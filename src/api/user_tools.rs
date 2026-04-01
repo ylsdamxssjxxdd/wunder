@@ -4,6 +4,7 @@ use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_
 use crate::config::{
     normalize_knowledge_base_type, Config, KnowledgeBaseConfig, KnowledgeBaseType, McpServerConfig,
 };
+use crate::core::repo_assets;
 use crate::i18n;
 use crate::knowledge;
 use crate::llm;
@@ -539,7 +540,8 @@ fn resolve_builtin_skills_root() -> Option<PathBuf> {
             return Some(normalized);
         }
     }
-    let fallback = PathBuf::from("skills");
+    let repo_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let fallback = repo_assets::builtin_skills_root(&repo_root);
     if fallback.exists() && fallback.is_dir() {
         return Some(normalize_existing_path(&fallback));
     }

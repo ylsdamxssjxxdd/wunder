@@ -4639,7 +4639,7 @@ async fn run_tool_direct(
         read_roots: Some(roots.read_roots.clone()),
         command_sessions: Some(runtime.state.control.command_sessions.clone()),
         event_emitter: None,
-        beeroom_projection: Some(runtime.state.projection.beeroom.clone()),
+        beeroom_realtime: Some(runtime.state.projection.beeroom.clone()),
         http: &http,
     };
 

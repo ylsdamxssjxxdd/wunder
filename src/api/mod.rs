@@ -24,7 +24,6 @@ pub mod doc2md;
 pub(crate) mod errors;
 pub mod external_links;
 pub mod gateway_ws;
-pub mod realtime_world;
 pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;
@@ -60,7 +59,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(cron::router())
         .merge(doc2md::router())
         .merge(gateway_ws::router())
-        .merge(realtime_world::router())
         .merge(temp_dir::router())
         .merge(workspace::router())
         .merge(admin::router())
@@ -104,7 +102,6 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(cron::router())
         .merge(desktop::router())
         .merge(desktop_lan::router())
-        .merge(realtime_world::router())
         .merge(external_links::router())
         .merge(temp_dir::router())
         .merge(workspace::router())

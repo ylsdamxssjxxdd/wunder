@@ -42,7 +42,7 @@
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
-- 控制平面实时状态已收敛到 `state.control.presence`：内部拆分为 `connection presence` 与 `projection watch presence` 两层；`/wunder/ws`、`/wunder/chat/ws`、`/wunder/user_world/ws`、`/wunder/beeroom/ws` 会在 `start/resume/watch/cancel/disconnect` 时同步订阅态，用于在线状态、热点观测与慢客户端恢复链路。
+- 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
@@ -69,7 +69,7 @@
 
 - 目标：支持“用户↔用户”单聊 + 群聊，默认可见联系人，WebSocket 优先，SSE 兜底。
 - 鉴权：使用用户端 Bearer Token（与 `/wunder/chat/*` 一致）。
-- 在线态来源：联系人列表中的 `online/last_seen_at` 由 `connection presence` 提供；会话订阅本身则进入 `projection watch presence`，用于实时路由与恢复，不额外暴露为独立接口字段。
+- 在线态来源：联系人列表中的 `online/last_seen_at` 由 `connection presence` 提供。
 - 接口清单：
   - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`，返回 `online/last_seen_at` 在线状态）
   - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
@@ -98,140 +98,6 @@
   - 语音消息约定：当 `content_type=voice`（或 `audio/*`）时，`content` 推荐传 JSON 字符串，至少包含 `path`（容器相对路径）；可选字段 `duration_ms/mime_type/name/size/container_id/owner_user_id`。
   - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
   - 群聊对象返回 `announcement/announcement_updated_at` 字段；群详情额外返回 `members[]`。
-
-### 4.0.3 实时控制面观测接口
-
-- 目标：为 agent-first 实时控制面提供直接的 route/watch/mission inspection 入口，便于管理员和联调工具判断“谁在持有 owner、谁在 watch、mission 现在推进到哪一层”。
-- 鉴权：
-  - `/wunder/realtime/metrics` 仅管理员可访问。
-  - `/wunder/realtime/sessions/{session_id}` 普通用户仅可访问自己的会话；管理员可访问任意已知 session。
-  - `/wunder/realtime/missions/{team_run_id}` 普通用户仅可访问自己的 mission；管理员可访问任意 mission。
-
-#### `GET /wunder/realtime/metrics`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `data.presence.projection_watch_metrics`
-    - `total_watch_count`
-    - `total_target_count`
-    - `session_watch_count`
-    - `beeroom_group_watch_count`
-    - `user_world_conversation_watch_count`
-  - `data.route_leases`
-    - `submit_lease_count`
-    - `active_route_count`
-    - `thread_route_count`
-    - `mission_route_count`
-    - `projection_route_count`
-  - `data.timestamp`
-
-#### `GET /wunder/realtime/sessions/{session_id}`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `data.session_id`
-  - `data.thread_id`
-  - `data.submit_lease`
-    - `session_id`
-    - `owner_id`
-    - `epoch`
-    - `acquired_at`
-    - `updated_at`
-  - `data.thread_route`
-    - `target_kind=thread`
-    - `target_id`
-    - `owner_id`
-    - `session_id`
-    - `user_id`
-    - `epoch`
-    - `acquired_at`
-    - `updated_at`
-  - `data.session_watch`
-    - `target_kind=session`
-    - `target_id`
-    - `watch_count`
-    - `user_count`
-    - `last_seen_at`
-  - `data.monitor`
-    - `status`
-    - `busy`
-    - `updated_time`
-    - `thread_status`
-    - `active_turn_id`
-    - `subscriber_count`
-  - `data.timestamp`
-
-#### `GET /wunder/realtime/missions/{team_run_id}`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `data.mission`
-    - `mission_id/team_run_id`
-    - `user_id`
-    - `hive_id`
-    - `parent_session_id`
-    - `parent_agent_id`
-    - `mother_agent_id`
-    - `strategy`
-    - `status`
-    - `task_total/task_success/task_failed`
-    - `context_tokens_total/context_tokens_peak/model_round_total`
-    - `started_time/finished_time/elapsed_s`
-    - `summary/error/updated_time`
-  - `data.mission_route`
-    - `target_kind=mission`
-    - `target_id`
-    - `owner_id`
-    - `session_id`
-    - `user_id`
-    - `epoch`
-    - `acquired_at`
-    - `updated_at`
-  - `data.beeroom_projection_route`
-    - `target_kind=projection`
-    - `target_id`
-    - `owner_id`
-    - `user_id`
-    - `epoch`
-    - `acquired_at`
-    - `updated_at`
-  - `data.beeroom_group_watch`
-    - `target_kind=beeroom_group`
-    - `target_id`
-    - `watch_count`
-    - `user_count`
-    - `last_seen_at`
-  - `data.parent_session_watch`
-    - `target_kind=session`
-    - `target_id`
-    - `watch_count`
-    - `user_count`
-    - `last_seen_at`
-  - `data.task_summary`
-    - `total`
-    - `queued`
-    - `running`
-    - `success`
-    - `failed`
-    - `timeout`
-    - `cancelled`
-    - `unknown`
-    - `terminal`
-    - `active`
-    - `highest_priority`
-    - `latest_updated_time`
-  - `data.latest_task`
-    - `task_id`
-    - `agent_id`
-    - `status`
-    - `priority`
-    - `target_session_id`
-    - `spawned_session_id`
-    - `session_run_id`
-    - `result_summary`
-    - `error`
-    - `updated_time`
-  - `data.timestamp`
 
 ### 4.1 `/wunder` 请求
 
@@ -289,7 +155,7 @@
 - 新增命令会话生命周期事件：`command_session_start/command_session_status/command_session_exit/command_session_summary`。当前阶段只持久化生命周期与摘要事件，不向客户端额外广播高频 `command_session_delta`，避免在旧前端仍消费 `tool_output_delta` 时造成双倍热路径流量。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `session_id/thread_id/subscriber_count/loaded/active_turn_id`。
 - 会话事件摘要接口：`GET /wunder/chat/sessions/{session_id}/events` 现额外返回 `data.runtime` 快照（包含 `thread_status/loaded/active_turn_id/turn.pending_approval_count/turn.waiting_for_user_input` 等字段）；`data.running` 也会覆盖等待审批、等待用户输入等活跃态，便于刷新后继续保持实时等待视图。
-- 会话级实时订阅会同步登记到控制平面 `projection watch presence`；`cancel`、连接关闭或任务自然结束都会清理对应 watch，避免慢客户端或断连后残留假订阅。
+- 会话级实时订阅支持 `cancel`、连接关闭和任务自然结束后的幂等清理，避免断连后残留状态。
 - 命令会话摘要现并入 `GET /wunder/chat/sessions/{session_id}/events`：返回 `data.command_sessions[]`，每项为当前会话内仍保留在 Broker 中的命令会话快照，包含 `command_session_id/status/seq/started_at/updated_at/ended_at/exit_code/stdout_tail/stderr_tail/pty_tail/*_dropped_bytes` 等字段，用于前端刷新后直接恢复工作流里的终端预览。
 - 新增命令会话回放接口：
   - `GET /wunder/chat/sessions/{session_id}/command-sessions`：返回当前会话可见的命令会话快照列表。
@@ -582,7 +448,7 @@
   - `ok`：是否成功
   - `extracted`：解压文件数量
   - `message`：提示信息
-- 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `skills/` 源码目录。
+- 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `config/skills/` 源码目录。
 - 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
 - 说明：压缩包必须以“技能目录”为顶层，例如 `我的技能/SKILL.md`；不允许直接把 `SKILL.md`、脚本或其他文件放在压缩包根目录，否则会返回 `400`。
 
@@ -1192,8 +1058,8 @@
 
 - 方法：`GET`
 - 返回（JSON）：
-  - `data.active`：当前启用的系统提示词模板包 ID（`default` 表示仓库内 `prompts/`）
-  - `data.packs_root`：非 default 模板包的根目录（默认 `./data/prompt_templates`）
+  - `data.active`：当前启用的系统提示词模板包 ID（`default` 表示仓库内 `config/prompts/`）
+  - `data.packs_root`：非 default 模板包的根目录（默认 `./config/data/prompt_templates`）
   - `data.packs[]`：模板包列表（id/is_default/path）
   - `data.segments[]`：系统提示词分段文件列表（key/file）
 
@@ -1796,7 +1662,7 @@
   - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-- 说明：当 root 为空时，字面知识库会自动创建 `./knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
+- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 
@@ -2037,7 +1903,7 @@
 - recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
 - `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 recall 排序和提示词快照构建。
-- 自动记忆提炼改为按 `用户 + 智能体` 单独开关，默认关闭。只有在用户侧“记忆碎片 -> 最近提炼任务”弹窗中显式开启后，系统才会在每个用户轮次结束并发出 `final` 回复后异步尝试写入 `auto-turn` 记忆；提炼阶段走独立的大模型提示词 `prompts/{zh|en}/memory_auto_extract.txt`，而最终写入前仍由服务端执行去重、`fact_key` 版本替代与手工/置顶碎片保护。
+- 自动记忆提炼改为按 `用户 + 智能体` 单独开关，默认关闭。只有在用户侧“记忆碎片 -> 最近提炼任务”弹窗中显式开启后，系统才会在每个用户轮次结束并发出 `final` 回复后异步尝试写入 `auto-turn` 记忆；提炼阶段走独立的大模型提示词 `config/prompts/{zh|en}/memory_auto_extract.txt`，而最终写入前仍由服务端执行去重、`fact_key` 版本替代与手工/置顶碎片保护。
 - 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`、`memory_preview_total_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中 `memory_preview_count` 表示当前提示词里实际注入的记忆条数，`memory_preview_total_count` 表示该记忆块生成时可用的长期记忆总数；新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。
 
 #### `GET /wunder/agents/{agent_id}/memory-settings`

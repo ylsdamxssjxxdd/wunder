@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-27T08:21:18.650015+00:00",
+  "generated_at": "2026-04-01T22:54:56.350527+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -708,7 +708,7 @@
       "language": "zh-CN",
       "title": "wunder 心舰",
       "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；入口建议先按角色和目标分流，再进入具体文档。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你第一次了解 wunder",
         "你需要快速判断先看 desktop、server 还是 cli",
@@ -812,7 +812,7 @@
       "language": "zh-CN",
       "title": "快速开始",
       "summary": "用最短路径跑通 wunder 的第一条可用链路；默认推荐 desktop，其次按 server 或 cli 分流。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你第一次使用 wunder",
         "你需要在 10 分钟内跑通一个可验证结果"
@@ -915,7 +915,7 @@
       "language": "zh-CN",
       "title": "Desktop 入门",
       "summary": "先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要先把 wunder 用起来",
         "你更关心桌面工作台，而不是先搭整套服务"
@@ -1048,7 +1048,7 @@
       "language": "zh-CN",
       "title": "Server 部署",
       "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要部署 server 形态",
         "你需要多用户、组织治理和对外接入能力"
@@ -1191,7 +1191,7 @@
       "language": "zh-CN",
       "title": "CLI 使用",
       "summary": "需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你想在终端中直接使用 wunder",
         "你更关注开发调试、脚本任务和工作区驱动执行"
@@ -1303,7 +1303,7 @@
       "language": "zh-CN",
       "title": "文档总览",
       "summary": "按角色和任务快速定位文档入口，避免在全站里盲搜。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你不确定先看哪一页",
         "你希望按角色快速进入正确文档路径"
@@ -1359,7 +1359,7 @@
       "language": "zh-CN",
       "title": "常用文档目录",
       "summary": "这是 wunder 最常用页面的精选目录。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你不想从左侧导航慢慢翻",
         "你只想先找到最常用的几篇文档"
@@ -1430,7 +1430,7 @@
       "language": "zh-CN",
       "title": "概念概览",
       "summary": "先建立 Wunder 的基础运行模型，再阅读接口和工具细节，会明显降低接入与排障成本。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你第一次系统性理解 Wunder",
         "你在接入或排障时遇到概念混淆"
@@ -1513,7 +1513,7 @@
       "language": "zh-CN",
       "title": "系统架构",
       "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 wunder 的整体结构",
         "你要知道 API、调度、工具、前端与存储之间如何协作"
@@ -1590,7 +1590,7 @@
       "language": "zh-CN",
       "title": "工作区与容器",
       "summary": "Wunder 的文件隔离不是“一个当前目录”，而是按 `user_id + container_id` 分层组织的持久化工作区。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解文件为什么按用户和容器隔离",
         "你要判断 `agent_id`、`container_id` 和工作区之间的关系"
@@ -1673,7 +1673,7 @@
       "language": "zh-CN",
       "title": "会话与轮次",
       "summary": "wunder 将对话拆分为会话、线程、用户轮次与模型轮次。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解会话状态、事件流与统计口径",
         "你要区分用户轮次、模型轮次与 token 占用"
@@ -1750,7 +1750,7 @@
       "language": "zh-CN",
       "title": "流式执行",
       "summary": "Wunder 的流式不是简单的字符流，而是把线程执行、工具调用和终态一起暴露出来。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在接 SSE 或 WebSocket",
         "你在给聊天界面设计状态机"
@@ -1849,7 +1849,7 @@
       "language": "zh-CN",
       "title": "运行时与在线状态",
       "summary": "Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在做会话列表、状态徽标或运行面板",
         "你在排查线程到底是卡住了还是已经结束"
@@ -1942,7 +1942,7 @@
       "language": "zh-CN",
       "title": "工具体系",
       "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 wunder 的能力为什么不只是聊天",
         "你要知道工具来源、边界与编排方式"
@@ -2025,7 +2025,7 @@
       "language": "zh-CN",
       "title": "提示词与技能",
       "summary": "Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解线程 system prompt 为什么会冻结",
         "你要搞清楚技能、模板包和 skill_call 的关系"
@@ -2139,7 +2139,7 @@
       "language": "zh-CN",
       "title": "长期记忆",
       "summary": "wunder 的长期记忆围绕线程冻结、单次注入与结构化记忆碎片设计。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 wunder 的长期记忆为什么要强调冻结与单次注入",
         "你要排查线程记忆与 system prompt 的关系"
@@ -2206,7 +2206,7 @@
       "language": "zh-CN",
       "title": "额度与 Token 占用",
       "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在看监控、额度或会话资源占用",
         "你要理解为什么系统强调 input_tokens 与 context 占用"
@@ -2279,7 +2279,7 @@
       "language": "zh-CN",
       "title": "蜂群协作",
       "summary": "wunder 的蜂群能力用于多智能体协同、资产化与工作流编排。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 wunder 的多智能体能力",
         "你要区分普通单智能体会话和蜂群协作"
@@ -2336,7 +2336,7 @@
       "language": "zh-CN",
       "title": "工具总览",
       "summary": "工具页解决的是「现在该用哪个工具」，而不是重复概念解释；按任务分组可最快命中正确工具链。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要查某个工具的动作、参数和适用场景",
         "你想按任务选择最短工具链"
@@ -2456,7 +2456,7 @@
       "language": "zh-CN",
       "title": "文件与工作区工具",
       "summary": "文件与工作区工具是最常用的内置工具，覆盖列出文件、搜索内容、读取文件、写入文件四大核心功能。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你需要在工作区中操作文件",
         "你想了解文件工具的正确使用顺序"
@@ -2633,7 +2633,7 @@
       "language": "zh-CN",
       "title": "执行命令",
       "summary": "在工作区中执行系统命令，支持编译、测试、运行脚本，受安全策略和预算约束。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你需要在工作区中运行命令",
         "你想了解命令执行的安全边界"
@@ -2745,7 +2745,7 @@
       "language": "zh-CN",
       "title": "ptc (Python 程序化执行)",
       "summary": "ptc 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类先生成再运行的场景。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 ptc 和执行命令的分工",
         "你要生成脚本产物而不是直接跑已有命令"
@@ -2827,7 +2827,7 @@
       "language": "zh-CN",
       "title": "应用补丁",
       "summary": "应用补丁是做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定、更安全。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要跨多个文件做精确编辑",
         "你在调试补丁格式为什么没被正确应用"
@@ -2944,7 +2944,7 @@
       "language": "zh-CN",
       "title": "读图工具",
       "summary": "读图工具让模型能分析本地图片，把图片以多模态消息形式注入到后续模型调用里，与读取文件分工明确。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要让模型看本地图片",
         "你要区分读取文件和读图工具的边界"
@@ -3036,7 +3036,7 @@
       "language": "zh-CN",
       "title": "LSP 查询",
       "summary": "LSP查询 面向代码语义导航，提供定义跳转、引用搜索、悬停说明、符号树和调用层级，与文本搜索分工明确。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要查定义、引用或调用关系",
         "你要区分 LSP 查询和文本搜索的边界"
@@ -3138,7 +3138,7 @@
       "language": "zh-CN",
       "title": "技能调用",
       "summary": "技能调用会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解技能为什么不是只在提示词里露一个名字",
         "你在排查 {{SKILL_ROOT}} 为什么会被替换"
@@ -3235,7 +3235,7 @@
       "language": "zh-CN",
       "title": "网页抓取",
       "summary": "web_fetch 适合读取网页正文，通过 HTTP/HTTPS 拉取页面，不维护浏览器会话，与浏览器工具分工明确。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要让模型读取网页正文",
         "你不确定该用网页抓取还是浏览器"
@@ -3332,7 +3332,7 @@
       "language": "zh-CN",
       "title": "浏览器",
       "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
-      "updated_at": "2026-03-27",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你需要真实打开页面并持续交互",
         "你需要通过 snapshot/ref 操作页面元素",
@@ -3457,7 +3457,7 @@
       "language": "zh-CN",
       "title": "桌面控制",
       "summary": "桌面控制器和桌面监视器提供完整的桌面自动化能力，基于坐标框执行桌面动作和截图观察。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要在 Desktop 模式下自动化桌面操作",
         "你需要了解 bbox 坐标框的使用方法"
@@ -3574,7 +3574,7 @@
       "language": "zh-CN",
       "title": "界面协同工具",
       "summary": "a2ui、计划面板、问询面板负责把模型执行过程变成前端可展示、可交互的界面状态，而不是只输出一段文本。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 Wunder 前端为什么能展示计划和问询分流",
         "你要知道哪些工具专门用来驱动界面"
@@ -3686,7 +3686,7 @@
       "language": "zh-CN",
       "title": "定时任务",
       "summary": "`定时任务` 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要让 Wunder 延迟执行或周期执行任务",
         "你要查 `定时任务` 工具和 `/wunder/cron/*` 接口的对应关系"
@@ -3790,7 +3790,7 @@
       "language": "zh-CN",
       "title": "会话线程控制",
       "summary": "会话线程控制负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要管理线程树、主线程和派生会话",
         "你要区分线程结构控制和多智能体协作"
@@ -3887,7 +3887,7 @@
       "language": "zh-CN",
       "title": "子智能体控制",
       "summary": "子智能体控制面向单个子会话运行的发现、历史查看、发消息和派生，适合盯住一个子运行而不是大范围并发派发。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要查看或操作某个子会话",
         "你要区分子智能体控制和智能体蜂群"
@@ -3984,7 +3984,7 @@
       "language": "zh-CN",
       "title": "智能体蜂群",
       "summary": "智能体蜂群面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要同时调度多个智能体",
         "你要查 batch_send -&gt; wait 这条典型协作路径"
@@ -4091,7 +4091,7 @@
       "language": "zh-CN",
       "title": "记忆管理",
       "summary": "记忆管理是 Wunder 的结构化长期记忆工具，重点动作是 list、add、update、delete、clear 和 recall。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解模型如何主动检索和维护记忆碎片",
         "你想知道 recall 为什么不会回写当前线程 prompt"
@@ -4203,7 +4203,7 @@
       "language": "zh-CN",
       "title": "渠道工具",
       "summary": "`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要让模型主动发渠道消息",
         "你在区分渠道工具和渠道 Webhook / 管理端渠道治理"
@@ -4266,7 +4266,7 @@
       "language": "zh-CN",
       "title": "用户世界工具",
       "summary": "`用户世界工具` 面向 Wunder 系统内的注册用户目录和站内消息发送，不等同于外部渠道消息工具。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要在 Wunder 内部查用户或发站内消息",
         "你要区分 `用户世界工具` 和 `渠道工具`"
@@ -4339,7 +4339,7 @@
       "language": "zh-CN",
       "title": "A2A 工具",
       "summary": "Wunder 会把每个已启用的 A2A 服务暴露成 `a2a@服务名` 工具，再配合 `a2a观察`、`a2a等待` 做状态跟踪。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要调用外部 A2A 服务",
         "你要跟踪 A2A 任务的完成状态"
@@ -4407,7 +4407,7 @@
       "language": "zh-CN",
       "title": "节点调用",
       "summary": "`节点调用` 是 Wunder 的底层节点桥接工具，既能列出可用节点，也能把具体命令和参数发到指定节点执行。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解节点桥接能力",
         "你要区分节点调用和浏览器/桌面控制的边界"
@@ -4469,7 +4469,7 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你准备把 Wunder 接入业务系统",
         "你不确定该从 `/wunder`、聊天域还是工作区接口开始"
@@ -4572,7 +4572,7 @@
       "language": "zh-CN",
       "title": "wunder API",
       "summary": "`/wunder` 是统一执行入口，适合能力调用；当你要做完整聊天产品时，优先切到 `/wunder/chat/*`。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要从业务系统接入 Wunder",
         "你要判断该走 `/wunder` 还是 `/wunder/chat/*`"
@@ -4645,7 +4645,7 @@
       "language": "zh-CN",
       "title": "聊天 WebSocket",
       "summary": "`/wunder/chat/ws` 是 Wunder 聊天主实时通道；实时会话优先 WS，SSE 作为兜底。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在开发聊天 UI 或桌面实时会话",
         "你要处理 start/resume/watch/cancel/approval"
@@ -4728,7 +4728,7 @@
       "language": "zh-CN",
       "title": "聊天会话",
       "summary": "`/wunder/chat/sessions/*` 是 Wunder 聊天主域，负责会话生命周期、消息收发、事件恢复和运行态管理。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在做聊天 UI、桌面会话或消息工作台",
         "你要从“能力调用”升级到“会话产品化”"
@@ -4795,7 +4795,7 @@
       "language": "zh-CN",
       "title": "工作区 API",
       "summary": "`/wunder/workspace*` 不只是文件接口，它决定文件到底落在哪个隔离工作区。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在做工作区面板、文件上传下载或产物回传",
         "你要理解 `container_id` 为什么会覆盖 `agent_id`"
@@ -4858,7 +4858,7 @@
       "language": "zh-CN",
       "title": "临时目录与文档转换",
       "summary": "`/wunder/temp_dir/*` 负责临时上传、下载和中转，`/wunder/doc2md/convert` 负责把文档转换成更适合模型消费的 Markdown。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要给外部系统发下载链接",
         "你要区分工作区、temp_dir 和 doc2md 的职责"
@@ -4947,7 +4947,7 @@
       "language": "zh-CN",
       "title": "用户世界接口",
       "summary": "`/wunder/user_world/*` 是 Wunder 里的用户到用户通信域，与用户到智能体会话域并行存在。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要接用户之间的单聊或群聊",
         "你想分清 user_world 和 chat 两套接口的边界"
@@ -5052,7 +5052,7 @@
       "language": "zh-CN",
       "title": "渠道 Webhook",
       "summary": "Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。",
-      "updated_at": "2026-03-22",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder",
         "你想知道 Webhook、长连接和 outbox 的关系"
@@ -5137,7 +5137,7 @@
       "language": "zh-CN",
       "title": "外部登录与免登嵌入",
       "summary": "Wunder 保留 `/wunder/auth/external/*` 作为外部系统嵌入和免登接入面。",
-      "updated_at": "2026-03-27",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要从外部系统直接进入 Wunder",
         "你想分清 external login、launch 和 token_login 的用途"
@@ -5216,7 +5216,7 @@
       "language": "zh-CN",
       "title": "A2A 接口",
       "summary": "Wunder 通过 `/a2a` 提供 A2A JSON-RPC 标准接入，并通过 AgentCard 暴露能力发现入口。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要让 Wunder 被别的智能体系统调用",
         "你要把外部 A2A 服务接进 Wunder 的工具体系"
@@ -5295,7 +5295,7 @@
       "language": "zh-CN",
       "title": "MCP 入口",
       "summary": "Wunder 同时支持自托管 MCP 服务 `/wunder/mcp` 与外部 MCP 服务接入。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要把 Wunder 作为 MCP 服务暴露出去",
         "你要理解 Wunder 内部 MCP 与 extra_mcp 的关系"
@@ -5364,7 +5364,7 @@
       "language": "zh-CN",
       "title": "界面概览",
       "summary": "Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你想快速分清用户端、管理端和 desktop 各自做什么",
         "你在找某个功能应该去哪个界面看"
@@ -5437,7 +5437,7 @@
       "language": "zh-CN",
       "title": "用户侧前端",
       "summary": "用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解 Wunder 面向普通用户的主要界面",
         "你要知道聊天、用户世界、工具、文件和设置如何组织"
@@ -5505,7 +5505,7 @@
       "language": "zh-CN",
       "title": "管理端界面",
       "summary": "管理端前端位于 `web/`，承担模型、工具、用户、渠道与运行治理。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要理解管理员和系统维护者看到的界面",
         "你要知道管理端和用户前端的职责边界"
@@ -5573,7 +5573,7 @@
       "language": "zh-CN",
       "title": "Desktop 界面",
       "summary": "`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要直接用 Wunder",
         "你要理解 desktop 为什么是当前产品重心"
@@ -5641,7 +5641,7 @@
       "language": "zh-CN",
       "title": "运维概览",
       "summary": "Wunder 运维包含部署、存储、安全、渠道运行态与可观测；目标是让系统可持续稳定运行，而不只是「启动成功」。",
-      "updated_at": "2026-03-23",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在部署或接手 Wunder 运行环境",
         "你要快速定位运维与治理入口"
@@ -5729,7 +5729,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。",
-      "updated_at": "2026-03-27",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要部署 Wunder",
         "你要确认数据库、MCP、sandbox 和工作区怎么放"
@@ -5833,7 +5833,7 @@
       "language": "zh-CN",
       "title": "数据与存储",
       "summary": "Wunder 的持久化需要同时分清数据库、工作区、向量存储和临时目录。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要部署或迁移数据",
         "你要理解 PostgreSQL、SQLite、Weaviate、workspaces、temp_dir 分别放什么"
@@ -5937,7 +5937,7 @@
       "language": "zh-CN",
       "title": "Desktop 本地模式",
       "summary": "Desktop 本地模式不是缩小版 server，而是一套本地优先、持久目录优先的运行形态。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你主要使用 wunder-desktop",
         "你要判断本地模式和远端 server 模式分别适合什么"
@@ -6031,7 +6031,7 @@
       "language": "zh-CN",
       "title": "认证与安全",
       "summary": "Wunder 需要同时区分 API Key、用户 Token、外链鉴权和工具执行边界。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要把 Wunder 放到可长期运行环境",
         "你要判断哪些入口该用哪种凭证"
@@ -6125,7 +6125,7 @@
       "language": "zh-CN",
       "title": "监控与 Benchmark",
       "summary": "Wunder 的观测面不是单一监控页，而是由会话监控、工具统计、性能采样、吞吐压测和 benchmark 共同组成。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在排查线程、工具或模型链路问题",
         "你要区分 monitor、throughput、performance 和 benchmark 的职责"
@@ -6228,7 +6228,7 @@
       "language": "zh-CN",
       "title": "渠道运行态",
       "summary": "渠道问题很多时候不在模型，而在账号、长连接、Webhook、outbox 和下载链接改写这条接入链路里。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在排查飞书、微信、QQBot、WhatsApp、XMPP 等渠道异常",
         "你想知道管理员侧和用户侧分别有哪些渠道运行态接口"
@@ -6296,7 +6296,7 @@
       "language": "zh-CN",
       "title": "参考概览",
       "summary": "参考页提供稳定查表内容：接口索引、配置项、事件语义、工作区路由和管理面板映射。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你需要字段级、事件级、配置级参考",
         "你已经知道问题在哪一层，想快速查标准答案"
@@ -6349,7 +6349,7 @@
       "language": "zh-CN",
       "title": "API 索引",
       "summary": "这是 Wunder 当前最常用接口族的索引页，用来快速定位入口而不是替代完整 API 文档。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在找某个接口大概属于哪一类",
         "你不想直接翻完整 `docs/API文档.md`"
@@ -6421,7 +6421,7 @@
       "language": "zh-CN",
       "title": "配置说明",
       "summary": "配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。",
-      "updated_at": "2026-03-27",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在查具体配置应该写到哪里",
         "你要分清基础配置、运行时覆盖和外部 MCP 配置"
@@ -6514,7 +6514,7 @@
       "language": "zh-CN",
       "title": "流式事件参考",
       "summary": "接 Wunder 的流式链路时，最重要的不是把每个事件都背下来，而是知道哪些事件承担真正的生命周期语义。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在接 SSE 或 WebSocket",
         "你想知道 turn_terminal、approval_resolved、thread_status 为什么重要"
@@ -6608,7 +6608,7 @@
       "language": "zh-CN",
       "title": "工作区路由参考",
       "summary": "Wunder 的工作区路由不是单纯按 user_id 取目录，而是由 `container_id`、智能体容器配置和 scoped user_id 共同决定。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你在排查文件为什么落到了“另一个工作区”",
         "你要准确理解工作区接口的路由优先级"
@@ -6696,7 +6696,7 @@
       "language": "zh-CN",
       "title": "提示词模板参考",
       "summary": "Wunder 把系统提示词拆成模板包和分段文件，并同时提供管理员侧与用户侧的模板管理接口。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要修改系统提示词模板包",
         "你想知道 default 包、用户包和线程冻结之间的关系"
@@ -6776,7 +6776,7 @@
       "language": "zh-CN",
       "title": "管理端面板索引",
       "summary": "管理员侧前端不是单一调试页，而是一组分工明确的治理面板。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你第一次使用管理员侧",
         "你想知道某个配置、监控或文档入口应该去哪看"
@@ -6879,7 +6879,7 @@
       "language": "zh-CN",
       "title": "帮助",
       "summary": "先按症状分流，再进入排障路径；目标是减少盲查日志和重复试错。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你要快速定位问题入口",
         "你想区分使用疑问与系统故障"
@@ -6952,7 +6952,7 @@
       "language": "zh-CN",
       "title": "故障排查",
       "summary": "按“入口 -> 鉴权 -> 配置 -> 依赖 -> 实时通道”顺序排查，可快速定位大部分 Wunder 故障。",
-      "updated_at": "2026-03-27",
+      "updated_at": "2026-04-02",
       "read_when": [
         "Wunder 跑不起来或行为异常",
         "你已确认不是单纯使用问题"
@@ -7030,7 +7030,7 @@
       "language": "zh-CN",
       "title": "FAQ",
       "summary": "wunder 的高频问题快速答复，适合在进入详细排障前先做判断。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你有高频使用疑问",
         "你想先快速判断是否属于故障"
@@ -7123,7 +7123,7 @@
       "language": "zh-CN",
       "title": "术语表",
       "summary": "这页用于快速统一 Wunder 文档里的核心术语，避免把 user、session、thread、container、agent 混成一个概念。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-04-02",
       "read_when": [
         "你第一次系统性阅读 Wunder 文档",
         "你发现很多词看起来相近但不知道边界"

@@ -8,7 +8,7 @@ use crate::orchestrator::Orchestrator;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
-use crate::services::projection::beeroom::BeeroomProjectionService;
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
@@ -90,7 +90,7 @@ pub struct ToolContext<'a> {
     pub storage: Arc<dyn StorageBackend>,
     pub orchestrator: Option<Arc<Orchestrator>>,
     pub monitor: Option<Arc<MonitorState>>,
-    pub beeroom_projection: Option<Arc<BeeroomProjectionService>>,
+    pub beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
     pub workspace: Arc<WorkspaceManager>,
     pub lsp_manager: Arc<LspManager>,
     pub config: &'a Config,
@@ -123,7 +123,7 @@ impl<'a> ToolContext<'a> {
             storage: Arc::clone(&self.storage),
             orchestrator: self.orchestrator.as_ref().map(Arc::clone),
             monitor: self.monitor.as_ref().map(Arc::clone),
-            beeroom_projection: self.beeroom_projection.as_ref().map(Arc::clone),
+            beeroom_realtime: self.beeroom_realtime.as_ref().map(Arc::clone),
             workspace: Arc::clone(&self.workspace),
             lsp_manager: Arc::clone(&self.lsp_manager),
             config: self.config,

@@ -62,7 +62,7 @@ pub struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptTemplatesConfig {
-    /// Active prompt template pack id. `"default"` uses the built-in `./prompts` directory.
+    /// Active prompt template pack id. `"default"` uses the built-in `./config/prompts` directory.
     #[serde(default = "default_prompt_templates_active")]
     pub active: String,
     /// Root directory that stores admin-managed prompt template packs.
@@ -84,7 +84,7 @@ fn default_prompt_templates_active() -> String {
 }
 
 fn default_prompt_templates_root() -> String {
-    "./data/prompt_templates".to_string()
+    "./config/data/prompt_templates".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -915,7 +915,7 @@ pub struct WorkspaceConfig {
 impl Default for WorkspaceConfig {
     fn default() -> Self {
         Self {
-            root: "./workspaces".to_string(),
+            root: "./config/data/workspaces".to_string(),
             container_roots: HashMap::new(),
             max_history_items: 0,
             retention_days: 0,
@@ -2118,13 +2118,13 @@ mcp:
       enabled: true
 skills:
   paths:
-    - ./skills
+    - ./config/skills
   enabled:
     - 技能创建器
 knowledge:
   bases:
     - name: 公司制度知识库
-      root: ./knowledge/plan
+      root: ./config/knowledge/plan
       enabled: false
 vector_store:
   weaviate:
@@ -2143,7 +2143,7 @@ tools:
     enabled:
       - 最终回复
 workspace:
-  root: /workspaces
+  root: ./config/data/workspaces
   max_history_items: 0
   retention_days: 0
 security:
@@ -2194,7 +2194,7 @@ storage:
         assert_eq!(config.i18n.aliases.get("zh"), Some(&"zh-CN".to_string()));
         assert_eq!(config.mcp.timeout_s, 1200);
         assert_eq!(config.mcp.servers.len(), 1);
-        assert_eq!(config.skills.paths, vec!["./skills".to_string()]);
+        assert_eq!(config.skills.paths, vec!["./config/skills".to_string()]);
         assert_eq!(config.skills.enabled, vec!["技能创建器".to_string()]);
         assert_eq!(config.knowledge.bases.len(), 1);
         assert_eq!(
@@ -2204,7 +2204,7 @@ storage:
         assert_eq!(config.storage.backend, "auto");
         assert_eq!(config.storage.db_path, "./config/data/wunder.db");
         assert_eq!(config.tools.builtin.enabled, vec!["最终回复".to_string()]);
-        assert_eq!(config.workspace.root, "/workspaces");
+        assert_eq!(config.workspace.root, "./config/data/workspaces");
         assert_eq!(config.security.allow_commands, vec!["*".to_string()]);
 
         let _ = fs::remove_dir_all(&root);

@@ -525,7 +525,7 @@ mod tests {
             WorkspaceManager::new(&root_text, storage, 0, &std::collections::HashMap::new());
 
         let mut config = Config::default();
-        config.workspace.root = "./workspaces".to_string();
+        config.workspace.root = "./config/data/workspaces".to_string();
         config.sandbox.container_root = "/workspaces".to_string();
 
         let resolved = resolve_container_workspace_root(&config, &workspace, "demo_user");

@@ -62,16 +62,18 @@
           <AgentPresetQuestionsField v-model="form.preset_questions" />
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.tools')">
-          <div class="tool-picker">
-            <div v-if="toolLoading" class="tool-picker-empty">{{ t('common.loading') }}</div>
-            <div v-else-if="toolError" class="tool-picker-empty">{{ toolError }}</div>
-            <el-checkbox-group v-else v-model="form.tool_names" class="tool-groups">
-              <div v-for="section in toolSections" :key="section.key" class="tool-section">
-                <div class="tool-section-title">{{ section.label }}</div>
-                <div v-for="group in section.groups" :key="group.key" class="tool-group">
-                  <div class="tool-group-head">
-                    <div class="tool-group-title">{{ group.label }}</div>
-                    <button class="tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
+          <div class="messenger-tool-picker">
+            <div v-if="toolLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+            <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
+            <el-checkbox-group v-else v-model="form.tool_names" class="messenger-tool-groups">
+              <div v-for="section in toolSections" :key="section.key" class="messenger-tool-section">
+                <div class="messenger-tool-section-title">{{ section.label }}</div>
+                <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
+                  <div class="messenger-tool-group-head">
+                    <div class="messenger-tool-group-head-left">
+                      <div class="messenger-tool-group-title">{{ group.label }}</div>
+                    </div>
+                    <button class="messenger-tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
                       {{
                         isGroupFullSelected(group)
                           ? t('messenger.agentCreate.unselectAll')
@@ -79,10 +81,33 @@
                       }}
                     </button>
                   </div>
-                  <div class="tool-options">
-                    <el-checkbox v-for="tool in group.options" :key="tool.value" :value="tool.value">
-                      <span :title="tool.hint">{{ tool.label }}</span>
-                    </el-checkbox>
+                  <div class="messenger-tool-options">
+                    <div
+                      v-for="tool in group.options"
+                      :key="tool.value"
+                      class="messenger-tool-option-item"
+                      @contextmenu.prevent="showToolDetail($event, group, tool)"
+                    >
+                      <el-checkbox :value="tool.value">
+                        <div class="messenger-tool-option-label">
+                          <AbilityIconBadge
+                            :name="tool.label"
+                            :description="tool.description"
+                            :hint="tool.hint"
+                            :kind="resolveGroupAbilityKind(group.key)"
+                            :group="group.key"
+                            :source="group.key"
+                            size="sm"
+                          />
+                          <div class="messenger-tool-option-copy">
+                            <span class="messenger-tool-option-name">{{ tool.label }}</span>
+                            <span class="messenger-tool-option-desc">
+                              {{ resolveToolOptionSummary(tool) || t('chat.ability.noDesc') }}
+                            </span>
+                          </div>
+                        </div>
+                      </el-checkbox>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -138,6 +163,27 @@
       </div>
     </template>
   </el-dialog>
+
+  <Teleport to="body">
+    <div
+      v-if="detailOption"
+      class="messenger-tool-detail-overlay"
+      @mousedown="detailOption = null"
+      @contextmenu.prevent="detailOption = null"
+    >
+      <div class="messenger-tool-detail-popup" :style="detailPopupStyle" @mousedown.stop>
+        <AbilityTooltipCard
+          :name="detailOption.option.label"
+          :description="detailOption.option.description"
+          :hint="detailOption.option.hint"
+          :kind="detailOption.kind"
+          :group="detailOption.groupKey"
+          :source="detailOption.groupKey"
+          :chips="[detailOption.groupLabel]"
+        />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -148,6 +194,8 @@ import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
+import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
+import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import {
@@ -158,6 +206,7 @@ import {
   type AgentToolSection
 } from '@/utils/agentToolCatalog';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { isAbilitySkillGroup, resolveAbilitySummary } from '@/utils/abilityVisuals';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
@@ -214,6 +263,13 @@ const approvalModeOptions = computed(() => [
   { value: 'auto_edit', label: t('portal.agent.permission.option.auto_edit') },
   { value: 'full_auto', label: t('portal.agent.permission.option.full_auto') }
 ]);
+
+const resolveGroupAbilityKind = (groupKey: string): 'tool' | 'skill' =>
+  isAbilitySkillGroup(groupKey) ? 'skill' : 'tool';
+
+const resolveToolOptionSummary = (option: ToolOption): string =>
+  resolveAbilitySummary(option.description, option.hint);
+
 const toolLoading = ref(false);
 const toolError = ref('');
 const toolSummary = ref<Record<string, unknown> | null>(null);
@@ -221,6 +277,33 @@ const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
 const saving = ref(false);
+
+type DetailPopupData = {
+  option: ToolOption;
+  kind: 'tool' | 'skill';
+  groupKey: string;
+  groupLabel: string;
+};
+
+const detailOption = ref<DetailPopupData | null>(null);
+const detailPos = ref({ x: 0, y: 0 });
+
+function showToolDetail(event: MouseEvent, group: AgentToolGroup<ToolOption>, tool: ToolOption): void {
+  const x = Math.min(event.clientX, window.innerWidth - 380);
+  const y = Math.min(event.clientY, window.innerHeight - 220);
+  detailPos.value = { x, y };
+  detailOption.value = {
+    option: tool,
+    kind: resolveGroupAbilityKind(group.key),
+    groupKey: group.key,
+    groupLabel: group.label
+  };
+}
+
+const detailPopupStyle = computed(() => ({
+  left: `${detailPos.value.x}px`,
+  top: `${detailPos.value.y}px`
+}));
 
 const form = reactive({
   name: '',

@@ -13,12 +13,11 @@ use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::bridge::BridgeRuntime;
-use crate::services::directory::RouteLeaseService;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::presence::PresenceService;
-use crate::services::projection::beeroom::BeeroomProjectionService;
 use crate::services::runtime::mission::MissionRuntime;
 use crate::services::runtime::thread::ThreadRuntime;
 use crate::services::swarm::SwarmService;
@@ -199,13 +198,12 @@ pub struct AppKernelServices {
 #[derive(Clone)]
 pub struct AppProjectionServices {
     pub user_world: Arc<UserWorldService>,
-    pub beeroom: Arc<BeeroomProjectionService>,
+    pub beeroom: Arc<BeeroomRealtimeService>,
 }
 
 #[derive(Clone)]
 pub struct AppControlServices {
     pub presence: Arc<PresenceService>,
-    pub route_leases: Arc<RouteLeaseService>,
     pub channels: Arc<ChannelHub>,
     pub gateway: Arc<GatewayHub>,
     pub cron: Arc<CronScheduler>,
@@ -279,12 +277,8 @@ impl AppState {
             user_store.clone(),
         ));
         let presence = Arc::new(PresenceService::new());
-        let route_leases = Arc::new(RouteLeaseService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
-        let beeroom_projection = Arc::new(BeeroomProjectionService::new(
-            storage.clone(),
-            route_leases.clone(),
-        ));
+        let beeroom_realtime = Arc::new(BeeroomRealtimeService::new(storage.clone()));
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
         let approval_registry = Arc::new(PendingApprovalRegistry::new());
         let command_sessions = Arc::new(CommandSessionBroker::new());
@@ -322,7 +316,7 @@ impl AppState {
             command_sessions.clone(),
             gateway.clone(),
             user_world.clone(),
-            beeroom_projection.clone(),
+            beeroom_realtime.clone(),
             Some(cron_wake_signal.clone()),
         ));
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
@@ -332,8 +326,7 @@ impl AppState {
             workspace.clone(),
             monitor.clone(),
             orchestrator.clone(),
-            route_leases.clone(),
-            beeroom_projection.clone(),
+            beeroom_realtime.clone(),
         );
         if options.resolved_start_mission_runtime() {
             mission_runtime.clone().start();
@@ -344,7 +337,6 @@ impl AppState {
             user_store.clone(),
             monitor.clone(),
             orchestrator.clone(),
-            route_leases.clone(),
         );
         if options.resolved_start_thread_runtime() {
             thread_runtime.clone().start();
@@ -407,11 +399,10 @@ impl AppState {
             },
             projection: AppProjectionServices {
                 user_world,
-                beeroom: beeroom_projection,
+                beeroom: beeroom_realtime,
             },
             control: AppControlServices {
                 presence,
-                route_leases,
                 channels,
                 gateway,
                 cron,
