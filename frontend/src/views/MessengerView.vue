@@ -2736,6 +2736,16 @@ watch(
 );
 
 watch(
+  () => [chatStore.activeSessionId, activeAgentId.value, selectedAgentId.value, chatStore.draftAgentId] as const,
+  () => {
+    agentPromptPreviewPayloadCache = null;
+    if (agentPromptPreviewPayloadPromise) {
+      agentPromptPreviewPayloadPromiseKey = '';
+    }
+  }
+);
+
+watch(
   () => activeAgentGreetingOverride.value,
   (value, oldValue) => {
     if (value === oldValue) return;

@@ -188,7 +188,6 @@
           </button>
         </div>
         <div v-if="composerError" class="beeroom-canvas-chat-compose-status is-error">{{ composerError }}</div>
-        <div v-else-if="demoError" class="beeroom-canvas-chat-compose-status is-error">{{ demoError }}</div>
       </section>
     </template>
   </aside>
@@ -223,7 +222,6 @@ const props = defineProps<{
   composerSending: boolean;
   composerCanSend: boolean;
   composerError: string;
-  demoError: string;
   demoActionDisabled: boolean;
   demoActionLabel: string;
   demoCanCancel: boolean;

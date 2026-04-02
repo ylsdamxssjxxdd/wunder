@@ -36,7 +36,6 @@
           :composer-sending="composerSending"
           :composer-can-send="composerCanSend"
           :composer-error="composerError"
-          :demo-error="demoError"
           :demo-action-disabled="demoActionDisabled"
           :demo-action-label="demoActionLabel"
           :demo-can-cancel="demoCanCancel"
@@ -109,7 +108,6 @@ const {
   composerSending,
   composerCanSend,
   composerError,
-  demoError,
   demoActionDisabled,
   demoActionLabel,
   demoCanCancel,
