@@ -51,17 +51,18 @@ export function useMessengerHostWidth(fallbackWidth = 1440): HostWidthState {
   function resolveMeasuredWidth(): number {
     const hostElement = hostRootRef.value;
     if (hostElement) {
-      // Prefer the immediate container width so responsive breakpoints follow
-      // the real space available to Messenger inside the current shell.
+      const hostElementWidth = resolveElementWidth(hostElement);
       const containerWidth = resolveElementWidth(hostElement.parentElement);
       const topLevelShellWidth = resolveTopLevelShellWidth(hostElement);
-      const stableContainerWidth = containerWidth > 0 ? containerWidth : topLevelShellWidth;
-      if (stableContainerWidth > 0) {
-        return stableContainerWidth;
-      }
-      const hostElementWidth = resolveElementWidth(hostElement);
-      if (hostElementWidth > 0) {
-        return hostElementWidth;
+
+      // Use the narrowest resolved width across Messenger and its host containers.
+      // This keeps layout breakpoints aligned with the real rendered space when
+      // outer shells and inner panes do not resize in lockstep.
+      const constrainedWidths = [hostElementWidth, containerWidth, topLevelShellWidth].filter(
+        (width) => Number.isFinite(width) && width > 0
+      );
+      if (constrainedWidths.length > 0) {
+        return Math.min(...constrainedWidths);
       }
     }
     if (typeof document !== 'undefined') {

@@ -14,8 +14,10 @@
             :mission="selectedMission"
             :agents="agents"
             :refreshing="refreshing"
+            :hide-standby-when-mission-empty="hideStandbyWhenMissionEmpty"
             @refresh="emit('refresh')"
             @open-agent="emit('open-agent', $event)"
+            @clear-history="handleCanvasHistoryCleared"
           />
         </div>
       </div>
@@ -61,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
 import { useI18n } from '@/i18n';
@@ -72,6 +74,7 @@ import {
 } from '@/stores/beeroom';
 
 const selectedMissionCacheByGroup = new Map<string, string>();
+const missionCanvasClearedAfterByGroup = reactive<Record<string, number>>({});
 
 type AgentOption = {
   id: string;
@@ -121,15 +124,30 @@ const orderedMissions = computed(() =>
   [...props.missions].sort((left, right) => resolveMissionMoment(right) - resolveMissionMoment(left))
 );
 
+const missionClearCutoff = computed(() => {
+  const groupId = resolveGroupScopeKey(props.group?.group_id);
+  return Number(groupId ? missionCanvasClearedAfterByGroup[groupId] || 0 : 0);
+});
+
+const visibleMissions = computed(() => {
+  const cutoff = missionClearCutoff.value;
+  if (!cutoff) {
+    return orderedMissions.value;
+  }
+  return orderedMissions.value.filter((mission) => resolveMissionMoment(mission) > cutoff);
+});
+
 const selectedMission = computed(() => {
   const selectedId = String(selectedMissionId.value || '').trim();
-  if (!selectedId) return orderedMissions.value[0] || null;
+  if (!selectedId) return visibleMissions.value[0] || null;
   return (
-    orderedMissions.value.find((item) => String(item.mission_id || item.team_run_id || '').trim() === selectedId) ||
-    orderedMissions.value[0] ||
+    visibleMissions.value.find((item) => String(item.mission_id || item.team_run_id || '').trim() === selectedId) ||
+    visibleMissions.value[0] ||
     null
   );
 });
+
+const hideStandbyWhenMissionEmpty = computed(() => Boolean(missionClearCutoff.value) && !selectedMission.value);
 
 const submitMoveAgents = () => {
   emit('move-agents', [...moveAgentIds.value]);
@@ -138,17 +156,20 @@ const submitMoveAgents = () => {
 };
 
 watch(
-  () => [props.group?.group_id, orderedMissions.value.map((item) => item.mission_id || item.team_run_id).join(',')],
+  () => [props.group?.group_id, visibleMissions.value.map((item) => item.mission_id || item.team_run_id).join(',')],
   () => {
     const groupId = resolveGroupScopeKey(props.group?.group_id);
-    const missionIds = orderedMissions.value
+    const missionIds = visibleMissions.value
       .map((item) => String(item.mission_id || item.team_run_id || '').trim())
       .filter(Boolean);
     const cachedMissionId = groupId ? String(selectedMissionCacheByGroup.get(groupId) || '').trim() : '';
     const currentSelected = String(selectedMissionId.value || '').trim();
     const preferredMissionId = currentSelected || cachedMissionId;
     if (!missionIds.length) {
-      selectedMissionId.value = preferredMissionId;
+      selectedMissionId.value = '';
+      if (groupId) {
+        selectedMissionCacheByGroup.delete(groupId);
+      }
       moveAgentIds.value = [];
       moveDialogVisible.value = false;
       return;
@@ -166,9 +187,21 @@ watch(
 watch(selectedMissionId, (value) => {
   const groupId = resolveGroupScopeKey(props.group?.group_id);
   const missionId = String(value || '').trim();
-  if (!groupId || !missionId) return;
+  if (!groupId) return;
+  if (!missionId) {
+    selectedMissionCacheByGroup.delete(groupId);
+    return;
+  }
   selectedMissionCacheByGroup.set(groupId, missionId);
 });
+
+const handleCanvasHistoryCleared = (clearedAfter: number) => {
+  const groupId = resolveGroupScopeKey(props.group?.group_id);
+  if (!groupId) return;
+  missionCanvasClearedAfterByGroup[groupId] = Number(clearedAfter || Date.now() / 1000);
+  selectedMissionCacheByGroup.delete(groupId);
+  selectedMissionId.value = '';
+};
 </script>
 
 <style scoped>

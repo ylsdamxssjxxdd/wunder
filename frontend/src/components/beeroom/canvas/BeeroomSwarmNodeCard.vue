@@ -157,6 +157,7 @@ const visibleWorkflowLines = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 
 .beeroom-node-card-head {
@@ -337,13 +338,17 @@ const visibleWorkflowLines = computed(() =>
 }
 
 .beeroom-node-workflow {
-  min-height: 46px;
+  min-height: 72px;
+  max-height: 96px;
   display: flex;
   align-items: stretch;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, 0.14);
   background: rgba(15, 23, 42, 0.48);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .beeroom-node-workflow.is-completed {
@@ -363,6 +368,8 @@ const visibleWorkflowLines = computed(() =>
   flex-direction: column;
   gap: 7px;
   width: 100%;
+  min-height: 0;
+  padding-right: 4px;
 }
 
 .beeroom-node-workflow-step {
@@ -392,20 +399,22 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-workflow-step-main,
 .beeroom-node-workflow-step-detail,
 .beeroom-node-workflow-empty {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .beeroom-node-workflow-step-main {
   font-size: 12px;
   font-weight: 600;
+  line-height: 1.35;
   color: #f3f4f6;
 }
 
 .beeroom-node-workflow-step-detail,
 .beeroom-node-workflow-empty {
   font-size: 11px;
+  line-height: 1.35;
   color: rgba(148, 163, 184, 0.9);
 }
 
@@ -425,7 +434,8 @@ const visibleWorkflowLines = computed(() =>
 }
 
 .beeroom-node-card.is-condensed .beeroom-node-workflow {
-  min-height: 40px;
+  min-height: 58px;
+  max-height: 74px;
   padding: 8px 10px;
 }
 </style>

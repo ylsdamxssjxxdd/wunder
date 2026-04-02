@@ -60,110 +60,98 @@
         <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
           {{ t('chat.ability.loading') }}
         </div>
+        <div v-else-if="!enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
+          {{ t('chat.ability.emptySkills') }}
+        </div>
         <div v-else class="messenger-skill-groups">
-          <div class="messenger-skill-group">
-            <div class="messenger-skill-group-header">
-              <span>{{ t('common.enabled') }}</span>
-              <span class="messenger-skill-group-count">{{ enabledSkills.length }}</span>
-            </div>
-            <div v-if="!enabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
-            <div v-else class="messenger-skill-list">
-              <el-tooltip
-                v-for="item in enabledSkills"
-                :key="`enabled-${item.name}`"
-                placement="left-start"
-                :show-after="100"
-                popper-class="ability-card-popper"
+          <div class="messenger-skill-list">
+            <el-tooltip
+              v-for="item in enabledSkills"
+              :key="`enabled-${item.name}`"
+              placement="left-start"
+              :show-after="100"
+              popper-class="ability-card-popper"
+            >
+              <template #content>
+                <AbilityTooltipCard
+                  :name="item.name"
+                  :description="item.description"
+                  kind="skill"
+                  group="skills"
+                  source="skill"
+                  :chips="[t('toolManager.system.skills'), t('common.enabled')]"
+                />
+              </template>
+              <div
+                class="messenger-skill-item"
+                :class="item.enabled ? 'is-enabled' : 'is-disabled'"
+                role="button"
+                tabindex="0"
+                @click="openSkillDetail(item.name)"
+                @keydown.enter.prevent="openSkillDetail(item.name)"
+                @keydown.space.prevent="openSkillDetail(item.name)"
               >
-                <template #content>
-                  <AbilityTooltipCard
+                <div class="ability-entry">
+                  <AbilityIconBadge
                     :name="item.name"
                     :description="item.description"
                     kind="skill"
                     group="skills"
                     source="skill"
-                    :chips="[t('toolManager.system.skills'), t('common.enabled')]"
+                    size="sm"
                   />
-                </template>
-                <div
-                  class="messenger-skill-item"
-                  :class="item.enabled ? 'is-enabled' : 'is-disabled'"
-                  role="button"
-                  tabindex="0"
-                  @click="openSkillDetail(item.name)"
-                  @keydown.enter.prevent="openSkillDetail(item.name)"
-                  @keydown.space.prevent="openSkillDetail(item.name)"
-                >
-                  <div class="ability-entry">
-                    <AbilityIconBadge
-                      :name="item.name"
-                      :description="item.description"
-                      kind="skill"
-                      group="skills"
-                      source="skill"
-                      size="sm"
-                    />
-                    <div class="messenger-skill-item-copy ability-entry__copy">
-                      <div class="messenger-skill-item-title-row">
-                        <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                      </div>
+                  <div class="messenger-skill-item-copy ability-entry__copy">
+                    <div class="messenger-skill-item-title-row">
+                      <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
                     </div>
                   </div>
                 </div>
-              </el-tooltip>
-            </div>
-          </div>
-
-          <div v-if="disabledSkills.length" class="messenger-skill-group">
-            <div class="messenger-skill-group-header">
-              <span>{{ t('common.disabled') }}</span>
-              <span class="messenger-skill-group-count">{{ disabledSkills.length }}</span>
-            </div>
-            <div class="messenger-skill-list">
-              <el-tooltip
-                v-for="item in disabledSkills"
-                :key="`disabled-${item.name}`"
-                placement="left-start"
-                :show-after="100"
-                popper-class="ability-card-popper"
+              </div>
+            </el-tooltip>
+            <div v-if="enabledSkills.length && disabledSkills.length" class="messenger-skill-divider" aria-hidden="true"></div>
+            <el-tooltip
+              v-for="item in disabledSkills"
+              :key="`disabled-${item.name}`"
+              placement="left-start"
+              :show-after="100"
+              popper-class="ability-card-popper"
+            >
+              <template #content>
+                <AbilityTooltipCard
+                  :name="item.name"
+                  :description="item.description"
+                  kind="skill"
+                  group="skills"
+                  source="skill"
+                  :chips="[t('toolManager.system.skills'), t('common.disabled')]"
+                />
+              </template>
+              <div
+                class="messenger-skill-item"
+                :class="item.enabled ? 'is-enabled' : 'is-disabled'"
+                role="button"
+                tabindex="0"
+                @click="openSkillDetail(item.name)"
+                @keydown.enter.prevent="openSkillDetail(item.name)"
+                @keydown.space.prevent="openSkillDetail(item.name)"
               >
-                <template #content>
-                  <AbilityTooltipCard
+                <div class="ability-entry">
+                  <AbilityIconBadge
                     :name="item.name"
                     :description="item.description"
                     kind="skill"
                     group="skills"
                     source="skill"
-                    :chips="[t('toolManager.system.skills'), t('common.disabled')]"
+                    size="sm"
                   />
-                </template>
-                <div
-                  class="messenger-skill-item"
-                  :class="item.enabled ? 'is-enabled' : 'is-disabled'"
-                  role="button"
-                  tabindex="0"
-                  @click="openSkillDetail(item.name)"
-                  @keydown.enter.prevent="openSkillDetail(item.name)"
-                  @keydown.space.prevent="openSkillDetail(item.name)"
-                >
-                  <div class="ability-entry">
-                    <AbilityIconBadge
-                      :name="item.name"
-                      :description="item.description"
-                      kind="skill"
-                      group="skills"
-                      source="skill"
-                      size="sm"
-                    />
-                    <div class="messenger-skill-item-copy ability-entry__copy">
-                      <div class="messenger-skill-item-title-row">
-                        <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                      </div>
+                  <div class="messenger-skill-item-copy ability-entry__copy">
+                    <div class="messenger-skill-item-title-row">
+                      <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
                     </div>
                   </div>
                 </div>
-              </el-tooltip>
-            </div>
+              </div>
+            </el-tooltip>
           </div>
         </div>
       </div>

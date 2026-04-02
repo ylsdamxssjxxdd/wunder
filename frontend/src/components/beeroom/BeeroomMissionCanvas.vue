@@ -45,7 +45,7 @@
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="composerText = $event"
           @update:composer-target-agent-id="composerTargetAgentId = $event"
-          @clear="clearManualChatHistory"
+          @clear="handleClearHistory"
           @stop="handleDispatchStop"
           @resume="handleDispatchResume"
           @send="handleComposerSend"
@@ -73,11 +73,13 @@ const props = defineProps<{
   mission: BeeroomMission | null;
   agents: BeeroomMember[];
   refreshing?: boolean;
+  hideStandbyWhenMissionEmpty?: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
   (event: 'refresh'): void;
+  (event: 'clear-history', clearedAfter: number): void;
 }>();
 
 const { t } = useI18n();
@@ -88,13 +90,16 @@ const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
 const agentsRef = toRef(props, 'agents');
 
-const hasSwarmNodes = computed(() =>
-  hasBeeroomSwarmNodes({
+const hasSwarmNodes = computed(() => {
+  if (props.hideStandbyWhenMissionEmpty && !props.mission) {
+    return false;
+  }
+  return hasBeeroomSwarmNodes({
     group: props.group,
     mission: props.mission,
     agents: props.agents
-  })
-);
+  });
+});
 
 const {
   chatCollapsed,
@@ -159,6 +164,11 @@ const toggleCanvasFullscreen = async () => {
   } finally {
     refreshCanvasFullscreen();
   }
+};
+
+const handleClearHistory = async () => {
+  await clearManualChatHistory();
+  emit('clear-history', Date.now() / 1000);
 };
 
 onMounted(() => {

@@ -51,17 +51,33 @@ export const UserSkillPane = lazy(() => import('@/components/user-tools/UserSkil
 export const AgentMemoryPanel = lazy(() => import('@/components/messenger/memory/AgentMemoryPanel.vue'));
 
 let agentSettingsPanelsPreloadPromise: Promise<unknown> | null = null;
+let secondaryAgentSettingsPanelsScheduled = false;
 
-export const preloadAgentSettingsPanels = () => {
-  if (!agentSettingsPanelsPreloadPromise) {
-    agentSettingsPanelsPreloadPromise = Promise.all([
-      import('@/components/messenger/AgentSettingsPanel.vue'),
+const scheduleSecondaryAgentSettingsPanelsPreload = (): void => {
+  if (secondaryAgentSettingsPanelsScheduled || typeof window === 'undefined') {
+    return;
+  }
+  secondaryAgentSettingsPanelsScheduled = true;
+  const run = () => {
+    void Promise.allSettled([
       import('@/components/messenger/AgentCronPanel.vue'),
       import('@/components/channels/UserChannelSettingsPanel.vue'),
       import('@/components/messenger/AgentRuntimeRecordsPanel.vue'),
       import('@/components/messenger/memory/AgentMemoryPanel.vue'),
       import('@/components/messenger/ArchivedThreadManager.vue')
     ]);
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(run, { timeout: 1200 });
+    return;
+  }
+  window.setTimeout(run, 48);
+};
+
+export const preloadAgentSettingsPanels = () => {
+  if (!agentSettingsPanelsPreloadPromise) {
+    agentSettingsPanelsPreloadPromise = import('@/components/messenger/AgentSettingsPanel.vue');
+    scheduleSecondaryAgentSettingsPanelsPreload();
   }
   return agentSettingsPanelsPreloadPromise;
 };

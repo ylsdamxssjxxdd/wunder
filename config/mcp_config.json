@@ -28,7 +28,7 @@
     }
   },
   "knowledge": {
-    "enabled": false,
+    "enabled": true,
     "base_url": "http://192.168.0.2:9380",
     "api_key": "ragflow-iUR6fuhanBhyoVPXqpu8OAZ0LDTKZPug9h_4cQlqbN8",
     "default_key": "product_docs",

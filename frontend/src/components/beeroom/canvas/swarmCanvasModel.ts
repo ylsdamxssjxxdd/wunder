@@ -100,7 +100,7 @@ type HoneycombSlot = {
 export const HONEYCOMB_RADIUS = 186;
 export const HONEYCOMB_VERTICAL_RATIO = 1.2;
 export const NODE_WIDTH = 272;
-export const NODE_HEIGHT = 138;
+export const NODE_HEIGHT = 170;
 export const WORLD_PADDING = 96;
 export const ACTIVE_DISPATCH_STATUSES = new Set(['queued', 'running', 'awaiting_idle']);
 
@@ -282,19 +282,23 @@ export const hasBeeroomSwarmNodes = (options: {
   agents: BeeroomMember[];
 }) => {
   const mission = options.mission;
+  const activeAgentIds = new Set<string>();
   const involvedAgentIds = new Set<string>();
   options.agents.forEach((member) => {
     const agentId = String(member.agent_id || '').trim();
-    if (agentId) involvedAgentIds.add(agentId);
+    if (!agentId) return;
+    activeAgentIds.add(agentId);
+    involvedAgentIds.add(agentId);
   });
   (Array.isArray(mission?.tasks) ? mission.tasks : []).forEach((task) => {
     const agentId = String(task.agent_id || '').trim();
-    if (agentId) involvedAgentIds.add(agentId);
+    if (agentId && activeAgentIds.has(agentId)) involvedAgentIds.add(agentId);
   });
   const motherAgentId = resolveBeeroomMotherAgentId(mission, options.group, options.agents);
-  if (motherAgentId) involvedAgentIds.add(motherAgentId);
-  if (String(mission?.entry_agent_id || '').trim()) {
-    involvedAgentIds.add(String(mission?.entry_agent_id || '').trim());
+  if (motherAgentId && activeAgentIds.has(motherAgentId)) involvedAgentIds.add(motherAgentId);
+  const entryAgentId = String(mission?.entry_agent_id || '').trim();
+  if (entryAgentId && activeAgentIds.has(entryAgentId)) {
+    involvedAgentIds.add(entryAgentId);
   }
   return involvedAgentIds.size > 0;
 };
@@ -313,8 +317,11 @@ export const buildBeeroomSwarmProjection = (options: {
   const tasks = Array.isArray(mission?.tasks) ? mission.tasks : [];
   const members = Array.isArray(options.agents) ? options.agents : [];
   const memberMap = new Map(members.map((agent) => [String(agent.agent_id || '').trim(), agent]));
+  const activeAgentIds = new Set(Array.from(memberMap.keys()).filter(Boolean));
   const motherAgentId = resolveBeeroomMotherAgentId(mission, options.group, members);
+  const hasMotherAgent = Boolean(motherAgentId) && activeAgentIds.has(motherAgentId);
   const entryAgentId = String(mission?.entry_agent_id || '').trim();
+  const hasEntryAgent = Boolean(entryAgentId) && activeAgentIds.has(entryAgentId);
   const missionStatus =
     String(mission?.completion_status || mission?.status || '').trim().toLowerCase() || 'idle';
   const involvedAgentIds = new Set<string>();
@@ -325,10 +332,10 @@ export const buildBeeroomSwarmProjection = (options: {
   });
   tasks.forEach((task) => {
     const agentId = String(task.agent_id || '').trim();
-    if (agentId) involvedAgentIds.add(agentId);
+    if (agentId && activeAgentIds.has(agentId)) involvedAgentIds.add(agentId);
   });
-  if (motherAgentId) involvedAgentIds.add(motherAgentId);
-  if (entryAgentId) involvedAgentIds.add(entryAgentId);
+  if (hasMotherAgent) involvedAgentIds.add(motherAgentId);
+  if (hasEntryAgent) involvedAgentIds.add(entryAgentId);
 
   if (!involvedAgentIds.size) {
     return {
@@ -345,7 +352,7 @@ export const buildBeeroomSwarmProjection = (options: {
   const tasksByAgent = new Map<string, BeeroomMissionTask[]>();
   tasks.forEach((task) => {
     const agentId = String(task.agent_id || '').trim();
-    if (!agentId) return;
+    if (!agentId || !activeAgentIds.has(agentId)) return;
     const bucket = tasksByAgent.get(agentId) || [];
     bucket.push(task);
     tasksByAgent.set(agentId, bucket);
@@ -381,7 +388,7 @@ export const buildBeeroomSwarmProjection = (options: {
     const member = memberMap.get(agentId);
     const agentTasks = tasksByAgent.get(agentId) || [];
     const latestTask = pickLatestTask(agentTasks);
-    const isMother = agentId === motherAgentId || (!motherAgentId && index === 0);
+    const isMother = (hasMotherAgent && agentId === motherAgentId) || (!hasMotherAgent && index === 0);
     const status = resolveNodeStatus(agentTasks, member, missionStatus);
     const statusLabel = resolveStatusLabel(status, options.t);
     const nodeId = `agent:${agentId}`;
@@ -459,7 +466,7 @@ export const buildBeeroomSwarmProjection = (options: {
     };
   }
 
-  const effectiveMotherAgentId = motherAgentId || orderedAgentIds[0] || '';
+  const effectiveMotherAgentId = (hasMotherAgent ? motherAgentId : '') || orderedAgentIds[0] || '';
   const motherNodeId = effectiveMotherAgentId ? `agent:${effectiveMotherAgentId}` : '';
   const edges: SwarmProjectionEdge[] = [];
   if (effectiveMotherAgentId) {

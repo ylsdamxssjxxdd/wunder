@@ -70,22 +70,6 @@
         </div>
       </div>
     </div>
-
-    <div class="beeroom-canvas-legend">
-      <span class="beeroom-canvas-legend-item is-running">
-        <i aria-hidden="true"></i>
-        <span>{{ t('beeroom.status.running') }} {{ canvasStatusSummary.running }}</span>
-      </span>
-      <span class="beeroom-canvas-legend-item is-danger">
-        <i aria-hidden="true"></i>
-        <span>{{ t('beeroom.status.failed') }} {{ canvasStatusSummary.failed }}</span>
-      </span>
-      <span class="beeroom-canvas-legend-item is-idle">
-        <i aria-hidden="true"></i>
-        <span>{{ t('beeroom.members.idle') }} {{ canvasStatusSummary.idle }}</span>
-      </span>
-    </div>
-
     <div class="beeroom-canvas-tools" role="toolbar" :aria-label="canvasControlLabels.toolbar">
       <button
         class="beeroom-canvas-tool-btn"
@@ -329,23 +313,6 @@ const hasNodes = computed(() =>
     agents: props.agents
   })
 );
-
-const canvasStatusSummary = computed(() => {
-  const summary = { running: 0, failed: 0, idle: 0 };
-  projection.value.nodeMetaMap.forEach((meta) => {
-    const status = String(meta.status || '').trim().toLowerCase();
-    if (status === 'running' || status === 'queued' || status === 'awaiting_idle') {
-      summary.running += 1;
-      return;
-    }
-    if (status === 'failed' || status === 'error' || status === 'timeout' || status === 'cancelled') {
-      summary.failed += 1;
-      return;
-    }
-    summary.idle += 1;
-  });
-  return summary;
-});
 
 const worldMetrics = computed(() => {
   const bounds = projection.value.bounds;
@@ -1012,56 +979,10 @@ onBeforeUnmount(() => {
   animation: beeroom-edge-label-breathe 1.3s ease-in-out infinite;
 }
 
-.beeroom-canvas-legend,
 .beeroom-canvas-tools,
 .beeroom-canvas-minimap-shell {
   position: absolute;
   z-index: 5;
-}
-
-.beeroom-canvas-legend {
-  top: 12px;
-  right: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(10, 13, 19, 0.94);
-  color: rgba(229, 231, 235, 0.86);
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.16);
-}
-
-.beeroom-canvas-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.beeroom-canvas-legend-item i {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.9);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
-}
-
-.beeroom-canvas-legend-item.is-running i {
-  background: rgba(239, 68, 68, 0.95);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
-}
-
-.beeroom-canvas-legend-item.is-danger i {
-  background: rgba(248, 113, 113, 0.95);
-  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
-}
-
-.beeroom-canvas-legend-item.is-idle i {
-  background: rgba(148, 163, 184, 0.9);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
 }
 
 .beeroom-canvas-tools {
@@ -1243,12 +1164,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
-  .beeroom-canvas-legend {
-    left: 108px;
-    right: 12px;
-    flex-wrap: wrap;
-  }
-
   .beeroom-canvas-tools {
     left: 12px;
   }

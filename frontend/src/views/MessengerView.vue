@@ -517,7 +517,7 @@
                 </div>
               </template>
               <template v-else>
-                <div class="messenger-inline-actions">
+                <div class="messenger-inline-actions messenger-inline-actions--agent-settings">
                   <button
                     class="messenger-inline-btn"
                     :class="{ active: agentSettingMode === 'agent' }"
@@ -2334,9 +2334,17 @@ const isSearchableMiddlePaneSection = (section: string): boolean =>
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT = 1120;
 const MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT = 1360;
+const MESSENGER_AGENT_SETTINGS_RIGHT_DOCK_BREAKPOINT = 1820;
 const MESSENGER_TIGHT_HOST_BREAKPOINT = 900;
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT);
-const isRightDockOverlay = computed(() => viewportWidth.value <= MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT);
+const isRightDockOverlay = computed(() => {
+  const inAgentSettingsDetail =
+    sessionHub.activeSection === 'agents' && agentOverviewMode.value === 'detail';
+  const breakpoint = inAgentSettingsDetail
+    ? MESSENGER_AGENT_SETTINGS_RIGHT_DOCK_BREAKPOINT
+    : MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT;
+  return viewportWidth.value <= breakpoint;
+});
 const showMiddlePane = computed(() => {
   if (isEmbeddedChatRoute.value) {
     return false;
@@ -3308,28 +3316,6 @@ const hasAgentAbilitySummary = computed(() =>
   agentAbilitySections.value.some((section) => section.items.length > 0)
 );
 
-const normalizeRightDockSkillDetails = (
-  list: unknown
-): Array<{ name: string; description: string }> => {
-  if (!Array.isArray(list)) return [];
-  const output: Array<{ name: string; description: string }> = [];
-  const seen = new Set<string>();
-  list.forEach((item) => {
-    if (!item || typeof item !== 'object') return;
-    const source = item as Record<string, unknown>;
-    const name = normalizeRightDockSkillRuntimeName(
-      String(source.name || source.tool_name || source.toolName || source.id || '')
-    );
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    output.push({
-      name,
-      description: String(source.description || source.desc || source.summary || '').trim()
-    });
-  });
-  return output;
-};
-
 function normalizeRightDockSkillRuntimeName(value: unknown): string {
   const normalized = String(value || '').trim();
   if (!normalized) return '';
@@ -3385,6 +3371,28 @@ const normalizeRightDockSkillCatalog = (list: unknown): RightDockSkillCatalogIte
   return output;
 };
 
+const normalizeRightDockSkillSummaryItems = (
+  list: unknown
+): Array<Pick<RightDockSkillCatalogItem, 'name' | 'description'>> => {
+  if (!Array.isArray(list)) return [];
+  const output: Array<Pick<RightDockSkillCatalogItem, 'name' | 'description'>> = [];
+  const seen = new Set<string>();
+  list.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const source = item as Record<string, unknown>;
+    const name = normalizeRightDockSkillRuntimeName(
+      String(source.name || source.tool_name || source.toolName || source.id || '')
+    );
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    output.push({
+      name,
+      description: String(source.description || source.desc || source.summary || '').trim()
+    });
+  });
+  return output;
+};
+
 const rightDockSkillEnabledNameSet = computed<Set<string>>(() => {
   const activeAgentProfile =
     activeAgentId.value === DEFAULT_AGENT_KEY
@@ -3394,22 +3402,12 @@ const rightDockSkillEnabledNameSet = computed<Set<string>>(() => {
   const selectedByProfile = normalizeRightDockSkillNameList(
     normalizeAbilityNameList(resolveAgentConfiguredAbilityNames(activeAgentProfile))
   );
-  if (!agentPromptToolSummary.value) {
-    return new Set(selectedByProfile);
-  }
-  const enabledSkills = collectAbilityDetails(
-    (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
-  );
-  const enabledDetails = normalizeRightDockSkillDetails(enabledSkills.skills);
-  return new Set<string>([...selectedByProfile, ...enabledDetails.map((item) => item.name)]);
+  return new Set(selectedByProfile);
 });
 
 const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
   const enabledSet = rightDockSkillEnabledNameSet.value;
   const merged = new Map<string, RightDockSkillItem>();
-  const allSkills = collectAbilityDetails(
-    (agentPromptToolSummary.value || {}) as Record<string, unknown>
-  );
 
   rightDockSkillCatalog.value.forEach((item) => {
     merged.set(item.name, {
@@ -3419,13 +3417,15 @@ const rightDockSkillItems = computed<RightDockSkillItem[]>(() => {
     });
   });
 
-  normalizeRightDockSkillDetails(allSkills.skills).forEach((item) => {
+  const allSkills = collectAbilityDetails(
+    (agentPromptToolSummary.value || {}) as Record<string, unknown>
+  );
+  normalizeRightDockSkillSummaryItems(allSkills.skills).forEach((item) => {
     const existing = merged.get(item.name);
     if (existing) {
       if (!existing.description && item.description) {
         existing.description = item.description;
       }
-      existing.enabled = enabledSet.has(item.name);
       return;
     }
     merged.set(item.name, {
@@ -3447,9 +3447,7 @@ const rightDockEnabledSkills = computed<RightDockSkillItem[]>(() =>
 const rightDockDisabledSkills = computed<RightDockSkillItem[]>(() =>
   rightDockSkillItems.value.filter((item) => !item.enabled)
 );
-const rightDockSkillsLoading = computed(
-  () => agentToolSummaryLoading.value || rightDockSkillCatalogLoading.value
-);
+const rightDockSkillsLoading = computed(() => rightDockSkillCatalogLoading.value);
 const rightDockSelectedSkill = computed<RightDockSkillCatalogItem | null>(() => {
   const name = String(rightDockSelectedSkillName.value || '').trim();
   if (!name) return null;
@@ -5125,8 +5123,17 @@ const activeWorldGroupId = computed(() => {
   );
 });
 
+const shouldHideAgentSettingsRightDock = computed(() => {
+  if (sessionHub.activeSection !== 'agents' || showAgentGridOverview.value) {
+    return false;
+  }
+  return navigationPaneCollapsed.value || isMiddlePaneOverlay.value || viewportWidth.value <= 1820;
+});
+
 const showAgentRightDock = computed(() => {
-  if (sessionHub.activeSection === 'agents') return !showAgentGridOverview.value;
+  if (sessionHub.activeSection === 'agents') {
+    return !showAgentGridOverview.value && !shouldHideAgentSettingsRightDock.value;
+  }
   return sessionHub.activeSection === 'messages' && isAgentConversationActive.value;
 });
 
@@ -5160,6 +5167,7 @@ let rightDockEdgeHoverFrame: number | null = null;
 let pendingRightDockPointerX: number | null = null;
 let cachedMessengerRootRight = 0;
 let cachedMessengerRootWidth = 0;
+let lastMessengerLayoutDebugSignature = '';
 
 function resolveMessengerRootElement(): HTMLElement | null {
   const root = messengerRootRef.value as unknown;
@@ -5167,6 +5175,125 @@ function resolveMessengerRootElement(): HTMLElement | null {
   if (root instanceof HTMLElement) return root;
   const candidate = (root as { $el?: unknown }).$el;
   return candidate instanceof HTMLElement ? candidate : null;
+}
+
+function measureMessengerLayoutElement(element: Element | null): {
+  width: number;
+  left: number;
+  right: number;
+} | null {
+  if (!(element instanceof HTMLElement)) return null;
+  const rect = element.getBoundingClientRect();
+  const width = Number.isFinite(rect.width) ? Math.round(rect.width) : 0;
+  const left = Number.isFinite(rect.left) ? Math.round(rect.left) : 0;
+  const right = Number.isFinite(rect.right) ? Math.round(rect.right) : 0;
+  return { width, left, right };
+}
+
+function reportMessengerLayoutAnomaly(reason: string): void {
+  if (typeof window === 'undefined') return;
+  const root = resolveMessengerRootElement();
+  if (!root) return;
+
+  const rootRect = measureMessengerLayoutElement(root);
+  const parentRect = measureMessengerLayoutElement(root.parentElement);
+  const leftRailRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-left-rail'));
+  const middlePaneRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-middle-pane'));
+  const chatRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-chat'));
+  const chatBodyRect = measureMessengerLayoutElement(root.querySelector('.messenger-chat-body'));
+  const footerRect = measureMessengerLayoutElement(chatFooterRef.value);
+  const composerRect = measureMessengerLayoutElement(root.querySelector('.messenger-composer-scope.chat-shell'));
+  const rightDockRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-right-dock'));
+  const sandboxPanelRect = measureMessengerLayoutElement(root.querySelector('.messenger-right-panel--sandbox'));
+  const skillsPanelRect = measureMessengerLayoutElement(root.querySelector('.messenger-right-panel--skills'));
+
+  const snapshot = {
+    reason,
+    route: route.fullPath,
+    section: sessionHub.activeSection,
+    windowWidth: Math.round(window.innerWidth || 0),
+    viewportWidth: Math.round(viewportWidth.value || 0),
+    root: rootRect,
+    parent: parentRect,
+    leftRail: leftRailRect,
+    middlePane: middlePaneRect,
+    chat: chatRect,
+    chatBody: chatBodyRect,
+    footer: footerRect,
+    composer: composerRect,
+    rightDock: rightDockRect,
+    sandboxPanel: sandboxPanelRect,
+    skillsPanel: skillsPanelRect,
+    showMiddlePane: showMiddlePane.value,
+    showRightDock: showRightDock.value,
+    rightDockCollapsed: rightDockCollapsed.value,
+    navigationPaneCollapsed: navigationPaneCollapsed.value,
+    isMiddlePaneOverlay: isMiddlePaneOverlay.value,
+    isRightDockOverlay: isRightDockOverlay.value,
+    rootClasses: Array.from(root.classList.values()),
+    gridTemplateColumns: window.getComputedStyle(root).gridTemplateColumns
+  };
+
+  const signature = JSON.stringify({
+    reason,
+    windowWidth: snapshot.windowWidth,
+    viewportWidth: snapshot.viewportWidth,
+    root: rootRect,
+    chat: chatRect,
+    footer: footerRect,
+    composer: composerRect,
+    rightDock: rightDockRect,
+    gridTemplateColumns: snapshot.gridTemplateColumns,
+    section: snapshot.section,
+    showMiddlePane: snapshot.showMiddlePane,
+    showRightDock: snapshot.showRightDock,
+    rightDockCollapsed: snapshot.rightDockCollapsed,
+    navigationPaneCollapsed: snapshot.navigationPaneCollapsed,
+    isMiddlePaneOverlay: snapshot.isMiddlePaneOverlay,
+    isRightDockOverlay: snapshot.isRightDockOverlay
+  });
+  if (signature === lastMessengerLayoutDebugSignature) return;
+  lastMessengerLayoutDebugSignature = signature;
+  console.warn('[messenger-layout-anomaly]', snapshot);
+}
+
+function detectMessengerLayoutAnomaly(): void {
+  if (typeof window === 'undefined') return;
+  const root = resolveMessengerRootElement();
+  if (!root) return;
+  const rootRect = measureMessengerLayoutElement(root);
+  const chatRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-chat'));
+  const footerRect = measureMessengerLayoutElement(chatFooterRef.value);
+  const composerRect = measureMessengerLayoutElement(root.querySelector('.messenger-composer-scope.chat-shell'));
+  const rightDockRect = measureMessengerLayoutElement(root.querySelector(':scope > .messenger-right-dock'));
+  const windowWidth = Math.round(window.innerWidth || 0);
+
+  if (windowWidth <= 0 || !rootRect) return;
+
+  if (rootRect.width > 0 && rootRect.width < windowWidth - 240) {
+    reportMessengerLayoutAnomaly('root-too-narrow');
+    return;
+  }
+
+  if (
+    windowWidth >= 900 &&
+    ((chatRect && chatRect.width > 0 && chatRect.width < 220) ||
+      (footerRect && footerRect.width > 0 && footerRect.width < 220) ||
+      (composerRect && composerRect.width > 0 && composerRect.width < 220))
+  ) {
+    reportMessengerLayoutAnomaly('chat-too-narrow');
+    return;
+  }
+
+  if (
+    isRightDockOverlay.value &&
+    rightDockRect &&
+    rightDockRect.width > 0 &&
+    rootRect.width >= windowWidth - 80 &&
+    rightDockRect.left < Math.round(windowWidth * 0.5)
+  ) {
+    reportMessengerLayoutAnomaly('overlay-dock-shifted-left');
+  }
 }
 
 function refreshMessengerRootBounds(): void {
@@ -5179,6 +5306,7 @@ function refreshMessengerRootBounds(): void {
   const rect = root.getBoundingClientRect();
   cachedMessengerRootRight = Number.isFinite(rect.right) ? rect.right : 0;
   cachedMessengerRootWidth = Number.isFinite(rect.width) ? rect.width : 0;
+  detectMessengerLayoutAnomaly();
 }
 
 function setRightDockEdgeHover(next: boolean): void {
@@ -7365,16 +7493,7 @@ const openDesktopModelSettingsFromHeader = () => {
 
 const openProfilePage = () => {
   closeFileContainerMenu();
-  settingsPanelMode.value = 'profile';
-  sessionHub.setSection('more');
-  sessionHub.setKeyword('');
-  const nextQuery = { ...route.query, section: 'more' } as Record<string, any>;
-  delete nextQuery.session_id;
-  delete nextQuery.agent_id;
-  delete nextQuery.entry;
-  delete nextQuery.conversation_id;
-  delete nextQuery.panel;
-  router.push({ path: `${basePrefix.value}/profile`, query: nextQuery }).catch(() => undefined);
+  activateSettingsPanel('profile');
 };
 
 const handleSettingsLogout = () => {
@@ -8071,8 +8190,7 @@ const openActiveAgentSettings = (
   }
   agentOverviewMode.value = 'detail';
   selectedAgentId.value = targetAgentId;
-  agentSettingMode.value = 'agent';
-  sessionHub.setSection('agents');
+  switchSection('agents');
   const nextQuery = {
     ...route.query,
     section: 'agents',
@@ -8081,12 +8199,7 @@ const openActiveAgentSettings = (
   delete nextQuery.session_id;
   delete nextQuery.entry;
   delete nextQuery.conversation_id;
-  router
-    .push({
-      path: `${basePrefix.value}/home`,
-      query: nextQuery
-    })
-    .catch(() => undefined);
+  scheduleSectionRouteSync(resolveChatShellPath(), nextQuery);
 };
 
 const updateAgentAbilityTooltip = async () => {
@@ -8347,11 +8460,8 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
 };
 
 const refreshRightDockSkills = async () => {
-  const [, skillCatalogLoaded] = await Promise.all([
-    loadAgentToolSummary({ force: true }),
-    loadRightDockSkills({ force: true, silent: true })
-  ]);
-  if (!skillCatalogLoaded || agentToolSummaryError.value) {
+  const skillCatalogLoaded = await loadRightDockSkills({ force: true, silent: true });
+  if (!skillCatalogLoaded) {
     ElMessage.error(t('userTools.skills.refresh.failed'));
     return;
   }
