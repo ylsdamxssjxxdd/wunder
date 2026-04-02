@@ -11,7 +11,7 @@
     "targets": {
       "local_hr_mysql": {
         "type": "mysql",
-        "host": "127.0.0.1",
+        "host": "192.168.0.2",
         "port": 3307,
         "user": "root",
         "password": "rootpass123!",
@@ -29,8 +29,8 @@
   },
   "knowledge": {
     "enabled": false,
-    "base_url": "http://127.0.0.1:9380",
-    "api_key": "REPLACE_WITH_RAGFLOW_API_KEY",
+    "base_url": "http://192.168.0.2:9380",
+    "api_key": "ragflow-iUR6fuhanBhyoVPXqpu8OAZ0LDTKZPug9h_4cQlqbN8",
     "default_key": "product_docs",
     "request": {
       "top_k": 8,
@@ -40,17 +40,15 @@
     "targets": {
       "product_docs": {
         "dataset_ids": [
-          "REPLACE_WITH_PRODUCT_DATASET_ID_1",
-          "REPLACE_WITH_PRODUCT_DATASET_ID_2"
+          "089219ce2b7311f19ffc61c96bcdbe56"
         ],
-        "description": "产品文档知识库示例，演示一个知识库目标聚合多个 dataset_ids"
+        "description": "学校向量库"
       },
       "hr_docs": {
         "dataset_ids": [
-          "REPLACE_WITH_HR_DATASET_ID_1",
-          "REPLACE_WITH_HR_DATASET_ID_2"
+          "64ad8a8c2b7211f19ffc61c96bcdbe56"
         ],
-        "description": "人事制度知识库示例，演示同时配置多个知识库目标"
+        "description": "公司向量库"
       }
     }
   }

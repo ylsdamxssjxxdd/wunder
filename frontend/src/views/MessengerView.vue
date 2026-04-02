@@ -579,6 +579,7 @@
                     :readonly="isSettingsDefaultAgentReadonly"
                     :focus-target="agentSettingsFocusTarget"
                     :focus-token="agentSettingsFocusToken"
+                    @delete-start="handleAgentDeleteStart"
                     @saved="handleAgentSettingsSaved"
                     @deleted="handleAgentDeleted"
                     @focus-consumed="handleAgentSettingsFocusConsumed"
@@ -1532,6 +1533,7 @@ import {
   splitMessengerBootstrapTasks,
   type MessengerBootstrapTask
 } from '@/views/messenger/bootstrap';
+import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
@@ -1658,8 +1660,8 @@ import {
 } from '@/utils/userPreferences';
 import {
   PROFILE_AVATAR_COLORS,
+  PROFILE_AVATAR_IMAGE_KEYS,
   PROFILE_AVATAR_IMAGE_MAP,
-  PROFILE_AVATAR_IMAGE_OPTIONS,
   PROFILE_AVATAR_OPTION_KEYS
 } from '@/utils/avatarCatalog';
 import {
@@ -1750,6 +1752,7 @@ const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_lau
 
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
+const deletingAgentSelectionSnapshot = ref<string[]>([]);
 const selectedAgentHiveGroupId = ref('');
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
@@ -2270,14 +2273,27 @@ const currentUserId = computed(() => {
   return String(user?.id || '');
 });
 let currentUserContextInitialized = false;
+const buildProfileAvatarOptionLabel = (key: string): string => {
+  const match = String(key || '').trim().match(/^qq-avatar-(\d{4})$/);
+  if (match) {
+    return `QQ Avatar ${match[1]}`;
+  }
+  return `QQ Avatar ${String(key || '').trim()}`;
+};
 const profileAvatarOptions = computed(() =>
-  [
-    {
-      key: 'initial',
-      label: t('portal.agent.avatar.icon.initial')
-    },
-    ...PROFILE_AVATAR_IMAGE_OPTIONS
-  ]
+  settingsPanelMode.value === 'profile'
+    ? [
+        {
+          key: 'initial',
+          label: t('portal.agent.avatar.icon.initial')
+        },
+        ...PROFILE_AVATAR_IMAGE_KEYS.map((key) => ({
+          key,
+          label: buildProfileAvatarOptionLabel(key),
+          image: PROFILE_AVATAR_IMAGE_MAP.get(key) || ''
+        }))
+      ]
+    : []
 );
 const profileAvatarColors = computed(() => [...PROFILE_AVATAR_COLORS]);
 const currentUserAvatarImageUrl = computed(
@@ -5331,8 +5347,25 @@ const preloadTimelinePreview = async (sessionId: string) => {
   }
   timelinePreviewLoadingSet.value.add(targetId);
   try {
-    await chatStore.preloadSessionDetail(targetId);
-    const messages = chatStore.getCachedSessionMessages(targetId);
+    const sessionRecord =
+      (Array.isArray(chatStore.sessions)
+        ? chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId)
+        : null) || null;
+    const sessionPreview = sessionRecord
+      ? resolveSessionTimelinePreview(sessionRecord as Record<string, unknown>)
+      : '';
+    if (sessionPreview) {
+      timelinePreviewMap.value.set(targetId, sessionPreview);
+      return;
+    }
+    const cachedMessages = chatStore.getCachedSessionMessages(targetId);
+    if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+      const preview = extractLatestUserPreview(cachedMessages as unknown[]);
+      timelinePreviewMap.value.set(targetId, preview);
+      return;
+    }
+    const result = await getChatSessionApi(targetId).catch(() => null);
+    const messages = Array.isArray(result?.data?.data?.messages) ? result.data.data.messages : [];
     if (!Array.isArray(messages) || !messages.length) {
       timelinePreviewMap.value.set(targetId, '');
       return;
@@ -9005,8 +9038,18 @@ const handleAgentSettingsSaved = async () => {
   }
 };
 
-const handleAgentDeleted = async () => {
-  selectedAgentId.value = DEFAULT_AGENT_KEY;
+const handleAgentDeleteStart = () => {
+  deletingAgentSelectionSnapshot.value = [...visibleAgentIdsForSelection.value];
+};
+
+const handleAgentDeleted = async (deletedAgentId: string) => {
+  selectedAgentId.value = resolveAgentSelectionAfterRemoval({
+    removedId: deletedAgentId,
+    previousIds: deletingAgentSelectionSnapshot.value,
+    currentIds: visibleAgentIdsForSelection.value,
+    fallbackId: DEFAULT_AGENT_KEY
+  });
+  deletingAgentSelectionSnapshot.value = [];
   const tasks: Promise<unknown>[] = [
     chatStore.loadSessions(),
     loadRunningAgents(),

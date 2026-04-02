@@ -27,7 +27,7 @@
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，接口返回默认智能体 `agent_id=__default__` 且 `focus_mode=false`，前端跳转 `/app/chat?section=messages&entry=default`（desktop 为 `/desktop/chat?section=messages&entry=default`）；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）并隐藏左/中栏聚焦该智能体。
-- 用户资料接口：`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。
+- 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）；`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。

@@ -45,15 +45,14 @@
               <div class="profile-stat-value">{{ toolCallCount }}</div>
             </div>
             <div class="profile-stat">
-              <div class="profile-stat-label">{{ t('profile.stats.contextTokens') }}</div>
-              <div class="profile-stat-value">{{ formatK(contextTokensLatest) }}</div>
+              <div class="profile-stat-label">{{ t('profile.stats.agents') }}</div>
+              <div class="profile-stat-value">{{ agentCount }}</div>
             </div>
             <div class="profile-stat">
               <div class="profile-stat-label">{{ t('profile.stats.totalTokens') }}</div>
               <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
             </div>
           </div>
-          <div class="profile-section-desc">{{ t('profile.stats.tokenNote') }}</div>
         </div>
       </section>
 
@@ -184,6 +183,7 @@ import UserTopbar from '@/components/user/UserTopbar.vue';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { useThemeStore } from '@/stores/theme';
@@ -192,6 +192,7 @@ import { showApiError } from '@/utils/apiError';
 
 const route = useRoute();
 const authStore = useAuthStore();
+const agentStore = useAgentStore();
 const chatStore = useChatStore();
 const themeStore = useThemeStore();
 const { t, language } = useI18n();
@@ -234,14 +235,31 @@ const assistantMessages = computed(() =>
   conversationMessages.value.filter((message) => message.role === 'assistant')
 );
 const sessionCount = computed(() => chatStore.sessions.length);
+const usageSummary = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
+});
+const agentCount = computed(() => {
+  const owned = Array.isArray(agentStore.agents) ? agentStore.agents.length : 0;
+  const shared = Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents.length : 0;
+  return 1 + owned + shared;
+});
 const toolCallCount = computed(() =>
-  assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0)
+  (() => {
+    const total = Number(usageSummary.value?.tool_calls ?? usageSummary.value?.toolCalls);
+    if (Number.isFinite(total) && total >= 0) return total;
+    return assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0);
+  })()
 );
 const tokenUsageTotal = computed(() =>
-  assistantMessages.value.reduce((sum, message) => {
-    const total = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
-    return sum + (Number.isFinite(total) ? total : 0);
-  }, 0)
+  (() => {
+    const total = Number(usageSummary.value?.consumed_tokens ?? usageSummary.value?.consumedTokens);
+    if (Number.isFinite(total) && total > 0) return total;
+    return assistantMessages.value.reduce((sum, message) => {
+      const messageTotal = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
+      return sum + (Number.isFinite(messageTotal) ? messageTotal : 0);
+    }, 0);
+  })()
 );
 
 const openProfileEditor = () => {
@@ -598,14 +616,6 @@ const quotaTotalText = computed(() =>
   Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
 );
 
-const contextTokensLatest = computed(() => {
-  for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
-    const value = Number(assistantMessages.value[i]?.stats?.contextTokens);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return null;
-});
-
 const recentSessionCount = computed(() => {
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000;
@@ -672,6 +682,7 @@ const loadSessions = async () => {
 
 onMounted(() => {
   authStore.loadProfile();
+  agentStore.loadAgents().catch(() => {});
   loadUnits();
   loadSessions();
   nextTick(() => {

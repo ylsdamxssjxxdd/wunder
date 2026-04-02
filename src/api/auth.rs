@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 #[cfg(test)]
 const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = external_service::DEFAULT_EXTERNAL_LAUNCH_PASSWORD;
+const USER_PROFILE_RUNTIME_RECORD_LIMIT: i64 = 5000;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -584,7 +585,7 @@ async fn me(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
-    let profile = build_user_profile(&state, &resolved.user)?;
+    let profile = build_user_profile_value(&state, &resolved.user)?;
     Ok(Json(json!({ "data": profile })))
 }
 
@@ -759,7 +760,7 @@ async fn update_me(
             )
         })?;
     }
-    let profile = build_user_profile(&state, &record)?;
+    let profile = build_user_profile_value(&state, &record)?;
     Ok(Json(json!({ "data": profile })))
 }
 
@@ -849,6 +850,87 @@ fn build_user_profile(
         user,
         unit.as_ref().or(fallback_unit.as_ref()),
     ))
+}
+
+fn build_user_profile_value(
+    state: &Arc<AppState>,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<Value, Response> {
+    let profile = build_user_profile(state.as_ref(), user)?;
+    let mut payload =
+        serde_json::to_value(profile).map_err(|err| {
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    if let Value::Object(ref mut map) = payload {
+        map.insert(
+            "usage_summary".to_string(),
+            build_user_usage_summary(state, &user.user_id),
+        );
+    }
+    Ok(payload)
+}
+
+fn build_user_usage_summary(state: &Arc<AppState>, user_id: &str) -> Value {
+    let records = state
+        .monitor
+        .load_records_by_user(user_id, None, None, USER_PROFILE_RUNTIME_RECORD_LIMIT);
+    let mut consumed_tokens = 0_i64;
+    for record in records {
+        let Some(events) = record.get("events").and_then(Value::as_array) else {
+            continue;
+        };
+        for event in events {
+            let event_type = event
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if event_type != "round_usage" {
+                continue;
+            }
+            let total_tokens = parse_usage_total_tokens(event.get("data").unwrap_or(&Value::Null));
+            consumed_tokens = consumed_tokens.saturating_add(total_tokens.max(0));
+        }
+    }
+    let tool_calls = state
+        .workspace
+        .get_user_usage_stats()
+        .get(user_id)
+        .and_then(|stats| stats.get("tool_records"))
+        .copied()
+        .unwrap_or(0)
+        .max(0);
+    json!({
+        "consumed_tokens": consumed_tokens.max(0),
+        "tool_calls": tool_calls,
+    })
+}
+
+fn parse_usage_total_tokens(data: &Value) -> i64 {
+    let direct_total = data.get("total_tokens").and_then(Value::as_i64);
+    let nested_total = data
+        .get("usage")
+        .and_then(|usage| usage.get("total_tokens"))
+        .and_then(Value::as_i64);
+    if let Some(total) = direct_total.or(nested_total) {
+        return total.max(0);
+    }
+    let direct_input = data.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
+    let direct_output = data.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+    if direct_input > 0 || direct_output > 0 {
+        return direct_input.saturating_add(direct_output).max(0);
+    }
+    let nested_input = data
+        .get("usage")
+        .and_then(|usage| usage.get("input_tokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let nested_output = data
+        .get("usage")
+        .and_then(|usage| usage.get("output_tokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    nested_input.saturating_add(nested_output).max(0)
 }
 
 fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {

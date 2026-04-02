@@ -8,6 +8,7 @@
               v-if="resolvedProfileAvatarImageUrl"
               class="messenger-settings-profile-avatar-image"
               :src="resolvedProfileAvatarImageUrl"
+              decoding="async"
               alt=""
             />
             <UserAvatarGlyph
@@ -65,8 +66,8 @@
             <div class="messenger-settings-label">{{ toolCallCount }}</div>
           </div>
           <div class="messenger-profile-stat-item">
-            <div class="messenger-settings-hint">{{ t('profile.stats.contextTokens') }}</div>
-            <div class="messenger-settings-label">{{ formatK(contextTokensLatest) }}</div>
+            <div class="messenger-settings-hint">{{ t('profile.stats.agents') }}</div>
+            <div class="messenger-settings-label">{{ agentCount }}</div>
           </div>
           <div class="messenger-profile-stat-item">
             <div class="messenger-settings-hint">{{ t('profile.stats.totalTokens') }}</div>
@@ -77,7 +78,6 @@
             <div class="messenger-settings-label">{{ lastActiveTime }}</div>
           </div>
         </div>
-        <div class="messenger-settings-hint">{{ t('profile.stats.tokenNote') }}</div>
         <div class="messenger-profile-chart-card">
           <div class="messenger-profile-chart-head">
             <span>{{ t('profile.stats.sessions7d') }}</span>
@@ -239,6 +239,7 @@
               v-if="avatarDialogImageUrl"
               class="messenger-settings-profile-avatar-image"
               :src="avatarDialogImageUrl"
+              decoding="async"
               alt=""
             />
             <UserAvatarGlyph
@@ -267,6 +268,8 @@
               v-if="item.image"
               class="messenger-settings-avatar-option-image"
               :src="item.image"
+              loading="lazy"
+              decoding="async"
               alt=""
             />
             <UserAvatarGlyph
@@ -331,9 +334,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { APP_VERSION } from '@/config/appVersion';
 import { useI18n } from '@/i18n';
+import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import DesktopRuntimeSettingsPanel from '@/components/messenger/DesktopRuntimeSettingsPanel.vue';
@@ -420,6 +424,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const agentStore = useAgentStore();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const appVersion = APP_VERSION;
@@ -655,6 +660,15 @@ const formatDateKey = (value: unknown): string => {
 };
 
 const sessionCount = computed(() => chatStore.sessions.length);
+const usageSummary = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
+});
+const agentCount = computed(() => {
+  const owned = Array.isArray(agentStore.agents) ? agentStore.agents.length : 0;
+  const shared = Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents.length : 0;
+  return 1 + owned + shared;
+});
 
 const recentSessionCount = computed(() => {
   const now = Date.now();
@@ -673,23 +687,23 @@ const assistantMessages = computed(() =>
 );
 
 const toolCallCount = computed(() =>
-  assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0)
+  (() => {
+    const total = Number(usageSummary.value?.tool_calls ?? usageSummary.value?.toolCalls);
+    if (Number.isFinite(total) && total >= 0) return total;
+    return assistantMessages.value.reduce((sum, message) => sum + (message?.stats?.toolCalls || 0), 0);
+  })()
 );
 
 const tokenUsageTotal = computed(() =>
-  assistantMessages.value.reduce((sum, message) => {
-    const total = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
-    return sum + (Number.isFinite(total) ? total : 0);
-  }, 0)
+  (() => {
+    const total = Number(usageSummary.value?.consumed_tokens ?? usageSummary.value?.consumedTokens);
+    if (Number.isFinite(total) && total > 0) return total;
+    return assistantMessages.value.reduce((sum, message) => {
+      const messageTotal = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
+      return sum + (Number.isFinite(messageTotal) ? messageTotal : 0);
+    }, 0);
+  })()
 );
-
-const contextTokensLatest = computed(() => {
-  for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
-    const value = Number(assistantMessages.value[i]?.stats?.contextTokens);
-    if (Number.isFinite(value) && value > 0) return value;
-  }
-  return null;
-});
 
 const lastActiveTime = computed(() => {
   const latest = chatStore.sessions[0];
@@ -807,5 +821,24 @@ const formatK = (value: number | null): string => {
   if (!Number.isFinite(value as number) || (value as number) <= 0) return '-';
   return `${((value as number) / 1000).toFixed(1)}k`;
 };
+
+const loadProfileStats = () => {
+  if (props.mode !== 'profile') return;
+  authStore.loadProfile().catch(() => {});
+  agentStore.loadAgents().catch(() => {});
+};
+
+onMounted(() => {
+  loadProfileStats();
+});
+
+watch(
+  () => props.mode,
+  (mode, previous) => {
+    if (mode === 'profile' && previous !== 'profile') {
+      loadProfileStats();
+    }
+  }
+);
 
 </script>

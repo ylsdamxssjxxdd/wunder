@@ -19,12 +19,12 @@
               v-model="form.name"
               class="messenger-agent-field"
               :placeholder="t('portal.agent.form.placeholder.name')"
-              :disabled="isReadonlyMode"
+              :disabled="isInteractionDisabled"
             />
             <button
               class="messenger-agent-avatar-trigger"
               type="button"
-              :disabled="isReadonlyMode"
+              :disabled="isInteractionDisabled"
               :title="t('portal.agent.avatarTitle')"
               :aria-label="t('portal.agent.avatarTitle')"
               @click.prevent="openAvatarDialog"
@@ -34,6 +34,7 @@
                   v-if="agentAvatarPreviewImageUrl"
                   class="messenger-settings-profile-avatar-image"
                   :src="agentAvatarPreviewImageUrl"
+                  decoding="async"
                   alt=""
                 />
                 <span v-else>{{ agentAvatarInitial }}</span>
@@ -47,7 +48,7 @@
             v-model="form.description"
             class="messenger-agent-field"
             :placeholder="t('portal.agent.form.placeholder.greeting')"
-            :disabled="isReadonlyMode"
+            :disabled="isInteractionDisabled"
           />
         </el-form-item>
         <el-form-item :label="t('portal.agent.form.extraPrompt')" class="messenger-agent-form-item">
@@ -57,7 +58,7 @@
             type="textarea"
             :rows="6"
             :placeholder="t('portal.agent.form.placeholder.extraPrompt')"
-            :disabled="isReadonlyMode"
+            :disabled="isInteractionDisabled"
           />
         </el-form-item>
         <el-form-item :label="t('portal.agent.form.tools')" class="messenger-agent-form-item messenger-agent-form-item--tools">
@@ -71,7 +72,7 @@
               v-else
               v-model="form.tool_names"
               class="messenger-tool-groups"
-              :disabled="isReadonlyMode"
+              :disabled="isInteractionDisabled"
             >
               <div v-for="section in toolSections" :key="section.key" class="messenger-tool-section">
                 <div class="messenger-tool-section-title">{{ section.label }}</div>
@@ -83,7 +84,7 @@
                     <button
                       class="messenger-tool-group-toggle"
                       type="button"
-                      :disabled="isReadonlyMode"
+                      :disabled="isInteractionDisabled"
                       @click.prevent="toggleGroup(group)"
                     >
                       {{
@@ -133,7 +134,7 @@
                   v-model="form.group"
                   :groups="beeroomGroupOptions"
                   :allow-create="false"
-                  :disabled="isReadonlyMode"
+                  :disabled="isInteractionDisabled"
                 />
               </div>
             </div>
@@ -143,7 +144,7 @@
                 <el-select
                   v-model="form.model_name"
                   class="messenger-agent-base-select"
-                  :disabled="isReadonlyMode || modelLoading"
+                  :disabled="isInteractionDisabled || modelLoading"
                 >
                   <el-option
                     :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })"
@@ -164,7 +165,7 @@
                 <el-select
                   v-model="form.sandbox_container_id"
                   class="messenger-agent-base-select"
-                  :disabled="isReadonlyMode"
+                  :disabled="isInteractionDisabled"
                 >
                   <el-option
                     v-for="id in sandboxContainerOptions"
@@ -181,7 +182,7 @@
                 <el-select
                   v-model="form.approval_mode"
                   class="messenger-agent-base-select"
-                  :disabled="isReadonlyMode"
+                  :disabled="isInteractionDisabled"
                 >
                   <el-option
                     v-for="item in approvalModeOptions"
@@ -199,7 +200,7 @@
             <div class="messenger-agent-section-head">
               <span>{{ t('portal.agent.form.presetQuestions') }}</span>
               <button
-                v-if="!isReadonlyMode"
+                v-if="!isInteractionDisabled"
                 class="messenger-agent-icon-btn"
                 type="button"
                 :title="t('portal.agent.presetQuestions.add')"
@@ -213,7 +214,7 @@
           <AgentPresetQuestionsField
             ref="presetQuestionsFieldRef"
             v-model="form.preset_questions"
-            :readonly="isReadonlyMode"
+            :readonly="isInteractionDisabled"
           />
         </el-form-item>
       </el-form>
@@ -234,6 +235,7 @@
                 v-if="avatarDialogImageUrl"
                 class="messenger-settings-profile-avatar-image"
                 :src="avatarDialogImageUrl"
+                decoding="async"
                 alt=""
               />
               <span v-else>{{ agentAvatarInitial }}</span>
@@ -256,6 +258,8 @@
                 v-if="item.image"
                 class="messenger-settings-avatar-option-image"
                 :src="item.image"
+                loading="lazy"
+                decoding="async"
                 alt=""
               />
               <span v-else>{{ agentAvatarInitial }}</span>
@@ -338,7 +342,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 
 import { listAgentModels } from '@/api/agents';
@@ -372,7 +376,7 @@ import {
 } from '@/utils/beeroomGroupDraft';
 import {
   AGENT_AVATAR_COLORS,
-  AGENT_AVATAR_IMAGE_OPTIONS,
+  AGENT_AVATAR_IMAGE_KEYS,
   AGENT_AVATAR_OPTION_KEYS,
   DEFAULT_AGENT_AVATAR_IMAGE_KEY,
   resolveAgentAvatarImageByKey
@@ -459,6 +463,7 @@ const props = defineProps({
 
 const emit = defineEmits<{
   saved: [agentId: string];
+  'delete-start': [agentId: string];
   deleted: [agentId: string];
   'focus-consumed': [target: string];
 }>();
@@ -490,9 +495,11 @@ const isDefaultAgentAlias = (value: string): boolean => {
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.value));
 const isReadonlyMode = computed(() => Boolean(props.readonly));
+const deleting = ref(false);
+const isInteractionDisabled = computed(() => isReadonlyMode.value || deleting.value);
 const dependencyNoticeKey = computed(() => `agent:${normalizedAgentId.value || '__default__'}`);
 const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
-const canEdit = computed(() => !isReadonlyMode.value && Boolean(normalizedAgentId.value));
+const canEdit = computed(() => !isInteractionDisabled.value && Boolean(normalizedAgentId.value));
 
 const form = reactive({
   name: '',
@@ -539,6 +546,22 @@ let lastHandledFocusToken = 0;
 let focusAnimationFrame = 0;
 let stopUserToolsUpdatedListener: (() => void) | null = null;
 let stopUnsavedGuard: (() => void) | null = null;
+let deleteLoading: ReturnType<typeof ElLoading.service> | null = null;
+
+const openDeleteLoading = () => {
+  if (deleteLoading) return;
+  deleteLoading = ElLoading.service({
+    lock: true,
+    fullscreen: true,
+    text: t('portal.agent.deleting'),
+    background: 'rgba(15, 23, 42, 0.22)'
+  });
+};
+
+const closeDeleteLoading = () => {
+  deleteLoading?.close();
+  deleteLoading = null;
+};
 
 const nextAgentLoadRequestId = (): number => {
   latestAgentLoadRequestId += 1;
@@ -660,13 +683,35 @@ const normalizeAgentAvatarName = (value: unknown): string => {
 
 const normalizeAgentAvatarColor = (value: unknown): string => normalizeAvatarColor(value || DEFAULT_AVATAR_COLOR);
 
-const avatarOptions = computed<ProfileAvatarOption[]>(() => [
-  {
-    key: 'initial',
-    label: t('portal.agent.avatar.icon.initial')
-  },
-  ...AGENT_AVATAR_IMAGE_OPTIONS
-]);
+const buildAgentAvatarOptionLabel = (key: string): string => {
+  const match = String(key || '').trim().match(/^avatar-(\d{3})$/);
+  if (match) {
+    return `Agent Avatar ${match[1]}`;
+  }
+  return `Agent Avatar ${String(key || '').trim()}`;
+};
+
+const avatarCatalogReady = computed(() => avatarDialogVisible.value);
+const avatarOptions = computed<ProfileAvatarOption[]>(() =>
+  avatarCatalogReady.value
+    ? [
+        {
+          key: 'initial',
+          label: t('portal.agent.avatar.icon.initial')
+        },
+        ...AGENT_AVATAR_IMAGE_KEYS.map((key) => ({
+          key,
+          label: buildAgentAvatarOptionLabel(key),
+          image: resolveAgentAvatarImageByKey(key)
+        }))
+      ]
+    : [
+        {
+          key: 'initial',
+          label: t('portal.agent.avatar.icon.initial')
+        }
+      ]
+);
 
 const resolveAvatarOptionImage = (key: unknown): string =>
   resolveAgentAvatarImageByKey(normalizeAgentAvatarName(key));
@@ -709,7 +754,11 @@ const avatarColorOptions = computed<AvatarColorOption[]>(() =>
 
 const resolveAvatarPageByKey = (key: string): number => {
   const normalized = normalizeAgentAvatarName(key);
-  const index = avatarOptions.value.findIndex((item) => item.key === normalized);
+  if (normalized === 'initial') {
+    return 1;
+  }
+  const imageIndex = AGENT_AVATAR_IMAGE_KEYS.findIndex((item) => item === normalized);
+  const index = imageIndex >= 0 ? imageIndex + 1 : -1;
   if (index < 0) return 1;
   return Math.floor(index / AVATAR_PAGE_SIZE) + 1;
 };
@@ -772,7 +821,7 @@ const markFormClean = (): void => {
 };
 
 const addPresetQuestion = () => {
-  if (isReadonlyMode.value) {
+  if (isInteractionDisabled.value) {
     return;
   }
   presetQuestionsFieldRef.value?.addQuestion();
@@ -800,6 +849,9 @@ watch(avatarDialogIcon, (value) => {
 });
 
 const confirmDiscardChanges = async (): Promise<boolean> => {
+  if (deleting.value) {
+    return false;
+  }
   if (!hasUnsavedChanges.value) {
     return true;
   }
@@ -928,7 +980,7 @@ const isGroupFullSelected = (group: AgentToolGroup<ToolOption>): boolean => {
 };
 
 const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
-  if (isReadonlyMode.value) return;
+  if (isInteractionDisabled.value) return;
   const selected = new Set(form.tool_names);
   if (isGroupFullSelected(group)) {
     group.options.forEach((option) => selected.delete(option.value));
@@ -1097,7 +1149,7 @@ const exportWorkerCard = () => {
 };
 
 const deleteAgent = async () => {
-  if (!canEdit.value || isDefaultAgent.value) return;
+  if (!canEdit.value || isDefaultAgent.value || deleting.value) return;
   const targetName = String(form.name || normalizedAgentId.value || '').trim();
   try {
     await ElMessageBox.confirm(t('portal.agent.deleteConfirm', { name: targetName }), t('common.notice'), {
@@ -1108,12 +1160,18 @@ const deleteAgent = async () => {
   } catch {
     return;
   }
+  deleting.value = true;
+  openDeleteLoading();
+  emit('delete-start', normalizedAgentId.value);
   try {
     await agentStore.deleteAgent(normalizedAgentId.value);
     ElMessage.success(t('portal.agent.deleteSuccess'));
     emit('deleted', normalizedAgentId.value);
   } catch (error) {
     showApiError(error, t('portal.agent.deleteFailed'));
+  } finally {
+    closeDeleteLoading();
+    deleting.value = false;
   }
 };
 
@@ -1192,6 +1250,7 @@ onBeforeUnmount(() => {
     stopUserToolsUpdatedListener();
     stopUserToolsUpdatedListener = null;
   }
+  closeDeleteLoading();
   clearFocusAnimationFrame();
 });
 </script>

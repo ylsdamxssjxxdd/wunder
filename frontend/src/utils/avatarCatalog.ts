@@ -1,40 +1,28 @@
-export type ProfileAvatarImageOption = {
-  key: string;
-  image: string;
-  label: string;
-};
-
 const PROFILE_AVATAR_IMAGE_FILES = import.meta.glob('../assets/qq-avatars/avatar-????.jpg', {
   eager: true,
   import: 'default'
 }) as Record<string, string>;
 
-export const PROFILE_AVATAR_IMAGE_OPTIONS: ProfileAvatarImageOption[] = Object.entries(
-  PROFILE_AVATAR_IMAGE_FILES
-)
+const PROFILE_AVATAR_IMAGE_ENTRIES = Object.entries(PROFILE_AVATAR_IMAGE_FILES)
   .map(([path, image]) => {
     const fileName = path.split('/').pop() || '';
     const stem = fileName.replace(/\.jpg$/i, '').trim();
-    const numericPart = stem.replace(/^avatar-/, '').trim();
-    const sequence = Number.parseInt(numericPart, 10);
-    const label = Number.isFinite(sequence)
-      ? `QQ Avatar ${String(sequence).padStart(4, '0')}`
-      : `QQ Avatar ${stem}`;
     return {
       key: `qq-${stem}`,
-      image,
-      label
+      image
     };
   })
   .sort((left, right) => left.key.localeCompare(right.key, 'en', { numeric: true, sensitivity: 'base' }));
 
+export const PROFILE_AVATAR_IMAGE_KEYS = PROFILE_AVATAR_IMAGE_ENTRIES.map((item) => item.key);
+
 export const PROFILE_AVATAR_IMAGE_MAP = new Map(
-  PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => [item.key, item.image])
+  PROFILE_AVATAR_IMAGE_ENTRIES.map((item) => [item.key, item.image])
 );
 
 export const PROFILE_AVATAR_OPTION_KEYS = new Set<string>([
   'initial',
-  ...PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => item.key)
+  ...PROFILE_AVATAR_IMAGE_KEYS
 ]);
 
 export const PROFILE_AVATAR_COLORS = [
@@ -54,7 +42,7 @@ export const PROFILE_AVATAR_COLORS = [
 
 export const DEFAULT_PROFILE_AVATAR_IMAGE_KEY = PROFILE_AVATAR_IMAGE_MAP.has('qq-avatar-0119')
   ? 'qq-avatar-0119'
-  : PROFILE_AVATAR_IMAGE_OPTIONS[0]?.key || 'initial';
+  : PROFILE_AVATAR_IMAGE_KEYS[0] || 'initial';
 
 export const resolveProfileAvatarImageByKey = (key: unknown): string =>
   PROFILE_AVATAR_IMAGE_MAP.get(String(key || '').trim()) || '';
