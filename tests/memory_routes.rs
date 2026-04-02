@@ -112,7 +112,15 @@ where
 }
 
 async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
+    build_test_context_with_mock_llm_and_tool_mode(username, "tool_call").await
+}
+
+async fn build_test_context_with_mock_llm_and_tool_mode(
+    username: &str,
+    tool_call_mode: &str,
+) -> TestContext {
     let (base_url, mock_llm_state) = spawn_mock_llm_server().await;
+    let tool_call_mode = tool_call_mode.to_string();
     let mut context = build_test_context_with_config(username, |config| {
         config.llm.default = "mock-auto-memory".to_string();
         config.llm.models.insert(
@@ -136,7 +144,7 @@ async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
                 stream_include_usage: Some(false),
                 history_compaction_ratio: None,
                 history_compaction_reset: None,
-                tool_call_mode: Some("tool_call".to_string()),
+                tool_call_mode: Some(tool_call_mode.clone()),
                 reasoning_effort: None,
                 model_type: None,
                 stop: None,
@@ -656,7 +664,12 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_prompt_and_runtime_keep_frozen_agent_tool_baseline_after_agent_edit() {
-    let context = build_test_context_with_mock_llm("frozen_tool_baseline_user").await;
+    let context =
+        build_test_context_with_mock_llm_and_tool_mode(
+            "frozen_tool_baseline_user",
+            "function_call",
+        )
+        .await;
 
     let (status, created_agent) = send_json(
         &context.app,

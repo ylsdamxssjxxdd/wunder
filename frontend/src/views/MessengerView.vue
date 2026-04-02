@@ -1815,6 +1815,7 @@ const agentPromptPreviewMemoryMode = ref<'none' | 'pending' | 'frozen'>('none');
 const agentPromptPreviewToolingMode = ref('');
 const agentPromptPreviewToolingContent = ref('');
 const agentPromptPreviewToolingItems = ref<PromptToolingPreviewItem[]>([]);
+const agentPromptPreviewSelectedNames = ref<string[] | null>(null);
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -2676,6 +2677,10 @@ watch(
   { immediate: true }
 );
 
+watch([() => chatStore.activeSessionId, () => activeAgentId.value], () => {
+  agentPromptPreviewSelectedNames.value = null;
+});
+
 const activeAgentPromptPreviewText = computed(() =>
   String(agentPromptPreviewContent.value || '').trim() || t('chat.systemPrompt.empty')
 );
@@ -3114,6 +3119,15 @@ const resolveAgentConfiguredAbilityNames = (agent: Record<string, unknown> | nul
   return [];
 };
 
+const extractPromptPreviewSelectedAbilityNames = (payload: unknown): string[] => {
+  const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  const tooling =
+    source.tooling_preview && typeof source.tooling_preview === 'object'
+      ? (source.tooling_preview as Record<string, unknown>)
+      : {};
+  return normalizeAbilityNameList(tooling.selected_tool_names);
+};
+
 const filterAbilitySummaryByNames = (
   summary: Record<string, unknown>,
   selectedNames: Set<string>
@@ -3163,6 +3177,16 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
   if (!summary) return null;
   const allowedSet = buildAbilityAllowedNameSet(summary);
   if (!allowedSet.size) return summary;
+  if (agentPromptPreviewSelectedNames.value !== null) {
+    const selectedNames = new Set<string>();
+    agentPromptPreviewSelectedNames.value.forEach((item) => {
+      const name = String(item || '').trim();
+      if (name && allowedSet.has(name)) {
+        selectedNames.add(name);
+      }
+    });
+    return filterAbilitySummaryByNames(summary, selectedNames);
+  }
   const activeAgentProfile =
     activeAgentId.value === DEFAULT_AGENT_KEY
       ? (defaultAgentProfile.value as Record<string, unknown> | null)
@@ -7968,6 +7992,67 @@ const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
   }
 };
 
+const fetchActiveAgentPromptPreviewPayload = async (): Promise<Record<string, unknown>> => {
+  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
+  if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
+    const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
+    if (profile) {
+      activeAgentDetailProfile.value = profile as Record<string, unknown>;
+    }
+  } else if (currentAgentId === DEFAULT_AGENT_KEY) {
+    await loadDefaultAgentProfile().catch(() => null);
+  }
+  const session = activeAgentSession.value as Record<string, unknown> | null;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  const sourceAgentId = normalizeAgentId(
+    session?.agent_id || chatStore.draftAgentId || activeAgentId.value
+  );
+  const agentId = sourceAgentId === DEFAULT_AGENT_KEY ? '' : sourceAgentId;
+  const previewAgentProfile =
+    sourceAgentId === DEFAULT_AGENT_KEY
+      ? (defaultAgentProfile.value as Record<string, unknown> | null)
+      : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
+          (activeAgent.value as Record<string, unknown> | null));
+  const previewAgentDefaults = normalizeAbilityNameList(
+    resolveAgentConfiguredAbilityNames(previewAgentProfile)
+  );
+  const overrides =
+    previewAgentDefaults.length > 0
+      ? previewAgentDefaults
+      : [AGENT_TOOL_OVERRIDE_NONE];
+  const payload =
+    sessionId
+      ? {
+          ...(agentId ? { agent_id: agentId } : {})
+        }
+      : {
+          ...(agentId ? { agent_id: agentId } : {}),
+          ...(overrides ? { tool_overrides: overrides } : {})
+        };
+  const promptResult = sessionId
+    ? await fetchSessionSystemPrompt(sessionId, payload)
+    : await fetchRealtimeSystemPrompt(payload);
+  return (promptResult?.data?.data || {}) as Record<string, unknown>;
+};
+
+const syncAgentPromptPreviewSelectedNames = async (options: { force?: boolean } = {}) => {
+  if (agentPromptPreviewSelectedNames.value !== null && options.force !== true) {
+    return agentPromptPreviewSelectedNames.value;
+  }
+  try {
+    const promptPayload = await fetchActiveAgentPromptPreviewPayload();
+    agentPromptPreviewSelectedNames.value = extractPromptPreviewSelectedAbilityNames(promptPayload);
+    return agentPromptPreviewSelectedNames.value;
+  } catch {
+    agentPromptPreviewSelectedNames.value = null;
+    return null;
+  } finally {
+    if (agentAbilityTooltipVisible.value) {
+      await updateAgentAbilityTooltip();
+    }
+  }
+};
+
 const loadRightDockSkills = async (
   options: { force?: boolean; silent?: boolean } = {}
 ) => {
@@ -8143,6 +8228,7 @@ const handleRightDockSkillArchiveUpload = async (file: File) => {
 const handleAgentAbilityTooltipShow = () => {
   agentAbilityTooltipVisible.value = true;
   void loadAgentToolSummary({ force: true });
+  void syncAgentPromptPreviewSelectedNames({ force: true });
   void updateAgentAbilityTooltip();
 };
 
@@ -8158,50 +8244,11 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewToolingMode.value = '';
   agentPromptPreviewToolingContent.value = '';
   agentPromptPreviewToolingItems.value = [];
-  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
-  if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
-    const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
-    if (profile) {
-      activeAgentDetailProfile.value = profile as Record<string, unknown>;
-    }
-  } else if (currentAgentId === DEFAULT_AGENT_KEY) {
-    await loadDefaultAgentProfile().catch(() => null);
-  }
   const summaryPromise = loadAgentToolSummary({ force: true });
   try {
-    const session = activeAgentSession.value as Record<string, unknown> | null;
-    const sessionId = String(chatStore.activeSessionId || '').trim();
-    const sourceAgentId = normalizeAgentId(
-      session?.agent_id || chatStore.draftAgentId || activeAgentId.value
-    );
-    const agentId = sourceAgentId === DEFAULT_AGENT_KEY ? '' : sourceAgentId;
-    const previewAgentProfile =
-      sourceAgentId === DEFAULT_AGENT_KEY
-        ? (defaultAgentProfile.value as Record<string, unknown> | null)
-        : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
-            (activeAgent.value as Record<string, unknown> | null));
-    const previewAgentDefaults = normalizeAbilityNameList(
-      resolveAgentConfiguredAbilityNames(previewAgentProfile)
-    );
-    const overrides =
-      previewAgentDefaults.length > 0
-        ? previewAgentDefaults
-        : [AGENT_TOOL_OVERRIDE_NONE];
-    const payload =
-      sessionId
-        ? {
-            ...(agentId ? { agent_id: agentId } : {})
-          }
-        : {
-            ...(agentId ? { agent_id: agentId } : {}),
-            ...(overrides ? { tool_overrides: overrides } : {})
-          };
-    const promptRequest = sessionId
-      ? fetchSessionSystemPrompt(sessionId, payload)
-      : fetchRealtimeSystemPrompt(payload);
-    const promptResult = await promptRequest;
+    const promptPayload = await fetchActiveAgentPromptPreviewPayload();
     await summaryPromise;
-    const promptPayload = (promptResult?.data?.data || {}) as Record<string, unknown>;
+    agentPromptPreviewSelectedNames.value = extractPromptPreviewSelectedAbilityNames(promptPayload);
     agentPromptPreviewContent.value = String(promptPayload.prompt || '').replace(
       /<<WUNDER_HISTORY_MEMORY>>/g,
       ''
@@ -8215,6 +8262,7 @@ const openAgentPromptPreview = async () => {
     agentPromptPreviewToolingItems.value = toolingPreview.items;
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
+    agentPromptPreviewSelectedNames.value = null;
     agentPromptPreviewContent.value = '';
     agentPromptPreviewMemoryMode.value = 'none';
     agentPromptPreviewToolingMode.value = '';

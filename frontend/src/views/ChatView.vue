@@ -225,6 +225,15 @@
             @click="handleMessageClick"
             @scroll="handleMessageScroll"
           >
+            <button
+              v-if="showScrollTopButton"
+              class="chat-scroll-top-btn"
+              type="button"
+              :aria-label="t('chat.toTop')"
+              @click="jumpToMessageTop"
+            >
+              <i class="fa-solid fa-angles-up" aria-hidden="true"></i>
+            </button>
             <div v-if="messageInitialLoading" class="message-skeleton-list" aria-hidden="true">
               <div v-for="index in 4" :key="`message-skeleton-${index}`" class="message-skeleton-item"></div>
             </div>
@@ -412,7 +421,6 @@
                       <button
                         class="prompt-preview-btn"
                         type="button"
-                        :title="t('chat.promptPreview')"
                         :aria-label="t('chat.promptPreview')"
                         :disabled="promptPreviewLoading"
                         @click="openPromptPreview"
@@ -828,6 +836,7 @@ const inquirySelection = ref([]);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
 const messagesContainerRef = ref(null);
+const showScrollTopButton = ref(false);
 // System prompt preview dialog state.
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
@@ -835,6 +844,7 @@ const promptPreviewContent = ref('');
 const promptPreviewToolingMode = ref('');
 const promptPreviewToolingContent = ref('');
 const promptPreviewToolingItems = ref<PromptToolingPreviewItem[]>([]);
+const promptPreviewSelectedNames = ref<string[] | null>(null);
 const promptPreviewView = ref<'prompt' | 'tooling'>('prompt');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
@@ -1010,6 +1020,15 @@ function applyToolOverridesToSummary(summary, overrides = [], agentDefaults = []
   return filterSummaryByNames(summary, effectiveSet);
 }
 
+const extractPromptPreviewSelectedToolNames = (payload) => {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const tooling =
+    source.tooling_preview && typeof source.tooling_preview === 'object'
+      ? source.tooling_preview
+      : {};
+  return normalizeToolNameList(tooling.selected_tool_names);
+};
+
 const activeSession = computed(
   () => chatStore.sessions.find((item) => item.id === chatStore.activeSessionId) || null
 );
@@ -1024,6 +1043,9 @@ const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
 const defaultAgent = computed(() => agentStore.agentMap[DEFAULT_AGENT_KEY] || null);
+watch([() => chatStore.activeSessionId, activeAgentId], () => {
+  promptPreviewSelectedNames.value = null;
+});
 const activeAgentPresetQuestions = computed(() => {
   if (!activeAgentId.value) {
     return normalizeAgentPresetQuestions((defaultAgent.value as Record<string, unknown> | null)?.preset_questions);
@@ -1080,6 +1102,12 @@ const greetingOverride = computed(() => {
   return desc;
 });
 const effectiveToolSummary = computed(() => {
+  if (promptPreviewSelectedNames.value !== null) {
+    return filterSummaryByNames(
+      promptToolSummary.value,
+      new Set(promptPreviewSelectedNames.value)
+    );
+  }
   const activeProfile = activeAgentId.value
     ? (activeAgent.value as Record<string, unknown> | null)
     : (defaultAgent.value as Record<string, unknown> | null);
@@ -1202,9 +1230,31 @@ let pendingEnterBottomScroll = true;
 const MESSAGE_AUTOLOAD_TOP_PX = 32;
 const MESSAGE_AUTOLOAD_COOLDOWN_MS = 1200;
 const MESSAGE_AUTOLOAD_SCROLLABLE_PADDING = 8;
+const MESSAGE_SCROLL_TOP_BUTTON_PX = 88;
 let lastMessageScrollTop = 0;
 let lastMessageAutoLoadAt = 0;
 let messageAutoLoadPending = false;
+
+const updateMessageScrollUi = (container = messagesContainerRef.value as HTMLElement | null) => {
+  if (!container) {
+    showScrollTopButton.value = false;
+    return;
+  }
+  const scrollTop = Math.max(0, container.scrollTop || 0);
+  const scrollableHeight = (container.scrollHeight || 0) - (container.clientHeight || 0);
+  showScrollTopButton.value =
+    scrollableHeight > MESSAGE_AUTOLOAD_SCROLLABLE_PADDING && scrollTop > MESSAGE_SCROLL_TOP_BUTTON_PX;
+};
+
+const scheduleMessageScrollUiRefresh = () => {
+  if (typeof window === 'undefined') {
+    updateMessageScrollUi();
+    return;
+  }
+  window.requestAnimationFrame(() => {
+    updateMessageScrollUi();
+  });
+};
 
 const resolveInitialSessionId = (agentId, sourceSessions = chatStore.sessions) => {
   const normalizedAgentId = String(agentId || '').trim();
@@ -2520,6 +2570,7 @@ const handleLoadOlderHistory = async (autoOrEvent: boolean | Event = false) => {
     const nextHeight = container.scrollHeight || 0;
     const delta = nextHeight - previousHeight;
     container.scrollTop = previousScrollTop + delta;
+    updateMessageScrollUi(container);
   }
 };
 
@@ -2618,6 +2669,7 @@ const handleMessageScroll = async (event) => {
   const scrollTop = container.scrollTop || 0;
   const previousTop = lastMessageScrollTop;
   lastMessageScrollTop = scrollTop;
+  updateMessageScrollUi(container);
   if (messageInitialLoading.value || historyLoading.value || !canLoadMoreHistory.value) {
     return;
   }
@@ -2830,10 +2882,56 @@ const loadToolSummary = async () => {
   }
 };
 
+const fetchPromptPreviewPayload = async () => {
+  const normalizedAgentId = String(
+    activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || DEFAULT_AGENT_KEY
+  ).trim();
+  await agentStore.getAgent(normalizedAgentId || DEFAULT_AGENT_KEY, { force: true }).catch(() => null);
+  const previewAgentProfile = activeAgentId.value
+    ? (activeAgent.value as Record<string, unknown> | null)
+    : (defaultAgent.value as Record<string, unknown> | null);
+  const previewAgentDefaults = resolveAgentConfiguredToolNames(previewAgentProfile || {});
+  const overrides = previewAgentDefaults.length > 0 ? previewAgentDefaults : [TOOL_OVERRIDE_NONE];
+  const agentId =
+    activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
+  const requestPayload = chatStore.activeSessionId
+    ? {
+        ...(agentId ? { agent_id: agentId } : {})
+      }
+    : {
+        ...(agentId ? { agent_id: agentId } : {}),
+        ...(overrides ? { tool_overrides: overrides } : {})
+      };
+  const promptRequest = chatStore.activeSessionId
+    ? fetchSessionSystemPrompt(chatStore.activeSessionId, requestPayload)
+    : fetchRealtimeSystemPrompt(requestPayload);
+  const promptResult = await promptRequest;
+  return (promptResult?.data?.data || {}) as Record<string, unknown>;
+};
+
+const syncPromptPreviewSelectedNames = async (options: { force?: boolean } = {}) => {
+  if (promptPreviewSelectedNames.value !== null && options.force !== true) {
+    return promptPreviewSelectedNames.value;
+  }
+  try {
+    const payload = await fetchPromptPreviewPayload();
+    promptPreviewSelectedNames.value = extractPromptPreviewSelectedToolNames(payload);
+    return promptPreviewSelectedNames.value;
+  } catch {
+    promptPreviewSelectedNames.value = null;
+    return null;
+  } finally {
+    if (abilityTooltipVisible.value) {
+      await updateAbilityTooltip();
+    }
+  }
+};
+
 const handleAbilityTooltipShow = () => {
   abilityTooltipVisible.value = true;
-  loadToolSummary();
-  updateAbilityTooltip();
+  void loadToolSummary();
+  void syncPromptPreviewSelectedNames({ force: true });
+  void updateAbilityTooltip();
 };
 
 const handleAbilityTooltipHide = () => {
@@ -2849,35 +2947,13 @@ const openPromptPreview = async () => {
   promptPreviewToolingContent.value = '';
   promptPreviewToolingItems.value = [];
   promptPreviewView.value = 'prompt';
-  const normalizedAgentId = String(
-    activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || DEFAULT_AGENT_KEY
-  ).trim();
-  await agentStore.getAgent(normalizedAgentId || DEFAULT_AGENT_KEY, { force: true }).catch(() => null);
   const toolSummaryPromise = loadToolSummary();
   try {
-    const previewAgentProfile = activeAgentId.value
-      ? (activeAgent.value as Record<string, unknown> | null)
-      : (defaultAgent.value as Record<string, unknown> | null);
-    const previewAgentDefaults = resolveAgentConfiguredToolNames(previewAgentProfile || {});
-    const overrides =
-      previewAgentDefaults.length > 0 ? previewAgentDefaults : [TOOL_OVERRIDE_NONE];
-    const agentId =
-      activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
-    const requestPayload = chatStore.activeSessionId
-      ? {
-          ...(agentId ? { agent_id: agentId } : {})
-        }
-      : {
-          ...(agentId ? { agent_id: agentId } : {}),
-          ...(overrides ? { tool_overrides: overrides } : {})
-        };
-    const promptRequest = chatStore.activeSessionId
-      ? fetchSessionSystemPrompt(chatStore.activeSessionId, requestPayload)
-      : fetchRealtimeSystemPrompt(requestPayload);
-    const promptResult = await promptRequest;
+    const responsePayload = await fetchPromptPreviewPayload();
     await toolSummaryPromise;
-    const responsePayload = promptResult?.data?.data || {};
-    promptPreviewContent.value = responsePayload.prompt || '';
+    promptPreviewSelectedNames.value = extractPromptPreviewSelectedToolNames(responsePayload);
+    promptPreviewContent.value =
+      typeof responsePayload.prompt === 'string' ? responsePayload.prompt : '';
     const toolingPreview = extractPromptToolingPreview(responsePayload);
     promptPreviewToolingMode.value = toolingPreview.mode;
     promptPreviewToolingContent.value = toolingPreview.text;
@@ -2885,6 +2961,7 @@ const openPromptPreview = async () => {
     promptPreviewView.value = 'prompt';
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
+    promptPreviewSelectedNames.value = null;
     promptPreviewContent.value = '';
     promptPreviewToolingMode.value = '';
     promptPreviewToolingContent.value = '';
@@ -3204,6 +3281,7 @@ const scrollMessagesToBottom = async () => {
     const container = messagesContainerRef.value;
     if (!container) return false;
     container.scrollTop = container.scrollHeight;
+    updateMessageScrollUi(container);
     return true;
   };
   const applied = applyBottomScroll();
@@ -3236,11 +3314,25 @@ const scrollLatestAssistantToCenter = async () => {
       const nextTop = container.scrollTop + targetCenter - container.clientHeight / 2;
       const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
       container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
+      updateMessageScrollUi(container);
     });
   };
 
+const jumpToMessageTop = async () => {
+  await nextTick();
+  const container = messagesContainerRef.value;
+  if (!container) return;
+  if (typeof container.scrollTo === 'function') {
+    container.scrollTo({ top: 0, behavior: 'smooth' });
+  } else {
+    container.scrollTop = 0;
+  }
+  scheduleMessageScrollUiRefresh();
+};
+
 onUpdated(() => {
   scheduleWorkspaceResourceHydration();
+  scheduleMessageScrollUiRefresh();
 });
 
 onMounted(async () => {
@@ -3248,6 +3340,7 @@ onMounted(async () => {
   await ensureEnterScrollToBottom();
   loadToolSummary();
   scheduleWorkspaceResourceHydration();
+  scheduleMessageScrollUiRefresh();
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
   updateCompactLayout();
   await nextTick();
@@ -3292,6 +3385,8 @@ watch(
       planExpanded.value = false;
       dismissedPlanMessages.value = new WeakSet();
       dismissedPlanVersion.value += 1;
+      showScrollTopButton.value = false;
+      scheduleMessageScrollUiRefresh();
       scheduleExternalSessionSync(false);
     }
   }
@@ -3323,6 +3418,7 @@ watch(
   () => chatStore.messages.length,
   (value) => {
     scheduleWorkspaceResourceHydration();
+    scheduleMessageScrollUiRefresh();
     if (value > 0) {
       void ensureEnterScrollToBottom();
     }
@@ -3342,6 +3438,7 @@ watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
+    scheduleMessageScrollUiRefresh();
   }
 );
 

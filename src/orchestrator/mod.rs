@@ -94,7 +94,6 @@ pub(crate) use error::OrchestratorError;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
-pub(crate) use prompt::merge_agent_prompt_with_thread_agents_snapshot;
 use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;

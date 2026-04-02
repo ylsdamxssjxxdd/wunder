@@ -4045,12 +4045,22 @@ const startSessionWatcher = (store, sessionId) => {
     const data = payload?.data ?? payload;
     const normalizedEventType = String(eventType || '').trim().toLowerCase();
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+      const previousThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
       const normalizedEventId = normalizeStreamEventId(eventId);
       if (normalizedEventId !== null) {
         updateRuntimeLastEventId(runtime, normalizedEventId);
         lastEventId = Math.max(lastEventId, normalizedEventId);
       }
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
+      const nextThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
+      const runtimeBecameBusy =
+        (nextThreadStatus === 'running' || isThreadRuntimeWaiting(nextThreadStatus)) &&
+        previousThreadStatus !== nextThreadStatus &&
+        previousThreadStatus !== 'running' &&
+        !isThreadRuntimeWaiting(previousThreadStatus);
+      if (normalizedEventType === 'thread_status' && runtimeBecameBusy) {
+        scheduleWatchReconcile(0);
+      }
       return;
     }
     if (

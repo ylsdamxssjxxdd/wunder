@@ -88,6 +88,7 @@ const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
 const CHANNEL_RUNTIME_LOG_CAPACITY: usize = 300;
 const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
 const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
+const CHANNEL_MODEL_ERROR_FALLBACK_TEXT: &str = "模型请求失败，请稍后重试。";
 const CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: &str = "_channel_display_question";
 const CHANNEL_COMPACTION_NOTICE_TEXT: &str = "上下文较长，正在整理对话上下文，请稍候。";
 const CHANNEL_APPROVAL_PROMPT: &str =
@@ -1161,9 +1162,9 @@ impl ChannelHub {
                 &session_info,
                 resolved_binding.as_ref(),
             )
-            .await?
+            .await
         {
-            ChannelModelResult::Answer(answer) => {
+            Ok(ChannelModelResult::Answer(answer)) => {
                 if !pending_files.is_empty() {
                     if let Err(err) = self.save_pending_channel_files(&message, &[]).await {
                         warn!(
@@ -1176,7 +1177,7 @@ impl ChannelHub {
                 }
                 answer
             }
-            ChannelModelResult::Busy => {
+            Ok(ChannelModelResult::Busy) => {
                 if let Some(task) = approval_task.as_ref() {
                     task.abort();
                 }
@@ -1187,6 +1188,20 @@ impl ChannelHub {
                         resolved_binding.as_ref(),
                         false,
                         Some(agent_display_name.as_str()),
+                        processing_ack_message_id.as_deref(),
+                    )
+                    .await;
+            }
+            Err(err) => {
+                if let Some(task) = approval_task.as_ref() {
+                    task.abort();
+                }
+                return self
+                    .respond_channel_model_error(
+                        &message,
+                        &session_info,
+                        resolved_binding.as_ref(),
+                        &err,
                         processing_ack_message_id.as_deref(),
                     )
                     .await;
@@ -1431,6 +1446,11 @@ impl ChannelHub {
                     .map(str::to_string);
             }
             created_at = chat_record.created_at;
+        }
+        if should_auto_title(&title) {
+            if let Some(auto_title) = build_session_title(message.text.as_deref()) {
+                title = auto_title;
+            }
         }
         let chat_record = ChatSessionRecord {
             session_id: session_id.clone(),
@@ -1899,6 +1919,67 @@ impl ChannelHub {
         )
         .await?;
         Ok(())
+    }
+
+    async fn respond_channel_model_error(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+        err: &anyhow::Error,
+        processing_ack_message_id: Option<&str>,
+    ) -> Result<ChannelInboundResult> {
+        let detail = format_channel_model_error_detail(err);
+        let reply = format_channel_model_error_reply(err);
+        warn!(
+            "channel model request failed: channel={}, account_id={}, session_id={}, error={detail}",
+            message.channel, message.account_id, session_info.session_id
+        );
+        self.monitor.record_event(
+            &session_info.session_id,
+            "channel_model_error",
+            &json!({
+                "channel": message.channel,
+                "account_id": message.account_id,
+                "message_id": message.message_id,
+                "error": detail.clone(),
+            }),
+        );
+        self.append_channel_chat(
+            &session_info.user_id,
+            &session_info.session_id,
+            "assistant",
+            &reply,
+        )
+        .await;
+        let mut extra_meta = json!({
+            "model_error": true,
+            "error_detail": detail.clone(),
+        });
+        if let Some(ack_message_id) = processing_ack_message_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(meta_obj) = extra_meta.as_object_mut() {
+                meta_obj.insert(
+                    "processing_ack_message_id".to_string(),
+                    Value::String(ack_message_id.to_string()),
+                );
+            }
+        }
+        let outbox_id = self
+            .enqueue_channel_text_reply(
+                message,
+                session_info,
+                resolved_binding,
+                &reply,
+                Some(extra_meta),
+            )
+            .await?;
+        Ok(ChannelInboundResult {
+            session_id: session_info.session_id.clone(),
+            outbox_id: Some(outbox_id),
+        })
     }
 
     async fn load_latest_assistant_message(
@@ -4894,6 +4975,50 @@ fn truncate_text(text: &str, max: usize) -> String {
     output
 }
 
+fn should_auto_title(title: &str) -> bool {
+    let cleaned = title.trim();
+    cleaned.is_empty()
+        || cleaned == "\u{65b0}\u{4f1a}\u{8bdd}"
+        || cleaned == "\u{672a}\u{547d}\u{540d}\u{4f1a}\u{8bdd}"
+        || cleaned.eq_ignore_ascii_case(DEFAULT_SESSION_TITLE)
+}
+
+fn build_session_title(content: Option<&str>) -> Option<String> {
+    let cleaned = content?.trim().replace('\n', " ");
+    if cleaned.is_empty() {
+        return None;
+    }
+    let mut output = cleaned;
+    if output.chars().count() > 20 {
+        output = output.chars().take(20).collect::<String>();
+        output.push_str("...");
+    }
+    Some(output)
+}
+
+fn normalize_channel_model_error_text(raw: &str) -> String {
+    let mut detail = raw.trim();
+    if let Some(stripped) = detail.strip_prefix("channel stream run failed:") {
+        detail = stripped.trim();
+    }
+    if detail.is_empty() {
+        return CHANNEL_MODEL_ERROR_FALLBACK_TEXT.to_string();
+    }
+    truncate_text(detail, 220)
+}
+
+fn format_channel_model_error_detail(err: &anyhow::Error) -> String {
+    normalize_channel_model_error_text(&err.to_string())
+}
+
+fn format_channel_model_error_reply(err: &anyhow::Error) -> String {
+    let detail = format_channel_model_error_detail(err);
+    if detail == CHANNEL_MODEL_ERROR_FALLBACK_TEXT {
+        return detail;
+    }
+    format!("模型请求失败：{detail}")
+}
+
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -5156,6 +5281,56 @@ mod tests {
             Some("压缩这张图")
         );
         assert!(merged.get("security").is_some());
+    }
+
+    #[test]
+    fn should_auto_title_accepts_channel_and_chat_placeholders() {
+        assert!(should_auto_title(""));
+        assert!(should_auto_title("\u{65b0}\u{4f1a}\u{8bdd}"));
+        assert!(should_auto_title("\u{672a}\u{547d}\u{540d}\u{4f1a}\u{8bdd}"));
+        assert!(should_auto_title(DEFAULT_SESSION_TITLE));
+        assert!(!should_auto_title("customer support"));
+    }
+
+    #[test]
+    fn build_session_title_uses_inbound_text_preview() {
+        assert_eq!(
+            build_session_title(Some("  first inbound title  ")),
+            Some("first inbound title".to_string())
+        );
+    }
+
+    #[test]
+    fn build_session_title_truncates_long_text() {
+        assert_eq!(
+            build_session_title(Some("12345678901234567890extra")),
+            Some("12345678901234567890...".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_channel_model_error_text_strips_internal_prefix() {
+        assert_eq!(
+            normalize_channel_model_error_text("channel stream run failed: upstream timeout"),
+            "upstream timeout"
+        );
+    }
+
+    #[test]
+    fn normalize_channel_model_error_text_falls_back_when_blank() {
+        assert_eq!(
+            normalize_channel_model_error_text("   "),
+            CHANNEL_MODEL_ERROR_FALLBACK_TEXT
+        );
+    }
+
+    #[test]
+    fn format_channel_model_error_reply_adds_user_facing_prefix() {
+        let err = anyhow!("channel stream run failed: provider unavailable");
+        assert_eq!(
+            format_channel_model_error_reply(&err),
+            "模型请求失败：provider unavailable"
+        );
     }
 
     #[test]

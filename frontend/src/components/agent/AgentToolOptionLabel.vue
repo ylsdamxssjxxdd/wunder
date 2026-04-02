@@ -59,6 +59,8 @@ const titleText = computed(() => {
 
 <style scoped>
 .agent-tool-option-label {
+  --agent-tool-option-name-color: var(--el-text-color-primary, #1f2937);
+  --agent-tool-option-desc-color: var(--el-text-color-secondary, #64748b);
   width: 100%;
   min-width: 0;
   display: flex;
@@ -86,7 +88,7 @@ const titleText = computed(() => {
 }
 
 .agent-tool-option-name {
-  color: var(--el-text-color-primary, #1f2937);
+  color: var(--agent-tool-option-name-color);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
@@ -94,7 +96,7 @@ const titleText = computed(() => {
 }
 
 .agent-tool-option-desc {
-  color: var(--el-text-color-secondary, #64748b);
+  color: var(--agent-tool-option-desc-color);
   font-size: 11px;
   line-height: 1.45;
   -webkit-line-clamp: 2;

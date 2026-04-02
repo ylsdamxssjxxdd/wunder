@@ -21,6 +21,39 @@
   min-height: 0;
 }
 
+.chat-shell .chat-scroll-top-btn {
+  position: sticky;
+  top: 12px;
+  align-self: flex-end;
+  width: 36px;
+  height: 36px;
+  margin-bottom: -44px;
+  border: 1px solid var(--chat-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--chat-card), var(--chat-panel));
+  color: var(--chat-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 2;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.2);
+  transition:
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.chat-shell .chat-scroll-top-btn:hover,
+.chat-shell .chat-scroll-top-btn:focus-visible {
+  border-color: rgba(var(--chat-primary-rgb), 0.56);
+  color: var(--chat-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 30px rgba(15, 23, 42, 0.24);
+}
+
 .chat-shell .message-load-more {
   display: flex;
   justify-content: center;
