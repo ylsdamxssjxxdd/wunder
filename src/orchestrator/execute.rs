@@ -1674,6 +1674,8 @@ impl Orchestrator {
                     "input_tokens": round_usage.input,
                     "output_tokens": round_usage.output,
                     "total_tokens": round_usage.total,
+                    "context_occupancy_tokens": round_usage.total,
+                    "request_consumed_tokens": round_usage.total,
                 });
                 if let Value::Object(ref mut map) = usage_payload {
                     request_round.insert_into(map);

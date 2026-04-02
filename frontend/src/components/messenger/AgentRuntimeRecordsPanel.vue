@@ -16,7 +16,9 @@
         </article>
         <article class="messenger-agent-runtime-card">
           <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.tokens') }}</div>
-          <div class="messenger-agent-runtime-value">{{ formatBilledTokens(summary.billed_tokens) }}</div>
+          <div class="messenger-agent-runtime-value">
+            {{ formatBilledTokens(summary.consumed_tokens ?? summary.billed_tokens) }}
+          </div>
         </article>
         <article class="messenger-agent-runtime-card">
           <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.quota') }}</div>
@@ -95,6 +97,7 @@ type RuntimeDailyRecord = {
   date: string;
   runtime_seconds: number;
   billed_tokens: number;
+  consumed_tokens?: number;
   quota_consumed: number;
   tool_calls: number;
 };
@@ -115,6 +118,7 @@ type RuntimeHeatmapTile = {
 type RuntimeSummary = {
   runtime_seconds: number;
   billed_tokens: number;
+  consumed_tokens?: number;
   quota_consumed: number;
   tool_calls: number;
 };
@@ -245,7 +249,8 @@ const dailyRows = computed<RuntimeDailyRecord[]>(() => {
   return (source || []).map((item) => ({
     date: String(item?.date || ''),
     runtime_seconds: toSafeNumber(item?.runtime_seconds),
-    billed_tokens: Math.max(0, toSafeNumber(item?.billed_tokens)),
+    billed_tokens: Math.max(0, toSafeNumber(item?.consumed_tokens ?? item?.billed_tokens)),
+    consumed_tokens: Math.max(0, toSafeNumber(item?.consumed_tokens ?? item?.billed_tokens)),
     quota_consumed: Math.max(0, toSafeNumber(item?.quota_consumed)),
     tool_calls: Math.max(0, toSafeNumber(item?.tool_calls))
   }));
@@ -264,7 +269,8 @@ const summary = computed<RuntimeSummary>(() => {
   if (source) {
     return {
       runtime_seconds: Math.max(0, toSafeNumber(source.runtime_seconds)),
-      billed_tokens: Math.max(0, toSafeNumber(source.billed_tokens)),
+      billed_tokens: Math.max(0, toSafeNumber(source.consumed_tokens ?? source.billed_tokens)),
+      consumed_tokens: Math.max(0, toSafeNumber(source.consumed_tokens ?? source.billed_tokens)),
       quota_consumed: Math.max(0, toSafeNumber(source.quota_consumed)),
       tool_calls: Math.max(0, toSafeNumber(source.tool_calls))
     };
@@ -273,10 +279,11 @@ const summary = computed<RuntimeSummary>(() => {
     (acc, item) => ({
       runtime_seconds: acc.runtime_seconds + item.runtime_seconds,
       billed_tokens: acc.billed_tokens + item.billed_tokens,
+      consumed_tokens: (acc.consumed_tokens || 0) + (item.consumed_tokens || 0),
       quota_consumed: acc.quota_consumed + item.quota_consumed,
       tool_calls: acc.tool_calls + item.tool_calls
     }),
-    { runtime_seconds: 0, billed_tokens: 0, quota_consumed: 0, tool_calls: 0 }
+    { runtime_seconds: 0, billed_tokens: 0, consumed_tokens: 0, quota_consumed: 0, tool_calls: 0 }
   );
 });
 

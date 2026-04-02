@@ -56,6 +56,12 @@ Wunder 里最容易被误读的一件事，就是把 token 统计直接当成“
 - `round_usage.total_tokens` 表示**单轮请求完成后的实际上下文占用**，当前作为上下文占用的权威口径。
 - `token_usage.total_tokens` 表示**单次模型调用的 usage 明细**；当一轮只发生一次模型调用时，它通常会和 `round_usage.total_tokens` 一致。
 
+如果你在做新接入，推荐直接消费这些显式别名：
+
+- `context_occupancy_tokens`：当前上下文占用
+- `request_consumed_tokens`：单次请求消耗
+- `consumed_tokens`：聚合接口里的累计消耗
+
 而 `context_usage` 这类字段更偏过程估算，适合观测，不适合当唯一准绳。
 
 ## 额度和 Token 占用不是一回事

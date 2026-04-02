@@ -341,6 +341,7 @@ import {
   waitWeixinQrLogin,
   writeChannelRuntimeProbe
 } from '@/api/channels';
+import { getDesktopLocalToken, isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -1552,6 +1553,12 @@ const buildWeixinQrRenderUrl = (rawValue: unknown, apiBaseRaw?: unknown): string
     return '';
   }
   const params = new URLSearchParams({ text });
+  if (isDesktopModeEnabled()) {
+    const desktopToken = getDesktopLocalToken();
+    if (desktopToken) {
+      params.set('access_token', desktopToken);
+    }
+  }
   const apiBase = trimmedText(apiBaseRaw);
   if (apiBase) {
     params.set('api_base', apiBase);

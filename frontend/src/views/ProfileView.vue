@@ -53,6 +53,7 @@
               <div class="profile-stat-value">{{ formatK(tokenUsageTotal) }}</div>
             </div>
           </div>
+          <div class="profile-section-desc">{{ t('profile.stats.tokenNote') }}</div>
         </div>
       </section>
 

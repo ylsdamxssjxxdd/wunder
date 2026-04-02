@@ -91,6 +91,18 @@ type GreetingMessageOptions = {
   sessionCreatedAt?: unknown;
 };
 
+type SessionEventsSnapshotCacheEntry = {
+  cachedAt: number;
+  running: boolean;
+  lastEventId: number | null;
+  payload: Record<string, unknown> | null;
+};
+
+type SessionDetailSnapshotCacheEntry = {
+  cachedAt: number;
+  payload: Record<string, unknown> | null;
+};
+
 type SessionWorkflowStateOptions = {
   reset?: boolean;
 };
@@ -596,6 +608,8 @@ const normalizeMessageStats = (stats) => {
   const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
   const explicitContextTokens = normalizeContextTokens(
     stats.contextTokens ??
+      stats.contextOccupancyTokens ??
+      stats.context_occupancy_tokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       stats.contextUsage ??
@@ -2457,12 +2471,19 @@ const sessionRuntime = new Map();
 const sessionMessages = new Map();
 const sessionListCache = new Map();
 const sessionListCacheInFlight = new Map();
+const sessionEventsSnapshotCache = new Map<string, SessionEventsSnapshotCacheEntry>();
+const sessionEventsSnapshotInFlight = new Map<string, Promise<Record<string, unknown> | null>>();
+const sessionDetailSnapshotCache = new Map<string, SessionDetailSnapshotCacheEntry>();
+const sessionHydratedMessageVersion = new Map<string, string>();
 const sessionDetailPrefetchInFlight = new Map();
 const sessionSubagentsInFlight = new Map();
 const sessionDetailWarmState = new Map();
 const sessionHistoryState = new Map();
 
 const SESSION_LIST_CACHE_TTL_MS = 15 * 1000;
+const SESSION_EVENTS_CACHE_TTL_MS = 2500;
+const SESSION_EVENTS_RUNNING_CACHE_TTL_MS = 600;
+const SESSION_DETAIL_SNAPSHOT_TTL_MS = 2500;
 const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
 
 const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
@@ -2706,6 +2727,238 @@ const cloneSessionList = (sessions) => {
   return Array.isArray(cloned) ? cloned : [];
 };
 
+const cloneSessionEventsPayload = (payload) => {
+  const cloned = cloneSerializable(payload, null);
+  return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const cloneSessionDetailPayload = (payload) => {
+  const cloned = cloneSerializable(payload, null);
+  return cloned && typeof cloned === 'object' && !Array.isArray(cloned) ? cloned : null;
+};
+
+const appendFingerprintHash = (seed, value) => {
+  let hash = seed >>> 0;
+  const text = String(value ?? '');
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+};
+
+const buildSessionMessageFingerprint = (messages) => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return '0';
+  }
+  let hash = 2166136261;
+  messages.forEach((message, index) => {
+    const record = message && typeof message === 'object' ? message : {};
+    const attachments = Array.isArray(record.attachments) ? record.attachments.length : 0;
+    const subagents = Array.isArray(record.subagents) ? record.subagents.length : 0;
+    const planSteps = Array.isArray(record?.plan?.steps)
+      ? record.plan.steps.length
+      : Array.isArray(record?.plan)
+        ? record.plan.length
+        : 0;
+    const questionPanelSelected = Array.isArray(record?.questionPanel?.selected)
+      ? record.questionPanel.selected.length
+      : 0;
+    hash = appendFingerprintHash(
+      hash,
+      [
+        index,
+        String(record.role || ''),
+        String(record.created_at || ''),
+        String(record.history_id ?? ''),
+        String(record.stream_event_id ?? ''),
+        String(record.stream_round ?? ''),
+        String(record.content || '').length,
+        String(record.reasoning || '').length,
+        attachments,
+        subagents,
+        String(record?.feedback?.vote ?? ''),
+        record?.feedback?.locked === true ? 1 : 0,
+        planSteps,
+        String(record?.questionPanel?.status ?? ''),
+        questionPanelSelected,
+        record?.hiddenInternal === true ? 1 : 0
+      ].join('|')
+    );
+  });
+  return hash.toString(36);
+};
+
+const buildWorkflowRoundsFingerprint = (rounds) => {
+  if (!Array.isArray(rounds) || rounds.length === 0) {
+    return '0';
+  }
+  let hash = 2166136261;
+  rounds.forEach((round, index) => {
+    const events = Array.isArray(round?.events) ? round.events : [];
+    const lastEvent = events.length > 0 ? events[events.length - 1] : null;
+    hash = appendFingerprintHash(
+      hash,
+      [
+        index,
+        String(round?.user_round ?? round?.round ?? ''),
+        events.length,
+        String(lastEvent?.event ?? lastEvent?.type ?? ''),
+        String(lastEvent?.timestamp ?? '')
+      ].join('|')
+    );
+  });
+  return hash.toString(36);
+};
+
+const buildSessionHydratedMessageVersion = (sessionDetail, eventsPayload) => {
+  const messages = Array.isArray(sessionDetail?.messages) ? sessionDetail.messages : [];
+  const rounds = Array.isArray(eventsPayload?.rounds) ? eventsPayload.rounds : [];
+  const remoteLastEventId =
+    normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId) || 0;
+  const running = eventsPayload?.running === true ? 1 : 0;
+  return [
+    buildSessionMessageFingerprint(messages),
+    buildWorkflowRoundsFingerprint(rounds),
+    remoteLastEventId,
+    running
+  ].join(':');
+};
+
+const readSessionHydratedMessageVersion = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  return String(sessionHydratedMessageVersion.get(sessionKey) || '');
+};
+
+const writeSessionHydratedMessageVersion = (sessionId, version) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return '';
+  const nextVersion = String(version || '').trim();
+  if (!nextVersion) {
+    sessionHydratedMessageVersion.delete(sessionKey);
+    return '';
+  }
+  sessionHydratedMessageVersion.set(sessionKey, nextVersion);
+  return nextVersion;
+};
+
+const clearSessionEventsSnapshot = (sessionId, options: { keepInFlight?: boolean } = {}) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return;
+  sessionEventsSnapshotCache.delete(sessionKey);
+  sessionDetailSnapshotCache.delete(sessionKey);
+  sessionHydratedMessageVersion.delete(sessionKey);
+  if (options.keepInFlight !== true) {
+    sessionEventsSnapshotInFlight.delete(sessionKey);
+  }
+};
+
+const cacheSessionDetailSnapshot = (sessionId, payload) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  const clonedPayload = cloneSessionDetailPayload(payload);
+  sessionDetailSnapshotCache.set(sessionKey, {
+    cachedAt: Date.now(),
+    payload: clonedPayload
+  });
+  return cloneSessionDetailPayload(clonedPayload);
+};
+
+const readSessionDetailSnapshot = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  const entry = sessionDetailSnapshotCache.get(sessionKey);
+  if (!entry) return null;
+  if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > SESSION_DETAIL_SNAPSHOT_TTL_MS) {
+    sessionDetailSnapshotCache.delete(sessionKey);
+    return null;
+  }
+  return cloneSessionDetailPayload(entry.payload);
+};
+
+const cacheSessionEventsSnapshot = (sessionId, payload) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  const clonedPayload = cloneSessionEventsPayload(payload);
+  sessionEventsSnapshotCache.set(sessionKey, {
+    cachedAt: Date.now(),
+    running: clonedPayload?.running === true,
+    lastEventId: normalizeStreamEventId(
+      clonedPayload?.last_event_id ?? clonedPayload?.lastEventId
+    ),
+    payload: clonedPayload
+  });
+  return cloneSessionEventsPayload(clonedPayload);
+};
+
+const readSessionEventsSnapshot = (
+  sessionId,
+  options: { allowRunning?: boolean; minLastEventId?: unknown } = {}
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return null;
+  const entry = sessionEventsSnapshotCache.get(sessionKey);
+  if (!entry) return null;
+  const ttlMs = entry.running ? SESSION_EVENTS_RUNNING_CACHE_TTL_MS : SESSION_EVENTS_CACHE_TTL_MS;
+  if (!Number.isFinite(entry.cachedAt) || Date.now() - entry.cachedAt > ttlMs) {
+    sessionEventsSnapshotCache.delete(sessionKey);
+    return null;
+  }
+  if (entry.running && options.allowRunning !== true) {
+    return null;
+  }
+  const runtime = sessionRuntime.get(sessionKey) || null;
+  if (runtime?.sendController || runtime?.resumeController) {
+    return null;
+  }
+  const minLastEventId = normalizeStreamEventId(options.minLastEventId);
+  if (minLastEventId !== null) {
+    const cachedLastEventId = normalizeStreamEventId(entry.lastEventId);
+    if (cachedLastEventId === null || cachedLastEventId < minLastEventId) {
+      return null;
+    }
+  }
+  return cloneSessionEventsPayload(entry.payload);
+};
+
+const loadSessionEventsSnapshot = (
+  sessionId,
+  options: {
+    allowCached?: boolean;
+    allowRunningCache?: boolean;
+    dedupeInFlight?: boolean;
+    minLastEventId?: unknown;
+  } = {}
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) {
+    return Promise.resolve(null);
+  }
+  if (options.allowCached !== false) {
+    const cached = readSessionEventsSnapshot(sessionKey, {
+      allowRunning: options.allowRunningCache === true,
+      minLastEventId: options.minLastEventId
+    });
+    if (cached) {
+      return Promise.resolve(cached);
+    }
+  }
+  const inFlight = sessionEventsSnapshotInFlight.get(sessionKey);
+  if (inFlight && options.dedupeInFlight !== false) {
+    return inFlight;
+  }
+  const request = getSessionEvents(sessionKey).then((response) =>
+    cacheSessionEventsSnapshot(sessionKey, response?.data?.data || null)
+  );
+  sessionEventsSnapshotInFlight.set(sessionKey, request);
+  return request.finally(() => {
+    if (sessionEventsSnapshotInFlight.get(sessionKey) === request) {
+      sessionEventsSnapshotInFlight.delete(sessionKey);
+    }
+  });
+};
+
 const filterSessionsByAgent = (agentId, sourceSessions = []) => {
   const normalizedAgentId = String(agentId || '').trim();
   return (Array.isArray(sourceSessions) ? sourceSessions : []).filter((session) => {
@@ -2890,6 +3143,7 @@ const purgeUnavailableSession = (store, sessionId) => {
   }
   sessionRuntime.delete(targetId);
   sessionMessages.delete(targetId);
+  clearSessionEventsSnapshot(targetId);
   sessionDetailWarmState.delete(targetId);
   sessionDetailPrefetchInFlight.delete(targetId);
   sessionSubagentsInFlight.delete(targetId);
@@ -3365,6 +3619,16 @@ const resolveLastAssistantStreamEventId = (messages) => {
     }
   }
   return null;
+};
+
+const resolveKnownSessionEventFloor = (sessionId, messages = getSessionMessages(sessionId)) => {
+  const runtime = getRuntime(sessionId);
+  const messageMaxEventId = Math.max(
+    resolveLastStreamEventId(messages) || 0,
+    resolveLastAssistantStreamEventId(messages) || 0,
+    resolveMaxStreamEventId(messages) || 0
+  );
+  return Math.max(getRuntimeLastEventId(runtime), messageMaxEventId);
 };
 
 const resolveMaxStreamRound = (messages) => {
@@ -3980,14 +4244,16 @@ const startSessionWatcher = (store, sessionId) => {
         }
         let response = null;
         try {
-          response = await getSessionEvents(key);
+          response = await loadSessionEventsSnapshot(key, {
+            allowCached: false
+          });
         } catch (error) {
           if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
             purgeUnavailableSession(store, key);
             return;
           }
         }
-        const payload = response?.data?.data;
+        const payload = response;
         hydrateSessionCommandSessions(key, payload?.command_sessions ?? payload?.commandSessions);
         applySessionRuntimeSnapshot(runtime, payload?.runtime);
         const running = payload?.running;
@@ -4049,6 +4315,9 @@ const startSessionWatcher = (store, sessionId) => {
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
     const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
+      clearSessionEventsSnapshot(key, { keepInFlight: true });
+    }
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
       const previousThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
       const normalizedEventId = normalizeStreamEventId(eventId);
@@ -4464,6 +4733,10 @@ const resetChatRuntimeState = () => {
   sessionMessages.clear();
   sessionListCache.clear();
   sessionListCacheInFlight.clear();
+  sessionEventsSnapshotCache.clear();
+  sessionEventsSnapshotInFlight.clear();
+  sessionDetailSnapshotCache.clear();
+  sessionHydratedMessageVersion.clear();
   sessionDetailPrefetchInFlight.clear();
   sessionSubagentsInFlight.clear();
   sessionDetailWarmState.clear();
@@ -4949,6 +5222,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const updateContextUsage = (payload) => {
     if (!stats) return;
     const contextTokens = normalizeContextTokens(
+      payload?.context_occupancy_tokens ??
+        payload?.contextOccupancyTokens ??
       payload?.context_tokens ??
         payload?.contextTokens ??
         payload?.context ??
@@ -7211,11 +7486,14 @@ export const useChatStore = defineStore('chat', {
       }
       const request = (async () => {
         let sessionRes = null;
-        let eventsRes = null;
+        let eventsPayload = null;
+        const knownEventFloor = resolveKnownSessionEventFloor(targetId);
         try {
-          [sessionRes, eventsRes] = await Promise.all([
+          [sessionRes, eventsPayload] = await Promise.all([
             getSession(targetId),
-            getSessionEvents(targetId).catch((error) => {
+            loadSessionEventsSnapshot(targetId, {
+              minLastEventId: knownEventFloor
+            }).catch((error) => {
               if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
                 throw error;
               }
@@ -7231,29 +7509,46 @@ export const useChatStore = defineStore('chat', {
         }
         const payload = sessionRes?.data;
         const sessionDetail = payload?.data || null;
-        const eventsPayload = eventsRes?.data?.data || null;
+        cacheSessionDetailSnapshot(targetId, sessionDetail);
+        const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
         hydrateSessionCommandSessions(
           targetId,
           eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
         );
         applySessionRuntimeSnapshot(ensureRuntime(targetId), eventsPayload?.runtime);
+        const remoteRunning = eventsPayload?.running === true;
         updateRuntimeLastEventId(
           ensureRuntime(targetId),
           normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId)
         );
-        const rounds = eventsPayload?.rounds || [];
-        const workflowState = buildSessionWorkflowState();
-        const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
-        let messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
-        messages = dedupeAssistantMessages(messages);
+        const cachedHydratedMessages = dedupeAssistantMessages(getSessionMessages(targetId));
+        const canReuseHydratedMessages =
+          !remoteRunning &&
+          Array.isArray(cachedHydratedMessages) &&
+          cachedHydratedMessages.length > 0 &&
+          readSessionHydratedMessageVersion(targetId) === hydratedVersion;
+        let messages = cachedHydratedMessages;
+        if (canReuseHydratedMessages) {
+          getSessionWorkflowState(targetId, { reset: true });
+        } else {
+          const rounds = eventsPayload?.rounds || [];
+          const workflowState = buildSessionWorkflowState();
+          const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
+          messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
+          messages = dedupeAssistantMessages(messages);
+        }
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {
           createdAt: sessionDetail?.created_at,
           greeting: this.greetingOverride
         });
+        if (!remoteRunning) {
+          clearCompletedAssistantStreamingState(greetingMessages);
+        }
         applyHistoryMeta(targetId, sessionDetail, greetingMessages);
         applyMessageWindow(this, targetId, greetingMessages);
         cacheSessionMessages(targetId, greetingMessages);
+        writeSessionHydratedMessageVersion(targetId, hydratedVersion);
         markSessionDetailWarm(targetId);
         void this.refreshSessionSubagents(targetId).catch(() => null);
         return sessionDetail;
@@ -7580,18 +7875,48 @@ export const useChatStore = defineStore('chat', {
         purgeUnavailableSession(this, targetSessionId);
         return null;
       }
+      const pendingPrefetch = sessionDetailPrefetchInFlight.get(targetSessionId);
+      let prefetchedSessionDetail = null;
+      if (pendingPrefetch) {
+        try {
+          prefetchedSessionDetail = await pendingPrefetch;
+        } catch (error) {
+          prefetchedSessionDetail = null;
+        }
+      }
+      const latestCachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
       let sessionRes = null;
-      let eventsRes = null;
+      let eventsPayload = null;
+      let sessionDetail = prefetchedSessionDetail;
+      const knownEventFloor = resolveKnownSessionEventFloor(
+        targetSessionId,
+        latestCachedSessionMessages || cachedSessionMessages
+      );
+      if (!sessionDetail && isSessionDetailWarm(targetSessionId)) {
+        sessionDetail = readSessionDetailSnapshot(targetSessionId);
+      }
+      if (sessionDetail && isSessionDetailWarm(targetSessionId)) {
+        eventsPayload = readSessionEventsSnapshot(targetSessionId, {
+          allowRunning: true,
+          minLastEventId: knownEventFloor
+        });
+      }
       try {
-        [sessionRes, eventsRes] = await Promise.all([
-          getSession(targetSessionId),
-          getSessionEvents(targetSessionId).catch((error) => {
-            if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-              throw error;
-            }
-            return null;
-          })
-        ]);
+        if (!sessionDetail || !eventsPayload) {
+          [sessionRes, eventsPayload] = await Promise.all([
+            getSession(targetSessionId),
+            loadSessionEventsSnapshot(targetSessionId, {
+              minLastEventId: knownEventFloor
+            }).catch((error) => {
+              if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+                throw error;
+              }
+              return null;
+            })
+          ]);
+          sessionDetail = sessionRes?.data?.data || null;
+          cacheSessionDetailSnapshot(targetSessionId, sessionDetail);
+        }
       } catch (error) {
         if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
           purgeUnavailableSession(this, targetSessionId);
@@ -7600,8 +7925,7 @@ export const useChatStore = defineStore('chat', {
         throw error;
       }
       const data = sessionRes?.data;
-      const sessionDetail = data?.data || null;
-      const eventsPayload = eventsRes?.data?.data || null;
+      const hydratedVersion = buildSessionHydratedMessageVersion(sessionDetail, eventsPayload);
       hydrateSessionCommandSessions(
         targetSessionId,
         eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
@@ -7631,20 +7955,29 @@ export const useChatStore = defineStore('chat', {
         filterSessionsByAgent(resolvedAgentIdText, this.sessions)
       );
       const rounds = eventsPayload?.rounds || [];
-      const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
-      const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
-      let messages = rawMessages.map((message) =>
-        hydrateMessage(message, workflowState)
-      );
-      messages = mergeSnapshotIntoMessages(messages, snapshot);
       const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
-      messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
-      messages = dedupeAssistantMessages(messages);
-      if (!remoteRunning) {
-        clearCompletedAssistantStreamingState(messages);
+      const canReuseHydratedMessages =
+        !remoteRunning &&
+        Array.isArray(finalCachedMessages) &&
+        finalCachedMessages.length > 0 &&
+        readSessionHydratedMessageVersion(targetSessionId) === hydratedVersion;
+      let messages = finalCachedMessages;
+      if (canReuseHydratedMessages) {
+        getSessionWorkflowState(targetSessionId, { reset: true });
+        messages = dedupeAssistantMessages(mergeSnapshotIntoMessages(finalCachedMessages, snapshot));
+      } else {
+        const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
+        const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
+        messages = rawMessages.map((message) =>
+          hydrateMessage(message, workflowState)
+        );
+        messages = mergeSnapshotIntoMessages(messages, snapshot);
+        messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
+        messages = dedupeAssistantMessages(messages);
       }
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(finalCachedMessages);
+        clearCompletedAssistantStreamingState(messages);
       }
       if (remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
         messages = dedupeAssistantMessages(
@@ -7662,10 +7995,11 @@ export const useChatStore = defineStore('chat', {
       clearSupersededPendingAssistantMessages(nextMessages);
       applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
       cacheSessionMessages(targetSessionId, nextMessages);
+      writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
       markSessionDetailWarm(targetSessionId);
       // Ignore stale async response: keep current foreground conversation state untouched.
       if (resolveSessionKey(this.activeSessionId) !== targetSessionId) {
-        return data.data;
+        return sessionDetail;
       }
       this.draftAgentId = resolvedAgentIdText;
       persistActiveSession(targetSessionId, resolvedAgentIdText);
@@ -7697,7 +8031,7 @@ export const useChatStore = defineStore('chat', {
       this.scheduleSnapshot(true);
       startSessionWatcher(this, targetSessionId);
       void this.refreshSessionSubagents(targetSessionId).catch(() => null);
-      return data.data;
+      return sessionDetail;
     },
     async loadOlderHistory(sessionId, options: { limit?: number; beforeId?: number } = {}) {
       const targetId = resolveSessionKey(sessionId || this.activeSessionId);
@@ -7820,6 +8154,7 @@ export const useChatStore = defineStore('chat', {
       this.clearPendingApprovals({ sessionId: targetId });
       sessionRuntime.delete(resolveSessionKey(targetId));
       sessionMessages.delete(resolveSessionKey(targetId));
+      clearSessionEventsSnapshot(targetId);
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
@@ -7908,6 +8243,7 @@ export const useChatStore = defineStore('chat', {
       this.clearPendingApprovals({ sessionId: targetId });
       sessionRuntime.delete(resolveSessionKey(targetId));
       sessionMessages.delete(resolveSessionKey(targetId));
+      clearSessionEventsSnapshot(targetId);
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
@@ -8109,6 +8445,7 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
       abortWatchStream(initialSessionId);
+      clearSessionEventsSnapshot(initialSessionId);
       this.messages.forEach((message) => {
         if (message && typeof message === 'object') {
           (message as Record<string, unknown>).resume_available = false;
@@ -8472,6 +8809,7 @@ export const useChatStore = defineStore('chat', {
         return false;
       }
       const sessionId = this.activeSessionId;
+      clearSessionEventsSnapshot(sessionId);
       const runtime = ensureRuntime(sessionId);
       if (runtime) {
         runtime.stopRequested = true;
@@ -8520,6 +8858,7 @@ export const useChatStore = defineStore('chat', {
       const force = options.force === true;
       if (!message || (!message.stream_incomplete && !force)) return;
       abortWatchStream(sessionId);
+      clearSessionEventsSnapshot(sessionId);
       setSessionLoading(this, sessionId, true);
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;

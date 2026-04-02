@@ -26,14 +26,18 @@ export type MessageViewportRuntimeOptions = {
 
 export type MessageViewportRuntime = {
   handleMessageListScroll: () => void;
-  handleWorkflowLayoutChange: () => void;
+  handleWorkflowLayoutChange: (messageKey?: string) => void;
   scrollMessagesToBottom: (force?: boolean) => Promise<void>;
   jumpToMessageBottom: () => Promise<void>;
   jumpToMessageTop: () => Promise<void>;
   scrollVirtualMessageToIndex: (keys: string[], index: number, align?: 'center' | 'start') => void;
   scrollLatestAssistantToCenter: () => Promise<void>;
-  scheduleMessageViewportRefresh: (options?: { updateScrollState?: boolean; measure?: boolean }) => void;
-  scheduleMessageVirtualMeasure: () => void;
+  scheduleMessageViewportRefresh: (options?: {
+    updateScrollState?: boolean;
+    measure?: boolean;
+    measureKeys?: string[];
+  }) => void;
+  scheduleMessageVirtualMeasure: (measureKeys?: string[]) => void;
   updateMessageScrollState: () => void;
   syncMessageVirtualMetrics: () => void;
   pruneMessageVirtualHeightCache: () => void;
@@ -50,6 +54,10 @@ export const createMessageViewportRuntime = (
   let messageViewportRefreshFrame: number | null = null;
   let scheduledViewportRefreshNeedsScrollState = false;
   let scheduledViewportRefreshNeedsMeasure = false;
+  let scheduledViewportRefreshMeasureAll = false;
+  let scheduledViewportRefreshMeasureKeys = new Set<string>();
+  let scheduledVirtualMeasureAll = false;
+  let scheduledVirtualMeasureKeys = new Set<string>();
 
   const applyMessageVirtualMetrics = (scrollTop: number, viewportHeight: number) => {
     if (options.messageVirtualViewportHeight.value !== viewportHeight) {
@@ -87,16 +95,54 @@ export const createMessageViewportRuntime = (
     }
   };
 
-  const measureVisibleMessageHeights = () => {
+  const collectMeasureKeys = (keys: string[] | undefined): string[] =>
+    Array.isArray(keys)
+      ? keys.map((key) => String(key || '').trim()).filter(Boolean)
+      : [];
+
+  const markMeasureTargets = (
+    nextKeys: string[] | undefined,
+    mode: 'viewport' | 'virtual'
+  ) => {
+    const normalizedKeys = collectMeasureKeys(nextKeys);
+    if (mode === 'viewport') {
+      if (!normalizedKeys.length) {
+        scheduledViewportRefreshMeasureAll = true;
+        scheduledViewportRefreshMeasureKeys.clear();
+        return;
+      }
+      if (scheduledViewportRefreshMeasureAll) {
+        return;
+      }
+      normalizedKeys.forEach((key) => scheduledViewportRefreshMeasureKeys.add(key));
+      return;
+    }
+    if (!normalizedKeys.length) {
+      scheduledVirtualMeasureAll = true;
+      scheduledVirtualMeasureKeys.clear();
+      return;
+    }
+    if (scheduledVirtualMeasureAll) {
+      return;
+    }
+    normalizedKeys.forEach((key) => scheduledVirtualMeasureKeys.add(key));
+  };
+
+  const measureVisibleMessageHeights = (targetKeys?: string[]) => {
     const container = options.messageListRef.value;
     if (!container || options.showChatSettingsView.value || !options.shouldVirtualizeMessages.value) {
       return;
     }
+    const normalizedTargetKeys = collectMeasureKeys(targetKeys);
+    const targetKeySet = normalizedTargetKeys.length ? new Set(normalizedTargetKeys) : null;
     const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
     let changed = false;
     nodes.forEach((node) => {
       const key = String(node.dataset.virtualKey || '').trim();
       if (!key) return;
+      if (targetKeySet && !targetKeySet.has(key)) {
+        return;
+      }
       const offsetHeight = Math.round(node.offsetHeight || 0);
       const height = Math.max(
         1,
@@ -131,18 +177,29 @@ export const createMessageViewportRuntime = (
     options.showScrollBottomButton.value = !shouldStick && isConversation;
   };
 
-  const scheduleMessageVirtualMeasure = () => {
+  const scheduleMessageVirtualMeasure = (measureKeys?: string[]) => {
     if (typeof window === 'undefined') return;
     if (!options.shouldVirtualizeMessages.value) return;
+    markMeasureTargets(measureKeys, 'virtual');
     if (messageVirtualMeasureFrame !== null) return;
     messageVirtualMeasureFrame = window.requestAnimationFrame(() => {
       messageVirtualMeasureFrame = null;
-      measureVisibleMessageHeights();
+      const shouldMeasureAll = scheduledVirtualMeasureAll;
+      const nextMeasureKeys = shouldMeasureAll
+        ? undefined
+        : Array.from(scheduledVirtualMeasureKeys);
+      scheduledVirtualMeasureAll = false;
+      scheduledVirtualMeasureKeys.clear();
+      measureVisibleMessageHeights(nextMeasureKeys);
     });
   };
 
   const scheduleMessageViewportRefresh = (
-    refreshOptions: { updateScrollState?: boolean; measure?: boolean } = {}
+    refreshOptions: {
+      updateScrollState?: boolean;
+      measure?: boolean;
+      measureKeys?: string[];
+    } = {}
   ) => {
     const shouldUpdateScrollState = refreshOptions.updateScrollState === true;
     const shouldMeasure = refreshOptions.measure === true;
@@ -152,7 +209,7 @@ export const createMessageViewportRuntime = (
         updateMessageScrollState();
       }
       if (shouldMeasure) {
-        measureVisibleMessageHeights();
+        measureVisibleMessageHeights(refreshOptions.measureKeys);
       }
       return;
     }
@@ -160,19 +217,28 @@ export const createMessageViewportRuntime = (
       scheduledViewportRefreshNeedsScrollState || shouldUpdateScrollState;
     scheduledViewportRefreshNeedsMeasure =
       scheduledViewportRefreshNeedsMeasure || shouldMeasure;
+    if (shouldMeasure) {
+      markMeasureTargets(refreshOptions.measureKeys, 'viewport');
+    }
     if (messageViewportRefreshFrame !== null) return;
     messageViewportRefreshFrame = window.requestAnimationFrame(() => {
       messageViewportRefreshFrame = null;
       const shouldFlushScrollState = scheduledViewportRefreshNeedsScrollState;
       const shouldFlushMeasure = scheduledViewportRefreshNeedsMeasure;
+      const shouldMeasureAll = scheduledViewportRefreshMeasureAll;
+      const nextMeasureKeys = shouldMeasureAll
+        ? undefined
+        : Array.from(scheduledViewportRefreshMeasureKeys);
       scheduledViewportRefreshNeedsScrollState = false;
       scheduledViewportRefreshNeedsMeasure = false;
+      scheduledViewportRefreshMeasureAll = false;
+      scheduledViewportRefreshMeasureKeys.clear();
       syncMessageVirtualMetrics();
       if (shouldFlushScrollState) {
         updateMessageScrollState();
       }
       if (shouldFlushMeasure) {
-        measureVisibleMessageHeights();
+        measureVisibleMessageHeights(nextMeasureKeys);
       }
     });
   };
@@ -192,10 +258,11 @@ export const createMessageViewportRuntime = (
     });
   };
 
-  const handleMessageWorkflowLayoutChange = () => {
+  const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
     scheduleMessageViewportRefresh({
       updateScrollState: true,
-      measure: true
+      measure: true,
+      measureKeys: messageKey ? [messageKey] : undefined
     });
   };
 
@@ -302,6 +369,12 @@ export const createMessageViewportRuntime = (
       window.cancelAnimationFrame(messageViewportRefreshFrame);
       messageViewportRefreshFrame = null;
     }
+    scheduledViewportRefreshNeedsScrollState = false;
+    scheduledViewportRefreshNeedsMeasure = false;
+    scheduledViewportRefreshMeasureAll = false;
+    scheduledViewportRefreshMeasureKeys.clear();
+    scheduledVirtualMeasureAll = false;
+    scheduledVirtualMeasureKeys.clear();
   };
 
   return {

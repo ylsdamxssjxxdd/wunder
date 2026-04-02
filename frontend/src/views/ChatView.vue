@@ -3259,6 +3259,8 @@ const buildMessageStatsEntries = (message) => {
   );
   const explicitContextTokens = Number(
     stats?.contextTokens ??
+    stats?.contextOccupancyTokens ??
+    stats?.context_occupancy_tokens ??
     stats?.context_tokens ??
     stats?.context_tokens_total ??
     stats?.context_usage?.context_tokens ??

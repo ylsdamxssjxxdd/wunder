@@ -44,7 +44,7 @@
             type="button"
             :title="item.label"
             :aria-label="item.label"
-            @mouseenter="previewMiddlePaneSection(item.key)"
+            @mouseenter="queuePreviewMiddlePaneSection(item.key)"
             @focus="previewMiddlePaneSection(item.key)"
             @click="switchSection(item.key)"
           >
@@ -63,7 +63,7 @@
             :title="item.label"
             :aria-label="item.label"
             :tabindex="leftRailMoreExpanded ? 0 : -1"
-            @mouseenter="previewMiddlePaneSection(item.key)"
+            @mouseenter="queuePreviewMiddlePaneSection(item.key)"
             @focus="previewMiddlePaneSection(item.key)"
             @click="openMoreRailSection(item.key)"
           >
@@ -76,7 +76,7 @@
             :title="t('userWorld.helperApps.title')"
             :aria-label="t('userWorld.helperApps.title')"
             :tabindex="leftRailMoreExpanded ? 0 : -1"
-            @mouseenter="previewMiddlePaneSection('groups', { helperWorkspace: true })"
+            @mouseenter="queuePreviewMiddlePaneSection('groups', { helperWorkspace: true })"
             @focus="previewMiddlePaneSection('groups', { helperWorkspace: true })"
             @click="openHelperAppsDialog"
           >
@@ -89,7 +89,7 @@
             :title="t('messenger.section.settings')"
             :aria-label="t('messenger.section.settings')"
             :tabindex="leftRailMoreExpanded ? 0 : -1"
-            @mouseenter="previewMiddlePaneSection('more')"
+            @mouseenter="queuePreviewMiddlePaneSection('more')"
             @focus="previewMiddlePaneSection('more')"
             @click="openSettingsPage"
           >
@@ -111,7 +111,8 @@
     </aside>
 
     <section
-      v-if="showMiddlePane"
+      v-if="middlePaneMounted && !isEmbeddedChatRoute"
+      v-show="showMiddlePane"
       ref="middlePaneRef"
       class="messenger-middle-pane messenger-middle-pane--overlay"
       @mouseenter="cancelMiddlePaneOverlayHide"
@@ -955,7 +956,7 @@
                           (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
                       )
                     "
-                    @layout-change="handleMessageWorkflowLayoutChange"
+                    @layout-change="handleMessageWorkflowLayoutChange(item.key)"
                   />
                   <MessageSubagentPanel
                     :session-id="chatStore.activeSessionId"
@@ -1965,6 +1966,7 @@ const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
 const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
 const middlePaneOverlayVisible = ref(false);
+const middlePaneMounted = ref(false);
 const standardNavigationCollapsed = ref(false);
 const leftRailMoreExpanded = ref(false);
 const quickCreatingAgent = ref(false);
@@ -1984,6 +1986,7 @@ let lifecycleTimer: number | null = null;
 let worldQuickPanelCloseTimer: number | null = null;
 let timelinePrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
+let middlePanePrewarmTimer: number | null = null;
 let keywordDebounceTimer: number | null = null;
 let contactVirtualFrame: number | null = null;
 let viewportResizeFrame: number | null = null;
@@ -2329,6 +2332,26 @@ const showNavigationCollapseToggle = computed(
 );
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
+const scheduleMiddlePanePrewarm = () => {
+  if (middlePaneMounted.value || isEmbeddedChatRoute.value || !isMiddlePaneOverlay.value) {
+    return;
+  }
+  if (typeof window === 'undefined') {
+    middlePaneMounted.value = true;
+    return;
+  }
+  if (middlePanePrewarmTimer !== null) {
+    return;
+  }
+  middlePanePrewarmTimer = window.setTimeout(() => {
+    middlePanePrewarmTimer = null;
+    if (isEmbeddedChatRoute.value) {
+      return;
+    }
+    middlePaneMounted.value = true;
+  }, 240);
+};
+
 const {
   clearMiddlePaneOverlayPreview,
   effectiveHelperAppsWorkspace: showMiddlePaneHelperAppsWorkspace,
@@ -2338,6 +2361,7 @@ const {
   effectiveSectionTitle: middlePaneActiveSectionTitle,
   isHelperWorkspaceButtonActive: isHelperAppsMiddlePaneActive,
   isSectionButtonActive,
+  queuePreviewMiddlePaneSection,
   previewMiddlePaneSection
 } = useMiddlePaneOverlayPreview({
   activeSection: computed(() => sessionHub.activeSection),
@@ -3686,20 +3710,6 @@ watch(
     void preloadAgentSettingsPanels();
     warmMessengerUserToolsData({
       catalog: true,
-      summary: true
-    });
-  },
-  { immediate: true }
-);
-
-watch(
-  () => showAgentRightDock.value,
-  (visible) => {
-    if (!visible) {
-      return;
-    }
-    warmMessengerUserToolsData({
-      skills: true,
       summary: true
     });
   },
@@ -5115,7 +5125,25 @@ const showRightDock = computed(() => showAgentRightDock.value || showGroupRightD
 
 const showRightAgentPanels = computed(() => showAgentRightDock.value);
 
+watch(
+  () => showAgentRightDock.value,
+  (visible) => {
+    if (!visible) {
+      return;
+    }
+    warmMessengerUserToolsData({
+      skills: true,
+      summary: true
+    });
+  },
+  { immediate: true }
+);
+
 const RIGHT_DOCK_EDGE_HOVER_THRESHOLD = 84;
+let rightDockEdgeHoverFrame: number | null = null;
+let pendingRightDockPointerX: number | null = null;
+let cachedMessengerRootRight = 0;
+let cachedMessengerRootWidth = 0;
 
 function resolveMessengerRootElement(): HTMLElement | null {
   const root = messengerRootRef.value as unknown;
@@ -5123,6 +5151,18 @@ function resolveMessengerRootElement(): HTMLElement | null {
   if (root instanceof HTMLElement) return root;
   const candidate = (root as { $el?: unknown }).$el;
   return candidate instanceof HTMLElement ? candidate : null;
+}
+
+function refreshMessengerRootBounds(): void {
+  const root = resolveMessengerRootElement();
+  if (!root) {
+    cachedMessengerRootRight = 0;
+    cachedMessengerRootWidth = 0;
+    return;
+  }
+  const rect = root.getBoundingClientRect();
+  cachedMessengerRootRight = Number.isFinite(rect.right) ? rect.right : 0;
+  cachedMessengerRootWidth = Number.isFinite(rect.width) ? rect.width : 0;
 }
 
 function setRightDockEdgeHover(next: boolean): void {
@@ -5135,25 +5175,46 @@ function handleMessengerRootPointerMove(event: PointerEvent | MouseEvent): void 
     setRightDockEdgeHover(false);
     return;
   }
-  const root = resolveMessengerRootElement();
-  if (!root) {
-    setRightDockEdgeHover(false);
-    return;
-  }
-  const rect = root.getBoundingClientRect();
-  if (!Number.isFinite(rect.right) || rect.width <= 0) {
-    setRightDockEdgeHover(false);
-    return;
-  }
   const pointerX = Number(event.clientX);
   if (!Number.isFinite(pointerX)) {
     setRightDockEdgeHover(false);
     return;
   }
-  setRightDockEdgeHover(pointerX >= rect.right - RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
+  pendingRightDockPointerX = pointerX;
+  if (typeof window === 'undefined') {
+    refreshMessengerRootBounds();
+    if (!Number.isFinite(cachedMessengerRootRight) || cachedMessengerRootWidth <= 0) {
+      setRightDockEdgeHover(false);
+      return;
+    }
+    setRightDockEdgeHover(pointerX >= cachedMessengerRootRight - RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
+    return;
+  }
+  if (rightDockEdgeHoverFrame !== null) {
+    return;
+  }
+  rightDockEdgeHoverFrame = window.requestAnimationFrame(() => {
+    rightDockEdgeHoverFrame = null;
+    if (!showRightDock.value) {
+      setRightDockEdgeHover(false);
+      return;
+    }
+    refreshMessengerRootBounds();
+    if (!Number.isFinite(cachedMessengerRootRight) || cachedMessengerRootWidth <= 0) {
+      setRightDockEdgeHover(false);
+      return;
+    }
+    const nextPointerX = pendingRightDockPointerX;
+    if (!Number.isFinite(nextPointerX)) {
+      setRightDockEdgeHover(false);
+      return;
+    }
+    setRightDockEdgeHover(nextPointerX >= cachedMessengerRootRight - RIGHT_DOCK_EDGE_HOVER_THRESHOLD);
+  });
 }
 
 function handleMessengerRootPointerLeave(): void {
+  pendingRightDockPointerX = null;
   setRightDockEdgeHover(false);
 }
 
@@ -5161,8 +5222,18 @@ watch(
   () => showRightDock.value,
   (visible) => {
     if (!visible) {
+      pendingRightDockPointerX = null;
       setRightDockEdgeHover(false);
+      return;
     }
+    refreshMessengerRootBounds();
+  }
+);
+
+watch(
+  () => [viewportWidth.value, navigationPaneCollapsed.value, rightDockCollapsed.value, showMiddlePane.value] as const,
+  () => {
+    refreshMessengerRootBounds();
   }
 );
 
@@ -5727,6 +5798,16 @@ const worldRenderableMessages = computed<WorldRenderableMessage[]>(() =>
     };
   })
 );
+
+const latestAgentRenderableMessageKey = computed(() => {
+  const latest = agentRenderableMessages.value[agentRenderableMessages.value.length - 1];
+  return String(latest?.key || '').trim();
+});
+
+const latestWorldRenderableMessageKey = computed(() => {
+  const latest = worldRenderableMessages.value[worldRenderableMessages.value.length - 1];
+  return String(latest?.key || '').trim();
+});
 
 const activeVirtualMessageKeys = computed<string[]>(() => {
   if (isAgentConversationActive.value) {
@@ -7353,6 +7434,13 @@ const clearMiddlePaneOverlayHide = () => {
   }
 };
 
+const clearMiddlePanePrewarm = () => {
+  if (typeof window !== 'undefined' && middlePanePrewarmTimer !== null) {
+    window.clearTimeout(middlePanePrewarmTimer);
+    middlePanePrewarmTimer = null;
+  }
+};
+
 const clearKeywordDebounce = () => {
   if (typeof window === 'undefined' || keywordDebounceTimer === null) return;
   window.clearTimeout(keywordDebounceTimer);
@@ -7402,6 +7490,7 @@ const openMiddlePaneOverlay = () => {
   if (!isMiddlePaneOverlay.value) return;
   clearMiddlePaneOverlayHide();
   clearMiddlePaneOverlayPreview();
+  middlePaneMounted.value = true;
   middlePaneOverlayVisible.value = true;
 };
 
@@ -7989,7 +8078,7 @@ const updateAgentAbilityTooltip = async () => {
   });
 };
 
-const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
+async function loadAgentToolSummary(options: { force?: boolean } = {}) {
   const force = options.force === true;
   if (agentToolSummaryPromise) {
     return agentToolSummaryPromise;
@@ -8018,7 +8107,7 @@ const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
     }
   })();
   return agentToolSummaryPromise;
-};
+}
 
 const fetchActiveAgentPromptPreviewPayload = async (): Promise<Record<string, unknown>> => {
   const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
@@ -8081,9 +8170,9 @@ const syncAgentPromptPreviewSelectedNames = async (options: { force?: boolean } 
   }
 };
 
-const loadRightDockSkills = async (
+async function loadRightDockSkills(
   options: { force?: boolean; silent?: boolean } = {}
-) => {
+) {
   const force = options.force === true;
   const silent = options.silent !== false;
   if (rightDockSkillCatalogLoading.value && !force) {
@@ -8107,7 +8196,7 @@ const loadRightDockSkills = async (
       rightDockSkillCatalogLoading.value = false;
     }
   }
-};
+}
 
 const openRightDockSkillDetail = async (name: unknown) => {
   const normalized = String(name || '').trim();
@@ -10519,17 +10608,17 @@ const pruneMessageVirtualHeightCache = () => {
 };
 
 const scheduleMessageViewportRefresh = (
-  options: { updateScrollState?: boolean; measure?: boolean } = {}
+  options: { updateScrollState?: boolean; measure?: boolean; measureKeys?: string[] } = {}
 ) => {
   messageViewportRuntime?.scheduleMessageViewportRefresh(options);
 };
 
-const scheduleMessageVirtualMeasure = () => {
-  messageViewportRuntime?.scheduleMessageVirtualMeasure();
+const scheduleMessageVirtualMeasure = (measureKeys?: string[]) => {
+  messageViewportRuntime?.scheduleMessageVirtualMeasure(measureKeys);
 };
 
-const handleMessageWorkflowLayoutChange = () => {
-  messageViewportRuntime?.handleWorkflowLayoutChange();
+const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
+  messageViewportRuntime?.handleWorkflowLayoutChange(messageKey);
 };
 
 const updateMessageScrollState = () => {
@@ -10741,6 +10830,24 @@ watch(keywordInput, (value) => {
 });
 
 watch(
+  () => [isEmbeddedChatRoute.value, isMiddlePaneOverlay.value, showMiddlePane.value] as const,
+  ([embedded, overlay, visible]) => {
+    if (embedded) {
+      clearMiddlePanePrewarm();
+      middlePaneMounted.value = false;
+      return;
+    }
+    if (visible || !overlay) {
+      clearMiddlePanePrewarm();
+      middlePaneMounted.value = true;
+      return;
+    }
+    scheduleMiddlePanePrewarm();
+  },
+  { immediate: true }
+);
+
+watch(
   () => isMiddlePaneOverlay.value,
   (overlay) => {
     if (!overlay) {
@@ -10755,6 +10862,10 @@ watch(
 watch(
   () => middlePaneOverlayVisible.value,
   (visible) => {
+    if (visible) {
+      middlePaneMounted.value = true;
+      return;
+    }
     if (!visible) {
       clearMiddlePaneOverlayPreview();
     }
@@ -11238,8 +11349,10 @@ watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
+    const latestMessageKey = latestAgentRenderableMessageKey.value;
     scheduleMessageViewportRefresh({
-      measure: true
+      measure: true,
+      measureKeys: latestMessageKey ? [latestMessageKey] : undefined
     });
   }
 );
@@ -11248,8 +11361,10 @@ watch(
   () => userWorldStore.activeMessages[userWorldStore.activeMessages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
+    const latestMessageKey = latestWorldRenderableMessageKey.value;
     scheduleMessageViewportRefresh({
-      measure: true
+      measure: true,
+      measureKeys: latestMessageKey ? [latestMessageKey] : undefined
     });
   }
 );
@@ -11484,6 +11599,12 @@ onBeforeUnmount(() => {
   closeFileContainerMenu();
   clearWorldQuickPanelClose();
   clearMiddlePaneOverlayHide();
+  clearMiddlePanePrewarm();
+  if (typeof window !== 'undefined' && rightDockEdgeHoverFrame !== null) {
+    window.cancelAnimationFrame(rightDockEdgeHoverFrame);
+    rightDockEdgeHoverFrame = null;
+  }
+  pendingRightDockPointerX = null;
   clearKeywordDebounce();
   closeImagePreview();
   stopWorldComposerResize();

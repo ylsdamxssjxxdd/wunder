@@ -142,6 +142,20 @@ test('message stats context falls back to usage.input_tokens when total is absen
   assert.equal(findEntryValue(entries, 'Context'), '4027');
 });
 
+test('message stats context supports explicit context_occupancy_tokens alias', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_occupancy_tokens: 6123
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '6123');
+});
+
 test('message stats clamps direct outlier speed to multi-round average speed', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

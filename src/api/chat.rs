@@ -524,6 +524,7 @@ async fn get_session(
             "messages": messages,
             "model_name": model_name,
             "context_tokens": context_tokens,
+            "context_occupancy_tokens": context_tokens,
             "history_has_more": history_has_more,
             "history_before_id": history_before_id
         }
@@ -2603,7 +2604,12 @@ fn insert_session_runtime_fields(
     if let Some(model_name) = model_name.map(str::trim).filter(|value| !value.is_empty()) {
         map.insert("model_name".to_string(), json!(model_name));
     }
-    map.insert("context_tokens".to_string(), json!(context_tokens.max(0)));
+    let context_tokens = context_tokens.max(0);
+    map.insert("context_tokens".to_string(), json!(context_tokens));
+    map.insert(
+        "context_occupancy_tokens".to_string(),
+        json!(context_tokens),
+    );
 }
 
 fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {

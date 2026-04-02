@@ -77,6 +77,7 @@
             <div class="messenger-settings-label">{{ lastActiveTime }}</div>
           </div>
         </div>
+        <div class="messenger-settings-hint">{{ t('profile.stats.tokenNote') }}</div>
         <div class="messenger-profile-chart-card">
           <div class="messenger-profile-chart-head">
             <span>{{ t('profile.stats.sessions7d') }}</span>

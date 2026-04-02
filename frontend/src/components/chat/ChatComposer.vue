@@ -692,6 +692,8 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   }
   const explicitContext = normalizePositiveTokenCount(
     stats.contextTokens ??
+      stats.contextOccupancyTokens ??
+      stats.context_occupancy_tokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
@@ -735,6 +737,8 @@ const resolveCurrentSessionContextTokens = (): number | null => {
     return null;
   }
   return normalizePositiveTokenCount(
+    session.contextOccupancyTokens ??
+      session.context_occupancy_tokens ??
     session.contextTokens ??
       session.context_tokens ??
       (session.context_usage as Record<string, unknown> | undefined)?.context_tokens ??

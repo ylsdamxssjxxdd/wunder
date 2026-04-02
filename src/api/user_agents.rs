@@ -826,6 +826,7 @@ async fn get_agent_runtime_records(
                 "date": date,
                 "runtime_seconds": round_f64(stats.runtime_seconds),
                 "billed_tokens": stats.billed_tokens.max(0),
+                "consumed_tokens": stats.billed_tokens.max(0),
                 "quota_consumed": stats.quota_consumed.max(0),
                 "tool_calls": stats.tool_calls.max(0),
             })
@@ -881,6 +882,7 @@ async fn get_agent_runtime_records(
             "summary": {
                 "runtime_seconds": round_f64(summary_runtime_seconds.max(0.0)),
                 "billed_tokens": summary_billed_tokens.max(0),
+                "consumed_tokens": summary_billed_tokens.max(0),
                 "quota_consumed": summary_quota_consumed.max(0),
                 "tool_calls": summary_tool_calls.max(0),
             },

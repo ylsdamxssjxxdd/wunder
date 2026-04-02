@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-02T09:46:18.050056+00:00",
+  "generated_at": "2026-04-02T13:08:21.870652+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -6550,51 +6550,56 @@
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "二类：排队与等待事件"
+          "level": 3,
+          "text": "roundusage 要怎么理解"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "三类：闭环事件"
+          "text": "二类：排队与等待事件"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "approvalresolved"
+          "level": 2,
+          "text": "三类：闭环事件"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "turnterminal"
+          "text": "approvalresolved"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "threadstatus"
+          "text": "turnterminal"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "为什么不能只看 final"
+          "level": 3,
+          "text": "threadstatus"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "接入时的最低处理建议"
+          "text": "为什么不能只看 final"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "SSE 和 WS 的区别要点"
+          "text": "接入时的最低处理建议"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "一个简单判断法"
+          "text": "SSE 和 WS 的区别要点"
         },
         {
           "id": "section-13",
+          "level": 2,
+          "text": "一个简单判断法"
+        },
+        {
+          "id": "section-14",
           "level": 2,
           "text": "延伸阅读"
         }

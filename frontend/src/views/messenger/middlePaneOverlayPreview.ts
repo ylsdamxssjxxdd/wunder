@@ -1,4 +1,4 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue';
+import { computed, onBeforeUnmount, ref, type ComputedRef, type Ref } from 'vue';
 
 import type { MessengerSection } from '@/stores/sessionHub';
 
@@ -7,6 +7,8 @@ type TranslateFn = (key: string) => string;
 type PreviewOptions = {
   helperWorkspace?: boolean;
 };
+
+const MIDDLE_PANE_PREVIEW_HOVER_DELAY_MS = 70;
 
 type UseMiddlePaneOverlayPreviewOptions = {
   activeSection: ComputedRef<MessengerSection>;
@@ -25,6 +27,16 @@ export const useMiddlePaneOverlayPreview = ({
 }: UseMiddlePaneOverlayPreviewOptions) => {
   const previewSection = ref<MessengerSection | ''>('');
   const previewHelperWorkspace = ref(false);
+  let previewTimer: number | null = null;
+
+  const clearPendingPreview = () => {
+    if (previewTimer === null || typeof window === 'undefined') {
+      previewTimer = null;
+      return;
+    }
+    window.clearTimeout(previewTimer);
+    previewTimer = null;
+  };
 
   const isPreviewing = computed(
     () => isMiddlePaneOverlay.value && middlePaneOverlayVisible.value && Boolean(previewSection.value)
@@ -71,6 +83,7 @@ export const useMiddlePaneOverlayPreview = ({
     if (!isMiddlePaneOverlay.value) {
       return;
     }
+    clearPendingPreview();
     // The overlay preview must stay isolated from the actual active section
     // so hovering does not mutate the main content before the user clicks.
     previewSection.value = section;
@@ -78,7 +91,30 @@ export const useMiddlePaneOverlayPreview = ({
     middlePaneOverlayVisible.value = true;
   };
 
+  const queuePreviewMiddlePaneSection = (
+    section: MessengerSection,
+    options: PreviewOptions = {}
+  ) => {
+    if (!isMiddlePaneOverlay.value) {
+      return;
+    }
+    if (middlePaneOverlayVisible.value) {
+      previewMiddlePaneSection(section, options);
+      return;
+    }
+    clearPendingPreview();
+    if (typeof window === 'undefined') {
+      previewMiddlePaneSection(section, options);
+      return;
+    }
+    previewTimer = window.setTimeout(() => {
+      previewTimer = null;
+      previewMiddlePaneSection(section, options);
+    }, MIDDLE_PANE_PREVIEW_HOVER_DELAY_MS);
+  };
+
   const clearMiddlePaneOverlayPreview = () => {
+    clearPendingPreview();
     previewSection.value = '';
     previewHelperWorkspace.value = false;
   };
@@ -94,6 +130,10 @@ export const useMiddlePaneOverlayPreview = ({
     () => effectiveSection.value === 'groups' && effectiveHelperAppsWorkspace.value
   );
 
+  onBeforeUnmount(() => {
+    clearPendingPreview();
+  });
+
   return {
     clearMiddlePaneOverlayPreview,
     effectiveHelperAppsWorkspace,
@@ -104,6 +144,7 @@ export const useMiddlePaneOverlayPreview = ({
     isHelperWorkspaceButtonActive,
     isPreviewing,
     isSectionButtonActive,
+    queuePreviewMiddlePaneSection,
     previewMiddlePaneSection
   };
 };

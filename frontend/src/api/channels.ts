@@ -27,7 +27,7 @@ export const startWeixinQrLogin = (payload: ApiPayload) =>
   api.post('/channels/weixin/qr/start', payload);
 
 export const waitWeixinQrLogin = (payload: ApiPayload) =>
-  api.post('/channels/weixin/qr/wait', payload);
+  api.post('/channels/weixin/qr/wait', payload, { timeout: 130000 });
 
 export const deleteChannelBinding = (
   channel: string,

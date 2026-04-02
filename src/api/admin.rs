@@ -3437,7 +3437,9 @@ async fn admin_monitor_tool_usage(
             "updated_time": updated_time,
             "elapsed_s": elapsed_s,
             "context_tokens": context_tokens,
+            "context_occupancy_tokens": context_tokens,
             "context_tokens_peak": context_tokens_peak,
+            "context_occupancy_tokens_peak": context_tokens_peak,
             "prefill_tokens": prefill_tokens,
             "prefill_duration_s": prefill_duration_s,
             "prefill_speed_tps": prefill_speed_tps,
@@ -5153,6 +5155,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
                 "context_tokens": stats.context_tokens,
+                "context_occupancy_tokens": stats.context_tokens,
                 "agent_count": agent_count
             })
         })

@@ -312,6 +312,22 @@
   - 更新时可同时提交 `declared_tool_names` 与 `declared_skill_names`
   - 技能依赖应写入 `declared_skill_names`
 
+#### `GET /wunder/agents/{agent_id}/runtime-records`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`、`days`（1~30，默认 14）、`date`（`YYYY-MM-DD`，热力图选中日期）
+- 返回（JSON）：
+  - `data.summary.runtime_seconds`：统计窗口内总运行时长
+  - `data.summary.billed_tokens`：兼容字段，等价于累计消耗
+  - `data.summary.consumed_tokens`：推荐字段，表示统计窗口内累计消耗
+  - `data.summary.quota_consumed`：统计窗口内额度消耗
+  - `data.summary.tool_calls`：统计窗口内工具调用次数
+  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/quota_consumed/tool_calls`
+  - `data.heatmap`：工具调用热力图（`date/max_calls/items[]`）
+- 说明：
+  - `consumed_tokens` 按各次请求的 `round_usage.total_tokens` 累加得到。
+  - `billed_tokens` 为历史兼容字段，新接入优先使用 `consumed_tokens`。
+
 #### `GET /wunder/admin/preset_agents`
 
 - 方法：`GET`
@@ -1180,6 +1196,7 @@
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
 - `session.context_tokens/context_tokens_peak` 汇总优先采用 `round_usage.total_tokens` 作为有效占用；`context_usage` 仍保留估算值用于过程观测。
 - `round_usage.total_tokens` 表示单轮请求完成后的实际上下文占用，是当前线程上下文占用的权威口径；实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
+- `round_usage` 事件额外提供 `context_occupancy_tokens` 与 `request_consumed_tokens` 两个显式语义别名；它们当前都与 `round_usage.total_tokens` 相同，新接入可直接按字段名区分“当前占用”和“单次请求消耗”。
 
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
@@ -2162,6 +2179,7 @@
 - `GET /wunder/chat/sessions/{session_id}`
 - `GET /wunder/chat/sessions/{session_id}/history`
 - `GET /wunder/chat/sessions/{session_id}` 新增 `data.agent_name`（智能体名称，默认智能体同样返回名称）。
+- `GET /wunder/chat/sessions/{session_id}` 新增 `data.context_occupancy_tokens`，作为 `data.context_tokens` 的显式语义别名；新接入优先使用该字段表达当前线程上下文占用。
 - 当会话仅处于队列等待阶段、最新用户消息尚未落入历史时，`GET /wunder/chat/sessions/{session_id}` 会基于活跃 `agent_tasks` 追加一组临时消息视图：
   - 最新用户消息会按请求体中的 `question/attachments` 投影到 `data.messages[]`
   - 对应助手占位会带 `stream_incomplete=true`
@@ -2181,6 +2199,9 @@
   - `feedback_down_count`：点踩数
   - `feedback_total_count`：反馈总数
   - `feedback_status`：`up` / `down` / `mixed` / `none`
+- `GET /wunder/admin/monitor` 与 `GET /wunder/admin/monitor/{session_id}` 现额外提供：
+  - `context_occupancy_tokens`：`context_tokens` 的显式语义别名
+  - `context_occupancy_tokens_peak`：`context_tokens_peak` 的显式语义别名
 - `GET /wunder/admin/monitor/{session_id}` 新增：
   - `feedback[]`：线程反馈列表
     - `history_id`：消息 history_id
