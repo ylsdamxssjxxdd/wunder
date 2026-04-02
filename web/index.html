@@ -136,21 +136,13 @@
               <i class="fa-solid fa-chevron-down nav-group-caret" aria-hidden="true"></i>
             </button>
             <div class="nav-children">
-              <button id="navIntro" class="nav-btn">
-                <i class="fa-solid fa-display"></i>
-                <span data-i18n="panel.intro">幻灯片</span>
-              </button>
-              <button id="navPaper" class="nav-btn">
-                <i class="fa-solid fa-file-lines"></i>
-                <span data-i18n="panel.paper">论文</span>
+              <button id="navDocsSite" class="nav-btn">
+                <i class="fa-solid fa-book"></i>
+                <span data-i18n="panel.docsSite">使用说明书</span>
               </button>
               <button id="navApiDocs" class="nav-btn">
                 <i class="fa-solid fa-file-code"></i>
                 <span data-i18n="panel.apiDocs">接口</span>
-              </button>
-              <button id="navDocsSite" class="nav-btn">
-                <i class="fa-solid fa-book"></i>
-                <span data-i18n="panel.docsSite">文档站</span>
               </button>
             </div>
           </div>
@@ -365,30 +357,6 @@
                 <div id="serviceStatusChart" class="monitor-chart"></div>
               </div>
             </div>
-          </div>
-        </section>
-        <section id="introPanel" class="panel">
-          <div class="list-header">
-            <h1 data-i18n="intro.title">幻灯片</h1>
-            <div class="header-actions">
-              <button id="introFullscreenBtn" class="secondary btn-with-icon" type="button">
-                <i class="fa-solid fa-expand"></i><span data-i18n="intro.fullscreen">全屏</span>
-              </button>
-            </div>
-          </div>
-          <div class="tips" data-i18n="intro.tip">
-            这里嵌入系统介绍 PPT，适合现场演示或全屏播放。按 T 可返回目录页。
-          </div>
-          <div id="introFrameWrap" class="intro-frame-wrap">
-            <iframe
-              id="introFrame"
-              class="intro-frame"
-        src="/wunder/ppt/index.html?v=20260110-09"
-              title="wunder 系统介绍"
-              data-i18n-title="intro.frame.title"
-              loading="lazy"
-              allowfullscreen
-            ></iframe>
           </div>
         </section>
         <section id="usersPanel" class="panel">
@@ -1548,9 +1516,8 @@
                       <option value="evaluation" data-i18n="panel.evaluation">Evaluation</option>
                       <option value="debug" data-i18n="panel.debug">Debug</option>
                       <option value="lsp" data-i18n="panel.lsp">LSP</option>
-                      <option value="intro" data-i18n="panel.intro">Intro</option>
-                      <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
                       <option value="docsSite" data-i18n="panel.docsSite">Docs Site</option>
+                      <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
                     </select>
                   </div>
                   <div class="form-row">
@@ -3576,46 +3543,12 @@
             </div>
           </div>
         </section>
-        <section id="paperPanel" class="panel" data-paper-src="/docs/paper.md?v=20260130-01">
-          <div class="list-header">
-            <h1 data-i18n="paper.title">论文阅读</h1>
-            <div class="header-actions">
-              <div class="paper-meta">
-                <span class="paper-meta-label" data-i18n="paper.meta.source">来源</span>
-                <span class="paper-meta-value">/docs/paper.md</span>
-              </div>
-              <div class="paper-meta">
-                <span class="paper-meta-label" data-i18n="paper.meta.updated">更新</span>
-                <span class="paper-meta-value">2026-01-22</span>
-              </div>
-            </div>
-          </div>
-          <div class="tips" data-i18n="paper.tip">
-            用于在管理端快速阅读《智能体调度平台的设计与实现》论文，支持目录跳转与代码块展示。
-          </div>
-          <div class="paper-layout">
-            <div class="paper-side">
-              <div class="paper-card">
-                <div class="paper-card-title">
-                  <i class="fa-solid fa-list"></i>
-                  <span data-i18n="paper.toc">目录</span>
-                </div>
-                <nav id="paperToc" class="paper-toc"></nav>
-              </div>
-            </div>
-            <div class="paper-main">
-              <div class="paper-card paper-content-card">
-                <article id="paperContent" class="paper-content"></article>
-              </div>
-            </div>
-          </div>
-        </section>
         <section id="docsSitePanel" class="panel" data-docs-site-src="/docs/?embed=admin">
           <div id="docsSiteFrameWrap" class="docs-site-frame-wrap">
             <iframe
               id="docsSiteFrame"
               class="docs-site-frame"
-              title="wunder 文档站"
+              title="wunder 使用说明书"
               loading="lazy"
               referrerpolicy="same-origin"
             ></iframe>

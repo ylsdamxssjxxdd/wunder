@@ -1,8 +1,8 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-01T22:54:56.350527+00:00",
+  "generated_at": "2026-04-02T00:10:03.925903+00:00",
   "site": {
-    "name": "wunder 文档",
+    "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
@@ -12,10 +12,6 @@
       {
         "label": "控制台",
         "url": "/"
-      },
-      {
-        "label": "PPT",
-        "url": "/wunder/ppt/"
       }
     ]
   },
@@ -74,14 +70,14 @@
                 "pages": [
                   {
                     "slug": "zh-CN/start/hubs",
-                    "title": "文档总览",
-                    "summary": "按角色和任务快速定位文档入口，避免在全站里盲搜。",
+                    "title": "说明书总览",
+                    "summary": "按角色和任务快速定位使用说明书入口，避免在全站里盲搜。",
                     "url": "/docs/zh-CN/start/hubs/"
                   },
                   {
                     "slug": "zh-CN/start/docs-directory",
-                    "title": "常用文档目录",
-                    "summary": "这是 wunder 最常用页面的精选目录。",
+                    "title": "常用说明目录",
+                    "summary": "这是 wunder 使用说明书里最常用页面的精选目录。",
                     "url": "/docs/zh-CN/start/docs-directory/"
                   }
                 ]
@@ -1301,8 +1297,8 @@
     "zh-CN/start/hubs": {
       "slug": "zh-CN/start/hubs",
       "language": "zh-CN",
-      "title": "文档总览",
-      "summary": "按角色和任务快速定位文档入口，避免在全站里盲搜。",
+      "title": "说明书总览",
+      "summary": "按角色和任务快速定位使用说明书入口，避免在全站里盲搜。",
       "updated_at": "2026-04-02",
       "read_when": [
         "你不确定先看哪一页",
@@ -1321,7 +1317,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "文档总览"
+          "text": "说明书总览"
         },
         {
           "id": "section-2",
@@ -1357,8 +1353,8 @@
     "zh-CN/start/docs-directory": {
       "slug": "zh-CN/start/docs-directory",
       "language": "zh-CN",
-      "title": "常用文档目录",
-      "summary": "这是 wunder 最常用页面的精选目录。",
+      "title": "常用说明目录",
+      "summary": "这是 wunder 使用说明书里最常用页面的精选目录。",
       "updated_at": "2026-04-02",
       "read_when": [
         "你不想从左侧导航慢慢翻",
@@ -1377,7 +1373,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "常用文档目录"
+          "text": "常用说明目录"
         },
         {
           "id": "section-2",
@@ -5550,7 +5546,7 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "文档站和管理端的关系"
+          "text": "使用说明书和管理端的关系"
         },
         {
           "id": "section-7",
@@ -6821,50 +6817,40 @@
         {
           "id": "section-6",
           "level": 3,
-          "text": "静态文档"
+          "text": "使用说明书"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "幻灯片"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "论文"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
           "text": "接口"
         },
         {
-          "id": "section-10",
+          "id": "section-8",
           "level": 2,
           "text": "不同人最常用什么"
         },
         {
-          "id": "section-11",
+          "id": "section-9",
           "level": 3,
           "text": "管理员"
         },
         {
-          "id": "section-12",
+          "id": "section-10",
           "level": 3,
           "text": "开发者"
         },
         {
-          "id": "section-13",
+          "id": "section-11",
           "level": 3,
           "text": "交付或培训人员"
         },
         {
-          "id": "section-14",
+          "id": "section-12",
           "level": 2,
           "text": "一个实用建议"
         },
         {
-          "id": "section-15",
+          "id": "section-13",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6887,7 +6873,7 @@
       "source_docs": [
         "docs/API文档.md",
         "docs/系统介绍.md",
-        "docs/静态站文档/zh-CN/help/troubleshooting.md"
+        "docs/使用说明书/zh-CN/help/troubleshooting.md"
       ],
       "tab": "帮助",
       "group": "概览",

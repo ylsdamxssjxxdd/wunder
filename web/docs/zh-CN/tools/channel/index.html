@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>渠道工具 | wunder 文档</title>
+  <title>渠道工具 | wunder 使用说明书</title>
   <meta name="description" content="`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。">
   <link rel="stylesheet" href="/docs/site.css">
   <script type="module" src="/docs/site.js"></script>
@@ -15,7 +15,7 @@
         <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
             <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
-            <span class="docs-brand-text">wunder 文档</span>
+            <span class="docs-brand-text">wunder 使用说明书</span>
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/channel","language":"zh-CN","title":"渠道工具","summary":"`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。","updated_at":"2026-04-02","read_when":["你要让模型主动发渠道消息","你在区分渠道工具和渠道 Webhook / 管理端渠道治理"],"source_docs":["docs/API文档.md","src/services/tools/channel_tool.rs","docs/设计方案.md"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/channel/","headings":[{"id":"section-1","level":1,"text":"渠道工具"},{"id":"section-2","level":2,"text":"当前动作"},{"id":"section-3","level":2,"text":"listcontacts"},{"id":"section-4","level":2,"text":"sendmessage"},{"id":"section-5","level":2,"text":"它和渠道 Webhook 的区别"},{"id":"section-6","level":2,"text":"实施建议"},{"id":"section-7","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/tools/memory-manager","next_slug":"zh-CN/tools/user-world","markdown":"# 渠道工具\n\n`渠道工具` 让模型直接操作渠道侧联系人和消息发送。\n\n## 当前动作\n\n- `list_contacts`\n- `send_message`\n\n## `list_contacts`\n\n适合：\n\n- 查联系人\n- 查可用账号\n- 按关键字找目标会话或目标用户\n\n常见参数：\n\n- `channel`\n- `account_id`\n- `keyword`\n- `offset`\n- `limit`\n- `refresh`\n\n## `send_message`\n\n适合：\n\n- 向某个渠道用户或群组发消息\n- 带附件发消息\n- 在需要时等待投递结果\n\n常见参数：\n\n- `channel`\n- `account_id`\n- `to`\n- `peer_kind`\n- `thread_id`\n- `text`\n- `content`\n- `attachments`\n- `wait`\n- `wait_timeout_s`\n\n## 它和渠道 Webhook 的区别\n\n可以这样记：\n\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)：接收入站\n- `渠道工具`：模型侧主动发出站\n\n两者属于同一渠道系统，但方向不同。\n\n## 实施建议\n\n- `渠道工具` 当前重点是联系人发现和发送消息。\n- 它属于模型侧出站工具，不等于管理员侧渠道治理接口。\n- 真正排查渠道故障时，还要一起看渠道运行态和 outbox。\n\n## 延伸阅读\n\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n","source_path":"静态站文档/zh-CN/tools/channel.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/channel","language":"zh-CN","title":"渠道工具","summary":"`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。","updated_at":"2026-04-02","read_when":["你要让模型主动发渠道消息","你在区分渠道工具和渠道 Webhook / 管理端渠道治理"],"source_docs":["docs/API文档.md","src/services/tools/channel_tool.rs","docs/设计方案.md"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/channel/","headings":[{"id":"section-1","level":1,"text":"渠道工具"},{"id":"section-2","level":2,"text":"当前动作"},{"id":"section-3","level":2,"text":"listcontacts"},{"id":"section-4","level":2,"text":"sendmessage"},{"id":"section-5","level":2,"text":"它和渠道 Webhook 的区别"},{"id":"section-6","level":2,"text":"实施建议"},{"id":"section-7","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/tools/memory-manager","next_slug":"zh-CN/tools/user-world","markdown":"# 渠道工具\n\n`渠道工具` 让模型直接操作渠道侧联系人和消息发送。\n\n## 当前动作\n\n- `list_contacts`\n- `send_message`\n\n## `list_contacts`\n\n适合：\n\n- 查联系人\n- 查可用账号\n- 按关键字找目标会话或目标用户\n\n常见参数：\n\n- `channel`\n- `account_id`\n- `keyword`\n- `offset`\n- `limit`\n- `refresh`\n\n## `send_message`\n\n适合：\n\n- 向某个渠道用户或群组发消息\n- 带附件发消息\n- 在需要时等待投递结果\n\n常见参数：\n\n- `channel`\n- `account_id`\n- `to`\n- `peer_kind`\n- `thread_id`\n- `text`\n- `content`\n- `attachments`\n- `wait`\n- `wait_timeout_s`\n\n## 它和渠道 Webhook 的区别\n\n可以这样记：\n\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)：接收入站\n- `渠道工具`：模型侧主动发出站\n\n两者属于同一渠道系统，但方向不同。\n\n## 实施建议\n\n- `渠道工具` 当前重点是联系人发现和发送消息。\n- 它属于模型侧出站工具，不等于管理员侧渠道治理接口。\n- 真正排查渠道故障时，还要一起看渠道运行态和 outbox。\n\n## 延伸阅读\n\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n","source_path":"使用说明书/zh-CN/tools/channel.md"}</script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Desktop 界面 | wunder 文档</title>
+  <title>Desktop 界面 | wunder 使用说明书</title>
   <meta name="description" content="`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。">
   <link rel="stylesheet" href="/docs/site.css">
   <script type="module" src="/docs/site.js"></script>
@@ -15,7 +15,7 @@
         <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
             <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
-            <span class="docs-brand-text">wunder 文档</span>
+            <span class="docs-brand-text">wunder 使用说明书</span>
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/desktop-ui","language":"zh-CN","title":"Desktop 界面","summary":"`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。","updated_at":"2026-04-02","read_when":["你要直接用 Wunder","你要理解 desktop 为什么是当前产品重心"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"Desktop 界面"},{"id":"section-2","level":2,"text":"它是什么"},{"id":"section-3","level":2,"text":"为什么 desktop 是当前重心"},{"id":"section-4","level":2,"text":"当前特征"},{"id":"section-5","level":2,"text":"它和用户前端的关系"},{"id":"section-6","level":2,"text":"它更适合谁"},{"id":"section-7","level":2,"text":"什么时候再接远端"},{"id":"section-8","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/surfaces/web-admin","next_slug":"zh-CN/ops/index","markdown":"# Desktop 界面\n\n如果把 Wunder 看成一个产品，而不是一个后端项目，那当前最重要的界面就是 desktop。\n\n## 它是什么\n\n`wunder-desktop` 不是单纯把网页包一层壳。\n\n它的目标是把这些东西组合成“本地优先的智能体工作台”：\n\n- 用户侧消息工作台\n- 本地桥接服务\n- 本地工作目录\n- 本地运行模式\n- 可选远端接入能力\n\n## 为什么 desktop 是当前重心\n\n因为它能一次性验证 Wunder 的核心价值链：\n\n- 对话入口\n- 工具执行\n- 工作区产物\n- 本地文件能力\n- 可视化工作流\n- 端云协同切换\n\n## 当前特征\n\n- 优先本地模式\n- 默认使用安装包附带的 Python 运行时\n- 支持本地持久工作目录\n- 支持远端 gateway / server 接入\n- 复用统一 `/wunder` 调度内核\n\n## 它和用户前端的关系\n\nDesktop 尽量复用用户侧前端的同构页面结构。\n\n也就是说：\n\n- 页面交互逻辑大量来自 `frontend/`\n- 桌面端新增的是本地桥接、系统设置、目录映射与运行形态能力\n\n## 它更适合谁\n\n- 普通个人用户\n- 需要本地文件和桌面环境的人\n- 想先用起来，而不是先部署完整 server 的人\n\n## 什么时候再接远端\n\n如果你遇到这些需求，再考虑远端：\n\n- 多用户和多租户\n- 管理员统一治理\n- 组织级部署\n- 渠道与网关统一接入\n\n## 延伸阅读\n\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n","source_path":"静态站文档/zh-CN/surfaces/desktop-ui.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/desktop-ui","language":"zh-CN","title":"Desktop 界面","summary":"`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。","updated_at":"2026-04-02","read_when":["你要直接用 Wunder","你要理解 desktop 为什么是当前产品重心"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"Desktop 界面"},{"id":"section-2","level":2,"text":"它是什么"},{"id":"section-3","level":2,"text":"为什么 desktop 是当前重心"},{"id":"section-4","level":2,"text":"当前特征"},{"id":"section-5","level":2,"text":"它和用户前端的关系"},{"id":"section-6","level":2,"text":"它更适合谁"},{"id":"section-7","level":2,"text":"什么时候再接远端"},{"id":"section-8","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/surfaces/web-admin","next_slug":"zh-CN/ops/index","markdown":"# Desktop 界面\n\n如果把 Wunder 看成一个产品，而不是一个后端项目，那当前最重要的界面就是 desktop。\n\n## 它是什么\n\n`wunder-desktop` 不是单纯把网页包一层壳。\n\n它的目标是把这些东西组合成“本地优先的智能体工作台”：\n\n- 用户侧消息工作台\n- 本地桥接服务\n- 本地工作目录\n- 本地运行模式\n- 可选远端接入能力\n\n## 为什么 desktop 是当前重心\n\n因为它能一次性验证 Wunder 的核心价值链：\n\n- 对话入口\n- 工具执行\n- 工作区产物\n- 本地文件能力\n- 可视化工作流\n- 端云协同切换\n\n## 当前特征\n\n- 优先本地模式\n- 默认使用安装包附带的 Python 运行时\n- 支持本地持久工作目录\n- 支持远端 gateway / server 接入\n- 复用统一 `/wunder` 调度内核\n\n## 它和用户前端的关系\n\nDesktop 尽量复用用户侧前端的同构页面结构。\n\n也就是说：\n\n- 页面交互逻辑大量来自 `frontend/`\n- 桌面端新增的是本地桥接、系统设置、目录映射与运行形态能力\n\n## 它更适合谁\n\n- 普通个人用户\n- 需要本地文件和桌面环境的人\n- 想先用起来，而不是先部署完整 server 的人\n\n## 什么时候再接远端\n\n如果你遇到这些需求，再考虑远端：\n\n- 多用户和多租户\n- 管理员统一治理\n- 组织级部署\n- 渠道与网关统一接入\n\n## 延伸阅读\n\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n","source_path":"使用说明书/zh-CN/surfaces/desktop-ui.md"}</script>
 </body>
 </html>

@@ -6,7 +6,7 @@
 - wunder 要有可供多人并发访问的良好性能
 - 注意保持优雅的项目结构和模块组成，始终要考虑系统的运行效率，速度要快，内存占用要低
 - 每次完成任务，将实现内容写入 `docs/功能迭代.md` 的分类区块，使用 `python scripts/update_feature_log.py --type <类型> --scope <范围> ...`；类型仅限：新增/变更/修复/性能/文档/重构/安全/工程/测试/移除/弃用。
-- 更新 `docs/静态站文档` 或 `docs/diagrams` 后，必须手动执行 `python scripts/build_docs_site.py` 并同步 `docs/diagrams` 到 `web/docs/diagrams`，确保管理员侧与用户侧帮助文档使用同一份最新内容。
+- 更新 `docs/使用说明书` 后，必须手动执行 `python scripts/build_docs_site.py`，确保管理员侧与用户侧帮助文档使用同一份最新内容；使用说明书内的图示资源统一放在 `docs/使用说明书/assets/`。
 - 如果系统结构或重要的部分有变化要及时更新docs/API/。
 - 不要尝试创建git分支或提交，这些交给用户，你git diff时可能会遇到出现了不是你修改的内容，没关系那是用户自己改的不用管他
 - 当前开发处于原型阶段，数据库等不需要考虑对之前的兼容性，老旧的代码直接删除即可

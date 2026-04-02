@@ -100,7 +100,7 @@ A: Just provide the objective. The system can split work automatically, or you c
 
 ## Documentation Entry Points
 
-- Static docs homepage: `docs/静态站文档/zh-CN/index.md`
+- Static docs homepage: `docs/使用说明书/zh-CN/index.md`
 - System overview: `docs/系统介绍.md`
 - Design doc: `docs/设计方案.md`
 - API doc: `docs/API文档.md`

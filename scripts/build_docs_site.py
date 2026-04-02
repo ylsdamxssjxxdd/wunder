@@ -10,7 +10,7 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DOCS_SOURCE_DIR = REPO_ROOT / "docs" / "静态站文档"
+DOCS_SOURCE_DIR = REPO_ROOT / "docs" / "使用说明书"
 SITE_CONFIG_PATH = DOCS_SOURCE_DIR / "site.json"
 SITE_ASSET_DIR = Path(__file__).resolve().parent / "docs_site"
 OUTPUT_DIR = REPO_ROOT / "web" / "docs"
@@ -23,8 +23,14 @@ ROOT_GENERATED_FILES = [
     "search.json",
     "assets",
 ]
+LEGACY_OUTPUT_PATHS = [
+    Path("diagrams"),
+    Path("paper.md"),
+]
 LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
 LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
+DOCS_ASSET_SOURCE_DIR = DOCS_SOURCE_DIR / "assets"
+DOCS_ASSET_TARGET_PATH = Path("assets") / "manual"
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -343,7 +349,7 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
         "prev_slug": page["prev_slug"],
         "next_slug": page["next_slug"],
         "markdown": page["markdown"],
-        "source_path": f"静态站文档/{page['source_path']}",
+        "source_path": f"{DOCS_SOURCE_DIR.name}/{page['source_path']}",
     }
     page_title = html.escape(f"{page['title']} | {site_meta['name']}", quote=False)
     description = html.escape(page["summary"] or site_meta["description"], quote=True)
@@ -438,6 +444,15 @@ def cleanup_previous_build() -> None:
             shutil.rmtree(target, ignore_errors=True)
 
 
+def cleanup_legacy_outputs() -> None:
+    for relative_path in LEGACY_OUTPUT_PATHS:
+        target = OUTPUT_DIR / relative_path
+        if target.is_file() or target.is_symlink():
+            target.unlink(missing_ok=True)
+        elif target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+
+
 def copy_site_assets() -> None:
     for asset_name in ("site.js", "site.css"):
         asset_path = SITE_ASSET_DIR / asset_name
@@ -451,12 +466,25 @@ def copy_site_assets() -> None:
     shutil.copy2(LOGO_SOURCE_PATH, logo_output)
 
 
+def copy_docs_assets() -> None:
+    if not DOCS_ASSET_SOURCE_DIR.exists():
+        return
+    target_root = OUTPUT_DIR / DOCS_ASSET_TARGET_PATH
+    for source_path in DOCS_ASSET_SOURCE_DIR.rglob("*"):
+        if source_path.is_dir():
+            continue
+        relative_path = source_path.relative_to(DOCS_ASSET_SOURCE_DIR)
+        target_path = target_root / relative_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+
+
 def build() -> None:
     site_config = load_json(SITE_CONFIG_PATH)
     pages, page_order, resolved_languages = load_pages(site_config)
     home_slug = str(site_config["site"]["home_page"])
     site_meta = {
-        "name": str(site_config["site"].get("name") or "wunder 文档"),
+        "name": str(site_config["site"].get("name") or "wunder 使用说明书"),
         "description": str(site_config["site"].get("description") or ""),
         "default_language": str(site_config["site"].get("default_language") or "zh-CN"),
         "home_page": home_slug,
@@ -466,8 +494,10 @@ def build() -> None:
     }
 
     cleanup_previous_build()
+    cleanup_legacy_outputs()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     copy_site_assets()
+    copy_docs_assets()
 
     for page in pages.values():
         write_text(OUTPUT_DIR / page["output_path"], render_page_html(site_meta, page))

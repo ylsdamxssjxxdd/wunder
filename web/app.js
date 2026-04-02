@@ -69,7 +69,6 @@ import { initSettingsPanel, loadAdminDefaults } from "./modules/settings.js?v=20
 
 import { initA2aServicesPanel, loadA2aServices } from "./modules/a2a-services.js?v=20260215-01";
 import { initApiDocsPanel } from "./modules/api-docs.js?v=20260215-01";
-import { initPaperPanel } from "./modules/paper.js?v=20260215-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260215-01";
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
 import { initSimLabPanel } from "./modules/sim-lab.js?v=20260215-01";
@@ -190,10 +189,6 @@ const panelMap = {
   evaluation: { panel: elements.evaluationPanel, nav: elements.navEvaluation },
 
   debug: { panel: elements.debugPanel, nav: elements.navDebug },
-
-  intro: { panel: elements.introPanel, nav: elements.navIntro },
-
-  paper: { panel: elements.paperPanel, nav: elements.navPaper },
 
   apiDocs: { panel: elements.apiDocsPanel, nav: elements.navApiDocs },
 
@@ -360,45 +355,6 @@ const switchPanel = (panel) => {
 };
 
 
-
-// 根据语言切换系统介绍 PPT 地址，同时附带版本号避免浏览器缓存旧页
-
-const INTRO_PPT_VERSION = "20260110-09";
-const appendIntroVersion = (src) => `${src}?v=${INTRO_PPT_VERSION}`;
-
-const resolveIntroSrc = (language) => {
-
-  const normalized = String(language || "").toLowerCase();
-
-  if (normalized.startsWith("en")) {
-
-    return appendIntroVersion("/wunder/ppt-en/index.html");
-
-  }
-
-  return appendIntroVersion("/wunder/ppt/index.html");
-
-};
-
-
-
-const syncIntroFrameLanguage = (language) => {
-
-  if (!elements.introFrame) {
-
-    return;
-
-  }
-
-  const nextSrc = resolveIntroSrc(language);
-
-  if (elements.introFrame.getAttribute("src") !== nextSrc) {
-
-    elements.introFrame.setAttribute("src", nextSrc);
-
-  }
-
-};
 
 const DOCS_SITE_DEFAULT_SRC = "/docs/";
 
@@ -981,23 +937,6 @@ const bindNavigation = () => {
     });
   }
 
-  if (elements.navIntro) {
-    elements.navIntro.addEventListener("click", () => switchPanel("intro"));
-  }
-
-  if (elements.navPaper) {
-    elements.navPaper.addEventListener("click", () => {
-      switchPanel("paper");
-      if (!state.panelLoaded.paper) {
-        initPaperPanel()
-          .then((loaded) => {
-            state.panelLoaded.paper = loaded;
-          })
-          .catch(() => {});
-      }
-    });
-  }
-
   if (elements.navApiDocs) {
     elements.navApiDocs.addEventListener("click", () => switchPanel("apiDocs"));
   }
@@ -1036,52 +975,6 @@ const applyAuthScopeVisibility = () => {
     );
     group.style.display = hasVisible ? "" : "none";
   });
-};
-
-
-
-// 系统介绍面板：全屏按钮与展示容器绑定
-
-const bindIntroPanel = () => {
-
-  if (!elements.introFullscreenBtn || !elements.introFrameWrap) {
-
-    return;
-
-  }
-
-  elements.introFullscreenBtn.addEventListener("click", () => {
-
-    const target = elements.introFrameWrap;
-
-    if (document.fullscreenElement) {
-
-      if (document.fullscreenElement === target && document.exitFullscreen) {
-
-        document.exitFullscreen();
-
-        return;
-
-      }
-
-    }
-
-    if (target.requestFullscreen) {
-
-      target.requestFullscreen().catch(() => {});
-
-    }
-
-  });
-
-  syncIntroFrameLanguage(getCurrentLanguage());
-
-  window.addEventListener("wunder:language-changed", (event) => {
-
-    syncIntroFrameLanguage(event.detail?.language);
-
-  });
-
 };
 
 
@@ -1328,8 +1221,6 @@ const bootstrap = async () => {
   bindNavGroupToggles();
   bindNavGroupHover();
 
-  bindIntroPanel();
-
   bindLanguageRefresh();
 
   bindGlobalInputs();
@@ -1366,14 +1257,6 @@ const bootstrap = async () => {
         })
         .catch(() => {});
     }
-  }
-
-  if (initialPanel === "paper" && !state.panelLoaded.paper) {
-    initPaperPanel()
-      .then((loaded) => {
-        state.panelLoaded.paper = loaded;
-      })
-      .catch(() => {});
   }
 
   if (initialPanel === "docsSite") {

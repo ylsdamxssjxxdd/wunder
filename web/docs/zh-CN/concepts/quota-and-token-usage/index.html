@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>额度与 Token 占用 | wunder 文档</title>
+  <title>额度与 Token 占用 | wunder 使用说明书</title>
   <meta name="description" content="Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。">
   <link rel="stylesheet" href="/docs/site.css">
   <script type="module" src="/docs/site.js"></script>
@@ -15,7 +15,7 @@
         <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
             <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
-            <span class="docs-brand-text">wunder 文档</span>
+            <span class="docs-brand-text">wunder 使用说明书</span>
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/quota-and-token-usage","language":"zh-CN","title":"额度与 Token 占用","summary":"Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。","updated_at":"2026-04-02","read_when":["你在看监控、额度或会话资源占用","你要理解为什么系统强调 input_tokens 与 context 占用"],"source_docs":["docs/API文档.md","docs/设计方案.md","docs/系统介绍.md"],"tab":"概念","group":"核心概念","group_path":["核心概念"],"url":"/docs/zh-CN/concepts/quota-and-token-usage/","headings":[{"id":"section-1","level":1,"text":"额度与 Token 占用"},{"id":"section-2","level":2,"text":"本页重点"},{"id":"section-3","level":2,"text":"Token 占用不是账单口径"},{"id":"section-4","level":2,"text":"为什么要强调这个口径"},{"id":"section-5","level":2,"text":"当前最该看的字段"},{"id":"section-6","level":2,"text":"额度和 Token 占用不是一回事"},{"id":"section-7","level":2,"text":"适用场景"},{"id":"section-8","level":2,"text":"实施建议"},{"id":"section-9","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/memory","next_slug":"zh-CN/concepts/swarm","markdown":"# 额度与 Token 占用\n\nWunder 里最容易被误读的一件事，就是把 token 统计直接当成“花了多少钱”。\n\n## 本页重点\n\n这页只解释两个概念：\n\n- 什么叫 Token 占用\n- 它和额度、账单、监控之间是什么关系\n\n## Token 占用不是账单口径\n\n当前系统更强调：\n\n- 模型这一轮实际接收了多少上下文\n\n而不是：\n\n- 供应商最终按什么账单规则计费\n\n所以你看到的 `token_usage`，首先应该理解成运行时资源占用。\n\n## 为什么要强调这个口径\n\n因为 Wunder 的很多稳定性问题，本质都和上下文大小有关：\n\n- 线程会不会过长\n- 压缩是否及时\n- 工具结果是否把上下文顶满\n- 某类任务是否长期占着高输入窗口\n\n如果只盯账单，很难指导系统治理。\n\n## 当前最该看的字段\n\n在监控和会话汇总里，最有意义的是：\n\n- `token_usage.input_tokens`\n\n它代表模型实际接收的上下文，占用语义最稳定。\n\n而 `context_usage` 这类字段更偏过程估算，适合观测，不适合当唯一准绳。\n\n## 额度和 Token 占用不是一回事\n\n可以这样理解：\n\n- 额度：治理规则，决定某类用户或请求能不能继续跑\n- Token 占用：运行观测，告诉你这轮上下文实际有多重\n\n所以一个请求可能：\n\n- 额度还够，但上下文已经很重\n- 账单不算高，但线程治理已经开始吃紧\n\n## 适用场景\n\n- 监控里某些会话 token_usage 异常高\n- 你在做压缩、裁剪和工具结果长度治理\n- 你在解释“为什么管理员态和普通用户态口径不同”\n\n## 实施建议\n\n- Wunder 记录的 token_usage 重点是上下文占用。\n- 会话汇总优先看 `token_usage.input_tokens`。\n- 不要把 token_usage、额度和供应商账单混成一个概念。\n\n## 延伸阅读\n\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [运维概览](/docs/zh-CN/ops/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n","source_path":"静态站文档/zh-CN/concepts/quota-and-token-usage.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/quota-and-token-usage","language":"zh-CN","title":"额度与 Token 占用","summary":"Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。","updated_at":"2026-04-02","read_when":["你在看监控、额度或会话资源占用","你要理解为什么系统强调 input_tokens 与 context 占用"],"source_docs":["docs/API文档.md","docs/设计方案.md","docs/系统介绍.md"],"tab":"概念","group":"核心概念","group_path":["核心概念"],"url":"/docs/zh-CN/concepts/quota-and-token-usage/","headings":[{"id":"section-1","level":1,"text":"额度与 Token 占用"},{"id":"section-2","level":2,"text":"本页重点"},{"id":"section-3","level":2,"text":"Token 占用不是账单口径"},{"id":"section-4","level":2,"text":"为什么要强调这个口径"},{"id":"section-5","level":2,"text":"当前最该看的字段"},{"id":"section-6","level":2,"text":"额度和 Token 占用不是一回事"},{"id":"section-7","level":2,"text":"适用场景"},{"id":"section-8","level":2,"text":"实施建议"},{"id":"section-9","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/memory","next_slug":"zh-CN/concepts/swarm","markdown":"# 额度与 Token 占用\n\nWunder 里最容易被误读的一件事，就是把 token 统计直接当成“花了多少钱”。\n\n## 本页重点\n\n这页只解释两个概念：\n\n- 什么叫 Token 占用\n- 它和额度、账单、监控之间是什么关系\n\n## Token 占用不是账单口径\n\n当前系统更强调：\n\n- 模型这一轮实际接收了多少上下文\n\n而不是：\n\n- 供应商最终按什么账单规则计费\n\n所以你看到的 `token_usage`，首先应该理解成运行时资源占用。\n\n## 为什么要强调这个口径\n\n因为 Wunder 的很多稳定性问题，本质都和上下文大小有关：\n\n- 线程会不会过长\n- 压缩是否及时\n- 工具结果是否把上下文顶满\n- 某类任务是否长期占着高输入窗口\n\n如果只盯账单，很难指导系统治理。\n\n## 当前最该看的字段\n\n在监控和会话汇总里，最有意义的是：\n\n- `token_usage.input_tokens`\n\n它代表模型实际接收的上下文，占用语义最稳定。\n\n而 `context_usage` 这类字段更偏过程估算，适合观测，不适合当唯一准绳。\n\n## 额度和 Token 占用不是一回事\n\n可以这样理解：\n\n- 额度：治理规则，决定某类用户或请求能不能继续跑\n- Token 占用：运行观测，告诉你这轮上下文实际有多重\n\n所以一个请求可能：\n\n- 额度还够，但上下文已经很重\n- 账单不算高，但线程治理已经开始吃紧\n\n## 适用场景\n\n- 监控里某些会话 token_usage 异常高\n- 你在做压缩、裁剪和工具结果长度治理\n- 你在解释“为什么管理员态和普通用户态口径不同”\n\n## 实施建议\n\n- Wunder 记录的 token_usage 重点是上下文占用。\n- 会话汇总优先看 `token_usage.input_tokens`。\n- 不要把 token_usage、额度和供应商账单混成一个概念。\n\n## 延伸阅读\n\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [运维概览](/docs/zh-CN/ops/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n","source_path":"使用说明书/zh-CN/concepts/quota-and-token-usage.md"}</script>
 </body>
 </html>

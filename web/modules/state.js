@@ -48,7 +48,6 @@ export const state = {
     performance: false,
     simLab: false,
     evaluation: false,
-    paper: false,
     docsSite: false,
     mcp: false,
     lsp: false,
