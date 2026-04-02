@@ -25,6 +25,7 @@
                     :name="item.name"
                     :description="item.description"
                     :hint="resolveAdminToolDetail(item)"
+                    :show-detail="false"
                     :kind="group.key === 'skills' ? 'skill' : 'tool'"
                     :group="group.key"
                     :chips="[group.title]"

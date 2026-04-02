@@ -87,11 +87,11 @@ pub struct WeixinTextItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinCdnMedia {
-    #[serde(default)]
+    #[serde(default, alias = "encryptQueryParam")]
     pub encrypt_query_param: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "aesKey")]
     pub aes_key: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "encryptType")]
     pub encrypt_type: Option<i64>,
 }
 
@@ -99,15 +99,15 @@ pub struct WeixinCdnMedia {
 pub struct WeixinImageItem {
     #[serde(default)]
     pub media: Option<WeixinCdnMedia>,
-    #[serde(default)]
+    #[serde(default, alias = "thumbMedia")]
     pub thumb_media: Option<WeixinCdnMedia>,
-    #[serde(default)]
+    #[serde(default, alias = "aes_key", alias = "aesKey")]
     pub aeskey: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "midSize")]
     pub mid_size: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "thumbSize")]
     pub thumb_size: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "hdSize")]
     pub hd_size: Option<u64>,
 }
 
@@ -117,9 +117,9 @@ pub struct WeixinVoiceItem {
     pub text: Option<String>,
     #[serde(default)]
     pub media: Option<WeixinCdnMedia>,
-    #[serde(default)]
+    #[serde(default, alias = "encodeType")]
     pub encode_type: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "sampleRate")]
     pub sample_rate: Option<i64>,
     #[serde(default)]
     pub playtime: Option<i64>,
@@ -129,53 +129,69 @@ pub struct WeixinVoiceItem {
 pub struct WeixinFileItem {
     #[serde(default)]
     pub media: Option<WeixinCdnMedia>,
-    #[serde(default)]
+    #[serde(default, alias = "fileName")]
     pub file_name: Option<String>,
     #[serde(default)]
     pub md5: Option<String>,
     #[serde(default)]
     pub len: Option<String>,
+    #[serde(default, alias = "encryptQueryParam")]
+    pub encrypt_query_param: Option<String>,
+    #[serde(default, alias = "aesKey")]
+    pub aes_key: Option<String>,
+    #[serde(default, alias = "aesHexKey")]
+    pub aeskey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinVideoItem {
     #[serde(default)]
     pub media: Option<WeixinCdnMedia>,
-    #[serde(default)]
+    #[serde(default, alias = "videoSize")]
     pub video_size: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "thumbMedia")]
     pub thumb_media: Option<WeixinCdnMedia>,
+    #[serde(default, alias = "encryptQueryParam")]
+    pub encrypt_query_param: Option<String>,
+    #[serde(default, alias = "aesKey")]
+    pub aes_key: Option<String>,
+    #[serde(default, alias = "aesHexKey")]
+    pub aeskey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinMessageItem {
     #[serde(default, rename = "type")]
     pub item_type: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "textItem")]
     pub text_item: Option<WeixinTextItem>,
-    #[serde(default)]
+    #[serde(default, alias = "voiceItem")]
     pub voice_item: Option<WeixinVoiceItem>,
-    #[serde(default)]
+    #[serde(default, alias = "imageItem")]
     pub image_item: Option<WeixinImageItem>,
-    #[serde(default)]
+    #[serde(default, alias = "fileItem")]
     pub file_item: Option<WeixinFileItem>,
-    #[serde(default)]
+    #[serde(default, alias = "videoItem")]
     pub video_item: Option<WeixinVideoItem>,
+    #[serde(default, alias = "msgId")]
+    pub msg_id: Option<Value>,
+    #[serde(default, alias = "createTimeMs")]
+    pub create_time_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WeixinInboundMessage {
     #[serde(default)]
     pub seq: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "messageId")]
     pub message_id: Option<Value>,
-    #[serde(default)]
+    #[serde(default, alias = "fromUserId")]
     pub from_user_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "toUserId")]
     pub to_user_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "clientId")]
     pub client_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "createTimeMs")]
     pub create_time_ms: Option<i64>,
     #[serde(default)]
     pub session_id: Option<String>,
@@ -519,11 +535,13 @@ pub fn extract_inbound_messages(
             .message_id
             .as_ref()
             .and_then(value_to_trimmed_string)
+            .or_else(|| extract_item_message_id(&message.item_list))
             .or_else(|| trimmed_non_empty(message.client_id.as_deref()))
             .or_else(|| fallback_message_id(message, account_id, &peer_id));
 
         let ts = message
             .create_time_ms
+            .or_else(|| extract_item_create_time_ms(&message.item_list))
             .map(|value| (value as f64 / 1000.0).max(0.0));
 
         output.push(ChannelMessage {
@@ -831,12 +849,29 @@ fn build_media_entry(item: &WeixinMessageItem) -> Option<WeixinInboundMediaEntry
     match item.item_type {
         Some(2) => {
             let image = item.image_item.as_ref()?;
-            let media = image.media.as_ref()?;
-            let encrypt_query_param = trimmed_non_empty(media.encrypt_query_param.as_deref())?;
+            let encrypt_query_param = image
+                .media
+                .as_ref()
+                .and_then(|media| trimmed_non_empty(media.encrypt_query_param.as_deref()))
+                .or_else(|| {
+                    image
+                        .thumb_media
+                        .as_ref()
+                        .and_then(|media| trimmed_non_empty(media.encrypt_query_param.as_deref()))
+                })?;
             Some(WeixinInboundMediaEntry {
                 kind: "image".to_string(),
                 encrypt_query_param,
-                aes_key: trimmed_non_empty(media.aes_key.as_deref()),
+                aes_key: image
+                    .media
+                    .as_ref()
+                    .and_then(|media| trimmed_non_empty(media.aes_key.as_deref()))
+                    .or_else(|| {
+                        image
+                            .thumb_media
+                            .as_ref()
+                            .and_then(|media| trimmed_non_empty(media.aes_key.as_deref()))
+                    }),
                 aes_hex_key: trimmed_non_empty(image.aeskey.as_deref()),
                 file_name: None,
                 mime_hint: Some("image/*".to_string()),
@@ -857,28 +892,54 @@ fn build_media_entry(item: &WeixinMessageItem) -> Option<WeixinInboundMediaEntry
         }
         Some(4) => {
             let file = item.file_item.as_ref()?;
-            let media = file.media.as_ref()?;
-            let encrypt_query_param = trimmed_non_empty(media.encrypt_query_param.as_deref())?;
+            let encrypt_query_param = file
+                .media
+                .as_ref()
+                .and_then(|media| trimmed_non_empty(media.encrypt_query_param.as_deref()))
+                .or_else(|| trimmed_non_empty(file.encrypt_query_param.as_deref()))?;
             let file_name = trimmed_non_empty(file.file_name.as_deref());
             let mime_hint = infer_mime_from_filename(file_name.as_deref());
             Some(WeixinInboundMediaEntry {
                 kind: "file".to_string(),
                 encrypt_query_param,
-                aes_key: trimmed_non_empty(media.aes_key.as_deref()),
-                aes_hex_key: None,
+                aes_key: file
+                    .media
+                    .as_ref()
+                    .and_then(|media| trimmed_non_empty(media.aes_key.as_deref()))
+                    .or_else(|| trimmed_non_empty(file.aes_key.as_deref())),
+                aes_hex_key: trimmed_non_empty(file.aeskey.as_deref()),
                 file_name,
                 mime_hint,
             })
         }
         Some(5) => {
             let video = item.video_item.as_ref()?;
-            let media = video.media.as_ref()?;
-            let encrypt_query_param = trimmed_non_empty(media.encrypt_query_param.as_deref())?;
+            let encrypt_query_param = video
+                .media
+                .as_ref()
+                .and_then(|media| trimmed_non_empty(media.encrypt_query_param.as_deref()))
+                .or_else(|| trimmed_non_empty(video.encrypt_query_param.as_deref()))
+                .or_else(|| {
+                    video
+                        .thumb_media
+                        .as_ref()
+                        .and_then(|media| trimmed_non_empty(media.encrypt_query_param.as_deref()))
+                })?;
             Some(WeixinInboundMediaEntry {
                 kind: "video".to_string(),
                 encrypt_query_param,
-                aes_key: trimmed_non_empty(media.aes_key.as_deref()),
-                aes_hex_key: None,
+                aes_key: video
+                    .media
+                    .as_ref()
+                    .and_then(|media| trimmed_non_empty(media.aes_key.as_deref()))
+                    .or_else(|| trimmed_non_empty(video.aes_key.as_deref()))
+                    .or_else(|| {
+                        video
+                            .thumb_media
+                            .as_ref()
+                            .and_then(|media| trimmed_non_empty(media.aes_key.as_deref()))
+                    }),
+                aes_hex_key: trimmed_non_empty(video.aeskey.as_deref()),
                 file_name: None,
                 mime_hint: Some("video/mp4".to_string()),
             })
@@ -1072,15 +1133,15 @@ async fn upload_media_to_cdn(
 
     ensure_weixin_ret_ok(&upload_payload, "weixin getuploadurl")?;
 
-    let upload_param = upload_payload
-        .get("upload_param")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("weixin getuploadurl missing upload_param"))?;
+    let upload_url = resolve_upload_url(config, &upload_payload, &filekey).ok_or_else(|| {
+        anyhow!(
+            "weixin getuploadurl missing upload target: {}",
+            truncate_text(&upload_payload.to_string(), 512)
+        )
+    })?;
 
     let download_encrypted_query_param =
-        upload_ciphertext_to_cdn(http, config, upload_param, &filekey, &ciphertext).await?;
+        upload_ciphertext_to_cdn(http, config, &upload_url, &ciphertext).await?;
 
     Ok(UploadedMediaRef {
         download_encrypted_query_param,
@@ -1099,16 +1160,10 @@ fn encode_weixin_media_aes_key(aes_key_hex: &str) -> String {
 async fn upload_ciphertext_to_cdn(
     http: &Client,
     config: &WeixinConfig,
-    upload_param: &str,
-    filekey: &str,
+    upload_url: &str,
     ciphertext: &[u8],
 ) -> Result<String> {
-    let cdn_base = resolve_cdn_base_url(config);
-    let encoded_upload_param = encode_query_value(upload_param);
-    let encoded_filekey = encode_query_value(filekey);
-    let url = format!(
-        "{cdn_base}/upload?encrypted_query_param={encoded_upload_param}&filekey={encoded_filekey}"
-    );
+    let url = normalize_upload_url(config, upload_url)?;
 
     let response = http
         .post(&url)
@@ -1640,8 +1695,107 @@ fn value_to_trimmed_string(value: &Value) -> Option<String> {
     match value {
         Value::String(item) => trimmed_non_empty(Some(item)),
         Value::Number(item) => Some(item.to_string()),
+        Value::Bool(item) => Some(item.to_string()),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value)
+            .ok()
+            .and_then(|serialized| trimmed_non_empty(Some(serialized.as_str()))),
         _ => None,
     }
+}
+
+fn extract_item_message_id(items: &[WeixinMessageItem]) -> Option<String> {
+    items
+        .iter()
+        .filter_map(|item| item.msg_id.as_ref().and_then(value_to_trimmed_string))
+        .find(|value| !value.is_empty())
+}
+
+fn extract_item_create_time_ms(items: &[WeixinMessageItem]) -> Option<i64> {
+    items
+        .iter()
+        .filter_map(|item| item.create_time_ms)
+        .find(|value| *value > 0)
+}
+
+fn extract_upload_param(payload: &Value) -> Option<String> {
+    const CANDIDATE_PATHS: &[&[&str]] = &[
+        &["upload_param"],
+        &["uploadParam"],
+        &["data", "upload_param"],
+        &["data", "uploadParam"],
+        &["result", "upload_param"],
+        &["result", "uploadParam"],
+        &["data", "result", "upload_param"],
+        &["data", "result", "uploadParam"],
+    ];
+    extract_string_by_paths(payload, CANDIDATE_PATHS)
+}
+
+fn extract_upload_full_url(payload: &Value) -> Option<String> {
+    const CANDIDATE_PATHS: &[&[&str]] = &[
+        &["upload_full_url"],
+        &["uploadFullUrl"],
+        &["data", "upload_full_url"],
+        &["data", "uploadFullUrl"],
+        &["result", "upload_full_url"],
+        &["result", "uploadFullUrl"],
+        &["data", "result", "upload_full_url"],
+        &["data", "result", "uploadFullUrl"],
+    ];
+    extract_string_by_paths(payload, CANDIDATE_PATHS)
+}
+
+fn resolve_upload_url(config: &WeixinConfig, payload: &Value, filekey: &str) -> Option<String> {
+    if let Some(upload_full_url) = extract_upload_full_url(payload) {
+        return Some(upload_full_url);
+    }
+    let upload_param = extract_upload_param(payload)?;
+    Some(build_upload_url_from_param(config, &upload_param, filekey))
+}
+
+fn build_upload_url_from_param(config: &WeixinConfig, upload_param: &str, filekey: &str) -> String {
+    let cdn_base = resolve_cdn_base_url(config);
+    let encoded_upload_param = encode_query_value(upload_param);
+    let encoded_filekey = encode_query_value(filekey);
+    format!(
+        "{cdn_base}/upload?encrypted_query_param={encoded_upload_param}&filekey={encoded_filekey}"
+    )
+}
+
+fn normalize_upload_url(config: &WeixinConfig, upload_url: &str) -> Result<String> {
+    let trimmed = upload_url.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("weixin upload url is empty"));
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Ok(trimmed.to_string());
+    }
+    let cdn_base = resolve_cdn_base_url(config);
+    if trimmed.starts_with('/') {
+        return Ok(format!("{cdn_base}{trimmed}"));
+    }
+    let normalized_path = trimmed.trim_start_matches('/');
+    Ok(format!("{cdn_base}/{normalized_path}"))
+}
+
+fn extract_string_by_paths(payload: &Value, paths: &[&[&str]]) -> Option<String> {
+    for path in paths {
+        let mut current = payload;
+        let mut found = true;
+        for segment in *path {
+            let Some(next) = current.get(*segment) else {
+                found = false;
+                break;
+            };
+            current = next;
+        }
+        if found {
+            if let Some(value) = value_to_trimmed_string(current) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 fn percent_decode_to_bytes(value: &str) -> Vec<u8> {
@@ -1671,6 +1825,102 @@ fn percent_decode_to_string(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::Bytes,
+        extract::State,
+        http::{HeaderName, HeaderValue, StatusCode},
+        response::IntoResponse,
+        routing::post,
+        Json, Router,
+    };
+    use serde_json::Value;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use tokio::{net::TcpListener, sync::Mutex};
+
+    #[derive(Clone)]
+    struct OutboundServerState {
+        upload_full_url: String,
+        getuploadurl_payloads: Arc<Mutex<Vec<Value>>>,
+        upload_bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+        sendmessage_payloads: Arc<Mutex<Vec<Value>>>,
+    }
+
+    struct OutboundServerFixture {
+        base_url: String,
+        state: OutboundServerState,
+        _handle: tokio::task::JoinHandle<()>,
+    }
+
+    async fn start_outbound_server_fixture() -> OutboundServerFixture {
+        async fn getuploadurl_handler(
+            State(state): State<OutboundServerState>,
+            Json(payload): Json<Value>,
+        ) -> Json<Value> {
+            state.getuploadurl_payloads.lock().await.push(payload);
+            Json(json!({
+                "ret": 0,
+                "upload_full_url": state.upload_full_url,
+            }))
+        }
+
+        async fn upload_direct_handler(
+            State(state): State<OutboundServerState>,
+            body: Bytes,
+        ) -> impl IntoResponse {
+            state.upload_bodies.lock().await.push(body.to_vec());
+            (
+                StatusCode::OK,
+                [(
+                    HeaderName::from_static("x-encrypted-param"),
+                    HeaderValue::from_static("enc-uploaded-1"),
+                )],
+            )
+        }
+
+        async fn sendmessage_handler(
+            State(state): State<OutboundServerState>,
+            Json(payload): Json<Value>,
+        ) -> Json<Value> {
+            state.sendmessage_payloads.lock().await.push(payload);
+            Json(json!({ "ret": 0 }))
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind outbound fixture listener");
+        let addr = listener.local_addr().expect("fixture local addr");
+        let base_url = format!("http://{addr}");
+        let state = OutboundServerState {
+            upload_full_url: format!("{base_url}/upload/direct?token=abc"),
+            getuploadurl_payloads: Arc::new(Mutex::new(Vec::new())),
+            upload_bodies: Arc::new(Mutex::new(Vec::new())),
+            sendmessage_payloads: Arc::new(Mutex::new(Vec::new())),
+        };
+        let app = Router::new()
+            .route("/ilink/bot/getuploadurl", post(getuploadurl_handler))
+            .route("/upload/direct", post(upload_direct_handler))
+            .route("/ilink/bot/sendmessage", post(sendmessage_handler))
+            .with_state(state.clone());
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("serve outbound fixture app");
+        });
+
+        OutboundServerFixture {
+            base_url,
+            state,
+            _handle: handle,
+        }
+    }
+
+    fn write_outbound_fixture_file(file_name: &str, bytes: &[u8]) -> (TempDir, String) {
+        let temp_dir = tempfile::tempdir().expect("create outbound temp dir");
+        let file_path = temp_dir.path().join(file_name);
+        std::fs::write(&file_path, bytes).expect("write outbound fixture file");
+        (temp_dir, file_path.to_string_lossy().to_string())
+    }
 
     #[test]
     fn extract_context_token_from_meta_supports_multiple_shapes() {
@@ -1754,6 +2004,49 @@ mod tests {
     }
 
     #[test]
+    fn extract_inbound_messages_supports_camel_case_media_shapes() {
+        let config = WeixinConfig::default();
+        let messages = extract_inbound_messages(
+            &[WeixinInboundMessage {
+                from_user_id: Some("u_camel".to_string()),
+                create_time_ms: None,
+                item_list: vec![WeixinMessageItem {
+                    item_type: Some(4),
+                    msg_id: Some(json!("msg-item-1")),
+                    create_time_ms: Some(1_710_000_000_123),
+                    file_item: Some(WeixinFileItem {
+                        media: None,
+                        file_name: Some("notes.txt".to_string()),
+                        encrypt_query_param: Some("enc-camel".to_string()),
+                        aes_key: Some("file-key".to_string()),
+                        aeskey: Some("00112233445566778899aabbccddeeff".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            "acc_camel",
+            &config,
+        );
+
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].message_id.as_deref(), Some("msg-item-1"));
+        assert_eq!(messages[0].attachments.len(), 1);
+        assert_eq!(
+            messages[0].attachments[0].name.as_deref(),
+            Some("notes.txt")
+        );
+        let entries = extract_media_entries_from_message_meta(messages[0].meta.as_ref());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].encrypt_query_param, "enc-camel");
+        assert_eq!(
+            entries[0].aes_hex_key.as_deref(),
+            Some("00112233445566778899aabbccddeeff")
+        );
+    }
+
+    #[test]
     fn parse_aes_key_base64_supports_raw_and_hex_payload() {
         let expected = [7_u8; 16];
         let raw_b64 = base64::engine::general_purpose::STANDARD.encode(expected);
@@ -1814,6 +2107,146 @@ mod tests {
             .map(|(_, value)| value.to_string())
             .unwrap_or_default();
         assert_eq!(encrypted_query_param, "A+B /?=");
+    }
+
+    #[test]
+    fn extract_upload_param_supports_nested_shapes() {
+        assert_eq!(
+            extract_upload_param(&json!({ "upload_param": "direct-upload" })).as_deref(),
+            Some("direct-upload")
+        );
+        assert_eq!(
+            extract_upload_param(&json!({ "data": { "uploadParam": "nested-upload" } })).as_deref(),
+            Some("nested-upload")
+        );
+        assert_eq!(
+            extract_upload_param(
+                &json!({ "data": { "result": { "upload_param": "deep-upload" } } })
+            )
+            .as_deref(),
+            Some("deep-upload")
+        );
+    }
+
+    #[test]
+    fn resolve_upload_url_prefers_upload_full_url_when_available() {
+        let config = WeixinConfig {
+            cdn_base: Some("https://cdn.example.com/c2c".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_upload_url(
+                &config,
+                &json!({
+                    "upload_full_url": "https://upload.example.com/direct?token=abc"
+                }),
+                "filekey-1"
+            )
+            .as_deref(),
+            Some("https://upload.example.com/direct?token=abc")
+        );
+        assert_eq!(
+            resolve_upload_url(
+                &config,
+                &json!({
+                    "data": {
+                        "uploadParam": "legacy-upload"
+                    }
+                }),
+                "filekey-2"
+            )
+            .as_deref(),
+            Some(
+                "https://cdn.example.com/c2c/upload?encrypted_query_param=legacy-upload&filekey=filekey-2"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn send_outbound_uploads_media_via_upload_full_url_and_sends_file_reference() {
+        let fixture = start_outbound_server_fixture().await;
+        let raw_bytes = b"quarterly report bytes".to_vec();
+        let (_temp_dir, file_path) = write_outbound_fixture_file("report.pdf", &raw_bytes);
+        let outbound = ChannelOutboundMessage {
+            channel: WEIXIN_CHANNEL.to_string(),
+            account_id: "acc_weixin".to_string(),
+            peer: ChannelPeer {
+                kind: "user".to_string(),
+                id: "wx_peer_1".to_string(),
+                name: None,
+            },
+            thread: None,
+            text: Some("Please review the attached report.".to_string()),
+            attachments: vec![ChannelAttachment {
+                kind: "file".to_string(),
+                url: file_path,
+                mime: Some("application/pdf".to_string()),
+                size: Some(raw_bytes.len() as i64),
+                name: Some("report.pdf".to_string()),
+            }],
+            meta: Some(json!({
+                "context_token": "ctx-upload-1"
+            })),
+        };
+        let config = WeixinConfig {
+            api_base: Some(fixture.base_url.clone()),
+            bot_token: Some("bot-token-1".to_string()),
+            media_enabled: Some(true),
+            ..Default::default()
+        };
+
+        send_outbound(&Client::new(), &outbound, &config)
+            .await
+            .expect("send outbound with upload_full_url");
+
+        let getuploadurl_payloads = fixture.state.getuploadurl_payloads.lock().await.clone();
+        assert_eq!(getuploadurl_payloads.len(), 1);
+        let getuploadurl_payload = &getuploadurl_payloads[0];
+        assert_eq!(
+            getuploadurl_payload
+                .get("to_user_id")
+                .and_then(Value::as_str),
+            Some("wx_peer_1")
+        );
+        assert_eq!(
+            getuploadurl_payload.get("rawsize").and_then(Value::as_u64),
+            Some(raw_bytes.len() as u64)
+        );
+
+        let upload_bodies = fixture.state.upload_bodies.lock().await.clone();
+        assert_eq!(upload_bodies.len(), 1);
+        assert!(!upload_bodies[0].is_empty());
+        assert_ne!(upload_bodies[0], raw_bytes);
+
+        let sendmessage_payloads = fixture.state.sendmessage_payloads.lock().await.clone();
+        assert_eq!(sendmessage_payloads.len(), 2);
+
+        let text_payload = sendmessage_payloads
+            .iter()
+            .find(|payload| {
+                payload["msg"]["item_list"][0]["type"].as_i64() == Some(1)
+                    && payload["msg"]["item_list"][0]["text_item"]["text"].as_str()
+                        == Some("Please review the attached report.")
+            })
+            .expect("text payload should be sent");
+        assert_eq!(
+            text_payload["msg"]["context_token"].as_str(),
+            Some("ctx-upload-1")
+        );
+
+        let file_payload = sendmessage_payloads
+            .iter()
+            .find(|payload| payload["msg"]["item_list"][0]["type"].as_i64() == Some(4))
+            .expect("file payload should be sent");
+        assert_eq!(
+            file_payload["msg"]["item_list"][0]["file_item"]["file_name"].as_str(),
+            Some("report.pdf")
+        );
+        assert_eq!(
+            file_payload["msg"]["item_list"][0]["file_item"]["media"]["encrypt_query_param"]
+                .as_str(),
+            Some("enc-uploaded-1")
+        );
     }
 
     #[test]

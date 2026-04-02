@@ -39,10 +39,15 @@
           class="workflow-dialog-detail system-prompt-content"
           v-html="htmlContent"
         ></pre>
-        <pre
+        <div
           v-else
           class="workflow-dialog-detail system-prompt-tooling-content"
-        >{{ toolingContent }}</pre>
+        >
+          <PromptToolingPreviewList
+            :items="toolingItems"
+            :fallback-text="toolingContent"
+          />
+        </div>
       </section>
     </template>
   </el-dialog>
@@ -50,7 +55,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+
+import PromptToolingPreviewList from '@/components/chat/PromptToolingPreviewList.vue';
 import { useI18n } from '@/i18n';
+import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
 
 const props = defineProps<{
   visible: boolean;
@@ -59,6 +67,7 @@ const props = defineProps<{
   memoryMode: 'none' | 'pending' | 'frozen';
   toolingMode?: string;
   toolingContent?: string;
+  toolingItems?: PromptToolingPreviewItem[];
 }>();
 
 const emit = defineEmits<{
@@ -77,7 +86,12 @@ const statusHint = computed(() => {
   return '';
 });
 
-const hasToolingContent = computed(() => String(props.toolingContent || '').trim().length > 0);
+const toolingItems = computed(() =>
+  Array.isArray(props.toolingItems) ? props.toolingItems.filter((item) => item?.name) : []
+);
+const hasToolingContent = computed(
+  () => toolingItems.value.length > 0 || String(props.toolingContent || '').trim().length > 0
+);
 const activeView = ref<'prompt' | 'tooling'>('prompt');
 
 const toolingModeLabel = computed(() => {
@@ -100,10 +114,11 @@ watch(
 );
 
 watch(
-  () => props.toolingContent,
+  () => [props.toolingContent, props.toolingItems],
   () => {
     activeView.value = 'prompt';
-  }
+  },
+  { deep: true }
 );
 
 const handleVisibleChange = (nextVisible: boolean) => {
@@ -180,7 +195,6 @@ const handleVisibleChange = (nextVisible: boolean) => {
   margin: 0;
   max-height: 46vh;
   overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: normal;
 }
 </style>

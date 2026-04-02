@@ -872,6 +872,8 @@ const openToolDetail = (tool) => {
     description: tool.description || '',
     schema: formatToolSchema(getToolInputSchema(tool))
   };
+  toolDetail.value.meta = metaParts.join(' · ');
+  toolDetail.value.meta = metaParts.join(' \u00b7 ');
   toolDetailVisible.value = true;
 };
 

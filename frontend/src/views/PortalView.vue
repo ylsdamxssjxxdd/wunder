@@ -334,7 +334,12 @@
                         :key="option.value"
                         :value="option.value"
                       >
-                        <span :title="option.hint">{{ option.label }}</span>
+                        <AgentToolOptionLabel
+                          :label="option.label"
+                          :description="option.description"
+                          :hint="option.hint"
+                          :group-key="group.key"
+                        />
                       </el-checkbox>
                     </div>
                   </div>
@@ -405,6 +410,7 @@ import { fetchCronJobs } from '@/api/cron';
 import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
+import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';

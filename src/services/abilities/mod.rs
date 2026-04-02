@@ -164,7 +164,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         &mut items,
         &mut seen_ids,
         &response.user_mcp_tools,
-        AbilityGroupKey::User,
+        AbilityGroupKey::Mcp,
         AbilitySourceKey::UserMcp,
         AbilityKind::Tool,
         None,
@@ -173,7 +173,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         &mut items,
         &mut seen_ids,
         &response.user_skills,
-        AbilityGroupKey::User,
+        AbilityGroupKey::Skills,
         AbilitySourceKey::UserSkill,
         AbilityKind::Skill,
         None,
@@ -182,7 +182,7 @@ pub fn build_ability_items(response: &AvailableToolsResponse) -> Vec<AbilityDesc
         &mut items,
         &mut seen_ids,
         &response.user_knowledge_tools,
-        AbilityGroupKey::User,
+        AbilityGroupKey::Knowledge,
         AbilitySourceKey::UserKnowledge,
         AbilityKind::Tool,
         None,
@@ -261,14 +261,20 @@ mod tests {
                 && item.kind == AbilityKind::Skill
         }));
         assert!(items.iter().any(|item| {
+            item.runtime_name == "alice@server@tool"
+                && item.group == AbilityGroupKey::Mcp
+                && item.source == AbilitySourceKey::UserMcp
+                && item.kind == AbilityKind::Tool
+        }));
+        assert!(items.iter().any(|item| {
             item.runtime_name == "writer_skill"
-                && item.group == AbilityGroupKey::User
+                && item.group == AbilityGroupKey::Skills
                 && item.source == AbilitySourceKey::UserSkill
                 && item.kind == AbilityKind::Skill
         }));
         assert!(items.iter().any(|item| {
             item.runtime_name == "alice@kb_search"
-                && item.group == AbilityGroupKey::User
+                && item.group == AbilityGroupKey::Knowledge
                 && item.source == AbilitySourceKey::UserKnowledge
                 && item.kind == AbilityKind::Tool
         }));

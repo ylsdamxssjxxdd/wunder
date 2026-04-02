@@ -26,6 +26,14 @@ const asRecord = (value: unknown): UnknownRecord =>
 const hasOwn = (record: UnknownRecord, key: string) =>
   Object.prototype.hasOwnProperty.call(record, key);
 
+const hasTypedUserGroups = (payload: UnknownRecord): boolean =>
+  hasOwn(payload, 'user_mcp_tools') ||
+  hasOwn(payload, 'userMcpTools') ||
+  hasOwn(payload, 'user_skills') ||
+  hasOwn(payload, 'userSkills') ||
+  hasOwn(payload, 'user_knowledge_tools') ||
+  hasOwn(payload, 'userKnowledgeTools');
+
 const pickName = (item: unknown): string => {
   if (!item) return '';
   if (typeof item === 'string') return item;
@@ -76,8 +84,28 @@ const normalizeAbilityItems = (list: unknown): AbilityItem[] => {
 const normalizeAbilityKind = (value: unknown): AbilityKind =>
   String(value || '').trim().toLowerCase() === 'skill' ? 'skill' : 'tool';
 
-const normalizeAbilityGroup = (value: unknown): AbilityGroupKey | undefined => {
+const normalizeAbilitySource = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const normalizeAbilityGroup = (
+  value: unknown,
+  source: unknown = '',
+  kind: AbilityKind = 'tool'
+): AbilityGroupKey | undefined => {
   const normalized = String(value || '').trim().toLowerCase();
+  const normalizedSource = normalizeAbilitySource(source);
+  if (normalizedSource === 'user_mcp') {
+    return 'mcp';
+  }
+  if (normalizedSource === 'user_skill') {
+    return 'skills';
+  }
+  if (normalizedSource === 'user_knowledge') {
+    return 'knowledge';
+  }
+  if (normalized === 'user' && kind === 'skill') {
+    return 'skills';
+  }
   if (
     normalized === 'skills' ||
     normalized === 'mcp' ||
@@ -90,6 +118,38 @@ const normalizeAbilityGroup = (value: unknown): AbilityGroupKey | undefined => {
     return normalized;
   }
   return undefined;
+};
+
+const mergeAbilityItems = (...lists: Array<AbilityItem[] | undefined>): AbilityItem[] => {
+  const items: AbilityItem[] = [];
+  const indexMap = new Map<string, number>();
+  for (const list of lists) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const item of list) {
+      const name = String(item?.name || '').trim();
+      if (!name) {
+        continue;
+      }
+      const description = String(item?.description || '').trim();
+      const existingIndex = indexMap.get(name);
+      if (existingIndex !== undefined) {
+        if (!items[existingIndex].description && description) {
+          items[existingIndex].description = description;
+        }
+        continue;
+      }
+      items.push({
+        name,
+        description,
+        kind: item?.kind,
+        group: item?.group
+      });
+      indexMap.set(name, items.length - 1);
+    }
+  }
+  return items;
 };
 
 const normalizeCatalogItems = (list: unknown): AbilityItem[] => {
@@ -105,7 +165,7 @@ const normalizeCatalogItems = (list: unknown): AbilityItem[] => {
     if (!name) return;
     const description = String(obj.description || obj.desc || obj.summary || '').trim();
     const kind = normalizeAbilityKind(obj.kind);
-    const group = normalizeAbilityGroup(obj.group);
+    const group = normalizeAbilityGroup(obj.group, obj.source, kind);
     const key = `${kind}:${name}`;
     if (indexMap.has(key)) {
       const existingIndex = indexMap.get(key);
@@ -148,17 +208,26 @@ export const collectAbilityNames = (payload: UnknownRecord = {}) => {
       )
     };
   }
+  const typedUserGroups = hasTypedUserGroups(payload);
+  const legacyUserTools = typedUserGroups
+    ? []
+    : normalizeToolNames(payload.user_tools || payload.userTools);
   const toolGroups = [
     payload.builtin_tools || payload.builtinTools,
     payload.mcp_tools || payload.mcpTools,
     payload.a2a_tools || payload.a2aTools,
     payload.knowledge_tools || payload.knowledgeTools,
-    payload.user_tools || payload.userTools,
+    payload.user_mcp_tools || payload.userMcpTools,
+    payload.user_knowledge_tools || payload.userKnowledgeTools,
+    legacyUserTools,
     payload.shared_tools || payload.sharedTools
   ];
   const tools = uniqNames(toolGroups.flatMap((list) => normalizeToolNames(list)));
   const skills = uniqNames(
-    normalizeToolNames(payload.skills || payload.skill_list || payload.skillList || [])
+    [
+      ...normalizeToolNames(payload.skills || payload.skill_list || payload.skillList || []),
+      ...normalizeToolNames(payload.user_skills || payload.userSkills || [])
+    ]
   );
   return { tools, skills };
 };
@@ -171,22 +240,29 @@ export const collectAbilityDetails = (payload: UnknownRecord = {}) => {
       skills: unifiedItems.filter((item) => item.kind === 'skill')
     };
   }
-  const toolGroups = [
-    payload.builtin_tools || payload.builtinTools,
-    payload.mcp_tools || payload.mcpTools,
-    payload.a2a_tools || payload.a2aTools,
-    payload.knowledge_tools || payload.knowledgeTools,
-    payload.user_tools || payload.userTools,
-    payload.shared_tools || payload.sharedTools
-  ];
-  const tools = normalizeAbilityItems(
-    toolGroups.flatMap((list) => (Array.isArray(list) ? list : []))
+  const typedUserGroups = hasTypedUserGroups(payload);
+  const legacyUserTools = typedUserGroups
+    ? []
+    : normalizeAbilityItems(payload.user_tools || payload.userTools || []);
+  const tools = mergeAbilityItems(
+    normalizeAbilityItems(payload.builtin_tools || payload.builtinTools || []),
+    normalizeAbilityItems(payload.mcp_tools || payload.mcpTools || []),
+    normalizeAbilityItems(payload.a2a_tools || payload.a2aTools || []),
+    normalizeAbilityItems(payload.knowledge_tools || payload.knowledgeTools || []),
+    normalizeAbilityItems(payload.user_mcp_tools || payload.userMcpTools || []),
+    normalizeAbilityItems(payload.user_knowledge_tools || payload.userKnowledgeTools || []),
+    legacyUserTools,
+    normalizeAbilityItems(payload.shared_tools || payload.sharedTools || [])
   );
-  const skills = normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []);
+  const skills = mergeAbilityItems(
+    normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []),
+    normalizeAbilityItems(payload.user_skills || payload.userSkills || [])
+  );
   return { tools, skills };
 };
 
 export const collectAbilityGroupDetails = (payload: UnknownRecord = {}) => {
+  const typedUserGroups = hasTypedUserGroups(payload);
   const grouped = {
     skills: [] as AbilityItem[],
     mcp: [] as AbilityItem[],
@@ -205,11 +281,20 @@ export const collectAbilityGroupDetails = (payload: UnknownRecord = {}) => {
     return grouped;
   }
   return {
-    skills: normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []),
-    mcp: normalizeAbilityItems(payload.mcp_tools || payload.mcpTools || []),
-    knowledge: normalizeAbilityItems(payload.knowledge_tools || payload.knowledgeTools || []),
+    skills: mergeAbilityItems(
+      normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []),
+      normalizeAbilityItems(payload.user_skills || payload.userSkills || [])
+    ),
+    mcp: mergeAbilityItems(
+      normalizeAbilityItems(payload.mcp_tools || payload.mcpTools || []),
+      normalizeAbilityItems(payload.user_mcp_tools || payload.userMcpTools || [])
+    ),
+    knowledge: mergeAbilityItems(
+      normalizeAbilityItems(payload.knowledge_tools || payload.knowledgeTools || []),
+      normalizeAbilityItems(payload.user_knowledge_tools || payload.userKnowledgeTools || [])
+    ),
     a2a: normalizeAbilityItems(payload.a2a_tools || payload.a2aTools || []),
-    user: normalizeAbilityItems(payload.user_tools || payload.userTools || []),
+    user: typedUserGroups ? [] : normalizeAbilityItems(payload.user_tools || payload.userTools || []),
     shared: normalizeAbilityItems(payload.shared_tools || payload.sharedTools || []),
     builtin: normalizeAbilityItems(payload.builtin_tools || payload.builtinTools || [])
   };

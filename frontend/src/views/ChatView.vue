@@ -391,19 +391,17 @@
                                   <span class="ability-count">{{ section.items.length }}</span>
                                 </div>
                                 <div v-if="section.items.length" class="ability-item-list">
-                                  <div
+                                  <AbilityTooltipListItem
                                     v-for="item in section.items"
                                     :key="`${section.key}-${item.name}`"
-                                    :class="['ability-item', section.kind]"
-                                  >
-                                    <div class="ability-item-name">{{ item.name }}</div>
-                                    <div
-                                      class="ability-item-desc"
-                                      :class="{ 'is-empty': !item.description }"
-                                    >
-                                      {{ item.description || t('chat.ability.noDesc') }}
-                                    </div>
-                                  </div>
+                                    :name="item.name"
+                                    :description="item.description"
+                                    :kind="section.kind"
+                                    :group="section.key"
+                                    :source="section.key"
+                                    :chip="section.title"
+                                    :empty-text="t('chat.ability.noDesc')"
+                                  />
                                 </div>
                                 <div v-else class="ability-empty">{{ section.emptyText }}</div>
                               </div>
@@ -525,7 +523,7 @@
       <div class="system-prompt-body">
         <div v-if="promptPreviewLoading" class="muted">{{ t('chat.systemPrompt.loading') }}</div>
         <template v-else>
-          <div v-if="promptPreviewToolingContent" class="system-prompt-view-switch">
+          <div v-if="hasPromptPreviewTooling" class="system-prompt-view-switch">
             <button
               class="system-prompt-view-btn"
               :class="{ 'is-active': promptPreviewView === 'prompt' }"
@@ -547,14 +545,19 @@
             </span>
           </div>
           <pre
-            v-if="!promptPreviewToolingContent || promptPreviewView === 'prompt'"
+            v-if="!hasPromptPreviewTooling || promptPreviewView === 'prompt'"
             class="system-prompt-content"
             v-html="promptPreviewHtml"
           ></pre>
-          <pre
+          <div
             v-else
             class="system-prompt-tooling-content"
-          >{{ promptPreviewToolingContent }}</pre>
+          >
+            <PromptToolingPreviewList
+              :items="promptPreviewToolingItems"
+              :fallback-text="promptPreviewToolingContent"
+            />
+          </div>
         </template>
       </div>
       <template #footer>
@@ -737,6 +740,8 @@ import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
+import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.vue';
+import PromptToolingPreviewList from '@/components/chat/PromptToolingPreviewList.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import { getDesktopRuntime, isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
@@ -774,7 +779,10 @@ import {
 } from '@/utils/chatCompactionWorkflow';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
-import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
+import {
+  extractPromptToolingPreview,
+  type PromptToolingPreviewItem
+} from '@/utils/promptToolingPreview';
 import { isDemoMode } from '@/utils/demo';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
@@ -826,6 +834,7 @@ const promptPreviewLoading = ref(false);
 const promptPreviewContent = ref('');
 const promptPreviewToolingMode = ref('');
 const promptPreviewToolingContent = ref('');
+const promptPreviewToolingItems = ref<PromptToolingPreviewItem[]>([]);
 const promptPreviewView = ref<'prompt' | 'tooling'>('prompt');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
@@ -1088,6 +1097,11 @@ const promptPreviewToolingModeLabel = computed(() => {
   const translated = t(key);
   return translated === key ? mode : translated;
 });
+const hasPromptPreviewTooling = computed(
+  () =>
+    promptPreviewToolingItems.value.length > 0 ||
+    String(promptPreviewToolingContent.value || '').trim().length > 0
+);
 // Ability tooltip sections share the same tool and skill summary payload.
 const abilitySections = computed(() => {
   const groups = collectAbilityGroupDetails(effectiveToolSummary.value || {});
@@ -1119,20 +1133,6 @@ const abilitySections = computed(() => {
       title: t('toolManager.system.a2a'),
       emptyText: t('chat.ability.emptyTools'),
       items: groups.a2a
-    },
-    {
-      key: 'user',
-      kind: 'tool',
-      title: t('portal.agent.tools.group.user'),
-      emptyText: t('chat.ability.emptyTools'),
-      items: groups.user
-    },
-    {
-      key: 'shared',
-      kind: 'tool',
-      title: t('portal.agent.tools.group.shared'),
-      emptyText: t('chat.ability.emptyTools'),
-      items: groups.shared
     },
     {
       key: 'builtin',
@@ -2847,6 +2847,7 @@ const openPromptPreview = async () => {
   promptPreviewContent.value = '';
   promptPreviewToolingMode.value = '';
   promptPreviewToolingContent.value = '';
+  promptPreviewToolingItems.value = [];
   promptPreviewView.value = 'prompt';
   const normalizedAgentId = String(
     activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || DEFAULT_AGENT_KEY
@@ -2862,10 +2863,14 @@ const openPromptPreview = async () => {
       previewAgentDefaults.length > 0 ? previewAgentDefaults : [TOOL_OVERRIDE_NONE];
     const agentId =
       activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || undefined;
-    const requestPayload = {
-      ...(agentId ? { agent_id: agentId } : {}),
-      ...(overrides ? { tool_overrides: overrides } : {})
-    };
+    const requestPayload = chatStore.activeSessionId
+      ? {
+          ...(agentId ? { agent_id: agentId } : {})
+        }
+      : {
+          ...(agentId ? { agent_id: agentId } : {}),
+          ...(overrides ? { tool_overrides: overrides } : {})
+        };
     const promptRequest = chatStore.activeSessionId
       ? fetchSessionSystemPrompt(chatStore.activeSessionId, requestPayload)
       : fetchRealtimeSystemPrompt(requestPayload);
@@ -2876,12 +2881,14 @@ const openPromptPreview = async () => {
     const toolingPreview = extractPromptToolingPreview(responsePayload);
     promptPreviewToolingMode.value = toolingPreview.mode;
     promptPreviewToolingContent.value = toolingPreview.text;
+    promptPreviewToolingItems.value = toolingPreview.items;
     promptPreviewView.value = 'prompt';
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     promptPreviewContent.value = '';
     promptPreviewToolingMode.value = '';
     promptPreviewToolingContent.value = '';
+    promptPreviewToolingItems.value = [];
     promptPreviewView.value = 'prompt';
   } finally {
     promptPreviewLoading.value = false;

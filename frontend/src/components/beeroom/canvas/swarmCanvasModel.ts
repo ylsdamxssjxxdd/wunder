@@ -50,9 +50,6 @@ export type SwarmProjectionNode = {
   roleLabel: string;
   status: string;
   statusLabel: string;
-  taskTotal: number;
-  activeSessionTotal: number;
-  entryAgent: boolean;
   selected: boolean;
   accentColor: string;
   avatarInitial: string;
@@ -103,7 +100,7 @@ type HoneycombSlot = {
 export const HONEYCOMB_RADIUS = 186;
 export const HONEYCOMB_VERTICAL_RATIO = 1.2;
 export const NODE_WIDTH = 272;
-export const NODE_HEIGHT = 156;
+export const NODE_HEIGHT = 138;
 export const WORLD_PADDING = 96;
 export const ACTIVE_DISPATCH_STATUSES = new Set(['queued', 'running', 'awaiting_idle']);
 
@@ -436,9 +433,6 @@ export const buildBeeroomSwarmProjection = (options: {
       roleLabel,
       status,
       statusLabel,
-      taskTotal: agentTasks.length,
-      activeSessionTotal: meta.active_session_total,
-      entryAgent: meta.entry_agent,
       selected: nodeId === String(options.selectedNodeId || '').trim(),
       accentColor: resolveNodeAccent(agentId, isMother),
       avatarInitial: resolveAgentAvatarInitial(name),

@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::time::{sleep, Duration};
@@ -31,6 +31,23 @@ struct MockLlmState {
     total_calls: AtomicUsize,
     chat_calls: AtomicUsize,
     extraction_calls: AtomicUsize,
+    chat_tool_names: Mutex<Vec<Vec<String>>>,
+}
+
+impl MockLlmState {
+    fn push_chat_tool_names(&self, tool_names: Vec<String>) {
+        if let Ok(mut guard) = self.chat_tool_names.lock() {
+            guard.push(tool_names);
+        }
+    }
+
+    fn last_chat_tool_names(&self) -> Vec<String> {
+        self.chat_tool_names
+            .lock()
+            .ok()
+            .and_then(|guard| guard.last().cloned())
+            .unwrap_or_default()
+    }
 }
 
 async fn build_test_context(username: &str) -> TestContext {
@@ -267,6 +284,7 @@ async fn mock_chat_completions(
     }
 
     state.chat_calls.fetch_add(1, Ordering::Relaxed);
+    state.push_chat_tool_names(extract_tool_names(&payload));
     Json(openai_chat_response("好的，我记住了。"))
 }
 
@@ -299,6 +317,28 @@ fn flatten_message_content(message: &Value) -> String {
             .to_string(),
         other => other.to_string(),
     }
+}
+
+fn extract_tool_names(payload: &Value) -> Vec<String> {
+    let mut names = payload
+        .get("tools")
+        .and_then(Value::as_array)
+        .map(|tools| {
+            tools
+                .iter()
+                .filter_map(|tool| {
+                    tool.get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(Value::as_str)
+                        .or_else(|| tool.get("name").and_then(Value::as_str))
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn openai_chat_response(content: &str) -> Value {
@@ -612,6 +652,176 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
         .expect("session system prompt");
     assert_eq!(reused_prompt, frozen_prompt);
     assert!(!reused_prompt.contains("Reply in Chinese by default."));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_prompt_and_runtime_keep_frozen_agent_tool_baseline_after_agent_edit() {
+    let context = build_test_context_with_mock_llm("frozen_tool_baseline_user").await;
+
+    let (status, created_agent) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/agents",
+        Some(json!({
+            "name": "Frozen Tool Agent",
+            "system_prompt": "Use only the configured tools.",
+            "tool_names": ["read_file"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let agent_id = created_agent["data"]["id"]
+        .as_str()
+        .expect("agent id")
+        .to_string();
+
+    let (status, session_created) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/chat/sessions",
+        Some(json!({
+            "title": "Frozen tool baseline session",
+            "agent_id": agent_id,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = session_created["data"]["id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let (status, first_message) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "First turn",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(first_message["data"]["answer"].is_string());
+
+    let mock_llm_state = context
+        .mock_llm_state
+        .as_ref()
+        .expect("mock llm state");
+    assert_eq!(mock_llm_state.last_chat_tool_names(), vec!["read_file"]);
+
+    let (status, frozen_preview_before_agent_edit) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/system-prompt"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let frozen_prompt = frozen_preview_before_agent_edit["data"]["prompt"]
+        .as_str()
+        .expect("frozen prompt")
+        .to_string();
+    assert_eq!(
+        frozen_preview_before_agent_edit["data"]["tooling_preview"]["selected_tool_names"],
+        json!(["read_file"])
+    );
+
+    let (status, updated_agent) = send_json(
+        &context.app,
+        &context.token,
+        Method::PUT,
+        &format!("/wunder/agents/{agent_id}"),
+        Some(json!({
+            "tool_names": ["write_file"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated_agent["data"]["tool_names"], json!(["write_file"]));
+
+    let (status, frozen_preview_after_agent_edit) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/system-prompt"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        frozen_preview_after_agent_edit["data"]["prompt"],
+        json!(frozen_prompt)
+    );
+    assert_eq!(
+        frozen_preview_after_agent_edit["data"]["tooling_preview"]["selected_tool_names"],
+        json!(["read_file"])
+    );
+
+    let (status, second_message) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "Second turn",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(second_message["data"]["answer"].is_string());
+    assert_eq!(mock_llm_state.last_chat_tool_names(), vec!["read_file"]);
+
+    let (status, session_tools_updated) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/tools"),
+        Some(json!({
+            "tool_overrides": ["write_file"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(session_tools_updated["data"]["tool_overrides"], json!(["write_file"]));
+
+    let (status, frozen_preview_after_session_override) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/system-prompt"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        frozen_preview_after_session_override["data"]["prompt"],
+        json!(frozen_prompt)
+    );
+    assert_eq!(
+        frozen_preview_after_session_override["data"]["tooling_preview"]["selected_tool_names"],
+        json!(["write_file"])
+    );
+
+    let (status, third_message) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "Third turn",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(third_message["data"]["answer"].is_string());
+    assert_eq!(mock_llm_state.last_chat_tool_names(), vec!["write_file"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

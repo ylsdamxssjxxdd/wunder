@@ -32,18 +32,6 @@
           <span>{{ node.statusLabel }}</span>
         </span>
       </div>
-
-      <div class="beeroom-node-metrics">
-        <span class="beeroom-node-metric">
-          <i class="fa-solid fa-list-check" aria-hidden="true"></i>
-          <b>{{ node.taskTotal }}</b>
-        </span>
-        <span class="beeroom-node-metric">
-          <i class="fa-solid fa-layer-group" aria-hidden="true"></i>
-          <b>{{ node.activeSessionTotal }}</b>
-        </span>
-        <span v-if="node.entryAgent" class="beeroom-node-entry-flag">ENTRY</span>
-      </div>
     </div>
 
     <div class="beeroom-node-workflow" :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]">
@@ -101,8 +89,8 @@ const visibleWorkflowLines = computed(() =>
   position: absolute;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: flex-start;
+  gap: 8px;
   padding: 14px 14px 12px 16px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 18px;
@@ -168,7 +156,7 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-card-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .beeroom-node-card-head {
@@ -179,24 +167,75 @@ const visibleWorkflowLines = computed(() =>
 }
 
 .beeroom-node-avatar {
+  position: relative;
+  isolation: isolate;
   width: 42px;
   height: 42px;
   border-radius: 12px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, var(--node-accent), rgba(15, 23, 42, 0.9));
+  border: 1px solid rgba(74, 222, 128, 0.24);
+  background:
+    radial-gradient(
+      circle at center,
+      rgba(74, 222, 128, 0.28) 0 18%,
+      rgba(16, 185, 129, 0.15) 18% 34%,
+      rgba(5, 150, 105, 0.08) 34% 52%,
+      rgba(5, 12, 18, 0.94) 52% 100%
+    ),
+    linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(6, 78, 59, 0.92));
   color: #f8fafc;
   font-size: 14px;
   font-weight: 700;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(187, 247, 208, 0.1),
+    0 8px 18px rgba(6, 78, 59, 0.18);
+}
+
+.beeroom-node-avatar::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 10px;
+  background:
+    repeating-radial-gradient(circle at center, rgba(74, 222, 128, 0.16) 0 1px, transparent 1px 8px),
+    linear-gradient(180deg, rgba(8, 28, 21, 0.06), rgba(2, 12, 10, 0.42));
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.beeroom-node-avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(
+    from 225deg,
+    transparent 0 72%,
+    rgba(16, 185, 129, 0.06) 78%,
+    rgba(110, 231, 183, 0.34) 84%,
+    rgba(16, 185, 129, 0.16) 90%,
+    transparent 96% 100%
+  );
+  opacity: 0.95;
+  pointer-events: none;
 }
 
 .beeroom-node-avatar-img {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  filter: saturate(0.78) contrast(1.06) brightness(0.84);
+}
+
+.beeroom-node-avatar-text {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 0 12px rgba(110, 231, 183, 0.26);
 }
 
 .beeroom-node-title-group {
@@ -215,8 +254,7 @@ const visibleWorkflowLines = computed(() =>
   text-overflow: ellipsis;
 }
 
-.beeroom-node-role-chip,
-.beeroom-node-entry-flag {
+.beeroom-node-role-chip {
   display: inline-flex;
   align-items: center;
   width: fit-content;
@@ -227,11 +265,6 @@ const visibleWorkflowLines = computed(() =>
   color: #d1d5db;
   font-size: 10px;
   letter-spacing: 0.06em;
-}
-
-.beeroom-node-entry-flag {
-  border-color: rgba(245, 158, 11, 0.3);
-  color: #fde68a;
 }
 
 .beeroom-node-status {
@@ -303,27 +336,8 @@ const visibleWorkflowLines = computed(() =>
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
-.beeroom-node-metrics {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.beeroom-node-metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 9px;
-  border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  background: rgba(15, 23, 42, 0.42);
-  color: rgba(226, 232, 240, 0.88);
-  font-size: 11px;
-}
-
 .beeroom-node-workflow {
-  min-height: 50px;
+  min-height: 46px;
   display: flex;
   align-items: stretch;
   padding: 10px 12px;

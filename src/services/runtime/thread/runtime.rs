@@ -707,8 +707,8 @@ impl ThreadRuntime {
                 let age = now_ts() - task.created_at;
                 if age > ttl_s {
                     let _ = self
-                    .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
-                    .await;
+                        .fail_task(&task, "task expired".to_string(), TASK_STATUS_DEAD)
+                        .await;
                     continue;
                 }
             }

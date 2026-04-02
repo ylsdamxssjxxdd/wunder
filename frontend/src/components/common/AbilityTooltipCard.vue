@@ -37,6 +37,7 @@ const props = withDefaults(
     kind?: string;
     group?: string;
     source?: string;
+    showDetail?: boolean;
     chips?: string[];
   }>(),
   {
@@ -46,6 +47,7 @@ const props = withDefaults(
     kind: 'tool',
     group: '',
     source: '',
+    showDetail: true,
     chips: () => []
   }
 );
@@ -74,6 +76,9 @@ const primaryText = computed(() => {
 });
 
 const secondaryText = computed(() => {
+  if (!props.showDetail) {
+    return '';
+  }
   const detail = resolveAbilitySummary(props.hint, '');
   if (!detail || detail === primaryText.value) {
     return '';

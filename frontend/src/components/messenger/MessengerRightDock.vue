@@ -47,22 +47,15 @@
             <span>技能 skill</span>
           </span>
           <button
-            class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-upload-btn"
+            class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-refresh-btn"
             type="button"
-            :disabled="skillsUploading"
-            :title="t('userTools.skills.action.upload')"
-            :aria-label="t('userTools.skills.action.upload')"
-            @click="openSkillArchivePicker"
+            :disabled="skillsLoading || skillsUploading"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="$emit('refresh-skills')"
           >
-            <i class="fa-solid fa-upload" aria-hidden="true"></i>
+            <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': skillsLoading }" aria-hidden="true"></i>
           </button>
-          <input
-            ref="skillArchiveInputRef"
-            type="file"
-            accept=".zip,.skill"
-            hidden
-            @change="handleSkillArchiveInputChange"
-          />
         </div>
         <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
           {{ t('chat.ability.loading') }}
@@ -93,7 +86,8 @@
                   />
                 </template>
                 <div
-                  class="messenger-skill-item is-enabled"
+                  class="messenger-skill-item"
+                  :class="item.enabled ? 'is-enabled' : 'is-disabled'"
                   role="button"
                   tabindex="0"
                   @click="openSkillDetail(item.name)"
@@ -112,10 +106,6 @@
                     <div class="messenger-skill-item-copy ability-entry__copy">
                       <div class="messenger-skill-item-title-row">
                         <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                        <span class="messenger-skill-status-tag">{{ t('common.enabled') }}</span>
-                      </div>
-                      <div class="messenger-skill-item-desc">
-                        {{ item.description || t('chat.ability.noDesc') }}
                       </div>
                     </div>
                   </div>
@@ -124,13 +114,12 @@
             </div>
           </div>
 
-          <div class="messenger-skill-group">
+          <div v-if="disabledSkills.length" class="messenger-skill-group">
             <div class="messenger-skill-group-header">
               <span>{{ t('common.disabled') }}</span>
               <span class="messenger-skill-group-count">{{ disabledSkills.length }}</span>
             </div>
-            <div v-if="!disabledSkills.length" class="messenger-list-empty">{{ t('chat.ability.emptySkills') }}</div>
-            <div v-else class="messenger-skill-list">
+            <div class="messenger-skill-list">
               <el-tooltip
                 v-for="item in disabledSkills"
                 :key="`disabled-${item.name}`"
@@ -149,7 +138,8 @@
                   />
                 </template>
                 <div
-                  class="messenger-skill-item is-disabled"
+                  class="messenger-skill-item"
+                  :class="item.enabled ? 'is-enabled' : 'is-disabled'"
                   role="button"
                   tabindex="0"
                   @click="openSkillDetail(item.name)"
@@ -168,10 +158,6 @@
                     <div class="messenger-skill-item-copy ability-entry__copy">
                       <div class="messenger-skill-item-title-row">
                         <div class="messenger-skill-item-title" :title="item.name">{{ item.name }}</div>
-                        <span class="messenger-skill-status-tag">{{ t('common.disabled') }}</span>
-                      </div>
-                      <div class="messenger-skill-item-desc">
-                        {{ item.description || t('chat.ability.noDesc') }}
                       </div>
                     </div>
                   </div>
@@ -235,6 +221,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
+  (event: 'refresh-skills'): void;
   (event: 'upload-skill-archive', file: File): void;
   (event: 'open-skill-detail', skillName: string): void;
   (event: 'open-container', containerId: number): void;
@@ -243,7 +230,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const sandboxMenuRef = ref<HTMLElement | null>(null);
-const skillArchiveInputRef = ref<HTMLInputElement | null>(null);
 const skillDropDepth = ref(0);
 const skillDropActive = ref(false);
 const sandboxContextMenu = ref({
@@ -282,21 +268,6 @@ const openSkillDetail = (name: unknown) => {
   const normalized = String(name || '').trim();
   if (!normalized) return;
   emit('open-skill-detail', normalized);
-};
-
-const openSkillArchivePicker = () => {
-  if (props.skillsUploading || !skillArchiveInputRef.value) return;
-  skillArchiveInputRef.value.value = '';
-  skillArchiveInputRef.value.click();
-};
-
-const handleSkillArchiveInputChange = (event: Event) => {
-  const input = event.target as HTMLInputElement | null;
-  const file = input?.files?.[0];
-  emitSkillArchive(file);
-  if (input) {
-    input.value = '';
-  }
 };
 
 const hasFilePayload = (event: DragEvent): boolean => {

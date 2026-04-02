@@ -1292,8 +1292,23 @@ pub(crate) async fn build_chat_request(
 
     let user_context = build_user_tool_context(state, &user.user_id).await;
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
+    let frozen_tool_overrides = state
+        .workspace
+        .load_session_frozen_tool_overrides_async(&user.user_id, &session_id)
+        .await;
     let mut allowed = compute_allowed_tool_names(user, &user_context);
-    let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
+    let overrides = resolve_session_tool_overrides(
+        &record,
+        frozen_tool_overrides.as_deref(),
+        agent_record.as_ref(),
+    );
+    if frozen_tool_overrides.is_none() {
+        // Freeze the agent-default tool baseline on the first accepted user
+        // message so later agent edits cannot silently drift an existing thread.
+        state
+            .workspace
+            .save_session_frozen_tool_overrides(&user.user_id, &session_id, &overrides);
+    }
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed);
@@ -2044,6 +2059,10 @@ async fn session_system_prompt(
         .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
         .await
         .unwrap_or(None);
+    let frozen_tool_overrides = state
+        .workspace
+        .load_session_frozen_tool_overrides_async(&resolved.user.user_id, &session_id)
+        .await;
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
     let agent_record = fetch_agent_record(
         &state,
@@ -2055,7 +2074,13 @@ async fn session_system_prompt(
     let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
     let overrides = request_overrides
         .clone()
-        .unwrap_or_else(|| resolve_session_tool_overrides(&record, agent_record.as_ref()));
+        .unwrap_or_else(|| {
+            resolve_session_tool_overrides(
+                &record,
+                frozen_tool_overrides.as_deref(),
+                agent_record.as_ref(),
+            )
+        });
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed.clone());
@@ -2139,62 +2164,6 @@ async fn update_session_tools(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-
-    let agent_record =
-        fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
-    let mut effective_allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let effective_overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
-    effective_allowed =
-        apply_tool_overrides(effective_allowed, &effective_overrides, &agent_defaults);
-    let tool_names = finalize_tool_names(effective_allowed);
-    let agent_prompt = agent_record
-        .as_ref()
-        .map(|record| record.system_prompt.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let workspace_id = resolve_agent_workspace_id(
-        &state,
-        &resolved.user.user_id,
-        record.agent_id.as_deref(),
-        agent_record.as_ref(),
-    );
-    let workspace_root = state
-        .workspace
-        .ensure_user_root(&workspace_id)
-        .unwrap_or_else(|_| state.workspace.root().to_path_buf());
-    let stored_prompt = state
-        .workspace
-        .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
-        .await
-        .unwrap_or(None);
-    let effective_agent_prompt = merge_agent_prompt_with_thread_agents_snapshot(
-        agent_prompt.as_deref(),
-        stored_prompt.as_deref(),
-        &workspace_root,
-        false,
-    );
-    let prompt = state
-        .kernel
-        .orchestrator
-        .build_system_prompt(
-            &user_context.config,
-            &tool_names,
-            &user_context.skills,
-            Some(&user_context.bindings),
-            &resolved.user.user_id,
-            record.agent_id.as_deref(),
-            UserStore::is_admin(&resolved.user),
-            &workspace_id,
-            None,
-            effective_agent_prompt.as_deref(),
-        )
-        .await;
-    let _ = state.workspace.save_session_system_prompt(
-        &resolved.user.user_id,
-        &session_id,
-        &prompt,
-        None,
-    );
 
     Ok(Json(json!({
         "data": {
@@ -2785,10 +2754,13 @@ async fn fetch_agent_record(
 
 fn resolve_session_tool_overrides(
     record: &crate::storage::ChatSessionRecord,
+    frozen_tool_overrides: Option<&[String]>,
     agent: Option<&crate::storage::UserAgentRecord>,
 ) -> Vec<String> {
     if !record.tool_overrides.is_empty() {
         normalize_tool_overrides(record.tool_overrides.clone())
+    } else if let Some(snapshot) = frozen_tool_overrides {
+        normalize_tool_overrides(snapshot.to_vec())
     } else {
         resolve_agent_tool_defaults(agent)
     }

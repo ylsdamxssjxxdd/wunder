@@ -89,23 +89,12 @@
                       @contextmenu.prevent="showToolDetail($event, group, tool)"
                     >
                       <el-checkbox :value="tool.value">
-                        <div class="messenger-tool-option-label">
-                          <AbilityIconBadge
-                            :name="tool.label"
-                            :description="tool.description"
-                            :hint="tool.hint"
-                            :kind="resolveGroupAbilityKind(group.key)"
-                            :group="group.key"
-                            :source="group.key"
-                            size="sm"
-                          />
-                          <div class="messenger-tool-option-copy">
-                            <span class="messenger-tool-option-name">{{ tool.label }}</span>
-                            <span class="messenger-tool-option-desc">
-                              {{ resolveToolOptionSummary(tool) || t('chat.ability.noDesc') }}
-                            </span>
-                          </div>
-                        </div>
+                        <AgentToolOptionLabel
+                          :label="tool.label"
+                          :description="tool.description"
+                          :hint="tool.hint"
+                          :group-key="group.key"
+                        />
                       </el-checkbox>
                     </div>
                   </div>
@@ -193,8 +182,8 @@ import { ElMessage } from 'element-plus';
 import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
+import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
-import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
@@ -206,7 +195,7 @@ import {
   type AgentToolSection
 } from '@/utils/agentToolCatalog';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
-import { isAbilitySkillGroup, resolveAbilitySummary } from '@/utils/abilityVisuals';
+import { isAbilitySkillGroup } from '@/utils/abilityVisuals';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
@@ -266,9 +255,6 @@ const approvalModeOptions = computed(() => [
 
 const resolveGroupAbilityKind = (groupKey: string): 'tool' | 'skill' =>
   isAbilitySkillGroup(groupKey) ? 'skill' : 'tool';
-
-const resolveToolOptionSummary = (option: ToolOption): string =>
-  resolveAbilitySummary(option.description, option.hint);
 
 const toolLoading = ref(false);
 const toolError = ref('');

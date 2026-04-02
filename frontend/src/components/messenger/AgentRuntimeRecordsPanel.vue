@@ -172,6 +172,13 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: 'question_panel', icon: 'fa-circle-question' },
   { keyword: 'ask_panel', icon: 'fa-circle-question' },
   { keyword: 'question panel', icon: 'fa-circle-question' },
+  { keyword: '浏览器', icon: 'fa-window-maximize' },
+  { keyword: 'browser', icon: 'fa-window-maximize' },
+  { keyword: 'browser_navigate', icon: 'fa-window-maximize' },
+  { keyword: 'browser_click', icon: 'fa-window-maximize' },
+  { keyword: 'browser_type', icon: 'fa-window-maximize' },
+  { keyword: 'browser_screenshot', icon: 'fa-window-maximize' },
+  { keyword: 'browser_read_page', icon: 'fa-window-maximize' },
   { keyword: '节点调用', icon: 'fa-diagram-project' },
   { keyword: 'node.invoke', icon: 'fa-diagram-project' },
   { keyword: 'node_invoke', icon: 'fa-diagram-project' },
@@ -503,9 +510,10 @@ function resolveToolIcon(name: string): string {
   if (
     matchesToolKeyword(lowerName, normalizedName, '最终回复') ||
     matchesToolKeyword(lowerName, normalizedName, 'final answer') ||
+    matchesToolKeyword(lowerName, normalizedName, 'final response') ||
     matchesToolKeyword(lowerName, normalizedName, 'final_response')
   ) {
-    return 'fa-flag-checkered';
+    return 'fa-paper-plane';
   }
   return 'fa-toolbox';
 }

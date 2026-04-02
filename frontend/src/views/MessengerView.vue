@@ -1005,32 +1005,17 @@
                                     <span class="ability-count">{{ section.items.length }}</span>
                                   </div>
                                   <div v-if="section.items.length" class="ability-item-list">
-                                    <div
+                                    <AbilityTooltipListItem
                                       v-for="item in section.items"
                                       :key="`${section.key}-${item.name}`"
-                                      :class="['ability-item', section.kind]"
-                                    >
-                                      <AbilityIconBadge
-                                        :name="item.name"
-                                        :description="item.description"
-                                        :kind="section.kind"
-                                        :group="section.key"
-                                        :source="section.key"
-                                        size="xs"
-                                      />
-                                      <div class="ability-item-copy">
-                                        <div class="ability-item-head">
-                                          <div class="ability-item-name">{{ item.name }}</div>
-                                          <span class="ability-item-chip">{{ section.title }}</span>
-                                        </div>
-                                        <div
-                                          class="ability-item-desc"
-                                          :class="{ 'is-empty': !item.description }"
-                                        >
-                                          {{ item.description || t('chat.ability.noDesc') }}
-                                        </div>
-                                      </div>
-                                    </div>
+                                      :name="item.name"
+                                      :description="item.description"
+                                      :kind="section.kind"
+                                      :group="section.key"
+                                      :source="section.key"
+                                      :chip="section.title"
+                                      :empty-text="t('chat.ability.noDesc')"
+                                    />
                                   </div>
                                   <div v-else class="ability-empty">{{ section.emptyText }}</div>
                                 </div>
@@ -1388,6 +1373,7 @@
       :enabled-skills="rightDockEnabledSkills"
       :disabled-skills="rightDockDisabledSkills"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
+      @refresh-skills="refreshRightDockSkills"
       @upload-skill-archive="handleRightDockSkillArchiveUpload"
       @open-skill-detail="openRightDockSkillDetail"
       @open-container="openContainerFromRightDock"
@@ -1437,6 +1423,7 @@
       :agent-prompt-preview-memory-mode="agentPromptPreviewMemoryMode"
       :agent-prompt-preview-tooling-mode="agentPromptPreviewToolingMode"
       :agent-prompt-preview-tooling-content="agentPromptPreviewToolingContent"
+      :agent-prompt-preview-tooling-items="agentPromptPreviewToolingItems"
       :image-preview-visible="imagePreviewVisible"
       :image-preview-url="imagePreviewUrl"
       :image-preview-title="imagePreviewTitle"
@@ -1535,7 +1522,7 @@ import {
 } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
-import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
+import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialog.vue';
 import {
@@ -1545,6 +1532,7 @@ import {
   type MessengerBootstrapTask
 } from '@/views/messenger/bootstrap';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
+import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
@@ -1630,7 +1618,10 @@ import {
   type AudioRecordingSession
 } from '@/utils/audioRecorder';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
-import { extractPromptToolingPreview } from '@/utils/promptToolingPreview';
+import {
+  extractPromptToolingPreview,
+  type PromptToolingPreviewItem
+} from '@/utils/promptToolingPreview';
 import { collectAbilityDetails, collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
   buildWorkspaceImagePersistentCacheKey,
@@ -1820,6 +1811,7 @@ const agentPromptPreviewContent = ref('');
 const agentPromptPreviewMemoryMode = ref<'none' | 'pending' | 'frozen'>('none');
 const agentPromptPreviewToolingMode = ref('');
 const agentPromptPreviewToolingContent = ref('');
+const agentPromptPreviewToolingItems = ref<PromptToolingPreviewItem[]>([]);
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -1884,7 +1876,6 @@ const appearanceHydrating = ref(false);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
-const sharedTools = ref<ToolEntry[]>([]);
 const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
@@ -1984,9 +1975,8 @@ let worldQuickPanelCloseTimer: number | null = null;
 let timelinePrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
 let keywordDebounceTimer: number | null = null;
-let messageScrollFrame: number | null = null;
-let messageVirtualMeasureFrame: number | null = null;
 let contactVirtualFrame: number | null = null;
+let viewportResizeFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let audioRecordingSupportHandler: (() => void) | null = null;
 let audioRecordingSupportRetryTimer: number | null = null;
@@ -1996,6 +1986,7 @@ let triggerRealtimePulseRefresh: ((reason?: string) => void) | null = null;
 let startBeeroomRealtimeSync: (() => void) | null = null;
 let stopBeeroomRealtimeSync: (() => void) | null = null;
 let triggerBeeroomRealtimeSyncRefresh: ((reason?: string) => void) | null = null;
+let messageViewportRuntime: MessageViewportRuntime | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 type WorldVoiceRecordingRuntime = {
   session: AudioRecordingSession;
@@ -3221,20 +3212,6 @@ const agentAbilitySections = computed(() => {
       title: t('toolManager.system.a2a'),
       emptyText: t('chat.ability.emptyTools'),
       items: groups.a2a
-    },
-    {
-      key: 'user',
-      kind: 'tool',
-      title: t('portal.agent.tools.group.user'),
-      emptyText: t('chat.ability.emptyTools'),
-      items: groups.user
-    },
-    {
-      key: 'shared',
-      kind: 'tool',
-      title: t('portal.agent.tools.group.shared'),
-      emptyText: t('chat.ability.emptyTools'),
-      items: groups.shared
     },
     {
       key: 'builtin',
@@ -7988,7 +7965,7 @@ const loadRightDockSkills = async (
   const force = options.force === true;
   const silent = options.silent !== false;
   if (rightDockSkillCatalogLoading.value && !force) {
-    return;
+    return false;
   }
   const currentVersion = ++rightDockSkillCatalogLoadVersion;
   rightDockSkillCatalogLoading.value = true;
@@ -7997,11 +7974,13 @@ const loadRightDockSkills = async (
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
     const payload = (result?.data?.data || {}) as Record<string, unknown>;
     rightDockSkillCatalog.value = normalizeRightDockSkillCatalog(payload.skills);
+    return true;
   } catch (error) {
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
     if (!silent) {
       showApiError(error, t('userTools.skills.loadFailed'));
     }
+    return false;
   } finally {
     if (currentVersion === rightDockSkillCatalogLoadVersion) {
       rightDockSkillCatalogLoading.value = false;
@@ -8119,6 +8098,18 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
   }
 };
 
+const refreshRightDockSkills = async () => {
+  const [, skillCatalogLoaded] = await Promise.all([
+    loadAgentToolSummary({ force: true }),
+    loadRightDockSkills({ force: true, silent: true })
+  ]);
+  if (!skillCatalogLoaded || agentToolSummaryError.value) {
+    ElMessage.error(t('userTools.skills.refresh.failed'));
+    return;
+  }
+  ElMessage.success(t('userTools.skills.refresh.success'));
+};
+
 const handleRightDockSkillArchiveUpload = async (file: File) => {
   if (!file || skillDockUploading.value) return;
   const filename = String(file.name || '').trim().toLowerCase();
@@ -8157,6 +8148,7 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewMemoryMode.value = 'none';
   agentPromptPreviewToolingMode.value = '';
   agentPromptPreviewToolingContent.value = '';
+  agentPromptPreviewToolingItems.value = [];
   const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
   if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
     const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
@@ -8186,10 +8178,15 @@ const openAgentPromptPreview = async () => {
       previewAgentDefaults.length > 0
         ? previewAgentDefaults
         : [AGENT_TOOL_OVERRIDE_NONE];
-    const payload = {
-      ...(agentId ? { agent_id: agentId } : {}),
-      ...(overrides ? { tool_overrides: overrides } : {})
-    };
+    const payload =
+      sessionId
+        ? {
+            ...(agentId ? { agent_id: agentId } : {})
+          }
+        : {
+            ...(agentId ? { agent_id: agentId } : {}),
+            ...(overrides ? { tool_overrides: overrides } : {})
+          };
     const promptRequest = sessionId
       ? fetchSessionSystemPrompt(sessionId, payload)
       : fetchRealtimeSystemPrompt(payload);
@@ -8206,12 +8203,14 @@ const openAgentPromptPreview = async () => {
     const toolingPreview = extractPromptToolingPreview(promptPayload);
     agentPromptPreviewToolingMode.value = toolingPreview.mode;
     agentPromptPreviewToolingContent.value = toolingPreview.text;
+    agentPromptPreviewToolingItems.value = toolingPreview.items;
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewContent.value = '';
     agentPromptPreviewMemoryMode.value = 'none';
     agentPromptPreviewToolingMode.value = '';
     agentPromptPreviewToolingContent.value = '';
+    agentPromptPreviewToolingItems.value = [];
   } finally {
     agentPromptPreviewLoading.value = false;
   }
@@ -8687,9 +8686,6 @@ const loadToolsCatalog = async () => {
     }
     const payload = (data?.data || {}) as Record<string, unknown>;
     builtinTools.value = (Array.isArray(payload.builtin_tools) ? payload.builtin_tools : [])
-      .map((item) => normalizeToolEntry(item))
-      .filter(Boolean) as ToolEntry[];
-    sharedTools.value = (Array.isArray(payload.shared_tools) ? payload.shared_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
     mcpTools.value = (Array.isArray(payload.mcp_tools) ? payload.mcp_tools : [])
@@ -10404,183 +10400,73 @@ const refreshAll = async () => {
 };
 
 const syncMessageVirtualMetrics = () => {
-  const container = messageListRef.value;
-  if (!container || showChatSettingsView.value) {
-    messageVirtualScrollTop.value = 0;
-    messageVirtualViewportHeight.value = 0;
-    return;
-  }
-  messageVirtualViewportHeight.value = container.clientHeight;
-  messageVirtualScrollTop.value = container.scrollTop;
+  messageViewportRuntime?.syncMessageVirtualMetrics();
 };
 
 const pruneMessageVirtualHeightCache = () => {
-  const keySet = new Set<string>([
-    ...agentRenderableMessages.value.map((item) => item.key),
-    ...worldRenderableMessages.value.map((item) => item.key)
-  ]);
-  let changed = false;
-  messageVirtualHeightCache.forEach((_value, key) => {
-    if (keySet.has(key)) {
-      return;
-    }
-    messageVirtualHeightCache.delete(key);
-    changed = true;
-  });
-  if (changed) {
-    messageVirtualLayoutVersion.value += 1;
-  }
+  messageViewportRuntime?.pruneMessageVirtualHeightCache();
 };
 
-const measureVisibleMessageHeights = () => {
-  const container = messageListRef.value;
-  if (!container || showChatSettingsView.value) {
-    return;
-  }
-  const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
-  let changed = false;
-  nodes.forEach((node) => {
-    const key = String(node.dataset.virtualKey || '').trim();
-    if (!key) return;
-    const height = Math.max(1, Math.round(node.getBoundingClientRect().height));
-    const cached = messageVirtualHeightCache.get(key);
-    if (cached && Math.abs(cached - height) <= 1) {
-      return;
-    }
-    messageVirtualHeightCache.set(key, height);
-    changed = true;
-  });
-  if (changed) {
-    messageVirtualLayoutVersion.value += 1;
-  }
+const scheduleMessageViewportRefresh = (
+  options: { updateScrollState?: boolean; measure?: boolean } = {}
+) => {
+  messageViewportRuntime?.scheduleMessageViewportRefresh(options);
 };
 
 const scheduleMessageVirtualMeasure = () => {
-  if (typeof window === 'undefined') return;
-  if (messageVirtualMeasureFrame !== null) return;
-  messageVirtualMeasureFrame = window.requestAnimationFrame(() => {
-    messageVirtualMeasureFrame = null;
-    measureVisibleMessageHeights();
-  });
+  messageViewportRuntime?.scheduleMessageVirtualMeasure();
 };
 
 const handleMessageWorkflowLayoutChange = () => {
-  syncMessageVirtualMetrics();
-  scheduleMessageVirtualMeasure();
+  messageViewportRuntime?.handleWorkflowLayoutChange();
 };
 
 const updateMessageScrollState = () => {
-  syncMessageVirtualMetrics();
-  const container = messageListRef.value;
-  if (!container || showChatSettingsView.value) {
-    showScrollTopButton.value = false;
-    showScrollBottomButton.value = false;
-    autoStickToBottom.value = true;
-    return;
-  }
-  const nearTop = container.scrollTop <= 72;
-  const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
-  const shouldStick = remaining <= 72;
-  const isConversation = isAgentConversationActive.value || isWorldConversationActive.value;
-  autoStickToBottom.value = shouldStick;
-  showScrollTopButton.value = !nearTop && isConversation;
-  showScrollBottomButton.value = !shouldStick && isConversation;
+  messageViewportRuntime?.updateMessageScrollState();
 };
 
 const handleMessageListScroll = () => {
-  if (typeof window === 'undefined') {
-    updateMessageScrollState();
-    return;
-  }
-  if (messageScrollFrame !== null) return;
-  messageScrollFrame = window.requestAnimationFrame(() => {
-    messageScrollFrame = null;
-    updateMessageScrollState();
-    scheduleMessageVirtualMeasure();
-  });
+  messageViewportRuntime?.handleMessageListScroll();
 };
 
 const scrollMessagesToBottom = async (force = false) => {
-  await nextTick();
-  const container = messageListRef.value;
-  if (!container) return;
-  if (!force && !autoStickToBottom.value) {
-    updateMessageScrollState();
-    scheduleMessageVirtualMeasure();
-    return;
-  }
-  container.scrollTop = container.scrollHeight;
-  updateMessageScrollState();
-  scheduleMessageVirtualMeasure();
+  return messageViewportRuntime?.scrollMessagesToBottom(force) ?? Promise.resolve();
 };
 
 const jumpToMessageBottom = async () => {
-  autoStickToBottom.value = true;
-  await scrollMessagesToBottom(true);
+  return messageViewportRuntime?.jumpToMessageBottom() ?? Promise.resolve();
 };
 
 const jumpToMessageTop = async () => {
-  await nextTick();
-  const container = messageListRef.value;
-  if (!container) return;
-  autoStickToBottom.value = false;
-  container.scrollTop = 0;
-  updateMessageScrollState();
-  scheduleMessageVirtualMeasure();
+  return messageViewportRuntime?.jumpToMessageTop() ?? Promise.resolve();
 };
 
 const scrollVirtualMessageToIndex = (keys: string[], index: number, align: 'center' | 'start' = 'center') => {
-  const container = messageListRef.value;
-  if (!container || !keys.length) return;
-  const safeIndex = Math.max(0, Math.min(keys.length - 1, Math.trunc(index)));
-  const top = estimateVirtualOffsetTop(keys, safeIndex);
-  const height = resolveVirtualMessageHeight(keys[safeIndex]);
-  const targetTop =
-    align === 'center'
-      ? top - container.clientHeight / 2 + height / 2
-      : top;
-  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-  container.scrollTop = Math.max(0, Math.min(targetTop, maxTop));
-  syncMessageVirtualMetrics();
+  messageViewportRuntime?.scrollVirtualMessageToIndex(keys, index, align);
 };
 
 const scrollLatestAssistantToCenter = async () => {
-  if (!isAgentConversationActive.value) return;
-  if (shouldVirtualizeMessages.value) {
-    const latestIndex = (() => {
-      for (let cursor = agentRenderableMessages.value.length - 1; cursor >= 0; cursor -= 1) {
-        const item = agentRenderableMessages.value[cursor];
-        if (String(item.message?.role || '') !== 'assistant') continue;
-        return cursor;
-      }
-      return -1;
-    })();
-    if (latestIndex >= 0) {
-      scrollVirtualMessageToIndex(
-        agentRenderableMessages.value.map((item) => item.key),
-        latestIndex,
-        'center'
-      );
-      await nextTick();
-    }
-  }
-  await nextTick();
-  const container = messageListRef.value;
-  if (!container) return;
-  const items = container.querySelectorAll('.messenger-message:not(.mine)');
-  if (!items.length) return;
-  const target = items[items.length - 1] as HTMLElement;
-  requestAnimationFrame(() => {
-    const containerRect = container.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const targetCenter = targetRect.top - containerRect.top + targetRect.height / 2;
-    const nextTop = container.scrollTop + targetCenter - container.clientHeight / 2;
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
-    updateMessageScrollState();
-    scheduleMessageVirtualMeasure();
-  });
+  return messageViewportRuntime?.scrollLatestAssistantToCenter() ?? Promise.resolve();
 };
+
+messageViewportRuntime = createMessageViewportRuntime({
+  messageListRef,
+  showChatSettingsView,
+  autoStickToBottom,
+  showScrollTopButton,
+  showScrollBottomButton,
+  isAgentConversationActive,
+  isWorldConversationActive,
+  shouldVirtualizeMessages,
+  agentRenderableMessages,
+  worldRenderableMessages,
+  messageVirtualHeightCache,
+  messageVirtualLayoutVersion,
+  messageVirtualScrollTop,
+  messageVirtualViewportHeight,
+  estimateVirtualOffsetTop,
+  resolveVirtualMessageHeight
+});
 
 function normalizeAgentId(value: unknown): string {
   const text = String(value || '').trim();
@@ -10902,8 +10788,7 @@ watch(
       !builtinTools.value.length &&
       !mcpTools.value.length &&
       !skillTools.value.length &&
-      !knowledgeTools.value.length &&
-      !sharedTools.value.length
+      !knowledgeTools.value.length
     ) {
       loadToolsCatalog();
     }
@@ -11185,8 +11070,10 @@ watch(
 watch(
   () => showChatSettingsView.value,
   () => {
-    updateMessageScrollState();
-    scheduleMessageVirtualMeasure();
+    scheduleMessageViewportRefresh({
+      updateScrollState: true,
+      measure: true
+    });
   }
 );
 
@@ -11195,8 +11082,9 @@ watch(
   () => {
     pruneMessageVirtualHeightCache();
     void nextTick(() => {
-      syncMessageVirtualMetrics();
-      scheduleMessageVirtualMeasure();
+      scheduleMessageViewportRefresh({
+        measure: true
+      });
     });
     scheduleWorkspaceResourceHydration();
     if (
@@ -11227,7 +11115,9 @@ watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
-    scheduleMessageVirtualMeasure();
+    scheduleMessageViewportRefresh({
+      measure: true
+    });
   }
 );
 
@@ -11235,7 +11125,9 @@ watch(
   () => userWorldStore.activeMessages[userWorldStore.activeMessages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
-    scheduleMessageVirtualMeasure();
+    scheduleMessageViewportRefresh({
+      measure: true
+    });
   }
 );
 
@@ -11244,8 +11136,9 @@ watch(
   () => {
     pruneMessageVirtualHeightCache();
     void nextTick(() => {
-      syncMessageVirtualMetrics();
-      scheduleMessageVirtualMeasure();
+      scheduleMessageViewportRefresh({
+        measure: true
+      });
     });
   }
 );
@@ -11344,11 +11237,19 @@ onUpdated(() => {
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     viewportResizeHandler = () => {
-      refreshHostWidth();
-      closeFileContainerMenu();
-      syncContactVirtualMetrics();
-      syncMessageVirtualMetrics();
-      scheduleMessageVirtualMeasure();
+      if (viewportResizeFrame !== null) {
+        return;
+      }
+      viewportResizeFrame = window.requestAnimationFrame(() => {
+        viewportResizeFrame = null;
+        refreshHostWidth();
+        closeFileContainerMenu();
+        syncContactVirtualMetrics();
+        scheduleMessageViewportRefresh({
+          updateScrollState: true,
+          measure: true
+        });
+      });
     };
     viewportResizeHandler();
     window.addEventListener('resize', viewportResizeHandler);
@@ -11381,9 +11282,10 @@ onMounted(async () => {
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
   refreshAudioRecordingSupport();
-  updateMessageScrollState();
-  syncMessageVirtualMetrics();
-  scheduleMessageVirtualMeasure();
+  scheduleMessageViewportRefresh({
+    updateScrollState: true,
+    measure: true
+  });
   scheduleWorkspaceResourceHydration();
   void loadAgentToolSummary({ force: true });
   void loadRightDockSkills({ force: true, silent: true });
@@ -11436,6 +11338,10 @@ onBeforeUnmount(() => {
       window.removeEventListener('resize', viewportResizeHandler);
       viewportResizeHandler = null;
     }
+    if (viewportResizeFrame !== null) {
+      window.cancelAnimationFrame(viewportResizeFrame);
+      viewportResizeFrame = null;
+    }
     window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside, true);
     document.removeEventListener('scroll', closeFileContainerMenu, true);
     if (audioRecordingSupportHandler) {
@@ -11458,14 +11364,7 @@ onBeforeUnmount(() => {
   void cancelAgentVoiceRecording();
   void cancelWorldVoiceRecording();
   disposeWorldVoicePlayback();
-  if (typeof window !== 'undefined' && messageScrollFrame !== null) {
-    window.cancelAnimationFrame(messageScrollFrame);
-    messageScrollFrame = null;
-  }
-  if (typeof window !== 'undefined' && messageVirtualMeasureFrame !== null) {
-    window.cancelAnimationFrame(messageVirtualMeasureFrame);
-    messageVirtualMeasureFrame = null;
-  }
+  messageViewportRuntime?.dispose();
   if (typeof window !== 'undefined' && contactVirtualFrame !== null) {
     window.cancelAnimationFrame(contactVirtualFrame);
     contactVirtualFrame = null;

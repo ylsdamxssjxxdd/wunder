@@ -960,12 +960,48 @@
   border-radius: 10px;
   width: 100%;
   min-width: 0;
-  padding: 4px 8px;
+  min-height: 60px;
+  padding: 8px 10px;
   margin-right: 0;
+  display: inline-flex;
+  align-items: flex-start;
+  border: 1px solid rgba(106, 217, 255, 0.18);
+  background: rgba(106, 217, 255, 0.05);
+  transition: border-color 0.18s ease, background-color 0.18s ease;
+}
+
+:root[data-user-theme='light'] .agent-tool-options .el-checkbox {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.agent-tool-options .el-checkbox:hover {
+  border-color: rgba(106, 217, 255, 0.36);
+  background: rgba(106, 217, 255, 0.1);
+}
+
+:root[data-user-theme='light'] .agent-tool-options .el-checkbox:hover {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.agent-tool-options .el-checkbox.is-checked {
+  border-color: rgba(106, 217, 255, 0.46);
+  background: rgba(106, 217, 255, 0.14);
+}
+
+:root[data-user-theme='light'] .agent-tool-options .el-checkbox.is-checked {
+  border-color: rgba(59, 130, 246, 0.24);
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .agent-tool-options .el-checkbox__label {
   color: var(--user-tools-text);
+  width: 100%;
+  min-width: 0;
+  padding-left: 10px;
+  white-space: normal;
+  display: flex;
 }
 
 .agent-card .user-tools-btn {

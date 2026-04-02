@@ -101,23 +101,12 @@
                       @contextmenu.prevent="showToolDetail($event, group, option)"
                     >
                       <el-checkbox :value="option.value">
-                        <div class="messenger-tool-option-label">
-                          <AbilityIconBadge
-                            :name="option.label"
-                            :description="option.description"
-                            :hint="option.hint"
-                            :kind="resolveGroupAbilityKind(group.key)"
-                            :group="group.key"
-                            :source="group.key"
-                            size="sm"
-                          />
-                          <div class="messenger-tool-option-copy">
-                            <span class="messenger-tool-option-name">{{ option.label }}</span>
-                            <span class="messenger-tool-option-desc">
-                              {{ resolveToolOptionSummary(option) || t('chat.ability.noDesc') }}
-                            </span>
-                          </div>
-                        </div>
+                        <AgentToolOptionLabel
+                          :label="option.label"
+                          :description="option.description"
+                          :hint="option.hint"
+                          :group-key="group.key"
+                        />
                       </el-checkbox>
                     </div>
                   </div>
@@ -353,8 +342,8 @@ import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
+import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
-import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
@@ -371,7 +360,7 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
-import { isAbilitySkillGroup, resolveAbilitySummary } from '@/utils/abilityVisuals';
+import { isAbilitySkillGroup } from '@/utils/abilityVisuals';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
@@ -555,9 +544,6 @@ const nextAgentLoadRequestId = (): number => {
 
 const resolveGroupAbilityKind = (groupKey: string): 'tool' | 'skill' =>
   isAbilitySkillGroup(groupKey) ? 'skill' : 'tool';
-
-const resolveToolOptionSummary = (option: ToolOption): string =>
-  resolveAbilitySummary(option.description, option.hint);
 
 type DetailPopupData = {
   option: ToolOption;

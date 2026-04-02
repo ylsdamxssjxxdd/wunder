@@ -39,6 +39,14 @@ const normalizeToolNames = (list: unknown): string[] => {
   return list.map((item) => pickToolName(item).trim()).filter(Boolean);
 };
 
+const hasTypedUserToolGroups = (payload: UnknownRecord): boolean =>
+  Object.prototype.hasOwnProperty.call(payload, 'user_mcp_tools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userMcpTools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'user_skills') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userSkills') ||
+  Object.prototype.hasOwnProperty.call(payload, 'user_knowledge_tools') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userKnowledgeTools');
+
 const TOOL_LINE_GROUP_PRIORITY: Record<ToolLineGroup, number> = {
   skills: 0,
   mcp: 1,
@@ -159,19 +167,33 @@ export const renderSystemPromptHighlight = (
     normalizeToolNames(toolsPayload.builtin_tools || toolsPayload.builtinTools)
   );
   const knowledgeToolNames = new Set(
-    normalizeToolNames(toolsPayload.knowledge_tools || toolsPayload.knowledgeTools)
+    [
+      ...normalizeToolNames(toolsPayload.knowledge_tools || toolsPayload.knowledgeTools),
+      ...normalizeToolNames(
+        toolsPayload.user_knowledge_tools || toolsPayload.userKnowledgeTools
+      )
+    ]
   );
   const skillsNames = new Set(
-    normalizeToolNames(toolsPayload.skills || toolsPayload.skill_list || toolsPayload.skillList)
+    [
+      ...normalizeToolNames(toolsPayload.skills || toolsPayload.skill_list || toolsPayload.skillList),
+      ...normalizeToolNames(toolsPayload.user_skills || toolsPayload.userSkills)
+    ]
   );
   const mcpToolNames = new Set(
-    normalizeToolNames(toolsPayload.mcp_tools || toolsPayload.mcpTools)
+    [
+      ...normalizeToolNames(toolsPayload.mcp_tools || toolsPayload.mcpTools),
+      ...normalizeToolNames(toolsPayload.user_mcp_tools || toolsPayload.userMcpTools)
+    ]
   );
   const a2aToolNames = new Set(
     normalizeToolNames(toolsPayload.a2a_tools || toolsPayload.a2aTools)
   );
+  const legacyUserToolList = hasTypedUserToolGroups(toolsPayload)
+    ? []
+    : normalizeToolNames(toolsPayload.user_tools || toolsPayload.userTools);
   const userToolNames = new Set(
-    normalizeToolNames(toolsPayload.user_tools || toolsPayload.userTools)
+    legacyUserToolList
   );
   const sharedToolNames = new Set(
     normalizeToolNames(toolsPayload.shared_tools || toolsPayload.sharedTools)

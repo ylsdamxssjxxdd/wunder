@@ -105,6 +105,7 @@
     :memory-mode="agentPromptPreviewMemoryMode"
     :tooling-mode="agentPromptPreviewToolingMode"
     :tooling-content="agentPromptPreviewToolingContent"
+    :tooling-items="agentPromptPreviewToolingItems"
     @update:visible="updateAgentPromptPreviewVisible"
   />
 
@@ -143,6 +144,7 @@ import {
   MessengerWorldHistoryDialog
 } from './asyncDialogs';
 import type { WorldHistoryCategory, WorldHistoryRecord } from '@/views/messenger/model';
+import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
 
 type MessengerWorldHistoryTabOption = {
   key: WorldHistoryCategory;
@@ -177,6 +179,7 @@ const {
   agentPromptPreviewMemoryMode,
   agentPromptPreviewToolingMode,
   agentPromptPreviewToolingContent,
+  agentPromptPreviewToolingItems,
   imagePreviewVisible,
   imagePreviewUrl,
   imagePreviewTitle,
@@ -217,6 +220,7 @@ const {
   agentPromptPreviewMemoryMode: 'none' | 'pending' | 'frozen';
   agentPromptPreviewToolingMode: string;
   agentPromptPreviewToolingContent: string;
+  agentPromptPreviewToolingItems: PromptToolingPreviewItem[];
   imagePreviewVisible: boolean;
   imagePreviewUrl: string;
   imagePreviewTitle: string;

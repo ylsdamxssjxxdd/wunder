@@ -536,13 +536,11 @@
   background: rgba(var(--ui-accent-rgb), 0.12);
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-group-header,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item-desc {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-group-header {
   color: var(--tech-blue-muted);
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-group-count,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-status-tag {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-group-count {
   border-color: rgba(var(--ui-accent-rgb), 0.24);
   background: rgba(var(--ui-accent-rgb), 0.14);
   color: var(--tech-blue-muted);
@@ -572,6 +570,15 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled:focus-visible {
   border-color: rgba(var(--ui-accent-rgb), 0.32);
   background: rgba(var(--ui-accent-rgb), 0.1);
+}
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled .messenger-skill-item-title {
+  color: #7f95ae;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-item.is-disabled .ability-icon-badge {
+  border-color: rgba(120, 138, 160, 0.24);
+  background: rgba(47, 62, 84, 0.88);
+  color: #91a2b8;
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-skill-detail-path,

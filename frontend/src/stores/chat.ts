@@ -48,6 +48,7 @@ import {
   findPendingAssistantMessage,
   stopPendingAssistantMessage
 } from './chatPendingMessage';
+import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
 import {
   isCompactionMarkerAssistantMessage,
   mergeCompactionMarkersIntoMessages
@@ -4072,80 +4073,33 @@ const startSessionWatcher = (store, sessionId) => {
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
     const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventType === 'channel_message') {
-      if (normalizedEventId !== null) {
-        if (normalizedEventId <= lastEventId) {
-          return;
+      const result = consumeChatWatchChannelMessage({
+        messages: sessionMessagesRef,
+        lastEventId,
+        eventId,
+        eventTimestampMs,
+        payload,
+        data,
+        normalizeEventId: normalizeStreamEventId,
+        buildMessage,
+        assignStreamEventId,
+        insertWatchUserMessage: (content, timestampMs, anchor, options) =>
+          insertWatchUserMessage(store, key, sessionMessagesRef, content, timestampMs, anchor, options),
+        clearSupersededPendingAssistantMessages,
+        dismissStaleInquiryPanels,
+        touchUpdatedAt: (timestamp) => touchSessionUpdatedAt(store, key, timestamp),
+        notifySnapshot: (immediate = true) =>
+          notifySessionSnapshot(store, key, sessionMessagesRef, immediate),
+        hiddenInternalUser: resolveHiddenInternalUserEvent(payload, data),
+        dedupeAssistantWindowMs: WATCH_USER_MESSAGE_DEDUP_MS
+      });
+      if (result.handled) {
+        if (result.lastEventId > lastEventId) {
+          updateRuntimeLastEventId(runtime, result.lastEventId);
+          lastEventId = result.lastEventId;
         }
-        updateRuntimeLastEventId(runtime, normalizedEventId);
-        lastEventId = normalizedEventId;
-      }
-      const roleRaw = String(data?.role ?? payload?.role ?? '').trim().toLowerCase();
-      const content = String(data?.content ?? payload?.content ?? '').trim();
-      const role = roleRaw === 'user' || roleRaw === 'assistant' ? roleRaw : '';
-      if (!role || !content) {
         return;
       }
-      if (role === 'user') {
-        const hiddenInternal = resolveHiddenInternalUserEvent(payload, data);
-        if (normalizedEventId !== null) {
-          const duplicateByEventId = sessionMessagesRef.some(
-            (message) =>
-              message?.role === 'user' &&
-              normalizeStreamEventId(message?.stream_event_id) === normalizedEventId
-          );
-          if (duplicateByEventId) {
-            return;
-          }
-          const createdAt = Number.isFinite(eventTimestampMs)
-            ? new Date(eventTimestampMs).toISOString()
-            : undefined;
-          const userMessage = buildMessage('user', content, createdAt, {
-            hiddenInternal
-          });
-          assignStreamEventId(userMessage, eventId);
-          sessionMessagesRef.push(userMessage);
-          clearSupersededPendingAssistantMessages(sessionMessagesRef);
-          dismissStaleInquiryPanels(sessionMessagesRef);
-          touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
-          notifySessionSnapshot(store, key, sessionMessagesRef, true);
-          return;
-        }
-        insertWatchUserMessage(store, key, sessionMessagesRef, content, eventTimestampMs, null, {
-          hiddenInternal
-        });
-        return;
-      }
-      if (normalizedEventId !== null) {
-        const duplicateByEventId = sessionMessagesRef.some(
-          (message) =>
-            message?.role === 'assistant' &&
-            normalizeStreamEventId(message?.stream_event_id) === normalizedEventId
-        );
-        if (duplicateByEventId) {
-          return;
-        }
-      }
-      const lastMessage = sessionMessagesRef[sessionMessagesRef.length - 1];
-      const lastTimestamp = resolveTimestampMs(lastMessage?.created_at);
-      const duplicateAssistant =
-        normalizedEventId === null &&
-        lastMessage?.role === 'assistant' &&
-        String(lastMessage?.content || '') === content &&
-        (!Number.isFinite(eventTimestampMs) ||
-          !Number.isFinite(lastTimestamp) ||
-          Math.abs(eventTimestampMs - lastTimestamp) <= WATCH_USER_MESSAGE_DEDUP_MS);
-      if (duplicateAssistant) {
-        return;
-      }
-      const createdAt = Number.isFinite(eventTimestampMs)
-        ? new Date(eventTimestampMs).toISOString()
-        : undefined;
-      const assistantMessage = buildMessage('assistant', content, createdAt);
-      assignStreamEventId(assistantMessage, eventId);
-      sessionMessagesRef.push(assistantMessage);
-      touchSessionUpdatedAt(store, key, eventTimestampMs ?? Date.now());
-      notifySessionSnapshot(store, key, sessionMessagesRef, true);
-      return;
     }
     const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
     const directRoundNumber = resolveEventRoundNumber(payload, data);

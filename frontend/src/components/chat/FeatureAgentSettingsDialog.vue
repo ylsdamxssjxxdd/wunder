@@ -49,12 +49,17 @@
                       {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
                     </button>
                   </div>
-                  <div class="agent-tool-options">
-                    <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                      <span :title="option.hint">{{ option.label }}</span>
-                    </el-checkbox>
+                    <div class="agent-tool-options">
+                      <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
+                        <AgentToolOptionLabel
+                          :label="option.label"
+                          :description="option.description"
+                          :hint="option.hint"
+                          :group-key="group.key"
+                        />
+                      </el-checkbox>
+                    </div>
                   </div>
-                </div>
               </div>
             </el-checkbox-group>
           </div>
@@ -138,6 +143,7 @@ import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
+import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';

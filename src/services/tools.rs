@@ -1471,13 +1471,22 @@ struct SwarmBatchDispatchTask {
 }
 
 fn resolve_swarm_batch_tool_names(
+    context: &ToolContext<'_>,
     config: &Config,
     skills: &SkillRegistry,
     allowed_tools: &HashSet<String>,
+    user_id: &str,
     session: &ChatSessionRecord,
     agent: &UserAgentRecord,
 ) -> Vec<String> {
-    let overrides = resolve_session_tool_overrides(session, Some(agent));
+    let frozen_tool_overrides = context
+        .workspace
+        .load_session_frozen_tool_overrides(user_id, &session.session_id);
+    let overrides = resolve_session_tool_overrides(
+        session,
+        frozen_tool_overrides.as_deref(),
+        Some(agent),
+    );
     let filtered = apply_tool_overrides(allowed_tools.clone(), &overrides, config, skills);
     finalize_tool_names(filtered)
 }
@@ -2137,9 +2146,11 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         };
 
         let tool_names = resolve_swarm_batch_tool_names(
+            context,
             context.config,
             context.skills,
             &allowed_tools,
+            user_id,
             &session_record,
             &agent_record,
         );
@@ -3817,10 +3828,13 @@ fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
 
 fn resolve_session_tool_overrides(
     record: &ChatSessionRecord,
+    frozen_tool_overrides: Option<&[String]>,
     agent: Option<&UserAgentRecord>,
 ) -> Vec<String> {
     if !record.tool_overrides.is_empty() {
         normalize_tool_overrides(record.tool_overrides.clone())
+    } else if let Some(snapshot) = frozen_tool_overrides {
+        normalize_tool_overrides(snapshot.to_vec())
     } else {
         agent
             .map(|record| record.tool_names.clone())
@@ -3894,7 +3908,14 @@ fn build_effective_tool_names(
     agent: Option<&UserAgentRecord>,
 ) -> Result<Vec<String>> {
     let allowed = collect_user_allowed_tools(context, user_id)?;
-    let overrides = resolve_session_tool_overrides(record, agent);
+    let frozen_tool_overrides = context
+        .workspace
+        .load_session_frozen_tool_overrides(user_id, &record.session_id);
+    let overrides = resolve_session_tool_overrides(
+        record,
+        frozen_tool_overrides.as_deref(),
+        agent,
+    );
     let allowed = apply_tool_overrides(allowed, &overrides, context.config, context.skills);
     Ok(finalize_tool_names(allowed))
 }

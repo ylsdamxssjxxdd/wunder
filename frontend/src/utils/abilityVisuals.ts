@@ -32,33 +32,87 @@ type AbilityRule = {
 };
 
 const ABILITY_RULES: AbilityRule[] = [
-  { keywords: ['final response', 'final answer', 'final_response'], icon: 'fa-flag-checkered', tone: 'general' },
+  {
+    keywords: ['最终回复', 'final response', 'final answer', 'final reply', 'final_response'],
+    icon: 'fa-paper-plane',
+    tone: 'general'
+  },
+  { keywords: ['desktop_controller', 'desktop controller'], icon: 'fa-computer-mouse', tone: 'general' },
+  { keywords: ['desktop_monitor', 'desktop monitor', '桌面监控'], icon: 'fa-display', tone: 'general' },
+  { keywords: ['update_plan', 'plan board', '计划面板', '计划看板'], icon: 'fa-table-columns', tone: 'automation' },
+  { keywords: ['question_panel', 'ask_panel', 'question panel', '问询面板'], icon: 'fa-circle-question', tone: 'general' },
+  {
+    keywords: ['browser_navigate', 'browser_click', 'browser_type', 'browser_screenshot', 'browser_read_page'],
+    icon: 'fa-window-maximize',
+    tone: 'search'
+  },
+  { keywords: ['browser', '浏览器'], icon: 'fa-window-maximize', tone: 'search' },
+  { keywords: ['a2a_observe', 'a2a observe', 'a2a观察'], icon: 'fa-glasses', tone: 'automation' },
+  { keywords: ['a2a_wait', 'a2a wait', 'a2a等待'], icon: 'fa-clock', tone: 'automation' },
+  { keywords: ['a2ui'], icon: 'fa-image', tone: 'search' },
+  { keywords: ['agent_swarm', 'swarm_control', '智能体蜂群'], icon: 'fa-bee', tone: 'automation' },
+  { keywords: ['subagent_control', '子智能体控制'], icon: 'fa-diagram-project', tone: 'automation' },
+  {
+    keywords: ['node.invoke', 'node_invoke', 'node invoke', 'gateway_invoke', 'gateway invoke'],
+    icon: 'fa-diagram-project',
+    tone: 'automation'
+  },
+  { keywords: ['thread_control', 'session_thread', '会话线程控制'], icon: 'fa-code-branch', tone: 'automation' },
+  { keywords: ['skill_call', 'skill_get', '技能调用'], icon: 'fa-wand-magic-sparkles', tone: 'skill' },
   { keywords: ['cron', 'schedule_task', 'scheduled task', 'timer'], icon: 'fa-clock', tone: 'automation' },
+  { keywords: ['计划任务', '定时任务'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['sleep_wait', 'sleep', 'pause'], icon: 'fa-hourglass-half', tone: 'automation' },
+  { keywords: ['休眠等待'], icon: 'fa-hourglass-half', tone: 'automation' },
   { keywords: ['memory_manager', 'memory_manage', 'memory manager', 'memory'], icon: 'fa-memory', tone: 'automation' },
+  { keywords: ['记忆管理'], icon: 'fa-memory', tone: 'automation' },
   { keywords: ['thread_control', 'session_thread', 'thread'], icon: 'fa-code-branch', tone: 'automation' },
   {
     keywords: ['subagent_control', 'node.invoke', 'node_invoke', 'gateway_invoke', 'a2a', 'subagent', 'swarm'],
     icon: 'fa-diagram-project',
     tone: 'automation'
   },
-  { keywords: ['desktop_controller', 'desktop controller'], icon: 'fa-computer-mouse', tone: 'general' },
-  { keywords: ['desktop_monitor', 'desktop monitor'], icon: 'fa-display', tone: 'general' },
   { keywords: ['web_fetch', 'web fetch', 'webfetch', 'browse'], icon: 'fa-globe', tone: 'search' },
+  { keywords: ['网页抓取'], icon: 'fa-globe', tone: 'search' },
   { keywords: ['list_files', 'list_file', 'list files'], icon: 'fa-folder-open', tone: 'file' },
+  { keywords: ['列出文件'], icon: 'fa-folder-open', tone: 'file' },
+  { keywords: ['read_image', 'read image'], icon: 'fa-image', tone: 'search' },
+  { keywords: ['search_content', 'search content'], icon: 'fa-magnifying-glass', tone: 'search' },
+  { keywords: ['搜索内容', '搜索', '检索'], icon: 'fa-magnifying-glass', tone: 'search' },
+  { keywords: ['read_file', 'read file'], icon: 'fa-file-lines', tone: 'file' },
+  { keywords: ['读取文件'], icon: 'fa-file-lines', tone: 'file' },
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
+  { keywords: ['写入文件'], icon: 'fa-file-circle-plus', tone: 'file' },
   { keywords: ['apply_patch', 'apply patch'], icon: 'fa-pen-to-square', tone: 'file' },
+  { keywords: ['应用补丁'], icon: 'fa-pen-to-square', tone: 'file' },
   { keywords: ['programmatic_tool_call', 'ptc'], icon: 'fa-code', tone: 'file' },
+  { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   {
     keywords: ['skill', 'skills', 'prompt', 'workflow', 'template', 'agent preset', 'preset'],
     icon: 'fa-wand-magic-sparkles',
     tone: 'skill'
   },
   { keywords: ['knowledge', 'rag', 'vector', 'embedding', 'document', 'kb'], icon: 'fa-book', tone: 'knowledge' },
-  { keywords: ['mcp', 'connector', 'integration', 'endpoint', 'service', 'server'], icon: 'fa-plug', tone: 'mcp' },
-  { keywords: ['shared', 'share'], icon: 'fa-share-nodes', tone: 'shared' },
-  { keywords: ['search', 'query', 'retrieve', 'web'], icon: 'fa-magnifying-glass', tone: 'search' },
-  { keywords: ['shell', 'terminal', 'command', 'powershell', 'bash', 'cmd'], icon: 'fa-terminal', tone: 'terminal' },
+  { keywords: ['知识'], icon: 'fa-book', tone: 'knowledge' },
+  { keywords: ['mcp', 'connector', 'integration', 'endpoint'], icon: 'fa-plug', tone: 'mcp' },
+  { keywords: ['shared', 'share'], icon: 'fa-wrench', tone: 'shared' },
+  { keywords: ['search', 'query', 'retrieve'], icon: 'fa-magnifying-glass', tone: 'search' },
+  {
+    keywords: [
+      'shell',
+      'terminal',
+      'command',
+      'powershell',
+      'bash',
+      'cmd',
+      'execute_command',
+      'run command',
+      'execute command',
+      '执行命令',
+      '运行命令'
+    ],
+    icon: 'fa-terminal',
+    tone: 'terminal'
+  },
   { keywords: ['file', 'files', 'read', 'write', 'patch', 'edit', 'folder', 'workspace'], icon: 'fa-file-lines', tone: 'file' },
   { keywords: ['image', 'vision', 'camera', 'screenshot'], icon: 'fa-image', tone: 'search' }
 ];
@@ -121,7 +175,7 @@ const resolveDefaultIcon = (tone: AbilityVisualTone): string => {
     case 'knowledge':
       return 'fa-book';
     case 'shared':
-      return 'fa-share-nodes';
+      return 'fa-wrench';
     case 'automation':
       return 'fa-diagram-project';
     case 'search':
@@ -133,6 +187,26 @@ const resolveDefaultIcon = (tone: AbilityVisualTone): string => {
     default:
       return 'fa-toolbox';
   }
+};
+
+const resolveContextualDefaultIcon = (input: AbilityVisualInput, tone: AbilityVisualTone): string => {
+  const name = cleanText(input.name);
+  const grouped = cleanText(input.group).toLowerCase();
+  const sourced = cleanText(input.source).toLowerCase();
+  if (tone !== 'mcp' && tone !== 'knowledge' && tone !== 'skill') {
+    if (name.includes('@')) {
+      return 'fa-wrench';
+    }
+    if (
+      grouped === 'user' ||
+      sourced === 'user' ||
+      grouped.startsWith('user-') ||
+      sourced.startsWith('user-')
+    ) {
+      return 'fa-wrench';
+    }
+  }
+  return resolveDefaultIcon(tone);
 };
 
 const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
@@ -176,7 +250,7 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
   const tone = preferredTone || matchedRule?.tone || (kind === 'skill' ? 'skill' : 'general');
 
   return {
-    icon: matchedRule?.icon || resolveDefaultIcon(tone),
+    icon: matchedRule?.icon || resolveContextualDefaultIcon(input, tone),
     tone
   };
 };
