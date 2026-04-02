@@ -3,7 +3,7 @@ use crate::api::user_context::resolve_user;
 use crate::config::normalize_chat_stream_channel;
 use crate::i18n;
 use crate::monitor::MonitorState;
-use crate::orchestrator::{merge_agent_prompt_with_thread_agents_snapshot, OrchestratorError};
+use crate::orchestrator::OrchestratorError;
 use crate::orchestrator_constants::{
     OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE,
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
