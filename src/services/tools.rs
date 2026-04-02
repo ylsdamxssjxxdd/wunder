@@ -45,6 +45,7 @@ pub use catalog::{
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
 pub(crate) use context::{
     collect_allow_roots, collect_read_roots, resolve_path_in_roots, resolve_tool_path,
+    roots_allow_any_path,
 };
 pub use dispatch::{execute_builtin_tool, execute_tool};
 pub(crate) use freeform::{
@@ -1482,11 +1483,8 @@ fn resolve_swarm_batch_tool_names(
     let frozen_tool_overrides = context
         .workspace
         .load_session_frozen_tool_overrides(user_id, &session.session_id);
-    let overrides = resolve_session_tool_overrides(
-        session,
-        frozen_tool_overrides.as_deref(),
-        Some(agent),
-    );
+    let overrides =
+        resolve_session_tool_overrides(session, frozen_tool_overrides.as_deref(), Some(agent));
     let filtered = apply_tool_overrides(allowed_tools.clone(), &overrides, config, skills);
     finalize_tool_names(filtered)
 }
@@ -3911,11 +3909,7 @@ fn build_effective_tool_names(
     let frozen_tool_overrides = context
         .workspace
         .load_session_frozen_tool_overrides(user_id, &record.session_id);
-    let overrides = resolve_session_tool_overrides(
-        record,
-        frozen_tool_overrides.as_deref(),
-        agent,
-    );
+    let overrides = resolve_session_tool_overrides(record, frozen_tool_overrides.as_deref(), agent);
     let allowed = apply_tool_overrides(allowed, &overrides, context.config, context.skills);
     Ok(finalize_tool_names(allowed))
 }
@@ -5647,21 +5641,41 @@ fn list_files_inner(
         }));
     }
     let mut items = Vec::new();
-    for entry in WalkDir::new(&root)
-        .min_depth(1)
-        .max_depth(max_depth.saturating_add(1))
-        .into_iter()
-        .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
-        .filter_map(|item| item.ok())
-    {
-        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-        let mut display = rel.to_string_lossy().replace('\\', "/");
-        if entry.file_type().is_dir() {
-            display.push('/');
+    let unrestricted_paths = roots_allow_any_path(extra_roots);
+    if unrestricted_paths {
+        for entry in WalkDir::new(&root)
+            .min_depth(1)
+            .max_depth(max_depth.saturating_add(1))
+            .into_iter()
+            .filter_map(|item| item.ok())
+        {
+            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            let mut display = rel.to_string_lossy().replace('\\', "/");
+            if entry.file_type().is_dir() {
+                display.push('/');
+            }
+            items.push(display);
+            if items.len() >= MAX_LIST_ITEMS {
+                break;
+            }
         }
-        items.push(display);
-        if items.len() >= MAX_LIST_ITEMS {
-            break;
+    } else {
+        for entry in WalkDir::new(&root)
+            .min_depth(1)
+            .max_depth(max_depth.saturating_add(1))
+            .into_iter()
+            .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
+            .filter_map(|item| item.ok())
+        {
+            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            let mut display = rel.to_string_lossy().replace('\\', "/");
+            if entry.file_type().is_dir() {
+                display.push('/');
+            }
+            items.push(display);
+            if items.len() >= MAX_LIST_ITEMS {
+                break;
+            }
         }
     }
     Ok(json!({ "items": items }))

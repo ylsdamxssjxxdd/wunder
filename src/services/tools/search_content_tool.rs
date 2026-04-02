@@ -1,7 +1,8 @@
 use super::command_options::parse_dry_run;
 use super::{
-    collect_read_roots, resolve_tool_path, tool_error::build_failed_tool_result,
-    tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES, MAX_SEARCH_MATCHES,
+    collect_read_roots, resolve_tool_path, roots_allow_any_path,
+    tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
+    MAX_SEARCH_MATCHES,
 };
 use crate::core::tool_fs_filter;
 use crate::i18n;
@@ -175,6 +176,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
+    let unrestricted_paths = roots_allow_any_path(&extra_roots);
     let root = {
         let path = params.path.clone();
         tokio::task::spawn_blocking(move || {
@@ -263,7 +265,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let mut rg_candidates: Option<Vec<PathBuf>> = None;
 
     if matches!(params.engine, SearchEngine::Auto | SearchEngine::Rg) {
-        match collect_candidates_with_rg(&root, &params).await {
+        match collect_candidates_with_rg(&root, &params, unrestricted_paths).await {
             Ok(result) => {
                 resolved_engine = SearchEngine::Rg;
                 rg_timeout_hit = result.timeout_hit;
@@ -307,6 +309,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 matcher.as_ref(),
                 file_filter.as_ref(),
                 &params_for_task,
+                unrestricted_paths,
                 deadline,
             )
         })
@@ -323,6 +326,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 matcher.as_ref(),
                 file_filter.as_ref(),
                 &params_for_task,
+                unrestricted_paths,
                 deadline,
             )
         })
@@ -341,6 +345,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         hits.truncate(params.max_matches);
     }
     let (hits, output_budget_hit) = limit_hits_by_output_budget(hits, params.output_budget_bytes);
+    let matched_files = collect_matched_files(&hits);
+    let matched_file_count = matched_files.len();
+    let returned_match_count = hits.len();
     let matches = hits
         .iter()
         .map(|item| format!("{}:{}:{}", item.path, item.line, item.content.trim()))
@@ -364,8 +371,14 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     };
 
     Ok(json!({
+        "query": params.query,
+        "path": params.path,
         "matches": matches,
         "hits": hits,
+        "matched_files": matched_files,
+        "matched_file_count": matched_file_count,
+        "returned_match_count": returned_match_count,
+        "file_pattern_items": params.file_pattern_items,
         "query_mode": params.query_mode.as_str(),
         "case_sensitive": params.case_sensitive,
         "context_before": params.context_before,
@@ -389,12 +402,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 }
 
 fn parse_search_params(args: &Value) -> Result<SearchParams> {
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let query = parse_search_query(args);
     if query.is_empty() {
         return Err(anyhow!(i18n::t("tool.search.empty")));
     }
@@ -405,24 +413,16 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .unwrap_or(".")
         .trim()
         .to_string();
-    let file_pattern_items = split_file_patterns(
-        args.get("file_pattern")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim(),
-    );
+    let file_pattern_items = collect_file_pattern_items(args);
     let query_mode = parse_query_mode(args);
-    let case_sensitive = args
-        .get("case_sensitive")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let context_before =
-        normalize_context_window(args.get("context_before").and_then(Value::as_u64));
-    let context_after = normalize_context_window(args.get("context_after").and_then(Value::as_u64));
+    let case_sensitive = parse_case_sensitive(args);
+    let (context_before, context_after) = parse_context_windows(args);
     let budget = parse_search_budget(args);
     let max_depth = parse_optional_usize(args.get("max_depth")).unwrap_or(0);
     let mut max_files = parse_optional_usize(args.get("max_files")).unwrap_or(0);
     let mut max_matches = parse_optional_usize(args.get("max_matches"))
+        .or_else(|| parse_optional_usize(args.get("max_count")))
+        .or_else(|| parse_optional_usize(args.get("head_limit")))
         .unwrap_or(MAX_SEARCH_MATCHES)
         .clamp(1, MAX_MATCHES_CAP);
     let mut max_candidates = parse_optional_usize(args.get("max_candidates"))
@@ -470,6 +470,20 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
     })
 }
 
+fn parse_search_query(args: &Value) -> String {
+    args.get("query")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            args.get("pattern")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 fn parse_search_budget(args: &Value) -> SearchBudget {
     let budget_obj = args.get("budget").and_then(Value::as_object);
     SearchBudget {
@@ -505,6 +519,22 @@ fn parse_optional_usize(value: Option<&Value>) -> Option<usize> {
 
 fn parse_optional_u64(value: Option<&Value>) -> Option<u64> {
     value.and_then(parse_optional_u64_value)
+}
+
+fn parse_optional_bool_value(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(flag) => Some(*flag),
+        Value::Number(num) => num.as_i64().map(|item| item != 0),
+        Value::String(text) => {
+            let cleaned = text.trim().to_ascii_lowercase();
+            match cleaned.as_str() {
+                "1" | "true" | "yes" | "on" => Some(true),
+                "0" | "false" | "no" | "off" => Some(false),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn parse_optional_usize_value(value: &Value) -> Option<usize> {
@@ -543,11 +573,75 @@ fn parse_query_mode(args: &Value) -> QueryMode {
         if cleaned == "regex" || cleaned == "re" {
             return QueryMode::Regex;
         }
+        if cleaned == "literal" || cleaned == "fixed" || cleaned == "fixed_strings" {
+            return QueryMode::Literal;
+        }
     }
-    if args.get("regex").and_then(Value::as_bool).unwrap_or(false) {
+    if args
+        .get("fixed_strings")
+        .and_then(parse_optional_bool_value)
+        .unwrap_or(false)
+        || args
+            .get("-F")
+            .and_then(parse_optional_bool_value)
+            .unwrap_or(false)
+        || args
+            .get("literal")
+            .and_then(parse_optional_bool_value)
+            .unwrap_or(false)
+    {
+        return QueryMode::Literal;
+    }
+    if args
+        .get("regex")
+        .and_then(parse_optional_bool_value)
+        .unwrap_or(false)
+    {
         return QueryMode::Regex;
     }
     QueryMode::Literal
+}
+
+fn parse_case_sensitive(args: &Value) -> bool {
+    if let Some(case_sensitive) = args
+        .get("case_sensitive")
+        .and_then(parse_optional_bool_value)
+    {
+        return case_sensitive;
+    }
+    if let Some(ignore_case) = args
+        .get("ignore_case")
+        .and_then(parse_optional_bool_value)
+        .or_else(|| {
+            args.get("case_insensitive")
+                .and_then(parse_optional_bool_value)
+        })
+        .or_else(|| args.get("-i").and_then(parse_optional_bool_value))
+    {
+        return !ignore_case;
+    }
+    false
+}
+
+fn parse_context_windows(args: &Value) -> (usize, usize) {
+    let shared = args
+        .get("context")
+        .and_then(parse_optional_u64_value)
+        .or_else(|| args.get("-C").and_then(parse_optional_u64_value));
+    let before = args
+        .get("context_before")
+        .and_then(parse_optional_u64_value)
+        .or_else(|| args.get("-B").and_then(parse_optional_u64_value))
+        .or(shared);
+    let after = args
+        .get("context_after")
+        .and_then(parse_optional_u64_value)
+        .or_else(|| args.get("-A").and_then(parse_optional_u64_value))
+        .or(shared);
+    (
+        normalize_context_window(before),
+        normalize_context_window(after),
+    )
 }
 
 fn normalize_context_window(raw: Option<u64>) -> usize {
@@ -560,6 +654,94 @@ fn split_file_patterns(raw: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(ToString::to_string)
         .collect::<Vec<_>>()
+}
+
+fn collect_file_pattern_items(args: &Value) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for key in ["file_pattern", "glob"] {
+        if let Some(raw) = args.get(key).and_then(Value::as_str) {
+            for item in split_file_patterns(raw.trim()) {
+                if seen.insert(item.clone()) {
+                    output.push(item);
+                }
+            }
+        }
+    }
+    for item in collect_type_patterns(args) {
+        if seen.insert(item.clone()) {
+            output.push(item);
+        }
+    }
+    output
+}
+
+fn collect_type_patterns(args: &Value) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for key in ["type", "types"] {
+        let Some(value) = args.get(key) else {
+            continue;
+        };
+        for item in parse_type_items(value) {
+            for glob in expand_type_globs(item.as_str()) {
+                if seen.insert(glob.clone()) {
+                    output.push(glob);
+                }
+            }
+        }
+    }
+    output
+}
+
+fn parse_type_items(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(text) => text
+            .split([',', ';', '\n', ' '])
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(ToString::to_string)
+            .collect(),
+        Value::Array(items) => items.iter().flat_map(parse_type_items).collect::<Vec<_>>(),
+        _ => Vec::new(),
+    }
+}
+
+fn expand_type_globs(raw: &str) -> Vec<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    let patterns: &[&str] = match normalized.as_str() {
+        "rust" | "rs" => &["*.rs"],
+        "typescript" | "ts" => &["*.ts", "*.mts", "*.cts"],
+        "tsx" => &["*.tsx"],
+        "javascript" | "js" => &["*.js", "*.mjs", "*.cjs"],
+        "jsx" => &["*.jsx"],
+        "vue" => &["*.vue"],
+        "python" | "py" => &["*.py"],
+        "go" => &["*.go"],
+        "java" => &["*.java"],
+        "kotlin" | "kt" => &["*.kt", "*.kts"],
+        "swift" => &["*.swift"],
+        "c" => &["*.c", "*.h"],
+        "cpp" | "c++" | "cc" | "cxx" => &["*.cc", "*.cpp", "*.cxx", "*.hpp", "*.hh", "*.hxx"],
+        "shell" | "sh" | "bash" => &["*.sh", "*.bash", "*.zsh"],
+        "powershell" | "pwsh" | "ps1" => &["*.ps1", "*.psm1", "*.psd1"],
+        "html" | "htm" => &["*.html", "*.htm"],
+        "css" | "scss" | "sass" | "less" => &["*.css", "*.scss", "*.sass", "*.less"],
+        "json" => &["*.json"],
+        "yaml" | "yml" => &["*.yaml", "*.yml"],
+        "toml" => &["*.toml"],
+        "md" | "markdown" => &["*.md", "*.mdx"],
+        "sql" => &["*.sql"],
+        "xml" => &["*.xml"],
+        "proto" | "protobuf" => &["*.proto"],
+        "csv" => &["*.csv"],
+        _ if normalized.is_empty() => &[],
+        _ => &[],
+    };
+    if !patterns.is_empty() {
+        return patterns.iter().map(|item| (*item).to_string()).collect();
+    }
+    vec![format!("*.{normalized}")]
 }
 
 fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool) -> Result<Regex> {
@@ -599,6 +781,7 @@ fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
 async fn collect_candidates_with_rg(
     root: &Path,
     params: &SearchParams,
+    unrestricted_paths: bool,
 ) -> Result<RgCandidateResult> {
     let (cwd, target) = if root.is_dir() {
         (root.to_path_buf(), PathBuf::from("."))
@@ -623,8 +806,15 @@ async fn collect_candidates_with_rg(
         .arg("--max-filesize")
         .arg(MAX_READ_BYTES.to_string())
         .arg("--regexp")
-        .arg(&params.query)
-        .arg("--");
+        .arg(&params.query);
+    if unrestricted_paths {
+        command
+            .arg("--hidden")
+            .arg("--no-ignore")
+            .arg("--no-ignore-global")
+            .arg("--no-ignore-parent")
+            .arg("--no-ignore-vcs");
+    }
     if params.query_mode == QueryMode::Literal {
         command.arg("--fixed-strings");
     }
@@ -634,12 +824,15 @@ async fn collect_candidates_with_rg(
     if params.max_depth > 0 {
         command.arg("--max-depth").arg(params.max_depth.to_string());
     }
-    for glob in DEFAULT_EXCLUDE_GLOBS {
-        command.arg("--glob").arg(format!("!{glob}"));
+    if !unrestricted_paths {
+        for glob in DEFAULT_EXCLUDE_GLOBS {
+            command.arg("--glob").arg(format!("!{glob}"));
+        }
     }
     for item in &params.file_pattern_items {
         command.arg("--glob").arg(item);
     }
+    command.arg("--");
     command.arg(target);
 
     let timeout_window = Duration::from_millis(params.timeout_ms);
@@ -713,6 +906,7 @@ fn search_content_with_candidates(
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
     params: &SearchParams,
+    unrestricted_paths: bool,
     deadline: Instant,
 ) -> Result<SearchComputation> {
     let display_base = if root.is_dir() {
@@ -731,7 +925,7 @@ fn search_content_with_candidates(
             timeout_hit = true;
             break;
         }
-        if tool_fs_filter::should_skip_path(&candidate) {
+        if !unrestricted_paths && tool_fs_filter::should_skip_path(&candidate) {
             continue;
         }
         let rel = candidate
@@ -790,6 +984,7 @@ fn search_content_walk(
     matcher: &Regex,
     file_filter: Option<&GlobSet>,
     params: &SearchParams,
+    unrestricted_paths: bool,
     deadline: Instant,
 ) -> Result<SearchComputation> {
     let hit_list = Arc::new(Mutex::new(Vec::<SearchHit>::new()));
@@ -812,11 +1007,11 @@ fn search_content_walk(
 
     let mut walker = WalkBuilder::new(root.as_ref());
     walker.hidden(false);
-    walker.ignore(true);
-    walker.parents(true);
-    walker.git_ignore(true);
-    walker.git_global(true);
-    walker.git_exclude(true);
+    walker.ignore(!unrestricted_paths);
+    walker.parents(!unrestricted_paths);
+    walker.git_ignore(!unrestricted_paths);
+    walker.git_global(!unrestricted_paths);
+    walker.git_exclude(!unrestricted_paths);
     walker.max_filesize(Some(MAX_READ_BYTES as u64));
     if params.max_depth > 0 {
         walker.max_depth(Some(params.max_depth));
@@ -854,12 +1049,12 @@ fn search_content_walk(
             let path = entry.path();
             let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
             if is_dir {
-                if tool_fs_filter::should_skip_path(path) {
+                if !unrestricted_paths && tool_fs_filter::should_skip_path(path) {
                     return WalkState::Skip;
                 }
                 return WalkState::Continue;
             }
-            if tool_fs_filter::should_skip_path(path) {
+            if !unrestricted_paths && tool_fs_filter::should_skip_path(path) {
                 return WalkState::Continue;
             }
 
@@ -1114,6 +1309,16 @@ fn limit_hits_by_output_budget(
     (kept, false)
 }
 
+fn collect_matched_files(hits: &[SearchHit]) -> Vec<String> {
+    let mut files = hits
+        .iter()
+        .map(|item| item.path.clone())
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    files
+}
+
 fn trim_line_endings(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
     while end > 0 {
@@ -1234,6 +1439,69 @@ mod tests {
         assert_eq!(params.max_candidates, 80);
         assert_eq!(params.max_files, 10);
         assert_eq!(params.output_budget_bytes, Some(4096));
+    }
+
+    #[test]
+    fn parse_search_params_accepts_rg_style_aliases() {
+        let params = parse_search_params(&json!({
+            "pattern": "turn_terminal|event title",
+            "query_mode": "regex",
+            "glob": "*.rs,*.md",
+            "type": "rust,markdown",
+            "-B": 1,
+            "-A": 4,
+            "-i": true,
+            "head_limit": 25
+        }))
+        .expect("params");
+        assert_eq!(params.query, "turn_terminal|event title");
+        assert_eq!(params.query_mode, QueryMode::Regex);
+        assert_eq!(params.file_pattern_items, vec!["*.rs", "*.md", "*.mdx"]);
+        assert!(!params.case_sensitive);
+        assert_eq!(params.context_before, 1);
+        assert_eq!(params.context_after, 4);
+        assert_eq!(params.max_matches, 25);
+    }
+
+    #[test]
+    fn parse_query_mode_supports_fixed_strings_aliases() {
+        let params = parse_search_params(&json!({
+            "pattern": "foo.bar",
+            "-F": true
+        }))
+        .expect("params");
+        assert_eq!(params.query_mode, QueryMode::Literal);
+    }
+
+    #[test]
+    fn collect_matched_files_sorts_and_deduplicates_paths() {
+        let files = collect_matched_files(&[
+            SearchHit {
+                path: "src/b.rs".to_string(),
+                line: 2,
+                content: "beta".to_string(),
+                segments: vec![],
+                before: vec![],
+                after: vec![],
+            },
+            SearchHit {
+                path: "src/a.rs".to_string(),
+                line: 1,
+                content: "alpha".to_string(),
+                segments: vec![],
+                before: vec![],
+                after: vec![],
+            },
+            SearchHit {
+                path: "src/b.rs".to_string(),
+                line: 5,
+                content: "beta two".to_string(),
+                segments: vec![],
+                before: vec![],
+                after: vec![],
+            },
+        ]);
+        assert_eq!(files, vec!["src/a.rs".to_string(), "src/b.rs".to_string()]);
     }
 
     #[test]

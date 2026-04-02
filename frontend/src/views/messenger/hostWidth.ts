@@ -51,13 +51,11 @@ export function useMessengerHostWidth(fallbackWidth = 1440): HostWidthState {
   function resolveMeasuredWidth(): number {
     const hostElement = hostRootRef.value;
     if (hostElement) {
-      // Prefer parent width in embedded mode to avoid feedback loops:
-      // host shrinks -> hostWidth shrinks -> compact layout locks forever.
+      // Prefer the immediate container width so responsive breakpoints follow
+      // the real space available to Messenger inside the current shell.
       const containerWidth = resolveElementWidth(hostElement.parentElement);
-      // Also sample top-level app shells so collapsed sub-layouts cannot lock
-      // the host width to a stale compact breakpoint.
       const topLevelShellWidth = resolveTopLevelShellWidth(hostElement);
-      const stableContainerWidth = Math.max(containerWidth, topLevelShellWidth);
+      const stableContainerWidth = containerWidth > 0 ? containerWidth : topLevelShellWidth;
       if (stableContainerWidth > 0) {
         return stableContainerWidth;
       }

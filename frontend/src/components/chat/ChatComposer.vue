@@ -652,6 +652,28 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (!stats) {
     return null;
   }
+  const roundUsageTotal = normalizePositiveTokenCount(
+    (stats.roundUsage as Record<string, unknown> | undefined)?.total ??
+      (stats.roundUsage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.roundUsage as Record<string, unknown> | undefined)?.totalTokens ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.total ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.totalTokens
+  );
+  if (roundUsageTotal !== null) {
+    return roundUsageTotal;
+  }
+  const roundUsageInput = normalizePositiveTokenCount(
+    (stats.roundUsage as Record<string, unknown> | undefined)?.input ??
+      (stats.roundUsage as Record<string, unknown> | undefined)?.input_tokens ??
+      (stats.roundUsage as Record<string, unknown> | undefined)?.inputTokens ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.input ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.input_tokens ??
+      (stats.round_usage as Record<string, unknown> | undefined)?.inputTokens
+  );
+  if (roundUsageInput !== null) {
+    return roundUsageInput;
+  }
   const usageTotal = normalizePositiveTokenCount(
     (stats.usage as Record<string, unknown> | undefined)?.total ??
       (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??

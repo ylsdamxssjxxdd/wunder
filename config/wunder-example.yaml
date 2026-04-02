@@ -35,7 +35,7 @@ security: # 安全与权限配置
   external_embed_jwt_user_id_claim: ${WUNDER_EXTERNAL_EMBED_JWT_USER_ID_CLAIM:-sub} # 外部 JWT 中映射 wunder 用户的 claim，默认取 sub
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
     - '*'
-  allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）
+  allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）；填 "*" 表示放开整个文件系统
     - ./config/skills
   deny_globs: # 拒绝访问的路径通配规则（用于阻断敏感目录）
     - '**/.git/**'

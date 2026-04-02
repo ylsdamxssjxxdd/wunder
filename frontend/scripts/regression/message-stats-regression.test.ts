@@ -59,16 +59,21 @@ test('message stats suppresses multi-round aggregate speed fallback when usage i
   assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
 
-test('message stats context uses usage.total_tokens when explicit context is absent', () => {
+test('message stats context uses roundUsage.total_tokens when explicit context is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
       role: 'assistant',
       stats: {
-        usage: {
+        roundUsage: {
           input_tokens: 4027,
           output_tokens: 171,
           total_tokens: 4198
+        },
+        usage: {
+          input_tokens: 3900,
+          output_tokens: 180,
+          total_tokens: 4080
         }
       }
     },
@@ -77,17 +82,22 @@ test('message stats context uses usage.total_tokens when explicit context is abs
   assert.equal(findEntryValue(entries, 'Context'), '4198');
 });
 
-test('message stats context prefers usage.total_tokens over explicit context_tokens', () => {
+test('message stats context prefers roundUsage.total_tokens over usage.total_tokens and explicit context_tokens', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
       role: 'assistant',
       stats: {
         context_tokens: 7101,
+        roundUsage: {
+          input_tokens: 7180,
+          output_tokens: 47,
+          total_tokens: 7227
+        },
         usage: {
           input_tokens: 7101,
           output_tokens: 126,
-          total_tokens: 7227
+          total_tokens: 7300
         }
       }
     },
@@ -96,7 +106,7 @@ test('message stats context prefers usage.total_tokens over explicit context_tok
   assert.equal(findEntryValue(entries, 'Context'), '7227');
 });
 
-test('message stats context prefers usage.total_tokens over stale explicit context_tokens', () => {
+test('message stats context falls back to usage.total_tokens when roundUsage is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {

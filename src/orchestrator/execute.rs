@@ -733,7 +733,7 @@ impl Orchestrator {
                     }
                 };
                 last_response = Some((content.clone(), reasoning.clone()));
-                accumulate_usage(&mut round_usage, &usage);
+                update_round_usage_authority(&mut round_usage, &usage);
                 let usage_context_tokens = if usage.total > 0 {
                     usage.total
                 } else {
@@ -1679,6 +1679,14 @@ impl Orchestrator {
                     request_round.insert_into(map);
                 }
                 emitter.emit("round_usage", usage_payload).await;
+                let round_context_tokens = round_usage.total.min(i64::MAX as u64) as i64;
+                self.workspace
+                    .save_session_context_tokens_async(
+                        &user_id,
+                        &session_id,
+                        round_context_tokens,
+                    )
+                    .await;
             }
 
             let response_usage = if has_round_usage {
@@ -2856,11 +2864,10 @@ fn build_tool_budget_guard_model_notice(
     )
 }
 
-fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
-    let total = usage.total.max(usage.input.saturating_add(usage.output));
-    target.input = target.input.saturating_add(usage.input);
-    target.output = target.output.saturating_add(usage.output);
-    target.total = target.total.saturating_add(total);
+fn update_round_usage_authority(target: &mut TokenUsage, usage: &TokenUsage) {
+    target.input = usage.input;
+    target.output = usage.output;
+    target.total = usage.total.max(usage.input.saturating_add(usage.output));
 }
 
 fn extract_workspace_changed_paths(

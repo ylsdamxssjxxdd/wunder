@@ -79,7 +79,10 @@ OUTPUT_DIR=target/arm64-20/dist \
 Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资源拷贝到 `desktop/electron/resources`：
 - `wunder-desktop-bridge`（桥接程序）
 - `frontend/dist`（前端静态资源）
-- `config/`、`scripts/`（如存在）
+- `prompts/`、`skills/`（按仓库资源目录自动解析）
+- `config/i18n.messages.json`、`config/wunder.desktop.preconfig.yaml`（如存在）
+
+桌面端安装包不再整包复制仓库 `config/` 或 `scripts/`。运行时配置会在首次启动时生成到 `userData/WUNDER_TEMPD/config/wunder.yaml`，再按可选的桌面预配置文件做一次播种，避免把网页端/服务端配置、数据目录和字体资源混入桌面安装包。
 
 图标现在采用单一源文件（优先）：`images/eva01-head.svg`（若缺失则回退 `images/eva01-head.ico`）。  
 `prepare-resources` 前会自动执行 `scripts/sync-icons.js`，统一生成并同步：

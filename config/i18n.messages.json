@@ -2135,21 +2135,45 @@
     "en-US": "Optional. Directory to limit the search, relative to the workspace.",
     "zh-CN": "可选，限制搜索范围的目录，相对工程师工作目录。"
   },
+  "tool.spec.search.args.pattern": {
+    "en-US": "Preferred rg-style alias of query. Put the literal text or regex pattern here when thinking in ripgrep syntax.",
+    "zh-CN": "推荐的 rg 风格别名，等价于 query。按 ripgrep 思路搜索时，可把字面量或正则模式写在这里。"
+  },
   "tool.spec.search.args.query": {
-    "en-US": "Search text or regex pattern, depending on query_mode.",
-    "zh-CN": "搜索文本或正则模式（由 query_mode 决定）。"
+    "en-US": "Search text or regex pattern, depending on query_mode. Use pattern when you want rg-style wording.",
+    "zh-CN": "搜索文本或正则模式（由 query_mode 决定）。若按 rg 风格组织参数，优先使用 pattern。"
+  },
+  "tool.spec.search.args.glob": {
+    "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
+    "zh-CN": "推荐的 rg 风格别名，等价于 file_pattern。支持逗号、分号或换行分隔的 --glob 风格过滤。"
+  },
+  "tool.spec.search.args.type": {
+    "en-US": "Optional rg-style language/file-type shortcut. Examples: rust, rs, ts, tsx, js, py, md, toml, json.",
+    "zh-CN": "可选，rg 风格的语言/文件类型快捷写法。例如 rust、rs、ts、tsx、js、py、md、toml、json。"
   },
   "tool.spec.search.args.query_mode": {
-    "en-US": "Optional. Query mode: literal (default) or regex.",
-    "zh-CN": "可选。查询模式：literal（默认）或 regex。"
+    "en-US": "Optional. Query mode: literal (default) or regex. Use regex for rg-style alternation like foo|bar|baz.",
+    "zh-CN": "可选。查询模式：literal（默认）或 regex。需要像 rg 那样写 foo|bar|baz 这类并列模式时，请使用 regex。"
   },
   "tool.spec.search.args.regex": {
     "en-US": "Optional alias. true means query_mode=regex.",
     "zh-CN": "可选别名。true 等价于 query_mode=regex。"
   },
+  "tool.spec.search.args.fixed_strings": {
+    "en-US": "Optional rg-style alias. true forces literal/fixed-string matching, same as query_mode=literal.",
+    "zh-CN": "可选的 rg 风格别名。true 表示强制字面量/固定字符串匹配，等价于 query_mode=literal。"
+  },
   "tool.spec.search.args.case_sensitive": {
     "en-US": "Optional. Whether matching is case-sensitive (default false).",
     "zh-CN": "可选。是否区分大小写（默认 false）。"
+  },
+  "tool.spec.search.args.ignore_case": {
+    "en-US": "Optional rg-style alias. true means case-insensitive search, similar to rg -i.",
+    "zh-CN": "可选的 rg 风格别名。true 表示忽略大小写搜索，类似 rg -i。"
+  },
+  "tool.spec.search.args.context": {
+    "en-US": "Optional shared context size. Same as setting both context_before and context_after, similar to rg -C.",
+    "zh-CN": "可选，共享上下文行数。等价于同时设置 context_before 和 context_after，类似 rg -C。"
   },
   "tool.spec.search.args.context_before": {
     "en-US": "Optional. Number of context lines before each hit (0-20).",
@@ -2159,9 +2183,25 @@
     "en-US": "Optional. Number of context lines after each hit (0-20).",
     "zh-CN": "可选。每条命中后返回的上下文行数（0-20）。"
   },
+  "tool.spec.search.args.before_alias": {
+    "en-US": "Optional rg-style alias of context_before, equivalent to -B.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context_before，对应 -B。"
+  },
+  "tool.spec.search.args.after_alias": {
+    "en-US": "Optional rg-style alias of context_after, equivalent to -A.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context_after，对应 -A。"
+  },
+  "tool.spec.search.args.context_alias": {
+    "en-US": "Optional rg-style alias of context, equivalent to -C.",
+    "zh-CN": "可选的 rg 风格别名，等价于 context，对应 -C。"
+  },
+  "tool.spec.search.args.max_count": {
+    "en-US": "Optional rg-style alias of max_matches/head_limit for returned hits.",
+    "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
+  },
   "tool.spec.search.description": {
-    "en-US": "Search text files under the workspace with literal/regex modes. Returns legacy matches plus structured hits with context and highlight segments.",
-    "zh-CN": "在工作区文本文件中按字面量/正则模式搜索。返回兼容的 matches 字段，以及包含上下文与高亮分段的结构化 hits。"
+    "en-US": "Search text files under the workspace. Prefer expressing searches like a narrowed rg call: put the regex in pattern/query, narrow with path plus glob/type, and request context with context or -A/-B/-C. The tool accepts rg-style aliases such as pattern, glob, type, -i, -A/-B/-C, -F, max_count/head_limit, and returns both legacy matches plus structured hits.",
+    "zh-CN": "在工作区文本文件中搜索。建议按收窄后的 rg 调用来组织参数：把模式写在 pattern/query，用 path 配合 glob/type 缩小范围，再用 context 或 -A/-B/-C 请求上下文。工具支持 pattern、glob、type、-i、-A/-B/-C、-F、max_count/head_limit 等 rg 风格别名，并同时返回兼容的 matches 与结构化 hits。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",

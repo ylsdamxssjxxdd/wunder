@@ -622,8 +622,7 @@ pub async fn send_outbound(
             Err(err) if should_skip_attachment_delivery_error(&err) => {
                 warn!(
                     "weixin outbound attachment skipped: to_user_id={}, source={}, error={err}",
-                    to_user_id,
-                    attachment.url
+                    to_user_id, attachment.url
                 );
                 skipped_attachments.push(attachment.clone());
             }

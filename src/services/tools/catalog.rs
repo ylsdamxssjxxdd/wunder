@@ -383,14 +383,29 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": t("tool.spec.search.args.query")},
+                    "pattern": {"type": "string", "description": t("tool.spec.search.args.pattern")},
                     "path": {"type": "string", "description": t("tool.spec.search.args.path")},
                     "file_pattern": {"type": "string", "description": t("tool.spec.search.args.file_pattern")},
+                    "glob": {"type": "string", "description": t("tool.spec.search.args.glob")},
+                    "type": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}}
+                        ],
+                        "description": t("tool.spec.search.args.type")
+                    },
                     "query_mode": {"type": "string", "enum": ["literal", "regex"], "description": t("tool.spec.search.args.query_mode")},
                     "regex": {"type": "boolean", "description": t("tool.spec.search.args.regex")},
+                    "fixed_strings": {"type": "boolean", "description": t("tool.spec.search.args.fixed_strings")},
+                    "-F": {"type": "boolean", "description": t("tool.spec.search.args.fixed_strings")},
                     "case_sensitive": {"type": "boolean", "description": t("tool.spec.search.args.case_sensitive")},
+                    "ignore_case": {"type": "boolean", "description": t("tool.spec.search.args.ignore_case")},
+                    "-i": {"type": "boolean", "description": t("tool.spec.search.args.ignore_case")},
                     "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
                     "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")},
                     "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of matches to return (default 200)."},
+                    "max_count": {"type": "integer", "minimum": 1, "maximum": 2000, "description": t("tool.spec.search.args.max_count")},
+                    "head_limit": {"type": "integer", "minimum": 1, "maximum": 2000, "description": t("tool.spec.search.args.max_count")},
                     "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000, "description": "Maximum candidate files produced by fast search engine (default 4000)."},
                     "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Search timeout in milliseconds (default 30000)."},
                     "engine": {"type": "string", "enum": ["auto", "rg", "rust"], "description": "Search engine strategy: auto prefers rg and falls back to rust scanner."},
@@ -407,10 +422,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000}
                         }
                     },
+                    "context": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context")},
+                    "-C": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_alias")},
                     "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
-                    "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
+                    "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")},
+                    "-B": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.before_alias")},
+                    "-A": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.after_alias")}
                 },
-                "required": ["query"]
+                "anyOf": [
+                    {"required": ["query"]},
+                    {"required": ["pattern"]}
+                ]
             }),
         },
         ToolSpec {
@@ -1545,6 +1567,24 @@ mod tests {
             .expect("path description");
         assert!(path_description.contains("纯文本"));
         assert!(path_description.contains("二进制"));
+    }
+
+    #[test]
+    fn search_spec_exposes_rg_style_aliases_in_english() {
+        let canonical = resolve_tool_name("search_content");
+        let spec = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == canonical)
+            .expect("search spec");
+        assert!(spec.description.contains("rg"));
+        assert!(spec.input_schema["properties"]["pattern"].is_object());
+        assert!(spec.input_schema["properties"]["glob"].is_object());
+        assert!(spec.input_schema["properties"]["type"].is_object());
+        assert!(spec.input_schema["properties"]["-C"].is_object());
+        assert!(spec.input_schema["properties"]["-i"].is_object());
+        assert!(spec.input_schema["properties"]["-F"].is_object());
+        assert!(spec.input_schema["properties"]["max_count"].is_object());
+        assert!(spec.input_schema["anyOf"].is_array());
     }
 
     #[test]

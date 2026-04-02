@@ -9,7 +9,7 @@
       'messenger-view--nav-collapsed': navigationPaneCollapsed,
       'messenger-view--host-medium': isRightDockOverlay,
       'messenger-view--host-small': isMiddlePaneOverlay,
-      'messenger-view--host-tight': viewportWidth <= 840
+      'messenger-view--host-tight': viewportWidth <= MESSENGER_TIGHT_HOST_BREAKPOINT
     }"
     @pointerenter="handleMessengerRootPointerMove"
     @pointermove="handleMessengerRootPointerMove"
@@ -1518,9 +1518,6 @@ import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import {
   fetchUserSkillContent,
-  fetchUserSkills,
-  fetchUserToolsCatalog,
-  fetchUserToolsSummary,
   uploadUserSkillZip
 } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
@@ -1642,6 +1639,15 @@ import {
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
+import {
+  invalidateAllUserToolsCaches,
+  invalidateUserSkillsCache,
+  invalidateUserToolsCatalogCache,
+  invalidateUserToolsSummaryCache,
+  loadUserSkillsCache,
+  loadUserToolsCatalogCache,
+  loadUserToolsSummaryCache
+} from '@/utils/userToolsCache';
 import {
   normalizeAvatarColor,
   normalizeAvatarIcon,
@@ -1822,6 +1828,7 @@ const imagePreviewWorkspacePath = ref('');
 const agentPromptToolSummary = ref<Record<string, unknown> | null>(null);
 const agentToolSummaryLoading = ref(false);
 const agentToolSummaryError = ref('');
+let agentToolSummaryPromise: Promise<Record<string, unknown> | null> | null = null;
 type TooltipLike = { updatePopper?: () => void; popperRef?: { update?: () => void } };
 const agentAbilityTooltipRef = ref<TooltipLike | TooltipLike[] | null>(null);
 const agentAbilityTooltipVisible = ref(false);
@@ -2306,8 +2313,11 @@ const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'sw
 const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
-const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
+const MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT = 1120;
+const MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT = 1360;
+const MESSENGER_TIGHT_HOST_BREAKPOINT = 900;
+const isMiddlePaneOverlay = computed(() => viewportWidth.value <= MESSENGER_MIDDLE_PANE_OVERLAY_BREAKPOINT);
+const isRightDockOverlay = computed(() => viewportWidth.value <= MESSENGER_RIGHT_DOCK_OVERLAY_BREAKPOINT);
 const showMiddlePane = computed(() => {
   if (isEmbeddedChatRoute.value) {
     return false;
@@ -3674,6 +3684,24 @@ watch(
       return;
     }
     void preloadAgentSettingsPanels();
+    warmMessengerUserToolsData({
+      catalog: true,
+      summary: true
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => showAgentRightDock.value,
+  (visible) => {
+    if (!visible) {
+      return;
+    }
+    warmMessengerUserToolsData({
+      skills: true,
+      summary: true
+    });
   },
   { immediate: true }
 );
@@ -7556,7 +7584,7 @@ const handleWorkerCardImportInput = async (event) => {
   if (!file || quickCreatingAgent.value) return;
   quickCreatingAgent.value = true;
   try {
-    const dependencyCatalog = (await fetchUserToolsSummary().catch(() => null))?.data?.data || null;
+    const dependencyCatalog = await loadUserToolsSummaryCache().catch(() => null);
     const documents = parseWorkerCardText(await file.text());
     const createdItems: Record<string, unknown>[] = [];
     const warnings: string[] = [];
@@ -7963,30 +7991,33 @@ const updateAgentAbilityTooltip = async () => {
 
 const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
   const force = options.force === true;
-  if (agentToolSummaryLoading.value) {
-    return agentPromptToolSummary.value;
+  if (agentToolSummaryPromise) {
+    return agentToolSummaryPromise;
   }
   if (!force && agentPromptToolSummary.value) {
     return agentPromptToolSummary.value;
   }
   agentToolSummaryLoading.value = true;
   agentToolSummaryError.value = '';
-  try {
-    const result = await fetchUserToolsSummary();
-    const summary = (result?.data?.data as Record<string, unknown> | null) || null;
-    agentPromptToolSummary.value = summary;
-    return summary;
-  } catch (error) {
-    agentToolSummaryError.value =
-      (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
-      t('chat.toolSummaryFailed');
-    return null;
-  } finally {
-    agentToolSummaryLoading.value = false;
-    if (agentAbilityTooltipVisible.value) {
-      await updateAgentAbilityTooltip();
+  agentToolSummaryPromise = (async () => {
+    try {
+      const summary = (await loadUserToolsSummaryCache({ force })) as Record<string, unknown> | null;
+      agentPromptToolSummary.value = summary;
+      return summary;
+    } catch (error) {
+      agentToolSummaryError.value =
+        (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+        t('chat.toolSummaryFailed');
+      return null;
+    } finally {
+      agentToolSummaryLoading.value = false;
+      agentToolSummaryPromise = null;
+      if (agentAbilityTooltipVisible.value) {
+        await updateAgentAbilityTooltip();
+      }
     }
-  }
+  })();
+  return agentToolSummaryPromise;
 };
 
 const fetchActiveAgentPromptPreviewPayload = async (): Promise<Record<string, unknown>> => {
@@ -8061,10 +8092,9 @@ const loadRightDockSkills = async (
   const currentVersion = ++rightDockSkillCatalogLoadVersion;
   rightDockSkillCatalogLoading.value = true;
   try {
-    const result = await fetchUserSkills();
+    const skills = await loadUserSkillsCache({ force });
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
-    const payload = (result?.data?.data || {}) as Record<string, unknown>;
-    rightDockSkillCatalog.value = normalizeRightDockSkillCatalog(payload.skills);
+    rightDockSkillCatalog.value = normalizeRightDockSkillCatalog(skills);
     return true;
   } catch (error) {
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
@@ -8182,6 +8212,11 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
   if (!isUserToolsScopeForAgentSummary(scope)) {
     return;
   }
+  agentToolSummaryPromise = null;
+  agentToolSummaryLoading.value = false;
+  invalidateUserToolsCatalogCache();
+  invalidateUserToolsSummaryCache();
+  invalidateUserSkillsCache();
   void loadAgentToolSummary({ force: true });
   void loadRightDockSkills({ force: true, silent: true });
   if (sessionHub.activeSection === 'tools') {
@@ -8211,6 +8246,11 @@ const handleRightDockSkillArchiveUpload = async (file: File) => {
   skillDockUploading.value = true;
   try {
     await uploadUserSkillZip(file);
+    agentToolSummaryPromise = null;
+    agentToolSummaryLoading.value = false;
+    invalidateUserSkillsCache();
+    invalidateUserToolsSummaryCache();
+    invalidateUserToolsCatalogCache();
     await loadRightDockSkills({ force: true, silent: true });
     void loadAgentToolSummary({ force: true });
     emitUserToolsUpdated({ scope: 'skills', action: 'upload' });
@@ -8232,6 +8272,24 @@ const handleAgentAbilityTooltipShow = () => {
 const handleAgentAbilityTooltipHide = () => {
   agentAbilityTooltipVisible.value = false;
 };
+
+function warmMessengerUserToolsData(
+  options: {
+    catalog?: boolean;
+    skills?: boolean;
+    summary?: boolean;
+  } = {}
+) {
+  if (options.catalog === true) {
+    void loadUserToolsCatalogCache();
+  }
+  if (options.summary === true) {
+    void loadAgentToolSummary();
+  }
+  if (options.skills === true) {
+    void loadRightDockSkills({ silent: true });
+  }
+}
 
 const openAgentPromptPreview = async () => {
   agentPromptPreviewVisible.value = true;
@@ -8734,11 +8792,10 @@ const loadToolsCatalog = async () => {
   const loadVersion = ++toolsCatalogLoadVersion;
   toolsCatalogLoading.value = true;
   try {
-    const { data } = await fetchUserToolsCatalog();
+    const payload = ((await loadUserToolsCatalogCache()) || {}) as Record<string, unknown>;
     if (loadVersion !== toolsCatalogLoadVersion) {
       return;
     }
-    const payload = (data?.data || {}) as Record<string, unknown>;
     builtinTools.value = (Array.isArray(payload.builtin_tools) ? payload.builtin_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
@@ -10609,7 +10666,7 @@ const bootstrap = async () => {
     : resolveSectionFromRoute(route.path, route.query.section);
   const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
     {
-      critical: true,
+      sections: ['messages', 'agents', 'files', 'swarms'],
       run: () => agentStore.loadAgents()
     },
     {
@@ -10618,7 +10675,7 @@ const bootstrap = async () => {
       run: () => beeroomStore.loadGroups()
     },
     {
-      critical: true,
+      sections: ['messages'],
       run: () => chatStore.loadSessions()
     },
     {
@@ -10780,6 +10837,7 @@ watch(
     timelineDialogVisible.value = false;
     skillDockUploading.value = false;
     agentPromptToolSummary.value = null;
+    agentToolSummaryLoading.value = false;
     rightDockSkillCatalog.value = [];
     rightDockSkillDialogVisible.value = false;
     rightDockSelectedSkillName.value = '';
@@ -10789,12 +10847,17 @@ watch(
     rightDockSkillToggleSaving.value = false;
     rightDockSkillCatalogLoadVersion += 1;
     rightDockSkillContentLoadVersion += 1;
+    agentToolSummaryPromise = null;
+    invalidateAllUserToolsCaches();
     clearWorkspaceResourceCache();
     ensureDismissedAgentConversationState(true);
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
-    void loadAgentToolSummary({ force: true });
-    void loadRightDockSkills({ force: true, silent: true });
+    warmMessengerUserToolsData({
+      catalog: showAgentSettingsPanel.value,
+      skills: showAgentRightDock.value,
+      summary: showAgentSettingsPanel.value || showAgentRightDock.value
+    });
     scheduleWorkspaceResourceHydration();
   },
   { immediate: true }
@@ -10845,6 +10908,12 @@ watch(
       !knowledgeTools.value.length
     ) {
       loadToolsCatalog();
+    }
+    if (section === 'agents') {
+      warmMessengerUserToolsData({
+        catalog: true,
+        summary: true
+      });
     }
     if (section === 'users' && !userWorldPermissionDenied.value) {
       resetContactVirtualScroll();
@@ -11341,8 +11410,11 @@ onMounted(async () => {
     measure: true
   });
   scheduleWorkspaceResourceHydration();
-  void loadAgentToolSummary({ force: true });
-  void loadRightDockSkills({ force: true, silent: true });
+  warmMessengerUserToolsData({
+    catalog: showAgentSettingsPanel.value,
+    skills: showAgentRightDock.value,
+    summary: showAgentSettingsPanel.value || showAgentRightDock.value
+  });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
   stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
   lifecycleTimer = window.setInterval(() => {

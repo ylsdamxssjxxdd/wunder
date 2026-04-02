@@ -3241,6 +3241,22 @@ const buildMessageStatsEntries = (message) => {
   const usageTotalTokens = Number(
     stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
   );
+  const roundUsageInputTokens = Number(
+    stats?.roundUsage?.input ??
+    stats?.roundUsage?.input_tokens ??
+    stats?.roundUsage?.inputTokens ??
+    stats?.round_usage?.input ??
+    stats?.round_usage?.input_tokens ??
+    stats?.round_usage?.inputTokens
+  );
+  const roundUsageTotalTokens = Number(
+    stats?.roundUsage?.total ??
+    stats?.roundUsage?.total_tokens ??
+    stats?.roundUsage?.totalTokens ??
+    stats?.round_usage?.total ??
+    stats?.round_usage?.total_tokens ??
+    stats?.round_usage?.totalTokens
+  );
   const explicitContextTokens = Number(
     stats?.contextTokens ??
     stats?.context_tokens ??
@@ -3249,6 +3265,12 @@ const buildMessageStatsEntries = (message) => {
     stats?.context_usage?.contextTokens
   );
   const contextTokens =
+    (Number.isFinite(roundUsageTotalTokens) && roundUsageTotalTokens > 0
+      ? roundUsageTotalTokens
+      : null) ??
+    (Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0
+      ? roundUsageInputTokens
+      : null) ??
     (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0 ? usageTotalTokens : null) ??
     (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null) ??
     (Number.isFinite(explicitContextTokens) && explicitContextTokens > 0

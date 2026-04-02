@@ -65,6 +65,7 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 
 - 服务基础：`server.host`、`server.port`、`server.chat_stream_channel`、`server.max_active_sessions`
 - 安全控制：`security.api_key`、`security.external_auth_key`、`security.allow_commands`、`security.allow_paths`、`security.deny_globs`
+  其中 `security.allow_paths` 填 `*` 表示放开整个文件系统；若同时保留 `deny_globs`，仍会继续拦截匹配路径。
 - MCP：`mcp.timeout_s`、`mcp.servers[]`
 - A2A：`a2a.timeout_s`、`a2a.services[]`
 

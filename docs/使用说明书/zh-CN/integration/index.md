@@ -166,9 +166,9 @@ curl -X POST http://localhost:18000/wunder \
 
 ### token 统计是上下文占用量
 
-- 不是账单总消耗量
-- 记录的是实际入模的上下文
-- 用于评估和优化，不是计费
+- 不是直接等同于账单
+- 当前上下文占用优先看 `round_usage.total_tokens`
+- 总消耗按每次请求的 `round_usage.total_tokens` 累加
 
 ### 线程 system prompt 会冻结
 

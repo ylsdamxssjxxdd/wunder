@@ -26,7 +26,10 @@ source_docs:
 
 ## token 统计为什么和账单不一致？
 
-系统记录的是上下文占用量（用于运行态和容量评估），不是账单总消耗口径。
+要分两层看：
+
+- `round_usage.total_tokens` 是单轮请求完成后的实际上下文占用，也是当前统一口径。
+- 实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
 
 ## 线程 system prompt 会在每轮重算吗？
 

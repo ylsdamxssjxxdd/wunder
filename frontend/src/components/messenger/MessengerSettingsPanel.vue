@@ -677,14 +677,14 @@ const toolCallCount = computed(() =>
 
 const tokenUsageTotal = computed(() =>
   assistantMessages.value.reduce((sum, message) => {
-    const total = message?.stats?.usage?.total ?? 0;
+    const total = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
     return sum + (Number.isFinite(total) ? total : 0);
   }, 0)
 );
 
 const contextTokensLatest = computed(() => {
   for (let i = assistantMessages.value.length - 1; i >= 0; i -= 1) {
-    const value = assistantMessages.value[i]?.stats?.contextTokens;
+    const value = Number(assistantMessages.value[i]?.stats?.contextTokens);
     if (Number.isFinite(value) && value > 0) return value;
   }
   return null;

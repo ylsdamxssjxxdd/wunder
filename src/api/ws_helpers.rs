@@ -339,6 +339,14 @@ fn try_send_text_strict(sender: &WsSender, text: String) -> Result<(), WsTrySend
     }
 }
 
+async fn send_text_backpressured(sender: &WsSender, text: String) -> Result<(), WsTrySendError> {
+    sender
+        .tx
+        .send(Message::Text(text.into()))
+        .await
+        .map_err(|_| WsTrySendError::Closed)
+}
+
 fn send_slow_client_warning(
     sender: &WsSender,
     request_id: Option<&str>,
@@ -364,6 +372,28 @@ fn send_slow_client_warning(
     } else {
         try_send_text_lossy(sender, warning_text)
     }
+}
+
+async fn send_slow_client_warning_backpressured(
+    sender: &WsSender,
+    request_id: Option<&str>,
+    reason: &str,
+    queue_capacity: usize,
+) -> Result<(), WsTrySendError> {
+    if !should_warn_slow_client(sender) {
+        return Ok(());
+    }
+    let warning_payload = json!({
+        "event": "slow_client",
+        "data": {
+            "reason": reason,
+            "queue_capacity": queue_capacity,
+            "resume_recommended": true,
+            "ts": Utc::now().to_rfc3339(),
+        },
+    });
+    let warning_text = build_ws_text("event", request_id, Some(warning_payload));
+    send_text_backpressured(sender, warning_text).await
 }
 
 pub(crate) async fn send_ws_ready(
@@ -398,13 +428,13 @@ pub(crate) async fn send_ws_event(
     if is_delta {
         let queue_capacity = tx.tx.capacity();
         if queue_capacity <= STREAM_EVENT_SLOW_CLIENT_QUEUE_WATERMARK {
-            let _ = send_slow_client_warning(
+            let _ = send_slow_client_warning_backpressured(
                 tx,
                 request_id,
                 "queue_full_resume_required",
                 queue_capacity,
-                true,
-            );
+            )
+            .await;
             return Err(());
         }
         let text = build_ws_text("event", request_id, Some(payload));
@@ -421,7 +451,18 @@ pub(crate) async fn send_ws_event(
                 tx.tx.capacity(),
                 false,
             );
-            Err(())
+            let retry_text = build_ws_text(
+                "event",
+                request_id,
+                Some(json!({
+                    "event": event.event,
+                    "id": event.id,
+                    "data": event.data,
+                })),
+            );
+            send_text_backpressured(tx, retry_text)
+                .await
+                .map_err(|_| ())
         }
         Err(WsTrySendError::Closed) => Err(()),
     }
@@ -696,18 +737,28 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn non_delta_event_returns_err_when_outbound_queue_is_full() {
-        let (tx, _rx) = mpsc::channel::<Message>(1);
+    async fn non_delta_event_waits_for_queue_capacity_and_succeeds() {
+        let (tx, mut rx) = mpsc::channel::<Message>(1);
         tx.try_send(Message::Text("busy".into()))
             .expect("fill queue");
         let sender = WsSender::new(tx);
+        let drain = tokio::spawn(async move {
+            let first = rx.recv().await.expect("first queued message");
+            assert!(matches!(first, Message::Text(_)));
+            rx.recv().await.expect("second queued message")
+        });
         let event = StreamEvent {
             event: "tool_call".to_string(),
             data: json!({"tool":"read_file"}),
             id: Some("1".to_string()),
             timestamp: None,
         };
-        assert!(send_ws_event(&sender, Some("req-1"), event).await.is_err());
+        assert!(send_ws_event(&sender, Some("req-1"), event).await.is_ok());
+        let second = drain.await.expect("drain task should finish");
+        let Message::Text(raw) = second else {
+            panic!("expected tool_call message");
+        };
+        assert!(raw.contains("\"event\":\"tool_call\""));
     }
 
     #[tokio::test]

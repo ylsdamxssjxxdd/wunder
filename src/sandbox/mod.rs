@@ -101,6 +101,10 @@ fn looks_like_windows_drive(value: &str) -> bool {
             .unwrap_or(false)
 }
 
+fn is_allow_all_path_token(value: &str) -> bool {
+    value.trim() == "*"
+}
+
 fn normalize_container_path(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -217,6 +221,13 @@ fn collect_allow_paths(config: &Config, bindings: Option<&UserToolBindings>) -> 
     let mut seen = HashSet::new();
 
     let mut push_path = |raw: &str| {
+        if is_allow_all_path_token(raw) {
+            let wildcard = "*".to_string();
+            if seen.insert(wildcard.clone()) {
+                output.push(wildcard);
+            }
+            return;
+        }
         let Some(normalized) = normalize_container_path(raw) else {
             return;
         };

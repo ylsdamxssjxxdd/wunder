@@ -615,22 +615,32 @@ fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i
     let mut latest: Option<i64> = None;
     let mut peak = 0_i64;
     for event in events {
+        if event.event_type == "round_usage" {
+            let total_tokens = parse_usage_total_tokens(&event.data);
+            if total_tokens <= 0 {
+                continue;
+            }
+            latest = Some(total_tokens);
+            if total_tokens > peak {
+                peak = total_tokens;
+            }
+        }
+    }
+    if latest.is_some() {
+        return latest.map(|tokens| (tokens, peak.max(tokens)));
+    }
+
+    for event in events {
         if event.event_type != "token_usage" {
             continue;
         }
-        let input_tokens = parse_i64_value(event.data.get("input_tokens").or_else(|| {
-            event
-                .data
-                .get("usage")
-                .and_then(|usage| usage.get("input_tokens"))
-        }))
-        .unwrap_or_default();
-        if input_tokens <= 0 {
+        let total_tokens = parse_usage_total_tokens(&event.data);
+        if total_tokens <= 0 {
             continue;
         }
-        latest = Some(input_tokens);
-        if input_tokens > peak {
-            peak = input_tokens;
+        latest = Some(total_tokens);
+        if total_tokens > peak {
+            peak = total_tokens;
         }
     }
     latest.map(|tokens| (tokens, peak.max(tokens)))
@@ -2506,6 +2516,30 @@ fn parse_decode_output_tokens(data: &Value) -> Option<i64> {
     })
 }
 
+fn parse_usage_total_tokens(data: &Value) -> i64 {
+    let direct_total = parse_i64_value(data.get("total_tokens"));
+    let nested_total = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("total_tokens")));
+    if let Some(total) = direct_total.or(nested_total) {
+        return total.max(0);
+    }
+    let direct_input = parse_i64_value(data.get("input_tokens")).unwrap_or(0);
+    let direct_output = parse_i64_value(data.get("output_tokens")).unwrap_or(0);
+    if direct_input > 0 || direct_output > 0 {
+        return direct_input.saturating_add(direct_output).max(0);
+    }
+    let nested_input = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
+        .unwrap_or(0);
+    let nested_output = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
+        .unwrap_or(0);
+    nested_input.saturating_add(nested_output).max(0)
+}
+
 fn format_panic_payload(payload: &(dyn Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         return (*message).to_string();
@@ -3039,7 +3073,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_effective_context_tokens_prefers_token_usage() {
+    fn derive_effective_context_tokens_prefers_round_usage() {
         let mut events = VecDeque::new();
         events.push_back(MonitorEvent {
             event_id: 1,
@@ -3056,14 +3090,26 @@ mod tests {
         events.push_back(MonitorEvent {
             event_id: 3,
             timestamp: 3.0,
-            event_type: "token_usage".to_string(),
+            event_type: "round_usage".to_string(),
             data: json!({ "input_tokens": 5750, "output_tokens": 32, "total_tokens": 5782 }),
         });
-        assert_eq!(derive_effective_context_tokens(&events), Some((5750, 5750)));
+        assert_eq!(derive_effective_context_tokens(&events), Some((5782, 5782)));
     }
 
     #[test]
-    fn derive_effective_context_tokens_none_without_token_usage() {
+    fn derive_effective_context_tokens_falls_back_to_token_usage_total() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "token_usage".to_string(),
+            data: json!({ "input_tokens": 5620, "output_tokens": 88, "total_tokens": 5708 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), Some((5708, 5708)));
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_none_without_usage_events() {
         let mut events = VecDeque::new();
         events.push_back(MonitorEvent {
             event_id: 1,

@@ -74,6 +74,12 @@ source_docs:
 
 在工作区中按关键词搜索代码、配置或日志。
 
+推荐按 `rg` 的思路组织搜索参数：
+- 用 `path` 先缩小目录范围
+- 用 `pattern`/`query` 写字面量或正则
+- 用 `glob`/`file_pattern`/`type` 过滤文件
+- 用 `context` 或 `-A`/`-B`/`-C` 请求上下文
+
 **别名**：
 - `search_content`
 
@@ -81,16 +87,26 @@ source_docs:
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `query` | string | ✅ | 搜索关键词 |
+| `query` | string | ❌ | 搜索关键词；兼容旧写法 |
+| `pattern` | string | ❌ | 推荐的 `rg` 风格别名，等价于 `query` |
 | `path` | string | ❌ | 搜索路径，默认为工作区根目录 |
 | `file_pattern` | string | ❌ | 文件匹配模式，如 `*.rs` |
-| `query_mode` | string | ❌ | 搜索模式：`literal`/`regex`/`fuzzy` |
+| `glob` | string | ❌ | 推荐的 `rg` 风格别名，等价于 `file_pattern` |
+| `type` | string/array | ❌ | 常见类型快捷过滤，如 `rust`、`rs`、`ts`、`tsx`、`js`、`py`、`md` |
+| `query_mode` | string | ❌ | 搜索模式：`literal`/`regex` |
+| `regex` | boolean | ❌ | `true` 等价于 `query_mode=regex` |
+| `fixed_strings` / `-F` | boolean | ❌ | 强制按字面量匹配，等价于 `query_mode=literal` |
 | `case_sensitive` | boolean | ❌ | 是否区分大小写，默认 false |
+| `ignore_case` / `-i` | boolean | ❌ | `rg` 风格别名，`true` 表示忽略大小写 |
 | `max_depth` | integer | ❌ | 最大搜索深度，默认 5 |
 | `max_files` | integer | ❌ | 最大文件数 |
 | `max_matches` | integer | ❌ | 最大匹配数 |
+| `max_count` / `head_limit` | integer | ❌ | `rg` 风格别名，等价于 `max_matches` |
+| `context` / `-C` | integer | ❌ | 同时设置前后上下文行数 |
 | `context_before` | integer | ❌ | 匹配前显示行数 |
 | `context_after` | integer | ❌ | 匹配后显示行数 |
+| `-B` | integer | ❌ | `rg` 风格别名，等价于 `context_before` |
+| `-A` | integer | ❌ | `rg` 风格别名，等价于 `context_after` |
 | `dry_run` | boolean | ❌ | 预演模式 |
 | `time_budget_ms` | integer | ❌ | 时间预算（毫秒） |
 | `output_budget_bytes` | integer | ❌ | 输出预算（字节） |
@@ -105,13 +121,25 @@ source_docs:
 }
 ```
 
-#### 带上下文的搜索
+#### 推荐的 rg 风格搜索
 ```json
 {
-  "query": "execute_tool",
-  "file_pattern": "*.rs",
-  "context_before": 3,
-  "context_after": 5
+  "pattern": "turn_terminal|event title|resolve.*title",
+  "query_mode": "regex",
+  "path": "src",
+  "glob": "*.rs",
+  "context": 2,
+  "max_count": 50
+}
+```
+
+#### 按类型过滤并带上下文
+```json
+{
+  "pattern": "execute_tool",
+  "type": "rust",
+  "-B": 3,
+  "-A": 5
 }
 ```
 

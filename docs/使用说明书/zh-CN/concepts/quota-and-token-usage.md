@@ -3,7 +3,7 @@ title: "额度与 Token 占用"
 summary: "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。"
 read_when:
   - "你在看监控、额度或会话资源占用"
-  - "你要理解为什么系统强调 input_tokens 与 context 占用"
+  - "你要理解为什么系统强调 round_usage.total_tokens 与 context 占用"
 source_docs:
   - "docs/API文档.md"
   - "docs/设计方案.md"
@@ -48,9 +48,13 @@ Wunder 里最容易被误读的一件事，就是把 token 统计直接当成“
 
 在监控和会话汇总里，最有意义的是：
 
-- `token_usage.input_tokens`
+- `round_usage.total_tokens`
+- `token_usage.total_tokens`
 
-它代表模型实际接收的上下文，占用语义最稳定。
+其中：
+
+- `round_usage.total_tokens` 表示**单轮请求完成后的实际上下文占用**，当前作为上下文占用的权威口径。
+- `token_usage.total_tokens` 表示**单次模型调用的 usage 明细**；当一轮只发生一次模型调用时，它通常会和 `round_usage.total_tokens` 一致。
 
 而 `context_usage` 这类字段更偏过程估算，适合观测，不适合当唯一准绳。
 
@@ -74,9 +78,9 @@ Wunder 里最容易被误读的一件事，就是把 token 统计直接当成“
 
 ## 实施建议
 
-- Wunder 记录的 token_usage 重点是上下文占用。
-- 会话汇总优先看 `token_usage.input_tokens`。
-- 不要把 token_usage、额度和供应商账单混成一个概念。
+- Wunder 记录的当前上下文占用，优先看 `round_usage.total_tokens`。
+- Wunder 记录的累计消耗，按每次请求的 `round_usage.total_tokens` 累加。
+- 不要把单次调用 usage、上下文占用、累计消耗、额度和供应商账单混成一个概念。
 
 ## 延伸阅读
 

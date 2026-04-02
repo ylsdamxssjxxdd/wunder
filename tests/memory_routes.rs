@@ -664,12 +664,11 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_prompt_and_runtime_keep_frozen_agent_tool_baseline_after_agent_edit() {
-    let context =
-        build_test_context_with_mock_llm_and_tool_mode(
-            "frozen_tool_baseline_user",
-            "function_call",
-        )
-        .await;
+    let context = build_test_context_with_mock_llm_and_tool_mode(
+        "frozen_tool_baseline_user",
+        "function_call",
+    )
+    .await;
 
     let (status, created_agent) = send_json(
         &context.app,
@@ -720,10 +719,7 @@ async fn session_prompt_and_runtime_keep_frozen_agent_tool_baseline_after_agent_
     assert_eq!(status, StatusCode::OK);
     assert!(first_message["data"]["answer"].is_string());
 
-    let mock_llm_state = context
-        .mock_llm_state
-        .as_ref()
-        .expect("mock llm state");
+    let mock_llm_state = context.mock_llm_state.as_ref().expect("mock llm state");
     assert_eq!(mock_llm_state.last_chat_tool_names(), vec!["read_file"]);
 
     let (status, frozen_preview_before_agent_edit) = send_json(
@@ -801,7 +797,10 @@ async fn session_prompt_and_runtime_keep_frozen_agent_tool_baseline_after_agent_
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(session_tools_updated["data"]["tool_overrides"], json!(["write_file"]));
+    assert_eq!(
+        session_tools_updated["data"]["tool_overrides"],
+        json!(["write_file"])
+    );
 
     let (status, frozen_preview_after_session_override) = send_json(
         &context.app,

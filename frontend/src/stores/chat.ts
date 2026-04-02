@@ -50,6 +50,7 @@ import {
   stopPendingAssistantMessage
 } from './chatPendingMessage';
 import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
+import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import {
   isCompactionMarkerAssistantMessage,
   mergeCompactionMarkersIntoMessages
@@ -226,6 +227,7 @@ type PendingApproval = {
 const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
+  roundUsage: null,
   prefill_duration_s: null,
   decode_duration_s: null,
   prefill_duration_total_s: null,
@@ -587,8 +589,11 @@ const normalizeMessageStats = (stats) => {
     return null;
   }
   const normalizedUsage = normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage);
+  const normalizedRoundUsage = normalizeUsagePayload(
+    stats.roundUsage ?? stats.round_usage ?? stats.round_usage_total ?? stats.billedUsage
+  );
+  const roundUsageContextTokens = resolveUsageContextTokens(normalizedRoundUsage);
   const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
-  const hasUsageTotalTokens = Boolean(normalizedUsage && normalizedUsage.total > 0);
   const explicitContextTokens = normalizeContextTokens(
     stats.contextTokens ??
       stats.context_tokens ??
@@ -600,9 +605,7 @@ const normalizeMessageStats = (stats) => {
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
-  const contextTokens = hasUsageTotalTokens
-    ? usageContextTokens
-    : explicitContextTokens ?? usageContextTokens;
+  const contextTokens = roundUsageContextTokens ?? usageContextTokens ?? explicitContextTokens;
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -631,6 +634,7 @@ const normalizeMessageStats = (stats) => {
   return {
     toolCalls: normalizeStatsCount(stats.toolCalls),
     usage: normalizedUsage,
+    roundUsage: normalizedRoundUsage,
     prefill_duration_s: normalizeDurationValue(
       stats.prefill_duration_s ?? stats.prefillDurationS ?? stats.prefillDuration
     ),
@@ -737,6 +741,7 @@ const mergeMessageStats = (base, incoming) => {
   return {
     toolCalls: Math.max(left.toolCalls, right.toolCalls),
     usage: right.usage || left.usage,
+    roundUsage: right.roundUsage || left.roundUsage,
     prefill_duration_s:
       right.prefill_duration_s === null || right.prefill_duration_s === undefined
         ? left.prefill_duration_s
@@ -3988,6 +3993,11 @@ const startSessionWatcher = (store, sessionId) => {
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
         const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
+        const shouldReconcileRemoteDrift = shouldWatchdogReconcileDrift({
+          remoteLastEventId,
+          localLastEventId: lastEventId,
+          hasPendingMessage: Boolean(pendingMessage)
+        });
         if (
           pendingMessage &&
           Number.isFinite(remoteLastEventId) &&
@@ -4002,13 +4012,8 @@ const startSessionWatcher = (store, sessionId) => {
           });
           return;
         }
-        if (
-          running === true &&
-          !pendingMessage &&
-          Number.isFinite(remoteLastEventId) &&
-          remoteLastEventId > lastEventId
-        ) {
-          scheduleWatchReconcile();
+        if (shouldReconcileRemoteDrift) {
+          scheduleWatchReconcile(running === false ? 0 : WATCH_RECONCILE_DELAY_MS);
         }
         if (running === false) {
           clearSupersededPendingAssistantMessages(sessionMessagesRef);
@@ -4286,6 +4291,10 @@ const startSessionWatcher = (store, sessionId) => {
       const transient =
         resumeRequired || error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
       if (transient) {
+        if (preferredTransport === 'ws') {
+          markWsUnavailable();
+          store.streamTransport = 'sse';
+        }
         if (perfEnabled) {
           chatPerf.count('chat_watch_interrupted', 1, { sessionId: key });
         }
@@ -4881,6 +4890,22 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       roundMetricsMap.set(roundNumber, current);
       recomputeRoundAggregates();
       return;
+    }
+  };
+
+  const updateRoundUsageStats = (usagePayload) => {
+    if (!stats) return;
+    const normalizedUsage = normalizeUsagePayload(usagePayload);
+    if (!normalizedUsage) return;
+    stats.roundUsage = normalizedUsage;
+    const roundUsageContextTokens = resolveUsageContextTokens(normalizedUsage);
+    if (roundUsageContextTokens === null) return;
+    const existingContextTokens = normalizeContextTokens(stats.contextTokens);
+    const changed = existingContextTokens !== roundUsageContextTokens;
+    stats.contextTokens = roundUsageContextTokens;
+    contextEstimateBaseTokens = roundUsageContextTokens;
+    if (changed) {
+      options.onContextUsage?.(roundUsageContextTokens, stats.contextTotalTokens ?? null);
     }
   };
 
@@ -6611,11 +6636,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'round_usage': {
         const round = resolveRound(payload, data);
+        updateRoundUsageStats(data?.usage ?? payload?.usage ?? data ?? payload);
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data ?? payload,
           null,
           null,
-          // round_usage is whole-turn aggregate; keep final llm_output usage as primary speed source.
+          // round_usage is the final request-level occupancy snapshot; keep llm_output usage for speed details.
           {
             round,
             updateUsage: !stats?.usage,
@@ -6705,6 +6731,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (lastRound !== null) {
           assistantMessage.stream_round = lastRound;
         }
+        updateRoundUsageStats(
+          finalPayload.round_usage ??
+            finalPayload.roundUsage ??
+            finalPayload.usage ??
+            data?.round_usage ??
+            payload?.round_usage
+        );
         outputState.streaming = false;
         outputState.reasoningStreaming = false;
         syncReasoningToMessage();

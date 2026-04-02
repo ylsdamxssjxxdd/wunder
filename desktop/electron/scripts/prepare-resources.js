@@ -5,6 +5,7 @@ const path = require('path')
 const repoRoot = process.env.WUNDER_REPO_ROOT
   ? path.resolve(process.env.WUNDER_REPO_ROOT)
   : path.resolve(__dirname, '..', '..', '..')
+const configRoot = path.join(repoRoot, 'config')
 const outputRoot = path.resolve(__dirname, '..', 'resources')
 const electronProjectRoot = path.resolve(__dirname, '..')
 const skipRuntimeDepsCopy = process.env.WUNDER_SKIP_RUNTIME_DEPS_COPY === '1'
@@ -24,7 +25,6 @@ const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'targe
 const cliSource = process.env.WUNDER_CLI_BIN || path.join(repoRoot, 'target', 'release', cliName)
 const frontendSource = process.env.WUNDER_FRONTEND_DIST || path.join(repoRoot, 'frontend', 'dist')
 const docsSource = process.env.WUNDER_DOCS_DIST || path.join(repoRoot, 'web', 'docs')
-const desktopPreconfigSource = path.join(repoRoot, 'docs', '分发', '预配置文件.yml')
 const buildIconIcoSource = path.join(__dirname, '..', 'build', 'icon.ico')
 const fallbackIconIcoSource = path.join(__dirname, '..', 'assets', 'icon.ico')
 const iconIcoSource = fs.existsSync(buildIconIcoSource) ? buildIconIcoSource : fallbackIconIcoSource
@@ -35,6 +35,42 @@ const linuxIconSetDir = path.join(__dirname, '..', 'build', 'icons')
 const linuxIconSetSizes = [16, 24, 32, 48, 64, 96, 128, 256, 512]
 const runtimeNodeModulesSource = path.join(electronProjectRoot, 'node_modules')
 const runtimeDepsOutputRoot = path.join(outputRoot, 'runtime-deps')
+const desktopBundledRepoDirs = ['prompts', 'skills']
+const desktopBundledConfigFiles = [
+  ['i18n.messages.json', 'i18n.messages.json'],
+  ['wunder.desktop.preconfig.yaml', 'wunder.desktop.preconfig.yaml']
+]
+const desktopPreconfigCandidates = [
+  path.join(configRoot, 'wunder.desktop.preconfig.yaml'),
+  path.join(repoRoot, '预配置文件.yml'),
+  path.join(repoRoot, 'docs', '分发', '预配置文件.yml')
+]
+
+const resolveExistingPath = (candidates) => candidates.find((candidate) => fs.existsSync(candidate)) || ''
+
+const resolveRepoDir = (name) => {
+  const migrated = path.join(configRoot, name)
+  if (fs.existsSync(migrated)) {
+    return migrated
+  }
+  const legacy = path.join(repoRoot, name)
+  if (fs.existsSync(legacy)) {
+    return legacy
+  }
+  return ''
+}
+
+const resolveRepoFile = (name) => {
+  const migrated = path.join(configRoot, name)
+  if (fs.existsSync(migrated)) {
+    return migrated
+  }
+  const legacy = path.join(repoRoot, name)
+  if (fs.existsSync(legacy)) {
+    return legacy
+  }
+  return ''
+}
 
 const copyDirWithFilter = (src, dest, filter) => {
   fs.cpSync(src, dest, {
@@ -48,7 +84,7 @@ const copyDir = (src, dest) => {
 }
 
 const copyDirIfExists = (src, dest) => {
-  if (!fs.existsSync(src)) {
+  if (!src || !fs.existsSync(src)) {
     console.warn(`[prepare] skip missing: ${src}`)
     return
   }
@@ -90,6 +126,14 @@ const copyRuntimeNodeModules = () => {
 const copyFile = (src, dest) => {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.copyFileSync(src, dest)
+}
+
+const copyFileIfExists = (src, dest) => {
+  if (!src || !fs.existsSync(src)) {
+    console.warn(`[prepare] skip missing file: ${src}`)
+    return
+  }
+  copyFile(src, dest)
 }
 
 const copyExtraRuntimeFiles = () => {
@@ -185,11 +229,17 @@ copyExtraRuntimeRoots()
 if (fs.existsSync(iconPngSource)) {
   copyFile(iconPngSource, path.join(outputRoot, 'frontend-dist', 'desktop-icon.png'))
 }
-copyDirIfExists(path.join(repoRoot, 'config'), path.join(outputRoot, 'config'))
-if (fs.existsSync(desktopPreconfigSource)) {
-  copyFile(desktopPreconfigSource, path.join(outputRoot, 'config', 'wunder.desktop.preconfig.yaml'))
+for (const dirName of desktopBundledRepoDirs) {
+  copyDirIfExists(resolveRepoDir(dirName), path.join(outputRoot, dirName))
 }
-copyDirIfExists(path.join(repoRoot, 'scripts'), path.join(outputRoot, 'scripts'))
+for (const [sourceName, targetName] of desktopBundledConfigFiles) {
+  const sourcePath = sourceName === 'wunder.desktop.preconfig.yaml'
+    ? resolveExistingPath(desktopPreconfigCandidates)
+    : resolveRepoFile(sourceName)
+  if (sourcePath) {
+    copyFileIfExists(sourcePath, path.join(outputRoot, 'config', targetName))
+  }
+}
 
 console.log(`[prepare] resources ready at: ${outputRoot}`)
 

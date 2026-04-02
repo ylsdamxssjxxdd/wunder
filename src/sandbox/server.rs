@@ -1078,6 +1078,10 @@ fn resolve_cached_rules(
 fn normalize_allow_paths_for_cache(container_root: &Path, allow_paths: &[String]) -> Vec<String> {
     let mut output = Vec::new();
     for raw in allow_paths {
+        if is_allow_all_path_token(raw) {
+            output.push("/".to_string());
+            continue;
+        }
         if let Ok(path) = normalize_container_path(raw, container_root) {
             output.push(path.to_string_lossy().to_string());
         }
@@ -1141,6 +1145,13 @@ fn build_allow_roots(
     let mut roots = Vec::new();
     roots.push(workspace_root.to_path_buf());
     for raw in allow_paths {
+        if is_allow_all_path_token(raw) {
+            let root = PathBuf::from("/");
+            if roots.iter().all(|existing| existing != &root) {
+                roots.push(root);
+            }
+            continue;
+        }
         if let Ok(path) = normalize_container_path(raw, container_root) {
             if roots.iter().all(|existing| existing != &path) {
                 roots.push(path);
@@ -1244,6 +1255,10 @@ fn looks_like_windows_drive(value: &str) -> bool {
     bytes[1] == b':' && value.chars().next().map(|ch| ch.is_ascii_alphabetic()) == Some(true)
 }
 
+fn is_allow_all_path_token(value: &str) -> bool {
+    value.trim() == "*"
+}
+
 fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     match value {
         Some(Value::Number(num)) => num.as_f64(),
@@ -1279,5 +1294,19 @@ mod tests {
         assert_eq!(parse_timeout_secs(Some(&disabled)), Some(0.0));
         assert_eq!(parse_timeout_secs(Some(&invalid)), None);
         assert_eq!(parse_timeout_secs(None), None);
+    }
+
+    #[test]
+    fn wildcard_allow_path_normalizes_to_container_root() {
+        let container_root = Path::new("/workspaces");
+        let normalized = normalize_allow_paths_for_cache(container_root, &["*".to_string()]);
+        let roots = build_allow_roots(
+            Path::new("/workspaces/admin__c__1"),
+            container_root,
+            &["*".to_string()],
+        );
+
+        assert_eq!(normalized, vec!["/".to_string()]);
+        assert!(roots.iter().any(|root| root == Path::new("/")));
     }
 }

@@ -151,6 +151,10 @@ pub struct ToolRoots {
     pub read_roots: Arc<Vec<PathBuf>>,
 }
 
+pub(crate) fn is_allow_all_path_token(value: &str) -> bool {
+    value.trim() == "*"
+}
+
 pub fn build_tool_roots(
     config: &Config,
     skills: &SkillRegistry,
@@ -190,6 +194,10 @@ pub(crate) fn build_allow_roots(config: &Config) -> Vec<PathBuf> {
     for raw in &config.security.allow_paths {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        if is_allow_all_path_token(trimmed) {
+            roots.extend(desktop_local_allow_roots());
             continue;
         }
         let path = PathBuf::from(trimmed);
@@ -232,7 +240,7 @@ fn path_is_filesystem_root(path: &Path) -> bool {
     path.parent().is_none()
 }
 
-fn allow_any_path_in_roots(roots: &[PathBuf]) -> bool {
+pub(crate) fn roots_allow_any_path(roots: &[PathBuf]) -> bool {
     roots
         .iter()
         .any(|root| path_is_filesystem_root(root.as_path()))
@@ -280,7 +288,7 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
     if trimmed.is_empty() {
         return None;
     }
-    let allow_any_path = allow_any_path_in_roots(roots);
+    let allow_any_path = roots_allow_any_path(roots);
     let path = PathBuf::from(trimmed);
     if path.is_absolute() {
         for root in roots {
@@ -350,7 +358,10 @@ pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_allow_roots, resolve_path_in_roots, ToolEventEmitter};
+    use super::{
+        build_allow_roots, is_allow_all_path_token, resolve_path_in_roots, roots_allow_any_path,
+        ToolEventEmitter,
+    };
     use crate::config::Config;
     use crate::path_utils::normalize_existing_path;
     use serde_json::json;
@@ -375,6 +386,17 @@ mod tests {
         let roots = build_allow_roots(&config);
 
         assert!(roots.iter().any(|root| root.parent().is_none()));
+    }
+
+    #[test]
+    fn wildcard_allow_path_expands_to_filesystem_roots() {
+        let mut config = Config::default();
+        config.security.allow_paths = vec!["*".to_string()];
+
+        let roots = build_allow_roots(&config);
+
+        assert!(is_allow_all_path_token("*"));
+        assert!(roots_allow_any_path(&roots));
     }
 
     #[test]

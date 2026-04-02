@@ -342,7 +342,6 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 
 import { listAgentModels } from '@/api/agents';
-import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
@@ -384,6 +383,7 @@ import {
   stringifyAgentAvatarIconConfig
 } from '@/utils/agentAvatar';
 import { showApiError } from '@/utils/apiError';
+import { invalidateUserToolsCatalogCache, loadUserToolsCatalogCache } from '@/utils/userToolsCache';
 import { onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { DEFAULT_AVATAR_COLOR, normalizeAvatarColor, normalizeAvatarIcon } from '@/utils/userPreferences';
 import { registerUnsavedChangesGuard } from '@/utils/unsavedChangesGuard';
@@ -938,13 +938,12 @@ const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   form.tool_names = Array.from(selected);
 };
 
-const loadToolSummary = async () => {
+const loadToolSummary = async (options: { force?: boolean } = {}) => {
   if (toolLoading.value) return;
   toolLoading.value = true;
   toolError.value = '';
   try {
-    const result = await fetchUserToolsCatalog();
-    toolSummary.value = (result?.data?.data as Record<string, unknown>) || {};
+    toolSummary.value = ((await loadUserToolsCatalogCache(options)) as Record<string, unknown> | null) || {};
   } catch (error) {
     toolError.value =
       (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
@@ -979,12 +978,11 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     return;
   }
   try {
-    if (!beeroomStore.groups.length) {
-      await beeroomStore.loadGroups().catch(() => null);
-    }
-    if (!isAgentLoadRequestActive(requestId)) return;
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!isAgentLoadRequestActive(requestId)) return;
+    if (!beeroomStore.groups.length) {
+      void beeroomStore.loadGroups().catch(() => null);
+    }
     if (!agent) {
       ElMessage.error(t('portal.agent.loadingFailed'));
       return;
@@ -1012,8 +1010,8 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
 
 const reloadAgent = async () => {
   const requestId = nextAgentLoadRequestId();
-  await Promise.all([loadToolSummary(), loadModelOptions()]);
-  if (!isAgentLoadRequestActive(requestId)) return;
+  void loadToolSummary();
+  void loadModelOptions();
   await loadAgent(requestId);
 };
 
@@ -1153,7 +1151,8 @@ onMounted(() => {
     if (scope && scope !== 'all' && scope !== 'skills' && scope !== 'mcp' && scope !== 'knowledge') {
       return;
     }
-    void loadToolSummary();
+    invalidateUserToolsCatalogCache();
+    void loadToolSummary({ force: true });
   });
   window.addEventListener('beforeunload', handleBeforeUnload);
   window.addEventListener('keydown', handleGlobalKeydown);

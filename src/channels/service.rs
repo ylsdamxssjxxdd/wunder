@@ -5291,7 +5291,9 @@ mod tests {
     fn should_auto_title_accepts_channel_and_chat_placeholders() {
         assert!(should_auto_title(""));
         assert!(should_auto_title("\u{65b0}\u{4f1a}\u{8bdd}"));
-        assert!(should_auto_title("\u{672a}\u{547d}\u{540d}\u{4f1a}\u{8bdd}"));
+        assert!(should_auto_title(
+            "\u{672a}\u{547d}\u{540d}\u{4f1a}\u{8bdd}"
+        ));
         assert!(should_auto_title(DEFAULT_SESSION_TITLE));
         assert!(!should_auto_title("customer support"));
     }

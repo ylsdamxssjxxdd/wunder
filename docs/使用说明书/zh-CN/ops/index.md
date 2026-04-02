@@ -176,7 +176,7 @@ source_docs:
 | **队列深度** | agent_tasks 待执行数 | > 100 |
 | **错误率** | 失败请求 / 总请求 | > 5% |
 | **平均延迟** | 端到端响应时间 | > 30s |
-| **Token 消耗** | 上下文占用量 | 接近 max_context |
+| **Token 消耗** | 上下文占用，优先看 `round_usage.total_tokens` | 接近 max_context |
 
 **内置能力**：
 - 吞吐量压测接口

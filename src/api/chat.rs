@@ -2072,15 +2072,13 @@ async fn session_system_prompt(
     )
     .await?;
     let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let overrides = request_overrides
-        .clone()
-        .unwrap_or_else(|| {
-            resolve_session_tool_overrides(
-                &record,
-                frozen_tool_overrides.as_deref(),
-                agent_record.as_ref(),
-            )
-        });
+    let overrides = request_overrides.clone().unwrap_or_else(|| {
+        resolve_session_tool_overrides(
+            &record,
+            frozen_tool_overrides.as_deref(),
+            agent_record.as_ref(),
+        )
+    });
     let agent_defaults = resolve_agent_tool_defaults(agent_record.as_ref());
     allowed = apply_tool_overrides(allowed, &overrides, &agent_defaults);
     let tool_names = finalize_tool_names(allowed.clone());
