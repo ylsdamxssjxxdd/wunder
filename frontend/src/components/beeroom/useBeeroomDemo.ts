@@ -35,8 +35,15 @@ const normalizeStatus = (value: unknown): DemoStatus => {
 };
 
 const normalizeErrorMessage = (error: any): string => {
-  const detail = asTrimmed(error?.response?.data?.detail || error?.response?.data?.message || error?.message);
-  return detail || '';
+  const detail = error?.response?.data?.detail;
+  if (detail && typeof detail === 'object') {
+    const message = asTrimmed(detail.message || detail.error || detail.detail);
+    if (message) {
+      return message;
+    }
+  }
+  const message = asTrimmed(detail || error?.response?.data?.message || error?.message);
+  return message || '';
 };
 
 export const useBeeroomDemo = (options: {

@@ -78,7 +78,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
   (event: 'refresh'): void;
-  (event: 'clear-history', clearedAfter: number): void;
 }>();
 
 const { t } = useI18n();
@@ -166,7 +165,6 @@ const toggleCanvasFullscreen = async () => {
 
 const handleClearHistory = async () => {
   await clearManualChatHistory();
-  emit('clear-history', Date.now() / 1000);
 };
 
 onMounted(() => {
