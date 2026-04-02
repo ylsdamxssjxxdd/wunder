@@ -9,6 +9,8 @@ import {
   updateAgent as updateAgentApi
 } from '@/api/agents';
 
+const inflightAgentRequests = new Map<string, Promise<Record<string, unknown> | null>>();
+
 export const useAgentStore = defineStore('agents', {
   state: () => ({
     agents: [] as Record<string, unknown>[],
@@ -112,6 +114,11 @@ export const useAgentStore = defineStore('agents', {
       if (!options.force && Object.prototype.hasOwnProperty.call(this.agentMap, key)) {
         return this.agentMap[key] || null;
       }
+      const inflightRequest = inflightAgentRequests.get(key);
+      if (inflightRequest) {
+        return inflightRequest;
+      }
+      const request = (async () => {
       try {
         const { data } = await getAgentApi(key);
         const agent = data?.data || null;
@@ -126,7 +133,12 @@ export const useAgentStore = defineStore('agents', {
           return null;
         }
         throw error;
+      } finally {
+        inflightAgentRequests.delete(key);
       }
+      })();
+      inflightAgentRequests.set(key, request);
+      return request;
     },
 
     async createAgent(payload) {

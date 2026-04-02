@@ -304,6 +304,20 @@ const refreshFileTreeMessage = () => {
   fileTreeMessage.value = '';
 };
 
+const resetSkillDetailState = () => {
+  detailVersion += 1;
+  fileVersion += 1;
+  fileEntries.value = [];
+  activeFile.value = '';
+  showEditorMessage('');
+};
+
+const clearSkillSelection = () => {
+  selectedIndex.value = -1;
+  resetSkillDetailState();
+  refreshFileTreeMessage();
+};
+
 type LoadSkillsOptions = {
   refreshDetail?: boolean;
 };
@@ -345,11 +359,7 @@ const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
         return;
       }
     }
-    selectedIndex.value = -1;
-    fileEntries.value = [];
-    activeFile.value = '';
-    showEditorMessage('');
-    refreshFileTreeMessage();
+    clearSkillSelection();
   } catch (error) {
     showApiError(error, t('userTools.skills.loadFailed'));
   } finally {
@@ -394,19 +404,13 @@ const reloadSkills = async () => {
 
 const selectSkill = async (skill, index) => {
   if (!skill) {
-    selectedIndex.value = -1;
-    fileEntries.value = [];
-    activeFile.value = '';
-    showEditorMessage('');
-    refreshFileTreeMessage();
+    clearSkillSelection();
     return;
   }
   selectedIndex.value = index;
-  fileEntries.value = [];
-  activeFile.value = '';
-  showEditorMessage('');
+  resetSkillDetailState();
   fileTreeMessage.value = t('common.loading');
-  const currentVersion = ++detailVersion;
+  const currentVersion = detailVersion;
   try {
     const { data } = await fetchUserSkillFiles(skill.name);
     if (currentVersion !== detailVersion) {
@@ -498,6 +502,28 @@ const saveSkillFile = async () => {
   }
 };
 
+const removeSkillFromList = async (skillName) => {
+  const removedIndex = skills.value.findIndex((item) => item?.name === skillName);
+  if (removedIndex < 0) {
+    return;
+  }
+  const deletingActive = removedIndex === selectedIndex.value;
+  skills.value = skills.value.filter((_, index) => index !== removedIndex);
+  if (!skills.value.length) {
+    clearSkillSelection();
+    return;
+  }
+  if (deletingActive) {
+    const nextIndex = Math.min(removedIndex, skills.value.length - 1);
+    await selectSkill(skills.value[nextIndex], nextIndex);
+    return;
+  }
+  if (selectedIndex.value > removedIndex) {
+    selectedIndex.value -= 1;
+  }
+  refreshFileTreeMessage();
+};
+
 const deleteSkill = async (skill) => {
   if (!skill?.name) return;
   if (isSkillReadonly(skill)) {
@@ -520,7 +546,7 @@ const deleteSkill = async (skill) => {
   deleteLoading.value = true;
   try {
     await deleteUserSkill(skill.name);
-    await loadSkills({ refreshDetail: true });
+    await removeSkillFromList(skill.name);
     emitUserToolsUpdated({ scope: 'skills', action: 'delete' });
     ElMessage.success(t('userTools.skills.deleted', { name: skill.name }));
   } catch (error) {

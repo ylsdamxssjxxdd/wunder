@@ -1374,6 +1374,7 @@
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
       :skills-loading="rightDockSkillsLoading"
+      :skills-refreshing="rightDockSkillsRefreshing"
       :skills-uploading="skillDockUploading"
       :enabled-skills="rightDockEnabledSkills"
       :disabled-skills="rightDockDisabledSkills"
@@ -1575,6 +1576,7 @@ import {
   MessengerSettingsPanel,
   MessengerWorldComposer,
   preloadAgentSettingsPanels,
+  preloadMessengerSettingsPanels,
   UserChannelSettingsPanel,
   UserPromptSettingsPanel
 } from '@/views/messenger/lazyPanels';
@@ -1825,6 +1827,12 @@ const agentPromptPreviewToolingMode = ref('');
 const agentPromptPreviewToolingContent = ref('');
 const agentPromptPreviewToolingItems = ref<PromptToolingPreviewItem[]>([]);
 const agentPromptPreviewSelectedNames = ref<string[] | null>(null);
+const AGENT_PROMPT_PREVIEW_CACHE_MS = 5000;
+let agentPromptPreviewPayloadPromise: Promise<Record<string, unknown>> | null = null;
+let agentPromptPreviewPayloadPromiseKey = '';
+let agentPromptPreviewPayloadCache:
+  | { key: string; payload: Record<string, unknown>; updatedAt: number }
+  | null = null;
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -1890,6 +1898,7 @@ const appearanceHydrating = ref(false);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
+const toolsCatalogLoaded = ref(false);
 const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
@@ -1948,6 +1957,7 @@ const timelineDialogVisible = ref(false);
 const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
 const skillDockUploading = ref(false);
+const rightDockSkillRefreshLoading = ref(false);
 const approvalResponding = ref(false);
 const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
@@ -3447,7 +3457,12 @@ const rightDockEnabledSkills = computed<RightDockSkillItem[]>(() =>
 const rightDockDisabledSkills = computed<RightDockSkillItem[]>(() =>
   rightDockSkillItems.value.filter((item) => !item.enabled)
 );
-const rightDockSkillsLoading = computed(() => rightDockSkillCatalogLoading.value);
+const rightDockSkillsLoading = computed(
+  () => rightDockSkillCatalogLoading.value && rightDockSkillItems.value.length === 0
+);
+const rightDockSkillsRefreshing = computed(
+  () => rightDockSkillRefreshLoading.value || rightDockSkillsLoading.value
+);
 const rightDockSelectedSkill = computed<RightDockSkillCatalogItem | null>(() => {
   const name = String(rightDockSelectedSkillName.value || '').trim();
   if (!name) return null;
@@ -7370,6 +7385,7 @@ const switchSection = (
   worldHistoryDialogVisible.value = false;
   agentPromptPreviewVisible.value = false;
   if (section === 'more') {
+    void preloadMessengerSettingsPanels({ desktopMode: desktopMode.value });
     settingsPanelMode.value =
       explicitSettingsPanelMode !== 'general'
         ? explicitSettingsPanelMode
@@ -8255,27 +8271,63 @@ async function loadAgentToolSummary(options: { force?: boolean } = {}) {
   return agentToolSummaryPromise;
 }
 
-const fetchActiveAgentPromptPreviewPayload = async (): Promise<Record<string, unknown>> => {
-  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
-  if (currentAgentId && currentAgentId !== DEFAULT_AGENT_KEY) {
-    const profile = await agentStore.getAgent(currentAgentId, { force: true }).catch(() => null);
-    if (profile) {
-      activeAgentDetailProfile.value = profile as Record<string, unknown>;
-    }
-  } else if (currentAgentId === DEFAULT_AGENT_KEY) {
-    await loadDefaultAgentProfile().catch(() => null);
+const resolveActiveAgentPromptPreviewKey = (): string => {
+  const sessionId = String(chatStore.activeSessionId || '').trim() || 'draft';
+  const agentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
+  return `${sessionId}:${agentId}`;
+};
+
+const fetchActiveAgentPromptPreviewPayload = async (
+  options: { force?: boolean } = {}
+): Promise<Record<string, unknown>> => {
+  const force = options.force === true;
+  const cacheKey = resolveActiveAgentPromptPreviewKey();
+  const now = Date.now();
+  if (
+    !force &&
+    agentPromptPreviewPayloadCache &&
+    agentPromptPreviewPayloadCache.key === cacheKey &&
+    now - agentPromptPreviewPayloadCache.updatedAt <= AGENT_PROMPT_PREVIEW_CACHE_MS
+  ) {
+    return agentPromptPreviewPayloadCache.payload;
   }
+  if (agentPromptPreviewPayloadPromise && agentPromptPreviewPayloadPromiseKey === cacheKey) {
+    return agentPromptPreviewPayloadPromise;
+  }
+  agentPromptPreviewPayloadPromiseKey = cacheKey;
+  agentPromptPreviewPayloadPromise = (async () => {
+  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId);
   const session = activeAgentSession.value as Record<string, unknown> | null;
   const sessionId = String(chatStore.activeSessionId || '').trim();
   const sourceAgentId = normalizeAgentId(
     session?.agent_id || chatStore.draftAgentId || activeAgentId.value
   );
   const agentId = sourceAgentId === DEFAULT_AGENT_KEY ? '' : sourceAgentId;
-  const previewAgentProfile =
+  let previewAgentProfile =
     sourceAgentId === DEFAULT_AGENT_KEY
       ? (defaultAgentProfile.value as Record<string, unknown> | null)
       : ((activeAgentDetailProfile.value as Record<string, unknown> | null) ||
           (activeAgent.value as Record<string, unknown> | null));
+  if (!sessionId) {
+    if (sourceAgentId === DEFAULT_AGENT_KEY) {
+      if (!previewAgentProfile) {
+        previewAgentProfile =
+          ((await agentStore.getAgent(DEFAULT_AGENT_KEY).catch(() => null)) as Record<string, unknown> | null) ||
+          null;
+        defaultAgentProfile.value = previewAgentProfile;
+      }
+    } else if (sourceAgentId) {
+      const hasConfiguredAbilities = resolveAgentConfiguredAbilityNames(previewAgentProfile).length > 0;
+      if (!hasConfiguredAbilities) {
+        previewAgentProfile =
+          ((await agentStore.getAgent(sourceAgentId).catch(() => null)) as Record<string, unknown> | null) ||
+          previewAgentProfile;
+        if (previewAgentProfile) {
+          activeAgentDetailProfile.value = previewAgentProfile;
+        }
+      }
+    }
+  }
   const previewAgentDefaults = normalizeAbilityNameList(
     resolveAgentConfiguredAbilityNames(previewAgentProfile)
   );
@@ -8295,7 +8347,22 @@ const fetchActiveAgentPromptPreviewPayload = async (): Promise<Record<string, un
   const promptResult = sessionId
     ? await fetchSessionSystemPrompt(sessionId, payload)
     : await fetchRealtimeSystemPrompt(payload);
-  return (promptResult?.data?.data || {}) as Record<string, unknown>;
+    const promptPayload = (promptResult?.data?.data || {}) as Record<string, unknown>;
+    agentPromptPreviewPayloadCache = {
+      key: cacheKey,
+      payload: promptPayload,
+      updatedAt: Date.now()
+    };
+    return promptPayload;
+  })();
+  try {
+    return await agentPromptPreviewPayloadPromise;
+  } finally {
+    if (agentPromptPreviewPayloadPromiseKey === cacheKey) {
+      agentPromptPreviewPayloadPromise = null;
+      agentPromptPreviewPayloadPromiseKey = '';
+    }
+  }
 };
 
 const syncAgentPromptPreviewSelectedNames = async (options: { force?: boolean } = {}) => {
@@ -8303,7 +8370,7 @@ const syncAgentPromptPreviewSelectedNames = async (options: { force?: boolean } 
     return agentPromptPreviewSelectedNames.value;
   }
   try {
-    const promptPayload = await fetchActiveAgentPromptPreviewPayload();
+    const promptPayload = await fetchActiveAgentPromptPreviewPayload(options);
     agentPromptPreviewSelectedNames.value = extractPromptPreviewSelectedAbilityNames(promptPayload);
     return agentPromptPreviewSelectedNames.value;
   } catch {
@@ -8455,17 +8522,22 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
   void loadAgentToolSummary({ force: true });
   void loadRightDockSkills({ force: true, silent: true });
   if (sessionHub.activeSection === 'tools') {
-    void loadToolsCatalog();
+    void loadToolsCatalog({ silent: true });
   }
 };
 
 const refreshRightDockSkills = async () => {
-  const skillCatalogLoaded = await loadRightDockSkills({ force: true, silent: true });
-  if (!skillCatalogLoaded) {
-    ElMessage.error(t('userTools.skills.refresh.failed'));
-    return;
+  rightDockSkillRefreshLoading.value = true;
+  try {
+    const skillCatalogLoaded = await loadRightDockSkills({ force: true, silent: true });
+    if (!skillCatalogLoaded) {
+      ElMessage.error(t('userTools.skills.refresh.failed'));
+      return;
+    }
+    ElMessage.success(t('userTools.skills.refresh.success'));
+  } finally {
+    rightDockSkillRefreshLoading.value = false;
   }
-  ElMessage.success(t('userTools.skills.refresh.success'));
 };
 
 const handleRightDockSkillArchiveUpload = async (file: File) => {
@@ -8496,8 +8568,8 @@ const handleRightDockSkillArchiveUpload = async (file: File) => {
 
 const handleAgentAbilityTooltipShow = () => {
   agentAbilityTooltipVisible.value = true;
-  void loadAgentToolSummary({ force: true });
-  void syncAgentPromptPreviewSelectedNames({ force: true });
+  void loadAgentToolSummary();
+  void syncAgentPromptPreviewSelectedNames();
   void updateAgentAbilityTooltip();
 };
 
@@ -8531,10 +8603,9 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewToolingMode.value = '';
   agentPromptPreviewToolingContent.value = '';
   agentPromptPreviewToolingItems.value = [];
-  const summaryPromise = loadAgentToolSummary({ force: true });
+  const summaryPromise = loadAgentToolSummary();
   try {
     const promptPayload = await fetchActiveAgentPromptPreviewPayload();
-    await summaryPromise;
     agentPromptPreviewSelectedNames.value = extractPromptPreviewSelectedAbilityNames(promptPayload);
     agentPromptPreviewContent.value = String(promptPayload.prompt || '').replace(
       /<<WUNDER_HISTORY_MEMORY>>/g,
@@ -8547,6 +8618,7 @@ const openAgentPromptPreview = async () => {
     agentPromptPreviewToolingMode.value = toolingPreview.mode;
     agentPromptPreviewToolingContent.value = toolingPreview.text;
     agentPromptPreviewToolingItems.value = toolingPreview.items;
+    void summaryPromise.catch(() => null);
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewSelectedNames.value = null;
@@ -9020,9 +9092,12 @@ const normalizeToolEntry = (item: unknown): ToolEntry | null => {
   };
 };
 
-const loadToolsCatalog = async () => {
+const loadToolsCatalog = async (options: { silent?: boolean } = {}) => {
   const loadVersion = ++toolsCatalogLoadVersion;
-  toolsCatalogLoading.value = true;
+  const manageLoading = !options.silent || !toolsCatalogLoaded.value || toolsCatalogLoading.value;
+  if (manageLoading) {
+    toolsCatalogLoading.value = true;
+  }
   try {
     const payload = ((await loadUserToolsCatalogCache()) || {}) as Record<string, unknown>;
     if (loadVersion !== toolsCatalogLoadVersion) {
@@ -9040,13 +9115,14 @@ const loadToolsCatalog = async () => {
     knowledgeTools.value = (Array.isArray(payload.knowledge_tools) ? payload.knowledge_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
+    toolsCatalogLoaded.value = true;
   } catch (error) {
     if (loadVersion !== toolsCatalogLoadVersion) {
       return;
     }
     showApiError(error, t('toolManager.loadFailed'));
   } finally {
-    if (loadVersion === toolsCatalogLoadVersion) {
+    if (manageLoading && loadVersion === toolsCatalogLoadVersion) {
       toolsCatalogLoading.value = false;
     }
   }
@@ -10954,6 +11030,7 @@ const bootstrap = async () => {
   await settleMessengerBootstrapTasks(critical);
   ensureSectionSelection();
   bootLoading.value = false;
+  void preloadMessengerSettingsPanels({ desktopMode: desktopMode.value });
   void restoreConversationFromRoute();
   scheduleMessengerBootstrapBackgroundTasks(background);
 };

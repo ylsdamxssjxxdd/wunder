@@ -823,6 +823,10 @@
   align-items: center;
 }
 
+.messenger-agent-item {
+  align-items: center;
+}
+
 .messenger-conversation-item .messenger-list-main,
 .messenger-swarm-item .messenger-list-main {
   padding-right: 0;
@@ -3706,6 +3710,7 @@ button.messenger-chat-header-model {
   min-height: 60px;
   display: inline-flex;
   align-items: flex-start;
+  overflow: hidden;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.17);
   border-radius: 12px;
   background: rgba(var(--ui-accent-rgb), 0.05);
@@ -3733,21 +3738,32 @@ button.messenger-chat-header-model {
   padding-left: 10px;
   white-space: normal;
   display: flex;
+  overflow: hidden;
 }
 
 .messenger-tool-option-label {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  width: 100%;
   min-width: 0;
 }
 
 .messenger-tool-option-copy {
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.messenger-tool-option-name,
+.messenger-tool-option-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
 }
 
 .messenger-tool-option-name {
@@ -3757,6 +3773,7 @@ button.messenger-chat-header-model {
   line-height: 1.35;
   word-break: break-word;
   overflow-wrap: anywhere;
+  -webkit-line-clamp: 1;
 }
 
 .messenger-tool-option-desc {
@@ -3765,6 +3782,7 @@ button.messenger-chat-header-model {
   line-height: 1.45;
   word-break: break-word;
   overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
 }
 
 .messenger-agent-base {

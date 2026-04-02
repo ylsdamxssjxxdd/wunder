@@ -52,13 +52,27 @@ export const AgentMemoryPanel = lazy(() => import('@/components/messenger/memory
 
 let agentSettingsPanelsPreloadPromise: Promise<unknown> | null = null;
 let secondaryAgentSettingsPanelsScheduled = false;
+let messengerSettingsPanelPreloadPromise: Promise<unknown> | null = null;
+let secondaryMorePanelsScheduled = false;
+
+const scheduleIdleImport = (runner: () => void, timeout = 1200): void => {
+  if (typeof window === 'undefined') {
+    runner();
+    return;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(runner, { timeout });
+    return;
+  }
+  window.setTimeout(runner, 48);
+};
 
 const scheduleSecondaryAgentSettingsPanelsPreload = (): void => {
   if (secondaryAgentSettingsPanelsScheduled || typeof window === 'undefined') {
     return;
   }
   secondaryAgentSettingsPanelsScheduled = true;
-  const run = () => {
+  scheduleIdleImport(() => {
     void Promise.allSettled([
       import('@/components/messenger/AgentCronPanel.vue'),
       import('@/components/channels/UserChannelSettingsPanel.vue'),
@@ -66,12 +80,7 @@ const scheduleSecondaryAgentSettingsPanelsPreload = (): void => {
       import('@/components/messenger/memory/AgentMemoryPanel.vue'),
       import('@/components/messenger/ArchivedThreadManager.vue')
     ]);
-  };
-  if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(run, { timeout: 1200 });
-    return;
-  }
-  window.setTimeout(run, 48);
+  });
 };
 
 export const preloadAgentSettingsPanels = () => {
@@ -80,5 +89,30 @@ export const preloadAgentSettingsPanels = () => {
     scheduleSecondaryAgentSettingsPanelsPreload();
   }
   return agentSettingsPanelsPreloadPromise;
+};
+
+const scheduleSecondaryMorePanelsPreload = (desktopMode: boolean): void => {
+  if (secondaryMorePanelsScheduled || typeof window === 'undefined') {
+    return;
+  }
+  secondaryMorePanelsScheduled = true;
+  scheduleIdleImport(() => {
+    const tasks: Promise<unknown>[] = [
+      import('@/components/messenger/UserPromptSettingsPanel.vue'),
+      import('@/components/messenger/MessengerHelpManualPanel.vue')
+    ];
+    if (desktopMode) {
+      tasks.push(import('@/components/messenger/DesktopSystemSettingsPanel.vue'));
+    }
+    void Promise.allSettled(tasks);
+  });
+};
+
+export const preloadMessengerSettingsPanels = (options: { desktopMode?: boolean } = {}) => {
+  if (!messengerSettingsPanelPreloadPromise) {
+    messengerSettingsPanelPreloadPromise = import('@/components/messenger/MessengerSettingsPanel.vue');
+  }
+  scheduleSecondaryMorePanelsPreload(options.desktopMode === true);
+  return messengerSettingsPanelPreloadPromise;
 };
 

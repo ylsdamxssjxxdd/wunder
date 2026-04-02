@@ -49,12 +49,12 @@
           <button
             class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-refresh-btn"
             type="button"
-            :disabled="skillsLoading || skillsUploading"
+            :disabled="skillsRefreshing || skillsUploading"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             @click="$emit('refresh-skills')"
           >
-            <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': skillsLoading }" aria-hidden="true"></i>
+            <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': skillsRefreshing }" aria-hidden="true"></i>
           </button>
         </div>
         <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
@@ -202,6 +202,7 @@ const props = defineProps<{
   agentIdForApi: string;
   containerId: number;
   skillsLoading: boolean;
+  skillsRefreshing: boolean;
   skillsUploading: boolean;
   enabledSkills: SkillItem[];
   disabledSkills: SkillItem[];

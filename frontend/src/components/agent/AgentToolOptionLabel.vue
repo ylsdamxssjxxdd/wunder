@@ -92,7 +92,7 @@ const titleText = computed(() => {
   font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
 }
 
 .agent-tool-option-desc {
