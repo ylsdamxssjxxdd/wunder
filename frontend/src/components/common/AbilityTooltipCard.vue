@@ -220,27 +220,27 @@ const chips = computed(() => {
   content: none !important;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-card) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-card) {
   color: #e2e8f0;
   background: #0f172a;
   border-color: rgba(148, 163, 184, 0.24);
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-card__name) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-card__name) {
   color: #f8fafc;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-card__summary) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-card__summary) {
   color: #cbd5e1;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-card__chip) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-card__chip) {
   border-color: rgba(148, 163, 184, 0.26);
   background: rgba(148, 163, 184, 0.14);
   color: #e2e8f0;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-card__detail) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-card__detail) {
   border-color: rgba(148, 163, 184, 0.2);
   background: rgba(148, 163, 184, 0.08);
   color: #cbd5e1;

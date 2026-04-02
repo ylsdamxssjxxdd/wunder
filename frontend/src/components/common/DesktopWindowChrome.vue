@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
   -webkit-app-region: drag;
 }
 
-:global(:root[data-user-theme='dark']) .desktop-window-chrome {
+:global(:root[data-user-accent='tech-blue']) .desktop-window-chrome {
   --desktop-window-chrome-bg: linear-gradient(
     180deg,
     rgba(37, 46, 58, 0.96),

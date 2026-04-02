@@ -1,25 +1,22 @@
 <template>
-  <button class="theme-toggle" type="button" :aria-label="toggleLabel" @click="toggleMode">
-    <i v-if="isDark" class="fa-solid fa-lightbulb theme-toggle-icon" aria-hidden="true"></i>
-    <i v-else class="fa-solid fa-moon theme-toggle-icon" aria-hidden="true"></i>
+  <button class="theme-toggle" type="button" :aria-label="label" @click="cycle">
+    <i class="fa-solid fa-palette theme-toggle-icon" aria-hidden="true"></i>
   </button>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import { useI18n } from '@/i18n';
 import { useThemeStore } from '@/stores/theme';
+import { THEME_PALETTES } from '@/utils/themeAppearance';
 
 const themeStore = useThemeStore();
-const { t } = useI18n();
 
-const isDark = computed(() => themeStore.mode === 'dark');
-const toggleLabel = computed(() =>
-  isDark.value ? t('theme.toggle.light') : t('theme.toggle.dark')
-);
+const label = computed(() => themeStore.palette);
 
-const toggleMode = () => {
-  themeStore.setMode(isDark.value ? 'light' : 'dark');
+const cycle = () => {
+  const idx = THEME_PALETTES.indexOf(themeStore.palette);
+  const next = THEME_PALETTES[(idx + 1) % THEME_PALETTES.length];
+  themeStore.setPalette(next);
 };
 </script>

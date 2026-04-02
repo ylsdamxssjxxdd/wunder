@@ -19,13 +19,11 @@ const isSameAppearance = (
   left: UserAppearancePreferences,
   right: UserAppearancePreferences
 ): boolean =>
-  left.themeMode === right.themeMode &&
   left.themePalette === right.themePalette &&
   left.avatarIcon === right.avatarIcon &&
   left.avatarColor === right.avatarColor;
 
 const toRemotePayload = (appearance: UserAppearancePreferences) => ({
-  theme_mode: appearance.themeMode,
   theme_palette: appearance.themePalette,
   avatar_icon: appearance.avatarIcon,
   avatar_color: appearance.avatarColor
@@ -66,7 +64,6 @@ export const saveUserAppearance = async (
   }
   const normalized = normalizeUserAppearance(
     {
-      theme_mode: appearance.themeMode,
       theme_palette: appearance.themePalette,
       avatar_icon: appearance.avatarIcon,
       avatar_color: appearance.avatarColor,

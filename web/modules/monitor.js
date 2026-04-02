@@ -2826,6 +2826,57 @@ const truncateMonitorEventTitle = (value) => {
   return `${text.slice(0, MONITOR_EVENT_TITLE_MAX_LENGTH)}...`;
 };
 
+// Extract readable scalar text from nested summary/error objects.
+const extractMonitorEventTitleText = (value, depth = 0) => {
+  if (value === null || value === undefined || depth > 3) {
+    return "";
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value).trim();
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractMonitorEventTitleText(item, depth + 1);
+      if (text) {
+        return text;
+      }
+    }
+    return "";
+  }
+  if (!value || typeof value !== "object") {
+    return "";
+  }
+  const source = value;
+  for (const key of [
+    "summary",
+    "message",
+    "question",
+    "reason",
+    "error",
+    "tool",
+    "tool_name",
+    "toolName",
+    "name",
+    "model",
+    "model_name",
+    "stage",
+    "status",
+    "code",
+    "title",
+  ]) {
+    const text = extractMonitorEventTitleText(source[key], depth + 1);
+    if (text) {
+      return text;
+    }
+  }
+  return "";
+};
+
 const formatMonitorEventTimestamp = (value) => {
   if (!value) {
     return "-";
@@ -2842,25 +2893,47 @@ const resolveMonitorEventTitle = (event) => {
   const data = unwrapMonitorEventData(event?.data);
   const repairSummary = resolveMonitorRepairSummary(resolveMonitorEventRepair(event));
   if (data && typeof data === "object") {
-    const userInputTitle =
+    const candidates =
       eventType === "user_input"
-        ? data.message || data.question || data.input || data.content
-        : "";
-    const summary =
-      userInputTitle ||
-      data.summary ||
-      data.message ||
-      data.question ||
-      data.error ||
-      data.reason ||
-      data.tool ||
-      data.tool_name ||
-      data.toolName ||
-      data.name ||
-      data.model ||
-      data.model_name ||
-      data.stage ||
-      data.status;
+        ? [
+            data.message,
+            data.question,
+            data.input,
+            data.content,
+            data.summary,
+            data.error,
+            data.reason,
+            data.tool,
+            data.tool_name,
+            data.toolName,
+            data.name,
+            data.model,
+            data.model_name,
+            data.stage,
+            data.status,
+          ]
+        : [
+            data.summary,
+            data.message,
+            data.question,
+            data.error,
+            data.reason,
+            data.tool,
+            data.tool_name,
+            data.toolName,
+            data.name,
+            data.model,
+            data.model_name,
+            data.stage,
+            data.status,
+          ];
+    let summary = "";
+    for (const candidate of candidates) {
+      summary = extractMonitorEventTitleText(candidate);
+      if (summary) {
+        break;
+      }
+    }
     const title = truncateMonitorEventTitle(
       repairSummary && summary ? `${summary} · ${repairSummary}` : summary || repairSummary
     );

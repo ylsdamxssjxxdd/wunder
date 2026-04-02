@@ -186,7 +186,9 @@ export const consumeChatWatchChannelMessage = (
   if (pendingAssistant) {
     const previousContent = String(pendingAssistant.content || '');
     const previousEventId = options.normalizeEventId(pendingAssistant.stream_event_id);
-    const nextContent = previousContent.trim().length > content.length ? previousContent : content;
+    // Channel-side assistant messages are delivered as discrete message payloads rather than
+    // monotonic stream deltas, so the latest payload must replace any stale placeholder text.
+    const nextContent = content;
     const nextCreatedAt = resolveCreatedAt(options.eventTimestampMs);
     const wasStreaming =
       normalizeFlag(pendingAssistant.stream_incomplete) ||

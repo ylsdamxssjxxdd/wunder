@@ -342,6 +342,57 @@ const truncateText = (value: unknown): string => {
   return `${text.slice(0, TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH)}...`;
 };
 
+// Extract readable scalar text from nested summary/error objects.
+const extractEventTitleText = (value: unknown, depth = 0): string => {
+  if (value === null || value === undefined || depth > 3) {
+    return '';
+  }
+  if (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    typeof value === 'bigint'
+  ) {
+    return String(value).trim();
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = extractEventTitleText(item, depth + 1);
+      if (text) {
+        return text;
+      }
+    }
+    return '';
+  }
+  if (typeof value !== 'object') {
+    return '';
+  }
+  const source = value as Record<string, unknown>;
+  for (const key of [
+    'summary',
+    'message',
+    'question',
+    'reason',
+    'error',
+    'tool',
+    'tool_name',
+    'toolName',
+    'name',
+    'model',
+    'model_name',
+    'stage',
+    'status',
+    'code',
+    'title'
+  ]) {
+    const text = extractEventTitleText(source[key], depth + 1);
+    if (text) {
+      return text;
+    }
+  }
+  return '';
+};
+
 const resolveEventTitle = (eventType: string, payload: unknown): string => {
   const normalizedType = String(eventType || '')
     .trim()
@@ -349,28 +400,45 @@ const resolveEventTitle = (eventType: string, payload: unknown): string => {
   const data = unwrapEventData(payload);
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     const source = data as Record<string, unknown>;
-    const userInputTitle =
+    const candidates =
       normalizedType === 'user_input'
-        ? source.message || source.question || source.input || source.content
-        : '';
-    const summary =
-      userInputTitle ||
-      source.summary ||
-      source.message ||
-      source.question ||
-      source.error ||
-      source.reason ||
-      source.tool ||
-      source.tool_name ||
-      source.toolName ||
-      source.name ||
-      source.model ||
-      source.model_name ||
-      source.stage ||
-      source.status;
-    const title = truncateText(summary);
-    if (title) {
-      return title;
+        ? [
+            source.message,
+            source.question,
+            source.input,
+            source.content,
+            source.summary,
+            source.error,
+            source.reason,
+            source.tool,
+            source.tool_name,
+            source.toolName,
+            source.name,
+            source.model,
+            source.model_name,
+            source.stage,
+            source.status
+          ]
+        : [
+            source.summary,
+            source.message,
+            source.question,
+            source.error,
+            source.reason,
+            source.tool,
+            source.tool_name,
+            source.toolName,
+            source.name,
+            source.model,
+            source.model_name,
+            source.stage,
+            source.status
+          ];
+    for (const candidate of candidates) {
+      const title = truncateText(extractEventTitleText(candidate));
+      if (title) {
+        return title;
+      }
     }
   }
   if (typeof data === 'string') {

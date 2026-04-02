@@ -170,25 +170,25 @@ const toneClass = computed(() => {
   background: rgba(51, 65, 85, 0.08);
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-list-item) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-list-item) {
   background: rgba(15, 23, 42, 0.5);
   border-color: rgba(148, 163, 184, 0.22);
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-list-item__name) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-list-item__name) {
   color: #f8fafc;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-list-item__chip) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-list-item__chip) {
   color: #cbd5e1;
   background: rgba(148, 163, 184, 0.12);
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-list-item__desc) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-list-item__desc) {
   color: #cbd5e1;
 }
 
-:global(:root[data-user-theme='dark'] .ability-tooltip-list-item__desc.is-empty) {
+:global(:root[data-user-accent='tech-blue'] .ability-tooltip-list-item__desc.is-empty) {
   color: rgba(203, 213, 225, 0.78);
 }
 </style>

@@ -495,7 +495,7 @@ const openDetail = (item: KnowledgeReference) => {
   color: var(--message-knowledge-citation-dialog-muted);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .message-knowledge-citation) {
+:global(:root[data-user-accent='tech-blue'] .message-knowledge-citation) {
   --message-knowledge-citation-border: rgba(var(--ui-accent-rgb), 0.22);
   --message-knowledge-citation-surface:
     linear-gradient(180deg, rgba(12, 22, 38, 0.96), rgba(8, 15, 28, 0.98));
@@ -509,7 +509,7 @@ const openDetail = (item: KnowledgeReference) => {
     inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .message-knowledge-citation-dialog.el-dialog) {
+:global(:root[data-user-accent='tech-blue'] .message-knowledge-citation-dialog.el-dialog) {
   --message-knowledge-citation-dialog-bg:
     linear-gradient(180deg, rgba(12, 22, 38, 0.98), rgba(8, 15, 28, 0.98));
   --message-knowledge-citation-dialog-surface:

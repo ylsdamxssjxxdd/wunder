@@ -2016,20 +2016,20 @@ onMounted(() => {
   background: rgba(var(--ui-accent-rgb), 0.1);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn) {
   border-color: var(--tech-blue-border);
   background: linear-gradient(180deg, rgba(16, 28, 47, 0.96), rgba(11, 20, 35, 0.94));
   color: var(--tech-blue-text);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn:hover:not(:disabled)) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn:hover:not(:disabled)) {
   border-color: var(--tech-blue-border-strong);
   background: rgba(var(--ui-accent-rgb), 0.14);
   color: #eef9ff;
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--primary) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--primary) {
   border-color: rgba(var(--ui-accent-rgb), 0.6);
   background: linear-gradient(
     180deg,
@@ -2042,7 +2042,7 @@ onMounted(() => {
     inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--primary:hover:not(:disabled)) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--primary:hover:not(:disabled)) {
   border-color: rgba(var(--ui-accent-rgb), 0.76);
   background: linear-gradient(
     180deg,
@@ -2052,84 +2052,84 @@ onMounted(() => {
   color: #ffffff;
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--danger) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--danger) {
   border-color: rgba(248, 113, 113, 0.34);
   background: linear-gradient(180deg, rgba(55, 21, 28, 0.96), rgba(34, 12, 18, 0.94));
   color: #fecaca;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--danger:hover:not(:disabled)) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .desktop-system-settings-btn--danger:hover:not(:disabled)) {
   border-color: rgba(248, 113, 113, 0.52);
   background: linear-gradient(180deg, rgba(74, 24, 34, 0.98), rgba(45, 14, 22, 0.96));
   color: #ffe4e6;
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner) {
   border-color: var(--tech-blue-border);
   background: linear-gradient(180deg, rgba(12, 22, 38, 0.96), rgba(9, 17, 30, 0.94));
   color: var(--tech-blue-text);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper:hover),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper:hover),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner:hover) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper:hover),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper:hover),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner:hover) {
   border-color: rgba(var(--ui-accent-rgb), 0.46);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper.is-focus),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper.is-focused),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner:focus) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__wrapper.is-focus),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__wrapper.is-focused),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner:focus) {
   border-color: var(--tech-blue-border-strong);
   box-shadow:
     0 0 0 2px rgba(var(--ui-accent-rgb), 0.2),
     inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.22);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__inner),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__selected-item),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__placeholder),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__inner),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__selected-item),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__placeholder),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner) {
   color: var(--tech-blue-text);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__inner::placeholder),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner::placeholder),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__placeholder) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-input__inner::placeholder),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-textarea__inner::placeholder),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-panel .el-select__placeholder) {
   color: var(--tech-blue-muted);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper.el-select__popper.el-popper) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper.el-select__popper.el-popper) {
   border-color: var(--tech-blue-border);
   background: linear-gradient(180deg, rgba(14, 25, 43, 0.98), rgba(10, 18, 32, 0.98));
   box-shadow: 0 18px 36px rgba(2, 8, 20, 0.36);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper.el-select__popper.el-popper .el-popper__arrow::before) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper.el-select__popper.el-popper .el-popper__arrow::before) {
   border-color: var(--tech-blue-border);
   background: rgba(14, 25, 43, 0.98);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__list) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__list) {
   background: transparent;
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item) {
   color: var(--tech-blue-text);
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.hover),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item:hover),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.is-selected) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.hover),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item:hover),
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.is-selected) {
   background: rgba(var(--ui-accent-rgb), 0.14);
   color: #eef9ff;
 }
 
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.is-disabled) {
+:global(:root[data-user-accent='tech-blue'] .desktop-system-settings-popper .el-select-dropdown__item.is-disabled) {
   color: rgba(148, 175, 210, 0.65);
 }
 

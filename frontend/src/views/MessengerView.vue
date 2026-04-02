@@ -1645,7 +1645,6 @@ import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvent
 import {
   normalizeAvatarColor,
   normalizeAvatarIcon,
-  normalizeThemeMode,
   normalizeThemePalette,
   type ThemePalette,
   type UserAppearancePreferences
@@ -7248,7 +7247,6 @@ const handleSettingsLogout = () => {
 
 const applyCurrentUserAppearance = (appearance: UserAppearancePreferences) => {
   appearanceHydrating.value = true;
-  themeStore.setMode(normalizeThemeMode(appearance.themeMode));
   themeStore.setPalette(normalizeThemePalette(appearance.themePalette));
   currentUserAvatarIcon.value = normalizeAvatarIcon(appearance.avatarIcon, PROFILE_AVATAR_OPTION_KEYS);
   currentUserAvatarColor.value = normalizeAvatarColor(appearance.avatarColor);
@@ -7256,7 +7254,6 @@ const applyCurrentUserAppearance = (appearance: UserAppearancePreferences) => {
 };
 
 const resolveCurrentUserAppearance = (): UserAppearancePreferences => ({
-  themeMode: normalizeThemeMode(themeStore.mode),
   themePalette: normalizeThemePalette(themeStore.palette),
   avatarIcon: normalizeAvatarIcon(currentUserAvatarIcon.value, PROFILE_AVATAR_OPTION_KEYS),
   avatarColor: normalizeAvatarColor(currentUserAvatarColor.value),
@@ -10814,7 +10811,7 @@ watch(
 );
 
 watch(
-  () => [themeStore.mode, themeStore.palette],
+  () => [themeStore.palette],
   () => {
     if (appearanceHydrating.value) return;
     void persistCurrentUserAppearance();

@@ -496,7 +496,8 @@ const normalizeColor = (value: string, fallback: string): string => {
 };
 
 const resolveThemeColors = () => {
-  const mode = document.documentElement.getAttribute('data-user-theme') || 'light';
+  const palette = document.documentElement.getAttribute('data-user-accent') || 'eva-orange';
+  const mode = palette === 'tech-blue' ? 'dark' : 'light';
   const accent = normalizeColor(readCssVar('--ui-accent'), mode === 'dark' ? '#5eead4' : '#0ea5e9');
   const accentSoft = normalizeColor(readCssVar('--ui-accent-soft-3'), mode === 'dark' ? '#0f172a' : '#e2e8f0');
   const accentDeep = normalizeColor(readCssVar('--ui-accent-deep'), mode === 'dark' ? '#f97316' : '#ea580c');
@@ -827,7 +828,7 @@ const observeTheme = () => {
   themeObserver = new MutationObserver(() => applyTheme());
   themeObserver.observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ['data-user-theme', 'data-user-accent']
+    attributeFilter: ['data-user-accent']
   });
 };
 

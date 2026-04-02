@@ -4984,7 +4984,11 @@ fn should_auto_title(title: &str) -> bool {
 }
 
 fn build_session_title(content: Option<&str>) -> Option<String> {
-    let cleaned = content?.trim().replace('\n', " ");
+    let raw = content?.trim();
+    if parse_channel_command(Some(raw)).is_some() {
+        return None;
+    }
+    let cleaned = raw.replace('\n', " ");
     if cleaned.is_empty() {
         return None;
     }
@@ -5298,6 +5302,11 @@ mod tests {
             build_session_title(Some("  first inbound title  ")),
             Some("first inbound title".to_string())
         );
+    }
+
+    #[test]
+    fn build_session_title_skips_channel_commands() {
+        assert_eq!(build_session_title(Some("/help")), None);
     }
 
     #[test]

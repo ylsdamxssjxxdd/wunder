@@ -18,6 +18,15 @@ const normalizeFlag = (value: unknown): boolean => {
   return Boolean(value);
 };
 
+const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === 'user') {
+      return index;
+    }
+  }
+  return -1;
+};
+
 export const normalizeThreadRuntimeStatus = (value: unknown): ThreadRuntimeStatus => {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'idle') return 'idle';
@@ -38,6 +47,15 @@ export const isThreadRuntimeBusy = (status: unknown): boolean => {
   return normalized === 'running' || isThreadRuntimeWaiting(normalized);
 };
 
+export const didThreadRuntimeEnterBusyState = (
+  previousStatus: unknown,
+  nextStatus: unknown
+): boolean => {
+  const previous = normalizeThreadRuntimeStatus(previousStatus);
+  const next = normalizeThreadRuntimeStatus(nextStatus);
+  return previous !== next && !isThreadRuntimeBusy(previous) && isThreadRuntimeBusy(next);
+};
+
 export const isAssistantRuntimeRunning = (message: ChatMessage | null | undefined): boolean => {
   if (!message || message.role !== 'assistant') return false;
   if (
@@ -54,7 +72,9 @@ export const hasRunningAssistantMessage = (
   messages: ChatMessage[] | null | undefined
 ): boolean => {
   if (!Array.isArray(messages) || messages.length === 0) return false;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
+  const latestUserIndex = resolveLatestUserIndex(messages);
+  const startIndex = latestUserIndex >= 0 ? latestUserIndex + 1 : 0;
+  for (let index = messages.length - 1; index >= startIndex; index -= 1) {
     if (isAssistantRuntimeRunning(messages[index])) {
       return true;
     }

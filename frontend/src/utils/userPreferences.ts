@@ -1,33 +1,25 @@
 import {
-  DEFAULT_THEME_MODE,
   DEFAULT_THEME_PALETTE,
   normalizeThemePalette,
-  resolveThemeModeForPalette,
-  type ThemeMode,
   type ThemePalette
 } from '@/utils/themeAppearance';
 
 export {
-  DEFAULT_THEME_MODE,
   DEFAULT_THEME_PALETTE,
-  normalizeThemeMode,
   normalizeThemePalette
 } from '@/utils/themeAppearance';
 
-export type { ThemeMode, ThemePalette };
+export type { ThemePalette };
 
 export const USER_APPEARANCE_STORAGE_PREFIX = 'messenger_user_appearance_v1:';
 const LEGACY_USER_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
-const THEME_MODE_STORAGE_KEY = 'beeroom-user-theme';
 const THEME_PALETTE_STORAGE_KEY = 'beeroom-user-accent-theme';
-const LEGACY_THEME_MODE_STORAGE_KEY = 'wille-user-theme';
 const LEGACY_THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
 
 export const DEFAULT_AVATAR_ICON = 'initial';
 export const DEFAULT_AVATAR_COLOR = '#3b82f6';
 
 export type UserAppearancePreferences = {
-  themeMode: ThemeMode;
   themePalette: ThemePalette;
   avatarIcon: string;
   avatarColor: string;
@@ -83,7 +75,6 @@ export const resolveAppearanceStorageKey = (userId: unknown): string => {
 };
 
 export const defaultUserAppearance = (): UserAppearancePreferences => ({
-  themeMode: DEFAULT_THEME_MODE,
   themePalette: DEFAULT_THEME_PALETTE,
   avatarIcon: DEFAULT_AVATAR_ICON,
   avatarColor: DEFAULT_AVATAR_COLOR,
@@ -97,7 +88,6 @@ export const normalizeUserAppearance = (
   const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
   const next = defaultUserAppearance();
   next.themePalette = normalizeThemePalette(source.theme_palette ?? source.themePalette);
-  next.themeMode = resolveThemeModeForPalette(source.theme_mode ?? source.themeMode, next.themePalette);
   next.avatarIcon = normalizeAvatarIcon(source.avatar_icon ?? source.avatarIcon, allowedAvatarKeys);
   next.avatarColor = normalizeAvatarColor(source.avatar_color ?? source.avatarColor);
   const updatedAt = Number(source.updated_at ?? source.updatedAt ?? 0);
@@ -130,9 +120,7 @@ export const writeUserAppearanceToStorage = (
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(resolveAppearanceStorageKey(userId), JSON.stringify(value));
-    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, value.themeMode);
     window.localStorage.setItem(THEME_PALETTE_STORAGE_KEY, value.themePalette);
-    window.localStorage.setItem(LEGACY_THEME_MODE_STORAGE_KEY, value.themeMode);
     window.localStorage.setItem(LEGACY_THEME_PALETTE_STORAGE_KEY, value.themePalette);
     const legacyAvatarKey = `${LEGACY_USER_AVATAR_STORAGE_PREFIX}${String(userId || '').trim() || 'guest'}`;
     window.localStorage.setItem(
@@ -158,11 +146,6 @@ const readLegacyUserAppearanceFromStorage = (
   next.themePalette = normalizeThemePalette(
     window.localStorage.getItem(THEME_PALETTE_STORAGE_KEY) ??
       window.localStorage.getItem(LEGACY_THEME_PALETTE_STORAGE_KEY)
-  );
-  next.themeMode = resolveThemeModeForPalette(
-    window.localStorage.getItem(THEME_MODE_STORAGE_KEY) ??
-      window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY),
-    next.themePalette
   );
   const legacyAvatarKey = `${LEGACY_USER_AVATAR_STORAGE_PREFIX}${String(userId || '').trim() || 'guest'}`;
   try {

@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs;
+use tracing::warn;
 use url::{form_urlencoded::byte_serialize, Url};
 use uuid::Uuid;
 
@@ -607,18 +608,33 @@ pub async fn send_outbound(
         return Ok(());
     }
 
+    let text_item = text_item_for_outbound_with_attachments(text.as_deref(), &outbound_attachments);
     let mut item_list = Vec::new();
-    if let Some(text_item) =
-        text_item_for_outbound_with_attachments(text.as_deref(), &outbound_attachments)
-    {
-        item_list.push(build_text_message_item(&text_item));
+    if let Some(text_item) = text_item.as_deref() {
+        item_list.push(build_text_message_item(text_item));
     }
+    let mut skipped_attachments: Vec<ChannelAttachment> = Vec::new();
     for attachment in &outbound_attachments {
-        let item = build_attachment_message_item(http, config, to_user_id, attachment).await?;
-        item_list.push(item);
+        match build_attachment_message_item(http, config, to_user_id, attachment).await {
+            Ok(item) => {
+                item_list.push(item);
+            }
+            Err(err) if should_skip_attachment_delivery_error(&err) => {
+                warn!(
+                    "weixin outbound attachment skipped: to_user_id={}, source={}, error={err}",
+                    to_user_id,
+                    attachment.url
+                );
+                skipped_attachments.push(attachment.clone());
+            }
+            Err(err) => return Err(err),
+        }
     }
     if item_list.is_empty() {
-        item_list.push(build_text_message_item("(empty message)"));
+        let fallback = render_missing_attachment_notice(&skipped_attachments)
+            .or_else(|| text_item.clone())
+            .unwrap_or_else(|| "(empty message)".to_string());
+        item_list.push(build_text_message_item(&fallback));
     }
     send_message_items(http, config, to_user_id, &context_token, item_list).await?;
     Ok(())
@@ -1088,6 +1104,33 @@ fn render_attachment_fallback(text: Option<&str>, attachments: &[ChannelAttachme
     } else {
         lines.join("\n")
     }
+}
+
+fn render_missing_attachment_notice(attachments: &[ChannelAttachment]) -> Option<String> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let names = attachments
+        .iter()
+        .filter_map(|attachment| {
+            attachment
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return Some("(attachment unavailable)".to_string());
+    }
+    Some(format!("(attachment unavailable: {})", names.join(", ")))
+}
+
+fn should_skip_attachment_delivery_error(err: &anyhow::Error) -> bool {
+    let error_text = err.to_string().to_ascii_lowercase();
+    error_text.contains("weixin attachment file not found")
+        || error_text.contains("weixin attachment path is not a file")
 }
 
 async fn upload_media_to_cdn(
@@ -2467,6 +2510,90 @@ mod tests {
         assert_eq!(
             text_item_for_outbound_with_attachments(Some(text), &attachments).as_deref(),
             Some("爱心图片已生成成功！")
+        );
+    }
+
+    #[test]
+    fn render_missing_attachment_notice_uses_safe_attachment_names() {
+        let attachments = vec![
+            ChannelAttachment {
+                kind: "image".to_string(),
+                url: "/workspaces/admin__c__1/inbox/weixin/1/missing-image.jpg".to_string(),
+                mime: None,
+                size: None,
+                name: Some("photo.jpg".to_string()),
+            },
+            ChannelAttachment {
+                kind: "file".to_string(),
+                url: "/workspaces/admin__c__1/inbox/weixin/1/missing-report.pdf".to_string(),
+                mime: None,
+                size: None,
+                name: Some("report.pdf".to_string()),
+            },
+        ];
+        assert_eq!(
+            render_missing_attachment_notice(&attachments).as_deref(),
+            Some("(attachment unavailable: photo.jpg, report.pdf)")
+        );
+    }
+
+    #[test]
+    fn should_skip_attachment_delivery_error_matches_missing_local_file_errors() {
+        assert!(should_skip_attachment_delivery_error(&anyhow!(
+            "weixin attachment file not found: /workspaces/admin__c__1/inbox/weixin/demo.jpg"
+        )));
+        assert!(should_skip_attachment_delivery_error(&anyhow!(
+            "weixin attachment path is not a file: /workspaces/admin__c__1/inbox/weixin/demo.jpg"
+        )));
+        assert!(!should_skip_attachment_delivery_error(&anyhow!(
+            "weixin cdn upload failed: status=500"
+        )));
+    }
+
+    #[tokio::test]
+    async fn send_outbound_skips_missing_local_attachment_and_keeps_text_payload() {
+        let fixture = start_outbound_server_fixture().await;
+        let outbound = ChannelOutboundMessage {
+            channel: WEIXIN_CHANNEL.to_string(),
+            account_id: "acc_weixin".to_string(),
+            peer: ChannelPeer {
+                kind: "user".to_string(),
+                id: "wx_peer_missing".to_string(),
+                name: None,
+            },
+            thread: None,
+            text: Some("Please review the generated summary.".to_string()),
+            attachments: vec![ChannelAttachment {
+                kind: "image".to_string(),
+                url: "/workspaces/admin__c__1/inbox/weixin/missing-image.jpg".to_string(),
+                mime: Some("image/jpeg".to_string()),
+                size: None,
+                name: Some("missing-image.jpg".to_string()),
+            }],
+            meta: Some(json!({
+                "context_token": "ctx-missing-attachment"
+            })),
+        };
+        let config = WeixinConfig {
+            api_base: Some(fixture.base_url.clone()),
+            bot_token: Some("bot-token-1".to_string()),
+            media_enabled: Some(true),
+            ..Default::default()
+        };
+
+        send_outbound(&Client::new(), &outbound, &config)
+            .await
+            .expect("send outbound should degrade missing local attachments to text");
+
+        let sendmessage_payloads = fixture.state.sendmessage_payloads.lock().await.clone();
+        assert_eq!(sendmessage_payloads.len(), 1);
+        assert_eq!(
+            sendmessage_payloads[0]["msg"]["item_list"][0]["type"].as_i64(),
+            Some(1)
+        );
+        assert_eq!(
+            sendmessage_payloads[0]["msg"]["item_list"][0]["text_item"]["text"].as_str(),
+            Some("Please review the generated summary.")
         );
     }
 }

@@ -1,0 +1,1079 @@
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell {
+  --chat-panel: rgba(15, 23, 42, 0.04);
+  --chat-card: rgba(255, 255, 255, 0.9);
+  --chat-border: rgba(15, 23, 42, 0.12);
+  --chat-text: #0f172a;
+  --chat-muted: #64748b;
+  --chat-primary: #3b82f6;
+  --chat-accent: #7c6cff;
+  --chat-primary-rgb: 59, 130, 246;
+  --chat-accent-rgb: 124, 108, 255;
+  --code-bg: rgba(15, 23, 42, 0.06);
+  --code-header: rgba(15, 23, 42, 0.08);
+  --code-border: rgba(15, 23, 42, 0.16);
+  --code-text: #0f172a;
+  --code-muted: #64748b;
+  --code-keyword: #2563eb;
+  --code-string: #15803d;
+  --code-number: #b45309;
+  --code-comment: #94a3b8;
+  background: var(--chat-bg);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar {
+  background: linear-gradient(
+    90deg,
+    rgba(var(--chat-primary-rgb), 0.16),
+    rgba(var(--chat-accent-rgb), 0.12)
+  );
+  border-bottom-color: var(--chat-border);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-user,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .logout-btn,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-icon-btn,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-panel-btn,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .tools-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.14);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .logout-btn:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  color: var(--chat-primary);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-icon-btn:hover,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-panel-btn:hover {
+  border-color: rgba(59, 130, 246, 0.55);
+  color: var(--chat-primary);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .tools-btn:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .new-chat-btn {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(124, 108, 255, 0.2));
+  color: var(--chat-text);
+  box-shadow: 0 10px 20px rgba(59, 130, 246, 0.18);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-status.is-running {
+  color: #2563eb;
+  --agent-pulse-color: rgba(37, 99, 235, 0.55);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-status.is-waiting {
+  color: #16a34a;
+  --agent-pulse-color: rgba(22, 163, 74, 0.4);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel {
+  border-color: rgba(var(--chat-primary-rgb), 0.18);
+  background: linear-gradient(
+      145deg,
+      rgba(var(--chat-primary-rgb), 0.1),
+      rgba(var(--chat-accent-rgb), 0.08) 56%,
+      rgba(255, 255, 255, 0.92)
+    ),
+    rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel::before {
+  opacity: 0.62;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .plan-tab {
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .plan-tab:hover {
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-route {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-route:hover {
+  border-color: rgba(var(--chat-primary-rgb), 0.42);
+  box-shadow: 0 0 0 3px rgba(var(--chat-primary-rgb), 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-route.active {
+  background: linear-gradient(
+    145deg,
+    rgba(var(--chat-primary-rgb), 0.12),
+    rgba(var(--chat-accent-rgb), 0.08)
+  );
+  border-color: rgba(var(--chat-primary-rgb), 0.46);
+  box-shadow: 0 6px 14px rgba(var(--chat-primary-rgb), 0.14);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-route.recommended {
+  border-color: rgba(var(--chat-accent-rgb), 0.4);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-route-tag {
+  background: rgba(var(--chat-accent-rgb), 0.18);
+  border-color: rgba(var(--chat-accent-rgb), 0.35);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-btn {
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-btn.secondary:hover {
+  border-color: rgba(var(--chat-primary-rgb), 0.35);
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-btn.primary {
+  background: linear-gradient(135deg, var(--chat-primary), var(--chat-accent));
+  color: #ffffff;
+  box-shadow: 0 8px 16px rgba(var(--chat-primary-rgb), 0.22);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .inquiry-panel-btn.primary:hover:not(:disabled) {
+  box-shadow: 0 10px 20px rgba(var(--chat-primary-rgb), 0.26);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .theme-toggle {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .glass-card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 255, 0.92));
+  border-color: rgba(59, 130, 246, 0.14);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .chat-panel {
+  background: linear-gradient(165deg, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.95));
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .glass-card.info-panel {
+  background: linear-gradient(165deg, #f8faff, #f2f6ff 75%);
+  border-color: rgba(59, 130, 246, 0.12);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .panel-header {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .pill {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-search {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-list {
+  background: #f8fafc;
+  border-color: #c7d2fe;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-list.dragover {
+  background: #e0edff;
+  border-color: #93c5fd;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-list.refreshing {
+  animation: workspace-refresh-pulse-light 1.2s ease-in-out infinite;
+}
+
+@keyframes workspace-refresh-pulse-light {
+  0%,
+  100% {
+    border-color: #c7d2fe;
+    background: #f8fafc;
+  }
+  50% {
+    border-color: rgba(59, 130, 246, 0.45);
+    background: #eef5ff;
+  }
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-skeleton {
+  border-color: rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-upload-bar {
+  background: rgba(15, 23, 42, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-upload-bar-fill {
+  background: linear-gradient(90deg, #38bdf8 0%, #3b82f6 100%);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-item.is-folder {
+  background: transparent;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-item.active,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-item.is-selected {
+  background: #dbeafe;
+  border-color: transparent;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workspace-item.drop-target {
+  border-color: rgba(59, 130, 246, 0.6);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .history-item {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .history-skeleton {
+  border-color: rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .history-item.active {
+  border-color: var(--chat-primary);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(124, 108, 255, 0.12));
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-skeleton-item {
+  border-color: rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.09);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-content {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-header {
+  border-bottom-color: rgba(15, 23, 42, 0.06);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .prompt-preview-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.15);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .prompt-preview-btn:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: var(--chat-primary);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-copy-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.15);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .message-copy-btn:hover {
+  border-color: rgba(59, 130, 246, 0.45);
+  color: var(--chat-primary);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .from-ai .message-content {
+  background: linear-gradient(160deg, rgba(59, 130, 246, 0.08), #ffffff);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .from-user .message-content {
+  background: linear-gradient(160deg, rgba(124, 108, 255, 0.08), #ffffff);
+  border-color: rgba(124, 108, 255, 0.25);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table table {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table th,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table td {
+  border-color: rgba(15, 23, 42, 0.22);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table th {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table tbody tr:nth-child(2n) td {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-rich-table td {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-resource-card {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-resource-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-resource-btn:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #1d4ed8;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-resource-preview {
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body .ai-resource-file-icon {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .markdown-body a.ai-resource-link {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .input-container {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .input-box {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-item {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-item:hover,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-item.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.32);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-name {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-desc,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-hint {
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .command-menu-hint {
+  border-top-color: rgba(15, 23, 42, 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .input-icon-btn {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .input-icon-btn:hover:not(:disabled) {
+  color: var(--chat-primary);
+  border-color: rgba(59, 130, 246, 0.5);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .send-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.35);
+  filter: brightness(1.02);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .upload-preview {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .upload-preview-item {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--chat-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workflow-item {
+  --workflow-border: rgba(15, 23, 42, 0.08);
+  --workflow-bg: rgba(15, 23, 42, 0.04);
+  --workflow-flow-highlight: rgba(59, 130, 246, 0.08);
+  color: var(--chat-muted);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workflow-content {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workflow-item:not(:last-child) {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .workflow-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn {
+  background: transparent;
+  border-color: transparent;
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn:hover:not(:disabled),
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn:focus-visible {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.34);
+  color: #0f172a;
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn.danger {
+  color: #ef4444;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn.danger:hover:not(:disabled),
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-context-menu .workspace-menu-btn.danger:focus-visible {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.44);
+  color: #dc2626;
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-dialog {
+  --chat-text: #0f172a;
+  --chat-muted: #64748b;
+  --chat-primary: #3b82f6;
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-dialog.el-dialog {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-preview {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-preview.embed,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-preview iframe {
+  background: #ffffff;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workspace-editor-text {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-dialog {
+  --chat-text: #0f172a;
+  --chat-muted: #64748b;
+  --chat-border: rgba(15, 23, 42, 0.12);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-dialog.el-dialog {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-body {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-view-btn {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-view-btn.is-active {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.42);
+  color: #1d4ed8;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-tooling-mode {
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.16);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-tooling-content {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-footer-btn {
+  background: #f1f5f9;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-footer-btn:hover {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .system-prompt-footer-btn:focus-visible {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.6);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  outline: none;
+}
+
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-menu {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.14);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-item {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-transport {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.14);
+  color: #475569;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-transport.ws .topbar-feature-transport-dot {
+  background: #0284c7;
+  box-shadow: 0 0 8px rgba(2, 132, 199, 0.32);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-transport.sse .topbar-feature-transport-dot {
+  background: #7c3aed;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.28);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-item:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
+  color: #1d4ed8;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-item.topbar-feature-item-danger:hover {
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.08);
+  color: #b91c1c;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .chat-shell .topbar-feature-item:focus-visible {
+  outline-color: rgba(59, 130, 246, 0.5);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog {
+  --chat-text: #0f172a;
+  --chat-muted: #64748b;
+  --chat-border: rgba(15, 23, 42, 0.12);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog.el-dialog {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog .icon-btn {
+  color: #1f2937;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog .icon-btn:hover {
+  color: #2563eb;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog .el-button {
+  background: #f1f5f9;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog .el-button:hover {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.5);
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-dialog .el-button--primary {
+  background: linear-gradient(135deg, #3b82f6, #7c6cff);
+  border: none;
+  color: #ffffff;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-groups {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .session-tools-item {
+  background: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .image-preview-dialog {
+  --el-dialog-bg-color: #ffffff;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .image-preview-dialog.el-dialog {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .image-preview-img {
+  background: #f8fafc;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workflow-dialog {
+  --chat-text: #0f172a;
+  --chat-primary: #3b82f6;
+  --workflow-surface: #ffffff;
+  --workflow-border: rgba(15, 23, 42, 0.12);
+  --workflow-header: rgba(59, 130, 246, 0.08);
+  --workflow-header-accent: rgba(124, 108, 255, 0.08);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workflow-dialog.el-dialog {
+  background: linear-gradient(160deg, #ffffff, #f5f7fb);
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .workflow-dialog-detail {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-dialog {
+  --chat-text: #0f172a;
+  --chat-primary: #3b82f6;
+  --plan-surface: #ffffff;
+  --plan-card: #ffffff;
+  --plan-border: rgba(15, 23, 42, 0.12);
+  --plan-badge-bg: rgba(15, 23, 42, 0.04);
+  --plan-badge-border: rgba(15, 23, 42, 0.12);
+  --plan-header: rgba(59, 130, 246, 0.08);
+  --plan-header-accent: rgba(124, 108, 255, 0.08);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-text-color-secondary: #64748b;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-dialog.el-dialog {
+  background: linear-gradient(160deg, #ffffff, #f5f7fb);
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-board {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-explanation {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-step {
+  background: #ffffff;
+  border-top-color: rgba(15, 23, 42, 0.12);
+  border-right-color: rgba(15, 23, 42, 0.12);
+  border-bottom-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-step:hover {
+  border-top-color: rgba(59, 130, 246, 0.3);
+  border-right-color: rgba(59, 130, 246, 0.3);
+  border-bottom-color: rgba(59, 130, 246, 0.3);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-index {
+  background: rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-text {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-status {
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-step--in_progress .plan-status {
+  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-step--completed .plan-status {
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.14);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .plan-empty {
+  border-color: rgba(15, 23, 42, 0.2);
+  background: rgba(15, 23, 42, 0.04);
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog {
+  --user-tools-bg: #f8fafc;
+  --user-tools-panel: rgba(15, 23, 42, 0.04);
+  --user-tools-border: rgba(15, 23, 42, 0.12);
+  --user-tools-text: #0f172a;
+  --user-tools-muted: #64748b;
+  --user-tools-accent: #3b82f6;
+  --user-tools-surface: #ffffff;
+  --user-tools-card: #ffffff;
+  --user-tools-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+  --user-tools-header: rgba(59, 130, 246, 0.08);
+  --user-tools-header-accent: rgba(124, 108, 255, 0.08);
+  --el-dialog-bg-color: #f8fafc;
+  --el-text-color-primary: #0f172a;
+  --el-text-color-regular: #1f2937;
+  --el-border-color: rgba(15, 23, 42, 0.12);
+  --el-border-color-light: rgba(15, 23, 42, 0.08);
+  --el-fill-color-blank: rgba(15, 23, 42, 0.04);
+  --el-fill-color: rgba(15, 23, 42, 0.08);
+  --el-bg-color: #f8fafc;
+  color: var(--user-tools-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog.el-dialog {
+  background: linear-gradient(160deg, #ffffff, #f5f7fb);
+  border-color: var(--user-tools-border);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .el-input__wrapper,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .el-textarea__inner,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .detail-schema,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .list-body,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-editor-wrapper {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .el-input.is-disabled .el-input__wrapper,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .el-textarea.is-disabled .el-textarea__inner {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .el-select__wrapper,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-sidebar,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-tab,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .tool-list,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skills-list,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-file-list,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-card {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-tab:hover {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-btn:hover:not(:disabled) {
+  border-color: rgba(59, 130, 246, 0.45);
+  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.18);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .list-item:hover {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .list-item.active {
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, 0.18);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .tool-item,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-item {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-detail-pane {
+  background: #ffffff;
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-file-tree {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: var(--user-tools-text);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-tree-item.is-file:hover {
+  background: rgba(59, 130, 246, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-tree-item.is-active {
+  background: rgba(59, 130, 246, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.45);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-editor-body {
+  background: rgba(15, 23, 42, 0.03);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-editor-body.is-disabled {
+  background: rgba(15, 23, 42, 0.02);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .tool-item:hover,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .skill-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-file-item:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-file-item.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-list,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-chunk-list,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-content {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-item:hover,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-chunk-item:hover {
+  background: rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-item.active,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-chunk-item.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-meta,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-section-title,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .knowledge-doc-chunk-preview {
+  color: rgba(15, 23, 42, 0.65);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .user-tools-dialog .user-tools-card {
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper {
+  --el-tooltip-bg-color: #ffffff;
+  --el-tooltip-border-color: rgba(15, 23, 42, 0.12);
+  background: linear-gradient(160deg, #ffffff, #f4f7fb);
+  border-color: var(--el-tooltip-border-color);
+  color: #0f172a;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12), 0 0 16px rgba(59, 130, 246, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .el-popper__arrow {
+  display: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .thinking-tooltip-popper {
+  --el-tooltip-bg-color: #ffffff;
+  --el-tooltip-border-color: rgba(15, 23, 42, 0.12);
+  background: linear-gradient(160deg, #ffffff, #f5f7fb);
+  border-color: var(--el-tooltip-border-color);
+  color: #0f172a;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .thinking-tooltip {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper::before {
+  background: radial-gradient(circle at 15% 10%, rgba(59, 130, 246, 0.12), transparent 45%),
+    radial-gradient(circle at 85% 0%, rgba(124, 108, 255, 0.12), transparent 42%);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip .ability-title {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-sub,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-section-title,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-muted,
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-empty {
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-section-title::before {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.9), rgba(124, 108, 255, 0.9));
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-count {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #3b82f6;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-chip {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+  color: #0f172a;
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item {
+  background: rgba(15, 23, 42, 0.02);
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: none;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item-name {
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item-desc {
+  color: #64748b;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item-desc.is-empty {
+  color: rgba(100, 116, 139, 0.8);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-chip:hover {
+  border-color: rgba(59, 130, 246, 0.35);
+  box-shadow: 0 6px 12px rgba(15, 23, 42, 0.12);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-chip.tool {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item.tool {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-chip.skill {
+  background: rgba(124, 108, 255, 0.12);
+  border-color: rgba(124, 108, 255, 0.35);
+  color: #0f172a;
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-item.skill {
+  background: rgba(124, 108, 255, 0.08);
+  border-color: rgba(124, 108, 255, 0.25);
+}
+
+:is(:root[data-user-accent='eva-orange'], :root[data-user-accent='claw-orange'], :root[data-user-accent='hula-green'], :root[data-user-accent='minimal']) .ability-tooltip-popper .ability-error {
+  color: #ef4444;
+}

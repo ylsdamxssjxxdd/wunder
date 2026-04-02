@@ -69,6 +69,19 @@ test('stops an active pending assistant in place', () => {
   assert.equal(pending.reasoningStreaming, false);
 });
 
+test('stops an assistant that only retains workflow and reasoning streaming flags', () => {
+  const pending = {
+    role: 'assistant',
+    stream_incomplete: false,
+    workflowStreaming: true,
+    reasoningStreaming: true
+  };
+  assert.equal(stopPendingAssistantMessage(pending), true);
+  assert.equal(pending.stream_incomplete, false);
+  assert.equal(pending.workflowStreaming, false);
+  assert.equal(pending.reasoningStreaming, false);
+});
+
 test('session busy remains true when compaction progress is still running', () => {
   const messages = [
     {
@@ -93,6 +106,28 @@ test('session busy clears after cancelled compaction is finalized', () => {
         { eventType: 'compaction_progress', status: 'completed', detail: '{"status":"cancelled"}' },
         { eventType: 'compaction', status: 'completed', detail: '{"status":"cancelled"}' }
       ]
+    }
+  ];
+  assert.equal(isSessionBusyFromSignals(false, messages), false);
+});
+
+test('session busy ignores stale running assistant markers from earlier turns', () => {
+  const messages = [
+    { role: 'user', content: 'first' },
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      workflowStreaming: true,
+      reasoningStreaming: true,
+      content: 'stale running'
+    },
+    { role: 'user', content: 'second' },
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      workflowStreaming: false,
+      reasoningStreaming: false,
+      content: 'done'
     }
   ];
   assert.equal(isSessionBusyFromSignals(false, messages), false);

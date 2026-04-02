@@ -206,3 +206,67 @@ test('watch channel runtime settles a pending assistant shell when assistant sid
   assert.equal(messages[1].reasoningStreaming, false);
   assert.equal(snapshotNotified, 1);
 });
+
+test('channel assistant message replaces stale pending assistant content from previous turn', () => {
+  const messages = [
+    {
+      role: 'user',
+      content: 'second question',
+      created_at: '2026-04-02T10:00:00.000Z'
+    },
+    {
+      role: 'assistant',
+      content: 'this is the first round long answer that should not leak into the next turn',
+      created_at: '2026-04-02T10:00:01.000Z',
+      stream_incomplete: true,
+      workflowStreaming: true,
+      reasoningStreaming: false,
+      stream_event_id: 11
+    }
+  ];
+  let snapshotCalls = 0;
+  let touchedAt = 0;
+
+  const result = consumeChatWatchChannelMessage({
+    messages,
+    lastEventId: 11,
+    eventId: 12,
+    eventTimestampMs: Date.parse('2026-04-02T10:00:02.000Z'),
+    payload: {
+      role: 'assistant',
+      content: 'short second answer'
+    },
+    data: {
+      role: 'assistant',
+      content: 'short second answer'
+    },
+    normalizeEventId,
+    buildMessage,
+    assignStreamEventId: (message, eventId) => {
+      message.stream_event_id = eventId;
+    },
+    insertWatchUserMessage: () => {
+      throw new Error('unexpected user insertion');
+    },
+    clearSupersededPendingAssistantMessages: () => undefined,
+    dismissStaleInquiryPanels: () => undefined,
+    touchUpdatedAt: (timestamp) => {
+      touchedAt = Number(timestamp);
+    },
+    notifySnapshot: () => {
+      snapshotCalls += 1;
+    },
+    dedupeAssistantWindowMs: 2000
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.mutated, true);
+  assert.equal(result.lastEventId, 12);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].content, 'short second answer');
+  assert.equal(messages[1].stream_event_id, 12);
+  assert.equal(messages[1].stream_incomplete, false);
+  assert.equal(messages[1].workflowStreaming, false);
+  assert.equal(snapshotCalls, 1);
+  assert.equal(touchedAt, Date.parse('2026-04-02T10:00:02.000Z'));
+});

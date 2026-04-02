@@ -9,6 +9,16 @@ const normalizeFlag = (value: unknown): boolean => {
   return Boolean(value);
 };
 
+const isAssistantRuntimeMarkedRunning = (message: ChatMessage | null | undefined): boolean =>
+  Boolean(
+    message?.role === 'assistant' &&
+    (
+      normalizeFlag(message.stream_incomplete) ||
+      normalizeFlag(message.workflowStreaming) ||
+      normalizeFlag(message.reasoningStreaming)
+    )
+  );
+
 const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i]?.role === 'user') {
@@ -19,10 +29,10 @@ const resolveLatestUserIndex = (messages: ChatMessage[]): number => {
 };
 
 export const isPendingAssistantMessage = (message: ChatMessage | null | undefined): boolean =>
-  Boolean(message?.role === 'assistant' && normalizeFlag(message.stream_incomplete));
+  isAssistantRuntimeMarkedRunning(message);
 
 export const stopPendingAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
-  if (!isPendingAssistantMessage(message)) return false;
+  if (!isAssistantRuntimeMarkedRunning(message)) return false;
   message.stream_incomplete = false;
   message.workflowStreaming = false;
   message.reasoningStreaming = false;

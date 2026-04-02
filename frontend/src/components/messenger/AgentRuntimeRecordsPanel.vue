@@ -531,7 +531,7 @@ function updateHeatmapRows() {
 }
 
 function resolveChartPalette() {
-  const dark = themeStore.mode === 'dark';
+  const dark = themeStore.palette === 'tech-blue';
   return dark
     ? {
         text: '#d1d5db',
@@ -750,7 +750,7 @@ watch(
 );
 
 watch(
-  () => themeStore.mode,
+  () => themeStore.palette,
   () => {
     renderTrendChart();
     updateHeatmapRows();

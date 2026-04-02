@@ -449,7 +449,7 @@ const quotaLabels = computed(() => ({
 }));
 
 const resolveQuotaPalette = () => {
-  const isLight = themeStore.mode === 'light';
+  const isLight = themeStore.palette !== 'tech-blue';
   return {
     usedLight: isLight ? '#7dd3fc' : '#5eead4',
     used: '#38bdf8',
@@ -699,7 +699,7 @@ watch(
 );
 
 watch(
-  [quotaTotal, quotaUsed, () => themeStore.mode],
+  [quotaTotal, quotaUsed, () => themeStore.palette],
   () => {
     nextTick(() => {
       renderQuotaChart();

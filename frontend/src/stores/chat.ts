@@ -27,6 +27,7 @@ import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
+  didThreadRuntimeEnterBusyState,
   isSessionBusyFromSignals,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
@@ -3116,7 +3117,9 @@ function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread
     const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
       ? store?.messages
       : getSessionMessages(targetId);
-    if (stopPendingAssistantMessage(findPendingAssistantMessage(targetMessages))) {
+    const clearedSuperseded = clearSupersededPendingAssistantMessages(targetMessages);
+    const clearedTrailing = stopPendingAssistantMessage(findPendingAssistantMessage(targetMessages));
+    if (clearedSuperseded || clearedTrailing) {
       notifySessionSnapshot(store, targetId, targetMessages, true);
     }
     setSessionLoading(store, targetId, false);
@@ -3756,11 +3759,11 @@ const startSessionWatcher = (store, sessionId) => {
     maxKnownRound = Math.max(maxKnownRound, normalizedRound);
     const state = roundStates.get(normalizedRound);
     if (!state) return;
-    state.processor.finalize();
     if (!aborted) {
       state.message.stream_incomplete = false;
       state.message.workflowStreaming = false;
     }
+    state.processor.finalize();
     notifySessionSnapshot(store, key, sessionMessagesRef, true);
     const messageRef = state.message;
     Array.from(roundStates.entries()).forEach(([roundKey, entry]) => {
@@ -4008,11 +4011,8 @@ const startSessionWatcher = (store, sessionId) => {
           scheduleWatchReconcile();
         }
         if (running === false) {
-          if (pendingMessage) {
-            pendingMessage.stream_incomplete = false;
-            pendingMessage.workflowStreaming = false;
-            pendingMessage.reasoningStreaming = false;
-          }
+          clearSupersededPendingAssistantMessages(sessionMessagesRef);
+          stopPendingAssistantMessage(pendingMessage);
           setSessionLoading(store, key, false);
           notifySessionSnapshot(store, key, sessionMessagesRef, true);
           if (perfEnabled) {
@@ -4053,11 +4053,10 @@ const startSessionWatcher = (store, sessionId) => {
       }
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
       const nextThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
-      const runtimeBecameBusy =
-        (nextThreadStatus === 'running' || isThreadRuntimeWaiting(nextThreadStatus)) &&
-        previousThreadStatus !== nextThreadStatus &&
-        previousThreadStatus !== 'running' &&
-        !isThreadRuntimeWaiting(previousThreadStatus);
+      const runtimeBecameBusy = didThreadRuntimeEnterBusyState(
+        previousThreadStatus,
+        nextThreadStatus
+      );
       if (normalizedEventType === 'thread_status' && runtimeBecameBusy) {
         scheduleWatchReconcile(0);
       }
@@ -8455,6 +8454,7 @@ export const useChatStore = defineStore('chat', {
       }
       const targetMessages =
         String(this.activeSessionId || '').trim() === sessionId ? this.messages : getSessionMessages(sessionId);
+      clearSupersededPendingAssistantMessages(targetMessages);
       const pendingAssistant = findPendingAssistantMessage(targetMessages);
       if (pendingAssistant) {
         if (isCompactionMarkerAssistantMessage(pendingAssistant)) {

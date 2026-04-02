@@ -154,48 +154,48 @@ const toneClass = computed(() => `ability-icon-badge--${visual.value.tone}`);
   color: #0f172a;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge) {
   background: rgba(15, 23, 42, 0.9);
   border-color: rgba(148, 163, 184, 0.22);
   color: #e2e8f0;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--skill) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--skill) {
   background: rgba(245, 158, 11, 0.18);
   color: #fbbf24;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--mcp) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--mcp) {
   background: rgba(14, 165, 233, 0.18);
   color: #7dd3fc;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--knowledge) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--knowledge) {
   background: rgba(16, 185, 129, 0.18);
   color: #6ee7b7;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--shared) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--shared) {
   background: rgba(139, 92, 246, 0.18);
   color: #c4b5fd;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--automation) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--automation) {
   background: rgba(99, 102, 241, 0.18);
   color: #a5b4fc;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--search) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--search) {
   background: rgba(34, 197, 94, 0.18);
   color: #86efac;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--file) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--file) {
   background: rgba(59, 130, 246, 0.18);
   color: #93c5fd;
 }
 
-:global(:root[data-user-theme='dark'] .ability-icon-badge--terminal) {
+:global(:root[data-user-accent='tech-blue'] .ability-icon-badge--terminal) {
   background: rgba(51, 65, 85, 0.9);
   color: #e2e8f0;
 }
