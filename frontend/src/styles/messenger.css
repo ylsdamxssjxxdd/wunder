@@ -3665,10 +3665,14 @@ button.messenger-chat-header-model {
   grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
   gap: 8px;
   min-width: 0;
-  max-height: 228px;
-  overflow: auto;
-  padding-right: 2px;
   width: 100%;
+}
+
+.messenger-tool-options--scrollable {
+  max-height: 228px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .messenger-tool-options .el-checkbox {
@@ -3816,7 +3820,7 @@ button.messenger-chat-header-model {
     grid-template-columns: 1fr;
   }
 
-  .messenger-tool-options {
+  .messenger-tool-options--scrollable {
     max-height: 188px;
   }
 }

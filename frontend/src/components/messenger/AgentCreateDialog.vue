@@ -81,7 +81,10 @@
                       }}
                     </button>
                   </div>
-                  <div class="messenger-tool-options">
+                  <div
+                    class="messenger-tool-options"
+                    :class="{ 'messenger-tool-options--scrollable': group.options.length > 3 }"
+                  >
                     <div
                       v-for="tool in group.options"
                       :key="tool.value"

@@ -201,9 +201,13 @@
       />
     </section>
 
-    <div v-if="allowNavigationCollapse" class="messenger-nav-toggle-hitbox" aria-hidden="true"></div>
+    <div
+      v-if="showNavigationCollapseToggle"
+      class="messenger-nav-toggle-hitbox"
+      aria-hidden="true"
+    ></div>
     <button
-      v-if="allowNavigationCollapse"
+      v-if="showNavigationCollapseToggle"
       class="messenger-nav-toggle"
       type="button"
       :title="navigationPaneToggleTitle"
@@ -230,7 +234,7 @@
           <div class="messenger-chat-title-row">
             <div class="messenger-chat-title">{{ chatPanelTitle }}</div>
           </div>
-          <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
+          <div v-if="chatPanelSubtitle" class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
         <div class="messenger-chat-header-actions">
           <button
@@ -867,7 +871,6 @@
               <i class="fa-regular fa-comments" aria-hidden="true"></i>
             </div>
             <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
-            <div class="messenger-chat-empty-subtitle">{{ t('messenger.section.messages.desc') }}</div>
           </div>
 
           <template v-else-if="isAgentConversationActive">
@@ -2289,6 +2292,9 @@ const activeSectionSubtitle = computed(() => {
   if (helperAppsWorkspaceMode.value && sessionHub.activeSection === 'groups') {
     return t('userWorld.helperApps.subtitle');
   }
+  if (sessionHub.activeSection === 'messages') {
+    return '';
+  }
   return sessionHub.activeSection === 'more'
     ? t('messenger.section.settings.desc')
     : t(`messenger.section.${sessionHub.activeSection}.desc`);
@@ -2308,6 +2314,9 @@ const showMiddlePane = computed(() => {
   }
   return !navigationPaneCollapsed.value && (!isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
 });
+const showNavigationCollapseToggle = computed(
+  () => allowNavigationCollapse.value && (showMiddlePane.value || navigationPaneCollapsed.value)
+);
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
 const {
@@ -4253,7 +4262,7 @@ const chatPanelSubtitle = computed(() => {
     return t('messenger.section.groups.desc');
   }
   if (sessionHub.activeSection === 'tools') {
-    return t('messenger.section.tools.desc');
+    return '';
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return currentUsername.value;

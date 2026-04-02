@@ -1,7 +1,7 @@
 ﻿<template>
   <header class="messenger-middle-header">
     <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
-    <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
+    <div v-if="activeSectionSubtitle" class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
   </header>
 
   <div v-if="showMiddlePaneSearch" class="messenger-search-row">
