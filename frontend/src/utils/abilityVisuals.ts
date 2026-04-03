@@ -32,6 +32,14 @@ type AbilityRule = {
 };
 
 const ABILITY_RULES: AbilityRule[] = [
+  { keywords: ['用户世界工具', 'user_world', 'user world'], icon: 'fa-earth-asia', tone: 'general' },
+  { keywords: ['会话让出', 'sessions_yield', 'session yield', 'yield'], icon: 'fa-share-from-square', tone: 'automation' },
+  { keywords: ['自我状态', 'self_status', 'self status'], icon: 'fa-gauge-high', tone: 'general' },
+  { keywords: ['桌面控制器'], icon: 'fa-computer-mouse', tone: 'general' },
+  { keywords: ['桌面监视器'], icon: 'fa-display', tone: 'general' },
+  { keywords: ['读图工具', 'view_image', 'view image'], icon: 'fa-image', tone: 'search' },
+  { keywords: ['渠道工具', 'channel_tool', 'channel tool', 'channel_send', 'channel_contacts'], icon: 'fa-comments', tone: 'general' },
+  { keywords: ['LSP查询', 'lsp query', 'lsp'], icon: 'fa-code', tone: 'file' },
   {
     keywords: ['最终回复', 'final response', 'final answer', 'final reply', 'final_response'],
     icon: 'fa-paper-plane',

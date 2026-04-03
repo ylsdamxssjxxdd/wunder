@@ -19,6 +19,7 @@ import {
   isStaleRealtimeUpdate,
   shouldApplyRealtimeStatusTransition
 } from './beeroomRealtimeStatus';
+import { useAgentStore } from './agents';
 
 export type BeeroomMember = {
   agent_id: string;
@@ -1072,10 +1073,14 @@ export const useBeeroomStore = defineStore('beeroom', {
 
         // Keep beeroom list/detail in sync when import has finished.
         if (normalizePackStatus(resolvedJob.status) === 'completed') {
+          const agentStore = useAgentStore();
           const targetHiveId = normalizeGroupId(
             resolvedJob.report?.hive_id || normalizedGroupId || this.activeGroupId
           );
-          await this.loadGroups().catch(() => null);
+          await Promise.all([
+            this.loadGroups().catch(() => null),
+            agentStore.loadAgents().catch(() => null)
+          ]);
           if (targetHiveId) {
             await this.selectGroup(targetHiveId, { silent: true }).catch(() => null);
           } else if (this.activeGroupId) {

@@ -49,8 +49,20 @@ const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 const USER_DASHBOARD_TTL_MS = 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
+  { keyword: "用户世界工具", icon: "fa-earth-asia" },
+  { keyword: "user_world", icon: "fa-earth-asia" },
+  { keyword: "user world", icon: "fa-earth-asia" },
+  { keyword: "会话让出", icon: "fa-share-from-square" },
+  { keyword: "sessions_yield", icon: "fa-share-from-square" },
+  { keyword: "session yield", icon: "fa-share-from-square" },
+  { keyword: "yield", icon: "fa-share-from-square" },
+  { keyword: "自我状态", icon: "fa-gauge-high" },
+  { keyword: "self_status", icon: "fa-gauge-high" },
+  { keyword: "self status", icon: "fa-gauge-high" },
+  { keyword: "桌面控制器", icon: "fa-computer-mouse" },
   { keyword: "desktop_controller", icon: "fa-computer-mouse" },
   { keyword: "desktop controller", icon: "fa-computer-mouse" },
+  { keyword: "桌面监视器", icon: "fa-display" },
   { keyword: "桌面监控", icon: "fa-display" },
   { keyword: "desktop_monitor", icon: "fa-display" },
   { keyword: "desktop monitor", icon: "fa-display" },
@@ -103,6 +115,16 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "memory manager", icon: "fa-memory" },
   { keyword: "a2a@", icon: "fa-diagram-project" },
   { keyword: "a2ui", icon: "fa-image" },
+  { keyword: "读图工具", icon: "fa-image" },
+  { keyword: "read_image", icon: "fa-image" },
+  { keyword: "read image", icon: "fa-image" },
+  { keyword: "view_image", icon: "fa-image" },
+  { keyword: "view image", icon: "fa-image" },
+  { keyword: "渠道工具", icon: "fa-comments" },
+  { keyword: "channel_tool", icon: "fa-comments" },
+  { keyword: "channel tool", icon: "fa-comments" },
+  { keyword: "channel_send", icon: "fa-comments" },
+  { keyword: "channel_contacts", icon: "fa-comments" },
   { keyword: "列出文件", icon: "fa-folder-open" },
   { keyword: "list files", icon: "fa-folder-open" },
   { keyword: "list_file", icon: "fa-folder-open" },
@@ -116,6 +138,9 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "应用补丁", icon: "fa-pen-to-square" },
   { keyword: "apply patch", icon: "fa-pen-to-square" },
   { keyword: "apply_patch", icon: "fa-pen-to-square" },
+  { keyword: "LSP查询", icon: "fa-code" },
+  { keyword: "lsp query", icon: "fa-code" },
+  { keyword: "lsp", icon: "fa-code" },
 ];
 // 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];

@@ -1072,7 +1072,7 @@ fn install_worker_snapshot(
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
     for skill_source in &skill_sources {
-        let preferred = normalize_name(&skill_source.preferred_name, "skill");
+        let preferred = normalize_import_skill_name_base(&skill_source.preferred_name, "skill");
         let source_skill_id = if skill_source.source_skill_id.trim().is_empty() {
             preferred.clone()
         } else {
@@ -2132,7 +2132,7 @@ fn validate_hive_manifest(manifest: &HiveManifest) -> Result<()> {
 }
 
 fn unique_skill_name(skill_root: &Path, preferred: &str) -> String {
-    let normalized = normalize_name(preferred, "skill");
+    let normalized = normalize_import_skill_name_base(preferred, "skill");
     let candidate = if normalized.is_empty() {
         "skill".to_string()
     } else {
@@ -2152,7 +2152,7 @@ fn unique_skill_name_for_replace(
     preferred: &str,
     reserved: &HashSet<String>,
 ) -> String {
-    let base = normalize_name(preferred, "skill");
+    let base = normalize_import_skill_name_base(preferred, "skill");
     if !reserved.contains(&base) {
         return base;
     }
@@ -2176,6 +2176,36 @@ fn resolve_import_skill_name(
         unique_skill_name_for_replace(skill_root, preferred, reserved)
     } else {
         unique_skill_name(skill_root, preferred)
+    }
+}
+
+fn normalize_import_skill_name_base(raw: &str, fallback: &str) -> String {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return fallback.to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_alphanumeric() {
+            if ch.is_ascii() {
+                output.push(ch.to_ascii_lowercase());
+            } else {
+                output.push(ch);
+            }
+        } else if ch == '_' || ch == '-' {
+            output.push(ch);
+        } else if ch.is_whitespace() {
+            output.push('-');
+        }
+    }
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let output = output.trim_matches('-').to_string();
+    if output.is_empty() {
+        fallback.to_string()
+    } else {
+        output
     }
 }
 
@@ -2458,6 +2488,37 @@ mod tests {
                 &reserved
             ),
             "planner-skill-3"
+        );
+    }
+
+    #[test]
+    fn resolve_import_skill_name_preserves_non_ascii_skill_names() {
+        let root = tempdir().expect("tempdir");
+        let skill_root = root.path();
+        assert_eq!(
+            resolve_import_skill_name(
+                skill_root,
+                "传播链路评估",
+                ImportConflictMode::AutoRenameOnly,
+                &HashSet::new()
+            ),
+            "传播链路评估"
+        );
+    }
+
+    #[test]
+    fn resolve_import_skill_name_suffixes_non_ascii_conflicts() {
+        let root = tempdir().expect("tempdir");
+        let skill_root = root.path();
+        std::fs::create_dir_all(skill_root.join("传播链路评估")).expect("seed unicode skill");
+        assert_eq!(
+            resolve_import_skill_name(
+                skill_root,
+                "传播链路评估",
+                ImportConflictMode::AutoRenameOnly,
+                &HashSet::new()
+            ),
+            "传播链路评估-2"
         );
     }
 

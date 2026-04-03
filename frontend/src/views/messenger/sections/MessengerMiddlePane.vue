@@ -1432,9 +1432,17 @@ const showImportRenameDetails = async (report: unknown) => {
     h('div', { class: 'messenger-pack-rename-dialog-body' }, messageChildren),
     t('beeroom.pack.rename.dialogTitle'),
     {
-      confirmButtonText: t('common.confirm')
+      confirmButtonText: t('common.confirm'),
+      closeOnClickModal: false,
+      closeOnPressEscape: false,
+      showClose: false
     }
   );
+};
+
+const isMessageBoxDismissAction = (value: unknown): boolean => {
+  const action = String(value || '').trim().toLowerCase();
+  return action === 'cancel' || action === 'close';
 };
 
 const resetSwarmPackInput = () => {
@@ -1515,10 +1523,21 @@ const handleSwarmPackFileChange = async (event: Event) => {
             count: renamedTotal
           })
         );
-        await showImportRenameDetails(job?.report);
+        try {
+          await showImportRenameDetails(job?.report);
+        } catch (dialogError) {
+          if (!isMessageBoxDismissAction(dialogError)) {
+            throw dialogError;
+          }
+        }
         return;
       }
       ElMessage.success(t('beeroom.pack.message.importSuccess', { name: importedName }));
+      return;
+    }
+    if (status === 'failed' || status === 'error' || status === 'cancelled' || status === 'canceled') {
+      const detail = String(job?.detail?.error || '').trim();
+      ElMessage.error(detail || beeroomStore.packError || t('beeroom.pack.message.importFailed'));
       return;
     }
     ElMessage.warning(t('beeroom.pack.message.importPending'));

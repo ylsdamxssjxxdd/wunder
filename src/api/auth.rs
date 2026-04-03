@@ -857,10 +857,8 @@ fn build_user_profile_value(
     user: &crate::storage::UserAccountRecord,
 ) -> Result<Value, Response> {
     let profile = build_user_profile(state.as_ref(), user)?;
-    let mut payload =
-        serde_json::to_value(profile).map_err(|err| {
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
-        })?;
+    let mut payload = serde_json::to_value(profile)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     if let Value::Object(ref mut map) = payload {
         map.insert(
             "usage_summary".to_string(),
@@ -871,9 +869,10 @@ fn build_user_profile_value(
 }
 
 fn build_user_usage_summary(state: &Arc<AppState>, user_id: &str) -> Value {
-    let records = state
-        .monitor
-        .load_records_by_user(user_id, None, None, USER_PROFILE_RUNTIME_RECORD_LIMIT);
+    let records =
+        state
+            .monitor
+            .load_records_by_user(user_id, None, None, USER_PROFILE_RUNTIME_RECORD_LIMIT);
     let mut consumed_tokens = 0_i64;
     for record in records {
         let Some(events) = record.get("events").and_then(Value::as_array) else {
@@ -915,8 +914,14 @@ fn parse_usage_total_tokens(data: &Value) -> i64 {
     if let Some(total) = direct_total.or(nested_total) {
         return total.max(0);
     }
-    let direct_input = data.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
-    let direct_output = data.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+    let direct_input = data
+        .get("input_tokens")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let direct_output = data
+        .get("output_tokens")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
     if direct_input > 0 || direct_output > 0 {
         return direct_input.saturating_add(direct_output).max(0);
     }

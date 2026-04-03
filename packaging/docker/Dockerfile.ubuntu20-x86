@@ -82,8 +82,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # AppImage packaging tooling (append-only, keep previous cache layers intact)
+# Keep system mksquashfs available so sidecar AppImage can be repacked with gzip
+# for older Linux/FUSE environments.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       squashfs-tools \
+    && command -v mksquashfs >/dev/null \
+    && mksquashfs -help 2>&1 | grep -q 'gzip (default)' \
     && rm -rf /var/lib/apt/lists/*
 
 # AppImage runner download (append-only, keep previous cache layers intact)
