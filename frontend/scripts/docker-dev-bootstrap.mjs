@@ -24,6 +24,8 @@ const parseBoolean = (value) => {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 };
 
+const skipDistBuild = parseBoolean(process.env.FRONTEND_SKIP_DIST_BUILD);
+
 const hasPath = async (targetPath) => {
   try {
     await fs.access(targetPath);
@@ -270,6 +272,16 @@ const waitBackend = async () => {
   });
 };
 
+const ensurePrebuiltDist = async () => {
+  const distIndexPath = path.join(distRoot, 'index.html');
+  if (!(await hasPath(distIndexPath))) {
+    throw new Error(
+      `FRONTEND_SKIP_DIST_BUILD requires an existing dist/index.html at ${distIndexPath}`
+    );
+  }
+  log('reusing existing frontend/dist without running vite build');
+};
+
 const startDevServer = async () => {
   log('starting vite dev server');
   await run(process.execPath, [path.join(frontendRoot, 'scripts', 'dev-server.mjs')], {
@@ -299,9 +311,13 @@ const main = async () => {
     await keepContainerAlive('reusing existing frontend/dist for nginx static serving');
     return;
   }
-  await clearCaches();
-  await buildTempDist(viteEntry);
-  await syncDist();
+  if (skipDistBuild) {
+    await ensurePrebuiltDist();
+  } else {
+    await clearCaches();
+    await buildTempDist(viteEntry);
+    await syncDist();
+  }
   await waitBackend();
   await startDevServer();
 };

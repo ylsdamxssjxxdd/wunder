@@ -208,6 +208,7 @@ services:
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
       - FRONTEND_ALLOW_PREBUILT_DIST=${FRONTEND_ALLOW_PREBUILT_DIST:-0}
+      - FRONTEND_SKIP_DIST_BUILD=${FRONTEND_SKIP_DIST_BUILD:-0}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
     command: ["node", "./frontend/scripts/docker-dev-bootstrap.mjs"]
