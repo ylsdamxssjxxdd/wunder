@@ -1985,6 +1985,7 @@ async fn system_prompt(
     let tool_names = finalize_tool_names(allowed.clone());
     let tooling_preview = build_prompt_tooling_preview_payload(
         &state,
+        &resolved.user.user_id,
         &user_context,
         &allowed,
         agent_record.as_ref(),
@@ -2085,6 +2086,7 @@ async fn session_system_prompt(
     let tool_names = finalize_tool_names(allowed.clone());
     let tooling_preview = build_prompt_tooling_preview_payload(
         &state,
+        &resolved.user.user_id,
         &user_context,
         &allowed,
         agent_record.as_ref(),
@@ -2932,6 +2934,7 @@ fn resolve_system_prompt_tool_call_mode(
 
 fn build_prompt_tooling_preview_payload(
     state: &Arc<AppState>,
+    user_id: &str,
     user_context: &crate::user_access::UserToolContext,
     allowed_tool_names: &HashSet<String>,
     agent_record: Option<&crate::storage::UserAgentRecord>,
@@ -2944,6 +2947,8 @@ fn build_prompt_tooling_preview_payload(
         allowed_tool_names,
         Some(&user_context.bindings),
         tool_call_mode,
+        user_id,
+        agent_record.map(|record| record.agent_id.as_str()),
     );
     let llm_tools = tooling
         .as_ref()

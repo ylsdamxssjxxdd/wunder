@@ -224,10 +224,11 @@
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话；无主会话时会自动创建后再发送指令。
+- `智能体蜂群` 的 `send`/`batch_send` 在未显式传入 `sessionKey` 时默认新建线程，避免工蜂沿用旧上下文；仅在显式指定 `sessionKey` 时复用已有线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
-- `智能体蜂群` 入参语义增强（便于模型主动调用）：`spawn` 需 `agentId+task`，`send` 需 `message` 且 `agentId/sessionKey` 二选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/sessionKey` 二选一）。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）。
+- `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
 - 推荐的 Codex 风格子智能体调用路径更新为：`subagent_control.spawn/batch_spawn -> sessions_yield -> 子智能体自动回流唤醒 -> status/wait(按需)`；其中 `sessions_yield` 是显式“本轮先结束”的一级原语。

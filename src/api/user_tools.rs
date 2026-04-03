@@ -17,7 +17,10 @@ use crate::services::default_tool_profile::curated_default_tool_candidates;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
-use crate::tools::{a2a_service_schema, builtin_tool_specs, resolve_tool_name};
+use crate::tools::{
+    a2a_service_schema, build_agent_swarm_tool_hint_for_context, builtin_tool_specs,
+    enrich_agent_swarm_tool_spec_for_context, resolve_tool_name,
+};
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
     UserToolContext,
@@ -55,6 +58,7 @@ struct BuiltinSkillCatalog {
 enum UserSkillSourceKind {
     Builtin,
     Custom,
+    Global,
 }
 
 impl UserSkillSourceKind {
@@ -62,10 +66,15 @@ impl UserSkillSourceKind {
         matches!(self, Self::Builtin)
     }
 
+    fn is_readonly(self) -> bool {
+        !matches!(self, Self::Custom)
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::Builtin => "builtin",
             Self::Custom => "custom",
+            Self::Global => "global",
         }
     }
 }
@@ -598,9 +607,48 @@ fn load_skill_registry_for_root(config: &Config, root: &Path) -> SkillRegistry {
     load_skills(&scan_config, false, false, false)
 }
 
+fn resolve_enabled_global_skill_spec(config: &Config, name: &str) -> Option<SkillSpec> {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    let enabled: HashSet<String> = config
+        .skills
+        .enabled
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if !enabled.contains(cleaned) {
+        return None;
+    }
+    let registry = load_skills(config, false, true, false);
+    registry.get(cleaned)
+}
+
 fn load_builtin_skill_registry(config: &Config) -> Option<SkillRegistry> {
     let builtin_root = resolve_builtin_skills_root()?;
     Some(load_skill_registry_for_root(config, &builtin_root))
+}
+
+fn resolve_configured_global_skill_roots(config: &Config) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+    for raw_path in &config.skills.paths {
+        let cleaned = raw_path.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let normalized = normalize_existing_path(&PathBuf::from(cleaned));
+        if !normalized.exists() || !normalized.is_dir() {
+            continue;
+        }
+        let key = normalize_path_for_compare(&normalized);
+        if seen.insert(key) {
+            roots.push(normalized);
+        }
+    }
+    roots
 }
 
 fn resolve_user_skill_source(
@@ -696,11 +744,12 @@ fn user_skill_to_value(
         "shared": shared,
         "builtin": source.is_builtin(),
         "source": source.as_str(),
-        "readonly": source.is_builtin()
+        "readonly": source.is_readonly()
     })
 }
 
 fn resolve_user_skill_root_for_source(
+    config: &Config,
     skill_root: &Path,
     spec: &SkillSpec,
     source: UserSkillSourceKind,
@@ -723,6 +772,9 @@ fn resolve_user_skill_root_for_source(
                     })
                     .unwrap_or(false)
         }
+        UserSkillSourceKind::Global => resolve_configured_global_skill_roots(config)
+            .into_iter()
+            .any(|configured_root| is_within_root(&configured_root, &root)),
     };
     if !allowed {
         return Err(error_response(
@@ -741,13 +793,14 @@ fn resolve_visible_user_skill(
     let builtin_catalog = load_builtin_skill_catalog(config, Some(skill_root));
     if let Ok(spec) = resolve_user_skill_spec(config, skill_root, name) {
         let source = resolve_user_skill_source(skill_root, &spec, &builtin_catalog);
-        let root = resolve_user_skill_root_for_source(skill_root, &spec, source)?;
+        let root = resolve_user_skill_root_for_source(config, skill_root, &spec, source)?;
         return Ok(ResolvedUserSkill { spec, root, source });
     }
     if builtin_catalog.names.contains(name) {
         if let Some(registry) = load_builtin_skill_registry(config) {
             if let Some(spec) = registry.get(name) {
                 let root = resolve_user_skill_root_for_source(
+                    config,
                     skill_root,
                     &spec,
                     UserSkillSourceKind::Builtin,
@@ -759,6 +812,16 @@ fn resolve_visible_user_skill(
                 });
             }
         }
+    }
+    if let Some(spec) = resolve_enabled_global_skill_spec(config, name) {
+        let source = if resolve_user_skill_source(skill_root, &spec, &builtin_catalog).is_builtin()
+        {
+            UserSkillSourceKind::Builtin
+        } else {
+            UserSkillSourceKind::Global
+        };
+        let root = resolve_user_skill_root_for_source(config, skill_root, &spec, source)?;
+        return Ok(ResolvedUserSkill { spec, root, source });
     }
     Err(error_response(
         StatusCode::NOT_FOUND,
@@ -2291,7 +2354,8 @@ async fn user_tools_summary(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let summary = build_user_tools_summary(&user_id, &allowed, &context, false);
+    let summary =
+        build_user_tools_summary(&user_id, &allowed, &context, false, state.storage.as_ref());
     Ok(Json(json!({ "data": summary })))
 }
 
@@ -2303,7 +2367,8 @@ async fn user_tools_catalog(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context_for_catalog(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let summary = build_user_tools_summary(&user_id, &allowed, &context, true);
+    let summary =
+        build_user_tools_summary(&user_id, &allowed, &context, true, state.storage.as_ref());
     Ok(Json(json!({ "data": summary })))
 }
 
@@ -2331,6 +2396,7 @@ fn build_user_tools_summary(
     allowed: &HashSet<String>,
     context: &UserToolContext,
     include_unavailable_user_skills: bool,
+    storage: &dyn StorageBackend,
 ) -> AvailableToolsResponse {
     let config = &context.config;
     let language = i18n::get_language().to_lowercase();
@@ -2342,7 +2408,8 @@ fn build_user_tools_summary(
 
     let mut builtin_tools = Vec::new();
     let mut seen_builtin = HashSet::new();
-    for spec in builtin_tool_specs() {
+    let swarm_hint = build_agent_swarm_tool_hint_for_context(storage, user_id, None).ok();
+    for mut spec in builtin_tool_specs() {
         let aliases = canonical_aliases
             .get(&spec.name)
             .map(|value| value.as_slice())
@@ -2364,6 +2431,11 @@ fn build_user_tools_summary(
         };
         if !seen_builtin.insert(name.clone()) {
             continue;
+        }
+        if resolve_tool_name(&spec.name) == "智能体蜂群" {
+            if let Some(hint) = swarm_hint.as_ref() {
+                enrich_agent_swarm_tool_spec_for_context(&mut spec, hint);
+            }
         }
         builtin_tools.push(ToolSpec {
             name,
@@ -3371,12 +3443,13 @@ mod tests {
     use crate::services::user_access::UserToolContext;
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::SkillRegistry;
+    use crate::storage::{SqliteStorage, StorageBackend};
     use crate::user_tools::UserToolsPayload;
     use serde_json::json;
     use std::collections::HashSet;
     use std::fs;
     use std::path::Path;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
     use tempfile::tempdir;
 
     fn builtin_skills_env_lock() -> &'static Mutex<()> {
@@ -3417,6 +3490,10 @@ mod tests {
 
     #[test]
     fn catalog_can_expose_user_custom_skills_even_when_not_allowed() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-tools-catalog.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         let mut bindings = UserToolBindings::default();
         bindings.alias_specs.insert(
             "custom_skill".to_string(),
@@ -3458,13 +3535,15 @@ mod tests {
         };
         let allowed = HashSet::new();
 
-        let summary_without_catalog = build_user_tools_summary("alice", &allowed, &context, false);
+        let summary_without_catalog =
+            build_user_tools_summary("alice", &allowed, &context, false, storage.as_ref());
         assert!(
             summary_without_catalog.user_skills.is_empty(),
             "non-catalog summary should keep allow-list filtering"
         );
 
-        let summary_with_catalog = build_user_tools_summary("alice", &allowed, &context, true);
+        let summary_with_catalog =
+            build_user_tools_summary("alice", &allowed, &context, true, storage.as_ref());
         assert_eq!(summary_with_catalog.user_skills.len(), 1);
         assert_eq!(summary_with_catalog.user_skills[0].name, "custom_skill");
         assert!(
@@ -3552,5 +3631,26 @@ mod tests {
         } else {
             std::env::remove_var(BUILTIN_SKILLS_ROOT_ENV);
         }
+    }
+
+    #[test]
+    fn resolve_visible_user_skill_can_read_enabled_global_skill_from_config_paths() {
+        let user_root = tempdir().expect("user root");
+        let global_root = tempdir().expect("global root");
+        write_test_skill(global_root.path(), "政策知识库检索", "global skill");
+
+        let mut config = Config::default();
+        config.skills.paths = vec![global_root.path().to_string_lossy().to_string()];
+        config.skills.enabled = vec!["政策知识库检索".to_string()];
+
+        let resolved =
+            resolve_visible_user_skill(&config, user_root.path(), "政策知识库检索")
+                .expect("resolve global skill");
+        assert!(matches!(resolved.source, UserSkillSourceKind::Global));
+        assert_eq!(resolved.spec.name, "政策知识库检索");
+        assert_eq!(
+            normalize_test_path(&resolved.root),
+            normalize_test_path(&global_root.path().join("政策知识库检索"))
+        );
     }
 }

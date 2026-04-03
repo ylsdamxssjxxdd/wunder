@@ -1,5 +1,8 @@
 use super::*;
-use crate::tools::build_responses_freeform_tool;
+use crate::tools::{
+    build_agent_swarm_tool_hint_for_context, build_responses_freeform_tool,
+    enrich_agent_swarm_tool_spec_for_context,
+};
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
 const THREAD_AGENTS_MD_FILE_NAME: &str = "AGENTS.md";
@@ -65,17 +68,30 @@ impl Orchestrator {
         allowed_tool_names: &HashSet<String>,
         user_tool_bindings: Option<&UserToolBindings>,
         tool_call_mode: ToolCallMode,
+        user_id: &str,
+        current_agent_id: Option<&str>,
     ) -> Option<FunctionTooling> {
         if allowed_tool_names.is_empty() {
             return None;
         }
-        let specs = collect_prompt_tool_specs_with_language(
+        let mut specs = collect_prompt_tool_specs_with_language(
             config,
             skills,
             allowed_tool_names,
             user_tool_bindings,
             "en-US",
         );
+        if let Ok(hint) = build_agent_swarm_tool_hint_for_context(
+            self.storage.as_ref(),
+            user_id,
+            current_agent_id,
+        ) {
+            for spec in &mut specs {
+                if resolve_tool_name(&spec.name) == "智能体蜂群" {
+                    enrich_agent_swarm_tool_spec_for_context(spec, &hint);
+                }
+            }
+        }
         if specs.is_empty() {
             return None;
         }

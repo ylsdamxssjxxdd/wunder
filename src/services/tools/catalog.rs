@@ -686,23 +686,29 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": "目标智能体 ID。"},
+                    "agentName": {"type": "string", "description": "目标智能体名称。优先从 list 返回结果中原样复制。"},
+                    "name": {"type": "string", "description": "agentName 的简写别名。"},
                     "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
                     "task": {"type": "string", "description": "spawn 的任务描述。", "minLength": 1},
                     "tasks": {
                         "type": "array",
-                        "description": "batch_send 任务列表（每项必须包含 message 与 agentId/sessionKey）。",
+                        "description": "batch_send 任务列表（每项必须包含 message，与 agentId/agentName/name/sessionKey 之一）。",
                         "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
                                 "agentId": {"type": "string", "description": "目标智能体 ID。"},
+                                "agentName": {"type": "string", "description": "目标智能体名称。优先从 list 返回结果中原样复制。"},
+                                "name": {"type": "string", "description": "agentName 的简写别名。"},
                                 "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
                             "required": ["message"],
                             "anyOf": [
                                 {"required": ["agentId"]},
+                                {"required": ["agentName"]},
+                                {"required": ["name"]},
                                 {"required": ["sessionKey"]}
                             ]
                         }
@@ -717,6 +723,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "required": ["message"],
                             "anyOf": [
                                 {"required": ["agentId"]},
+                                {"required": ["agentName"]},
+                                {"required": ["name"]},
                                 {"required": ["sessionKey"]}
                             ]
                         }
@@ -727,7 +735,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     },
                     {
                         "if": {"properties": {"action": {"const": "spawn"}}},
-                        "then": {"required": ["agentId", "task"]}
+                        "then": {
+                            "required": ["task"],
+                            "anyOf": [
+                                {"required": ["agentId"]},
+                                {"required": ["agentName"]},
+                                {"required": ["name"]}
+                            ]
+                        }
                     },
                     {
                         "if": {"properties": {"action": {"const": "batch_send"}}},
@@ -740,13 +755,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 ],
                 "examples": [
                     {"action": "list"},
-                    {"action": "send", "agentId": "agent_research", "message": "请输出 5 条风险要点。"},
-                    {"action": "spawn", "agentId": "agent_writer", "task": "给出一页执行计划。"},
+                    {"action": "send", "agentName": "政策专家（副）", "message": "请输出 5 条风险要点。"},
+                    {"action": "spawn", "agentName": "政策专家（副）", "task": "给出一页执行计划。"},
                     {
                         "action": "batch_send",
                         "tasks": [
-                            {"agentId": "agent_legal", "message": "评估法律约束。"},
-                            {"agentId": "agent_finance", "message": "评估预算影响。"}
+                            {"agentName": "政策专家（副）", "message": "评估法律约束。"},
+                            {"agentId": "agent_xxx", "message": "评估预算影响。"}
                         ]
                     },
                     {"action": "wait", "runIds": ["run_a", "run_b"]}
@@ -1585,6 +1600,38 @@ mod tests {
         assert!(spec.input_schema["properties"]["-F"].is_object());
         assert!(spec.input_schema["properties"]["max_count"].is_object());
         assert!(spec.input_schema["anyOf"].is_array());
+    }
+
+    #[test]
+    fn agent_swarm_schema_accepts_agent_name_variants() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "智能体蜂群")
+            .expect("agent_swarm spec");
+        assert!(spec.input_schema["properties"]["agentName"].is_object());
+        assert!(spec.input_schema["properties"]["name"].is_object());
+        let task_props = &spec.input_schema["properties"]["tasks"]["items"]["properties"];
+        assert!(task_props["agentName"].is_object());
+        assert!(task_props["name"].is_object());
+        let all_of = spec.input_schema["allOf"]
+            .as_array()
+            .expect("allOf should be array");
+        let send_rule = all_of
+            .iter()
+            .find(|item| item["if"]["properties"]["action"]["const"] == "send")
+            .expect("send rule");
+        let send_any_of = send_rule["then"]["anyOf"].as_array().expect("send anyOf");
+        assert!(send_any_of
+            .iter()
+            .any(|item| item["required"][0] == "agentName"));
+        let spawn_rule = all_of
+            .iter()
+            .find(|item| item["if"]["properties"]["action"]["const"] == "spawn")
+            .expect("spawn rule");
+        let spawn_any_of = spawn_rule["then"]["anyOf"].as_array().expect("spawn anyOf");
+        assert!(spawn_any_of
+            .iter()
+            .any(|item| item["required"][0] == "name"));
     }
 
     #[test]

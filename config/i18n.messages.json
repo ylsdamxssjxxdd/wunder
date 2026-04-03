@@ -1095,6 +1095,14 @@
     "en-US": "(range {start}-{end} out of file size {total})",
     "zh-CN": "（范围 {start}-{end} 超出文件长度 {total}）"
   },
+  "tool.read.range_out_of_truncated_excerpt": {
+    "en-US": "(range {start}-{end} exceeds the loaded excerpt of {loaded} lines; file is too large so only a safe prefix was returned)",
+    "zh-CN": "（范围 {start}-{end} 超出本次已加载的 {loaded} 行截断内容；文件较大，本次仅返回安全前缀）"
+  },
+  "tool.read.truncated_prefix": {
+    "en-US": "(file is large; returning a safe truncated prefix, so the content may be incomplete)",
+    "zh-CN": "（文件较大，本次仅返回安全截断前缀，内容可能不完整）"
+  },
   "tool.read.too_large": {
     "en-US": "File too large to read.",
     "zh-CN": "文件过大，已拒绝读取。"

@@ -27,7 +27,6 @@ import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
-  didThreadRuntimeEnterBusyState,
   isSessionBusyFromSignals,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
@@ -55,6 +54,11 @@ import {
   isCompactionMarkerAssistantMessage,
   mergeCompactionMarkersIntoMessages
 } from './chatCompactionMarker';
+import { replaceMessageArrayKeepingReference } from './chatMessageArraySync';
+import {
+  mergeProtectedRealtimeMessages,
+  upsertProtectedRealtimeMessage
+} from './chatRealtimeMessageProtection';
 import { useCommandSessionStore } from './commandSessions';
 
 type SnapshotAssistantMessage = {
@@ -77,6 +81,7 @@ type SnapshotAssistantMessage = {
   attachments?: unknown[];
   subagents?: unknown[];
   hiddenInternal?: boolean;
+  realtime_protected?: boolean;
 };
 
 type DemoChatCachePatch = {
@@ -202,6 +207,10 @@ type ListSessionsByStatusOptions = {
 
 type OpenDraftSessionOptions = {
   agent_id?: string | number | boolean | null | undefined;
+};
+
+type LoadSessionDetailOptions = {
+  preserveWatcher?: boolean;
 };
 
 type SendMessageOptions = {
@@ -1040,6 +1049,16 @@ const setRuntimeLastEventId = (runtime, eventId) => {
   runtime.lastEventId = normalized;
 };
 
+const updateRuntimeRemoteLastEventId = (runtime, eventId) => {
+  if (!runtime) return;
+  const normalized = normalizeStreamEventId(eventId);
+  if (normalized === null) return;
+  const current = normalizeStreamEventId(runtime.remoteLastEventId);
+  if (current === null || normalized > current) {
+    runtime.remoteLastEventId = normalized;
+  }
+};
+
 const normalizeStreamRound = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number.parseInt(value, 10);
@@ -1168,15 +1187,18 @@ const normalizeSnapshotMessage = (message) => {
   if (normalizeHiddenInternalMessage(message.hiddenInternal)) {
     base.hiddenInternal = true;
   }
+  if (message.realtime_protected === true) {
+    base.realtime_protected = true;
+  }
+  const streamEventId = normalizeStreamEventId(message.stream_event_id);
+  if (streamEventId !== null) {
+    base.stream_event_id = streamEventId;
+  }
   if (message.role === 'assistant') {
     base.reasoning = normalizedAssistant?.reasoning || '';
     base.reasoningStreaming = normalizeFlag(message.reasoningStreaming);
     base.workflowStreaming = normalizeFlag(message.workflowStreaming);
     base.stream_incomplete = normalizeFlag(message.stream_incomplete);
-    const streamEventId = normalizeStreamEventId(message.stream_event_id);
-    if (streamEventId !== null) {
-      base.stream_event_id = streamEventId;
-    }
     const streamRound = normalizeStreamRound(message.stream_round);
     if (streamRound !== null) {
       base.stream_round = streamRound;
@@ -1471,7 +1493,25 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   const isPendingTarget =
     normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
   if (isPendingTarget || !Number.isFinite(targetTime)) {
-    return cursor;
+    const fallback = snapshotAssistants[cursor];
+    if (!fallback) return -1;
+    const fallbackEventId = normalizeStreamEventId(fallback.stream_event_id);
+    const fallbackRound = normalizeStreamRound(fallback.stream_round);
+    const fallbackPending =
+      normalizeFlag(fallback.stream_incomplete) || normalizeFlag(fallback.workflowStreaming);
+    if (targetEventId !== null && fallbackEventId !== null && targetEventId === fallbackEventId) {
+      return cursor;
+    }
+    if (targetRound !== null && fallbackRound !== null && targetRound === fallbackRound) {
+      return cursor;
+    }
+    if (
+      fallbackPending &&
+      (targetRound === null || fallbackRound === null || targetRound === fallbackRound)
+    ) {
+      return cursor;
+    }
+    return -1;
   }
   return -1;
 };
@@ -2469,6 +2509,7 @@ const resolveToolCategory = (toolName, payload) => {
 
 const sessionRuntime = new Map();
 const sessionMessages = new Map();
+const sessionProtectedRealtimeMessages = new Map();
 const sessionListCache = new Map();
 const sessionListCacheInFlight = new Map();
 const sessionEventsSnapshotCache = new Map<string, SessionEventsSnapshotCacheEntry>();
@@ -2959,6 +3000,103 @@ const loadSessionEventsSnapshot = (
   });
 };
 
+const readProtectedRealtimeMessages = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return [];
+  const entries = sessionProtectedRealtimeMessages.get(sessionKey);
+  return Array.isArray(entries) ? entries.slice() : [];
+};
+
+const writeProtectedRealtimeMessages = (sessionId, entries) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return [];
+  const nextEntries = Array.isArray(entries) ? entries.slice() : [];
+  if (!nextEntries.length) {
+    sessionProtectedRealtimeMessages.delete(sessionKey);
+    return [];
+  }
+  sessionProtectedRealtimeMessages.set(sessionKey, nextEntries);
+  return nextEntries;
+};
+
+const trackSessionProtectedRealtimeMessage = (
+  sessionId,
+  entry: {
+    eventId?: unknown;
+    role?: unknown;
+    content?: unknown;
+    createdAt?: unknown;
+    hiddenInternal?: unknown;
+  }
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return [];
+  const nextEntries = upsertProtectedRealtimeMessage(
+    readProtectedRealtimeMessages(sessionKey),
+    entry,
+    normalizeStreamEventId
+  );
+  return writeProtectedRealtimeMessages(sessionKey, nextEntries);
+};
+
+const mergeSessionProtectedRealtimeMessages = (sessionId, messages) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey || !Array.isArray(messages)) {
+    return messages;
+  }
+  const entries = readProtectedRealtimeMessages(sessionKey);
+  if (!entries.length) {
+    return messages;
+  }
+  const result = mergeProtectedRealtimeMessages({
+    messages,
+    entries,
+    normalizeEventId: normalizeStreamEventId,
+    buildMessage,
+    assignStreamEventId
+  });
+  writeProtectedRealtimeMessages(sessionKey, result.retainedEntries);
+  return messages;
+};
+
+const protectRealtimeChannelMessage = (
+  sessionId,
+  messages,
+  eventId,
+  role,
+  content,
+  eventTimestampMs,
+  hiddenInternal = false
+) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  const normalizedEventId = normalizeStreamEventId(eventId);
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  const normalizedContent = String(content || '').trim();
+  if (
+    !sessionKey ||
+    !Array.isArray(messages) ||
+    normalizedEventId === null ||
+    (normalizedRole !== 'user' && normalizedRole !== 'assistant') ||
+    !normalizedContent
+  ) {
+    return;
+  }
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== normalizedRole) continue;
+    if (normalizeStreamEventId(message?.stream_event_id) !== normalizedEventId) continue;
+    message.realtime_protected = true;
+    break;
+  }
+  trackSessionProtectedRealtimeMessage(sessionKey, {
+    eventId: normalizedEventId,
+    role: normalizedRole,
+    content: normalizedContent,
+    createdAt: Number.isFinite(eventTimestampMs) ? new Date(eventTimestampMs).toISOString() : undefined,
+    hiddenInternal: normalizedRole === 'user' && hiddenInternal === true
+  });
+};
+
 const filterSessionsByAgent = (agentId, sourceSessions = []) => {
   const normalizedAgentId = String(agentId || '').trim();
   return (Array.isArray(sourceSessions) ? sourceSessions : []).filter((session) => {
@@ -3143,6 +3281,7 @@ const purgeUnavailableSession = (store, sessionId) => {
   }
   sessionRuntime.delete(targetId);
   sessionMessages.delete(targetId);
+  sessionProtectedRealtimeMessages.delete(targetId);
   clearSessionEventsSnapshot(targetId);
   sessionDetailWarmState.delete(targetId);
   sessionDetailPrefetchInFlight.delete(targetId);
@@ -3221,6 +3360,7 @@ const ensureRuntime = (sessionId) => {
       slowClientResumeAfterEventId: 0,
       stopRequested: false,
       lastEventId: 0,
+      remoteLastEventId: 0,
       threadStatus: 'not_loaded',
       loaded: false,
       activeTurnId: '',
@@ -3621,13 +3761,24 @@ const resolveLastAssistantStreamEventId = (messages) => {
   return null;
 };
 
-const resolveKnownSessionEventFloor = (sessionId, messages = getSessionMessages(sessionId)) => {
-  const runtime = getRuntime(sessionId);
-  const messageMaxEventId = Math.max(
+const resolveMaterializedMessageEventId = (messages) =>
+  Math.max(
     resolveLastStreamEventId(messages) || 0,
     resolveLastAssistantStreamEventId(messages) || 0,
     resolveMaxStreamEventId(messages) || 0
   );
+
+const resolveHiddenInternalUserEvent = (payload, data) =>
+  Boolean(
+    data?.hidden_internal_user ??
+      data?.hiddenInternalUser ??
+      payload?.hidden_internal_user ??
+      payload?.hiddenInternalUser
+  );
+
+const resolveKnownSessionEventFloor = (sessionId, messages = getSessionMessages(sessionId)) => {
+  const runtime = getRuntime(sessionId);
+  const messageMaxEventId = resolveMaterializedMessageEventId(messages);
   return Math.max(getRuntimeLastEventId(runtime), messageMaxEventId);
 };
 
@@ -4177,14 +4328,6 @@ const startSessionWatcher = (store, sessionId) => {
     return '';
   };
 
-  const resolveHiddenInternalUserEvent = (payload, data) =>
-    Boolean(
-      data?.hidden_internal_user ??
-        data?.hiddenInternalUser ??
-        payload?.hidden_internal_user ??
-        payload?.hiddenInternalUser
-    );
-
   const markWatchdogEvent = () => {
     runtime.watchLastEventAt = Date.now();
   };
@@ -4211,7 +4354,7 @@ const startSessionWatcher = (store, sessionId) => {
       if (store.activeSessionId !== key) return;
       if (!hasKnownSessionInStore(store, key)) return;
       if (runtime.sendController || runtime.resumeController) return;
-      void store.loadSessionDetail(key).catch(() => {});
+      void store.loadSessionDetail(key, { preserveWatcher: true }).catch(() => {});
     }, Math.max(0, Number(delayMs) || 0));
   };
 
@@ -4258,6 +4401,7 @@ const startSessionWatcher = (store, sessionId) => {
         applySessionRuntimeSnapshot(runtime, payload?.runtime);
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
+        updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
         const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
         const shouldReconcileRemoteDrift = shouldWatchdogReconcileDrift({
           remoteLastEventId,
@@ -4319,21 +4463,11 @@ const startSessionWatcher = (store, sessionId) => {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
     if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
-      const previousThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
       const normalizedEventId = normalizeStreamEventId(eventId);
       if (normalizedEventId !== null) {
-        updateRuntimeLastEventId(runtime, normalizedEventId);
-        lastEventId = Math.max(lastEventId, normalizedEventId);
+        updateRuntimeRemoteLastEventId(runtime, normalizedEventId);
       }
       applySessionRuntimeEvent(store, key, data ?? payload, normalizedEventType);
-      const nextThreadStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
-      const runtimeBecameBusy = didThreadRuntimeEnterBusyState(
-        previousThreadStatus,
-        nextThreadStatus
-      );
-      if (normalizedEventType === 'thread_status' && runtimeBecameBusy) {
-        scheduleWatchReconcile(0);
-      }
       return;
     }
     if (
@@ -4356,6 +4490,8 @@ const startSessionWatcher = (store, sessionId) => {
     const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? data?.timestamp);
     const normalizedEventId = normalizeStreamEventId(eventId);
     if (normalizedEventType === 'channel_message') {
+      const channelRole = String(data?.role ?? payload?.role ?? '').trim().toLowerCase();
+      const channelContent = String(data?.content ?? payload?.content ?? '').trim();
       const result = consumeChatWatchChannelMessage({
         messages: sessionMessagesRef,
         lastEventId,
@@ -4379,7 +4515,24 @@ const startSessionWatcher = (store, sessionId) => {
       if (result.handled) {
         if (result.lastEventId > lastEventId) {
           updateRuntimeLastEventId(runtime, result.lastEventId);
+          updateRuntimeRemoteLastEventId(runtime, result.lastEventId);
           lastEventId = result.lastEventId;
+        }
+        if (
+          result.mutated &&
+          normalizedEventId !== null &&
+          (channelRole === 'user' || channelRole === 'assistant') &&
+          channelContent
+        ) {
+          protectRealtimeChannelMessage(
+            key,
+            sessionMessagesRef,
+            normalizedEventId,
+            channelRole,
+            channelContent,
+            eventTimestampMs,
+            resolveHiddenInternalUserEvent(payload, data)
+          );
         }
         return;
       }
@@ -4425,8 +4578,10 @@ const startSessionWatcher = (store, sessionId) => {
           return;
         }
         setRuntimeLastEventId(runtime, normalizedEventId);
+        updateRuntimeRemoteLastEventId(runtime, normalizedEventId);
       } else {
         updateRuntimeLastEventId(runtime, normalizedEventId);
+        updateRuntimeRemoteLastEventId(runtime, normalizedEventId);
       }
       lastEventId = normalizedEventId;
     }
@@ -4731,6 +4886,7 @@ const resetChatRuntimeState = () => {
   clearSessionWatcher();
   sessionRuntime.clear();
   sessionMessages.clear();
+  sessionProtectedRealtimeMessages.clear();
   sessionListCache.clear();
   sessionListCacheInFlight.clear();
   sessionEventsSnapshotCache.clear();
@@ -7515,10 +7671,11 @@ export const useChatStore = defineStore('chat', {
           targetId,
           eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
         );
-        applySessionRuntimeSnapshot(ensureRuntime(targetId), eventsPayload?.runtime);
+        const runtime = ensureRuntime(targetId);
+        applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
         const remoteRunning = eventsPayload?.running === true;
-        updateRuntimeLastEventId(
-          ensureRuntime(targetId),
+        updateRuntimeRemoteLastEventId(
+          runtime,
           normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId)
         );
         const cachedHydratedMessages = dedupeAssistantMessages(getSessionMessages(targetId));
@@ -7542,12 +7699,14 @@ export const useChatStore = defineStore('chat', {
           createdAt: sessionDetail?.created_at,
           greeting: this.greetingOverride
         });
+        mergeSessionProtectedRealtimeMessages(targetId, greetingMessages);
         if (!remoteRunning) {
           clearCompletedAssistantStreamingState(greetingMessages);
         }
         applyHistoryMeta(targetId, sessionDetail, greetingMessages);
         applyMessageWindow(this, targetId, greetingMessages);
         cacheSessionMessages(targetId, greetingMessages);
+        updateRuntimeLastEventId(runtime, resolveMaterializedMessageEventId(greetingMessages));
         writeSessionHydratedMessageVersion(targetId, hydratedVersion);
         markSessionDetailWarm(targetId);
         void this.refreshSessionSubagents(targetId).catch(() => null);
@@ -7841,16 +8000,20 @@ export const useChatStore = defineStore('chat', {
       return targetId;
     },
 
-    async loadSessionDetail(sessionId) {
+    async loadSessionDetail(sessionId, options: LoadSessionDetailOptions = {}) {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;
       const previousSessionId = this.activeSessionId;
+      const preserveWatcher =
+        options.preserveWatcher === true && resolveSessionKey(previousSessionId) === targetSessionId;
       if (previousSessionId && previousSessionId !== targetSessionId) {
         cacheSessionMessages(previousSessionId, this.messages);
       }
-      abortResumeStream(previousSessionId);
-      clearSessionWatcher();
-      this.activeSessionId = targetSessionId;
+      if (!preserveWatcher) {
+        abortResumeStream(previousSessionId);
+        clearSessionWatcher();
+        this.activeSessionId = targetSessionId;
+      }
       getHistoryState(targetSessionId, { reset: true });
       const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
       const snapshot = this.getSnapshotForSession(targetSessionId);
@@ -7930,12 +8093,13 @@ export const useChatStore = defineStore('chat', {
         targetSessionId,
         eventsPayload?.command_sessions ?? eventsPayload?.commandSessions
       );
-      applySessionRuntimeSnapshot(ensureRuntime(targetSessionId), eventsPayload?.runtime);
+      const runtime = ensureRuntime(targetSessionId);
+      applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
       const remoteRunning = eventsPayload?.running === true;
       const remoteLastEventId = normalizeStreamEventId(
         eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
       );
-      updateRuntimeLastEventId(ensureRuntime(targetSessionId), remoteLastEventId);
+      updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
       const sessionCreatedAt = sessionDetail?.created_at;
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
@@ -7984,8 +8148,9 @@ export const useChatStore = defineStore('chat', {
           mergeSnapshotIntoMessages(finalCachedMessages, { messages })
         );
       }
+      mergeSessionProtectedRealtimeMessages(targetSessionId, messages);
       dismissStaleInquiryPanels(messages);
-      const nextMessages = ensureGreetingMessage(messages, {
+      let nextMessages = ensureGreetingMessage(messages, {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
@@ -7994,7 +8159,14 @@ export const useChatStore = defineStore('chat', {
       }
       clearSupersededPendingAssistantMessages(nextMessages);
       applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
+      if (preserveWatcher) {
+        const watchedMessages =
+          getSessionMessages(targetSessionId) ||
+          (resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null);
+        nextMessages = replaceMessageArrayKeepingReference(watchedMessages, nextMessages);
+      }
       cacheSessionMessages(targetSessionId, nextMessages);
+      updateRuntimeLastEventId(runtime, resolveMaterializedMessageEventId(nextMessages));
       writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
       markSessionDetailWarm(targetSessionId);
       // Ignore stale async response: keep current foreground conversation state untouched.
@@ -8029,7 +8201,9 @@ export const useChatStore = defineStore('chat', {
         setSessionLoading(this, targetSessionId, false);
       }
       this.scheduleSnapshot(true);
-      startSessionWatcher(this, targetSessionId);
+      if (!preserveWatcher) {
+        startSessionWatcher(this, targetSessionId);
+      }
       void this.refreshSessionSubagents(targetSessionId).catch(() => null);
       return sessionDetail;
     },
@@ -8898,6 +9072,11 @@ export const useChatStore = defineStore('chat', {
         ? Number.parseInt(String(forcedEventId), 10)
         : normalizedMessageEventId;
       const resumeAfterEventId = Number.isFinite(afterEventId) ? Math.max(afterEventId, 0) : 0;
+      let resumeLastEventId = Math.max(
+        resolveMaterializedMessageEventId(sessionMessagesRef),
+        getRuntimeLastEventId(runtime),
+        resumeAfterEventId
+      );
       try {
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
@@ -8917,12 +9096,79 @@ export const useChatStore = defineStore('chat', {
             sessionId
           );
           if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
-            updateRuntimeLastEventId(runtime, eventId);
+            updateRuntimeRemoteLastEventId(runtime, eventId);
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
           }
+          if (normalizedEventType === 'channel_message') {
+            const eventTimestampMs = resolveTimestampMs(payload?.timestamp ?? approvalPayload?.timestamp);
+            const channelRole = String(
+              approvalPayload?.role ?? payload?.role ?? ''
+            ).trim().toLowerCase();
+            const channelContent = String(
+              approvalPayload?.content ?? payload?.content ?? ''
+            ).trim();
+            const result = consumeChatWatchChannelMessage({
+              messages: sessionMessagesRef,
+              lastEventId: resumeLastEventId,
+              eventId,
+              eventTimestampMs,
+              payload,
+              data: approvalPayload,
+              normalizeEventId: normalizeStreamEventId,
+              buildMessage,
+              assignStreamEventId,
+              insertWatchUserMessage: (content, timestampMs, anchor, insertOptions) =>
+                insertWatchUserMessage(
+                  this,
+                  sessionId,
+                  sessionMessagesRef,
+                  content,
+                  timestampMs,
+                  anchor,
+                  insertOptions
+                ),
+              clearSupersededPendingAssistantMessages,
+              dismissStaleInquiryPanels,
+              touchUpdatedAt: (timestamp) => touchSessionUpdatedAt(this, sessionId, timestamp),
+              notifySnapshot: (immediate = true) =>
+                notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
+              hiddenInternalUser: resolveHiddenInternalUserEvent(payload, approvalPayload),
+              dedupeAssistantWindowMs: WATCH_USER_MESSAGE_DEDUP_MS
+            });
+            if (result.handled) {
+              if (result.lastEventId > resumeLastEventId) {
+                resumeLastEventId = result.lastEventId;
+                updateRuntimeLastEventId(runtime, result.lastEventId);
+                updateRuntimeRemoteLastEventId(runtime, result.lastEventId);
+              }
+              const normalizedEventId = normalizeStreamEventId(eventId);
+              if (
+                result.mutated &&
+                normalizedEventId !== null &&
+                (channelRole === 'user' || channelRole === 'assistant') &&
+                channelContent
+              ) {
+                protectRealtimeChannelMessage(
+                  sessionId,
+                  sessionMessagesRef,
+                  normalizedEventId,
+                  channelRole,
+                  channelContent,
+                  eventTimestampMs,
+                  resolveHiddenInternalUserEvent(payload, approvalPayload)
+                );
+              }
+              return;
+            }
+          }
           assignStreamEventId(message, eventId);
           updateRuntimeLastEventId(runtime, eventId);
+          updateRuntimeRemoteLastEventId(runtime, eventId);
+          resumeLastEventId = Math.max(
+            resumeLastEventId,
+            normalizeStreamEventId(eventId) || 0
+          );
           if (eventType === 'final') {
             finalSeen = true;
           } else if (eventType === 'error') {

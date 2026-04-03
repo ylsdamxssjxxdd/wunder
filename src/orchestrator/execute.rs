@@ -348,6 +348,8 @@ impl Orchestrator {
                     &allowed_tool_names,
                     Some(&user_tool_bindings),
                     tool_call_mode,
+                    &user_id,
+                    prepared.agent_id.as_deref(),
                 )
             } else {
                 None

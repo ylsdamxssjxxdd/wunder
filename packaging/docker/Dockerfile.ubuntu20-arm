@@ -39,7 +39,7 @@ RUN set -eux; \
       ln -s /bin/true /sbin/ldconfig; \
     fi; \
     apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git python3 \
+      ca-certificates curl git ripgrep python3 \
       build-essential pkg-config cmake ninja-build clang perl \
       xz-utils \
       libssl-dev \

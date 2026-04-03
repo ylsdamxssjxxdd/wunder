@@ -175,7 +175,8 @@
           active: isGuidedDefaultConversation(item)
             ? selectedAgentId === normalizeAgentId(defaultAgentKey)
             : isMixedConversationActive(item),
-          'messenger-conversation-item--guided': isGuidedDefaultConversation(item)
+          'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
+          'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running'
         }"
         role="button"
         tabindex="0"
@@ -454,7 +455,11 @@
       <button
         v-if="showDefaultAgentEntry"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === defaultAgentKey, selected: isAgentMultiSelected(defaultAgentKey) }"
+        :class="{
+          active: selectedAgentId === defaultAgentKey,
+          selected: isAgentMultiSelected(defaultAgentKey),
+          'is-running': resolveAgentRuntimeState(defaultAgentKey) === 'running'
+        }"
         type="button"
         @click="handleAgentSelectionClick($event, defaultAgentKey)"
         @dblclick="openAgentById(defaultAgentKey)"
@@ -479,7 +484,11 @@
         v-for="agent in filteredOwnedAgents"
         :key="agent.id"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
+        :class="{
+          active: selectedAgentId === normalizeAgentId(agent.id),
+          selected: isAgentMultiSelected(agent.id),
+          'is-running': resolveAgentRuntimeState(agent.id) === 'running'
+        }"
         type="button"
         @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="handleAgentOpenById(agent.id)"
@@ -508,7 +517,11 @@
         v-for="agent in filteredSharedAgents"
         :key="`shared-${agent.id}`"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
+        :class="{
+          active: selectedAgentId === normalizeAgentId(agent.id),
+          selected: isAgentMultiSelected(agent.id),
+          'is-running': resolveAgentRuntimeState(agent.id) === 'running'
+        }"
         type="button"
         @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="handleAgentOpenById(agent.id)"

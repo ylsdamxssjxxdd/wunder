@@ -1537,6 +1537,7 @@ import {
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
+import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
@@ -4142,7 +4143,7 @@ function resolveSessionActivityTimestamp(session: Record<string, unknown>): numb
   return normalizeTimestamp(session.last_message_at || session.updated_at || session.created_at);
 }
 
-const mixedConversations = computed<MixedConversation[]>(() => {
+const sortedMixedConversations = computed<MixedConversation[]>(() => {
   const dismissedMap = dismissedAgentConversationMap.value;
   const sessionsByAgent = new Map<
     string,
@@ -4249,6 +4250,8 @@ const mixedConversations = computed<MixedConversation[]>(() => {
 
   return entries.sort((left, right) => right.lastAt - left.lastAt);
 });
+
+const mixedConversations = useStableMixedConversationOrder(sortedMixedConversations);
 
 const filteredMixedConversations = computed(() => {
   const text = keyword.value.toLowerCase();

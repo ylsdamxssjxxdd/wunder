@@ -28,7 +28,7 @@ RUN set -eux; \
     fi
 
 RUN apt-get update && apt-get install -y \
-    ca-certificates curl git vim \
+    ca-certificates curl git vim ripgrep \
     python3 python3-pip python3-venv \
     nodejs build-essential pkg-config cmake ninja-build \
     libreoffice pandoc ffmpeg \

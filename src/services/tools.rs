@@ -27,6 +27,7 @@ mod skill_call;
 mod sleep_tool;
 mod subagent_control;
 mod swarm_realtime;
+mod swarm_tool_hint;
 mod thread_control_tool;
 pub(crate) mod tool_error;
 mod web_fetch_tool;
@@ -53,6 +54,10 @@ pub(crate) use freeform::{
     render_prompt_tool_spec,
 };
 pub(crate) use memory_manager_tool::execute_memory_manager_tool;
+pub(crate) use swarm_tool_hint::{
+    build_agent_swarm_tool_hint as build_agent_swarm_tool_hint_for_context,
+    enrich_agent_swarm_tool_spec as enrich_agent_swarm_tool_spec_for_context,
+};
 pub(crate) use thread_control_tool::execute_thread_control_tool;
 
 use crate::a2a_store::A2aTask;
@@ -81,8 +86,8 @@ use crate::schemas::WunderRequest;
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
-    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom, resolve_agent_main_session,
-    resolve_or_create_agent_main_session, resolve_swarm_hive_id as resolve_swarm_hive_scope,
+    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom,
+    resolve_swarm_hive_id as resolve_swarm_hive_scope,
 };
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
@@ -113,6 +118,7 @@ use swarm_realtime::{
     emit_swarm_run_started, emit_swarm_run_terminal, emit_swarm_task_dispatched,
     emit_swarm_task_updated, sync_swarm_run_summary,
 };
+use swarm_tool_hint::resolve_swarm_agent_record;
 use tokio::io::AsyncReadExt;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
@@ -1147,6 +1153,8 @@ struct SessionSpawnArgs {
     label: Option<String>,
     #[serde(default, alias = "agentId", alias = "agent_id")]
     agent_id: Option<String>,
+    #[serde(default, rename = "agentName", alias = "agent_name", alias = "name")]
+    agent_name: Option<String>,
     #[serde(default)]
     model: Option<String>,
     #[serde(default, rename = "runTimeoutSeconds", alias = "run_timeout_seconds")]
@@ -1352,6 +1360,8 @@ struct AgentSwarmListArgs {
 struct AgentSwarmStatusArgs {
     #[serde(default, alias = "agentId", alias = "agent_id")]
     agent_id: Option<String>,
+    #[serde(default, rename = "agentName", alias = "agent_name", alias = "name")]
+    agent_name: Option<String>,
     #[serde(default)]
     limit: Option<i64>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
@@ -1362,6 +1372,8 @@ struct AgentSwarmStatusArgs {
 struct AgentSwarmSendArgs {
     #[serde(default, alias = "agentId", alias = "agent_id")]
     agent_id: Option<String>,
+    #[serde(default, rename = "agentName", alias = "agent_name", alias = "name")]
+    agent_name: Option<String>,
     #[serde(
         default,
         alias = "session_id",
@@ -1385,6 +1397,8 @@ struct AgentSwarmSendArgs {
 struct AgentSwarmBatchTaskArgs {
     #[serde(default, alias = "agentId", alias = "agent_id")]
     agent_id: Option<String>,
+    #[serde(default, rename = "agentName", alias = "agent_name", alias = "name")]
+    agent_name: Option<String>,
     #[serde(
         default,
         alias = "session_id",
@@ -1729,20 +1743,27 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
-    let Some(agent_id) = normalize_optional_string(payload.agent_id) else {
+    let requested_agent_id = normalize_optional_string(payload.agent_id);
+    let requested_agent_name = normalize_optional_string(payload.agent_name);
+    if requested_agent_id.is_none() && requested_agent_name.is_none() {
         return agent_swarm_list(context, args).await;
-    };
+    }
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
-    if !include_current {
-        ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
-    }
-    let Some(agent) = load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
+    let Some(agent) = resolve_swarm_agent_record(
+        context.storage.as_ref(),
+        user_id,
+        current_agent_id.as_deref(),
+        include_current,
+        &swarm_hive_id,
+        requested_agent_id.as_deref(),
+        requested_agent_name.as_deref(),
+    )?
     else {
-        return Err(anyhow!(i18n::t("error.agent_not_found")));
+        return agent_swarm_list(context, args).await;
     };
-    ensure_swarm_agent_in_hive(&agent, &swarm_hive_id)?;
+    let agent_id = agent.agent_id.clone();
     let limit = clamp_limit(payload.limit, 20, MAX_SESSION_LIST_ITEMS);
     let runtime_map = collect_swarm_runtime(context, user_id)?;
     let runtime = runtime_map.get(&agent_id);
@@ -1788,7 +1809,6 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
 async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: AgentSwarmSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let _label = normalize_optional_string(payload.label.clone());
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
@@ -1801,59 +1821,83 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     let include_current = payload.include_current.unwrap_or(false);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let requested_agent_id = normalize_optional_string(payload.agent_id);
-    let (target_agent_id, target_session_id, created_session) =
-        if let Some(session_key) = payload.session_key {
-            let session_id = resolve_session_key(Some(session_key))?;
-            let record = context
-                .storage
-                .get_chat_session(user_id, &session_id)?
-                .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
-            let resolved_agent_id = normalize_optional_string(record.agent_id.clone())
-                .ok_or_else(|| anyhow!("agent_swarm send target session is missing agent_id"))?;
-            if !include_current {
-                ensure_swarm_target_not_current(&resolved_agent_id, current_agent_id.as_deref())?;
+    let requested_agent_name = normalize_optional_string(payload.agent_name);
+    let (target_agent, target_session_id, created_session) = if let Some(session_key) =
+        payload.session_key
+    {
+        let session_id = resolve_session_key(Some(session_key))?;
+        let record = context
+            .storage
+            .get_chat_session(user_id, &session_id)?
+            .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
+        let resolved_agent_id = normalize_optional_string(record.agent_id.clone())
+            .ok_or_else(|| anyhow!("agent_swarm send target session is missing agent_id"))?;
+        if !include_current {
+            ensure_swarm_target_not_current(&resolved_agent_id, current_agent_id.as_deref())?;
+        }
+        if let Some(requested) = requested_agent_id.as_ref() {
+            if requested != &resolved_agent_id {
+                return Err(anyhow!(
+                    "agent_swarm send agent_id does not match target session"
+                ));
             }
-            if let Some(requested) = requested_agent_id.as_ref() {
-                if requested != &resolved_agent_id {
-                    return Err(anyhow!(
-                        "agent_swarm send agent_id does not match target session"
-                    ));
-                }
-            }
-            let target_agent = load_agent_record(
+        }
+        if let Some(requested) = requested_agent_name.as_deref() {
+            let agent = load_agent_record(
                 context.storage.as_ref(),
                 user_id,
                 Some(&resolved_agent_id),
                 false,
             )?
             .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
-            ensure_swarm_agent_in_hive(&target_agent, &swarm_hive_id)?;
-            (resolved_agent_id, session_id, false)
-        } else {
-            let agent_id = requested_agent_id
-                .ok_or_else(|| anyhow!("agent_swarm send requires agent_id or session_id"))?;
-            ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
-            let target_agent =
-                load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
-                    .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
-            ensure_swarm_agent_in_hive(&target_agent, &swarm_hive_id)?;
-            if payload.create_if_missing.unwrap_or(true) {
-                let (record, created) = resolve_or_create_agent_main_session(
-                    context.storage.as_ref(),
-                    user_id,
-                    &target_agent,
-                )?;
-                (agent_id, record.session_id, created)
-            } else if let Some(record) =
-                resolve_agent_main_session(context.storage.as_ref(), user_id, &agent_id)?
+            if swarm_tool_hint::normalize_swarm_agent_name_lookup_key(requested)
+                != swarm_tool_hint::normalize_swarm_agent_name_lookup_key(&agent.name)
             {
-                (agent_id, record.session_id, false)
-            } else {
                 return Err(anyhow!(
-                    "target agent session not found and createIfMissing is false"
+                    "agent_swarm send agent_name does not match target session"
                 ));
             }
-        };
+        }
+        let target_agent = load_agent_record(
+            context.storage.as_ref(),
+            user_id,
+            Some(&resolved_agent_id),
+            false,
+        )?
+        .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
+        ensure_swarm_agent_in_hive(&target_agent, &swarm_hive_id)?;
+        (target_agent, session_id, false)
+    } else {
+        let target_agent = resolve_swarm_agent_record(
+            context.storage.as_ref(),
+            user_id,
+            current_agent_id.as_deref(),
+            include_current,
+            &swarm_hive_id,
+            requested_agent_id.as_deref(),
+            requested_agent_name.as_deref(),
+        )?
+        .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
+        let dispatch_preview = build_swarm_dispatch_message(
+            context.storage.as_ref(),
+            context.monitor.as_deref(),
+            user_id,
+            &swarm_hive_id,
+            current_agent_id.as_deref(),
+            context.session_id,
+            None,
+            None,
+            &message,
+        )?;
+        let prepared = prepare_swarm_child_session(
+            context,
+            &dispatch_preview,
+            payload.label.clone(),
+            &target_agent.agent_id,
+        )?;
+        (target_agent, prepared.child_session_id, true)
+    };
+    let target_agent_id = target_agent.agent_id.clone();
 
     let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
     let mut run_record = create_swarm_team_run_record(
@@ -1874,8 +1918,6 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         Some(target_session_id.clone()),
         0,
     );
-    context.storage.upsert_team_task(&task_record)?;
-    emit_swarm_task_dispatched(context, &run_record, &task_record);
     let dispatch_message = build_swarm_dispatch_message(
         context.storage.as_ref(),
         context.monitor.as_deref(),
@@ -1887,6 +1929,8 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         Some(&task_record.task_id),
         &message,
     )?;
+    context.storage.upsert_team_task(&task_record)?;
+    emit_swarm_task_dispatched(context, &run_record, &task_record);
 
     let mut send_args = json!({
         "session_id": target_session_id,
@@ -1987,7 +2031,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 
     let shared_message = normalize_optional_string(payload.message.clone());
     let shared_label = normalize_optional_string(payload.label.clone());
-    let default_create_if_missing = payload.create_if_missing.unwrap_or(true);
     let default_include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
@@ -2024,19 +2067,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         .storage
         .list_chat_sessions(user_id, None, None, 0, 4096)?;
     let mut sessions_by_id = HashMap::with_capacity(sessions.len());
-    let mut latest_session_by_agent = HashMap::new();
-    let mut main_session_by_agent = HashMap::new();
     for session in sessions {
         sessions_by_id.insert(session.session_id.clone(), session.clone());
-        if let Some(agent_id) = normalize_optional_string(session.agent_id.clone()) {
-            let should_replace = latest_session_by_agent
-                .get(&agent_id)
-                .map(|existing: &ChatSessionRecord| session.updated_at > existing.updated_at)
-                .unwrap_or(true);
-            if should_replace {
-                latest_session_by_agent.insert(agent_id, session);
-            }
-        }
     }
 
     let mut dispatch_plan = Vec::with_capacity(payload.tasks.len());
@@ -2047,16 +2079,14 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             .ok_or_else(|| anyhow!("agent_swarm batch_send task[{index}] requires message"))?;
         let label = normalize_optional_string(task.label).or_else(|| shared_label.clone());
         let include_current = task.include_current.unwrap_or(default_include_current);
-        let create_if_missing = task.create_if_missing.unwrap_or(default_create_if_missing);
         let requested_agent_id = normalize_optional_string(task.agent_id);
+        let requested_agent_name = normalize_optional_string(task.agent_name);
         let requested_session_id = task
             .session_key
             .map(|value| resolve_session_key(Some(value)))
             .transpose()?;
 
-        let (agent_record, session_record, created_session) = if let Some(session_id) =
-            requested_session_id
-        {
+        let (agent_record, session_record) = if let Some(session_id) = requested_session_id {
             let session_record = if let Some(record) = sessions_by_id.get(&session_id).cloned() {
                 record
             } else {
@@ -2078,6 +2108,26 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     ));
                 }
             }
+            if let Some(requested) = requested_agent_name.as_deref() {
+                let agent_record = if let Some(agent) = agent_map.get(&resolved_agent_id).cloned() {
+                    agent
+                } else {
+                    load_agent_record(
+                        context.storage.as_ref(),
+                        user_id,
+                        Some(&resolved_agent_id),
+                        false,
+                    )?
+                    .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?
+                };
+                if swarm_tool_hint::normalize_swarm_agent_name_lookup_key(requested)
+                    != swarm_tool_hint::normalize_swarm_agent_name_lookup_key(&agent_record.name)
+                {
+                    return Err(anyhow!(
+                        "agent_swarm send agent_name does not match target session"
+                    ));
+                }
+            }
 
             let agent_record = if let Some(agent) = agent_map.get(&resolved_agent_id).cloned() {
                 agent
@@ -2093,83 +2143,24 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             ensure_swarm_agent_in_hive(&agent_record, &swarm_hive_id)?;
 
             sessions_by_id.insert(session_record.session_id.clone(), session_record.clone());
-            let should_replace = latest_session_by_agent
-                .get(&resolved_agent_id)
-                .map(|existing| session_record.updated_at > existing.updated_at)
-                .unwrap_or(true);
-            if should_replace {
-                latest_session_by_agent.insert(resolved_agent_id, session_record.clone());
-            }
-            main_session_by_agent.insert(agent_record.agent_id.clone(), session_record.clone());
-
-            (agent_record, session_record, false)
+            (agent_record, Some(session_record))
         } else {
-            let agent_id = requested_agent_id
-                .ok_or_else(|| anyhow!("agent_swarm send requires agent_id or session_id"))?;
-            if !include_current {
-                ensure_swarm_target_not_current(&agent_id, current_agent_id.as_deref())?;
-            }
-            let agent_record = if let Some(agent) = agent_map.get(&agent_id).cloned() {
-                agent
-            } else {
-                load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
-                    .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?
-            };
-            ensure_swarm_agent_in_hive(&agent_record, &swarm_hive_id)?;
-
-            if let Some(existing) = main_session_by_agent.get(&agent_id).cloned() {
-                (agent_record, existing, false)
-            } else if create_if_missing {
-                let (record, created) = resolve_or_create_agent_main_session(
-                    context.storage.as_ref(),
-                    user_id,
-                    &agent_record,
-                )?;
-                sessions_by_id.insert(record.session_id.clone(), record.clone());
-                latest_session_by_agent.insert(agent_id.clone(), record.clone());
-                main_session_by_agent.insert(agent_id, record.clone());
-                (agent_record, record, created)
-            } else if let Some(record) =
-                resolve_agent_main_session(context.storage.as_ref(), user_id, &agent_id)?
-            {
-                sessions_by_id.insert(record.session_id.clone(), record.clone());
-                latest_session_by_agent.insert(agent_id.clone(), record.clone());
-                main_session_by_agent.insert(agent_id, record.clone());
-                (agent_record, record, false)
-            } else {
-                return Err(anyhow!(
-                    "target agent session not found and createIfMissing is false"
-                ));
-            }
+            let agent_record = resolve_swarm_agent_record(
+                context.storage.as_ref(),
+                user_id,
+                current_agent_id.as_deref(),
+                include_current,
+                &swarm_hive_id,
+                requested_agent_id.as_deref(),
+                requested_agent_name.as_deref(),
+            )?
+            .ok_or_else(|| {
+                anyhow!("agent_swarm send requires agent_id/agent_name or session_id")
+            })?;
+            (agent_record, None)
         };
-
-        let tool_names = resolve_swarm_batch_tool_names(
-            context,
-            context.config,
-            context.skills,
-            &allowed_tools,
-            user_id,
-            &session_record,
-            &agent_record,
-        );
-        let agent_prompt = {
-            let prompt = agent_record.system_prompt.trim();
-            if prompt.is_empty() {
-                None
-            } else {
-                Some(prompt.to_string())
-            }
-        };
-        let model_name = normalize_optional_string(agent_record.model_name.clone());
-        let task_record = create_swarm_team_task_record(
-            &run_record,
-            &agent_record.agent_id,
-            Some(session_record.session_id.clone()),
-            Some(session_record.session_id.clone()),
-            0,
-        );
-        context.storage.upsert_team_task(&task_record)?;
-        emit_swarm_task_dispatched(context, &run_record, &task_record);
+        let mut task_record =
+            create_swarm_team_task_record(&run_record, &agent_record.agent_id, None, None, 0);
         let dispatch_message = build_swarm_dispatch_message(
             context.storage.as_ref(),
             context.monitor.as_deref(),
@@ -2181,6 +2172,52 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             Some(&task_record.task_id),
             &message,
         )?;
+        let (session_id, created_session, tool_names, model_name, agent_prompt) =
+            if let Some(session_record) = session_record {
+                let tool_names = resolve_swarm_batch_tool_names(
+                    context,
+                    context.config,
+                    context.skills,
+                    &allowed_tools,
+                    user_id,
+                    &session_record,
+                    &agent_record,
+                );
+                let agent_prompt = {
+                    let prompt = agent_record.system_prompt.trim();
+                    if prompt.is_empty() {
+                        None
+                    } else {
+                        Some(prompt.to_string())
+                    }
+                };
+                let model_name = normalize_optional_string(agent_record.model_name.clone());
+                (
+                    session_record.session_id,
+                    false,
+                    tool_names,
+                    model_name,
+                    agent_prompt,
+                )
+            } else {
+                let prepared = prepare_swarm_child_session(
+                    context,
+                    &dispatch_message,
+                    label.clone(),
+                    &agent_record.agent_id,
+                )?;
+                (
+                    prepared.child_session_id,
+                    true,
+                    prepared.request.tool_names,
+                    prepared.model_name,
+                    prepared.request.agent_prompt,
+                )
+            };
+        task_record.target_session_id = Some(session_id.clone());
+        task_record.spawned_session_id = Some(session_id.clone());
+        context.storage.upsert_team_task(&task_record)?;
+        emit_swarm_task_dispatched(context, &run_record, &task_record);
         task_records_by_index.insert(index, task_record.clone());
 
         dispatch_plan.push(SwarmBatchDispatchTask {
@@ -2189,7 +2226,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             message: dispatch_message,
             label,
             agent_id: agent_record.agent_id,
-            session_id: session_record.session_id,
+            session_id,
             created_session,
             tool_names,
             model_name,
@@ -2709,8 +2746,8 @@ async fn agent_swarm_history(context: &ToolContext<'_>, args: &Value) -> Result<
 async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SessionSpawnArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let agent_id = normalize_optional_string(payload.agent_id)
-        .ok_or_else(|| anyhow!("agent_swarm spawn requires agent_id"))?;
+    let requested_agent_id = normalize_optional_string(payload.agent_id);
+    let requested_agent_name = normalize_optional_string(payload.agent_name);
     let include_current = args
         .get("includeCurrent")
         .or_else(|| args.get("include_current"))
@@ -2718,14 +2755,24 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         .unwrap_or(false);
     let user_id = context.user_id.trim();
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
-    let target_agent =
-        load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
-            .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
-    ensure_swarm_agent_in_hive(&target_agent, &swarm_hive_id)?;
-    if !include_current {
-        ensure_swarm_target_not_current(&agent_id, current_agent_id(context).as_deref())?;
+    let target_agent = resolve_swarm_agent_record(
+        context.storage.as_ref(),
+        user_id,
+        current_agent_id(context).as_deref(),
+        include_current,
+        &swarm_hive_id,
+        requested_agent_id.as_deref(),
+        requested_agent_name.as_deref(),
+    )?
+    .ok_or_else(|| anyhow!("agent_swarm spawn requires agent_id/agent_name"))?;
+    let mut spawn_args = args.clone();
+    if let Value::Object(ref mut map) = spawn_args {
+        map.insert("agentId".to_string(), json!(target_agent.agent_id));
+        map.remove("agentName");
+        map.remove("agent_name");
+        map.remove("name");
     }
-    sessions_spawn(context, args).await
+    sessions_spawn(context, &spawn_args).await
 }
 
 fn collect_swarm_agents(
@@ -2871,6 +2918,26 @@ fn resolve_swarm_hive_id(
         user_id,
         current_agent_id(context).as_deref(),
         requested_hive_id,
+    )
+}
+
+fn prepare_swarm_child_session(
+    context: &ToolContext<'_>,
+    task: &str,
+    label: Option<String>,
+    agent_id: &str,
+) -> Result<PreparedChildSession> {
+    let parent_session_id = context.session_id.trim();
+    if parent_session_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    }
+    prepare_child_session(
+        context,
+        parent_session_id,
+        task,
+        label,
+        Some(agent_id.to_string()),
+        None,
     )
 }
 
@@ -5706,7 +5773,6 @@ struct ReadBudget {
 enum ReadFailureKind {
     PathInvalid,
     NotFound,
-    TooLarge,
     Binary,
 }
 
@@ -6190,20 +6256,7 @@ fn read_files_inner(
             summaries.push(summary);
             continue;
         }
-        if size > MAX_READ_BYTES as u64 {
-            let message = i18n::t("tool.read.too_large");
-            outputs.push(format!(">>> {}\n{}", raw_path, message));
-            failures.push(ReadFailure {
-                kind: ReadFailureKind::TooLarge,
-                detail: format!("{raw_path}: {message}"),
-            });
-            if let Value::Object(ref mut map) = summary {
-                map.insert("size_bytes".to_string(), Value::from(size));
-                map.insert("error".to_string(), Value::String(message));
-            }
-            summaries.push(summary);
-            continue;
-        }
+        let source_truncated_by_size = size > MAX_READ_BYTES as u64;
         let guarded = read_file_guard::read_text_file_with_limit(&target, MAX_READ_BYTES)?;
         let content = match guarded {
             read_file_guard::ReadFileGuardResult::Text(content) => content,
@@ -6232,15 +6285,34 @@ fn read_files_inner(
         };
         successful_reads += 1;
         let lines: Vec<&str> = content.lines().collect();
-        let total_lines = lines.len();
+        let loaded_lines = lines.len();
+        if let Value::Object(ref mut map) = summary {
+            map.insert("size_bytes".to_string(), Value::from(size));
+            map.insert(
+                "truncated_by_size".to_string(),
+                Value::Bool(source_truncated_by_size),
+            );
+            if source_truncated_by_size {
+                map.insert("loaded_lines".to_string(), Value::from(loaded_lines as u64));
+                map.insert(
+                    "loaded_bytes".to_string(),
+                    Value::from(content.len() as u64),
+                );
+            }
+        }
         match spec.mode {
             ReadFileMode::Slice => {
-                let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);
-                let (hit_eof, range_reaches_eof) = summarize_slice_eof(&spec.ranges, total_lines);
+                let (read_lines, mut complete) = summarize_read_ranges(&spec.ranges, loaded_lines);
+                let (hit_eof, range_reaches_eof) = if source_truncated_by_size {
+                    complete = false;
+                    (false, false)
+                } else {
+                    summarize_slice_eof(&spec.ranges, loaded_lines)
+                };
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("slice".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
-                    map.insert("total_lines".to_string(), Value::from(total_lines as u64));
+                    map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
                     map.insert("complete".to_string(), Value::Bool(complete));
                     map.insert("hit_eof".to_string(), Value::Bool(hit_eof));
                     map.insert(
@@ -6249,19 +6321,34 @@ fn read_files_inner(
                     );
                 }
                 let mut file_output = Vec::new();
+                if source_truncated_by_size {
+                    file_output.push(i18n::t("tool.read.truncated_prefix"));
+                }
                 for (start, end) in spec.ranges {
                     if lines.is_empty() {
                         file_output.push(i18n::t("tool.read.empty_file"));
                         continue;
                     }
                     if start > lines.len() {
-                        let params = HashMap::from([
-                            ("start".to_string(), start.to_string()),
-                            ("end".to_string(), end.to_string()),
-                            ("total".to_string(), lines.len().to_string()),
-                        ]);
-                        file_output
-                            .push(i18n::t_with_params("tool.read.range_out_of_file", &params));
+                        if source_truncated_by_size {
+                            let params = HashMap::from([
+                                ("start".to_string(), start.to_string()),
+                                ("end".to_string(), end.to_string()),
+                                ("loaded".to_string(), lines.len().to_string()),
+                            ]);
+                            file_output.push(i18n::t_with_params(
+                                "tool.read.range_out_of_truncated_excerpt",
+                                &params,
+                            ));
+                        } else {
+                            let params = HashMap::from([
+                                ("start".to_string(), start.to_string()),
+                                ("end".to_string(), end.to_string()),
+                                ("total".to_string(), lines.len().to_string()),
+                            ]);
+                            file_output
+                                .push(i18n::t_with_params("tool.read.range_out_of_file", &params));
+                        }
                         continue;
                     }
                     let last = end.min(lines.len());
@@ -6270,6 +6357,17 @@ fn read_files_inner(
                         slice_lines.push(format!("{}: {}", idx + 1, line));
                     }
                     file_output.push(slice_lines.join("\n"));
+                    if source_truncated_by_size && end > lines.len() {
+                        let params = HashMap::from([
+                            ("start".to_string(), start.to_string()),
+                            ("end".to_string(), end.to_string()),
+                            ("loaded".to_string(), lines.len().to_string()),
+                        ]);
+                        file_output.push(i18n::t_with_params(
+                            "tool.read.range_out_of_truncated_excerpt",
+                            &params,
+                        ));
+                    }
                 }
                 let joined = file_output.join("\n---\n");
                 outputs.push(format!(">>> {}\n{}", raw_path, joined));
@@ -6277,27 +6375,28 @@ fn read_files_inner(
             ReadFileMode::Indentation => {
                 let selected = read_indentation::read_block(&content, &spec.indentation);
                 let read_lines = selected.len();
-                let complete = total_lines == read_lines;
+                let complete = !source_truncated_by_size && loaded_lines == read_lines;
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("indentation".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
-                    map.insert("total_lines".to_string(), Value::from(total_lines as u64));
+                    map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
                     map.insert("complete".to_string(), Value::Bool(complete));
                 }
+                let mut parts = Vec::new();
+                if source_truncated_by_size {
+                    parts.push(i18n::t("tool.read.truncated_prefix"));
+                }
                 if selected.is_empty() {
-                    outputs.push(format!(
-                        ">>> {}\n{}",
-                        raw_path,
-                        i18n::t("tool.read.empty_file")
-                    ));
+                    parts.push(i18n::t("tool.read.empty_file"));
                 } else {
                     let formatted = selected
                         .into_iter()
                         .map(|(line, text)| format!("{line}: {text}"))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    outputs.push(format!(">>> {}\n{}", raw_path, formatted));
+                    parts.push(formatted);
                 }
+                outputs.push(format!(">>> {}\n{}", raw_path, parts.join("\n")));
             }
         }
         summaries.push(summary);
@@ -6369,12 +6468,6 @@ fn classify_read_failure(failures: &[ReadFailure]) -> (&'static str, String) {
             "TOOL_READ_BINARY_FILE",
             "该工具只适合纯文本文件；图片请改用读图工具，Office/PDF/压缩包请改用对应工具。"
                 .to_string(),
-        );
-    }
-    if all_are(ReadFailureKind::TooLarge) {
-        return (
-            "TOOL_READ_TOO_LARGE",
-            "请改为读取更具体的文件，或配合搜索内容、行号范围、分块读取来缩小结果。".to_string(),
         );
     }
     (
@@ -7820,6 +7913,60 @@ mod tests {
             value.pointer("/error_meta/code").and_then(Value::as_str),
             Some("TOOL_READ_NOT_FOUND")
         );
+    }
+
+    #[test]
+    fn read_files_inner_returns_truncated_excerpt_for_large_text_file() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-files-large.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let user_root = workspace_root.join("admin");
+        std::fs::create_dir_all(&user_root).expect("create user root");
+        let file_path = user_root.join("large.md");
+        let mut content = String::new();
+        for idx in 1..=60_000usize {
+            content.push_str(&format!("line {idx:05} {}\n", "x".repeat(24)));
+        }
+        std::fs::write(&file_path, content).expect("write large file");
+
+        let value = read_files_inner(
+            &workspace,
+            "admin",
+            &[],
+            vec![ReadFileSpec {
+                path: "large.md".to_string(),
+                ranges: vec![(1, 5)],
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
+            }],
+            ReadBudget::default(),
+            false,
+            1,
+            false,
+        )
+        .expect("read files result");
+
+        assert_ne!(value.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            value
+                .pointer("/meta/files/0/truncated_by_size")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        let body = value
+            .pointer("/content")
+            .and_then(Value::as_str)
+            .expect("content should exist");
+        assert!(body.contains("line 00001"));
+        assert!(body.contains(">>> large.md"));
     }
 
     #[test]

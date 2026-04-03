@@ -824,7 +824,54 @@
 }
 
 .messenger-agent-item {
+  position: relative;
   align-items: center;
+}
+
+.messenger-conversation-item.is-running,
+.messenger-agent-item.is-running {
+  border-color: var(--ui-accent-deep);
+  background: var(--ui-accent-soft-4);
+  box-shadow: inset 0 0 0 1px var(--ui-accent-deep);
+  overflow: hidden;
+}
+
+.messenger-conversation-item.is-running::before,
+.messenger-agent-item.is-running::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  bottom: 7px;
+  left: 6px;
+  width: 4px;
+  border-radius: 999px;
+  background: var(--ui-accent-deep);
+  transform-origin: center center;
+  animation: messenger-running-beacon 2.6s cubic-bezier(0.37, 0, 0.2, 1) infinite;
+}
+
+.messenger-conversation-item.is-running .messenger-list-name,
+.messenger-agent-item.is-running .messenger-list-name {
+  color: var(--ui-accent-deep);
+}
+
+.messenger-list-item.active.is-running .messenger-list-name {
+  color: var(--ui-accent-deep);
+}
+
+.messenger-list-item.active.is-running .messenger-list-time,
+.messenger-list-item.active.is-running .messenger-list-preview {
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.messenger-list-item.active.is-running .messenger-list-avatar {
+  background: rgba(255, 255, 255, 0.52);
+  color: var(--ui-accent-deep);
+}
+
+.messenger-list-item.active.is-running {
+  border-color: var(--ui-accent-deep);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
 }
 
 .messenger-conversation-item .messenger-list-main,
@@ -901,6 +948,30 @@
   transform: none;
   opacity: 1;
   pointer-events: auto;
+}
+
+@keyframes messenger-running-beacon {
+  0% {
+    transform: scaleY(0.78);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(0.78);
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messenger-conversation-item.is-running::before,
+  .messenger-agent-item.is-running::before {
+    animation: none;
+    transform: scaleY(1);
+    opacity: 1;
+  }
 }
 
 .messenger-pack-rename-dialog-body {
