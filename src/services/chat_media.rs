@@ -137,13 +137,7 @@ async fn process_chat_media_source_path(
         .ok_or_else(|| anyhow!("unsupported media type, expected audio/video"))?;
     match media_kind {
         MediaKind::Audio => {
-            process_audio_source(
-                config,
-                source_path,
-                filename.as_str(),
-                source_public_path,
-            )
-            .await
+            process_audio_source(config, source_path, filename.as_str(), source_public_path).await
         }
         MediaKind::Video => {
             process_video_source(
@@ -683,7 +677,10 @@ fn detect_media_kind(filename: &str, content_type: Option<&str>) -> Option<Media
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if matches!(extension.as_str(), "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac" | "m4a") {
+    if matches!(
+        extension.as_str(),
+        "mp3" | "wav" | "ogg" | "opus" | "aac" | "flac" | "m4a"
+    ) {
         return Some(MediaKind::Audio);
     }
     if matches!(

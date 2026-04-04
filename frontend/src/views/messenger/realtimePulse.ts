@@ -7,6 +7,7 @@ type MessengerRealtimePulseOptions = {
   refreshChatSessions?: AsyncTask;
   refreshContacts?: AsyncTask;
   shouldRefreshCron?: () => boolean;
+  shouldRefreshChannelBoundAgentIds?: () => boolean;
   shouldRefreshChatSessions?: () => boolean;
   shouldRefreshContacts?: () => boolean;
   isHotState?: () => boolean;
@@ -81,10 +82,10 @@ export const createMessengerRealtimePulse = (
     }
     // Keep one in-flight tick at a time to avoid overlapping requests and stale writes.
     running = true;
-    const tasks: Promise<unknown>[] = [
-      scheduleTask(options.refreshRunningAgents),
-      scheduleTask(options.refreshChannelBoundAgentIds)
-    ];
+    const tasks: Promise<unknown>[] = [scheduleTask(options.refreshRunningAgents)];
+    if (options.shouldRefreshChannelBoundAgentIds?.() !== false) {
+      tasks.push(scheduleTask(options.refreshChannelBoundAgentIds));
+    }
     if (options.shouldRefreshCron?.() !== false) {
       tasks.push(scheduleTask(options.refreshCronAgentIds));
     }
@@ -136,7 +137,7 @@ export const createMessengerRealtimePulse = (
       window.addEventListener('online', handleVisibility);
       document.addEventListener('visibilitychange', handleVisibility);
     }
-    trigger('start');
+    scheduleNext(resolveDelay());
   };
 
   const stop = () => {

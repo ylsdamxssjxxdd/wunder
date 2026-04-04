@@ -1315,8 +1315,11 @@ impl Orchestrator {
             let display_name = Self::display_attachment_name(name);
             if is_image_attachment(attachment, trimmed) {
                 if let Some(image_url) =
-                    crate::services::chat_media::load_image_attachment_data_url(&self.workspace, attachment)
-                        .await
+                    crate::services::chat_media::load_image_attachment_data_url(
+                        &self.workspace,
+                        attachment,
+                    )
+                    .await
                 {
                     image_parts.push(json!({
                         "type": "image_url",

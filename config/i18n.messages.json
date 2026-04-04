@@ -1099,6 +1099,18 @@
     "en-US": "(range {start}-{end} exceeds the loaded excerpt of {loaded} lines; file is too large so only a safe prefix was returned)",
     "zh-CN": "（范围 {start}-{end} 超出本次已加载的 {loaded} 行截断内容；文件较大，本次仅返回安全前缀）"
   },
+  "tool.read.invalid_reversed_range": {
+    "en-US": "Invalid line range: start_line {start} must be less than or equal to end_line {end}.",
+    "zh-CN": "无效的行号范围：start_line {start} 必须小于等于 end_line {end}。"
+  },
+  "tool.read.invalid_reversed_range_hint": {
+    "en-US": "Use an ascending inclusive line window. For long files, locate the relevant heading with search_content first, then read a narrower range.",
+    "zh-CN": "请使用升序的包含式行号窗口；长文档应先用 search_content 定位相关标题，再读取更窄的范围。"
+  },
+  "tool.read.continuation_hint": {
+    "en-US": "This read returned only part of the available text. Continue by locating the relevant heading with search_content or by reading a narrower line range/indentation block. Do not reread the whole document blindly.",
+    "zh-CN": "本次读取只返回了部分可用文本。请先用 search_content 定位相关标题，或改读更窄的行范围/缩进块；不要盲目重复读取整篇文档。"
+  },
   "tool.read.truncated_prefix": {
     "en-US": "(file is large; returning a safe truncated prefix, so the content may be incomplete)",
     "zh-CN": "（文件较大，本次仅返回安全截断前缀，内容可能不完整）"
@@ -2100,24 +2112,24 @@
     "zh-CN": "要读取的文件列表，可选指定行号范围。"
   },
   "tool.spec.read.args.files.end_line": {
-    "en-US": "Optional end line (inclusive).",
-    "zh-CN": "可选结束行（包含）。"
+    "en-US": "Optional end line (inclusive). Must be greater than or equal to start_line.",
+    "zh-CN": "可选结束行（包含），且必须大于等于 start_line。"
   },
   "tool.spec.read.args.files.line_ranges": {
-    "en-US": "Optional list of line ranges.",
-    "zh-CN": "可选的行号范围列表。"
+    "en-US": "Optional list of inclusive line ranges. Each range must be ascending.",
+    "zh-CN": "可选的包含式行号范围列表；每个范围都必须按升序填写。"
   },
   "tool.spec.read.args.files.path": {
-    "en-US": "Path to a local plain-text file to read. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. If unsure, list files first. Do not pass images or other binary files here.",
-    "zh-CN": "要读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；路径不确定时先列出文件。不要在这里传入图片或其他二进制文件。"
+    "en-US": "Path to a local plain-text file for targeted reading. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. If the file or heading is uncertain, use list_files/search_content first. Do not pass images or other binary files here.",
+    "zh-CN": "用于定点读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；文件或标题不确定时先用 list_files/search_content。不要在这里传入图片或其他二进制文件。"
   },
   "tool.spec.read.args.files.start_line": {
-    "en-US": "Optional start line (inclusive).",
-    "zh-CN": "可选起始行（包含）。"
+    "en-US": "Optional start line (inclusive). Must be less than or equal to end_line.",
+    "zh-CN": "可选起始行（包含），且必须小于等于 end_line。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read local plain-text file contents from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Only use this for code/config/log/markdown/text files. If a path is uncertain, list files first instead of guessing neighboring paths. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
-    "zh-CN": "读取指定路径的本地纯文本文件内容，支持批量读取并指定行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。仅用于代码、配置、日志、Markdown 等文本文件；路径不确定时先列出文件，不要反复猜测相邻路径；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
+    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. For long documents, read narrower line ranges or indentation blocks instead of repeatedly rereading the whole file. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
+    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。面对长文档时，应读取更窄的行范围或缩进块，而不是反复重读整篇文件；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",

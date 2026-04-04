@@ -441,9 +441,12 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
                 );
             }
         };
-        if let Some(diagnosis) =
-            diagnose_html_page(&decoded, html.title.as_deref(), &html.content, &html.extractor)
-        {
+        if let Some(diagnosis) = diagnose_html_page(
+            &decoded,
+            html.title.as_deref(),
+            &html.content,
+            &html.extractor,
+        ) {
             if diagnosis.kind.retry_with_browser() && browser_tools_enabled(context.config) {
                 match fetch_with_browser_fallback(
                     context,
@@ -477,30 +480,28 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
                             .to_string(),
                     ),
                 };
-                return Ok(
-                    web_fetch_failure(
-                        &raw_url,
-                        Some(&request_url),
-                        "extract",
-                        match diagnosis.kind {
-                            HtmlPageKind::DynamicPage => "TOOL_WEB_FETCH_DYNAMIC_PAGE",
-                            HtmlPageKind::BotProtection => "TOOL_WEB_FETCH_BOT_PROTECTION",
-                        },
-                        i18n::t(message_key),
-                        hint,
-                        false,
-                        None,
-                        json!({
-                            "status": fetched.status,
-                            "content_type": content_type,
-                            "final_url": fetched.final_url,
-                            "page_kind": diagnosis.kind.as_str(),
-                            "diagnosis": diagnosis.reason,
-                            "browser_fallback_available": browser_tools_enabled(context.config),
-                        }),
-                    )
-                    .into_value(),
-                );
+                return Ok(web_fetch_failure(
+                    &raw_url,
+                    Some(&request_url),
+                    "extract",
+                    match diagnosis.kind {
+                        HtmlPageKind::DynamicPage => "TOOL_WEB_FETCH_DYNAMIC_PAGE",
+                        HtmlPageKind::BotProtection => "TOOL_WEB_FETCH_BOT_PROTECTION",
+                    },
+                    i18n::t(message_key),
+                    hint,
+                    false,
+                    None,
+                    json!({
+                        "status": fetched.status,
+                        "content_type": content_type,
+                        "final_url": fetched.final_url,
+                        "page_kind": diagnosis.kind.as_str(),
+                        "diagnosis": diagnosis.reason,
+                        "browser_fallback_available": browser_tools_enabled(context.config),
+                    }),
+                )
+                .into_value());
             }
         } else {
             CachedPayload {
@@ -1325,7 +1326,12 @@ fn looks_like_script_payload(text: &str) -> bool {
     let mut non_empty_lines = 0usize;
     let mut script_lines = 0usize;
     let mut prose_lines = 0usize;
-    for line in trimmed.lines().map(str::trim).filter(|line| !line.is_empty()).take(40) {
+    for line in trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(40)
+    {
         non_empty_lines += 1;
         let line_lower = line.to_ascii_lowercase();
         if line_lower.starts_with("var ")
@@ -1344,11 +1350,7 @@ fn looks_like_script_payload(text: &str) -> bool {
             script_lines += 1;
         }
         if line.contains(' ')
-            && line
-                .chars()
-                .filter(|ch| ch.is_ascii_alphabetic())
-                .count()
-                >= 24
+            && line.chars().filter(|ch| ch.is_ascii_alphabetic()).count() >= 24
             && matches!(line.chars().last(), Some('.' | '!' | '?' | ';'))
         {
             prose_lines += 1;
@@ -1376,7 +1378,11 @@ async fn fetch_with_browser_fallback(
     let scope = browser_fallback_scope(context, request_url);
     let browser = browser_service(context.config);
     let navigate_result = browser
-        .execute(&scope, "navigate", &json!({ "url": request_url.to_string() }))
+        .execute(
+            &scope,
+            "navigate",
+            &json!({ "url": request_url.to_string() }),
+        )
         .await;
     let navigate = match navigate_result {
         Ok(value) => value,
@@ -1409,14 +1415,16 @@ async fn fetch_with_browser_fallback(
         .await;
     let _ = browser.execute(&scope, "stop", &json!({})).await;
 
-    let read_value = read_result.map_err(|err| browser_fallback_failure(
-        raw_url,
-        request_url,
-        status,
-        content_type,
-        diagnosis,
-        err.to_string(),
-    ))?;
+    let read_value = read_result.map_err(|err| {
+        browser_fallback_failure(
+            raw_url,
+            request_url,
+            status,
+            content_type,
+            diagnosis,
+            err.to_string(),
+        )
+    })?;
     let content = read_value
         .get("content")
         .and_then(Value::as_str)
@@ -2292,9 +2300,13 @@ mod tests {
             </html>
         "#;
 
-        let diagnosis =
-            diagnose_html_page(html, Some("Shell"), "var buildId = \"abc123\";", "sanitized-html")
-                .expect("dynamic shell should be detected");
+        let diagnosis = diagnose_html_page(
+            html,
+            Some("Shell"),
+            "var buildId = \"abc123\";",
+            "sanitized-html",
+        )
+        .expect("dynamic shell should be detected");
         assert_eq!(diagnosis.kind, HtmlPageKind::DynamicPage);
     }
 

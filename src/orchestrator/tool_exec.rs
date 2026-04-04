@@ -1428,9 +1428,19 @@ fn is_non_empty_continuation_value(value: &Value) -> bool {
     }
 }
 
+fn looks_like_read_file_payload(data: &Value) -> bool {
+    let Some(meta) = data.get("meta").and_then(Value::as_object) else {
+        return false;
+    };
+    data.get("content").and_then(Value::as_str).is_some()
+        && meta.get("files").and_then(Value::as_array).is_some()
+        && meta.get("read").and_then(Value::as_object).is_some()
+}
+
 fn supports_tool_result_continuation(data: &Value, meta: Option<&Value>) -> bool {
     value_has_continuation_signal(data, 0)
         || meta.is_some_and(|value| value_has_continuation_signal(value, 0))
+        || looks_like_read_file_payload(data)
 }
 
 fn should_skip_tool_truncation(tool_name: &str) -> bool {
@@ -2025,6 +2035,49 @@ mod tests {
         });
 
         compact_observation_payload(&mut payload, "extra_mcp@db_query");
+
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_required"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_hint"))
+                .and_then(Value::as_str),
+            Some(TRUNCATION_CONTINUATION_HINT)
+        );
+    }
+
+    #[test]
+    fn test_compact_observation_payload_marks_continuation_for_read_file() {
+        let text = "x".repeat(OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80);
+        let mut payload = json!({
+            "tool": "读取文件",
+            "ok": true,
+            "data": {
+                "content": text,
+                "meta": {
+                    "files": [
+                        {
+                            "path": "notes.md",
+                            "used_default_range": true,
+                            "read_lines": 2000,
+                            "total_lines": 4907
+                        }
+                    ],
+                    "read": {
+                        "requested_files": 1,
+                        "processed_files": 1
+                    }
+                }
+            }
+        });
+
+        compact_observation_payload(&mut payload, "读取文件");
 
         assert_eq!(
             payload

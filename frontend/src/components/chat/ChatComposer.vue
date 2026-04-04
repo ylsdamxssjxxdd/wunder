@@ -582,6 +582,7 @@ type AttachmentPayload = {
 type ProcessedMediaAttachment = {
   name?: string;
   content?: string;
+  content_type?: string;
   mime_type?: string;
   public_path?: string;
 };
@@ -1592,7 +1593,7 @@ const normalizeProcessedMediaAttachment = (
   const name = String(source.name || '').trim();
   const content = String(source.content || '');
   const publicPath = String(source.public_path || '').trim();
-  const mimeType = String(source.mime_type || '').trim();
+  const mimeType = String(source.content_type ?? source.mime_type ?? '').trim();
   const inferredType = mimeType.startsWith('image/')
     ? 'image'
     : mimeType.startsWith('audio/')
@@ -1631,7 +1632,7 @@ const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | nul
     name,
     content
   };
-  const mimeType = String(source.mime_type || '').trim();
+  const mimeType = String(source.mime_type ?? source.content_type ?? '').trim();
   if (mimeType) attachment.mime_type = mimeType;
   const converter = String(source.converter || '').trim();
   if (converter) attachment.converter = converter;

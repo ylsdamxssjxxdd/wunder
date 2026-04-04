@@ -127,7 +127,8 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/chat/attachments/media/process",
-            post(chat_attachment_media_process).layer(DefaultBodyLimit::max(MAX_MEDIA_UPLOAD_BYTES)),
+            post(chat_attachment_media_process)
+                .layer(DefaultBodyLimit::max(MAX_MEDIA_UPLOAD_BYTES)),
         )
 }
 

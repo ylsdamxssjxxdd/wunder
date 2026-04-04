@@ -1573,12 +1573,14 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("plain-text"));
+        assert!(spec.description.contains("search_content"));
         assert!(!spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
             ["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
+        assert!(path_description.contains("targeted"));
         assert!(path_description.contains("binary"));
     }
 
@@ -1589,12 +1591,14 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("纯文本"));
+        assert!(spec.description.contains("search_content"));
         assert!(!spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
             ["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("纯文本"));
+        assert!(path_description.contains("定点"));
         assert!(path_description.contains("二进制"));
     }
 

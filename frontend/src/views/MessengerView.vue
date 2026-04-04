@@ -1531,8 +1531,7 @@ import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialo
 import {
   scheduleMessengerBootstrapBackgroundTasks,
   settleMessengerBootstrapTasks,
-  splitMessengerBootstrapTasks,
-  type MessengerBootstrapTask
+  splitMessengerBootstrapTasks
 } from '@/views/messenger/bootstrap';
 import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelection';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
@@ -3743,9 +3742,9 @@ const showAgentGridOverview = computed(
 );
 
 watch(
-  () => [showAgentSettingsPanel.value, showAgentGridOverview.value] as const,
-  ([visible, showGrid]) => {
-    if (!visible || showGrid) {
+  () => [sessionHub.activeSection, showAgentGridOverview.value] as const,
+  ([section, showGrid]) => {
+    if (section !== 'agents' || showGrid) {
       return;
     }
     void preloadAgentSettingsPanels();
@@ -5184,8 +5183,7 @@ watch(
       return;
     }
     warmMessengerUserToolsData({
-      skills: true,
-      summary: true
+      skills: true
     });
   },
   { immediate: true }
@@ -10830,6 +10828,8 @@ const refreshRealtimeChatSessions = async () => {
 };
 
 const shouldRefreshRealtimeChatSessions = () => sessionHub.activeSection === 'messages';
+const shouldRefreshAgentMeta = () =>
+  sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools';
 
 const refreshAll = async () => {
   const tasks: Promise<unknown>[] = [
@@ -11032,28 +11032,11 @@ const bootstrap = async () => {
     },
     {
       run: () => loadAgentUserRounds()
-    },
-    {
-      sections: ['tools'],
-      run: () => loadToolsCatalog()
-    },
-    {
-      sections: ['tools'],
-      run: () => loadChannelBoundAgentIds()
-    },
-    ...(cronPermissionDenied.value
-      ? []
-      : [
-          {
-            sections: ['tools'],
-            run: () => loadCronAgentIds()
-          } satisfies MessengerBootstrapTask
-        ])
+    }
   ]);
   await settleMessengerBootstrapTasks(critical);
   ensureSectionSelection();
   bootLoading.value = false;
-  void preloadMessengerSettingsPanels({ desktopMode: desktopMode.value });
   void restoreConversationFromRoute();
   scheduleMessengerBootstrapBackgroundTasks(background);
 };
@@ -11218,9 +11201,9 @@ watch(
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
     warmMessengerUserToolsData({
-      catalog: showAgentSettingsPanel.value,
+      catalog: sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools',
       skills: showAgentRightDock.value,
-      summary: showAgentSettingsPanel.value || showAgentRightDock.value
+      summary: sessionHub.activeSection === 'agents'
     });
     scheduleWorkspaceResourceHydration();
   },
@@ -11278,6 +11261,19 @@ watch(
         catalog: true,
         summary: true
       });
+      void loadChannelBoundAgentIds();
+      if (!cronPermissionDenied.value) {
+        void loadCronAgentIds();
+      }
+    }
+    if (section === 'tools') {
+      void loadChannelBoundAgentIds();
+      if (!cronPermissionDenied.value) {
+        void loadCronAgentIds();
+      }
+    }
+    if (section === 'more') {
+      void preloadMessengerSettingsPanels({ desktopMode: desktopMode.value });
     }
     if (section === 'users' && !userWorldPermissionDenied.value) {
       resetContactVirtualScroll();
@@ -11779,9 +11775,9 @@ onMounted(async () => {
   });
   scheduleWorkspaceResourceHydration();
   warmMessengerUserToolsData({
-    catalog: showAgentSettingsPanel.value,
+    catalog: sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools',
     skills: showAgentRightDock.value,
-    summary: showAgentSettingsPanel.value || showAgentRightDock.value
+    summary: sessionHub.activeSection === 'agents'
   });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
   stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
@@ -11800,6 +11796,7 @@ onMounted(async () => {
       }),
     isHotState: () => hasHotRuntimeState.value,
     shouldRefreshCron: () => !cronPermissionDenied.value,
+    shouldRefreshChannelBoundAgentIds: shouldRefreshAgentMeta,
     shouldRefreshChatSessions: shouldRefreshRealtimeChatSessions,
     shouldRefreshContacts: () =>
       !userWorldPermissionDenied.value &&

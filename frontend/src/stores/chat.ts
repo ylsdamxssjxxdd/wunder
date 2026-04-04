@@ -463,78 +463,100 @@ const sanitizeSubagentDetailPayload = (
   source: Record<string, unknown>,
   agentState: Record<string, unknown>
 ): Record<string, unknown> => {
-  const normalized = { ...detail };
-  const assistantMessage = pickSubagentTextValue(
-    normalized.assistant_message,
-    normalized.assistantMessage,
-    source.assistant_message,
-    source.assistantMessage,
-    normalized.result,
-    source.result,
-    normalized.message,
-    source.message,
-    agentState.message
-  );
-  if (assistantMessage) {
-    normalized.assistant_message = assistantMessage;
-  }
-  delete normalized.assistantMessage;
-
-  const userMessage = pickSubagentTextValue(
-    normalized.user_message,
-    normalized.userMessage,
-    source.user_message,
-    source.userMessage
-  );
-  if (userMessage) {
-    normalized.user_message = userMessage;
-  }
-  delete normalized.userMessage;
-
-  const errorMessage = pickSubagentTextValue(
-    normalized.error_message,
-    normalized.errorMessage,
-    source.error_message,
-    source.errorMessage,
-    normalized.error,
-    source.error
-  );
-  if (errorMessage) {
-    normalized.error_message = errorMessage;
-  }
-  delete normalized.errorMessage;
-
-  const resultText = pickSubagentTextValue(normalized.result);
-  if (resultText && assistantMessage && resultText === assistantMessage) {
-    delete normalized.result;
-  }
-  const messageText = pickSubagentTextValue(normalized.message);
-  if (messageText && assistantMessage && messageText === assistantMessage) {
-    delete normalized.message;
-  }
-  const errorText = pickSubagentTextValue(normalized.error);
-  if (errorText && errorMessage && errorText === errorMessage) {
-    delete normalized.error;
-  }
-
   const detailAgentState =
-    normalized.agent_state && typeof normalized.agent_state === 'object' && !Array.isArray(normalized.agent_state)
-      ? (normalized.agent_state as Record<string, unknown>)
+    detail.agent_state && typeof detail.agent_state === 'object' && !Array.isArray(detail.agent_state)
+      ? (detail.agent_state as Record<string, unknown>)
       : {};
   const mergedAgentState = { ...detailAgentState, ...agentState };
-  const mergedAgentStatus = String(mergedAgentState.status || '').trim();
-  const mergedAgentMessage = pickSubagentTextValue(mergedAgentState.message);
-  if (!mergedAgentStatus && (!mergedAgentMessage || mergedAgentMessage === assistantMessage)) {
-    delete normalized.agent_state;
-  } else {
-    normalized.agent_state = {
-      ...(mergedAgentStatus ? { status: mergedAgentStatus } : {}),
-      ...(mergedAgentMessage && mergedAgentMessage !== assistantMessage
-        ? { message: mergedAgentMessage }
-        : {})
-    };
-  }
-  return normalized;
+  const mergedAgentStatus = normalizeSubagentEventStatus(mergedAgentState.status ?? detail.status ?? source.status);
+
+  const assistantMessage = pickSubagentTextValue(
+    detail.assistant_message,
+    detail.assistantMessage,
+    source.assistant_message,
+    source.assistantMessage,
+    detail.result,
+    source.result,
+    detail.message,
+    source.message,
+    mergedAgentState.message
+  );
+  const errorMessage = pickSubagentTextValue(
+    detail.error_message,
+    detail.errorMessage,
+    source.error_message,
+    source.errorMessage,
+    detail.error,
+    source.error
+  );
+  const sessionId = pickSubagentTextValue(
+    detail.session_id,
+    detail.sessionId,
+    source.session_id,
+    source.sessionId
+  );
+  const runId = pickSubagentTextValue(detail.run_id, detail.runId, source.run_id, source.runId);
+  const agentId = pickSubagentTextValue(
+    detail.agent_id,
+    detail.agentId,
+    source.agent_id,
+    source.agentId
+  );
+  const modelName = pickSubagentTextValue(
+    detail.model_name,
+    detail.modelName,
+    source.model_name,
+    source.modelName
+  );
+  const requestedBy = pickSubagentTextValue(
+    detail.requested_by,
+    detail.requestedBy,
+    source.requested_by,
+    source.requestedBy
+  );
+  const spawnedBy = pickSubagentTextValue(
+    detail.spawned_by,
+    detail.spawnedBy,
+    source.spawned_by,
+    source.spawnedBy
+  );
+  const elapsedSeconds = normalizeDurationValue(
+    detail.elapsed_s ?? detail.elapsedSeconds ?? source.elapsed_s ?? source.elapsedSeconds
+  );
+  const queuedAt = resolveTimestampIso(
+    detail.queued_time ?? detail.queuedTime ?? source.queued_time ?? source.queuedTime
+  );
+  const startedAt = resolveTimestampIso(
+    detail.started_time ?? detail.startedTime ?? source.started_time ?? source.startedTime
+  );
+  const finishedAt = resolveTimestampIso(
+    detail.finished_time ?? detail.finishedTime ?? source.finished_time ?? source.finishedTime
+  );
+  const updatedAt = resolveTimestampIso(
+    detail.updated_time ??
+      detail.updatedTime ??
+      source.updated_time ??
+      source.updatedTime ??
+      source.finished_time ??
+      source.finishedTime
+  );
+
+  const compacted: Record<string, unknown> = {};
+  if (agentId) compacted.agent_id = agentId;
+  if (sessionId) compacted.session_id = sessionId;
+  if (runId) compacted.run_id = runId;
+  if (mergedAgentStatus) compacted.status = mergedAgentStatus;
+  if (assistantMessage) compacted.assistant_message = assistantMessage;
+  if (errorMessage && errorMessage !== assistantMessage) compacted.error = errorMessage;
+  if (modelName) compacted.model_name = modelName;
+  if (Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0) compacted.elapsed_s = elapsedSeconds;
+  if (queuedAt) compacted.queued_at = queuedAt;
+  if (startedAt) compacted.started_at = startedAt;
+  if (finishedAt) compacted.finished_at = finishedAt;
+  if (updatedAt) compacted.updated_at = updatedAt;
+  if (requestedBy) compacted.requested_by = requestedBy;
+  if (spawnedBy) compacted.spawned_by = spawnedBy;
+  return compacted;
 };
 
 const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
@@ -571,7 +593,7 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
     agentState.message
   );
   const summary = String(
-    source.summary ?? assistantMessage ?? normalizedDetail.error_message ?? source.error ?? ''
+    source.summary ?? assistantMessage ?? normalizedDetail.error ?? source.error ?? ''
   ).trim();
   const updatedAtMs = normalizeInteractionTimestamp(
     source.updated_time ??
@@ -583,7 +605,9 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   );
   const updatedAt = resolveTimestampIso(updatedAtMs);
   const agentStateStatus = String(agentState.status ?? status).trim();
-  const agentStateMessage = pickSubagentTextValue(agentState.message, summary, assistantMessage);
+  const agentStateMessageRaw = pickSubagentTextValue(agentState.message, assistantMessage);
+  const agentStateMessage =
+    agentStateMessageRaw && agentStateMessageRaw !== assistantMessage ? agentStateMessageRaw : '';
   return {
     key,
     session_id: sessionId,

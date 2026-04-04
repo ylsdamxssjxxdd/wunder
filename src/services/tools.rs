@@ -5958,10 +5958,12 @@ fn list_files_inner(
     Ok(json!({ "items": items }))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ReadFileSpec {
     path: String,
+    requested_ranges: Vec<(usize, usize)>,
     ranges: Vec<(usize, usize)>,
+    used_default_range: bool,
     mode: ReadFileMode,
     indentation: read_indentation::IndentationReadOptions,
 }
@@ -5992,6 +5994,14 @@ struct ReadFailure {
     detail: String,
 }
 
+#[derive(Clone, Debug)]
+struct ReadSpecParseError {
+    code: &'static str,
+    message: String,
+    hint: Option<String>,
+    data: Value,
+}
+
 impl ReadBudget {
     fn to_json(self) -> Value {
         json!({
@@ -6002,7 +6012,37 @@ impl ReadBudget {
     }
 }
 
-fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>, String> {
+impl ReadSpecParseError {
+    fn invalid_args(message: String) -> Self {
+        Self {
+            code: "TOOL_READ_INVALID_ARGS",
+            message,
+            hint: Some("请检查 files/path/line_ranges/mode/budget 参数格式。".to_string()),
+            data: json!({}),
+        }
+    }
+
+    fn reversed_range(start: usize, end: usize) -> Self {
+        let params = HashMap::from([
+            ("start".to_string(), start.to_string()),
+            ("end".to_string(), end.to_string()),
+        ]);
+        Self {
+            code: "TOOL_READ_INVALID_RANGE",
+            message: i18n::t_with_params("tool.read.invalid_reversed_range", &params),
+            hint: Some(i18n::t("tool.read.invalid_reversed_range_hint")),
+            data: json!({
+                "kind": "reversed_line_range",
+                "start_line": start,
+                "end_line": end,
+            }),
+        }
+    }
+}
+
+fn parse_read_file_specs(
+    args: &Value,
+) -> std::result::Result<Vec<ReadFileSpec>, ReadSpecParseError> {
     let mut specs = Vec::new();
 
     if let Some(files) = args.get("files").and_then(Value::as_array) {
@@ -6010,7 +6050,7 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
             let Some(obj) = file.as_object() else {
                 continue;
             };
-            if let Some(spec) = parse_read_file_spec_object(obj) {
+            if let Some(spec) = parse_read_file_spec_object(obj)? {
                 specs.push(spec);
             }
         }
@@ -6018,7 +6058,7 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
 
     if specs.is_empty() {
         if let Some(obj) = args.as_object() {
-            if let Some(spec) = parse_read_file_spec_object(obj) {
+            if let Some(spec) = parse_read_file_spec_object(obj)? {
                 specs.push(spec);
             }
         } else if let Some(path) = args
@@ -6028,7 +6068,9 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
         {
             specs.push(ReadFileSpec {
                 path: path.to_string(),
+                requested_ranges: vec![(1, MAX_READ_LINES)],
                 ranges: vec![(1, MAX_READ_LINES)],
+                used_default_range: true,
                 mode: ReadFileMode::Slice,
                 indentation: read_indentation::IndentationReadOptions::default(),
             });
@@ -6036,12 +6078,16 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
     }
 
     if specs.is_empty() {
-        return Err(i18n::t("tool.read.no_path"));
+        return Err(ReadSpecParseError::invalid_args(i18n::t(
+            "tool.read.no_path",
+        )));
     }
     Ok(coalesce_read_specs(specs))
 }
 
-fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<ReadFileSpec> {
+fn parse_read_file_spec_object(
+    obj: &serde_json::Map<String, Value>,
+) -> std::result::Result<Option<ReadFileSpec>, ReadSpecParseError> {
     let path = normalize_read_path_hint(
         obj.get("path")
             .or_else(|| obj.get("file_path"))
@@ -6052,9 +6098,10 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
             .to_string(),
     );
     if path.is_empty() {
-        return None;
+        return Ok(None);
     }
 
+    let mut requested_ranges = Vec::new();
     let mut ranges = Vec::new();
     if let Some(Value::Array(items)) = obj.get("line_ranges") {
         for item in items {
@@ -6070,6 +6117,8 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
             let Some(end) = pair.get(1).and_then(parse_line_number) else {
                 continue;
             };
+            validate_line_range_order(start, end)?;
+            requested_ranges.push((start, end));
             ranges.push(normalize_range(start, end));
         }
     }
@@ -6079,6 +6128,8 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
             .get("end_line")
             .and_then(parse_line_number)
             .unwrap_or(start);
+        validate_line_range_order(start, end)?;
+        requested_ranges.push((start, end));
         ranges.push(normalize_range(start, end));
     }
     if let Some(offset) = obj.get("offset").and_then(parse_line_number) {
@@ -6088,10 +6139,13 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
             .unwrap_or(MAX_READ_LINES)
             .max(1);
         let end = offset.saturating_add(limit.saturating_sub(1));
+        requested_ranges.push((offset, end));
         ranges.push(normalize_range(offset, end));
     }
 
+    let used_default_range = ranges.is_empty();
     if ranges.is_empty() {
+        requested_ranges.push((1, MAX_READ_LINES));
         ranges.push((1, MAX_READ_LINES));
     }
     ranges = merge_read_ranges(ranges);
@@ -6100,12 +6154,14 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
     if indentation.anchor_line.is_none() {
         indentation.anchor_line = ranges.first().map(|(start, _)| *start);
     }
-    Some(ReadFileSpec {
+    Ok(Some(ReadFileSpec {
         path,
+        requested_ranges,
         ranges,
+        used_default_range,
         mode,
         indentation,
-    })
+    }))
 }
 
 fn parse_read_mode(obj: &serde_json::Map<String, Value>) -> ReadFileMode {
@@ -6260,6 +6316,16 @@ fn normalize_range(start: usize, end: usize) -> (usize, usize) {
     (start, end)
 }
 
+fn validate_line_range_order(
+    start: usize,
+    end: usize,
+) -> std::result::Result<(), ReadSpecParseError> {
+    if end < start {
+        return Err(ReadSpecParseError::reversed_range(start, end));
+    }
+    Ok(())
+}
+
 fn merge_read_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     if ranges.len() <= 1 {
         return ranges;
@@ -6293,8 +6359,10 @@ fn coalesce_read_specs(specs: Vec<ReadFileSpec>) -> Vec<ReadFileSpec> {
         spec.ranges = merge_read_ranges(spec.ranges);
         if let Some(last) = merged.last_mut() {
             if can_merge_read_specs(last, &spec) {
+                last.requested_ranges.extend(spec.requested_ranges);
                 last.ranges.extend(spec.ranges);
                 last.ranges = merge_read_ranges(std::mem::take(&mut last.ranges));
+                last.used_default_range &= spec.used_default_range;
                 continue;
             }
         }
@@ -6357,22 +6425,46 @@ fn summarize_slice_eof(ranges: &[(usize, usize)], total_lines: usize) -> (bool, 
     (hit_eof, range_reaches_eof)
 }
 
+fn slice_request_satisfied(ranges: &[(usize, usize)], total_lines: usize) -> bool {
+    if ranges.is_empty() {
+        return total_lines == 0;
+    }
+    ranges
+        .iter()
+        .all(|(start, end)| *start <= total_lines && *end <= total_lines)
+}
+
+fn summary_requires_read_continuation(summary: &Value) -> bool {
+    let Some(obj) = summary.as_object() else {
+        return false;
+    };
+    if obj
+        .get("truncated_by_size")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    let used_default_range = obj
+        .get("used_default_range")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let read_lines = obj.get("read_lines").and_then(Value::as_u64).unwrap_or(0);
+    let total_lines = obj.get("total_lines").and_then(Value::as_u64).unwrap_or(0);
+    used_default_range && read_lines > 0 && total_lines > read_lines
+}
+
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
     let dry_run = parse_dry_run(&args);
     let read_budget = parse_read_budget(&args);
     let mut specs = match parse_read_file_specs(&args) {
         Ok(specs) => specs,
-        Err(message) => {
+        Err(err) => {
             return Ok(build_failed_tool_result(
-                message,
-                json!({}),
-                ToolErrorMeta::new(
-                    "TOOL_READ_INVALID_ARGS",
-                    Some("请检查 files/path/line_ranges/mode/budget 参数格式。".to_string()),
-                    false,
-                    None,
-                ),
+                err.message,
+                err.data,
+                ToolErrorMeta::new(err.code, err.hint, false, None),
                 false,
             ));
         }
@@ -6448,9 +6540,15 @@ fn read_files_inner(
             }
         }
         let raw_path = spec.path.as_str();
+        let requested_ranges = spec.requested_ranges.clone();
+        let effective_ranges = spec.ranges.clone();
+        let range_args_normalized = requested_ranges != effective_ranges;
         let mut summary = json!({
             "path": raw_path,
-            "requested_ranges": spec.ranges,
+            "requested_ranges": requested_ranges,
+            "effective_ranges": effective_ranges,
+            "range_args_normalized": range_args_normalized,
+            "used_default_range": spec.used_default_range,
             "read_lines": 0,
             "total_lines": 0,
             "complete": false,
@@ -6572,6 +6670,7 @@ fn read_files_inner(
         match spec.mode {
             ReadFileMode::Slice => {
                 let (read_lines, mut complete) = summarize_read_ranges(&spec.ranges, loaded_lines);
+                let request_satisfied = slice_request_satisfied(&spec.ranges, loaded_lines);
                 let (hit_eof, range_reaches_eof) = if source_truncated_by_size {
                     complete = false;
                     (false, false)
@@ -6582,6 +6681,10 @@ fn read_files_inner(
                     map.insert("mode".to_string(), Value::String("slice".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(loaded_lines as u64));
+                    map.insert(
+                        "request_satisfied".to_string(),
+                        Value::Bool(request_satisfied),
+                    );
                     map.insert("complete".to_string(), Value::Bool(complete));
                     map.insert("hit_eof".to_string(), Value::Bool(hit_eof));
                     map.insert(
@@ -6688,6 +6791,8 @@ fn read_files_inner(
         }
         result = truncated;
     }
+    let continuation_required =
+        output_budget_hit || summaries.iter().any(summary_requires_read_continuation);
     let processed_files = summaries.len();
     let scope = json!({
         "kind": "workspace_local",
@@ -6695,7 +6800,7 @@ fn read_files_inner(
         "supports_web": false,
     });
     let scope_note = "Reads local workspace text files only. It does not fetch web pages and should not be used for images, PDFs, Office documents, archives, audio/video, or other binary files.";
-    let data = json!({
+    let mut data = json!({
         "content": result,
         "scope": scope,
         "scope_note": scope_note,
@@ -6714,6 +6819,10 @@ fn read_files_inner(
             }
         }
     });
+    if continuation_required {
+        data["continuation_required"] = Value::Bool(true);
+        data["continuation_hint"] = Value::String(i18n::t("tool.read.continuation_hint"));
+    }
     if successful_reads == 0 && !failures.is_empty() {
         let (code, hint) = classify_read_failure(&failures);
         let error = failures
@@ -8114,6 +8223,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_read_file_specs_rejects_descending_ranges() {
+        let err = parse_read_file_specs(&json!({
+            "path": "README.md",
+            "start_line": 80,
+            "end_line": 12,
+        }))
+        .expect_err("descending ranges should fail");
+
+        assert_eq!(err.code, "TOOL_READ_INVALID_RANGE");
+        assert!(err.message.contains("80"));
+        assert!(err.message.contains("12"));
+    }
+
+    #[test]
     fn parse_read_file_specs_normalizes_zero_start_line_to_first_line() {
         let specs = parse_read_file_specs(&json!({
             "path": "README.md",
@@ -8123,6 +8246,7 @@ mod tests {
         .expect("zero-based start should parse");
 
         assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].requested_ranges, vec![(0, 12)]);
         assert_eq!(specs[0].ranges, vec![(1, 12)]);
     }
 
@@ -8232,7 +8356,9 @@ mod tests {
             &[],
             vec![ReadFileSpec {
                 path: "missing.txt".to_string(),
+                requested_ranges: vec![(1, 20)],
                 ranges: vec![(1, 20)],
+                used_default_range: false,
                 mode: ReadFileMode::Slice,
                 indentation: read_indentation::IndentationReadOptions::default(),
             }],
@@ -8278,7 +8404,9 @@ mod tests {
             &[],
             vec![ReadFileSpec {
                 path: "large.md".to_string(),
+                requested_ranges: vec![(1, 5)],
                 ranges: vec![(1, 5)],
+                used_default_range: false,
                 mode: ReadFileMode::Slice,
                 indentation: read_indentation::IndentationReadOptions::default(),
             }],
@@ -8302,6 +8430,65 @@ mod tests {
             .expect("content should exist");
         assert!(body.contains("line 00001"));
         assert!(body.contains(">>> large.md"));
+    }
+
+    #[test]
+    fn read_files_inner_marks_default_full_window_as_continuable() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-files-default-window.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let user_root = workspace_root.join("admin");
+        std::fs::create_dir_all(&user_root).expect("create user root");
+        let file_path = user_root.join("treaty.md");
+        let mut content = String::new();
+        for idx in 1..=2_500usize {
+            content.push_str(&format!("line {idx:05}\n"));
+        }
+        std::fs::write(&file_path, content).expect("write treaty file");
+
+        let value = read_files_inner(
+            &workspace,
+            "admin",
+            &[],
+            vec![ReadFileSpec {
+                path: "treaty.md".to_string(),
+                requested_ranges: vec![(1, MAX_READ_LINES)],
+                ranges: vec![(1, MAX_READ_LINES)],
+                used_default_range: true,
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
+            }],
+            ReadBudget::default(),
+            false,
+            1,
+            false,
+        )
+        .expect("read files result");
+
+        assert_eq!(
+            value.get("continuation_required").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .pointer("/meta/files/0/request_satisfied")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            value
+                .pointer("/meta/files/0/used_default_range")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]
