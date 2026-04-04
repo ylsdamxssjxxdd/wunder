@@ -1,6 +1,6 @@
 ---
 title: 聊天会话
-summary: `/wunder/chat/sessions/*` 是 Wunder 聊天主域，负责会话生命周期、消息收发、事件恢复和运行态管理。
+summary: `/wunder/chat/sessions/*` 是 Wunder 聊天主域，负责会话生命周期、消息收发、附件预处理、事件恢复和运行态管理。
 read_when:
   - 你在做聊天 UI、桌面会话或消息工作台
   - 你要从“能力调用”升级到“会话产品化”
@@ -24,6 +24,8 @@ source_docs:
 
 - `GET/POST /wunder/chat/sessions`
 - `GET/DELETE /wunder/chat/sessions/{session_id}`
+- `POST /wunder/chat/attachments/convert`
+- `POST /wunder/chat/attachments/media/process`
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - `GET /wunder/chat/sessions/{session_id}/events`
 - `GET /wunder/chat/sessions/{session_id}/resume`
@@ -34,10 +36,21 @@ source_docs:
 ## 典型链路
 
 1. `POST /wunder/chat/sessions` 创建会话
-2. `POST /wunder/chat/sessions/{session_id}/messages` 发送消息
-3. 用 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) 或 `resume` 消费事件
-4. 用 `GET /wunder/chat/sessions/{session_id}` 渲染会话详情
-5. 需要时调用 `cancel` 或 `compaction`
+2. 文档附件先 `POST /wunder/chat/attachments/convert`
+3. 音频 / 视频附件先 `POST /wunder/chat/attachments/media/process`
+4. `POST /wunder/chat/sessions/{session_id}/messages` 发送正文和 / 或附件
+5. 用 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) 或 `resume` 消费事件
+6. 用 `GET /wunder/chat/sessions/{session_id}` 渲染会话详情
+7. 需要时调用 `cancel` 或 `compaction`
+
+## 附件推荐流程
+
+- 图片：可直接作为 `attachments` 发送，走视觉上下文。
+- 文档：先走 `/wunder/chat/attachments/convert`，把文档转成文本型附件。
+- 音频：先走 `/wunder/chat/attachments/media/process`，拿到转写结果后再提交消息。
+- 视频：也走 `/wunder/chat/attachments/media/process`，服务端会先拆成图片序列和音轨附件；原始视频不会直接送进模型。
+
+消息提交允许“只有附件，没有正文”。只要 `attachments[]` 里存在有效 `content` 或 `public_path`，就可以不传文本正文。
 
 ## 与 `/wunder` 的关系
 
@@ -60,6 +73,7 @@ source_docs:
 - 消息字段是 `content`，不是 `question`。
 - 会话状态优先看 `runtime`，不要只看兼容字段 `running`。
 - 会话能力与线程能力不是一层语义，UI 设计要分开处理。
+- 聊天输入区自动做的附件预处理，如果你自己接 API，也要在消息发送前补上。
 
 ## 延伸阅读
 

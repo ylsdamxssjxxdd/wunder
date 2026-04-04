@@ -1,7 +1,8 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::services::user_prompt_templates::{
-    self, normalize_locale, normalize_pack_id, DEFAULT_PACK_ID, SYSTEM_SEGMENTS,
+    self, normalize_locale, normalize_pack_id, DEFAULT_EN_PACK_ID, DEFAULT_PACK_ID,
+    DEFAULT_ZH_PACK_ID, SYSTEM_SEGMENTS,
 };
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -62,6 +63,21 @@ async fn read_segment_content(
     Ok((path, exists, content))
 }
 
+fn resolve_user_pack_id(raw: Option<&str>, active_pack_id: Option<&str>) -> String {
+    let pack_id = normalize_pack_id(raw.or(active_pack_id));
+    if pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+        user_prompt_templates::resolve_default_user_pack_id()
+    } else {
+        pack_id
+    }
+}
+
+fn resolve_pack_locale(raw_locale: Option<&str>, pack_id: &str) -> String {
+    user_prompt_templates::builtin_user_pack_locale(pack_id)
+        .map(str::to_string)
+        .unwrap_or_else(|| normalize_locale(raw_locale))
+}
+
 async fn list_prompt_templates(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -74,14 +90,22 @@ async fn list_prompt_templates(
     let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
     let system_pack_root =
         user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
+    let language_default_pack_id = user_prompt_templates::resolve_default_user_pack_id();
 
-    let mut packs = vec![json!({
-        "id": DEFAULT_PACK_ID,
-        "is_default": true,
-        "readonly": true,
-        "sync_pack_id": system_pack_id,
-        "path": system_pack_root.to_string_lossy(),
-    })];
+    let mut packs = Vec::new();
+    for pack_id in [DEFAULT_ZH_PACK_ID, DEFAULT_EN_PACK_ID] {
+        let locale = user_prompt_templates::builtin_user_pack_locale(pack_id).unwrap_or("zh");
+        packs.push(json!({
+            "id": pack_id,
+            "is_default": true,
+            "readonly": true,
+            "builtin": true,
+            "locale": locale,
+            "is_system_language_default": pack_id.eq_ignore_ascii_case(&language_default_pack_id),
+            "sync_pack_id": system_pack_id,
+            "path": system_pack_root.to_string_lossy(),
+        }));
+    }
 
     if let Ok(mut dir) = tokio::fs::read_dir(&packs_root).await {
         while let Ok(Some(entry)) = dir.next_entry().await {
@@ -92,7 +116,7 @@ async fn list_prompt_templates(
                 continue;
             }
             let name = entry.file_name().to_string_lossy().trim().to_string();
-            if name.is_empty() || name.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+            if name.is_empty() || user_prompt_templates::is_builtin_user_pack_id(&name) {
                 continue;
             }
             if user_prompt_templates::validate_pack_id(&name).is_err() {
@@ -118,6 +142,22 @@ async fn list_prompt_templates(
             .unwrap_or(false);
         if a_default != b_default {
             return b_default.cmp(&a_default);
+        }
+        let a_system_default = a
+            .get("is_system_language_default")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let b_system_default = b
+            .get("is_system_language_default")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if a_system_default != b_system_default {
+            return b_system_default.cmp(&a_system_default);
+        }
+        let a_locale = a.get("locale").and_then(Value::as_str).unwrap_or("");
+        let b_locale = b.get("locale").and_then(Value::as_str).unwrap_or("");
+        if a_locale != b_locale {
+            return a_locale.cmp(b_locale);
         }
         let a_id = a.get("id").and_then(Value::as_str).unwrap_or("");
         let b_id = b.get("id").and_then(Value::as_str).unwrap_or("");
@@ -158,10 +198,10 @@ async fn set_active_prompt_template(
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
-    let pack_id = normalize_pack_id(payload.active.as_deref());
+    let pack_id = resolve_user_pack_id(payload.active.as_deref(), None);
     user_prompt_templates::validate_pack_id(&pack_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    if !pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+    if !user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
         let pack_root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &pack_id);
         if !pack_root.is_dir() {
             return Err(error_response(
@@ -197,10 +237,10 @@ async fn get_prompt_template_file(
     let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
     let active_pack_id = user_prompt_templates::load_user_active_pack_id(&config, &user_id);
-    let pack_id = normalize_pack_id(query.pack_id.as_deref().or(Some(active_pack_id.as_str())));
+    let pack_id = resolve_user_pack_id(query.pack_id.as_deref(), Some(active_pack_id.as_str()));
     user_prompt_templates::validate_pack_id(&pack_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    let locale = normalize_locale(query.locale.as_deref());
+    let locale = resolve_pack_locale(query.locale.as_deref(), &pack_id);
     let key = query.key.trim();
     if key.is_empty() {
         return Err(error_response(
@@ -214,51 +254,51 @@ async fn get_prompt_template_file(
         user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
     let system_default_root =
         user_prompt_templates::resolve_system_pack_root(&config, DEFAULT_PACK_ID);
-    let (path, exists, fallback_used, content, readonly, source_pack_id) = if pack_id
-        .eq_ignore_ascii_case(DEFAULT_PACK_ID)
-    {
-        let (path, exists, mut content) =
-            read_segment_content(&system_pack_root, &locale, key).await?;
-        let mut fallback_used = false;
-        let mut source_pack_id = system_pack_id.clone();
-        if !exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-            let (_, fallback_exists, fallback_content) =
-                read_segment_content(&system_default_root, &locale, key).await?;
-            if fallback_exists {
-                fallback_used = true;
-                source_pack_id = DEFAULT_PACK_ID.to_string();
-                content = fallback_content;
-            }
-        }
-        (path, exists, fallback_used, content, true, source_pack_id)
-    } else {
-        let pack_root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &pack_id);
-        if !pack_root.is_dir() {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                "prompt template pack not found".to_string(),
-            ));
-        }
-        let path = resolve_segment_path_or_bad_request(&pack_root, &locale, key)?;
-        let exists = path.is_file();
-        if exists {
-            let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-            (path, true, false, content, false, pack_id.clone())
-        } else {
-            let (_, system_exists, mut content) =
+    let (path, exists, fallback_used, content, readonly, source_pack_id) =
+        if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
+            let (path, exists, mut content) =
                 read_segment_content(&system_pack_root, &locale, key).await?;
+            let mut fallback_used = false;
             let mut source_pack_id = system_pack_id.clone();
-            if !system_exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-                let (_, default_exists, default_content) =
+            if !exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+                let (_, fallback_exists, fallback_content) =
                     read_segment_content(&system_default_root, &locale, key).await?;
-                if default_exists {
+                if fallback_exists {
+                    fallback_used = true;
                     source_pack_id = DEFAULT_PACK_ID.to_string();
-                    content = default_content;
+                    content = fallback_content;
                 }
             }
-            (path, false, true, content, false, source_pack_id)
-        }
-    };
+            (path, exists, fallback_used, content, true, source_pack_id)
+        } else {
+            let pack_root =
+                user_prompt_templates::resolve_user_pack_root(&config, &user_id, &pack_id);
+            if !pack_root.is_dir() {
+                return Err(error_response(
+                    StatusCode::NOT_FOUND,
+                    "prompt template pack not found".to_string(),
+                ));
+            }
+            let path = resolve_segment_path_or_bad_request(&pack_root, &locale, key)?;
+            let exists = path.is_file();
+            if exists {
+                let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                (path, true, false, content, false, pack_id.clone())
+            } else {
+                let (_, system_exists, mut content) =
+                    read_segment_content(&system_pack_root, &locale, key).await?;
+                let mut source_pack_id = system_pack_id.clone();
+                if !system_exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+                    let (_, default_exists, default_content) =
+                        read_segment_content(&system_default_root, &locale, key).await?;
+                    if default_exists {
+                        source_pack_id = DEFAULT_PACK_ID.to_string();
+                        content = default_content;
+                    }
+                }
+                (path, false, true, content, false, source_pack_id)
+            }
+        };
 
     Ok(Json(json!({
         "data": {
@@ -292,16 +332,16 @@ async fn update_prompt_template_file(
     let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
     let active_pack_id = user_prompt_templates::load_user_active_pack_id(&config, &user_id);
-    let pack_id = normalize_pack_id(payload.pack_id.as_deref().or(Some(active_pack_id.as_str())));
+    let pack_id = resolve_user_pack_id(payload.pack_id.as_deref(), Some(active_pack_id.as_str()));
     user_prompt_templates::validate_pack_id(&pack_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    if pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+    if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
         return Err(error_response(
             StatusCode::FORBIDDEN,
             "default prompt template pack is read-only".to_string(),
         ));
     }
-    let locale = normalize_locale(payload.locale.as_deref());
+    let locale = resolve_pack_locale(payload.locale.as_deref(), &pack_id);
     let key = payload.key.trim();
     if key.is_empty() {
         return Err(error_response(
@@ -355,7 +395,7 @@ async fn create_prompt_template_pack(
     let pack_id = payload.pack_id.trim().to_string();
     user_prompt_templates::validate_pack_id(&pack_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    if pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+    if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "cannot create default pack".to_string(),
@@ -372,25 +412,27 @@ async fn create_prompt_template_pack(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let copy_from = normalize_pack_id(payload.copy_from.as_deref());
+    let copy_from = resolve_user_pack_id(payload.copy_from.as_deref(), None);
     user_prompt_templates::validate_pack_id(&copy_from)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    let (source_root, fallback_source_root) = if copy_from.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
-        let source_root = user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
-        let fallback_source_root = (!system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID))
-            .then(|| user_prompt_templates::resolve_system_pack_root(&config, DEFAULT_PACK_ID));
-        (source_root, fallback_source_root)
-    } else {
-        let root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &copy_from);
-        if !root.is_dir() {
-            return Err(error_response(
-                StatusCode::NOT_FOUND,
-                "copy_from pack not found".to_string(),
-            ));
-        }
-        (root, None)
-    };
+    let (source_root, fallback_source_root) =
+        if user_prompt_templates::is_builtin_user_pack_id(&copy_from) {
+            let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
+            let source_root =
+                user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
+            let fallback_source_root = (!system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID))
+                .then(|| user_prompt_templates::resolve_system_pack_root(&config, DEFAULT_PACK_ID));
+            (source_root, fallback_source_root)
+        } else {
+            let root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &copy_from);
+            if !root.is_dir() {
+                return Err(error_response(
+                    StatusCode::NOT_FOUND,
+                    "copy_from pack not found".to_string(),
+                ));
+            }
+            (root, None)
+        };
 
     for locale in ["zh", "en"] {
         for (key, _) in SYSTEM_SEGMENTS {
@@ -442,7 +484,7 @@ async fn delete_prompt_template_pack(
     let config = state.config_store.get().await;
     user_prompt_templates::validate_pack_id(&pack_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    if pack_id.trim().eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+    if user_prompt_templates::is_builtin_user_pack_id(&pack_id) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "cannot delete default pack".to_string(),

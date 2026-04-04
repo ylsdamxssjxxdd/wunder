@@ -26,9 +26,16 @@
           <summary class="tool-workflow-entry-summary">
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
             <i :class="['fa-solid', 'tool-workflow-entry-tool-icon', entry.toolIconClass]" aria-hidden="true"></i>
-            <span class="tool-workflow-entry-title" :title="entry.toolCallRawTitle">
-              {{ entry.summaryTitle }}
-            </span>
+            <el-tooltip
+              :content="entry.toolCallRawTitle"
+              placement="top-start"
+              popper-class="tool-workflow-debug-popper"
+              :disabled="!entry.toolCallRawTitle"
+            >
+              <span class="tool-workflow-entry-title">
+                {{ entry.summaryTitle }}
+              </span>
+            </el-tooltip>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
           </summary>
 
@@ -147,7 +154,6 @@ const PATCH_RESULT_FILE_LIMIT = 10;
 const PATCH_PREVIEW_FILE_LIMIT = 4;
 const PATCH_PREVIEW_LINE_LIMIT = 12;
 const PATCH_PREVIEW_LINE_MAX_CHARS = 140;
-const TOOL_CALL_TOOLTIP_MAX_CHARS = 6000;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 
@@ -2022,7 +2028,7 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
       arguments: callArgs
     });
     if (normalized) {
-      return truncateByMiddle(normalizeDetailText(normalized), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+      return normalizeDetailText(normalized);
     }
   }
   if (isExecuteCommandTool(entry.toolName)) {
@@ -2039,17 +2045,17 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
         }
       });
       if (snapshot) {
-        return truncateByMiddle(normalizeDetailText(snapshot), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+        return normalizeDetailText(snapshot);
       }
     }
   }
   const rawDetail = normalizeDetailText(entry.callItem?.detail);
   if (rawDetail) {
-    return truncateByMiddle(rawDetail, TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+    return rawDetail;
   }
   const fallbackDetail = pickString(entry.outputItem?.detail, entry.resultItem?.detail);
   if (fallbackDetail) {
-    return truncateByMiddle(normalizeDetailText(fallbackDetail), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+    return normalizeDetailText(fallbackDetail);
   }
   return '';
 };
@@ -2748,6 +2754,9 @@ const buildEmptySection = (key: string, title: string, body: string): ToolWorkfl
   empty: true
 });
 
+const resolveRawWorkflowDetail = (item: WorkflowItem | null): string =>
+  typeof item?.detail === 'string' && item.detail.length > 0 ? item.detail : '';
+
 const buildModelCallSection = (
   entry: RawEntry,
   command: string,
@@ -2899,6 +2908,32 @@ const buildToolResultSection = (
         empty: !errorText
       };
     }
+  }
+
+  const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
+  if (rawResultDetail) {
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'text',
+      body: rawResultDetail,
+      copyText: rawResultDetail,
+      commandView: null,
+      patchLines: []
+    };
+  }
+
+  const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
+  if (rawOutputDetail) {
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'text',
+      body: rawOutputDetail,
+      copyText: rawOutputDetail,
+      commandView: null,
+      patchLines: []
+    };
   }
 
   if (isExecuteCommandTool(entry.toolName)) {
@@ -3628,6 +3663,18 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+:global(.tool-workflow-debug-popper) {
+  max-width: min(820px, calc(100vw - 32px));
+  max-height: min(60vh, 720px);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
 }
 
 .tool-workflow-entry-tool-icon {

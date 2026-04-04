@@ -39,7 +39,7 @@ source_docs:
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
-                    │   Nginx (18001)│
+                    │   Nginx (18002)│
                     │  反向代理 + 静态│
                     └────────┬────────┘
          ┌───────────────────┼───────────────────┐
@@ -145,7 +145,7 @@ docker-compose -f docker-compose-arm.yml up -d
 首次启动会：
 - 拉取或构建镜像
 - 初始化 PostgreSQL 数据库
-- 启动 wunder-server、frontend、sandbox 等
+- 启动 wunder-server、frontend 构建服务、nginx、sandbox 等
 
 等待约 1-2 分钟，检查状态：
 
@@ -157,9 +157,12 @@ docker-compose -f docker-compose-x86.yml ps
 
 | 服务 | 地址 | 说明 |
 |------|------|------|
-| 用户前端 | http://localhost:18001 | 普通用户入口 |
-| 管理端 | http://localhost:18000 | 管理员后台 |
+| 用户前端 | http://localhost:18002 | Nginx 对外暴露的普通用户入口 |
+| 前端开发服务 | http://localhost:18001 | Compose 内部前端构建/调试入口，默认不作为对外地址 |
+| 管理端 / 文档 | http://localhost:18000 | Rust 后端直出 `web/` 管理页、调试页与 `/docs/` |
 | 默认管理员 | admin / admin | 首次登录请修改密码 |
+
+> 默认 compose 里，`18002` 面向普通用户；`18000` 面向管理员、调试页和说明书；`18001` 更适合前端联调，不建议当生产入口。
 
 ---
 
@@ -190,6 +193,8 @@ security:
   api_key: your-admin-api-key
   cors:
     allowed_origins:
+      - http://localhost:18002
+      # 如果你直接暴露 compose 里的前端开发服务，再额外放开 18001
       - http://localhost:18001
 ```
 
@@ -200,8 +205,18 @@ security:
 | 用户工作区 | `wunder_workspaces` | `/workspaces` |
 | PostgreSQL 数据 | `wunder_logs` | PostgreSQL 数据目录 |
 | 临时文件 | `./temp_dir` | 临时上传/下载 |
+| 服务运行日志 | `./config/data/logs/server` | 仅 `wunder-server` 写本地 JSONL 日志，默认保留 14 天 |
 
 > **重要**：不要把长期业务数据放进 `data/` 目录，容易被清理或覆盖！
+
+### 服务日志
+
+服务版启动后会同时输出控制台日志和本地文件日志：
+
+- 本地日志目录：`config/data/logs/server`
+- 日志格式：JSONL 结构化日志，按天轮转
+- 覆盖范围：启动、HTTP 访问、异常退出、panic
+- 非覆盖范围：desktop 和 cli 不写这套本地运行日志
 
 ---
 

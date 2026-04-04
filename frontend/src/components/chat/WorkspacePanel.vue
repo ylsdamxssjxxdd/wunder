@@ -499,7 +499,7 @@ const selectionMeta = computed(() =>
 const emptyText = computed(() => {
   if (state.searchMode) return t('workspace.empty.search');
   if (props.emptyText) return props.emptyText;
-  return desktopLocalMode.value ? t('workspace.emptyPermanent') : t('workspace.empty');
+  return t('workspace.emptyPermanent');
 });
 const searchKeyword = computed({
   get: () => state.searchKeyword,
@@ -2656,5 +2656,9 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('scroll', handleGlobalScroll, true);
   window.removeEventListener('resize', closeContextMenu);
+});
+
+defineExpose({
+  refreshView: reloadWorkspaceView
 });
 </script>

@@ -26,6 +26,8 @@ source_docs:
 ## 聊天会话域
 
 - `GET/POST /wunder/chat/sessions`
+- `POST /wunder/chat/attachments/convert`
+- `POST /wunder/chat/attachments/media/process`
 - `POST /wunder/chat/sessions/{session_id}/messages`
 - `GET /wunder/chat/sessions/{session_id}/resume`
 - `POST /wunder/chat/sessions/{session_id}/cancel`
@@ -33,6 +35,8 @@ source_docs:
 
 适合先看：
 
+- [聊天会话](/docs/zh-CN/integration/chat-sessions/)
+- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/)
 - [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 

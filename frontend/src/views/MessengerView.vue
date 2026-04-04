@@ -341,6 +341,21 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
+            :disabled="agentConversationRefreshLoading"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="refreshAgentConversationView"
+          >
+            <i
+              class="fa-solid fa-rotate-right"
+              :class="{ 'fa-spin': agentConversationRefreshLoading }"
+              aria-hidden="true"
+            ></i>
+          </button>
+          <button
+            v-if="!showChatSettingsView && isAgentConversationActive"
+            class="messenger-header-btn"
+            type="button"
             :title="t('common.setting')"
             :aria-label="t('common.setting')"
             @click="openActiveAgentSettings"
@@ -793,7 +808,7 @@
                     :agent-id="selectedFileAgentIdForApi"
                     :container-id="selectedFileContainerId"
                     :title="fileScope === 'user' ? t('messenger.files.userContainer') : t('messenger.files.title')"
-                    :empty-text="resolveFileWorkspaceEmptyText({ fileScope, desktopLocalMode, t })"
+                    :empty-text="resolveFileWorkspaceEmptyText({ fileScope, t })"
                     @stats="handleFileWorkspaceStats"
                   />
                 </div>
@@ -1376,12 +1391,10 @@
       :agent-id-for-api="rightPanelAgentIdForApi"
       :container-id="rightPanelContainerId"
       :skills-loading="rightDockSkillsLoading"
-      :skills-refreshing="rightDockSkillsRefreshing"
       :skills-uploading="skillDockUploading"
       :enabled-skills="rightDockEnabledSkills"
       :disabled-skills="rightDockDisabledSkills"
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
-      @refresh-skills="refreshRightDockSkills"
       @upload-skill-archive="handleRightDockSkillArchiveUpload"
       @open-skill-detail="openRightDockSkillDetail"
       @open-container="openContainerFromRightDock"
@@ -1772,7 +1785,10 @@ const dismissedAgentConversationMap = ref<Record<string, number>>({});
 const dismissedAgentStorageKey = ref('');
 const leftRailRef = ref<HTMLElement | null>(null);
 const middlePaneRef = ref<HTMLElement | null>(null);
-const rightDockRef = ref<{ $el?: HTMLElement } | null>(null);
+const rightDockRef = ref<{
+  $el?: HTMLElement;
+  refreshWorkspace?: (options?: { background?: boolean }) => Promise<boolean>;
+} | null>(null);
 const worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 const worldUploading = ref(false);
 const worldVoiceRecording = ref(false);
@@ -1960,7 +1976,6 @@ const timelineDialogVisible = ref(false);
 const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
 const skillDockUploading = ref(false);
-const rightDockSkillRefreshLoading = ref(false);
 const approvalResponding = ref(false);
 const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
@@ -1980,6 +1995,7 @@ const groupCreateKeyword = ref('');
 const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
+const agentConversationRefreshLoading = ref(false);
 const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
 const middlePaneOverlayVisible = ref(false);
 const middlePaneMounted = ref(false);
@@ -3481,9 +3497,6 @@ const rightDockDisabledSkills = computed<RightDockSkillItem[]>(() =>
 );
 const rightDockSkillsLoading = computed(
   () => rightDockSkillCatalogLoading.value && rightDockSkillItems.value.length === 0
-);
-const rightDockSkillsRefreshing = computed(
-  () => rightDockSkillRefreshLoading.value || rightDockSkillsLoading.value
 );
 const rightDockSelectedSkill = computed<RightDockSkillCatalogItem | null>(() => {
   const name = String(rightDockSelectedSkillName.value || '').trim();
@@ -5217,11 +5230,6 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
 
 const fileContainerLifecycleText = computed(() =>
   resolveFileContainerLifecycleText({
-    fileScope: fileScope.value,
-    desktopLocalMode: desktopLocalMode.value,
-    entryCount: fileContainerEntryCount.value,
-    latestUpdatedAt: fileContainerLatestUpdatedAt.value,
-    now: fileLifecycleNowTick.value,
     t
   })
 );
@@ -8646,17 +8654,94 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
   }
 };
 
-const refreshRightDockSkills = async () => {
-  rightDockSkillRefreshLoading.value = true;
+type AgentConversationRefreshSectionResult = {
+  label: string;
+  success: boolean;
+};
+
+const formatRefreshSectionLabels = (labels: string[]): string => {
+  if (!labels.length) return '';
+  const locale = String(getCurrentLanguage() || '').trim() || undefined;
+  if (typeof Intl !== 'undefined' && typeof Intl.ListFormat === 'function') {
+    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(labels);
+  }
+  const separator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
+  return labels.join(separator);
+};
+
+const refreshAgentConversationView = async () => {
+  if (!isAgentConversationActive.value || agentConversationRefreshLoading.value) return;
+  agentConversationRefreshLoading.value = true;
   try {
-    const skillCatalogLoaded = await loadRightDockSkills({ force: true, silent: true });
-    if (!skillCatalogLoaded) {
-      ElMessage.error(t('userTools.skills.refresh.failed'));
+    const activeSessionId = String(chatStore.activeSessionId || '').trim();
+    const refreshSections: Array<{
+      label: string;
+      run: () => Promise<boolean>;
+    }> = [
+      {
+        label: t('messenger.refresh.target.chat'),
+        run: async () => {
+          const tasks: Promise<unknown>[] = [chatStore.loadSessions({ skipTransportRefresh: true })];
+          if (activeSessionId) {
+            tasks.push(chatStore.loadSessionDetail(activeSessionId, { preserveWatcher: true }));
+          }
+          const settled = await Promise.allSettled(tasks);
+          return settled.every((item) => item.status === 'fulfilled');
+        }
+      },
+      {
+        label: t('messenger.right.sandbox'),
+        run: async () => {
+          const refreshWorkspace = rightDockRef.value?.refreshWorkspace;
+          if (typeof refreshWorkspace !== 'function') {
+            return true;
+          }
+          try {
+            return (await refreshWorkspace({ background: true })) !== false;
+          } catch {
+            return false;
+          }
+        }
+      },
+      {
+        label: t('userTools.skills.title'),
+        run: async () => (await loadRightDockSkills({ force: true, silent: true })) !== false
+      }
+    ];
+    const sectionPromises = refreshSections.map(async (section): Promise<AgentConversationRefreshSectionResult> => ({
+      label: section.label,
+      success: await section.run()
+    }));
+    const refreshResults = await Promise.allSettled([
+      loadAgentToolSummary({ force: true }),
+      ...sectionPromises
+    ]);
+    const sectionResults = refreshResults
+      .slice(1)
+      .map((item, index): AgentConversationRefreshSectionResult => {
+        if (item.status === 'fulfilled') {
+          return item.value as AgentConversationRefreshSectionResult;
+        }
+        return {
+          label: refreshSections[index]?.label || t('common.refresh'),
+          success: false
+        };
+      });
+    const failedLabels = sectionResults.filter((item) => !item.success).map((item) => item.label);
+    if (!failedLabels.length) {
+      ElMessage.success(t('common.refreshSuccess'));
       return;
     }
-    ElMessage.success(t('userTools.skills.refresh.success'));
+    const failedText = formatRefreshSectionLabels(failedLabels);
+    if (failedLabels.length === sectionResults.length) {
+      ElMessage.error(t('messenger.refresh.failed', { targets: failedText }));
+      return;
+    }
+    ElMessage.warning(t('messenger.refresh.partial', { targets: failedText }));
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
   } finally {
-    rightDockSkillRefreshLoading.value = false;
+    agentConversationRefreshLoading.value = false;
   }
 };
 

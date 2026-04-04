@@ -2,6 +2,16 @@
   <section class="tool-workflow-section" :class="{ 'is-empty': section.empty }">
     <div class="tool-workflow-section-header">
       <span class="tool-workflow-section-title">{{ section.title }}</span>
+      <button
+        v-if="section.copyText"
+        class="tool-workflow-section-copy"
+        type="button"
+        :title="t('common.copy')"
+        :aria-label="t('common.copy')"
+        @click="handleCopySection"
+      >
+        <i class="fa-regular fa-copy" aria-hidden="true"></i>
+      </button>
     </div>
 
     <div class="tool-workflow-section-body">
@@ -56,7 +66,10 @@
 
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue';
+import { ElMessage } from 'element-plus';
 
+import { useI18n } from '@/i18n';
+import { copyText } from '@/utils/clipboard';
 import MessageToolWorkflowCommandSection from './MessageToolWorkflowCommandSection.vue';
 import MessageToolWorkflowCompactionSection from './MessageToolWorkflowCompactionSection.vue';
 import MessageToolWorkflowPatchSection from './MessageToolWorkflowPatchSection.vue';
@@ -65,11 +78,23 @@ import type { ToolWorkflowDetailSection } from './toolWorkflowTypes';
 
 type CommandStreamName = 'stdout' | 'stderr';
 
-defineProps<{
+const props = defineProps<{
   section: ToolWorkflowDetailSection;
   bindStreamBodyRef?: (stream: CommandStreamName, el: Element | ComponentPublicInstance | null) => void;
   onStreamBodyScroll?: (stream: CommandStreamName, event: Event) => void;
 }>();
+
+const { t } = useI18n();
+
+const handleCopySection = async () => {
+  if (!props.section.copyText) return;
+  const copied = await copyText(props.section.copyText);
+  if (copied) {
+    ElMessage.success(t('chat.message.copySuccess'));
+    return;
+  }
+  ElMessage.warning(t('chat.message.copyFailed'));
+};
 </script>
 
 <style scoped>
@@ -99,6 +124,31 @@ defineProps<{
 
 .tool-workflow-section.is-empty .tool-workflow-section-title {
   opacity: 0.82;
+}
+
+.tool-workflow-section-copy {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--workflow-term-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--workflow-term-muted);
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.tool-workflow-section-copy:hover {
+  color: var(--workflow-term-text);
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(148, 163, 184, 0.08);
 }
 
 .tool-workflow-section-body {

@@ -92,8 +92,9 @@ source_docs:
    ```
 
 3. **访问系统**
-   - 用户前端：http://localhost:18001
-   - 管理端：http://localhost:18000
+   - 用户前端：http://localhost:18002
+   - 管理端与文档：http://localhost:18000
+   - 前端开发服务（仅联调时直接访问）：http://localhost:18001
    - 默认管理员：admin / admin
 
 ### Server 核心能力

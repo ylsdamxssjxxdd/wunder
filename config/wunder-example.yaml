@@ -253,6 +253,8 @@ storage: # 存储配置
 
 observability: # 可观测性配置
   log_level: ${WUNDER_LOG_LEVEL} # 日志级别（DEBUG/INFO/WARNING/ERROR）
+  server_log_dir: ./config/data/logs/server # only wunder-server writes local runtime logs here
+  server_log_retention_days: 14 # days to keep local server log files; 0 disables cleanup
   monitor_event_limit: 500 # 监控事件保留条数上限（<=0 表示不限制，注意会增加内存占用）
   monitor_payload_max_chars: 0 # 监控事件单条最大字符数（<= 0 表示不截断）
   monitor_drop_event_types: # 需要丢弃的事件类型列表（减少存储占用）

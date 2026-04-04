@@ -1137,6 +1137,102 @@
   - `ok`：是否成功
   - `data.pack_id`：删除的模板包 ID
 
+### 4.1.6.10 `/wunder/prompt_templates`
+
+- 方法：`GET`
+- 鉴权：用户侧 Bearer Token
+- 返回（JSON）：
+  - `data.active`：当前用户实际生效的模板包 ID
+    - 默认会解析为 `default-zh` 或 `default-en`
+    - 兼容别名 `default` 仅用于历史设置兼容，不再作为用户界面的主选项
+  - `data.packs_root`：用户自定义模板包根目录
+  - `data.default_sync_pack_id`：当前管理员启用的系统模板包 ID
+  - `data.packs[]`：模板包列表
+    - `id`：模板包 ID
+    - `is_default`：是否为内置默认包
+    - `readonly`：是否只读
+    - `builtin`：是否为内置包
+    - `locale`：内置包绑定语言，当前为 `zh` 或 `en`
+    - `is_system_language_default`：是否为当前系统语言默认落点
+    - `sync_pack_id`：内置包同步的系统模板包 ID
+    - `path`：模板包路径
+  - `data.segments[]`：可编辑分段列表
+- 说明：
+  - 用户侧默认提供 `default-zh` 与 `default-en` 两套只读内置模板包
+  - 未显式选择时，后端会按当前系统语言把兼容别名 `default` 解析到对应内置包
+
+### 4.1.6.11 `/wunder/prompt_templates/active`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `active`：要启用的模板包 ID，可为 `default-zh`、`default-en` 或自定义包 ID
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.active`：已保存的模板包 ID
+- 说明：
+  - 选中 `default-zh` 或 `default-en` 后，运行时会固定读取对应语言模板，不再随界面语言漂移
+
+### 4.1.6.12 `/wunder/prompt_templates/file`
+
+- 方法：`GET` / `PUT`
+- 鉴权：用户侧 Bearer Token
+- `GET` Query：
+  - `pack_id`：模板包 ID，可选，默认读取当前启用包
+  - `locale`：语言，可选；对内置包会被强制锁定为包绑定语言
+  - `key`：分段 key
+- `GET` 返回（JSON）：
+  - `data.pack_id`：实际读取的模板包 ID
+  - `data.locale`：实际读取语言
+  - `data.key`：分段 key
+  - `data.path`：实际读取路径
+  - `data.exists`：当前包内该分段是否存在
+  - `data.fallback_used`：是否回退到了系统模板内容
+  - `data.readonly`：当前包是否只读
+  - `data.source_pack_id`：实际命中的系统模板包 ID
+  - `data.content`：分段内容
+- `PUT` 入参（JSON）：
+  - `pack_id`：模板包 ID
+  - `locale`：语言
+  - `key`：分段 key
+  - `content`：分段内容
+- `PUT` 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：模板包 ID
+  - `data.locale`：写入语言
+  - `data.key`：分段 key
+  - `data.path`：写入路径
+- 说明：
+  - `default-zh` 与 `default-en` 为只读，禁止通过 `PUT` 修改
+  - 自定义包缺失分段时，会先回退到当前系统 active 模板包，再回退到系统 `default`
+
+### 4.1.6.13 `/wunder/prompt_templates/packs`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- 入参（JSON）：
+  - `pack_id`：要创建的自定义模板包 ID
+  - `copy_from`：可选，复制来源模板包 ID
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：创建后的模板包 ID
+  - `data.path`：模板包路径
+  - `data.copied_from`：复制来源模板包 ID
+- 说明：
+  - `copy_from` 支持 `default-zh`、`default-en` 和任意现有自定义包
+  - 对内置包复制时，会从当前管理员启用的系统模板内容复制出可编辑包
+
+### 4.1.6.14 `/wunder/prompt_templates/packs/{pack_id}`
+
+- 方法：`DELETE`
+- 鉴权：用户侧 Bearer Token
+- 返回（JSON）：
+  - `ok`：是否成功
+  - `data.pack_id`：删除的模板包 ID
+- 说明：
+  - 内置包 `default-zh` 与 `default-en` 不允许删除
+  - 若删除的是当前启用的自定义包，后端会回退到系统语言对应的默认内置包
+
 ### 4.1.7 `/wunder/admin/skills/upload`
 
 - 方法：`POST`
@@ -2242,7 +2338,21 @@
 
 - 本次改造针对 beeroom/chat/channel 的消息实时链路；“模型配置变更（用户改模型、管理员改默认模型）”的全局推送链路尚未迁移到统一实时总线，仍按现有页面刷新/重新拉取机制生效。
 
-## 2026-04-04 增补：聊天媒体附件预处理
+## 2026-04-04 增补：聊天附件预处理
+
+### `POST /wunder/chat/attachments/convert`
+
+- 方法：`POST`
+- 鉴权：与聊天域保持一致（用户侧 Bearer Token）
+- Body：`multipart/form-data`
+  - `file`：必填，可上传一个或多个文档附件；支持范围与 `/wunder/doc2md/convert` 一致
+- 返回：`JSON`
+  - 单文件时：`data.name/content/converter/warnings`
+  - 多文件时：`data.items[]`
+- 说明：
+  - 这是聊天域的文档预处理入口，供前端先把文档转成文本型附件，再提交到 `POST /wunder/chat/sessions/{session_id}/messages`
+  - 图片一般直接走 `attachments[]`
+  - 音频 / 视频走 `/wunder/chat/attachments/media/process`
 
 ### `POST /wunder/chat/attachments/media/process`
 

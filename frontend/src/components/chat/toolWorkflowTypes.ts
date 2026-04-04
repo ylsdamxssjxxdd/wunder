@@ -71,6 +71,7 @@ export type ToolWorkflowDetailSection = {
   kind: 'text' | 'command' | 'patch' | 'compaction' | 'structured';
   summary?: string;
   body: string;
+  copyText?: string;
   commandView: ToolWorkflowCommandView | null;
   patchLines: ToolWorkflowPatchLine[];
   compactionView?: CompactionView | null;

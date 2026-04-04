@@ -13,6 +13,8 @@ const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 const USER_ACTIVE_PACK_CACHE_MAX_ITEMS: usize = 512;
 
 pub const DEFAULT_PACK_ID: &str = "default";
+pub const DEFAULT_ZH_PACK_ID: &str = "default-zh";
+pub const DEFAULT_EN_PACK_ID: &str = "default-en";
 
 pub const SYSTEM_SEGMENTS: &[(&str, &str)] = &[
     ("role", "role.txt"),
@@ -44,6 +46,8 @@ impl Default for UserPromptTemplateSettingsFile {
 struct UserActivePackCacheEntry {
     revision: u64,
     active_pack_id: String,
+    follows_system_language_default: bool,
+    language_default_pack_id: String,
 }
 
 fn user_active_pack_cache() -> &'static Mutex<HashMap<String, UserActivePackCacheEntry>> {
@@ -125,6 +129,36 @@ pub fn resolve_system_pack_root(config: &Config, pack_id: &str) -> PathBuf {
     resolve_system_packs_root(config).join(pack_id.trim())
 }
 
+pub fn resolve_default_user_pack_id_for_language(raw_language: Option<&str>) -> String {
+    if normalize_locale(raw_language).eq_ignore_ascii_case("en") {
+        DEFAULT_EN_PACK_ID.to_string()
+    } else {
+        DEFAULT_ZH_PACK_ID.to_string()
+    }
+}
+
+pub fn resolve_default_user_pack_id() -> String {
+    resolve_default_user_pack_id_for_language(None)
+}
+
+pub fn is_builtin_user_pack_id(pack_id: &str) -> bool {
+    let cleaned = pack_id.trim();
+    cleaned.eq_ignore_ascii_case(DEFAULT_PACK_ID)
+        || cleaned.eq_ignore_ascii_case(DEFAULT_ZH_PACK_ID)
+        || cleaned.eq_ignore_ascii_case(DEFAULT_EN_PACK_ID)
+}
+
+pub fn builtin_user_pack_locale(pack_id: &str) -> Option<&'static str> {
+    let cleaned = pack_id.trim();
+    if cleaned.eq_ignore_ascii_case(DEFAULT_ZH_PACK_ID) {
+        Some("zh")
+    } else if cleaned.eq_ignore_ascii_case(DEFAULT_EN_PACK_ID) {
+        Some("en")
+    } else {
+        None
+    }
+}
+
 pub fn resolve_user_prompt_root(config: &Config, user_id: &str) -> PathBuf {
     resolve_user_prompt_templates_root(config).join(safe_user_prompt_key(user_id))
 }
@@ -160,13 +194,17 @@ pub fn safe_user_prompt_key(user_id: &str) -> String {
 pub fn load_user_active_pack_id(config: &Config, user_id: &str) -> String {
     let cache_key = safe_user_prompt_key(user_id);
     let revision = crate::prompting::system_prompt_templates_revision();
+    let language_default_pack_id = resolve_default_user_pack_id();
     if let Some(entry) = user_active_pack_cache()
         .lock()
         .unwrap_or_else(|err| err.into_inner())
         .get(&cache_key)
         .cloned()
     {
-        if entry.revision == revision {
+        if entry.revision == revision
+            && (!entry.follows_system_language_default
+                || entry.language_default_pack_id == language_default_pack_id)
+        {
             return entry.active_pack_id;
         }
     }
@@ -175,21 +213,36 @@ pub fn load_user_active_pack_id(config: &Config, user_id: &str) -> String {
     let text = match std::fs::read_to_string(&settings_path) {
         Ok(value) => value,
         Err(_) => {
-            store_cached_user_active_pack_id(&cache_key, revision, DEFAULT_PACK_ID);
-            return DEFAULT_PACK_ID.to_string();
+            store_cached_user_active_pack_id(
+                &cache_key,
+                revision,
+                &language_default_pack_id,
+                true,
+                &language_default_pack_id,
+            );
+            return language_default_pack_id;
         }
     };
     let parsed = serde_json::from_str::<UserPromptTemplateSettingsFile>(&text)
         .unwrap_or_else(|_| UserPromptTemplateSettingsFile::default());
     let active = normalize_pack_id(parsed.active.as_deref());
-    let resolved = if active.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        DEFAULT_PACK_ID.to_string()
-    } else if resolve_user_pack_root(config, user_id, &active).is_dir() {
-        active
-    } else {
-        DEFAULT_PACK_ID.to_string()
-    };
-    store_cached_user_active_pack_id(&cache_key, revision, &resolved);
+    let (resolved, follows_system_language_default) =
+        if active.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+            (language_default_pack_id.clone(), true)
+        } else if builtin_user_pack_locale(&active).is_some() {
+            (active, false)
+        } else if resolve_user_pack_root(config, user_id, &active).is_dir() {
+            (active, false)
+        } else {
+            (language_default_pack_id.clone(), true)
+        };
+    store_cached_user_active_pack_id(
+        &cache_key,
+        revision,
+        &resolved,
+        follows_system_language_default,
+        &language_default_pack_id,
+    );
     resolved
 }
 
@@ -201,8 +254,9 @@ pub fn save_user_active_pack_id(
     validate_pack_id(pack_id)?;
     let root = resolve_user_prompt_root(config, user_id);
     std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+    let active = normalize_pack_id(Some(pack_id));
     let settings = UserPromptTemplateSettingsFile {
-        active: Some(normalize_pack_id(Some(pack_id))),
+        active: Some(active),
         updated_at: Some(now_ts()),
     };
     let text = serde_json::to_string_pretty(&settings).map_err(|err| err.to_string())?;
@@ -223,7 +277,13 @@ fn clear_cached_user_active_pack_id(user_id: &str) {
         .remove(&safe_user_prompt_key(user_id));
 }
 
-fn store_cached_user_active_pack_id(cache_key: &str, revision: u64, active_pack_id: &str) {
+fn store_cached_user_active_pack_id(
+    cache_key: &str,
+    revision: u64,
+    active_pack_id: &str,
+    follows_system_language_default: bool,
+    language_default_pack_id: &str,
+) {
     let mut cache = user_active_pack_cache()
         .lock()
         .unwrap_or_else(|err| err.into_inner());
@@ -235,6 +295,8 @@ fn store_cached_user_active_pack_id(cache_key: &str, revision: u64, active_pack_
         UserActivePackCacheEntry {
             revision,
             active_pack_id: active_pack_id.to_string(),
+            follows_system_language_default,
+            language_default_pack_id: language_default_pack_id.to_string(),
         },
     );
 }
@@ -326,4 +388,45 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        builtin_user_pack_locale, is_builtin_user_pack_id, normalize_locale,
+        resolve_default_user_pack_id_for_language, DEFAULT_EN_PACK_ID, DEFAULT_PACK_ID,
+        DEFAULT_ZH_PACK_ID,
+    };
+
+    #[test]
+    fn resolve_default_user_pack_id_for_language_tracks_language() {
+        assert_eq!(
+            resolve_default_user_pack_id_for_language(Some("zh-CN")),
+            DEFAULT_ZH_PACK_ID
+        );
+        assert_eq!(
+            resolve_default_user_pack_id_for_language(Some("en-US")),
+            DEFAULT_EN_PACK_ID
+        );
+        assert_eq!(
+            resolve_default_user_pack_id_for_language(Some("en")),
+            DEFAULT_EN_PACK_ID
+        );
+    }
+
+    #[test]
+    fn builtin_user_pack_helpers_cover_builtin_ids() {
+        assert!(is_builtin_user_pack_id(DEFAULT_PACK_ID));
+        assert!(is_builtin_user_pack_id(DEFAULT_ZH_PACK_ID));
+        assert!(is_builtin_user_pack_id(DEFAULT_EN_PACK_ID));
+        assert_eq!(builtin_user_pack_locale(DEFAULT_ZH_PACK_ID), Some("zh"));
+        assert_eq!(builtin_user_pack_locale(DEFAULT_EN_PACK_ID), Some("en"));
+        assert_eq!(builtin_user_pack_locale(DEFAULT_PACK_ID), None);
+    }
+
+    #[test]
+    fn normalize_locale_maps_non_empty_input() {
+        assert_eq!(normalize_locale(Some("zh-Hans")), "zh");
+        assert_eq!(normalize_locale(Some("en-GB")), "en");
+    }
 }

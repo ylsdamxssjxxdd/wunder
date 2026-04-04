@@ -1,6 +1,6 @@
 ---
 title: 临时目录与文档转换
-summary: `/wunder/temp_dir/*` 负责临时上传、下载和中转，`/wunder/doc2md/convert` 负责把文档转换成更适合模型消费的 Markdown。
+summary: `/wunder/temp_dir/*` 负责临时上传、下载和中转；文档转换与聊天附件预处理分别走公共转换、调试转换和聊天域转换接口。
 read_when:
   - 你要给外部系统发下载链接
   - 你要区分工作区、temp_dir 和 doc2md 的职责
@@ -9,6 +9,7 @@ source_docs:
   - docs/设计方案.md
   - src/api/temp_dir.rs
   - src/api/doc2md.rs
+  - src/api/chat.rs
 ---
 
 # 临时目录与文档转换
@@ -17,16 +18,19 @@ source_docs:
 
 ## 本页重点
 
-这页只解释三件事：
+这页只解释四件事：
 
 - 什么应该放进 `temp_dir`
-- 什么情况下应该先经过 `doc2md`
+- 什么情况下应该先经过文档转换
+- 聊天域的附件预处理接口怎么分
 - 为什么很多外部渠道最终拿到的是 `/wunder/temp_dir/download`
 
 ## 最常用的接口
 
 - `POST /wunder/doc2md/convert`
 - `POST /wunder/attachments/convert`
+- `POST /wunder/chat/attachments/convert`
+- `POST /wunder/chat/attachments/media/process`
 - `GET /wunder/temp_dir/download`
 - `POST /wunder/temp_dir/upload`
 - `GET /wunder/temp_dir/list`
@@ -38,15 +42,23 @@ source_docs:
 - 你要给外部客户端发一个可点击下载链接
 - 你要先把 doc/pdf/ppt/xlsx 之类文件转成 Markdown
 - 你在做调试面板附件解析
+- 你在做聊天输入区的文档、音频或视频附件预处理
 
-## `doc2md` 和 `attachments/convert` 的区别
+## 四类高频接口怎么分
 
 可以这样记：
 
-- `/wunder/doc2md/convert`：公共转换入口，无需鉴权
-- `/wunder/attachments/convert`：调试面板使用，逻辑与 `doc2md` 一致，但需鉴权
+| 接口 | 面向对象 | 典型输出 |
+|------|----------|----------|
+| `/wunder/doc2md/convert` | 公共文档转换 | Markdown 内容 |
+| `/wunder/attachments/convert` | 调试面板 / 鉴权联调 | 与 `doc2md` 一致，但要求鉴权 |
+| `/wunder/chat/attachments/convert` | 聊天输入区的文档附件 | 供聊天域装配文本型 `attachments` |
+| `/wunder/chat/attachments/media/process` | 聊天输入区的音频 / 视频附件 | 音频转写结果，或视频拆出的图片帧 + 音轨附件 |
 
-所以如果你只是做文档转换能力接入，优先看 `doc2md`。
+补充两点：
+
+- 图片一般不走这些转换接口，直接作为聊天附件发送即可。
+- 视频不会直接发给模型，而是先拆成图片序列和音轨；重新抽帧依赖 `source_public_path`。
 
 ## 为什么很多文件最后变成 `temp_dir` 下载链接
 
@@ -61,6 +73,8 @@ source_docs:
 - `/wunder/temp_dir/download?...`
 
 这样渠道客户端或外部网页才能真正点开。
+
+聊天媒体预处理时，源文件通常先落到工作区公共路径；真正发给外部客户端下载时，系统仍可能再改写成 `temp_dir` 下载链接。
 
 ## 常见误区
 
@@ -85,7 +99,8 @@ source_docs:
 ## 实施建议
 
 - `temp_dir` 适合中转和分发，不适合长期沉淀业务文件。
-- `doc2md` 负责把多种文档变成模型更容易消费的 Markdown。
+- 文档类转换先分清是公共能力、调试面板还是聊天输入区。
+- 音频 / 视频附件应走 `POST /wunder/chat/attachments/media/process`，不要直接把原始视频当模型输入。
 - 外部渠道能点击打开文件，通常依赖的是 `temp_dir` 下载链接。
 
 ## 延伸阅读

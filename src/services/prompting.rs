@@ -92,12 +92,12 @@ struct InflightEntry {
 }
 
 pub fn read_prompt_template(path: &Path) -> String {
-    read_prompt_template_with_exists(path).0
+    read_prompt_template_with_exists(path, None).0
 }
 
-fn read_prompt_template_with_exists(path: &Path) -> (String, bool) {
-    let language = i18n::get_language().to_ascii_lowercase();
-    let cache_key = format!("{language}|{}", path.to_string_lossy());
+fn read_prompt_template_with_exists(path: &Path, locale_override: Option<&str>) -> (String, bool) {
+    let locale = resolve_requested_prompt_locale(locale_override).unwrap_or("default");
+    let cache_key = format!("{locale}|{}", path.to_string_lossy());
     let revision = system_prompt_templates_revision();
 
     let cache = prompt_file_cache();
@@ -113,7 +113,7 @@ fn read_prompt_template_with_exists(path: &Path) -> (String, bool) {
     // Admin-managed system prompt templates are edited via API and we bump
     // `SYSTEM_PROMPT_TEMPLATES_REVISION` on writes, so we can avoid filesystem
     // metadata checks on hot paths (bind-mount `stat` can be expensive).
-    let resolved = resolve_prompt_path(path);
+    let resolved = resolve_prompt_path(path, locale_override);
     let (text, exists) = match std::fs::read_to_string(&resolved) {
         Ok(text) => (text, true),
         Err(_) => (String::new(), false),
@@ -131,7 +131,7 @@ fn read_prompt_template_with_exists(path: &Path) -> (String, bool) {
 
 pub fn read_prompt_template_from_active_pack(config: &Config, path: &Path) -> String {
     let template_id = resolve_prompt_template_id(config);
-    read_prompt_template_from_pack(config, &template_id, path)
+    read_prompt_template_from_pack(config, &template_id, path, None)
 }
 
 impl PromptComposer {
@@ -404,6 +404,7 @@ struct PromptTemplateScope {
     system_pack_id: String,
     user_pack_id: Option<String>,
     owner_user_id: Option<String>,
+    locale_override: Option<String>,
 }
 
 fn resolve_prompt_template_id(config: &Config) -> String {
@@ -422,17 +423,27 @@ fn resolve_prompt_template_scope(
     let system_pack_id = resolve_prompt_template_id(config);
     let user_pack_id =
         user_prompt_templates::load_user_active_pack_id(config, prompt_owner_user_id);
+    if let Some(locale) = user_prompt_templates::builtin_user_pack_locale(&user_pack_id) {
+        return PromptTemplateScope {
+            system_pack_id,
+            user_pack_id: None,
+            owner_user_id: None,
+            locale_override: Some(locale.to_string()),
+        };
+    }
     if user_pack_id.eq_ignore_ascii_case(user_prompt_templates::DEFAULT_PACK_ID) {
         return PromptTemplateScope {
             system_pack_id,
             user_pack_id: None,
             owner_user_id: None,
+            locale_override: None,
         };
     }
     PromptTemplateScope {
         system_pack_id,
         user_pack_id: Some(user_pack_id),
         owner_user_id: Some(prompt_owner_user_id.trim().to_string()),
+        locale_override: None,
     }
 }
 
@@ -449,9 +460,11 @@ fn build_prompt_template_cache_key(scope: &PromptTemplateScope) -> String {
             .as_deref()
             .map(user_prompt_templates::safe_user_prompt_key)
             .unwrap_or_else(|| "anonymous".to_string());
-        return format!("user:{owner}:{user_pack_id}|system:{system_pack}");
+        let locale = scope.locale_override.as_deref().unwrap_or("default");
+        return format!("user:{owner}:{user_pack_id}|system:{system_pack}|locale:{locale}");
     }
-    format!("system:{system_pack}")
+    let locale = scope.locale_override.as_deref().unwrap_or("default");
+    format!("system:{system_pack}|locale:{locale}")
 }
 
 fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
@@ -472,18 +485,23 @@ fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
     root.join(template_id.trim())
 }
 
-fn read_prompt_template_from_pack(config: &Config, template_id: &str, path: &Path) -> String {
+fn read_prompt_template_from_pack(
+    config: &Config,
+    template_id: &str,
+    path: &Path,
+    locale_override: Option<&str>,
+) -> String {
     let template_id = template_id.trim();
     let is_default = template_id.is_empty() || template_id.eq_ignore_ascii_case("default");
     if !is_default {
         let pack_root = resolve_prompt_template_root(config, template_id);
         let candidate = pack_root.join(path);
-        let (text, exists) = read_prompt_template_with_exists(&candidate);
+        let (text, exists) = read_prompt_template_with_exists(&candidate, locale_override);
         if exists {
             return text;
         }
     }
-    read_prompt_template(path)
+    read_prompt_template_with_exists(path, locale_override).0
 }
 
 fn read_prompt_template_from_scope(
@@ -498,12 +516,18 @@ fn read_prompt_template_from_scope(
         let user_pack_root =
             user_prompt_templates::resolve_user_pack_root(config, owner_user_id, user_pack_id);
         let user_candidate = user_pack_root.join(path);
-        let (text, exists) = read_prompt_template_with_exists(&user_candidate);
+        let (text, exists) =
+            read_prompt_template_with_exists(&user_candidate, scope.locale_override.as_deref());
         if exists {
             return text;
         }
     }
-    read_prompt_template_from_pack(config, &scope.system_pack_id, path)
+    read_prompt_template_from_pack(
+        config,
+        &scope.system_pack_id,
+        path,
+        scope.locale_override.as_deref(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -982,17 +1006,13 @@ fn rewrite_workspace_paths_for_local_text(
     replaced_placeholder.replace(public_root, local_root)
 }
 
-fn resolve_prompt_path(path: &Path) -> PathBuf {
+fn resolve_prompt_path(path: &Path, locale_override: Option<&str>) -> PathBuf {
     let mut resolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
         user_prompt_templates::resolve_default_prompt_pack_root().join(path)
     };
-    let locale = match i18n::get_language().to_ascii_lowercase() {
-        language if language.starts_with("en") => Some("en"),
-        language if language.starts_with("zh") => Some("zh"),
-        _ => None,
-    };
+    let locale = resolve_requested_prompt_locale(locale_override);
     if let Some(locale) = locale {
         if let Some(candidate) = insert_locale_after_prompts(&resolved, locale) {
             if candidate.exists() {
@@ -1017,6 +1037,21 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
         resolved = path.to_path_buf();
     }
     resolved
+}
+
+fn resolve_requested_prompt_locale(locale_override: Option<&str>) -> Option<&'static str> {
+    let raw = locale_override.unwrap_or("").trim().to_ascii_lowercase();
+    if raw.starts_with("en") {
+        return Some("en");
+    }
+    if raw.starts_with("zh") {
+        return Some("zh");
+    }
+    match i18n::get_language().to_ascii_lowercase() {
+        language if language.starts_with("en") => Some("en"),
+        language if language.starts_with("zh") => Some("zh"),
+        _ => None,
+    }
 }
 
 fn insert_locale_after_prompts(path: &Path, locale: &str) -> Option<PathBuf> {
@@ -1251,5 +1286,25 @@ mod tests {
             schema["properties"]["content"]["description"].as_str(),
             Some("![x](C:/Users/test/Desktop/workspace/a.png)")
         );
+    }
+
+    #[test]
+    fn build_prompt_template_cache_key_includes_locale_override() {
+        let scope = PromptTemplateScope {
+            system_pack_id: "pack-a".to_string(),
+            user_pack_id: None,
+            owner_user_id: None,
+            locale_override: Some("en".to_string()),
+        };
+        assert_eq!(
+            build_prompt_template_cache_key(&scope),
+            "system:pack-a|locale:en"
+        );
+    }
+
+    #[test]
+    fn resolve_requested_prompt_locale_prefers_supported_override() {
+        assert_eq!(resolve_requested_prompt_locale(Some("en-US")), Some("en"));
+        assert_eq!(resolve_requested_prompt_locale(Some("zh-Hans")), Some("zh"));
     }
 }

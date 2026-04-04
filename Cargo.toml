@@ -96,7 +96,8 @@ tokio-rustls = "0.26"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 tauri = { version = "2", features = ["wry"], optional = true }
 tauri-plugin-updater = { version = "2", optional = true }
 url = "2"

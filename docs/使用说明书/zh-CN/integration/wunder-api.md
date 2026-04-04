@@ -54,7 +54,18 @@ source_docs:
 - `model_name`：临时覆盖模型
 - `tool_names`：显式挂载工具
 - `config_overrides`：局部配置覆盖
-- `attachments`：附件输入
+- `attachments`：附件输入（图片可直接传；文档、音频、视频建议先做预处理）
+
+## 附件不要一股脑直接丢给 `/wunder`
+
+官方前端现在对附件的处理是分流的：
+
+- 图片：可直接作为视觉上下文进入 `attachments`
+- 文档：通常先走 `/wunder/chat/attachments/convert` 或 `/wunder/doc2md/convert`，转成文本再提交
+- 音频：先走 `/wunder/chat/attachments/media/process`，把语音转成文本附件
+- 视频：先走 `/wunder/chat/attachments/media/process`，拆成图片序列和音轨附件；不是直接把原始视频发给模型
+
+如果你绕过这些预处理，自己直接调 `/wunder`，那附件拆解、转写、抽帧和体积控制都要由接入方自己负责。
 
 ## 身份字段说明
 

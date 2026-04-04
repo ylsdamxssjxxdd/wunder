@@ -5,7 +5,9 @@
         <label class="messenger-prompt-field">
           <span>{{ t('messenger.prompt.pack') }}</span>
           <select :value="selectedPack" :disabled="metaLoading" @change="handlePackSelectChange">
-            <option v-for="pack in packs" :key="pack.id" :value="pack.id">{{ pack.id }}</option>
+            <option v-for="pack in packs" :key="pack.id" :value="pack.id">
+              {{ resolvePackLabel(pack.id, pack) }}
+            </option>
           </select>
         </label>
         <button
@@ -22,7 +24,7 @@
         <button
           class="messenger-settings-action danger ghost"
           type="button"
-          :disabled="deletingPack || selectedPack === 'default'"
+          :disabled="deletingPack || selectedPackReadonly"
           @click="deletePack"
         >
           {{ t('messenger.prompt.deletePack') }}
@@ -30,9 +32,12 @@
       </div>
       <div class="messenger-prompt-meta">
         <span class="messenger-kind-tag">
-          {{ t('messenger.prompt.activeTag', { pack: activePack || 'default' }) }}
+          {{ t('messenger.prompt.activeTag', { pack: resolvePackLabel(activePack, activePackMeta) }) }}
         </span>
-        <span v-if="selectedPack === 'default' && defaultSyncPackId" class="messenger-kind-tag">
+        <span v-if="selectedPackMeta?.is_system_language_default" class="messenger-kind-tag">
+          {{ t('messenger.prompt.systemLanguageDefaultTag') }}
+        </span>
+        <span v-if="selectedPackBuiltin && defaultSyncPackId" class="messenger-kind-tag">
           {{ t('messenger.prompt.syncTag', { pack: defaultSyncPackId }) }}
         </span>
       </div>
@@ -59,7 +64,7 @@
           <button
             class="messenger-settings-action"
             type="button"
-            :disabled="savingFile || selectedPack === 'default'"
+            :disabled="savingFile || selectedPackReadonly"
             @click="saveCurrentFile"
           >
             {{ savingFile ? t('common.loading') : t('common.save') }}
@@ -68,7 +73,7 @@
         <textarea
           v-model="editorContent"
           class="messenger-prompt-editor"
-          :readonly="selectedPack === 'default'"
+          :readonly="selectedPackReadonly"
           spellcheck="false"
         ></textarea>
         <div class="messenger-prompt-status">{{ statusText }}</div>
@@ -91,7 +96,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -110,6 +115,10 @@ type PromptPack = {
   id: string;
   is_default?: boolean;
   readonly?: boolean;
+  builtin?: boolean;
+  locale?: string;
+  is_system_language_default?: boolean;
+  sync_pack_id?: string;
 };
 
 type PromptSegment = {
@@ -139,14 +148,19 @@ const DEFAULT_SEGMENTS: PromptSegment[] = [
   { key: 'extra', file: 'extra.txt' }
 ];
 
+const DEFAULT_PACK_ID = 'default';
+const DEFAULT_ZH_PACK_ID = 'default-zh';
+const DEFAULT_EN_PACK_ID = 'default-en';
+const BUILTIN_PACK_IDS = new Set([DEFAULT_PACK_ID, DEFAULT_ZH_PACK_ID, DEFAULT_EN_PACK_ID]);
+
 const { t, language } = useI18n();
 
 const packs = ref<PromptPack[]>([]);
 const segments = ref<PromptSegment[]>([...DEFAULT_SEGMENTS]);
-const selectedPack = ref('default');
-const activePack = ref('default');
+const selectedPack = ref(resolveSystemLanguageBuiltinPackId());
+const activePack = ref(resolveSystemLanguageBuiltinPackId());
 const selectedSegment = ref(DEFAULT_SEGMENTS[0].key);
-const defaultSyncPackId = ref('default');
+const defaultSyncPackId = ref(DEFAULT_PACK_ID);
 
 const editorContent = ref('');
 const loadedContent = ref('');
@@ -175,6 +189,63 @@ const resolveErrorMessage = (error: unknown, fallback: string) => {
 };
 
 const resolveLocale = () => (String(language.value || '').toLowerCase().startsWith('en') ? 'en' : 'zh');
+
+function resolveSystemLanguageBuiltinPackId() {
+  return resolveLocale() === 'en' ? DEFAULT_EN_PACK_ID : DEFAULT_ZH_PACK_ID;
+}
+
+const packMap = computed(() => {
+  const next = new Map<string, PromptPack>();
+  for (const pack of packs.value) {
+    next.set(String(pack.id || '').trim(), pack);
+  }
+  return next;
+});
+
+const selectedPackMeta = computed(() => packMap.value.get(selectedPack.value) || null);
+const activePackMeta = computed(() => packMap.value.get(activePack.value) || null);
+
+const isBuiltinPack = (packId: string, pack?: PromptPack | null) => {
+  if (pack?.builtin) {
+    return true;
+  }
+  return BUILTIN_PACK_IDS.has(String(pack?.id || packId || '').trim().toLowerCase());
+};
+
+const isReadonlyPack = (pack?: PromptPack | null, packId = '') =>
+  Boolean(pack?.readonly || isBuiltinPack(packId, pack));
+
+const selectedPackBuiltin = computed(() => isBuiltinPack(selectedPack.value, selectedPackMeta.value));
+const selectedPackReadonly = computed(() => isReadonlyPack(selectedPackMeta.value, selectedPack.value));
+
+const resolvePackLocale = (packId: string, pack?: PromptPack | null) => {
+  const normalizedPackId = String(packId || '').trim().toLowerCase();
+  const locale = String(pack?.locale || '').trim().toLowerCase();
+  if (normalizedPackId === DEFAULT_PACK_ID) {
+    return resolveLocale();
+  }
+  if (locale.startsWith('en') || normalizedPackId === DEFAULT_EN_PACK_ID) {
+    return 'en';
+  }
+  if (locale.startsWith('zh') || normalizedPackId === DEFAULT_ZH_PACK_ID) {
+    return 'zh';
+  }
+  return resolveLocale();
+};
+
+const resolvePackLabel = (packId: string, pack?: PromptPack | null) => {
+  const normalizedPackId = String(packId || '').trim();
+  if (!normalizedPackId) {
+    return '-';
+  }
+  const meta = pack || packMap.value.get(normalizedPackId) || null;
+  if (isBuiltinPack(normalizedPackId, meta)) {
+    return resolvePackLocale(normalizedPackId, meta) === 'en'
+      ? t('messenger.prompt.defaultPackEn')
+      : t('messenger.prompt.defaultPackZh');
+  }
+  return normalizedPackId;
+};
 
 const normalizeSegmentKey = (value: unknown) =>
   String(value || '')
@@ -260,13 +331,26 @@ const loadStatus = async () => {
   try {
     const result = await listUserPromptTemplates();
     const data = ((result?.data?.data || {}) as PromptTemplateStatus) || {};
-    const nextPacks = Array.isArray(data.packs) && data.packs.length ? data.packs : [{ id: 'default' }];
+    const hadPacks = packs.value.length > 0;
+    const fallbackPackId = resolveSystemLanguageBuiltinPackId();
+    const nextPacks =
+      Array.isArray(data.packs) && data.packs.length
+        ? data.packs
+        : [
+            {
+              id: fallbackPackId,
+              builtin: true,
+              readonly: true,
+              locale: resolveLocale(),
+              is_system_language_default: true
+            }
+          ];
     const nextSegments = normalizeSegments(data.segments);
     packs.value = nextPacks;
     segments.value = nextSegments;
-    activePack.value = String(data.active || 'default').trim() || 'default';
-    defaultSyncPackId.value = String(data.default_sync_pack_id || 'default').trim() || 'default';
-    if (!packs.value.some((pack) => pack.id === selectedPack.value)) {
+    activePack.value = String(data.active || fallbackPackId).trim() || fallbackPackId;
+    defaultSyncPackId.value = String(data.default_sync_pack_id || DEFAULT_PACK_ID).trim() || DEFAULT_PACK_ID;
+    if (!hadPacks || !packs.value.some((pack) => pack.id === selectedPack.value)) {
       selectedPack.value = activePack.value;
     }
     if (!segments.value.some((segment) => segment.key === selectedSegment.value)) {
@@ -294,9 +378,9 @@ const loadFile = async () => {
     const nextContent = resolveTemplateContent(data);
     editorContent.value = nextContent;
     loadedContent.value = nextContent;
-    if (selectedPack.value === 'default') {
+    if (selectedPackReadonly.value) {
       statusText.value = t('messenger.prompt.readonlyDefault', {
-        pack: String(data.source_pack_id || defaultSyncPackId.value || 'default')
+        pack: String(data.source_pack_id || defaultSyncPackId.value || DEFAULT_PACK_ID)
       });
     } else if (data.fallback_used) {
       statusText.value = t('messenger.prompt.fallbackHint');
@@ -374,7 +458,7 @@ const loadPreview = async () => {
 
 const handlePackSelectChange = async (event: Event) => {
   const target = event.target as HTMLSelectElement | null;
-  const nextPack = String(target?.value || '').trim() || 'default';
+  const nextPack = String(target?.value || '').trim() || resolveSystemLanguageBuiltinPackId();
   if (nextPack === selectedPack.value) {
     return;
   }
@@ -401,9 +485,9 @@ const selectSegment = async (key: string) => {
 };
 
 const saveCurrentFile = async () => {
-  if (selectedPack.value === 'default') {
+  if (selectedPackReadonly.value) {
     statusText.value = t('messenger.prompt.readonlyDefault', {
-      pack: defaultSyncPackId.value || 'default'
+      pack: defaultSyncPackId.value || DEFAULT_PACK_ID
     });
     return;
   }
@@ -438,7 +522,11 @@ const setActivePack = async () => {
   try {
     await setUserPromptTemplateActive({ active: selectedPack.value });
     activePack.value = selectedPack.value;
-    ElMessage.success(t('messenger.prompt.activeUpdated', { pack: selectedPack.value }));
+    ElMessage.success(
+      t('messenger.prompt.activeUpdated', {
+        pack: resolvePackLabel(activePack.value, activePackMeta.value)
+      })
+    );
     await loadPreview();
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error, t('messenger.prompt.activeUpdateFailed')));
@@ -466,12 +554,15 @@ const createPack = async () => {
     }
     return;
   }
-  if (!packId || packId.toLowerCase() === 'default') {
+  if (!packId || BUILTIN_PACK_IDS.has(packId.toLowerCase())) {
     return;
   }
   creatingPack.value = true;
   try {
-    await createUserPromptTemplatePack({ pack_id: packId, copy_from: 'default' });
+    await createUserPromptTemplatePack({
+      pack_id: packId,
+      copy_from: selectedPack.value || activePack.value || resolveSystemLanguageBuiltinPackId()
+    });
     await loadStatus();
     selectedPack.value = packId;
     await loadFile();
@@ -484,7 +575,7 @@ const createPack = async () => {
 };
 
 const deletePack = async () => {
-  if (!selectedPack.value || selectedPack.value === 'default') {
+  if (!selectedPack.value || selectedPackReadonly.value) {
     return;
   }
   try {
@@ -505,7 +596,7 @@ const deletePack = async () => {
   try {
     await deleteUserPromptTemplatePack(deletedPack);
     await loadStatus();
-    selectedPack.value = activePack.value || 'default';
+    selectedPack.value = activePack.value || resolveSystemLanguageBuiltinPackId();
     await loadFile();
     ElMessage.success(t('messenger.prompt.packDeleted', { pack: deletedPack }));
   } catch (error) {

@@ -497,6 +497,7 @@ mod tests {
                     monitor_event_limit: 1000,
                     monitor_payload_max_chars: 4000,
                     monitor_drop_event_types: Vec::new(),
+                    ..ObservabilityConfig::default()
                 },
                 SandboxConfig::default(),
                 workspace_root.to_string_lossy().to_string(),

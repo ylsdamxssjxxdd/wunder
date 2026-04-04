@@ -26,6 +26,7 @@ pub use services::{
     vector_knowledge, workspace,
 };
 
+use crate::core::logging;
 use axum::body::Body;
 use axum::extract::OriginalUri;
 use axum::http::{Request, StatusCode};
@@ -46,30 +47,44 @@ use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, Any, CorsLayer};
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::{error, info, warn};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnFailure, DefaultOnResponse};
+use tracing::{error, info, warn, Level};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     core::rustls_provider::install_process_default_provider();
     // 初始化配置存储，用于鉴权与路由行为保持一致。
-    let config_store = ConfigStore::new(ConfigStore::config_path_default());
+    let config_path = ConfigStore::config_path_default();
+    let config_store = ConfigStore::new(config_path.clone());
     let config = config_store.get().await;
-    init_tracing(&config);
     let server_mode = resolve_server_mode(&config);
+    let log_dir = logging::init_server_tracing(&config, &server_mode, &config_path)?;
+    info!(
+        server_mode = %server_mode,
+        bind_addr = %bind_address(&config),
+        config_path = %config_path.display(),
+        log_dir = %log_dir.display(),
+        "server bootstrap ready"
+    );
     if server_mode == "sandbox" {
         let addr = bind_address(&config);
         let app = sandbox::server::build_router()
-            .layer(TraceLayer::new_for_http())
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::INFO))
+                    .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+            )
             .layer(from_fn(panic_guard));
         let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
-        info!("Sandbox 服务已启动: http://{addr}");
+        info!(bind_addr = %addr, "sandbox server listening");
         let server = axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown_signal());
         if let Err(err) = server.await {
-            warn!("Sandbox 服务退出异常: {err}");
+            warn!(error = %err, "sandbox server exited unexpectedly");
         }
         return Ok(());
     }
@@ -107,12 +122,17 @@ async fn main() -> anyhow::Result<()> {
         .layer(from_fn_with_state(state.clone(), api_key_guard))
         .layer(from_fn_with_state(state.clone(), language_guard))
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
+        )
         .layer(from_fn(panic_guard));
 
     let addr = bind_address(&config);
     let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
-    info!("Rust API 服务已启动: http://{addr}");
+    info!(bind_addr = %addr, "rust api server listening");
 
     let server = axum::serve(
         listener,
@@ -120,22 +140,10 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_graceful_shutdown(shutdown_signal());
     if let Err(err) = server.await {
-        warn!("服务退出异常: {err}");
+        warn!(error = %err, "server exited unexpectedly");
     }
 
     Ok(())
-}
-
-fn init_tracing(config: &Config) {
-    let default_level = config.observability.log_level.trim();
-    let default_level = if default_level.is_empty() {
-        "info".to_string()
-    } else {
-        default_level.to_lowercase()
-    };
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
 fn bind_address(config: &Config) -> String {

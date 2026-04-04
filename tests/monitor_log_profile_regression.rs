@@ -20,6 +20,7 @@ fn build_monitor(payload_limit: i64) -> MonitorState {
         monitor_event_limit: 1000,
         monitor_payload_max_chars: payload_limit,
         monitor_drop_event_types: Vec::new(),
+        ..ObservabilityConfig::default()
     };
     MonitorState::new(
         storage,

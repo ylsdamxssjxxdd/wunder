@@ -28,7 +28,7 @@
           <span>{{ t('messenger.right.sandbox') }}</span>
         </div>
         <div v-if="showAgentPanels" class="messenger-workspace-scope chat-shell">
-          <WorkspacePanel :agent-id="agentIdForApi" :container-id="containerId" />
+          <WorkspacePanel ref="workspacePanelRef" :agent-id="agentIdForApi" :container-id="containerId" />
         </div>
         <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
       </div>
@@ -46,16 +46,6 @@
             <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
             <span>技能 skill</span>
           </span>
-          <button
-            class="messenger-inline-btn messenger-inline-btn--compact messenger-skill-refresh-btn"
-            type="button"
-            :disabled="skillsRefreshing || skillsUploading"
-            :title="t('common.refresh')"
-            :aria-label="t('common.refresh')"
-            @click="$emit('refresh-skills')"
-          >
-            <i class="fa-solid fa-rotate-right" :class="{ 'fa-spin': skillsRefreshing }" aria-hidden="true"></i>
-          </button>
         </div>
         <div v-if="skillsLoading && !enabledSkills.length && !disabledSkills.length" class="messenger-list-empty">
           {{ t('chat.ability.loading') }}
@@ -195,6 +185,10 @@ type SkillItem = {
   enabled: boolean;
 };
 
+type WorkspacePanelViewRef = {
+  refreshView?: (options?: { background?: boolean }) => Promise<boolean>;
+};
+
 const props = defineProps<{
   collapsed: boolean;
   edgeActive: boolean;
@@ -202,7 +196,6 @@ const props = defineProps<{
   agentIdForApi: string;
   containerId: number;
   skillsLoading: boolean;
-  skillsRefreshing: boolean;
   skillsUploading: boolean;
   enabledSkills: SkillItem[];
   disabledSkills: SkillItem[];
@@ -210,7 +203,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
-  (event: 'refresh-skills'): void;
   (event: 'upload-skill-archive', file: File): void;
   (event: 'open-skill-detail', skillName: string): void;
   (event: 'open-container', containerId: number): void;
@@ -219,6 +211,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const sandboxMenuRef = ref<HTMLElement | null>(null);
+const workspacePanelRef = ref<WorkspacePanelViewRef | null>(null);
 const skillDropDepth = ref(0);
 const skillDropActive = ref(false);
 const sandboxContextMenu = ref({
@@ -379,4 +372,17 @@ watch(
     skillDropActive.value = false;
   }
 );
+
+const refreshWorkspace = async (options: { background?: boolean } = {}) => {
+  if (!workspacePanelRef.value?.refreshView) {
+    return false;
+  }
+  return workspacePanelRef.value.refreshView({
+    background: options.background !== false
+  });
+};
+
+defineExpose({
+  refreshWorkspace
+});
 </script>

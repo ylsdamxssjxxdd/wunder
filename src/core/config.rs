@@ -1104,16 +1104,44 @@ impl KnowledgeBaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     #[serde(default)]
     pub log_level: String,
+    #[serde(default = "default_server_log_dir")]
+    pub server_log_dir: String,
+    #[serde(
+        default = "default_server_log_retention_days",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub server_log_retention_days: u64,
     #[serde(default)]
     pub monitor_event_limit: i64,
     #[serde(default)]
     pub monitor_payload_max_chars: i64,
     #[serde(default)]
     pub monitor_drop_event_types: Vec<String>,
+}
+
+impl Default for ObservabilityConfig {
+    fn default() -> Self {
+        Self {
+            log_level: String::new(),
+            server_log_dir: default_server_log_dir(),
+            server_log_retention_days: default_server_log_retention_days(),
+            monitor_event_limit: 0,
+            monitor_payload_max_chars: 0,
+            monitor_drop_event_types: Vec::new(),
+        }
+    }
+}
+
+fn default_server_log_dir() -> String {
+    "./config/data/logs/server".to_string()
+}
+
+fn default_server_log_retention_days() -> u64 {
+    14
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
