@@ -330,63 +330,55 @@ pub fn build_swarm_dispatch_message(
     hive_id: &str,
     sender_agent_id: Option<&str>,
     source_session_id: &str,
-    team_run_id: Option<&str>,
-    task_id: Option<&str>,
+    _team_run_id: Option<&str>,
+    _task_id: Option<&str>,
     original_message: &str,
 ) -> Result<String> {
     let hive = storage.get_hive(user_id, hive_id)?;
     let members = list_user_agents_by_hive_with_default(storage, user_id, hive_id)?;
     let activity = collect_agent_activity(storage, monitor, user_id, hive_id, &members)?;
     let mother_agent_id = get_mother_agent_id(storage, user_id, hive_id)?;
-    let active_members = members
+    let active_member_total = members
         .iter()
-        .filter_map(|agent| {
-            let snapshot = activity.get(&agent.agent_id)?;
-            if snapshot.is_idle() {
-                return None;
-            }
-            Some(json!({
-                "agent_id": agent.agent_id,
-                "name": agent.name,
-                "active_sessions": snapshot.active_session_ids(),
-            }))
+        .filter(|agent| {
+            activity
+                .get(&agent.agent_id)
+                .is_some_and(|snapshot| !snapshot.is_idle())
         })
-        .collect::<Vec<_>>();
-    let idle_member_ids = members
+        .count();
+    let idle_member_total = members
         .iter()
         .filter(|agent| {
             activity
                 .get(&agent.agent_id)
                 .is_none_or(AgentActivitySnapshot::is_idle)
         })
-        .map(|agent| agent.agent_id.clone())
-        .collect::<Vec<_>>();
+        .count();
 
+    // Keep swarm context minimal to reduce prompt noise and chat bubble overflow.
     let payload = json!({
-        "group": {
-            "hive_id": normalize_hive_id(hive_id),
-            "name": hive.as_ref().map(|item| item.name.clone()),
-            "description": hive.as_ref().map(|item| item.description.clone()),
+        "swarm": {
+            "hive_name": hive.as_ref().map(|item| item.name.clone()),
             "mother_agent_id": mother_agent_id,
             "member_total": members.len(),
-            "active_member_total": active_members.len(),
-            "idle_member_ids": idle_member_ids,
+            "active_member_total": active_member_total,
+            "idle_member_total": idle_member_total,
         },
         "sender": {
             "agent_id": sender_agent_id.map(str::trim).filter(|value| !value.is_empty()),
             "session_id": source_session_id.trim(),
-            "user_id": user_id.trim(),
         },
-        "mission": {
-            "team_run_id": team_run_id.map(str::trim).filter(|value| !value.is_empty()),
-            "task_id": task_id.map(str::trim).filter(|value| !value.is_empty()),
-        },
-        "active_members": active_members,
     });
-
+    let payload_pretty =
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
     Ok(format!(
-        "[SWARM_CONTEXT]\n{}\n[/SWARM_CONTEXT]\n\n任务指令：\n{}",
-        payload,
+        "[SWARM_CONTEXT]
+{}
+[/SWARM_CONTEXT]
+
+任务指令：
+{}",
+        payload_pretty,
         original_message.trim()
     ))
 }

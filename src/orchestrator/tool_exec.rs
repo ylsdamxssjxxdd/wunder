@@ -234,14 +234,13 @@ impl Orchestrator {
         tool_name: &str,
         mut result: ToolResultPayload,
         started_at: Instant,
-        is_admin: bool,
     ) -> ToolResultPayload {
         let skip_truncation = should_skip_tool_truncation(tool_name);
         let duration_ms = started_at.elapsed().as_millis() as i64;
         let continuation_supported =
             supports_tool_result_continuation(&result.data, result.meta.as_ref());
         let mut truncated = false;
-        if !is_admin && !skip_truncation {
+        if !skip_truncation {
             truncated = truncate_tool_result_data(
                 &mut result.data,
                 TOOL_RESULT_HEAD_CHARS,
@@ -259,7 +258,7 @@ impl Orchestrator {
             }
         }
         let mut output_chars = estimate_tool_result_chars(&result.data);
-        if !is_admin && !skip_truncation && output_chars > TOOL_RESULT_MAX_CHARS {
+        if !skip_truncation && output_chars > TOOL_RESULT_MAX_CHARS {
             result.data = compact_large_tool_result_data(
                 &result.data,
                 output_chars,
@@ -776,11 +775,7 @@ impl Orchestrator {
         config: &Config,
         tool_name: &str,
         args: &Value,
-        is_admin: bool,
     ) -> Option<Duration> {
-        if is_admin {
-            return None;
-        }
         let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
         if tool_name == "a2a等待" {
             let wait_s = parse_timeout_secs(args.get("wait_s")).unwrap_or(0.0);

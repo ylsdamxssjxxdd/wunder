@@ -1047,7 +1047,6 @@ impl Orchestrator {
                             &allowed_tool_names,
                             &session_id,
                             active_turn.turn_id.as_str(),
-                            is_admin,
                             &emitter,
                             prepared.approval_tx.clone(),
                             round_info,
@@ -1838,7 +1837,6 @@ impl Orchestrator {
         allowed_tool_names: &HashSet<String>,
         session_id: &str,
         turn_id: &str,
-        is_admin: bool,
         emitter: &EventEmitter,
         approval_tx: Option<ApprovalRequestTx>,
         round_info: RoundInfo,
@@ -1948,7 +1946,6 @@ impl Orchestrator {
                             &name,
                             rejected,
                             started_at,
-                            is_admin,
                         );
                         return Ok(ToolExecutionOutcome {
                             call,
@@ -1970,7 +1967,7 @@ impl Orchestrator {
                 let policy_meta = policy_decision.as_ref().map(|decision| decision.to_value());
                 let started_at = Instant::now();
                 let tool_timeout =
-                    orchestrator.resolve_tool_timeout(scoped_tool_context.config, &name, &args, is_admin);
+                    orchestrator.resolve_tool_timeout(scoped_tool_context.config, &name, &args);
                 let supports_parallel_execution = tool_call_supports_parallel(&name, &args);
                 let mut result = if !allowed_tool_names.contains(&name) {
                     ToolResultPayload::error(
@@ -2302,7 +2299,7 @@ impl Orchestrator {
                     result.insert_meta("repair", repair);
                 }
                 result = orchestrator.normalize_tool_result_payload(&name, result);
-                result = orchestrator.finalize_tool_result(&name, result, started_at, is_admin);
+                result = orchestrator.finalize_tool_result(&name, result, started_at);
                 Ok(ToolExecutionOutcome { call, name, result })
             }
         }))

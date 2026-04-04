@@ -257,6 +257,25 @@ impl Orchestrator {
         let current_user_message = current_user_index
             .and_then(|index| messages.get(index))
             .cloned();
+        let question_text = current_question.trim().to_string();
+        let current_user_signature = current_user_message
+            .as_ref()
+            .map(|message| {
+                self.extract_memory_summary_text(message.get("content").unwrap_or(&Value::Null))
+            })
+            .unwrap_or_default();
+        let current_user_signature = current_user_signature.trim().to_string();
+        let mut question_candidates: Vec<String> = Vec::new();
+        if !question_text.is_empty() {
+            question_candidates.push(question_text.clone());
+        }
+        if !current_user_signature.is_empty()
+            && !question_candidates
+                .iter()
+                .any(|candidate| candidate == &current_user_signature)
+        {
+            question_candidates.push(current_user_signature.clone());
+        }
         let current_user_has_non_text = current_user_message
             .as_ref()
             .is_some_and(message_has_non_text_content);
@@ -390,11 +409,12 @@ impl Orchestrator {
         }
 
         let compaction_prompt = HistoryManager::load_compaction_prompt();
-        let compaction_instruction = if artifact_content.is_empty() {
-            compaction_prompt.clone()
-        } else {
-            format!("{compaction_prompt}\n\n{artifact_content}")
-        };
+        let compaction_instruction = build_compaction_instruction(
+            &compaction_prompt,
+            &artifact_content,
+            &question_text,
+            &current_user_signature,
+        );
         let mut summary_input = messages.clone();
         let compaction_message = json!({ "role": "user", "content": compaction_instruction });
         if let Some(index) = current_user_index {
@@ -405,25 +425,6 @@ impl Orchestrator {
 
         let mut compacted_until_ts: Option<f64> = None;
         let mut compacted_until: Option<String> = None;
-        let question_text = current_question.trim();
-        let current_user_signature = current_user_message
-            .as_ref()
-            .map(|message| {
-                self.extract_memory_summary_text(message.get("content").unwrap_or(&Value::Null))
-            })
-            .unwrap_or_default();
-        let mut question_candidates: Vec<String> = Vec::new();
-        if !question_text.is_empty() {
-            question_candidates.push(question_text.to_string());
-        }
-        let current_user_signature = current_user_signature.trim();
-        if !current_user_signature.is_empty()
-            && !question_candidates
-                .iter()
-                .any(|candidate| candidate == current_user_signature)
-        {
-            question_candidates.push(current_user_signature.to_string());
-        }
         let history_limit = if is_admin {
             0
         } else {
@@ -584,7 +585,7 @@ impl Orchestrator {
         if let Some(current_user_message) = current_user_message.clone() {
             base_messages.push(current_user_message);
         } else if !question_text.is_empty() {
-            base_messages.push(json!({ "role": "user", "content": question_text }));
+            base_messages.push(json!({ "role": "user", "content": question_text.clone() }));
         }
         let base_tokens = estimate_messages_tokens(&base_messages);
         for _ in 0..3 {
@@ -1693,6 +1694,45 @@ fn extract_guard_content_text(content: &Value) -> String {
     }
 }
 
+fn build_compaction_instruction(
+    compaction_prompt: &str,
+    artifact_content: &str,
+    current_question: &str,
+    current_user_signature: &str,
+) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+    let prompt = compaction_prompt.trim();
+    if !prompt.is_empty() {
+        blocks.push(prompt.to_string());
+    }
+    let artifact = artifact_content.trim();
+    if !artifact.is_empty() {
+        blocks.push(artifact.to_string());
+    }
+
+    let mut request_candidates: Vec<String> = Vec::new();
+    let question = current_question.trim();
+    if !question.is_empty() {
+        request_candidates.push(question.to_string());
+    }
+    let signature = current_user_signature.trim();
+    if !signature.is_empty()
+        && !request_candidates
+            .iter()
+            .any(|candidate| candidate == signature)
+    {
+        request_candidates.push(signature.to_string());
+    }
+    if !request_candidates.is_empty() {
+        let request_block = request_candidates.join("\n");
+        blocks.push(format!(
+            "[Current user request / 当前用户问题]\n{request_block}\n\n[Compaction constraints / 压缩约束]\n- Treat the request above as explicit task context.\n- Do not write placeholder claims such as \"task unspecified\".\n- If evidence is missing, state \"Insufficient evidence in context\"."
+        ));
+    }
+
+    blocks.join("\n\n")
+}
+
 fn strip_existing_memory_block_text(text: &str) -> String {
     let cleaned = text.trim_end();
     let mut prefixes = i18n::get_known_prefixes("memory.block_prefix");
@@ -2509,5 +2549,26 @@ mod tests {
         assert!(merged.contains("Keep this summary"));
         assert!(merged.contains("fresh memory"));
         assert!(!merged.contains("stale memory"));
+    }
+
+    #[test]
+    fn test_build_compaction_instruction_appends_current_request_constraints() {
+        let instruction = build_compaction_instruction(
+            "base prompt",
+            "",
+            "Summarize UNCLOS article 121 for disputed reefs",
+            "",
+        );
+        assert!(instruction.contains("base prompt"));
+        assert!(instruction.contains("[Current user request / 当前用户问题]"));
+        assert!(instruction.contains("Summarize UNCLOS article 121 for disputed reefs"));
+        assert!(instruction.contains("task unspecified"));
+    }
+
+    #[test]
+    fn test_build_compaction_instruction_deduplicates_request_candidates() {
+        let instruction =
+            build_compaction_instruction("base prompt", "", "same request", "same request");
+        assert_eq!(instruction.matches("same request").count(), 1);
     }
 }

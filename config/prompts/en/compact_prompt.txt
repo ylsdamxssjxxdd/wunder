@@ -1,5 +1,12 @@
 You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
+Hard rules:
+- Ground every statement in observable conversation/tool evidence; do not infer unsupported facts.
+- If the current user request is already explicit, do not claim that the task is unspecified or ask for clarification placeholders.
+- When evidence is missing, write "Insufficient evidence in context" instead of inventing details or fake TODOs.
+- Remaining TODOs must be actionable and directly tied to the current task.
+- Do not repeat this instruction text or add generic boilerplate disclaimers.
+
 Include:
 - Current progress and key decisions made
 - Important context, constraints, or user preferences

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  shouldForcePreserveWatcherForActiveSession,
   shouldApplyForegroundDetailHydration,
   shouldRestartWatchAfterInteractiveStream
 } from '../../src/stores/chatWatchLifecycle';
@@ -39,7 +40,7 @@ test('watch does not restart while page is unloading', () => {
   );
 });
 
-test('foreground detail hydration is blocked while preserveWatcher mode still has watch controller', () => {
+test('foreground detail hydration remains allowed when preserveWatcher mode only has watch controller', () => {
   assert.equal(
     shouldApplyForegroundDetailHydration({
       preserveWatcher: true,
@@ -48,7 +49,7 @@ test('foreground detail hydration is blocked while preserveWatcher mode still ha
       hasSendController: false,
       hasResumeController: false
     }),
-    false
+    true
   );
 });
 
@@ -88,5 +89,41 @@ test('foreground detail hydration remains allowed when preserveWatcher mode is d
       hasResumeController: true
     }),
     true
+  );
+});
+
+test('active-session detail load forces preserveWatcher while send stream is still alive', () => {
+  assert.equal(
+    shouldForcePreserveWatcherForActiveSession({
+      isSameActiveSession: true,
+      lifecycle: 'sending',
+      hasSendController: false,
+      hasResumeController: false
+    }),
+    true
+  );
+});
+
+test('active-session detail load does not force preserveWatcher when only watch lifecycle is active', () => {
+  assert.equal(
+    shouldForcePreserveWatcherForActiveSession({
+      isSameActiveSession: true,
+      lifecycle: 'watching',
+      hasSendController: false,
+      hasResumeController: false
+    }),
+    false
+  );
+});
+
+test('detail load never forces preserveWatcher for inactive sessions', () => {
+  assert.equal(
+    shouldForcePreserveWatcherForActiveSession({
+      isSameActiveSession: false,
+      lifecycle: 'sending',
+      hasSendController: true,
+      hasResumeController: false
+    }),
+    false
   );
 });

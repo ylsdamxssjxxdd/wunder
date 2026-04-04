@@ -188,7 +188,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 json!({}),
                 ToolErrorMeta::new(
                     "TOOL_SEARCH_INVALID_ARGS",
-                    Some("请检查 query/path/engine/budget 参数格式。".to_string()),
+                    Some("Please check query/path/engine/budget argument formats.".to_string()),
                     false,
                     None,
                 ),
@@ -215,7 +215,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             json!({ "path": params.path }),
             ToolErrorMeta::new(
                 "TOOL_SEARCH_PATH_NOT_FOUND",
-                Some("请确认 path 路径存在且在允许范围内。".to_string()),
+                Some("Ensure path exists and stays within allowed roots.".to_string()),
                 false,
                 None,
             ),
@@ -232,7 +232,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 json!({}),
                 ToolErrorMeta::new(
                     "TOOL_SEARCH_INVALID_QUERY",
-                    Some("请检查 query 或 query_mode=regex 下的正则表达式是否合法。".to_string()),
+                    Some(
+                        "Please check query, or regex validity when query_mode=regex.".to_string(),
+                    ),
                     false,
                     None,
                 ),
@@ -248,7 +250,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 json!({}),
                 ToolErrorMeta::new(
                     "TOOL_SEARCH_INVALID_FILE_PATTERN",
-                    Some("请检查 file_pattern 或 budget 参数中的 glob 语法。".to_string()),
+                    Some("Please check glob syntax in file_pattern or budget options.".to_string()),
                     false,
                     None,
                 ),
@@ -312,7 +314,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                         ToolErrorMeta::new(
                             "TOOL_SEARCH_RG_FAILED",
                             Some(
-                                "rg 快路径执行失败，可改用 engine=rust 或调整查询范围。"
+                                "rg fast path failed; try engine=rust or narrow the query scope."
                                     .to_string(),
                             ),
                             true,
@@ -385,7 +387,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 
     let elapsed_ms = started_at.elapsed().as_millis();
     let timeout_hit = rg_timeout_hit || computation.timeout_hit;
-    let fallback = resolved_engine != params.engine && params.engine == SearchEngine::Auto;
+    let fallback = params.engine == SearchEngine::Auto && resolved_engine == SearchEngine::Rust;
     let meta = SearchExecutionMeta {
         requested_engine: params.engine.as_str().to_string(),
         resolved_engine: resolved_engine.as_str().to_string(),
@@ -775,28 +777,27 @@ fn expand_type_globs(raw: &str) -> Vec<String> {
     vec![format!("*.{normalized}")]
 }
 
+fn literal_query_terms(query: &str) -> Vec<String> {
+    let terms = query
+        .split('|')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        vec![query.to_string()]
+    } else {
+        terms
+    }
+}
+
 fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool) -> Result<Regex> {
     let pattern = match query_mode {
-        QueryMode::Literal => {
-            // 在 literal 模式下，如果查询包含 | 分隔符，我们将其视为 OR 多个关键词
-            if query.contains('|') {
-                let parts: Vec<&str> = query.split('|').collect();
-                let mut escaped_parts = Vec::new();
-                for part in parts {
-                    let trimmed = part.trim();
-                    if !trimmed.is_empty() {
-                        escaped_parts.push(regex::escape(trimmed));
-                    }
-                }
-                if escaped_parts.is_empty() {
-                    regex::escape(query)
-                } else {
-                    escaped_parts.join("|")
-                }
-            } else {
-                regex::escape(query)
-            }
-        }
+        QueryMode::Literal => literal_query_terms(query)
+            .iter()
+            .map(|item| regex::escape(item))
+            .collect::<Vec<_>>()
+            .join("|"),
         QueryMode::Regex => query.to_string(),
     };
     RegexBuilder::new(&pattern)
@@ -995,9 +996,18 @@ fn build_rg_search_command(
         .arg("--color")
         .arg("never")
         .arg("--max-filesize")
-        .arg(MAX_READ_BYTES.to_string())
-        .arg("--regexp")
-        .arg(&params.query);
+        .arg(MAX_READ_BYTES.to_string());
+    match params.query_mode {
+        QueryMode::Literal => {
+            command.arg("--fixed-strings");
+            for item in literal_query_terms(&params.query) {
+                command.arg("--regexp").arg(item);
+            }
+        }
+        QueryMode::Regex => {
+            command.arg("--regexp").arg(&params.query);
+        }
+    }
     if unrestricted_paths {
         command
             .arg("--hidden")
@@ -1005,9 +1015,6 @@ fn build_rg_search_command(
             .arg("--no-ignore-global")
             .arg("--no-ignore-parent")
             .arg("--no-ignore-vcs");
-    }
-    if params.query_mode == QueryMode::Literal {
-        command.arg("--fixed-strings");
     }
     if !params.case_sensitive {
         command.arg("--ignore-case");
@@ -1595,6 +1602,26 @@ mod tests {
         let matcher = build_query_matcher(r"foo.+bar", QueryMode::Regex, true).expect("matcher");
         assert!(matcher.is_match("foo123bar"));
         assert!(!matcher.is_match("foobar"));
+    }
+
+    #[test]
+    fn literal_query_terms_splits_pipe_delimited_items() {
+        let terms = literal_query_terms(" alpha | beta|gamma ");
+        assert_eq!(terms, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn literal_query_terms_preserves_query_when_only_pipe_delimiters_exist() {
+        let terms = literal_query_terms("|");
+        assert_eq!(terms, vec!["|"]);
+    }
+
+    #[test]
+    fn literal_mode_supports_pipe_as_or_separator() {
+        let matcher = build_query_matcher("foo|bar", QueryMode::Literal, false).expect("matcher");
+        assert!(matcher.is_match("foo"));
+        assert!(matcher.is_match("bar"));
+        assert!(!matcher.is_match("baz"));
     }
 
     #[test]

@@ -1126,7 +1126,7 @@
                   </button>
                 </div>
                 <MessageCompactionDivider
-                  v-if="item.message.role === 'assistant'"
+                  v-if="shouldShowCompactionDivider(item.message)"
                   :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                   :is-streaming="
                     Boolean(
@@ -1615,7 +1615,8 @@ import {
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
   isCompactionOnlyWorkflowItems,
-  isCompactionRunningFromWorkflowItems
+  isCompactionRunningFromWorkflowItems,
+  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
@@ -6147,6 +6148,15 @@ const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean =>
     .trim()
     .toLowerCase();
   return panelStatus !== 'pending';
+};
+
+const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
+  if (String(message?.role || '') !== 'assistant') return false;
+  if (isCompactionMarkerMessage(message)) return true;
+  const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
+  if (!snapshot) return false;
+  if (snapshot.status === 'failed' || snapshot.status === 'cancelled') return true;
+  return isCompactionRunningFromWorkflowItems(message?.workflowItems);
 };
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {

@@ -704,6 +704,10 @@
   line-height: 1.6;
   color: var(--chat-text);
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-shell .message-stats {
@@ -734,6 +738,19 @@
   white-space: normal;
   line-height: 1.7;
   color: var(--chat-text);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-shell .message-text .markdown-body p,
+.chat-shell .message-text .markdown-body li,
+.chat-shell .message-text .markdown-body blockquote,
+.chat-shell .message-text .markdown-body td,
+.chat-shell .message-text .markdown-body th {
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .chat-shell .message-text .markdown-body img {

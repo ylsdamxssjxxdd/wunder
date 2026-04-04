@@ -52,6 +52,7 @@ import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime
 import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import {
   normalizeStreamLifecyclePhase,
+  shouldForcePreserveWatcherForActiveSession,
   shouldApplyForegroundDetailHydration,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
@@ -8042,8 +8043,20 @@ export const useChatStore = defineStore('chat', {
       const targetSessionId = resolveSessionKey(sessionId);
       if (!targetSessionId) return null;
       const previousSessionId = this.activeSessionId;
+      const previousSessionKey = resolveSessionKey(previousSessionId);
+      const runtimeForPreserveGuard = getRuntime(targetSessionId);
+      const lifecycleForPreserveGuard = refreshRuntimeStreamLifecycle(runtimeForPreserveGuard);
       const preserveWatcher =
-        options.preserveWatcher === true && resolveSessionKey(previousSessionId) === targetSessionId;
+        previousSessionKey === targetSessionId &&
+        (
+          options.preserveWatcher === true ||
+          shouldForcePreserveWatcherForActiveSession({
+            isSameActiveSession: true,
+            lifecycle: lifecycleForPreserveGuard,
+            hasSendController: Boolean(runtimeForPreserveGuard?.sendController),
+            hasResumeController: Boolean(runtimeForPreserveGuard?.resumeController)
+          })
+        );
       if (previousSessionId && previousSessionId !== targetSessionId) {
         cacheSessionMessages(previousSessionId, this.messages);
       }

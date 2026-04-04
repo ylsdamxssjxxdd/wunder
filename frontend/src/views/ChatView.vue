@@ -476,7 +476,7 @@
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                 />
                 <MessageCompactionDivider
-                  v-if="message.role === 'assistant'"
+                  v-if="shouldShowCompactionDivider(message)"
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                   :is-streaming="isAssistantStreaming(message)"
                 />
@@ -783,7 +783,8 @@ import {
 } from '@/utils/workspaceRefresh';
 import {
   isCompactionOnlyWorkflowItems,
-  isCompactionRunningFromWorkflowItems
+  isCompactionRunningFromWorkflowItems,
+  resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -1642,6 +1643,15 @@ const isCompactionMarkerMessage = (message): boolean => {
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
   return panelStatus !== 'pending';
+};
+
+const shouldShowCompactionDivider = (message): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (isCompactionMarkerMessage(message)) return true;
+  const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
+  if (!snapshot) return false;
+  if (snapshot.status === 'failed' || snapshot.status === 'cancelled') return true;
+  return isCompactionRunningFromWorkflowItems(message.workflowItems);
 };
 
 // Assistant replies render through Markdown so tables and rich text stay readable.

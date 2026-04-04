@@ -43,14 +43,35 @@ type ForegroundHydrationOptions = {
   hasResumeController?: boolean;
 };
 
+type ActiveSessionPreserveOptions = {
+  isSameActiveSession?: boolean;
+  lifecycle?: unknown;
+  hasSendController?: boolean;
+  hasResumeController?: boolean;
+};
+
+export const shouldForcePreserveWatcherForActiveSession = (
+  options: ActiveSessionPreserveOptions
+): boolean => {
+  if (options.isSameActiveSession !== true) {
+    return false;
+  }
+  if (options.hasSendController || options.hasResumeController) {
+    return true;
+  }
+  const lifecycle = normalizeStreamLifecyclePhase(options.lifecycle);
+  return lifecycle === 'sending' || lifecycle === 'resuming';
+};
+
 export const shouldApplyForegroundDetailHydration = (
   options: ForegroundHydrationOptions
 ): boolean => {
   if (options.preserveWatcher !== true) {
     return true;
   }
-  if (options.hasSendController || options.hasResumeController || options.hasWatchController) {
+  if (options.hasSendController || options.hasResumeController) {
     return false;
   }
-  return !isRealtimeDrivenLifecycle(options.lifecycle);
+  const lifecycle = normalizeStreamLifecyclePhase(options.lifecycle);
+  return lifecycle !== 'sending' && lifecycle !== 'resuming';
 };
