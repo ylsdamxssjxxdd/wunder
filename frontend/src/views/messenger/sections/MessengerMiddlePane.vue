@@ -180,6 +180,8 @@
         }"
         role="button"
         tabindex="0"
+        @pointerenter="preloadMixedConversation(item)"
+        @focus="preloadMixedConversation(item)"
         @click="openConversationFromList(item)"
         @keydown.enter.prevent="openConversationFromList(item)"
         @keydown.space.prevent="openConversationFromList(item)"
@@ -461,6 +463,8 @@
           'is-running': resolveAgentRuntimeState(defaultAgentKey) === 'running'
         }"
         type="button"
+        @pointerenter="preloadAgentById(defaultAgentKey)"
+        @focus="preloadAgentById(defaultAgentKey)"
         @click="handleAgentSelectionClick($event, defaultAgentKey)"
         @dblclick="openAgentById(defaultAgentKey)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, defaultAgentKey)"
@@ -490,6 +494,8 @@
           'is-running': resolveAgentRuntimeState(agent.id) === 'running'
         }"
         type="button"
+        @pointerenter="preloadAgentById(agent.id)"
+        @focus="preloadAgentById(agent.id)"
         @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
@@ -523,6 +529,8 @@
           'is-running': resolveAgentRuntimeState(agent.id) === 'running'
         }"
         type="button"
+        @pointerenter="preloadAgentById(agent.id)"
+        @focus="preloadAgentById(agent.id)"
         @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
@@ -915,6 +923,7 @@ const {
   filteredMixedConversations,
   isMixedConversationActive,
   openMixedConversation,
+  preloadMixedConversation,
   resolveAgentRuntimeState,
   avatarLabel,
   formatTime,
@@ -954,6 +963,7 @@ const {
   defaultAgentIcon,
   selectAgentForSettings,
   openAgentById,
+  preloadAgentById,
   normalizeAgentId,
   handleAgentBatchExport,
   handleAgentBatchDelete,
@@ -994,6 +1004,7 @@ const {
   filteredMixedConversations: Array<Record<string, any>>;
   isMixedConversationActive: (item: any) => boolean;
   openMixedConversation: (item: any) => void | Promise<void>;
+  preloadMixedConversation: (item: any) => void;
   resolveAgentRuntimeState: (agentId: any) => any;
   avatarLabel: (value: unknown) => string;
   formatTime: (value: unknown) => string;
@@ -1033,6 +1044,7 @@ const {
   defaultAgentIcon?: unknown;
   selectAgentForSettings: (agentId: any) => void;
   openAgentById: (agentId: any) => void | Promise<void>;
+  preloadAgentById: (agentId: any) => void;
   normalizeAgentId: (value: unknown) => string;
   handleAgentBatchExport: (agentIds: string[]) => void | Promise<void>;
   handleAgentBatchDelete: (agentIds: string[]) => void | Promise<void>;

@@ -145,6 +145,7 @@
           :filtered-mixed-conversations="filteredMixedConversations"
           :is-mixed-conversation-active="isMixedConversationActive"
           :open-mixed-conversation="openMixedConversation"
+          :preload-mixed-conversation="preloadMixedConversation"
           :resolve-agent-runtime-state="resolveAgentRuntimeState"
           :avatar-label="avatarLabel"
           :format-time="formatTime"
@@ -183,6 +184,7 @@
           :default-agent-icon="defaultAgentProfile?.icon"
           :select-agent-for-settings="selectAgentForSettings"
           :open-agent-by-id="openAgentById"
+          :preload-agent-by-id="preloadAgentById"
           :normalize-agent-id="normalizeAgentId"
           :selected-tool-entry-key="selectedToolEntryKey"
           :select-tool-category="selectToolCategory"
@@ -607,7 +609,7 @@
                     mode="page"
                     :agent-id="settingsAgentIdForApi"
                     :active="agentSettingMode === 'channel'"
-                    @changed="loadChannelBoundAgentIds"
+                    @changed="() => loadChannelBoundAgentIds({ force: true })"
                   />
                 </div>
                 <div
@@ -1999,6 +2001,7 @@ const setContactVirtualListRef = (element: HTMLElement | null) => {
 let lifecycleTimer: number | null = null;
 let worldQuickPanelCloseTimer: number | null = null;
 let timelinePrefetchTimer: number | null = null;
+let sessionDetailPrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
 let middlePanePrewarmTimer: number | null = null;
 let keywordDebounceTimer: number | null = null;
@@ -2040,6 +2043,12 @@ let runningAgentsLoadVersion = 0;
 let agentUserRoundsLoadVersion = 0;
 let cronAgentIdsLoadVersion = 0;
 let channelBoundAgentIdsLoadVersion = 0;
+let runningAgentsLoadPromise: Promise<void> | null = null;
+let runningAgentsLoadedAt = 0;
+let cronAgentIdsLoadPromise: Promise<void> | null = null;
+let cronAgentIdsLoadedAt = 0;
+let channelBoundAgentIdsLoadPromise: Promise<void> | null = null;
+let channelBoundAgentIdsLoadedAt = 0;
 let toolsCatalogLoadVersion = 0;
 let rightDockSkillCatalogLoadVersion = 0;
 let rightDockSkillContentLoadVersion = 0;
@@ -2062,6 +2071,8 @@ const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
 const MESSAGE_VIRTUAL_GAP = 12;
 const AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30_000;
 const SERVER_DEFAULT_MODEL_CACHE_MS = 30_000;
+const AGENT_META_REQUEST_CACHE_MS = 1_500;
+const SESSION_DETAIL_PREFETCH_DELAY_MS = 90;
 const BEEROOM_GROUPS_REFRESH_MIN_MS_HOT = 2800;
 const BEEROOM_GROUPS_REFRESH_MIN_MS_IDLE = 7000;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
@@ -4583,6 +4594,90 @@ const collectMainAgentSessionEntries = (): AgentMainSessionEntry[] => {
       } as AgentMainSessionEntry;
     })
     .filter((item): item is AgentMainSessionEntry => Boolean(item));
+};
+
+const resolvePreferredAgentSessionId = (agentId: unknown): string => {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
+  let fallbackSessionId = '';
+  let fallbackActivity = -1;
+  for (const sessionRaw of sessions) {
+    const session = (sessionRaw || {}) as Record<string, unknown>;
+    if (normalizeAgentId(session.agent_id) !== normalizedAgentId) {
+      continue;
+    }
+    const sessionId = String(session.id || '').trim();
+    if (!sessionId) {
+      continue;
+    }
+    if (Boolean(session.is_main)) {
+      return sessionId;
+    }
+    const activity = resolveSessionActivityTimestamp(session);
+    if (!fallbackSessionId || activity > fallbackActivity) {
+      fallbackSessionId = sessionId;
+      fallbackActivity = activity;
+    }
+  }
+  return fallbackSessionId;
+};
+
+const queuedSessionDetailPrefetchIds = new Set<string>();
+
+const flushSessionDetailPrefetchQueue = () => {
+  if (typeof window !== 'undefined' && sessionDetailPrefetchTimer !== null) {
+    window.clearTimeout(sessionDetailPrefetchTimer);
+    sessionDetailPrefetchTimer = null;
+  }
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  const sessionIds = Array.from(queuedSessionDetailPrefetchIds);
+  queuedSessionDetailPrefetchIds.clear();
+  sessionIds.forEach((sessionId) => {
+    if (!sessionId || sessionId === activeSessionId) {
+      return;
+    }
+    void chatStore.preloadSessionDetail(sessionId).catch(() => undefined);
+  });
+};
+
+const queueSessionDetailPrefetch = (sessionId: unknown) => {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+  if (normalizedSessionId === String(chatStore.activeSessionId || '').trim()) {
+    return;
+  }
+  queuedSessionDetailPrefetchIds.add(normalizedSessionId);
+  if (typeof window === 'undefined') {
+    flushSessionDetailPrefetchQueue();
+    return;
+  }
+  if (sessionDetailPrefetchTimer !== null) {
+    return;
+  }
+  sessionDetailPrefetchTimer = window.setTimeout(() => {
+    flushSessionDetailPrefetchQueue();
+  }, SESSION_DETAIL_PREFETCH_DELAY_MS);
+};
+
+const preloadAgentById = (agentId: unknown) => {
+  const sessionId = resolvePreferredAgentSessionId(agentId);
+  if (!sessionId) {
+    return;
+  }
+  queueSessionDetailPrefetch(sessionId);
+};
+
+const preloadMixedConversation = (item: MixedConversation | null | undefined) => {
+  if (!item || item.kind !== 'agent') {
+    return;
+  }
+  const sessionId = String(item.sourceId || '').trim() || resolvePreferredAgentSessionId(item.agentId);
+  if (!sessionId) {
+    return;
+  }
+  queueSessionDetailPrefetch(sessionId);
 };
 
 const setAgentMainUnreadCount = (agentId: string, count: number) => {
@@ -7768,9 +7863,9 @@ const submitAgentCreate = async (payload: Record<string, unknown>): Promise<bool
   try {
     const created = await agentStore.createAgent(payload);
     ElMessage.success(t('portal.agent.createSuccess'));
-    const tasks: Promise<unknown>[] = [loadRunningAgents(), beeroomStore.loadGroups()];
+    const tasks: Promise<unknown>[] = [loadRunningAgents({ force: true }), beeroomStore.loadGroups()];
     if (!cronPermissionDenied.value) {
-      tasks.push(loadCronAgentIds());
+      tasks.push(loadCronAgentIds({ force: true }));
     }
     await Promise.all(tasks);
     const createdHiveId = String(created?.hive_id || payload.hive_id || '').trim();
@@ -7845,9 +7940,13 @@ const handleBeeroomMoveAgents = async (agentIds: string[]) => {
 };
 
 const refreshAgentMutationState = async () => {
-  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents(), beeroomStore.loadGroups()];
+  const tasks: Promise<unknown>[] = [
+    agentStore.loadAgents(),
+    loadRunningAgents({ force: true }),
+    beeroomStore.loadGroups()
+  ];
   if (!cronPermissionDenied.value) {
-    tasks.push(loadCronAgentIds());
+    tasks.push(loadCronAgentIds({ force: true }));
   }
   await Promise.all(tasks);
 };
@@ -8010,6 +8109,11 @@ const openMixedConversation = async (item: MixedConversation) => {
     return;
   }
   if (item.kind === 'agent') {
+    const targetSessionId = String(item.sourceId || '').trim();
+    if (targetSessionId) {
+      await openAgentSession(targetSessionId, item.agentId);
+      return;
+    }
     await openAgentById(item.agentId);
     return;
   }
@@ -8055,7 +8159,10 @@ const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
 
   try {
     await beeroomStore.deleteGroup(groupId);
-    await Promise.all([agentStore.loadAgents().catch(() => null), loadRunningAgents().catch(() => null)]);
+    await Promise.all([
+      agentStore.loadAgents().catch(() => null),
+      loadRunningAgents({ force: true }).catch(() => null)
+    ]);
     ElMessage.success(t('beeroom.message.hiveDeleted'));
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
@@ -8127,17 +8234,9 @@ const openAgentById = async (agentId: unknown) => {
   const normalized = normalizeAgentId(agentId);
   clearAgentConversationDismissed(normalized);
   selectedAgentId.value = normalized;
-  const sessions = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
-    .filter((item) => normalizeAgentId(item?.agent_id) === normalized)
-    .sort(
-      (left, right) =>
-        resolveSessionActivityTimestamp((right || {}) as Record<string, unknown>) -
-        resolveSessionActivityTimestamp((left || {}) as Record<string, unknown>)
-    );
-  const mainSession = sessions.find((item) => Boolean(item?.is_main));
-  const targetSession = mainSession || sessions[0];
-  if (targetSession?.id) {
-    await openAgentSession(String(targetSession.id), normalized);
+  const preferredSessionId = resolvePreferredAgentSessionId(normalized);
+  if (preferredSessionId) {
+    await openAgentSession(preferredSessionId, normalized);
     return;
   }
   try {
@@ -8784,13 +8883,27 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
     path: resolveChatShellPath(),
     query: nextQuery
   }).catch(() => undefined);
-  await scrollMessagesToBottom(true);
-  markMessengerPerfTrace(perfTrace, 'uiReady');
   const isForegroundSession = () =>
     String(chatStore.activeSessionId || '').trim() === normalizedSessionId;
   try {
     markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
-    const sessionDetail = await chatStore.loadSessionDetail(normalizedSessionId);
+    let sessionDetail = null;
+    let sessionDetailError: unknown = null;
+    const sessionDetailTask = chatStore
+      .loadSessionDetail(normalizedSessionId)
+      .then((value) => {
+        sessionDetail = value;
+      })
+      .catch((error) => {
+        sessionDetailError = error;
+      });
+    markMessengerPerfTrace(perfTrace, 'loadSessionDetailScheduled');
+    await scrollMessagesToBottom(true);
+    markMessengerPerfTrace(perfTrace, 'uiReady');
+    await sessionDetailTask;
+    if (sessionDetailError) {
+      throw sessionDetailError;
+    }
     markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
     if (!isForegroundSession()) {
       finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
@@ -9225,13 +9338,13 @@ const handleAgentSettingsSaved = async () => {
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
     loadDefaultAgentProfile(),
-    loadRunningAgents(),
+    loadRunningAgents({ force: true }),
     loadAgentUserRounds(),
-    loadChannelBoundAgentIds(),
+    loadChannelBoundAgentIds({ force: true }),
     loadAgentToolSummary({ force: true })
   ];
   if (!cronPermissionDenied.value) {
-    tasks.push(loadCronAgentIds());
+    tasks.push(loadCronAgentIds({ force: true }));
   }
   await Promise.allSettled(tasks);
   const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
@@ -9259,12 +9372,12 @@ const handleAgentDeleted = async (deletedAgentId: string) => {
   deletingAgentSelectionSnapshot.value = [];
   const tasks: Promise<unknown>[] = [
     chatStore.loadSessions(),
-    loadRunningAgents(),
+    loadRunningAgents({ force: true }),
     loadAgentUserRounds(),
-    loadChannelBoundAgentIds()
+    loadChannelBoundAgentIds({ force: true })
   ];
   if (!cronPermissionDenied.value) {
-    tasks.push(loadCronAgentIds());
+    tasks.push(loadCronAgentIds({ force: true }));
   }
   await Promise.allSettled(tasks);
 };
@@ -10595,36 +10708,53 @@ const openDebugTools = async () => {
   ElMessage.info(t('messenger.settings.debugHint'));
 };
 
-const loadRunningAgents = async () => {
+const shouldReuseAgentMetaResult = (loadedAt: number, force = false): boolean =>
+  !force && loadedAt > 0 && Date.now() - loadedAt < AGENT_META_REQUEST_CACHE_MS;
+
+const loadRunningAgents = async (options: { force?: boolean } = {}) => {
+  const force = options.force === true;
+  if (!force && runningAgentsLoadPromise) {
+    return runningAgentsLoadPromise;
+  }
+  if (shouldReuseAgentMetaResult(runningAgentsLoadedAt, force)) {
+    return;
+  }
   // Ignore stale responses when multiple refreshes race (manual refresh + pulse tick).
   const loadVersion = ++runningAgentsLoadVersion;
-  try {
-    const response = await listRunningAgents();
-    if (loadVersion !== runningAgentsLoadVersion) {
-      return;
+  const request = (async () => {
+    try {
+      const response = await listRunningAgents();
+      if (loadVersion !== runningAgentsLoadVersion) {
+        return;
+      }
+      const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
+      const stateMap = new Map<string, AgentRuntimeState>();
+      items.forEach((item: Record<string, unknown>) => {
+        const key =
+          normalizeAgentId(
+            item?.agent_id || (item?.is_default === true ? DEFAULT_AGENT_KEY : '')
+          ) || DEFAULT_AGENT_KEY;
+        const state = normalizeRuntimeState(item?.state, item?.pending_question === true);
+        stateMap.set(key, state);
+      });
+      handleAgentRuntimeStateUpdate(stateMap);
+      runningAgentsLoadedAt = Date.now();
+    } catch (error) {
+      if (loadVersion !== runningAgentsLoadVersion) {
+        return;
+      }
+      const status = resolveHttpStatus(error);
+      if (isAuthDeniedStatus(status)) {
+        agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
+        agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
+        agentRuntimeStateHydrated = false;
+      }
     }
-    const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
-    const stateMap = new Map<string, AgentRuntimeState>();
-    items.forEach((item: Record<string, unknown>) => {
-      const key =
-        normalizeAgentId(
-          item?.agent_id || (item?.is_default === true ? DEFAULT_AGENT_KEY : '')
-        ) || DEFAULT_AGENT_KEY;
-      const state = normalizeRuntimeState(item?.state, item?.pending_question === true);
-      stateMap.set(key, state);
-    });
-    handleAgentRuntimeStateUpdate(stateMap);
-  } catch (error) {
-    if (loadVersion !== runningAgentsLoadVersion) {
-      return;
-    }
-    const status = resolveHttpStatus(error);
-    if (isAuthDeniedStatus(status)) {
-      agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
-      agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
-      agentRuntimeStateHydrated = false;
-    }
-  }
+  })().finally(() => {
+    runningAgentsLoadPromise = null;
+  });
+  runningAgentsLoadPromise = request;
+  return request;
 };
 
 const loadAgentUserRounds = async () => {
@@ -10682,10 +10812,17 @@ const handleCronPanelChanged = (payload?: { agentId?: string; hasJobs?: boolean 
     }
     cronAgentIds.value = next;
   }
-  void loadCronAgentIds();
+  void loadCronAgentIds({ force: true });
 };
 
-const loadCronAgentIds = async () => {
+const loadCronAgentIds = async (options: { force?: boolean } = {}) => {
+  const force = options.force === true;
+  if (!force && cronAgentIdsLoadPromise) {
+    return cronAgentIdsLoadPromise;
+  }
+  if (shouldReuseAgentMetaResult(cronAgentIdsLoadedAt, force)) {
+    return;
+  }
   const loadVersion = ++cronAgentIdsLoadVersion;
   if (cronPermissionDenied.value) {
     if (loadVersion === cronAgentIdsLoadVersion) {
@@ -10693,131 +10830,152 @@ const loadCronAgentIds = async () => {
     }
     return;
   }
-  try {
-    const normalizeCronAgentKey = (value: unknown): string => {
-      const raw = String(value || '').trim();
-      if (!raw) return '';
-      const lowered = raw.toLowerCase();
-      if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
-        return DEFAULT_AGENT_KEY;
+  const request = (async () => {
+    try {
+      const normalizeCronAgentKey = (value: unknown): string => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const lowered = raw.toLowerCase();
+        if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
+          return DEFAULT_AGENT_KEY;
+        }
+        return normalizeAgentId(raw);
+      };
+      const sessionAgentMap = new Map<string, string>();
+      const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
+      sessions.forEach((session: Record<string, unknown>) => {
+        const sessionId = String(session?.id || '').trim();
+        if (!sessionId) return;
+        const explicitAgent = normalizeCronAgentKey(session?.agent_id ?? session?.agentId);
+        const fallbackAgent = session?.is_main === true ? DEFAULT_AGENT_KEY : '';
+        const resolvedAgent = explicitAgent || fallbackAgent;
+        if (resolvedAgent) {
+          sessionAgentMap.set(sessionId, resolvedAgent);
+        }
+      });
+      const response = await fetchCronJobs();
+      if (loadVersion !== cronAgentIdsLoadVersion) {
+        return;
       }
-      return normalizeAgentId(raw);
-    };
-    const sessionAgentMap = new Map<string, string>();
-    const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
-    sessions.forEach((session: Record<string, unknown>) => {
-      const sessionId = String(session?.id || '').trim();
-      if (!sessionId) return;
-      const explicitAgent = normalizeCronAgentKey(session?.agent_id ?? session?.agentId);
-      const fallbackAgent = session?.is_main === true ? DEFAULT_AGENT_KEY : '';
-      const resolvedAgent = explicitAgent || fallbackAgent;
-      if (resolvedAgent) {
-        sessionAgentMap.set(sessionId, resolvedAgent);
+      const jobs = Array.isArray(response?.data?.data?.jobs)
+        ? response.data.data.jobs
+        : Array.isArray(response?.data?.data?.items)
+          ? response.data.data.items
+          : [];
+      const result = new Set<string>();
+      jobs.forEach((job: Record<string, unknown>) => {
+        const rawAgentId = String(
+          job?.agent_id ??
+            job?.agentId ??
+            (job?.agent as Record<string, unknown> | undefined)?.id ??
+            (job?.agent as Record<string, unknown> | undefined)?.agent_id ??
+            ''
+        ).trim();
+        const mappedSessionAgent = sessionAgentMap.get(
+          String(job?.session_id ?? job?.sessionId ?? '').trim()
+        );
+        const target = String(
+          job?.session_target ?? job?.sessionTarget ?? job?.session ?? ''
+        ).trim().toLowerCase();
+        const defaultTarget =
+          target === '' ||
+          target === 'main' ||
+          target === 'default' ||
+          target === 'system' ||
+          target === '__default__';
+        const resolved =
+          rawAgentId ||
+          mappedSessionAgent ||
+          (defaultTarget ||
+          job?.is_default === true ||
+          job?.isDefault === true
+            ? DEFAULT_AGENT_KEY
+            : '');
+        if (!resolved) return;
+        result.add(normalizeCronAgentKey(resolved));
+      });
+      if (loadVersion !== cronAgentIdsLoadVersion) {
+        return;
       }
-    });
-    const response = await fetchCronJobs();
-    if (loadVersion !== cronAgentIdsLoadVersion) {
-      return;
+      cronAgentIds.value = result;
+      cronPermissionDenied.value = false;
+      cronAgentIdsLoadedAt = Date.now();
+    } catch (error) {
+      if (loadVersion !== cronAgentIdsLoadVersion) {
+        return;
+      }
+      const status = resolveHttpStatus(error);
+      if (isAuthDeniedStatus(status)) {
+        cronPermissionDenied.value = true;
+        cronAgentIds.value = new Set<string>();
+        return;
+      }
     }
-    const jobs = Array.isArray(response?.data?.data?.jobs)
-      ? response.data.data.jobs
-      : Array.isArray(response?.data?.data?.items)
-        ? response.data.data.items
-        : [];
-    const result = new Set<string>();
-    jobs.forEach((job: Record<string, unknown>) => {
-      const rawAgentId = String(
-        job?.agent_id ??
-          job?.agentId ??
-          (job?.agent as Record<string, unknown> | undefined)?.id ??
-          (job?.agent as Record<string, unknown> | undefined)?.agent_id ??
-          ''
-      ).trim();
-      const mappedSessionAgent = sessionAgentMap.get(
-        String(job?.session_id ?? job?.sessionId ?? '').trim()
-      );
-      const target = String(
-        job?.session_target ?? job?.sessionTarget ?? job?.session ?? ''
-      ).trim().toLowerCase();
-      const defaultTarget =
-        target === '' ||
-        target === 'main' ||
-        target === 'default' ||
-        target === 'system' ||
-        target === '__default__';
-      const resolved =
-        rawAgentId ||
-        mappedSessionAgent ||
-        (defaultTarget ||
-        job?.is_default === true ||
-        job?.isDefault === true
-          ? DEFAULT_AGENT_KEY
-          : '');
-      if (!resolved) return;
-      result.add(normalizeCronAgentKey(resolved));
-    });
-    if (loadVersion !== cronAgentIdsLoadVersion) {
-      return;
-    }
-    cronAgentIds.value = result;
-    cronPermissionDenied.value = false;
-  } catch (error) {
-    if (loadVersion !== cronAgentIdsLoadVersion) {
-      return;
-    }
-    const status = resolveHttpStatus(error);
-    if (isAuthDeniedStatus(status)) {
-      cronPermissionDenied.value = true;
-      cronAgentIds.value = new Set<string>();
-      return;
-    }
-  }
+  })().finally(() => {
+    cronAgentIdsLoadPromise = null;
+  });
+  cronAgentIdsLoadPromise = request;
+  return request;
 };
 
-const loadChannelBoundAgentIds = async () => {
-  const loadVersion = ++channelBoundAgentIdsLoadVersion;
-  try {
-    const normalizeChannelAgentKey = (value: unknown): string => {
-      const raw = String(value || '').trim();
-      if (!raw) return DEFAULT_AGENT_KEY;
-      const lowered = raw.toLowerCase();
-      if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
-        return DEFAULT_AGENT_KEY;
-      }
-      return normalizeAgentId(raw);
-    };
-    const response = await listChannelBindings();
-    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
-      return;
-    }
-    const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
-    const bound = new Set<string>();
-    items.forEach((item: Record<string, unknown>) => {
-      const agentId = normalizeChannelAgentKey(
-        item?.agent_id ??
-          item?.agentId ??
-          (item?.agent as Record<string, unknown> | undefined)?.id ??
-          (item?.agent as Record<string, unknown> | undefined)?.agent_id ??
-          (item?.config as Record<string, unknown> | undefined)?.agent_id ??
-          (item?.raw_config as Record<string, unknown> | undefined)?.agent_id ??
-          ''
-      );
-      bound.add(agentId);
-    });
-    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
-      return;
-    }
-    channelBoundAgentIds.value = bound;
-  } catch (error) {
-    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
-      return;
-    }
-    const status = resolveHttpStatus(error);
-    if (isAuthDeniedStatus(status)) {
-      channelBoundAgentIds.value = new Set<string>();
-      return;
-    }
+const loadChannelBoundAgentIds = async (options: { force?: boolean } = {}) => {
+  const force = options.force === true;
+  if (!force && channelBoundAgentIdsLoadPromise) {
+    return channelBoundAgentIdsLoadPromise;
   }
+  if (shouldReuseAgentMetaResult(channelBoundAgentIdsLoadedAt, force)) {
+    return;
+  }
+  const loadVersion = ++channelBoundAgentIdsLoadVersion;
+  const request = (async () => {
+    try {
+      const normalizeChannelAgentKey = (value: unknown): string => {
+        const raw = String(value || '').trim();
+        if (!raw) return DEFAULT_AGENT_KEY;
+        const lowered = raw.toLowerCase();
+        if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
+          return DEFAULT_AGENT_KEY;
+        }
+        return normalizeAgentId(raw);
+      };
+      const response = await listChannelBindings();
+      if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+        return;
+      }
+      const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
+      const bound = new Set<string>();
+      items.forEach((item: Record<string, unknown>) => {
+        const agentId = normalizeChannelAgentKey(
+          item?.agent_id ??
+            item?.agentId ??
+            (item?.agent as Record<string, unknown> | undefined)?.id ??
+            (item?.agent as Record<string, unknown> | undefined)?.agent_id ??
+            (item?.config as Record<string, unknown> | undefined)?.agent_id ??
+            (item?.raw_config as Record<string, unknown> | undefined)?.agent_id ??
+            ''
+        );
+        bound.add(agentId);
+      });
+      if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+        return;
+      }
+      channelBoundAgentIds.value = bound;
+      channelBoundAgentIdsLoadedAt = Date.now();
+    } catch (error) {
+      if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+        return;
+      }
+      const status = resolveHttpStatus(error);
+      if (isAuthDeniedStatus(status)) {
+        channelBoundAgentIds.value = new Set<string>();
+        return;
+      }
+    }
+  })().finally(() => {
+    channelBoundAgentIdsLoadPromise = null;
+  });
+  channelBoundAgentIdsLoadPromise = request;
+  return request;
 };
 
 const refreshRealtimeChatSessions = async () => {
@@ -10838,13 +10996,13 @@ const refreshAll = async () => {
     chatStore.loadSessions(),
     userWorldStore.bootstrap(true),
     loadOrgUnits(),
-    loadRunningAgents(),
+    loadRunningAgents({ force: true }),
     loadAgentUserRounds(),
     loadToolsCatalog(),
-    loadChannelBoundAgentIds()
+    loadChannelBoundAgentIds({ force: true })
   ];
   if (!cronPermissionDenied.value) {
-    tasks.push(loadCronAgentIds());
+    tasks.push(loadCronAgentIds({ force: true }));
   }
   await Promise.allSettled(tasks);
   ensureSectionSelection();
@@ -11005,6 +11163,16 @@ const bootstrap = async () => {
   const initialSection = desktopMode.value
     ? ('messages' as MessengerSection)
     : resolveSectionFromRoute(route.path, route.query.section);
+  const initialQuerySessionId = String(route.query.session_id || '').trim();
+  const initialQueryConversationId = String(route.query.conversation_id || '').trim();
+  const initialQueryAgentId = String(route.query.agent_id || '').trim();
+  const initialQueryEntry = String(route.query.entry || '').trim().toLowerCase();
+  const shouldDeferWorldBootstrap =
+    initialSection === 'messages' &&
+    !initialQueryConversationId &&
+    Boolean(
+      initialQuerySessionId || initialQueryAgentId || initialQueryEntry === 'default'
+    );
   const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
     {
       sections: ['messages', 'agents', 'files', 'swarms'],
@@ -11020,7 +11188,7 @@ const bootstrap = async () => {
       run: () => chatStore.loadSessions()
     },
     {
-      sections: ['messages', 'users', 'groups'],
+      sections: shouldDeferWorldBootstrap ? ['users', 'groups'] : ['messages', 'users', 'groups'],
       run: () => userWorldStore.bootstrap()
     },
     {
@@ -11527,6 +11695,30 @@ watch(
 );
 
 watch(
+  () =>
+    [
+      sessionHub.activeSection,
+      filteredMixedConversations.value
+        .filter((item) => item.kind === 'agent')
+        .slice(0, 4)
+        .map((item) => `${item.agentId}:${String(item.sourceId || '').trim()}`)
+        .join('|')
+    ] as const,
+  ([section, key]) => {
+    if (section !== 'messages' || !key) {
+      return;
+    }
+    filteredMixedConversations.value
+      .filter((item) => item.kind === 'agent')
+      .slice(0, 4)
+      .forEach((item) => {
+        preloadMixedConversation(item);
+      });
+  },
+  { immediate: true }
+);
+
+watch(
   () => rightDockSkillDialogVisible.value,
   (visible) => {
     if (visible) return;
@@ -11882,6 +12074,11 @@ onBeforeUnmount(() => {
     window.clearTimeout(timelinePrefetchTimer);
     timelinePrefetchTimer = null;
   }
+  if (typeof window !== 'undefined' && sessionDetailPrefetchTimer !== null) {
+    window.clearTimeout(sessionDetailPrefetchTimer);
+    sessionDetailPrefetchTimer = null;
+  }
+  queuedSessionDetailPrefetchIds.clear();
   markdownCache.clear();
   messageVirtualHeightCache.clear();
   if (stopWorkspaceRefreshListener) {
