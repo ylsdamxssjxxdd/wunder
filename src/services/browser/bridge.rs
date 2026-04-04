@@ -17,6 +17,7 @@ pub struct BridgeResponse {
     pub success: bool,
     pub data: Option<Value>,
     pub error: Option<String>,
+    pub traceback: Option<String>,
 }
 
 struct BridgeSession {
@@ -182,7 +183,14 @@ impl BrowserBridge {
                 .error
                 .unwrap_or_else(|| "Unknown startup error".to_string());
             let _ = child.kill();
-            return Err(format!("Browser bridge failed to start: {error}"));
+            let traceback = ready
+                .traceback
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!("\n{value}"))
+                .unwrap_or_default();
+            return Err(format!("Browser bridge failed to start: {error}{traceback}"));
         }
         self.sessions.insert(
             session_key.to_string(),

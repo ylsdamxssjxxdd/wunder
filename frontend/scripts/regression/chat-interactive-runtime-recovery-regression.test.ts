@@ -45,6 +45,22 @@ test('interactive controller recovery clears stale lock when remote event id kee
   );
 });
 
+test('interactive controller recovery also clears remote-ahead locks without activity timestamps', () => {
+  assert.equal(
+    resolveInteractiveControllerRecoveryReason({
+      hasController: true,
+      controllerAborted: false,
+      startedAt: 0,
+      lastEventAt: 0,
+      localLastEventId: 20,
+      remoteLastEventId: 30,
+      loading: true,
+      nowMs: 2000
+    }),
+    'remote_ahead'
+  );
+});
+
 test('interactive controller recovery keeps active stream locks that still have recent activity', () => {
   assert.equal(
     shouldRecoverInteractiveController({

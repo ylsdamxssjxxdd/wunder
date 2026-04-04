@@ -445,6 +445,24 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000, "description": "Optional time budget cap in milliseconds for this read call."},
                     "output_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 2097152, "description": "Optional cap for aggregated read output text bytes."},
                     "max_files": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Optional cap for number of files processed in this call."},
+                    "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
+                    "file_path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
+                    "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
+                    "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
+                    "offset": {"type": "integer", "minimum": 1, "description": "Codex-compatible alias of start_line. Use with limit to read a line window."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Codex-compatible line window size used with offset."},
+                    "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}},
+                    "mode": {"type": "string", "enum": ["slice", "indentation"], "description": "Read mode: slice ranges or indentation-aware block."},
+                    "indentation": {
+                        "type": "object",
+                        "properties": {
+                            "anchor_line": {"type": "integer", "minimum": 1},
+                            "max_levels": {"type": "integer", "minimum": 0},
+                            "include_siblings": {"type": "boolean"},
+                            "include_header": {"type": "boolean"},
+                            "max_lines": {"type": "integer", "minimum": 1}
+                        }
+                    },
                     "budget": {
                         "type": "object",
                         "properties": {
@@ -478,7 +496,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         }
                     }
                 },
-                "required": ["files"]
+                "anyOf": [
+                    {"required": ["files"]},
+                    {"required": ["path"]},
+                    {"required": ["file_path"]}
+                ]
             }),
         },
         ToolSpec {

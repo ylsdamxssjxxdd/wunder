@@ -17,7 +17,12 @@ impl ToolResultPayload {
         if let Value::Object(map) = &value {
             if map.get("ok").and_then(Value::as_bool).is_some() && map.contains_key("data") {
                 let ok = map.get("ok").and_then(Value::as_bool).unwrap_or(true);
-                let data = map.get("data").cloned().unwrap_or_else(|| json!({}));
+                let mut data = map.get("data").cloned().unwrap_or_else(|| json!({}));
+                if let Some(error_meta) = map.get("error_meta").cloned() {
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.entry("error_meta".to_string()).or_insert(error_meta);
+                    }
+                }
                 let error = map
                     .get("error")
                     .and_then(Value::as_str)

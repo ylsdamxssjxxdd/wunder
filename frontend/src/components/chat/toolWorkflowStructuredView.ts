@@ -245,6 +245,7 @@ const buildSearchStructuredView = (
   dataObject: UnknownObject,
   t: Translate
 ): ToolWorkflowStructuredView | null => {
+  const summary = asObject(dataObject.summary);
   const rawHits = Array.isArray(dataObject.hits) && dataObject.hits.length > 0
     ? dataObject.hits
     : Array.isArray(dataObject.matches)
@@ -254,33 +255,66 @@ const buildSearchStructuredView = (
     .map(parseSearchHit)
     .filter(Boolean)
     .slice(0, SEARCH_HIT_LIMIT) as SearchHit[];
-  if (!hits.length) return null;
 
-  const grouped = new Map<string, SearchHit[]>();
-  hits.forEach((hit) => {
-    const key = hit.path || '(matches)';
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key)?.push(hit);
-  });
+  const groups: ToolWorkflowStructuredGroup[] = [];
+  if (hits.length) {
+    const grouped = new Map<string, SearchHit[]>();
+    hits.forEach((hit) => {
+      const key = hit.path || '(matches)';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)?.push(hit);
+    });
 
-  const groups = Array.from(grouped.entries())
-    .slice(0, SEARCH_GROUP_LIMIT)
-    .map(([path, groupHits], index) => ({
-      key: `search-${index}`,
-      title: path,
-      rows: groupHits.map((hit, rowIndex) => ({
-        key: `search-row-${index}-${rowIndex}`,
-        title: hit.line !== null ? `#${hit.line}` : path,
-        body: truncateText(hit.content, 600),
-        mono: true
-      }))
-    }));
+    groups.push(
+      ...Array.from(grouped.entries())
+        .slice(0, SEARCH_GROUP_LIMIT)
+        .map(([path, groupHits], index) => ({
+          key: `search-${index}`,
+          title: path,
+          rows: groupHits.map((hit, rowIndex) => ({
+            key: `search-row-${index}-${rowIndex}`,
+            title: hit.line !== null ? `#${hit.line}` : path,
+            body: truncateText(hit.content, 600),
+            mono: true
+          }))
+        }))
+    );
+  }
+
+  const infoRows: ToolWorkflowStructuredGroup['rows'] = [];
+  const scopeNote = pickString(dataObject.scope_note);
+  const nextHint = pickString(summary?.next_hint);
+  if (!hits.length && scopeNote) {
+    infoRows.push({
+      key: 'search-scope-note',
+      title: scopeNote,
+      tone: 'warning'
+    });
+  }
+  if (nextHint) {
+    infoRows.push({
+      key: 'search-next-hint',
+      title: nextHint,
+      tone: 'warning'
+    });
+  }
+  if (infoRows.length) {
+    groups.push({
+      key: 'search-info',
+      rows: infoRows
+    });
+  }
 
   const metrics = [
-    buildMetric('hits', t('chat.toolWorkflow.detail.hits'), hits.length),
+    buildMetric(
+      'hits',
+      t('chat.toolWorkflow.detail.hits'),
+      toInt(dataObject.returned_match_count) || hits.length
+    ),
     buildMetric('scanned', t('chat.toolWorkflow.detail.scannedFiles'), toInt(dataObject.scanned_files))
   ].filter(Boolean) as ToolWorkflowStructuredMetric[];
 
+  if (!groups.length) return null;
   return {
     variant: 'search',
     metrics,
@@ -375,7 +409,13 @@ export const buildStructuredToolResultNote = (
       : Array.isArray(dataObject.matches)
         ? dataObject.matches.length
         : 0;
-    return count > 0 ? `${t('chat.toolWorkflow.detail.hits')} ${count}` : '';
+    const scanned = toInt(dataObject.scanned_files);
+    if (count > 0 && scanned > 0) {
+      return `${t('chat.toolWorkflow.detail.hits')} ${count} · ${t('chat.toolWorkflow.detail.scannedFiles')} ${scanned}`;
+    }
+    if (count > 0) return `${t('chat.toolWorkflow.detail.hits')} ${count}`;
+    if (scanned > 0) return `${t('chat.toolWorkflow.detail.scannedFiles')} ${scanned}`;
+    return '';
   }
   if (isWriteFileTool(toolName)) {
     const firstResult = Array.isArray(dataObject.results)

@@ -187,6 +187,7 @@ struct SearchSummary {
     matched_file_count: usize,
     top_files: Vec<String>,
     matched_terms: Vec<String>,
+    focus_points: Vec<String>,
     next_hint: Option<String>,
 }
 
@@ -311,6 +312,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             false,
         ));
     }
+    let resolved_path = root.to_string_lossy().to_string();
+    let scope = build_search_scope(&resolved_path);
+    let scope_note = build_search_scope_note(&resolved_path);
 
     let file_filter = match build_file_filter(&params.file_pattern_items) {
         Ok(value) => value,
@@ -355,6 +359,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
             "data": {
                 "dry_run": true,
                 "path": root.to_string_lossy().to_string(),
+                "resolved_path": resolved_path,
+                "scope": scope,
+                "scope_note": scope_note,
                 "query_source": params.query_source.as_str(),
                 "query_mode": params.query_mode.as_str(),
                 "query_mode_inferred": params.query_mode_inferred,
@@ -453,17 +460,19 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     }
 
     let selected_attempt = selected_attempt.unwrap_or_else(|| &attempts[attempts.len() - 1]);
-    let selected_result = selected_result.or(last_result).unwrap_or(SearchAttemptResult {
-        hits: Vec::new(),
-        scanned_files: 0,
-        timeout_hit: any_timeout_hit,
-        file_limit_hit: false,
-        match_limit_hit: false,
-        resolved_engine: SearchEngine::Rust,
-        rg_program: None,
-        fallback_reason: None,
-        candidate_limit_hit: false,
-    });
+    let selected_result = selected_result
+        .or(last_result)
+        .unwrap_or(SearchAttemptResult {
+            hits: Vec::new(),
+            scanned_files: 0,
+            timeout_hit: any_timeout_hit,
+            file_limit_hit: false,
+            match_limit_hit: false,
+            resolved_engine: SearchEngine::Rust,
+            rg_program: None,
+            fallback_reason: None,
+            candidate_limit_hit: false,
+        });
     let SearchAttemptResult {
         hits: raw_hits,
         scanned_files,
@@ -498,6 +507,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         &attempt_traces,
         &matched_files,
         &hits,
+        scanned_files,
         output_budget_hit,
     );
     let meta = SearchExecutionMeta {
@@ -526,6 +536,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         "query_mode_inferred": params.query_mode_inferred,
         "query_used": selected_attempt.query.clone(),
         "path": params.path,
+        "resolved_path": resolved_path,
+        "scope": scope,
+        "scope_note": scope_note,
         "summary": summary,
         "matches": matches,
         "hits": hits,
@@ -926,8 +939,28 @@ fn trim_search_term(raw: &str) -> String {
     raw.trim_matches(|ch: char| {
         matches!(
             ch,
-            '"' | '\'' | '`' | ',' | ';' | ':' | '|' | '(' | ')' | '[' | ']' | '{' | '}'
-                | '<' | '>' | '，' | '。' | '；' | '：' | '（' | '）' | '【' | '】'
+            '"' | '\''
+                | '`'
+                | ','
+                | ';'
+                | ':'
+                | '|'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '<'
+                | '>'
+                | '，'
+                | '。'
+                | '；'
+                | '：'
+                | '（'
+                | '）'
+                | '【'
+                | '】'
         )
     })
     .trim()
@@ -936,7 +969,10 @@ fn trim_search_term(raw: &str) -> String {
 
 fn is_useful_fallback_term(term: &str) -> bool {
     let char_count = term.chars().count();
-    if term.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
+    if term
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
         return char_count >= 2;
     }
     char_count >= 2
@@ -1858,6 +1894,83 @@ fn collect_matched_terms_for_line(
     output
 }
 
+fn hit_line_span(hits: &[SearchHit]) -> Option<(usize, usize)> {
+    let mut min_line = usize::MAX;
+    let mut max_line = 0usize;
+    let mut found = false;
+    for hit in hits {
+        min_line = min_line.min(hit.line);
+        max_line = max_line.max(hit.line);
+        found = true;
+    }
+    if found {
+        Some((min_line, max_line))
+    } else {
+        None
+    }
+}
+
+fn diversify_hits_within_file(hits: Vec<SearchHit>) -> VecDeque<SearchHit> {
+    if hits.len() <= 2 {
+        return hits.into();
+    }
+    let Some((min_line, max_line)) = hit_line_span(&hits) else {
+        return hits.into();
+    };
+    let line_span = max_line.saturating_sub(min_line);
+    if line_span < 80 {
+        return hits.into();
+    }
+    let mut remaining = hits;
+    let mut diversified = VecDeque::new();
+    diversified.push_back(remaining.remove(0));
+    while !remaining.is_empty() {
+        let mut best_idx = 0usize;
+        let mut best_distance = 0usize;
+        for (idx, hit) in remaining.iter().enumerate() {
+            let distance = diversified
+                .iter()
+                .map(|picked| hit.line.abs_diff(picked.line))
+                .min()
+                .unwrap_or(usize::MAX);
+            if distance > best_distance {
+                best_distance = distance;
+                best_idx = idx;
+            }
+        }
+        diversified.push_back(remaining.remove(best_idx));
+    }
+    diversified
+}
+
+fn build_focus_points(hits: &[SearchHit], limit: usize) -> Vec<String> {
+    let mut focus_points = Vec::new();
+    let mut seen = HashSet::new();
+    for hit in hits {
+        let key = format!("{}:{}", hit.path, hit.line);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        let term_suffix = if hit.matched_terms.is_empty() {
+            String::new()
+        } else {
+            let preview_terms = hit
+                .matched_terms
+                .iter()
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(" [{preview_terms}]")
+        };
+        focus_points.push(format!("{key}{term_suffix}"));
+        if focus_points.len() >= limit {
+            break;
+        }
+    }
+    focus_points
+}
+
 fn rank_search_hits(
     mut hits: Vec<SearchHit>,
     attempt: &SearchAttempt,
@@ -1911,15 +2024,35 @@ fn rank_search_hits(
             .then(left.line.cmp(&right.line))
     });
 
-    let mut grouped: HashMap<String, VecDeque<SearchHit>> = HashMap::new();
+    let mut grouped: HashMap<String, Vec<SearchHit>> = HashMap::new();
     let mut order = Vec::new();
     for hit in hits {
         let key = hit.path.clone();
         let queue = grouped.entry(key.clone()).or_insert_with(|| {
             order.push(key.clone());
-            VecDeque::new()
+            Vec::new()
         });
-        queue.push_back(hit);
+        queue.push(hit);
+    }
+
+    let mut grouped = grouped
+        .into_iter()
+        .map(|(key, hits)| (key, diversify_hits_within_file(hits)))
+        .collect::<HashMap<_, _>>();
+
+    for key in &order {
+        if let Some(queue) = grouped.get_mut(key) {
+            if queue.len() > 1 {
+                let mut deduped = VecDeque::new();
+                let mut seen_lines = HashSet::new();
+                while let Some(hit) = queue.pop_front() {
+                    if seen_lines.insert(hit.line) {
+                        deduped.push_back(hit);
+                    }
+                }
+                *queue = deduped;
+            }
+        }
     }
 
     let mut diversified = Vec::new();
@@ -1938,12 +2071,45 @@ fn rank_search_hits(
     diversified
 }
 
+fn build_search_scope(resolved_path: &str) -> Value {
+    json!({
+        "kind": "workspace_local",
+        "local_only": true,
+        "supports_web": false,
+        "resolved_path": resolved_path,
+    })
+}
+
+fn build_search_scope_note(resolved_path: &str) -> String {
+    format!(
+        "Searches local workspace text files only under `{resolved_path}`. This tool does not search the web; use list_files first if the path is uncertain."
+    )
+}
+
+fn build_zero_hit_search_hint(params: &SearchParams, scanned_files: usize) -> String {
+    if scanned_files == 0 {
+        return "No readable local text files were scanned. This tool only searches local workspace files, not the web. Use list_files first or widen path/glob.".to_string();
+    }
+    let fallback_terms = literal_query_fallback_terms(&params.query);
+    if !fallback_terms.is_empty() {
+        return format!(
+            "No exact hit in local workspace files. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
+            fallback_terms.join(" | ")
+        );
+    }
+    if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
+        return "No hit in local workspace files. pattern defaults to regex; use -F or query_mode=literal for fixed-string matching.".to_string();
+    }
+    "No hits in local workspace files. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape.".to_string()
+}
+
 fn build_search_summary(
     params: &SearchParams,
     attempt: &SearchAttempt,
     attempt_traces: &[SearchAttemptTrace],
     matched_files: &[String],
     hits: &[SearchHit],
+    scanned_files: usize,
     output_budget_hit: bool,
 ) -> SearchSummary {
     let mut matched_terms = Vec::new();
@@ -1970,29 +2136,29 @@ fn build_search_summary(
             break;
         }
     }
+    let focus_points = build_focus_points(hits, 5);
+    let single_file_spread = matched_files.len() == 1
+        && hits.len() >= 4
+        && hit_line_span(hits).is_some_and(|(start, end)| end.saturating_sub(start) >= 200);
     let next_hint = if hits.is_empty() {
-        let fallback_terms = literal_query_fallback_terms(&params.query);
-        if !fallback_terms.is_empty() {
+        Some(build_zero_hit_search_hint(params, scanned_files))
+    } else if output_budget_hit {
+        if single_file_spread {
+            let (start, end) = hit_line_span(hits).unwrap_or((0, 0));
             Some(format!(
-                "No exact hit. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
-                fallback_terms.join(" | ")
+                "Single file matched broadly across lines {start}-{end}. Narrow with a more specific phrase, heading, or smaller anchor before raising output_budget_bytes."
             ))
-        } else if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
-            Some(
-                "pattern defaults to regex. If you want fixed-string matching, pass -F or query_mode=literal."
-                    .to_string(),
-            )
         } else {
             Some(
-                "No hits. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape."
+                "Result was compacted to fit the output budget. Narrow path/glob or raise output_budget_bytes if you need more hits."
                     .to_string(),
             )
         }
-    } else if output_budget_hit {
-        Some(
-            "Result was compacted to fit the output budget. Narrow path/glob or raise output_budget_bytes if you need more hits."
-                .to_string(),
-        )
+    } else if single_file_spread {
+        let (start, end) = hit_line_span(hits).unwrap_or((0, 0));
+        Some(format!(
+            "Single file matched broadly across lines {start}-{end}. Refine with a more specific phrase, heading, or file-local anchor to avoid linear reading."
+        ))
     } else if matched_files.len() > 5
         || attempt_traces
             .iter()
@@ -2016,6 +2182,7 @@ fn build_search_summary(
         matched_file_count: matched_files.len(),
         top_files,
         matched_terms,
+        focus_points,
         next_hint,
     }
 }
@@ -2264,10 +2431,17 @@ mod tests {
 
     #[test]
     fn literal_query_fallback_terms_split_model_style_queries() {
-        let terms = literal_query_fallback_terms("alphaDoc betaRef gammaNode deltaPoint epsilonTag");
+        let terms =
+            literal_query_fallback_terms("alphaDoc betaRef gammaNode deltaPoint epsilonTag");
         assert_eq!(
             terms,
-            vec!["alphaDoc", "betaRef", "gammaNode", "deltaPoint", "epsilonTag"]
+            vec![
+                "alphaDoc",
+                "betaRef",
+                "gammaNode",
+                "deltaPoint",
+                "epsilonTag"
+            ]
         );
     }
 
@@ -2283,7 +2457,13 @@ mod tests {
         assert_eq!(attempts[1].strategy, SearchStrategy::LiteralTermsFallback);
         assert_eq!(
             attempts[1].match_terms,
-            vec!["alphaDoc", "betaRef", "gammaNode", "deltaPoint", "epsilonTag"]
+            vec![
+                "alphaDoc",
+                "betaRef",
+                "gammaNode",
+                "deltaPoint",
+                "epsilonTag"
+            ]
         );
     }
 
@@ -2394,6 +2574,208 @@ mod tests {
         );
         assert_eq!(ranked[0].path, "a.md");
         assert_eq!(ranked[0].content, "alpha beta");
+    }
+
+    #[test]
+    fn rank_search_hits_diversifies_single_file_regions() {
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralTermsFallback,
+            "alpha".to_string(),
+            QueryMode::Literal,
+            vec!["alpha".to_string()],
+            Some("alpha".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let ranked = rank_search_hits(
+            vec![
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 10,
+                    content: "alpha one".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 20,
+                    content: "alpha two".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 300,
+                    content: "alpha three".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 900,
+                    content: "alpha four".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+            ],
+            &attempt,
+            false,
+        );
+        let first_three = ranked
+            .iter()
+            .take(3)
+            .map(|hit| hit.line)
+            .collect::<Vec<_>>();
+        assert_eq!(first_three, vec![10, 900, 300]);
+    }
+
+    #[test]
+    fn build_search_summary_marks_broad_single_file_match() {
+        let params = SearchParams {
+            query: "alpha".to_string(),
+            query_source: QuerySource::Query,
+            path: ".".to_string(),
+            file_pattern_items: vec!["*.md".to_string()],
+            query_mode: QueryMode::Literal,
+            query_mode_inferred: false,
+            case_sensitive: false,
+            context_before: 0,
+            context_after: 0,
+            max_depth: 0,
+            max_files: 0,
+            max_matches: 50,
+            max_candidates: 4000,
+            timeout_ms: 30_000,
+            engine: SearchEngine::Rust,
+            output_budget_bytes: Some(4096),
+        };
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralExact,
+            "alpha".to_string(),
+            QueryMode::Literal,
+            vec!["alpha".to_string()],
+            Some("alpha".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let hits = vec![
+            SearchHit {
+                path: "a.md".to_string(),
+                line: 15,
+                content: "alpha".to_string(),
+                segments: vec![],
+                matched_terms: vec!["alpha".to_string()],
+                before: vec![],
+                after: vec![],
+            },
+            SearchHit {
+                path: "a.md".to_string(),
+                line: 250,
+                content: "alpha".to_string(),
+                segments: vec![],
+                matched_terms: vec!["alpha".to_string()],
+                before: vec![],
+                after: vec![],
+            },
+            SearchHit {
+                path: "a.md".to_string(),
+                line: 700,
+                content: "alpha".to_string(),
+                segments: vec![],
+                matched_terms: vec!["alpha".to_string()],
+                before: vec![],
+                after: vec![],
+            },
+            SearchHit {
+                path: "a.md".to_string(),
+                line: 1200,
+                content: "alpha".to_string(),
+                segments: vec![],
+                matched_terms: vec!["alpha".to_string()],
+                before: vec![],
+                after: vec![],
+            },
+        ];
+        let summary = build_search_summary(
+            &params,
+            &attempt,
+            &[SearchAttemptTrace {
+                strategy: "literal_exact".to_string(),
+                query_mode: "literal".to_string(),
+                query_used: "alpha".to_string(),
+                returned_match_count: 4,
+                matched_file_count: 1,
+                scanned_files: 1,
+            }],
+            &["a.md".to_string()],
+            &hits,
+            1,
+            true,
+        );
+        assert_eq!(summary.focus_points[0], "a.md:15 [alpha]");
+        assert!(summary
+            .next_hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("Single file matched broadly across lines 15-1200"));
+    }
+
+    #[test]
+    fn zero_hit_summary_explicitly_marks_local_scope() {
+        let params = SearchParams {
+            query: "alpha beta".to_string(),
+            query_source: QuerySource::Query,
+            path: ".".to_string(),
+            file_pattern_items: vec![],
+            query_mode: QueryMode::Literal,
+            query_mode_inferred: false,
+            case_sensitive: false,
+            context_before: 0,
+            context_after: 0,
+            max_depth: 0,
+            max_files: 0,
+            max_matches: 20,
+            max_candidates: DEFAULT_MAX_CANDIDATES,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+            engine: SearchEngine::Auto,
+            output_budget_bytes: None,
+        };
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralExact,
+            "alpha beta".to_string(),
+            QueryMode::Literal,
+            vec!["alpha beta".to_string()],
+            Some("alpha beta".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let summary = build_search_summary(
+            &params,
+            &attempt,
+            &[],
+            &[],
+            &[],
+            0,
+            false,
+        );
+        assert!(summary
+            .next_hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("local workspace files"));
+        assert!(summary
+            .next_hint
+            .as_deref()
+            .unwrap_or("")
+            .contains("not the web"));
     }
 
     #[test]

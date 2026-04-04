@@ -202,25 +202,26 @@
   - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
-- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并兼容一批更接近 `rg` 心智模型的别名：`pattern`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。默认语义更新为：`query` 省略 `query_mode` 时按 `literal` 处理，`pattern` 省略 `query_mode`/`-F` 时按 `regex` 处理；对 `query` 的多词精确短语在无结果时，工具可能自动回退为按词检索，以更贴近模型的自然查询习惯。
-- `读取文件`（`read_file`）仅用于代码/配置/日志/Markdown 等纯文本文件，不应用于图片、PDF、Office 文档、压缩包或其他二进制文件。该工具支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
+- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并兼容一批更接近 `rg` 心智模型的别名：`pattern`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。默认语义更新为：`query` 省略 `query_mode` 时按 `literal` 处理，`pattern` 省略 `query_mode`/`-F` 时按 `regex` 处理；对 `query` 的多词精确短语在无结果时，工具可能自动回退为按词检索，以更贴近模型的自然查询习惯。对于单个超长文件的高密度命中，结果会优先分散暴露不同区段的代表命中，避免预览长期偏在文件前部。该工具只搜索本地工作区文本文件，不会访问网页；返回结果会补充 `resolved_path/scope/scope_note`，零命中时 `summary.next_hint` 会明确提示“本地范围为空或需先 list_files”。
+- `读取文件`（`read_file`）仅用于代码/配置/日志/Markdown 等纯文本文件，不应用于图片、PDF、Office 文档、压缩包或其他二进制文件。该工具支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。`slice` 模式的 `start_line/end_line` 采用包含式区间；当模型传入 `start_line=0` 时会自动归一化到首行，同文件相邻/重叠切片在同一次调用内会合并展示，以减少重复输出与外层截断。另兼容 Codex 常见的 `file_path + offset/limit` 读取窗口写法，并在 `meta.files[]` 中补充 `resolved_path/requested_ranges` 方便前端与模型判断实际读取范围。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
 - 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation（管理员会话同样生效）；若仍因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
 - `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
 - 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
-- `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
+- `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词、`focus_points` 和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。
-- 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，便于前端与模型按错误码做自动恢复。
+- 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，并保证同时落入 `data.error_meta`，便于前端、结果归一化和重试治理统一按错误码做自动恢复。
+- 外层工具超时不再只返回笼统字符串；`tool_result` 会补充 `data.failure_summary/error_detail_head/next_step_hint/timeout_s/timeout_ms` 与 `error_meta.code=TOOL_TIMEOUT`，前端工作流可直接显示失败原因与下一步建议。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
   - 技能文档内建议使用占位符 `{{SKILL_ROOT}}` 引用技能资源（脚本/示例/工作流文件等）。
   - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
   - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
-- `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围。
+- `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围；若同文件一次请求了多个离散切片，正文里会增加 `[lines a-b]` 小标题以保持范围边界清晰。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn|batch_spawn|status|wait|interrupt|close|resume` 统一完成子会话派生、批量调度、状态聚合与生命周期控制。
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
@@ -245,6 +246,7 @@
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
 - 新增内置工具 `网页抓取`（英文别名 `web_fetch`），参数 `url` 必填，支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不依赖浏览器状态。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置私网地址拦截、重定向复校验、响应体大小限制与短 TTL 缓存，配置位于 `tools.web.fetch.*`。
+- `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
 - `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。

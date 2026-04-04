@@ -48,6 +48,7 @@
     "./beeroom-realtime-regression.test.ts",
     "./realtime-pulse-regression.test.ts",
     "./composer-approval-regression.test.ts",
-    "./message-stats-regression.test.ts"
+    "./message-stats-regression.test.ts",
+    "./tool-workflow-regression.test.ts"
   ]
 }

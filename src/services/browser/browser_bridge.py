@@ -653,7 +653,18 @@ def main():
     parser.add_argument("--launch-arg", action="append", default=[])
     args = parser.parse_args()
 
-    session = BridgeSession(args)
+    try:
+        session = BridgeSession(args)
+    except Exception as exc:
+        respond(
+            {
+                "success": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(limit=6),
+                "phase": "startup",
+            }
+        )
+        return 1
     respond(
         {
             "success": True,
@@ -691,7 +702,8 @@ def main():
                     break
     finally:
         session.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

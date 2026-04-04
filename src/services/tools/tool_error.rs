@@ -39,9 +39,10 @@ pub(crate) fn build_failed_tool_result(
     meta: ToolErrorMeta,
     sandbox: bool,
 ) -> Value {
+    let data = with_error_meta(data, meta.clone());
     json!({
         "ok": false,
-        "data": ensure_object_payload(data),
+        "data": data,
         "error": error.into(),
         "error_meta": meta.to_json(),
         "sandbox": sandbox,
@@ -78,5 +79,22 @@ mod tests {
         let obj = payload.as_object().expect("payload should be object");
         assert_eq!(obj.get("result"), Some(&Value::String("bad".to_string())));
         assert!(obj.get("error_meta").is_some());
+    }
+
+    #[test]
+    fn build_failed_tool_result_embeds_error_meta_into_data() {
+        let payload = build_failed_tool_result(
+            "failed",
+            json!({ "detail": "bad request" }),
+            ToolErrorMeta::new("TOOL_FAILED", Some("retry later".to_string()), true, Some(250)),
+            false,
+        );
+        let data = payload.get("data").and_then(Value::as_object).expect("data object");
+        let meta = data
+            .get("error_meta")
+            .and_then(Value::as_object)
+            .expect("embedded error_meta");
+        assert_eq!(meta.get("code"), Some(&Value::String("TOOL_FAILED".to_string())));
+        assert_eq!(meta.get("retryable"), Some(&Value::Bool(true)));
     }
 }

@@ -25,7 +25,18 @@
         >
           <summary class="tool-workflow-entry-summary">
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
-            <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
+            <span class="tool-workflow-entry-copy">
+              <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
+              <span
+                v-if="entry.summaryNote"
+                :class="[
+                  'tool-workflow-entry-note',
+                  entry.summaryNoteTone ? `is-${entry.summaryNoteTone}` : ''
+                ]"
+              >
+                {{ entry.summaryNote }}
+              </span>
+            </span>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
             <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
           </summary>
@@ -65,6 +76,7 @@ import {
   type WorkflowItem
 } from './toolWorkflowRunModel';
 import {
+  buildStructuredToolResultNote,
   buildStructuredToolResultView
 } from './toolWorkflowStructuredView';
 import { chatPerf } from '@/utils/chatPerf';
@@ -2791,17 +2803,56 @@ const buildErrorText = (
   resultItem: WorkflowItem | null,
   commandSession: CommandSessionRuntimeEntry | null
 ): string => {
-  const sessionError = pickString(commandSession?.error);
+  const sessionError = truncateSingleLine(pickString(commandSession?.error), 200);
   if (sessionError) return sessionError;
   if (!resultItem) return '';
   const detailObject = parseDetailObject(resultItem.detail);
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
-  const error = pickString(resultObject?.error, dataObject?.error);
-  const code = pickString(dataObject?.error_code);
-  if (error && code) return `${error} (${code})`;
-  if (error) return error;
-  return code;
+  const errorMeta = asObject(dataObject?.error_meta);
+  const summary = truncateSingleLine(
+    pickString(
+      dataObject?.failure_summary,
+      dataObject?.error_detail_head,
+      resultObject?.error,
+      dataObject?.error,
+      dataObject?.message,
+      resultObject?.message,
+      dataObject?.stderr
+    ),
+    200
+  );
+  const hint = truncateSingleLine(
+    pickString(dataObject?.next_step_hint, errorMeta?.hint),
+    220
+  );
+  const code = pickString(dataObject?.error_code, errorMeta?.code);
+  if (summary && code) {
+    return hint && hint !== summary ? `${summary} (${code})\n${hint}` : `${summary} (${code})`;
+  }
+  if (summary) return hint && hint !== summary ? `${summary}\n${hint}` : summary;
+  if (code && hint) return `${code}\n${hint}`;
+  if (code) return code;
+  return hint;
+};
+
+const buildEntrySummaryNote = (
+  entry: RawEntry,
+  status: string,
+  commandSession: CommandSessionRuntimeEntry | null
+): { text: string; tone: '' | 'info' | 'success' | 'warning' } => {
+  if (status === 'failed') {
+    return {
+      text: truncateSingleLine(buildErrorText(entry.resultItem, commandSession), 220),
+      tone: 'warning'
+    };
+  }
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const text = buildStructuredToolResultNote(entry.toolName, resultObject, dataObject, t);
+  return {
+    text,
+    tone: text ? 'info' : ''
+  };
 };
 
 const resolveEntryStatus = (
@@ -2842,6 +2893,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
+  const entrySummaryNote = buildEntrySummaryNote(entry, status, commandSession);
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(
@@ -2858,8 +2910,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   return {
     key: entry.key,
     summaryTitle,
-    summaryNote: compactionDisplay?.summaryNote || '',
-    summaryNoteTone: compactionDisplay?.summaryNoteTone || '',
+    summaryNote: compactionDisplay?.summaryNote || entrySummaryNote.text,
+    summaryNoteTone: compactionDisplay?.summaryNoteTone || entrySummaryNote.tone,
     isCompaction: Boolean(compactionDisplay),
     compactionView: compactionDisplay?.view || null,
     status,
@@ -3410,14 +3462,42 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-entry-title {
-  min-width: 0;
-  flex: 1 1 auto;
   font-size: 12px;
   font-weight: 600;
   color: var(--workflow-term-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tool-workflow-entry-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-workflow-entry-note {
+  min-width: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--workflow-term-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-workflow-entry-note.is-info {
+  color: rgba(191, 219, 254, 0.92);
+}
+
+.tool-workflow-entry-note.is-warning {
+  color: rgba(253, 230, 138, 0.95);
+}
+
+.tool-workflow-entry-note.is-success {
+  color: rgba(187, 247, 208, 0.95);
 }
 
 .tool-workflow-entry-lamp {

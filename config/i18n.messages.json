@@ -1672,8 +1672,8 @@
     "zh-CN": "关闭当前浏览器会话"
   },
   "tool.spec.web_fetch.description": {
-    "en-US": "Fetch a web page directly over HTTP and return cleaned low-noise content.",
-    "zh-CN": "直接抓取网页并返回清洗后的低噪声正文内容。"
+    "en-US": "Fetch a remote public web page directly over HTTP(S) and return cleaned low-noise content. Use this for websites, not for local workspace files or generic keyword search.",
+    "zh-CN": "直接通过 HTTP(S) 抓取远程公网网页，并返回清洗后的低噪声正文内容。它用于网站，不用于本地工作区文件，也不是通用关键词搜索工具。"
   },
   "tool.spec.web_fetch.args.url": {
     "en-US": "The target URL to fetch (http/https only).",
@@ -2096,16 +2096,16 @@
     "zh-CN": "可选的行号范围列表。"
   },
   "tool.spec.read.args.files.path": {
-    "en-US": "Path to a plain-text file to read. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. If unsure, list files first. Do not pass images or other binary files here.",
-    "zh-CN": "要读取的纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；路径不确定时先列出文件。不要在这里传入图片或其他二进制文件。"
+    "en-US": "Path to a local plain-text file to read. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. If unsure, list files first. Do not pass images or other binary files here.",
+    "zh-CN": "要读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；路径不确定时先列出文件。不要在这里传入图片或其他二进制文件。"
   },
   "tool.spec.read.args.files.start_line": {
     "en-US": "Optional start line (inclusive).",
     "zh-CN": "可选起始行（包含）。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read plain-text file contents from specified paths, with batch and line-range support. Only use this for code/config/log/markdown/text files. If a path is uncertain, list files first instead of guessing neighboring paths. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
-    "zh-CN": "读取指定路径的纯文本文件内容，支持批量读取并指定行号范围。仅用于代码、配置、日志、Markdown 等文本文件；路径不确定时先列出文件，不要反复猜测相邻路径；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
+    "en-US": "Read local plain-text file contents from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Only use this for code/config/log/markdown/text files. If a path is uncertain, list files first instead of guessing neighboring paths. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
+    "zh-CN": "读取指定路径的本地纯文本文件内容，支持批量读取并指定行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。仅用于代码、配置、日志、Markdown 等文本文件；路径不确定时先列出文件，不要反复猜测相邻路径；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",
@@ -2140,16 +2140,16 @@
     "zh-CN": "可选，最大扫描文件数（0 表示不限制）。"
   },
   "tool.spec.search.args.path": {
-    "en-US": "Optional. Directory to limit the search, relative to the workspace.",
-    "zh-CN": "可选，限制搜索范围的目录，相对工程师工作目录。"
+    "en-US": "Optional. Directory to limit the search, relative to the local workspace. This tool searches workspace files only, never the web.",
+    "zh-CN": "可选，限制搜索范围的目录，相对当前本地工作区。这个工具只搜索工作区文件，不会搜索网页。"
   },
   "tool.spec.search.args.pattern": {
     "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",
     "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
   },
   "tool.spec.search.args.query": {
-    "en-US": "Primary text query input. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
-    "zh-CN": "主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
+    "en-US": "Primary text query input for local workspace files. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
+    "zh-CN": "面向本地工作区文件的主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
   },
   "tool.spec.search.args.glob": {
     "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
@@ -2208,8 +2208,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search text files under the workspace. Prefer expressing searches like a narrowed rg call: put the regex in pattern/query, narrow with path plus glob/type, and request context with context or -A/-B/-C. The tool accepts rg-style aliases such as pattern, glob, type, -i, -A/-B/-C, -F, max_count/head_limit, and returns both legacy matches plus structured hits.",
-    "zh-CN": "在工作区文本文件中搜索。建议按收窄后的 rg 调用来组织参数：把模式写在 pattern/query，用 path 配合 glob/type 缩小范围，再用 context 或 -A/-B/-C 请求上下文。工具支持 pattern、glob、type、-i、-A/-B/-C、-F、max_count/head_limit 等 rg 风格别名，并同时返回兼容的 matches 与结构化 hits。"
+    "en-US": "Search local workspace text files only. This is not a web search tool. Prefer expressing searches like a narrowed rg call: put the regex in pattern/query, narrow with path plus glob/type, and request context with context or -A/-B/-C. If you are not sure the files exist, use list_files first. The tool accepts rg-style aliases such as pattern, glob, type, -i, -A/-B/-C, -F, max_count/head_limit, and returns both legacy matches plus structured hits.",
+    "zh-CN": "仅在本地工作区文本文件中搜索，这不是网页搜索工具。建议按收窄后的 rg 调用来组织参数：把模式写在 pattern/query，用 path 配合 glob/type 缩小范围，再用 context 或 -A/-B/-C 请求上下文；如果不确定文件是否存在，先用列出文件。工具支持 pattern、glob、type、-i、-A/-B/-C、-F、max_count/head_limit 等 rg 风格别名，并同时返回兼容的 matches 与结构化 hits。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",

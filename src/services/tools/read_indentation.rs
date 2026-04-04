@@ -2,7 +2,7 @@ use std::cmp;
 
 const TAB_WIDTH: usize = 4;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct IndentationReadOptions {
     pub(crate) anchor_line: Option<usize>,
     pub(crate) max_levels: usize,

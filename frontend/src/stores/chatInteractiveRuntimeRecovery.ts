@@ -54,21 +54,32 @@ export const resolveInteractiveControllerRecoveryReason = (options: {
   const startedAt = normalizeTimestampMs(options.startedAt);
   const lastEventAtRaw = normalizeTimestampMs(options.lastEventAt);
   const lastEventAt = lastEventAtRaw > 0 ? lastEventAtRaw : startedAt;
+  const hasKnownActivityClock = startedAt > 0 || lastEventAtRaw > 0;
   const activeMs = startedAt > 0 ? Math.max(0, nowMs - startedAt) : 0;
   const idleMs = lastEventAt > 0 ? Math.max(0, nowMs - lastEventAt) : activeMs;
   const remoteLastEventId = normalizeEventId(options.remoteLastEventId);
   const localLastEventId = normalizeEventId(options.localLastEventId);
   if (
     remoteLastEventId > localLastEventId &&
-    activeMs >= REMOTE_AHEAD_ACTIVE_MS &&
-    idleMs >= REMOTE_AHEAD_IDLE_MS
+    (
+      !hasKnownActivityClock ||
+      (
+        activeMs >= REMOTE_AHEAD_ACTIVE_MS &&
+        idleMs >= REMOTE_AHEAD_IDLE_MS
+      )
+    )
   ) {
     return 'remote_ahead';
   }
   if (
     options.loading !== true &&
-    activeMs >= NO_LOADING_STALE_ACTIVE_MS &&
-    idleMs >= NO_LOADING_STALE_IDLE_MS
+    (
+      !hasKnownActivityClock ||
+      (
+        activeMs >= NO_LOADING_STALE_ACTIVE_MS &&
+        idleMs >= NO_LOADING_STALE_IDLE_MS
+      )
+    )
   ) {
     return 'not_loading_stale';
   }

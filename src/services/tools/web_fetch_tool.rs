@@ -1,4 +1,4 @@
-use super::ToolContext;
+use super::{tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext};
 use crate::config::{Config, WebFetchToolConfig};
 use crate::i18n;
 use anyhow::{anyhow, Result};
@@ -11,7 +11,7 @@ use regex::Regex;
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, LOCATION, USER_AGENT};
 use reqwest::redirect::Policy;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::OnceLock;
@@ -204,6 +204,64 @@ struct CandidateStats {
     negative_hint: bool,
 }
 
+#[derive(Debug)]
+struct WebFetchFailure {
+    message: String,
+    data: Value,
+    meta: ToolErrorMeta,
+}
+
+impl WebFetchFailure {
+    fn into_value(self) -> Value {
+        build_failed_tool_result(self.message, self.data, self.meta, false)
+    }
+}
+
+fn web_fetch_failure(
+    raw_url: &str,
+    url: Option<&Url>,
+    phase: &str,
+    code: &str,
+    message: impl Into<String>,
+    hint: Option<String>,
+    retryable: bool,
+    retry_after_ms: Option<u64>,
+    extra: Value,
+) -> WebFetchFailure {
+    let message = message.into();
+    let mut data = Map::new();
+    data.insert("url".to_string(), Value::String(raw_url.to_string()));
+    data.insert("phase".to_string(), Value::String(phase.to_string()));
+    data.insert(
+        "failure_summary".to_string(),
+        Value::String(message.clone()),
+    );
+    data.insert(
+        "error_detail_head".to_string(),
+        Value::String(message.clone()),
+    );
+    if let Some(url) = url {
+        data.insert(
+            "normalized_url".to_string(),
+            Value::String(url.to_string()),
+        );
+        if let Some(host) = url.host_str() {
+            data.insert("host".to_string(), Value::String(host.to_string()));
+        }
+    }
+    if let Some(text) = hint.clone().filter(|value| !value.trim().is_empty()) {
+        data.insert("next_step_hint".to_string(), Value::String(text));
+    }
+    if let Value::Object(map) = extra {
+        data.extend(map);
+    }
+    WebFetchFailure {
+        message,
+        data: Value::Object(data),
+        meta: ToolErrorMeta::new(code, hint, retryable, retry_after_ms),
+    }
+}
+
 pub fn is_web_fetch_tool_name(name: &str) -> bool {
     let cleaned = name.trim();
     if cleaned == TOOL_WEB_FETCH {
@@ -220,7 +278,10 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
     let request: WebFetchArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let raw_url = request.url.trim().to_string();
-    let request_url = normalize_request_url(&request.url)?;
+    let request_url = match normalize_request_url(&request.url) {
+        Ok(value) => value,
+        Err(failure) => return Ok(failure.into_value()),
+    };
     let config = &context.config.tools.web.fetch;
     let extract_mode = ExtractMode::from_raw(request.extract_mode.as_deref());
     let max_chars = resolve_max_chars(request.max_chars, config);
@@ -236,7 +297,10 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
         ));
     }
 
-    let fetched = fetch_url(&request_url, config).await?;
+    let fetched = match fetch_url(&raw_url, &request_url, config).await {
+        Ok(value) => value,
+        Err(failure) => return Ok(failure.into_value()),
+    };
     let decoded = decode_body_text(&fetched.body, fetched.content_type.as_deref());
     let content_type = normalize_content_type(fetched.content_type.as_deref())
         .unwrap_or_else(|| "application/octet-stream".to_string());
@@ -263,9 +327,51 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             params.insert("detail".to_string(), detail);
             i18n::t_with_params("tool.web_fetch.http_error_with_detail", &params)
         };
-        return Err(anyhow!(message));
+        return Ok(
+            web_fetch_failure(
+                &raw_url,
+                Some(&request_url),
+                "response_status",
+                "TOOL_WEB_FETCH_HTTP_ERROR",
+                message,
+                Some("Check the status/detail or try a different public source.".to_string()),
+                (500..600).contains(&fetched.status),
+                None,
+                json!({
+                    "status": fetched.status,
+                    "content_type": content_type,
+                    "final_url": fetched.final_url,
+                }),
+            )
+            .into_value(),
+        );
     } else if is_html_content_type(&content_type) || looks_like_html(&decoded) {
-        let html = extract_html_content(&decoded, extract_mode)?;
+        let html = match extract_html_content(&decoded, extract_mode) {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(
+                    web_fetch_failure(
+                        &raw_url,
+                        Some(&request_url),
+                        "extract",
+                        "TOOL_WEB_FETCH_NO_CONTENT",
+                        err.to_string(),
+                        Some(
+                            "Try extract_mode=text, a simpler page, or the browser tool for dynamic pages."
+                                .to_string(),
+                        ),
+                        false,
+                        None,
+                        json!({
+                            "status": fetched.status,
+                            "content_type": content_type,
+                            "final_url": fetched.final_url,
+                        }),
+                    )
+                    .into_value(),
+                );
+            }
+        };
         CachedPayload {
             final_url: fetched.final_url,
             status: fetched.status,
@@ -277,13 +383,39 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             fetched_at: chrono::Utc::now().to_rfc3339(),
         }
     } else if is_json_content_type(&content_type) {
+        let content = match format_json_content(&decoded, extract_mode) {
+            Ok(value) => value,
+            Err(err) => {
+                return Ok(
+                    web_fetch_failure(
+                        &raw_url,
+                        Some(&request_url),
+                        "parse",
+                        "TOOL_WEB_FETCH_PARSE_FAILED",
+                        err.to_string(),
+                        Some(
+                            "The response could not be decoded as valid JSON. Try extract_mode=text or another URL."
+                                .to_string(),
+                        ),
+                        false,
+                        None,
+                        json!({
+                            "status": fetched.status,
+                            "content_type": content_type,
+                            "final_url": fetched.final_url,
+                        }),
+                    )
+                    .into_value(),
+                );
+            }
+        };
         CachedPayload {
             final_url: fetched.final_url,
             status: fetched.status,
             content_type,
             title: None,
             extractor: "json".to_string(),
-            content: format_json_content(&decoded, extract_mode)?,
+            content,
             warning,
             fetched_at: chrono::Utc::now().to_rfc3339(),
         }
@@ -300,15 +432,52 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
         }
     } else {
         let mut params = HashMap::new();
-        params.insert("content_type".to_string(), content_type);
-        return Err(anyhow!(i18n::t_with_params(
-            "tool.web_fetch.unsupported_content_type",
-            &params,
-        )));
+        params.insert("content_type".to_string(), content_type.clone());
+        return Ok(
+            web_fetch_failure(
+                &raw_url,
+                Some(&request_url),
+                "content_type",
+                "TOOL_WEB_FETCH_UNSUPPORTED_CONTENT_TYPE",
+                i18n::t_with_params("tool.web_fetch.unsupported_content_type", &params),
+                Some(
+                    "Use web_fetch for HTML/text/JSON pages. Switch tools for binary downloads or interactive pages."
+                        .to_string(),
+                ),
+                false,
+                None,
+                json!({
+                    "status": fetched.status,
+                    "content_type": content_type,
+                    "final_url": fetched.final_url,
+                }),
+            )
+            .into_value(),
+        );
     };
 
     if payload.content.trim().is_empty() {
-        return Err(anyhow!(i18n::t("tool.web_fetch.no_content")));
+        return Ok(
+            web_fetch_failure(
+                &raw_url,
+                Some(&request_url),
+                "extract",
+                "TOOL_WEB_FETCH_NO_CONTENT",
+                i18n::t("tool.web_fetch.no_content"),
+                Some(
+                    "Try a different page, extract_mode=text, or the browser tool if content depends on client-side rendering."
+                        .to_string(),
+                ),
+                false,
+                None,
+                json!({
+                    "status": payload.status,
+                    "content_type": payload.content_type,
+                    "final_url": payload.final_url,
+                }),
+            )
+            .into_value(),
+        );
     }
 
     write_cache_entry(&cache_key, payload.clone(), config.cache_ttl_secs);
@@ -321,17 +490,59 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
     ))
 }
 
-fn normalize_request_url(raw: &str) -> Result<Url> {
+fn normalize_request_url(raw: &str) -> std::result::Result<Url, WebFetchFailure> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return Err(anyhow!(i18n::t("tool.web_fetch.invalid_url")));
+        return Err(web_fetch_failure(
+            raw,
+            None,
+            "validation",
+            "TOOL_WEB_FETCH_INVALID_URL",
+            i18n::t("tool.web_fetch.invalid_url"),
+            Some("Pass an absolute http:// or https:// URL.".to_string()),
+            false,
+            None,
+            json!({}),
+        ));
     }
-    let url = Url::parse(trimmed).map_err(|_| anyhow!(i18n::t("tool.web_fetch.invalid_url")))?;
+    let url = Url::parse(trimmed).map_err(|_| {
+        web_fetch_failure(
+            raw,
+            None,
+            "validation",
+            "TOOL_WEB_FETCH_INVALID_URL",
+            i18n::t("tool.web_fetch.invalid_url"),
+            Some("Pass an absolute http:// or https:// URL.".to_string()),
+            false,
+            None,
+            json!({}),
+        )
+    })?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(anyhow!(i18n::t("tool.web_fetch.unsupported_scheme")));
+        return Err(web_fetch_failure(
+            raw,
+            Some(&url),
+            "validation",
+            "TOOL_WEB_FETCH_UNSUPPORTED_SCHEME",
+            i18n::t("tool.web_fetch.unsupported_scheme"),
+            Some("Use http:// or https:// URLs only.".to_string()),
+            false,
+            None,
+            json!({}),
+        ));
     }
     if url.host_str().is_none() {
-        return Err(anyhow!(i18n::t("tool.web_fetch.invalid_url")));
+        return Err(web_fetch_failure(
+            raw,
+            Some(&url),
+            "validation",
+            "TOOL_WEB_FETCH_INVALID_URL",
+            i18n::t("tool.web_fetch.invalid_url"),
+            Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
+            false,
+            None,
+            json!({}),
+        ));
     }
     Ok(url)
 }
@@ -360,8 +571,24 @@ fn status_is_success(status: u16) -> bool {
     (200..300).contains(&status)
 }
 
-async fn fetch_url(url: &Url, config: &WebFetchToolConfig) -> Result<FetchedResponse> {
-    let client = web_fetch_client()?;
+async fn fetch_url(
+    raw_url: &str,
+    url: &Url,
+    config: &WebFetchToolConfig,
+) -> std::result::Result<FetchedResponse, WebFetchFailure> {
+    let client = web_fetch_client().map_err(|err| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "request",
+            "TOOL_WEB_FETCH_REQUEST_FAILED",
+            format!("Failed to initialize HTTP client: {err}"),
+            Some("Retry later or restart the service if the issue persists.".to_string()),
+            true,
+            Some(200),
+            json!({}),
+        )
+    })?;
     let timeout_secs = resolve_timeout_secs(config);
     let max_redirects = resolve_max_redirects(config);
     let max_response_bytes = resolve_max_response_bytes(config);
@@ -371,9 +598,19 @@ async fn fetch_url(url: &Url, config: &WebFetchToolConfig) -> Result<FetchedResp
     let mut visited = HashSet::new();
 
     for redirect_index in 0..=max_redirects {
-        validate_remote_target(&current, timeout_secs).await?;
+        validate_remote_target(raw_url, &current, timeout_secs).await?;
         if !visited.insert(current.to_string()) {
-            return Err(anyhow!(i18n::t("tool.web_fetch.redirect_loop")));
+            return Err(web_fetch_failure(
+                raw_url,
+                Some(&current),
+                "redirect",
+                "TOOL_WEB_FETCH_REDIRECT_LOOP",
+                i18n::t("tool.web_fetch.redirect_loop"),
+                Some("Use the final page URL directly if possible.".to_string()),
+                false,
+                None,
+                json!({ "timeout_s": timeout_secs }),
+            ));
         }
 
         let request = client
@@ -383,22 +620,90 @@ async fn fetch_url(url: &Url, config: &WebFetchToolConfig) -> Result<FetchedResp
             .header(USER_AGENT, user_agent);
         let response = timeout(Duration::from_secs(timeout_secs), request.send())
             .await
-            .map_err(|_| anyhow!(i18n::t("tool.web_fetch.timeout")))?
-            .map_err(|err| anyhow!(err.to_string()))?;
+            .map_err(|_| {
+                web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "request",
+                    "TOOL_TIMEOUT",
+                    i18n::t("tool.web_fetch.timeout"),
+                    Some("Retry later or narrow to a faster public page.".to_string()),
+                    true,
+                    Some(timeout_secs.saturating_mul(1000)),
+                    json!({ "timeout_s": timeout_secs }),
+                )
+            })?
+            .map_err(|err| {
+                web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "request",
+                    "TOOL_WEB_FETCH_REQUEST_FAILED",
+                    format!("Request failed: {err}"),
+                    Some("Check site reachability or retry with a simpler public URL.".to_string()),
+                    err.is_timeout() || err.is_connect() || err.is_request(),
+                    Some(timeout_secs.saturating_mul(1000)),
+                    json!({ "timeout_s": timeout_secs }),
+                )
+            })?;
 
         if response.status().is_redirection() {
             if redirect_index >= max_redirects {
-                return Err(anyhow!(i18n::t("tool.web_fetch.too_many_redirects")));
+                return Err(web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "redirect",
+                    "TOOL_WEB_FETCH_TOO_MANY_REDIRECTS",
+                    i18n::t("tool.web_fetch.too_many_redirects"),
+                    Some("Use the final destination URL directly or reduce redirect hops.".to_string()),
+                    false,
+                    None,
+                    json!({ "timeout_s": timeout_secs }),
+                ));
             }
             let Some(location) = response.headers().get(LOCATION) else {
-                return Err(anyhow!(i18n::t("tool.web_fetch.redirect_missing_location")));
+                return Err(web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "redirect",
+                    "TOOL_WEB_FETCH_REDIRECT_INVALID",
+                    i18n::t("tool.web_fetch.redirect_missing_location"),
+                    Some("Retry with the final URL directly.".to_string()),
+                    false,
+                    None,
+                    json!({ "timeout_s": timeout_secs }),
+                ));
             };
             let location = location
                 .to_str()
-                .map_err(|_| anyhow!(i18n::t("tool.web_fetch.redirect_invalid_location")))?;
+                .map_err(|_| {
+                    web_fetch_failure(
+                        raw_url,
+                        Some(&current),
+                        "redirect",
+                        "TOOL_WEB_FETCH_REDIRECT_INVALID",
+                        i18n::t("tool.web_fetch.redirect_invalid_location"),
+                        Some("Retry with the final URL directly.".to_string()),
+                        false,
+                        None,
+                        json!({ "timeout_s": timeout_secs }),
+                    )
+                })?;
             current = current
                 .join(location)
-                .map_err(|_| anyhow!(i18n::t("tool.web_fetch.redirect_invalid_location")))?;
+                .map_err(|_| {
+                    web_fetch_failure(
+                        raw_url,
+                        Some(&current),
+                        "redirect",
+                        "TOOL_WEB_FETCH_REDIRECT_INVALID",
+                        i18n::t("tool.web_fetch.redirect_invalid_location"),
+                        Some("Retry with the final URL directly.".to_string()),
+                        false,
+                        None,
+                        json!({ "timeout_s": timeout_secs }),
+                    )
+                })?;
             continue;
         }
 
@@ -413,7 +718,32 @@ async fn fetch_url(url: &Url, config: &WebFetchToolConfig) -> Result<FetchedResp
             read_response_bytes_limited(response, max_response_bytes),
         )
         .await
-        .map_err(|_| anyhow!(i18n::t("tool.web_fetch.timeout")))??;
+        .map_err(|_| {
+            web_fetch_failure(
+                raw_url,
+                Some(&current),
+                "response_body",
+                "TOOL_TIMEOUT",
+                i18n::t("tool.web_fetch.timeout"),
+                Some("Retry later or fetch a smaller/faster page.".to_string()),
+                true,
+                Some(timeout_secs.saturating_mul(1000)),
+                json!({ "timeout_s": timeout_secs }),
+            )
+        })?
+        .map_err(|err| {
+            web_fetch_failure(
+                raw_url,
+                Some(&current),
+                "response_body",
+                "TOOL_WEB_FETCH_REQUEST_FAILED",
+                format!("Failed to read response body: {err}"),
+                Some("Retry later or use another public source.".to_string()),
+                true,
+                Some(timeout_secs.saturating_mul(1000)),
+                json!({ "timeout_s": timeout_secs }),
+            )
+        })?;
         return Ok(FetchedResponse {
             final_url: current.to_string(),
             status,
@@ -423,7 +753,17 @@ async fn fetch_url(url: &Url, config: &WebFetchToolConfig) -> Result<FetchedResp
         });
     }
 
-    Err(anyhow!(i18n::t("tool.web_fetch.too_many_redirects")))
+    Err(web_fetch_failure(
+        raw_url,
+        Some(&current),
+        "redirect",
+        "TOOL_WEB_FETCH_TOO_MANY_REDIRECTS",
+        i18n::t("tool.web_fetch.too_many_redirects"),
+        Some("Use the final destination URL directly or reduce redirect hops.".to_string()),
+        false,
+        None,
+        json!({ "timeout_s": timeout_secs }),
+    ))
 }
 
 async fn read_response_bytes_limited(
@@ -448,55 +788,142 @@ async fn read_response_bytes_limited(
     Ok((data, truncated))
 }
 
-async fn validate_remote_target(url: &Url, timeout_secs: u64) -> Result<()> {
+async fn validate_remote_target(
+    raw_url: &str,
+    url: &Url,
+    timeout_secs: u64,
+) -> std::result::Result<(), WebFetchFailure> {
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow!(i18n::t("tool.web_fetch.invalid_url")))?;
-    let ascii_host =
-        idna::domain_to_ascii(host).map_err(|_| anyhow!(i18n::t("tool.web_fetch.invalid_url")))?;
+        .ok_or_else(|| {
+            web_fetch_failure(
+                raw_url,
+                Some(url),
+                "validation",
+                "TOOL_WEB_FETCH_INVALID_URL",
+                i18n::t("tool.web_fetch.invalid_url"),
+                Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
+                false,
+                None,
+                json!({}),
+            )
+        })?;
+    let ascii_host = idna::domain_to_ascii(host).map_err(|_| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "validation",
+            "TOOL_WEB_FETCH_INVALID_URL",
+            i18n::t("tool.web_fetch.invalid_url"),
+            Some("Use a valid public host name.".to_string()),
+            false,
+            None,
+            json!({}),
+        )
+    })?;
 
     if is_obviously_private_host(&ascii_host) {
         let mut params = HashMap::new();
         params.insert("host".to_string(), ascii_host);
-        return Err(anyhow!(i18n::t_with_params(
-            "tool.web_fetch.blocked_host",
-            &params,
-        )));
+        return Err(web_fetch_failure(
+            raw_url,
+            Some(url),
+            "validation",
+            "TOOL_WEB_FETCH_BLOCKED_HOST",
+            i18n::t_with_params("tool.web_fetch.blocked_host", &params),
+            Some("Use a public internet host. Private/internal targets are blocked.".to_string()),
+            false,
+            None,
+            json!({}),
+        ));
     }
 
     if let Ok(ip) = ascii_host.parse::<IpAddr>() {
-        ensure_public_ip(ip)?;
+        ensure_public_ip(raw_url, url, ip)?;
         return Ok(());
     }
 
     let resolver = TokioAsyncResolver::tokio_from_system_conf()
-        .map_err(|err| anyhow!(format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed"))))?;
+        .map_err(|err| {
+            web_fetch_failure(
+                raw_url,
+                Some(url),
+                "dns_lookup",
+                "TOOL_WEB_FETCH_DNS_FAILED",
+                format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
+                Some("Check DNS reachability or try another public host.".to_string()),
+                true,
+                Some(timeout_secs.saturating_mul(1000)),
+                json!({ "timeout_s": timeout_secs }),
+            )
+        })?;
     let lookup = timeout(
         Duration::from_secs(timeout_secs),
         resolver.lookup_ip(ascii_host.clone()),
     )
     .await
-    .map_err(|_| anyhow!(i18n::t("tool.web_fetch.timeout")))?
-    .map_err(|err| anyhow!(format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed"))))?;
+    .map_err(|_| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "dns_lookup",
+            "TOOL_TIMEOUT",
+            i18n::t("tool.web_fetch.timeout"),
+            Some("DNS lookup timed out. Retry later or use another reachable host.".to_string()),
+            true,
+            Some(timeout_secs.saturating_mul(1000)),
+            json!({ "timeout_s": timeout_secs }),
+        )
+    })?
+    .map_err(|err| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "dns_lookup",
+            "TOOL_WEB_FETCH_DNS_FAILED",
+            format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
+            Some("Check DNS reachability or try another public host.".to_string()),
+            true,
+            Some(timeout_secs.saturating_mul(1000)),
+            json!({ "timeout_s": timeout_secs }),
+        )
+    })?;
     let mut resolved_any = false;
     for ip in lookup.iter() {
         resolved_any = true;
-        ensure_public_ip(ip)?;
+        ensure_public_ip(raw_url, url, ip)?;
     }
     if !resolved_any {
-        return Err(anyhow!(i18n::t("tool.web_fetch.dns_failed")));
+        return Err(web_fetch_failure(
+            raw_url,
+            Some(url),
+            "dns_lookup",
+            "TOOL_WEB_FETCH_DNS_FAILED",
+            i18n::t("tool.web_fetch.dns_failed"),
+            Some("Check DNS reachability or try another public host.".to_string()),
+            true,
+            Some(timeout_secs.saturating_mul(1000)),
+            json!({ "timeout_s": timeout_secs }),
+        ));
     }
     Ok(())
 }
 
-fn ensure_public_ip(ip: IpAddr) -> Result<()> {
+fn ensure_public_ip(raw_url: &str, url: &Url, ip: IpAddr) -> std::result::Result<(), WebFetchFailure> {
     if ip_is_private_or_internal(ip) {
         let mut params = HashMap::new();
         params.insert("host".to_string(), ip.to_string());
-        return Err(anyhow!(i18n::t_with_params(
-            "tool.web_fetch.blocked_host",
-            &params,
-        )));
+        return Err(web_fetch_failure(
+            raw_url,
+            Some(url),
+            "validation",
+            "TOOL_WEB_FETCH_BLOCKED_HOST",
+            i18n::t_with_params("tool.web_fetch.blocked_host", &params),
+            Some("Use a public internet host. Private/internal targets are blocked.".to_string()),
+            false,
+            None,
+            json!({ "resolved_ip": ip.to_string() }),
+        ));
     }
     Ok(())
 }
@@ -1360,9 +1787,12 @@ fn markdown_ordered_list_regex() -> &'static Regex {
 mod tests {
     use super::{
         canonicalize_block_for_dedupe, extract_html_content, ip_is_private_or_internal,
-        is_noise_block, normalize_text_block, strip_invisible_unicode, truncate_chars, ExtractMode,
+        is_noise_block, normalize_text_block, strip_invisible_unicode, truncate_chars,
+        web_fetch_failure, ExtractMode,
     };
+    use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use url::Url;
 
     #[test]
     fn extract_html_content_prefers_main_and_drops_noise() {
@@ -1460,5 +1890,25 @@ mod tests {
         let left = canonicalize_block_for_dedupe("[Read more](https://example.com)");
         let right = canonicalize_block_for_dedupe("Read more");
         assert_eq!(left, right);
+    }
+
+    #[test]
+    fn structured_failure_contains_phase_and_error_meta() {
+        let url = Url::parse("https://example.com/docs").expect("url");
+        let payload = web_fetch_failure(
+            "https://example.com/docs",
+            Some(&url),
+            "request",
+            "TOOL_TIMEOUT",
+            "request timed out",
+            Some("retry later".to_string()),
+            true,
+            Some(1000),
+            json!({ "timeout_s": 1 }),
+        )
+        .into_value();
+        assert_eq!(payload["data"]["phase"], json!("request"));
+        assert_eq!(payload["data"]["host"], json!("example.com"));
+        assert_eq!(payload["data"]["error_meta"]["code"], json!("TOOL_TIMEOUT"));
     }
 }

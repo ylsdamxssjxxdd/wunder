@@ -207,7 +207,7 @@ fn infer_error_code(
     if lower.contains("no such file or directory") && is_execute_command_tool_name(tool_name) {
         return Some("COMMAND_NOT_FOUND".to_string());
     }
-    if lower.contains("timeout") {
+    if contains_timeout_hint(message) {
         return Some("TOOL_TIMEOUT".to_string());
     }
     if let Some(meta) = extract_error_meta(data) {
@@ -257,12 +257,22 @@ fn infer_retryable(
     }
     if !transport_ok {
         let lower = message.to_ascii_lowercase();
-        if lower.contains("timeout") || lower.contains("temporarily") || lower.contains("try again")
+        if contains_timeout_hint(message)
+            || lower.contains("temporarily")
+            || lower.contains("try again")
         {
             return true;
         }
     }
     false
+}
+
+fn contains_timeout_hint(message: &str) -> bool {
+    let lower = message.trim().to_ascii_lowercase();
+    lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("time out")
+        || message.contains("超时")
 }
 
 fn extract_error_meta(data: &Value) -> Option<&Map<String, Value>> {
@@ -445,6 +455,30 @@ mod tests {
         let meta = normalized.meta.expect("meta");
         assert_eq!(
             meta.get("normalized_final_ok").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn chinese_timeout_message_normalizes_to_retryable_timeout() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "error": "网页抓取请求超时"
+            }),
+            error: "网页抓取请求超时".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let normalized = normalize_tool_result_payload("web_fetch", payload);
+        let meta = normalized.meta.expect("meta");
+        assert_eq!(
+            meta.get("error_code").and_then(Value::as_str),
+            Some("TOOL_TIMEOUT")
+        );
+        assert_eq!(
+            meta.get("error_retryable").and_then(Value::as_bool),
             Some(true)
         );
     }

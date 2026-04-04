@@ -3541,10 +3541,8 @@ async fn spawn_session_run(
         Some(Value::Object(map)) => Value::Object(map),
         _ => json!({}),
     };
-    let user_message_preview = truncate_text(
-        request.question.trim(),
-        SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS,
-    );
+    let user_message_preview =
+        truncate_text(request.question.trim(), SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS);
     if !user_message_preview.is_empty() {
         insert_run_metadata_field(
             &mut run_metadata,
@@ -3610,7 +3608,10 @@ async fn spawn_session_run(
             })
             .await;
         }
-        if let Some(config) = announce_for_start.as_ref().filter(|entry| entry.emit_parent_events) {
+        if let Some(config) = announce_for_start
+            .as_ref()
+            .filter(|entry| entry.emit_parent_events)
+        {
             let _ = subagents::emit_child_runtime_update(
                 storage.clone(),
                 monitor.as_ref().map(Arc::clone),
@@ -5901,7 +5902,7 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
     if specs.is_empty() {
         return Err(i18n::t("tool.read.no_path"));
     }
-    Ok(specs)
+    Ok(coalesce_read_specs(specs))
 }
 
 fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<ReadFileSpec> {
@@ -5944,10 +5945,20 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
             .unwrap_or(start);
         ranges.push(normalize_range(start, end));
     }
+    if let Some(offset) = obj.get("offset").and_then(parse_line_number) {
+        let limit = obj
+            .get("limit")
+            .and_then(parse_line_number)
+            .unwrap_or(MAX_READ_LINES)
+            .max(1);
+        let end = offset.saturating_add(limit.saturating_sub(1));
+        ranges.push(normalize_range(offset, end));
+    }
 
     if ranges.is_empty() {
         ranges.push((1, MAX_READ_LINES));
     }
+    ranges = merge_read_ranges(ranges);
     let mode = parse_read_mode(obj);
     let mut indentation = parse_indentation_options(obj);
     if indentation.anchor_line.is_none() {
@@ -6087,20 +6098,18 @@ fn parse_line_number(value: &Value) -> Option<usize> {
         return Some(num as usize);
     }
     if let Some(num) = value.as_i64() {
-        if num > 0 {
+        if num >= 0 {
             return Some(num as usize);
         }
     }
     if let Some(num) = value.as_f64() {
-        if num > 0.0 {
+        if num >= 0.0 {
             return Some(num as usize);
         }
     }
     if let Some(text) = value.as_str() {
         if let Ok(num) = text.trim().parse::<usize>() {
-            if num > 0 {
-                return Some(num);
-            }
+            return Some(num);
         }
     }
     None
@@ -6113,6 +6122,49 @@ fn normalize_range(start: usize, end: usize) -> (usize, usize) {
         return (start, start + MAX_RANGE_SPAN - 1);
     }
     (start, end)
+}
+
+fn merge_read_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if ranges.len() <= 1 {
+        return ranges;
+    }
+    ranges.sort_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if let Some((_, last_end)) = merged.last_mut() {
+            if start <= last_end.saturating_add(1) {
+                *last_end = (*last_end).max(end);
+                continue;
+            }
+        }
+        merged.push((start, end));
+    }
+    merged
+}
+
+fn can_merge_read_specs(left: &ReadFileSpec, right: &ReadFileSpec) -> bool {
+    left.path == right.path
+        && left.mode == right.mode
+        && match left.mode {
+            ReadFileMode::Slice => true,
+            ReadFileMode::Indentation => left.indentation == right.indentation,
+        }
+}
+
+fn coalesce_read_specs(specs: Vec<ReadFileSpec>) -> Vec<ReadFileSpec> {
+    let mut merged = Vec::with_capacity(specs.len());
+    for mut spec in specs {
+        spec.ranges = merge_read_ranges(spec.ranges);
+        if let Some(last) = merged.last_mut() {
+            if can_merge_read_specs(last, &spec) {
+                last.ranges.extend(spec.ranges);
+                last.ranges = merge_read_ranges(std::mem::take(&mut last.ranges));
+                continue;
+            }
+        }
+        merged.push(spec);
+    }
+    merged
 }
 
 fn summarize_read_ranges(ranges: &[(usize, usize)], total_lines: usize) -> (usize, bool) {
@@ -6194,6 +6246,7 @@ async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         spec.path = normalize_read_path_for_workspace(&spec.path, &user_id);
     }
     let requested_files = specs.len();
+    specs = coalesce_read_specs(specs);
     let mut budget_file_limit_hit = false;
     if let Some(max_files) = read_budget.max_files {
         if specs.len() > max_files {
@@ -6261,6 +6314,7 @@ fn read_files_inner(
         let raw_path = spec.path.as_str();
         let mut summary = json!({
             "path": raw_path,
+            "requested_ranges": spec.ranges,
             "read_lines": 0,
             "total_lines": 0,
             "complete": false,
@@ -6289,6 +6343,12 @@ fn read_files_inner(
             summaries.push(summary);
             continue;
         };
+        if let Value::Object(ref mut map) = summary {
+            map.insert(
+                "resolved_path".to_string(),
+                Value::String(target.to_string_lossy().to_string()),
+            );
+        }
         if !target.exists() {
             let message = i18n::t("tool.read.not_found");
             outputs.push(format!(">>> {}\n{}", raw_path, message));
@@ -6397,6 +6457,7 @@ fn read_files_inner(
                 if source_truncated_by_size {
                     file_output.push(i18n::t("tool.read.truncated_prefix"));
                 }
+                let show_range_headers = spec.ranges.len() > 1;
                 for (start, end) in spec.ranges {
                     if lines.is_empty() {
                         file_output.push(i18n::t("tool.read.empty_file"));
@@ -6426,6 +6487,9 @@ fn read_files_inner(
                     }
                     let last = end.min(lines.len());
                     let mut slice_lines = Vec::new();
+                    if show_range_headers {
+                        slice_lines.push(format!("[lines {start}-{last}]"));
+                    }
                     for (idx, line) in lines.iter().enumerate().take(last).skip(start - 1) {
                         slice_lines.push(format!("{}: {}", idx + 1, line));
                     }
@@ -6489,8 +6553,16 @@ fn read_files_inner(
         result = truncated;
     }
     let processed_files = summaries.len();
+    let scope = json!({
+        "kind": "workspace_local",
+        "local_only": true,
+        "supports_web": false,
+    });
+    let scope_note = "Reads local workspace text files only. It does not fetch web pages and should not be used for images, PDFs, Office documents, archives, audio/video, or other binary files.";
     let data = json!({
         "content": result,
+        "scope": scope,
+        "scope_note": scope_note,
         "meta": {
             "files": summaries,
             "read": {
@@ -7879,6 +7951,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_read_file_specs_accepts_offset_and_limit_aliases() {
+        let specs = parse_read_file_specs(&json!({
+            "file_path": "README.md",
+            "offset": 15,
+            "limit": 20,
+        }))
+        .expect("offset/limit alias should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "README.md");
+        assert_eq!(specs[0].ranges, vec![(15, 34)]);
+    }
+
+    #[test]
     fn parse_read_file_specs_clamps_explicit_range_to_max_span() {
         let specs = parse_read_file_specs(&json!({
             "path": "README.md",
@@ -7889,6 +7975,46 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].ranges, vec![(10, 10 + MAX_RANGE_SPAN - 1)]);
+    }
+
+    #[test]
+    fn parse_read_file_specs_normalizes_zero_start_line_to_first_line() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "README.md",
+            "start_line": 0,
+            "end_line": 12,
+        }))
+        .expect("zero-based start should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].ranges, vec![(1, 12)]);
+    }
+
+    #[test]
+    fn parse_read_file_specs_coalesces_adjacent_slice_specs_for_same_file() {
+        let specs = parse_read_file_specs(&json!({
+            "files": [
+                {
+                    "path": "README.md",
+                    "start_line": 0,
+                    "end_line": 100
+                },
+                {
+                    "path": "README.md",
+                    "start_line": 100,
+                    "end_line": 200
+                },
+                {
+                    "path": "README.md",
+                    "start_line": 200,
+                    "end_line": 300
+                }
+            ]
+        }))
+        .expect("adjacent slice specs should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].ranges, vec![(1, 300)]);
     }
 
     #[test]

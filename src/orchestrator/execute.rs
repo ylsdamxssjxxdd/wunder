@@ -13,6 +13,7 @@ use crate::core::approval::{
 };
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::subagents;
+use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 use crate::services::tools::sessions_yield_tool;
 
 struct PlannedToolCall {
@@ -2168,18 +2169,14 @@ impl Orchestrator {
                             let mut executed = match result {
                                 Ok(value) => ToolResultPayload::from_value(value),
                                 Err(err) => {
-                                    let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                        i18n::t_with_params(
-                                            "error.tool_execution_failed",
-                                            &HashMap::from([(
-                                                "name".to_string(),
-                                                format!("{name} timeout"),
-                                            )]),
-                                        )
+                                    if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                        build_tool_timeout_result(&name, tool_timeout)
                                     } else {
-                                        err.to_string()
-                                    };
-                                    ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                                        ToolResultPayload::error(
+                                            err.to_string(),
+                                            json!({ "tool": name.clone() }),
+                                        )
+                                    }
                                 }
                             };
                             if let Some(meta) = policy_meta.clone() {
@@ -2224,18 +2221,14 @@ impl Orchestrator {
                         let mut executed = match result {
                             Ok(value) => ToolResultPayload::from_value(value),
                             Err(err) => {
-                                let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                    i18n::t_with_params(
-                                        "error.tool_execution_failed",
-                                        &HashMap::from([(
-                                            "name".to_string(),
-                                            format!("{name} timeout"),
-                                        )]),
-                                    )
+                                if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                    build_tool_timeout_result(&name, tool_timeout)
                                 } else {
-                                    err.to_string()
-                                };
-                                ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                                    ToolResultPayload::error(
+                                        err.to_string(),
+                                        json!({ "tool": name.clone() }),
+                                    )
+                                }
                             }
                         };
                         if let Some(meta) = policy_meta.clone() {
@@ -2260,18 +2253,14 @@ impl Orchestrator {
                     match result {
                         Ok(value) => ToolResultPayload::from_value(value),
                         Err(err) => {
-                            let message = if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
-                                i18n::t_with_params(
-                                    "error.tool_execution_failed",
-                                    &HashMap::from([(
-                                        "name".to_string(),
-                                        format!("{name} timeout"),
-                                    )]),
-                                )
+                            if err.to_string() == tool_exec::TOOL_TIMEOUT_ERROR {
+                                build_tool_timeout_result(&name, tool_timeout)
                             } else {
-                                err.to_string()
-                            };
-                            ToolResultPayload::error(message, json!({ "tool": name.clone() }))
+                                ToolResultPayload::error(
+                                    err.to_string(),
+                                    json!({ "tool": name.clone() }),
+                                )
+                            }
                         }
                     }
                 };
@@ -2806,6 +2795,39 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
         return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
     }
     "建议下一步：停止重复当前调用，调整工具参数或更换工具路径后继续。".to_string()
+}
+
+fn build_tool_timeout_result(tool_name: &str, timeout: Option<Duration>) -> ToolResultPayload {
+    let timeout_s = timeout.map(|value| value.as_secs_f64());
+    let timeout_ms = timeout.map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64);
+    let failure_summary = if let Some(seconds) = timeout_s {
+        format!("Tool `{tool_name}` timed out after {seconds:.1}s.")
+    } else {
+        format!("Tool `{tool_name}` timed out before it returned a result.")
+    };
+    let next_step_hint = build_tool_failure_next_step_hint(tool_name, "TOOL_TIMEOUT", &failure_summary);
+    let message = i18n::t_with_params(
+        "error.tool_execution_failed",
+        &HashMap::from([("name".to_string(), format!("{tool_name} timeout"))]),
+    );
+    let data = with_error_meta(
+        json!({
+            "tool": tool_name,
+            "phase": "execution",
+            "failure_summary": failure_summary,
+            "error_detail_head": failure_summary,
+            "next_step_hint": next_step_hint,
+            "timeout_s": timeout_s,
+            "timeout_ms": timeout_ms,
+        }),
+        ToolErrorMeta::new(
+            "TOOL_TIMEOUT",
+            Some("Retry with a narrower scope or a resumable flow.".to_string()),
+            true,
+            timeout_ms,
+        ),
+    );
+    ToolResultPayload::error(message, data)
 }
 
 fn build_tool_budget_guard_model_notice(
