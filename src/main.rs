@@ -63,7 +63,10 @@ async fn main() -> anyhow::Result<()> {
         server_mode = %server_mode,
         bind_addr = %bind_address(&config),
         config_path = %config_path.display(),
-        log_dir = %log_dir.display(),
+        log_dir = %log_dir
+            .as_ref()
+            .map(|item| item.display().to_string())
+            .unwrap_or_else(|| "disabled".to_string()),
         "server bootstrap ready"
     );
     if server_mode == "sandbox" {
@@ -72,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
             .layer(
                 TraceLayer::new_for_http()
                     .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::DEBUG))
                     .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
             )
             .layer(from_fn(panic_guard));
@@ -125,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::DEBUG))
                 .on_failure(DefaultOnFailure::new().level(Level::ERROR)),
         )
         .layer(from_fn(panic_guard));

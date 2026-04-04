@@ -1,6 +1,7 @@
 use super::config::Config;
 use anyhow::{Context, Result};
 use std::backtrace::Backtrace;
+use std::env;
 use std::fs;
 use std::io;
 use std::io::IsTerminal;
@@ -25,58 +26,75 @@ pub fn init_server_tracing(
     config: &Config,
     server_mode: &str,
     config_path: &Path,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let log_dir = resolve_server_log_dir(config);
-    fs::create_dir_all(&log_dir)
-        .with_context(|| format!("create server log dir failed: {}", log_dir.display()))?;
+    let persist_server_logs = should_persist_server_logs(server_mode);
+    if persist_server_logs {
+        fs::create_dir_all(&log_dir)
+            .with_context(|| format!("create server log dir failed: {}", log_dir.display()))?;
+    }
 
     let retention_days = resolve_server_log_retention_days(config);
-    let cleanup_result = cleanup_expired_log_files(&log_dir, retention_days);
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(resolve_log_level(config)));
+    let cleanup_result = if persist_server_logs {
+        Some(cleanup_expired_log_files(&log_dir, retention_days))
+    } else {
+        None
+    };
+    let env_filter = build_env_filter(config);
 
-    let stdout_layer = fmt::layer()
+    let console_ansi = resolve_console_ansi_enabled();
+    let console_layer = fmt::layer()
         .compact()
-        .with_ansi(io::stdout().is_terminal())
+        .with_ansi(console_ansi)
+        .with_writer(io::stderr)
         .with_target(false)
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false);
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, LOG_FILE_BASENAME);
-    let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
-    let file_layer = fmt::layer()
-        .json()
-        .with_ansi(false)
-        .with_target(true)
-        .with_thread_names(true)
-        .with_thread_ids(true)
-        .with_file(true)
-        .with_line_number(true)
-        .with_current_span(true)
-        .with_span_list(true)
-        .with_writer(file_writer);
+    let (file_layer, file_guard) = if persist_server_logs {
+        let file_appender = tracing_appender::rolling::daily(&log_dir, LOG_FILE_BASENAME);
+        let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
+        let file_layer = fmt::layer()
+            .json()
+            .with_ansi(false)
+            .with_target(true)
+            .with_thread_names(false)
+            .with_thread_ids(false)
+            .with_file(false)
+            .with_line_number(false)
+            .with_current_span(false)
+            .with_span_list(false)
+            .with_writer(file_writer);
+        (Some(file_layer), Some(file_guard))
+    } else {
+        (None, None)
+    };
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(stdout_layer)
+        .with(console_layer)
         .with(file_layer)
         .init();
 
-    let _ = FILE_LOG_GUARD.set(file_guard);
+    if let Some(file_guard) = file_guard {
+        let _ = FILE_LOG_GUARD.set(file_guard);
+    }
     install_panic_hook();
 
-    match cleanup_result {
-        Ok(removed) if removed > 0 => {
-            info!(removed, retention_days, "expired server log files removed");
-        }
-        Ok(_) => {}
-        Err(err) => {
-            warn!(
-                log_dir = %log_dir.display(),
-                retention_days,
-                "failed to cleanup expired server log files: {err}"
-            );
+    if let Some(cleanup_result) = cleanup_result {
+        match cleanup_result {
+            Ok(removed) if removed > 0 => {
+                info!(removed, retention_days, "expired server log files removed");
+            }
+            Ok(_) => {}
+            Err(err) => {
+                warn!(
+                    log_dir = %log_dir.display(),
+                    retention_days,
+                    "failed to cleanup expired server log files: {err}"
+                );
+            }
         }
     }
 
@@ -84,11 +102,13 @@ pub fn init_server_tracing(
         pid = std::process::id(),
         server_mode = %server_mode,
         config_path = %config_path.display(),
+        persist_server_logs,
         log_dir = %log_dir.display(),
         retention_days,
+        console_ansi,
         "server tracing initialized"
     );
-    Ok(log_dir)
+    Ok(persist_server_logs.then_some(log_dir))
 }
 
 pub fn resolve_server_log_dir(config: &Config) -> PathBuf {
@@ -111,6 +131,64 @@ fn resolve_log_level(config: &Config) -> String {
     } else {
         cleaned
     }
+}
+
+fn build_env_filter(config: &Config) -> EnvFilter {
+    let mut env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(resolve_log_level(config)));
+    for directive in default_noise_filter_directives() {
+        if is_target_overridden_by_rust_log(directive) {
+            continue;
+        }
+        if let Ok(parsed) = directive.parse() {
+            env_filter = env_filter.add_directive(parsed);
+        }
+    }
+    env_filter
+}
+
+fn default_noise_filter_directives() -> &'static [&'static str] {
+    &["tower_http::trace=warn", "hyper=warn", "h2=warn"]
+}
+
+fn is_target_overridden_by_rust_log(directive: &str) -> bool {
+    let Some((target, _)) = directive.split_once('=') else {
+        return false;
+    };
+    let Some(raw) = env::var("RUST_LOG").ok() else {
+        return false;
+    };
+    raw.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .any(|item| item.starts_with(&format!("{target}=")) || item == target)
+}
+
+fn should_persist_server_logs(server_mode: &str) -> bool {
+    !server_mode.trim().eq_ignore_ascii_case("sandbox")
+}
+
+fn resolve_console_ansi_enabled() -> bool {
+    if let Some(mode) = env::var("WUNDER_LOG_COLOR")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        if mode == "always" {
+            return true;
+        }
+        if mode == "never" {
+            return false;
+        }
+    }
+    if env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    if let Some(value) = env::var_os("CLICOLOR_FORCE").or_else(|| env::var_os("FORCE_COLOR")) {
+        if value.to_string_lossy() != "0" {
+            return true;
+        }
+    }
+    io::stderr().is_terminal() || io::stdout().is_terminal()
 }
 
 fn cleanup_expired_log_files(log_dir: &Path, retention_days: u64) -> io::Result<usize> {
@@ -193,7 +271,7 @@ fn log_panic(panic_info: &PanicHookInfo<'_>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_server_log_dir, should_delete_log_file};
+    use super::{resolve_server_log_dir, should_delete_log_file, should_persist_server_logs};
     use crate::config::Config;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime};
@@ -232,5 +310,12 @@ mod tests {
             SystemTime::UNIX_EPOCH + Duration::from_secs(101),
             cutoff
         ));
+    }
+
+    #[test]
+    fn should_persist_server_logs_disables_sandbox_mode() {
+        assert!(should_persist_server_logs("api"));
+        assert!(!should_persist_server_logs("sandbox"));
+        assert!(!should_persist_server_logs("SANDBOX"));
     }
 }
