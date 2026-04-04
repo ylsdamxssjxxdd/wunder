@@ -1,5 +1,16 @@
 <template>
   <div class="tool-workflow-structured" :class="`is-${view.variant}`">
+    <div v-if="view.metrics.length" class="tool-workflow-structured-metrics">
+      <div
+        v-for="metric in view.metrics"
+        :key="metric.key"
+        :class="['tool-workflow-structured-metric', metric.tone ? `is-${metric.tone}` : '']"
+      >
+        <span class="tool-workflow-structured-metric-label">{{ metric.label }}</span>
+        <span class="tool-workflow-structured-metric-value">{{ metric.value }}</span>
+      </div>
+    </div>
+
     <div class="tool-workflow-structured-groups">
       <section
         v-for="group in view.groups"
@@ -49,6 +60,52 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.tool-workflow-structured-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-workflow-structured-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--workflow-term-border);
+  background: rgba(15, 23, 42, 0.16);
+}
+
+.tool-workflow-structured-metric.is-success {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.tool-workflow-structured-metric.is-warning {
+  border-color: rgba(251, 191, 36, 0.24);
+  background: rgba(217, 119, 6, 0.1);
+}
+
+.tool-workflow-structured-metric.is-danger {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.tool-workflow-structured-metric-label,
+.tool-workflow-structured-metric-value {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.tool-workflow-structured-metric-label {
+  color: var(--workflow-term-muted);
+  font-weight: 600;
+}
+
+.tool-workflow-structured-metric-value {
+  color: var(--workflow-term-text);
 }
 
 .tool-workflow-structured-groups {

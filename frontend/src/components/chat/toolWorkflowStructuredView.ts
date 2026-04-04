@@ -46,6 +46,53 @@ const toInt = (...values: unknown[]): number => {
   return 0;
 };
 
+const normalizeListFileItems = (
+  items: unknown[]
+): { rows: string[]; omittedItems: number } => {
+  const rows: string[] = [];
+  let omittedItems = 0;
+  for (const item of items) {
+    const obj = asObject(item);
+    if (obj) {
+      // Tool-result truncation can inject marker objects into arrays; convert markers to omission counts.
+      const isTruncationMarker =
+        Object.prototype.hasOwnProperty.call(obj, 'truncated_items') ||
+        Object.prototype.hasOwnProperty.call(obj, 'omitted_items') ||
+        obj.__truncated === true;
+      if (isTruncationMarker) {
+        omittedItems += toInt(obj.truncated_items, obj.omitted_items, obj.__omitted_items);
+        continue;
+      }
+      const pathLike = pickString(obj.path, obj.file, obj.file_path, obj.name, obj.title);
+      if (pathLike) {
+        rows.push(pathLike);
+        continue;
+      }
+      const serialized = JSON.stringify(obj);
+      if (serialized && serialized !== '{}') {
+        rows.push(serialized);
+      }
+      continue;
+    }
+    const text = String(item ?? '').trim();
+    if (text) rows.push(text);
+  }
+  return { rows, omittedItems };
+};
+
+const toOptionalInt = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value);
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value.trim(), 10);
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    }
+  }
+  return null;
+};
+
 const truncateText = (value: string, maxChars = SNIPPET_MAX_CHARS): string => {
   const normalized = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (!normalized) return '';
@@ -200,20 +247,28 @@ const buildListStructuredView = (
   t: Translate
 ): ToolWorkflowStructuredView | null => {
   const items = Array.isArray(dataObject.items) ? dataObject.items : [];
-  const rows = items
-    .map((item, index) => String(item || '').trim())
-    .filter(Boolean)
+  const normalized = normalizeListFileItems(items);
+  const rows: ToolWorkflowStructuredGroup['rows'] = normalized.rows
     .slice(0, LIST_ITEM_LIMIT)
     .map((title, index) => ({
       key: `list-row-${index}`,
       title,
       mono: true
     }));
+  if (normalized.omittedItems > 0) {
+    rows.push({
+      key: 'list-omitted-items',
+      title: `... (+${normalized.omittedItems} items omitted)`,
+      mono: true,
+      tone: 'warning'
+    });
+  }
   if (!rows.length) return null;
+  const itemCount = normalized.rows.length + normalized.omittedItems;
   return {
     variant: 'list',
     metrics: [
-      buildMetric('items', t('chat.toolWorkflow.detail.items'), rows.length)
+      buildMetric('items', t('chat.toolWorkflow.detail.items'), itemCount)
     ].filter(Boolean) as ToolWorkflowStructuredMetric[],
     groups: [{ key: 'list', rows }]
   };
@@ -325,7 +380,8 @@ const buildSearchStructuredView = (
 const buildWriteStructuredView = (
   resultObject: UnknownObject | null,
   dataObject: UnknownObject,
-  t: Translate
+  t: Translate,
+  callArgs: UnknownObject | null = null
 ): ToolWorkflowStructuredView | null => {
   const firstResult = Array.isArray(dataObject.results)
     ? (dataObject.results.find((item) => asObject(item)) as UnknownObject | undefined)
@@ -343,7 +399,7 @@ const buildWriteStructuredView = (
     dataObject.target
   );
   if (!path) return null;
-  const bytes = toInt(
+  const bytes = toOptionalInt(
     firstResult?.bytes,
     firstResult?.written_bytes,
     dataObject.bytes,
@@ -351,10 +407,23 @@ const buildWriteStructuredView = (
     resultObject?.bytes,
     resultObject?.written_bytes
   );
+  const preview = truncateText(
+    pickString(
+      firstResult?.content_preview,
+      firstResult?.preview,
+      dataObject.content_preview,
+      dataObject.preview,
+      resultObject?.content_preview,
+      resultObject?.preview,
+      callArgs?.content,
+      callArgs?.text,
+      callArgs?.input
+    )
+  );
   return {
     variant: 'write',
     metrics: [
-      buildMetric('bytes', t('chat.toolWorkflow.detail.bytes'), bytes > 0 ? bytes : '')
+      buildMetric('bytes', t('chat.toolWorkflow.detail.bytes'), bytes === null ? '' : bytes)
     ].filter(Boolean) as ToolWorkflowStructuredMetric[],
     groups: [
       {
@@ -363,6 +432,7 @@ const buildWriteStructuredView = (
           {
             key: 'write-row',
             title: path,
+            body: preview,
             mono: true
           }
         ]
@@ -375,13 +445,14 @@ export const buildStructuredToolResultView = (
   toolName: string,
   resultObject: UnknownObject | null,
   dataObject: UnknownObject | null,
-  t: Translate
+  t: Translate,
+  callArgs: UnknownObject | null = null
 ): ToolWorkflowStructuredView | null => {
   if (!dataObject) return null;
   if (isReadFileTool(toolName)) return buildReadStructuredView(dataObject, t);
   if (isListFilesTool(toolName)) return buildListStructuredView(dataObject, t);
   if (isSearchContentTool(toolName)) return buildSearchStructuredView(dataObject, t);
-  if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, dataObject, t);
+  if (isWriteFileTool(toolName)) return buildWriteStructuredView(resultObject, dataObject, t, callArgs);
   return null;
 };
 

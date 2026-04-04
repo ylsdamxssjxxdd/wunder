@@ -7,6 +7,7 @@ pub mod beeroom_realtime;
 pub mod bridge;
 pub mod browser;
 pub mod chat_attachments;
+pub mod chat_media;
 pub mod cron;
 pub mod cron_schedule;
 pub mod default_agent_protocol;

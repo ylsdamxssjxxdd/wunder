@@ -244,7 +244,7 @@
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 浏览器工具重构（2026-03-27）：内置工具 `浏览器`（英文别名 `browser`）升级为浏览器运行时入口，支持 `status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/screenshot/read_page`；保留 `browser_navigate/browser_click/browser_type/browser_screenshot/browser_read_page/browser_close` 旧别名兼容。浏览器工具对模型的可见性由 `tools.browser.enabled` 控制，浏览器运行时由顶层 `browser.*` 配置控制；非 desktop 模式下无需再把 `浏览器` 写进 `tools.builtin.enabled`，`desktop + tools.browser.enabled` 仍兼容 legacy 模式。
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
-- 新增内置工具 `网页抓取`（英文别名 `web_fetch`），参数 `url` 必填，支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不依赖浏览器状态。
+- 内置工具 `网页抓取`（英文别名 `web_fetch`）现要求传入明确公网 URL，支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
 - `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置私网地址拦截、重定向复校验、响应体大小限制与短 TTL 缓存，配置位于 `tools.web.fetch.*`。
 - `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
@@ -2241,3 +2241,45 @@
 ### 说明
 
 - 本次改造针对 beeroom/chat/channel 的消息实时链路；“模型配置变更（用户改模型、管理员改默认模型）”的全局推送链路尚未迁移到统一实时总线，仍按现有页面刷新/重新拉取机制生效。
+
+## 2026-04-04 增补：聊天媒体附件预处理
+
+### `POST /wunder/chat/attachments/media/process`
+
+- 方法：`POST`
+- 鉴权：用户侧 Bearer Token
+- Body：`multipart/form-data`
+  - 首次处理：
+    - `file`：必填，音频或视频文件
+    - `frame_rate`：可选，视频抽帧频率（FPS），默认 `1`
+  - 重新抽帧：
+    - `source_public_path`：必填，之前返回的源媒体工作区公共路径
+    - `frame_rate`：必填或可选，视频抽帧频率（FPS）
+- 支持类型：
+  - 音频：`mp3/wav/ogg/opus/aac/flac/m4a/webm(audio/*)`
+  - 视频：`mp4/mov/mkv/avi/webm(video/*)/mpeg/mpg/m4v`
+- 返回：`JSON`
+  - `data.kind`：`audio` / `video`
+  - `data.name`：源文件名
+  - `data.source_public_path`：源媒体落盘后的 `/workspaces/...` 公共路径，可用于后续重新抽帧
+  - `data.duration_ms`：媒体时长（若可探测）
+  - `data.requested_frame_rate`：请求的 FPS（仅视频）
+  - `data.applied_frame_rate`：实际采用的 FPS（仅视频，超长视频会被自动下调）
+  - `data.frame_count`：返回的图片帧数量（仅视频）
+  - `data.has_audio`：视频是否成功抽取到音轨
+  - `data.warnings[]`：降级说明，例如 ASR 未配置、视频无音轨、抽帧被限流
+  - `data.attachments[]`：可直接作为聊天附件提交的派生结果
+    - 图片帧：`name/content_type=image/jpeg/public_path`
+    - 音频结果：`name/content(转写文本或占位文本)/content_type/public_path`
+- 说明：
+  - 视频不会直接作为模型输入，而是先拆成图片序列和音轨。
+  - 默认每秒抽 `1` 帧，并带总帧数上限保护；超长视频会自动降低实际 FPS。
+  - 音频/视频转写复用 `channels.media.asr` 配置；若未启用 ASR，接口仍会成功返回，但会在 `warnings` 中说明，并给音频附件写入占位文本。
+  - 运行该接口需要服务端可用的 `ffmpeg/ffprobe`；也可通过环境变量 `WUNDER_FFMPEG_BIN`、`WUNDER_FFPROBE_BIN` 指定路径。
+
+### 聊天消息提交补充
+
+- `POST /wunder/chat/sessions/{session_id}/messages`
+- 现支持“仅附件、无正文”的提交方式：
+  - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。
+  - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。

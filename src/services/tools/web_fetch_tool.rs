@@ -1,6 +1,7 @@
 use super::{tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext};
 use crate::config::{Config, WebFetchToolConfig};
 use crate::i18n;
+use crate::services::browser::{browser_service, browser_tools_enabled, BrowserSessionScope};
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
 use encoding_rs::{Encoding, GBK};
@@ -12,7 +13,9 @@ use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, LOCATION, USER_AGEN
 use reqwest::redirect::Policy;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -28,6 +31,7 @@ const MIN_MAX_RESPONSE_BYTES: usize = 32 * 1024;
 const MAX_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ERROR_DETAIL_CHARS: usize = 600;
 const MIN_PRIMARY_CONTENT_CHARS: usize = 240;
+const MIN_DYNAMIC_PAGE_CONTENT_CHARS: usize = 320;
 const DEFAULT_ACCEPT_LANGUAGE_VALUE: &str = "zh-CN,zh;q=0.9,en;q=0.8";
 const DEFAULT_ACCEPT_VALUE: &str =
     "text/html, text/plain, application/json, text/markdown;q=0.9, */*;q=0.1";
@@ -127,6 +131,37 @@ const NOISE_BLOCK_PHRASES: &[&str] = &[
     "分享",
 ];
 
+const DYNAMIC_PAGE_MARKERS: &[&str] = &[
+    "__next",
+    "__next_data__",
+    "__nuxt",
+    "data-reactroot",
+    "reactdom",
+    "hydrateroot",
+    "createroot(",
+    "id=\"app\"",
+    "id='app'",
+    "id=\"root\"",
+    "id='root'",
+    "vite",
+    "webpack",
+    "client-side rendering",
+    "enable javascript",
+];
+
+const BOT_PROTECTION_PHRASES: &[&str] = &[
+    "access denied",
+    "attention required",
+    "bot verification",
+    "captcha",
+    "checking your browser",
+    "just a moment",
+    "please enable cookies",
+    "request blocked",
+    "security check",
+    "verify you are human",
+];
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum ExtractMode {
     Markdown,
@@ -174,6 +209,8 @@ struct CachedPayload {
     content_type: String,
     title: Option<String>,
     extractor: String,
+    content_kind: String,
+    fetch_strategy: String,
     content: String,
     warning: Option<String>,
     fetched_at: String,
@@ -190,6 +227,42 @@ struct HtmlExtraction {
     title: Option<String>,
     content: String,
     extractor: String,
+}
+
+#[derive(Debug, Clone)]
+struct HtmlPageDiagnosis {
+    kind: HtmlPageKind,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct BrowserFallbackRequest<'a> {
+    raw_url: &'a str,
+    request_url: &'a Url,
+    status: u16,
+    content_type: &'a str,
+    max_chars: usize,
+    warning: Option<String>,
+    diagnosis: &'a HtmlPageDiagnosis,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum HtmlPageKind {
+    DynamicPage,
+    BotProtection,
+}
+
+impl HtmlPageKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DynamicPage => "dynamic_page",
+            Self::BotProtection => "bot_protection",
+        }
+    }
+
+    fn retry_with_browser(self) -> bool {
+        matches!(self, Self::DynamicPage)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -217,6 +290,7 @@ impl WebFetchFailure {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn web_fetch_failure(
     raw_url: &str,
     url: Option<&Url>,
@@ -241,10 +315,7 @@ fn web_fetch_failure(
         Value::String(message.clone()),
     );
     if let Some(url) = url {
-        data.insert(
-            "normalized_url".to_string(),
-            Value::String(url.to_string()),
-        );
+        data.insert("normalized_url".to_string(), Value::String(url.to_string()));
         if let Some(host) = url.host_str() {
             data.insert("host".to_string(), Value::String(host.to_string()));
         }
@@ -327,24 +398,22 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             params.insert("detail".to_string(), detail);
             i18n::t_with_params("tool.web_fetch.http_error_with_detail", &params)
         };
-        return Ok(
-            web_fetch_failure(
-                &raw_url,
-                Some(&request_url),
-                "response_status",
-                "TOOL_WEB_FETCH_HTTP_ERROR",
-                message,
-                Some("Check the status/detail or try a different public source.".to_string()),
-                (500..600).contains(&fetched.status),
-                None,
-                json!({
-                    "status": fetched.status,
-                    "content_type": content_type,
-                    "final_url": fetched.final_url,
-                }),
-            )
-            .into_value(),
-        );
+        return Ok(web_fetch_failure(
+            &raw_url,
+            Some(&request_url),
+            "response_status",
+            "TOOL_WEB_FETCH_HTTP_ERROR",
+            message,
+            Some("Check the status/detail or try a different public source.".to_string()),
+            (500..600).contains(&fetched.status),
+            None,
+            json!({
+                "status": fetched.status,
+                "content_type": content_type,
+                "final_url": fetched.final_url,
+            }),
+        )
+        .into_value());
     } else if is_html_content_type(&content_type) || looks_like_html(&decoded) {
         let html = match extract_html_content(&decoded, extract_mode) {
             Ok(value) => value,
@@ -372,15 +441,80 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
                 );
             }
         };
-        CachedPayload {
-            final_url: fetched.final_url,
-            status: fetched.status,
-            content_type,
-            title: html.title,
-            extractor: html.extractor,
-            content: html.content,
-            warning,
-            fetched_at: chrono::Utc::now().to_rfc3339(),
+        if let Some(diagnosis) =
+            diagnose_html_page(&decoded, html.title.as_deref(), &html.content, &html.extractor)
+        {
+            if diagnosis.kind.retry_with_browser() && browser_tools_enabled(context.config) {
+                match fetch_with_browser_fallback(
+                    context,
+                    BrowserFallbackRequest {
+                        raw_url: &raw_url,
+                        request_url: &request_url,
+                        status: fetched.status,
+                        content_type: &content_type,
+                        max_chars,
+                        warning: warning.clone(),
+                        diagnosis: &diagnosis,
+                    },
+                )
+                .await
+                {
+                    Ok(payload) => payload,
+                    Err(failure) => return Ok(failure.into_value()),
+                }
+            } else {
+                let message_key = match diagnosis.kind {
+                    HtmlPageKind::DynamicPage => "tool.web_fetch.dynamic_page",
+                    HtmlPageKind::BotProtection => "tool.web_fetch.bot_protection",
+                };
+                let hint = match diagnosis.kind {
+                    HtmlPageKind::DynamicPage => Some(
+                        "This page appears to rely on client-side rendering. Use the browser tool or another source with stable public HTML."
+                            .to_string(),
+                    ),
+                    HtmlPageKind::BotProtection => Some(
+                        "This page appears to be protected by verification or anti-bot controls. Try another public source or open it in a browser."
+                            .to_string(),
+                    ),
+                };
+                return Ok(
+                    web_fetch_failure(
+                        &raw_url,
+                        Some(&request_url),
+                        "extract",
+                        match diagnosis.kind {
+                            HtmlPageKind::DynamicPage => "TOOL_WEB_FETCH_DYNAMIC_PAGE",
+                            HtmlPageKind::BotProtection => "TOOL_WEB_FETCH_BOT_PROTECTION",
+                        },
+                        i18n::t(message_key),
+                        hint,
+                        false,
+                        None,
+                        json!({
+                            "status": fetched.status,
+                            "content_type": content_type,
+                            "final_url": fetched.final_url,
+                            "page_kind": diagnosis.kind.as_str(),
+                            "diagnosis": diagnosis.reason,
+                            "browser_fallback_available": browser_tools_enabled(context.config),
+                        }),
+                    )
+                    .into_value(),
+                );
+            }
+        } else {
+            CachedPayload {
+                final_url: fetched.final_url,
+                status: fetched.status,
+                content_type,
+                title: html.title,
+                extractor: html.extractor,
+                content_kind: "html".to_string(),
+                fetch_strategy: "direct_http".to_string(),
+                content: html.content,
+                warning: warning.clone(),
+                fetched_at: chrono::Utc::now().to_rfc3339(),
+            }
         }
     } else if is_json_content_type(&content_type) {
         let content = match format_json_content(&decoded, extract_mode) {
@@ -415,8 +549,10 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             content_type,
             title: None,
             extractor: "json".to_string(),
+            content_kind: "json".to_string(),
+            fetch_strategy: "direct_http".to_string(),
             content,
-            warning,
+            warning: warning.clone(),
             fetched_at: chrono::Utc::now().to_rfc3339(),
         }
     } else if is_text_like_content_type(&content_type) || looks_like_text(&fetched.body) {
@@ -426,8 +562,10 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
             content_type,
             title: None,
             extractor: "text".to_string(),
+            content_kind: "text".to_string(),
+            fetch_strategy: "direct_http".to_string(),
             content: format_plain_text(&decoded),
-            warning,
+            warning: warning.clone(),
             fetched_at: chrono::Utc::now().to_rfc3339(),
         }
     } else {
@@ -655,7 +793,10 @@ async fn fetch_url(
                     "redirect",
                     "TOOL_WEB_FETCH_TOO_MANY_REDIRECTS",
                     i18n::t("tool.web_fetch.too_many_redirects"),
-                    Some("Use the final destination URL directly or reduce redirect hops.".to_string()),
+                    Some(
+                        "Use the final destination URL directly or reduce redirect hops."
+                            .to_string(),
+                    ),
                     false,
                     None,
                     json!({ "timeout_s": timeout_secs }),
@@ -674,36 +815,32 @@ async fn fetch_url(
                     json!({ "timeout_s": timeout_secs }),
                 ));
             };
-            let location = location
-                .to_str()
-                .map_err(|_| {
-                    web_fetch_failure(
-                        raw_url,
-                        Some(&current),
-                        "redirect",
-                        "TOOL_WEB_FETCH_REDIRECT_INVALID",
-                        i18n::t("tool.web_fetch.redirect_invalid_location"),
-                        Some("Retry with the final URL directly.".to_string()),
-                        false,
-                        None,
-                        json!({ "timeout_s": timeout_secs }),
-                    )
-                })?;
-            current = current
-                .join(location)
-                .map_err(|_| {
-                    web_fetch_failure(
-                        raw_url,
-                        Some(&current),
-                        "redirect",
-                        "TOOL_WEB_FETCH_REDIRECT_INVALID",
-                        i18n::t("tool.web_fetch.redirect_invalid_location"),
-                        Some("Retry with the final URL directly.".to_string()),
-                        false,
-                        None,
-                        json!({ "timeout_s": timeout_secs }),
-                    )
-                })?;
+            let location = location.to_str().map_err(|_| {
+                web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "redirect",
+                    "TOOL_WEB_FETCH_REDIRECT_INVALID",
+                    i18n::t("tool.web_fetch.redirect_invalid_location"),
+                    Some("Retry with the final URL directly.".to_string()),
+                    false,
+                    None,
+                    json!({ "timeout_s": timeout_secs }),
+                )
+            })?;
+            current = current.join(location).map_err(|_| {
+                web_fetch_failure(
+                    raw_url,
+                    Some(&current),
+                    "redirect",
+                    "TOOL_WEB_FETCH_REDIRECT_INVALID",
+                    i18n::t("tool.web_fetch.redirect_invalid_location"),
+                    Some("Retry with the final URL directly.".to_string()),
+                    false,
+                    None,
+                    json!({ "timeout_s": timeout_secs }),
+                )
+            })?;
             continue;
         }
 
@@ -793,21 +930,19 @@ async fn validate_remote_target(
     url: &Url,
     timeout_secs: u64,
 ) -> std::result::Result<(), WebFetchFailure> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| {
-            web_fetch_failure(
-                raw_url,
-                Some(url),
-                "validation",
-                "TOOL_WEB_FETCH_INVALID_URL",
-                i18n::t("tool.web_fetch.invalid_url"),
-                Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
-                false,
-                None,
-                json!({}),
-            )
-        })?;
+    let host = url.host_str().ok_or_else(|| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "validation",
+            "TOOL_WEB_FETCH_INVALID_URL",
+            i18n::t("tool.web_fetch.invalid_url"),
+            Some("Pass an absolute http:// or https:// URL with a host.".to_string()),
+            false,
+            None,
+            json!({}),
+        )
+    })?;
     let ascii_host = idna::domain_to_ascii(host).map_err(|_| {
         web_fetch_failure(
             raw_url,
@@ -843,20 +978,19 @@ async fn validate_remote_target(
         return Ok(());
     }
 
-    let resolver = TokioAsyncResolver::tokio_from_system_conf()
-        .map_err(|err| {
-            web_fetch_failure(
-                raw_url,
-                Some(url),
-                "dns_lookup",
-                "TOOL_WEB_FETCH_DNS_FAILED",
-                format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
-                Some("Check DNS reachability or try another public host.".to_string()),
-                true,
-                Some(timeout_secs.saturating_mul(1000)),
-                json!({ "timeout_s": timeout_secs }),
-            )
-        })?;
+    let resolver = TokioAsyncResolver::tokio_from_system_conf().map_err(|err| {
+        web_fetch_failure(
+            raw_url,
+            Some(url),
+            "dns_lookup",
+            "TOOL_WEB_FETCH_DNS_FAILED",
+            format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed")),
+            Some("Check DNS reachability or try another public host.".to_string()),
+            true,
+            Some(timeout_secs.saturating_mul(1000)),
+            json!({ "timeout_s": timeout_secs }),
+        )
+    })?;
     let lookup = timeout(
         Duration::from_secs(timeout_secs),
         resolver.lookup_ip(ascii_host.clone()),
@@ -909,7 +1043,11 @@ async fn validate_remote_target(
     Ok(())
 }
 
-fn ensure_public_ip(raw_url: &str, url: &Url, ip: IpAddr) -> std::result::Result<(), WebFetchFailure> {
+fn ensure_public_ip(
+    raw_url: &str,
+    url: &Url,
+    ip: IpAddr,
+) -> std::result::Result<(), WebFetchFailure> {
     if ip_is_private_or_internal(ip) {
         let mut params = HashMap::new();
         params.insert("host".to_string(), ip.to_string());
@@ -1128,6 +1266,286 @@ fn extract_error_detail(decoded: &str, content_type: &str) -> String {
     }
 }
 
+fn diagnose_html_page(
+    html: &str,
+    title: Option<&str>,
+    content: &str,
+    extractor: &str,
+) -> Option<HtmlPageDiagnosis> {
+    let title_text = title.unwrap_or("").trim();
+    if let Some(reason) = detect_bot_protection_reason(title_text, content) {
+        return Some(HtmlPageDiagnosis {
+            kind: HtmlPageKind::BotProtection,
+            reason,
+        });
+    }
+
+    let html_lower = html.to_ascii_lowercase();
+    let content_chars = content.chars().count();
+    let script_tag_count = html_lower.matches("<script").count();
+    let dynamic_marker_count = DYNAMIC_PAGE_MARKERS
+        .iter()
+        .filter(|marker| html_lower.contains(**marker))
+        .count();
+    let shell_score = usize::from(content_chars < MIN_DYNAMIC_PAGE_CONTENT_CHARS)
+        + usize::from(script_tag_count >= 4)
+        + dynamic_marker_count.min(3)
+        + usize::from(extractor == "sanitized-html" || extractor == "raw-html")
+        + usize::from(looks_like_script_payload(content));
+    if shell_score >= 4 {
+        return Some(HtmlPageDiagnosis {
+            kind: HtmlPageKind::DynamicPage,
+            reason: format!(
+                "dynamic shell markers={dynamic_marker_count}, scripts={script_tag_count}, extractor={extractor}, content_chars={content_chars}"
+            ),
+        });
+    }
+
+    None
+}
+
+fn detect_bot_protection_reason(title: &str, content: &str) -> Option<String> {
+    let combined = format!("{title}\n{content}").to_ascii_lowercase();
+    BOT_PROTECTION_PHRASES
+        .iter()
+        .find(|phrase| combined.contains(**phrase))
+        .map(|phrase| format!("matched bot-protection marker '{phrase}'"))
+}
+
+fn looks_like_script_payload(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("var ") || lower.starts_with("const ") || lower.starts_with("let ") {
+        return true;
+    }
+
+    let mut non_empty_lines = 0usize;
+    let mut script_lines = 0usize;
+    let mut prose_lines = 0usize;
+    for line in trimmed.lines().map(str::trim).filter(|line| !line.is_empty()).take(40) {
+        non_empty_lines += 1;
+        let line_lower = line.to_ascii_lowercase();
+        if line_lower.starts_with("var ")
+            || line_lower.starts_with("const ")
+            || line_lower.starts_with("let ")
+            || line_lower.starts_with("function ")
+            || line_lower.contains("=>")
+            || line_lower.contains("window.")
+            || line_lower.contains("document.")
+            || line_lower.contains("reactdom")
+            || line_lower.contains("__next")
+            || line_lower.contains("__nuxt")
+            || line_lower.contains("webpack")
+            || (line.ends_with(';') && line.contains('='))
+        {
+            script_lines += 1;
+        }
+        if line.contains(' ')
+            && line
+                .chars()
+                .filter(|ch| ch.is_ascii_alphabetic())
+                .count()
+                >= 24
+            && matches!(line.chars().last(), Some('.' | '!' | '?' | ';'))
+        {
+            prose_lines += 1;
+        }
+    }
+
+    non_empty_lines > 0
+        && script_lines > 0
+        && (script_lines * 2 >= non_empty_lines || (script_lines >= 3 && prose_lines == 0))
+}
+
+async fn fetch_with_browser_fallback(
+    context: &ToolContext<'_>,
+    request: BrowserFallbackRequest<'_>,
+) -> std::result::Result<CachedPayload, WebFetchFailure> {
+    let BrowserFallbackRequest {
+        raw_url,
+        request_url,
+        status,
+        content_type,
+        max_chars,
+        warning,
+        diagnosis,
+    } = request;
+    let scope = browser_fallback_scope(context, request_url);
+    let browser = browser_service(context.config);
+    let navigate_result = browser
+        .execute(&scope, "navigate", &json!({ "url": request_url.to_string() }))
+        .await;
+    let navigate = match navigate_result {
+        Ok(value) => value,
+        Err(err) => {
+            let _ = browser.execute(&scope, "stop", &json!({})).await;
+            return Err(browser_fallback_failure(
+                raw_url,
+                request_url,
+                status,
+                content_type,
+                diagnosis,
+                err.to_string(),
+            ));
+        }
+    };
+
+    let target_id = navigate
+        .get("target_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let read_result = browser
+        .execute(
+            &scope,
+            "read_page",
+            &json!({
+                "target_id": target_id,
+                "max_chars": max_chars,
+            }),
+        )
+        .await;
+    let _ = browser.execute(&scope, "stop", &json!({})).await;
+
+    let read_value = read_result.map_err(|err| browser_fallback_failure(
+        raw_url,
+        request_url,
+        status,
+        content_type,
+        diagnosis,
+        err.to_string(),
+    ))?;
+    let content = read_value
+        .get("content")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            navigate
+                .get("content")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            browser_fallback_failure(
+                raw_url,
+                request_url,
+                status,
+                content_type,
+                diagnosis,
+                i18n::t("tool.web_fetch.no_content"),
+            )
+        })?;
+    if let Some(reason) = detect_bot_protection_reason(
+        read_value
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        &content,
+    ) {
+        return Err(web_fetch_failure(
+            raw_url,
+            Some(request_url),
+            "browser_fallback",
+            "TOOL_WEB_FETCH_BOT_PROTECTION",
+            i18n::t("tool.web_fetch.bot_protection"),
+            Some(
+                "The page still appears to be protected by verification after browser fallback. Try another source."
+                    .to_string(),
+            ),
+            false,
+            None,
+            json!({
+                "status": status,
+                "content_type": content_type,
+                "final_url": read_value.get("url").and_then(Value::as_str).unwrap_or(request_url.as_str()),
+                "page_kind": HtmlPageKind::BotProtection.as_str(),
+                "diagnosis": reason,
+                "fetch_strategy": "browser_fallback",
+            }),
+        ));
+    }
+
+    Ok(CachedPayload {
+        final_url: read_value
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or(request_url.as_str())
+            .to_string(),
+        status,
+        content_type: content_type.to_string(),
+        title: read_value
+            .get("title")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        extractor: "browser-read-page".to_string(),
+        content_kind: "html".to_string(),
+        fetch_strategy: "browser_fallback".to_string(),
+        content,
+        warning: merge_warnings(
+            warning.as_deref(),
+            Some(
+                "Direct HTTP fetch looked like a frontend shell, so the page was re-read with the browser runtime."
+                    .to_string(),
+            ),
+        ),
+        fetched_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+fn browser_fallback_scope(context: &ToolContext<'_>, request_url: &Url) -> BrowserSessionScope {
+    let mut hasher = DefaultHasher::new();
+    request_url.as_str().hash(&mut hasher);
+    let url_hash = hasher.finish();
+    BrowserSessionScope {
+        user_id: context.user_id.to_string(),
+        session_id: context.session_id.to_string(),
+        agent_id: context.agent_id.map(ToString::to_string),
+        profile: None,
+        browser_session_id: Some(format!(
+            "web-fetch:{}:{}:{url_hash:x}",
+            chrono::Utc::now().timestamp_millis(),
+            context.session_id
+        )),
+    }
+}
+
+fn browser_fallback_failure(
+    raw_url: &str,
+    request_url: &Url,
+    status: u16,
+    content_type: &str,
+    diagnosis: &HtmlPageDiagnosis,
+    detail: String,
+) -> WebFetchFailure {
+    let mut params = HashMap::new();
+    params.insert("detail".to_string(), detail.clone());
+    web_fetch_failure(
+        raw_url,
+        Some(request_url),
+        "browser_fallback",
+        "TOOL_WEB_FETCH_BROWSER_FALLBACK_FAILED",
+        i18n::t_with_params("tool.web_fetch.browser_fallback_failed", &params),
+        Some(
+            "Direct HTTP fetch did not return meaningful content, and browser fallback also failed. Try another public source."
+                .to_string(),
+        ),
+        true,
+        Some(500),
+        json!({
+            "status": status,
+            "content_type": content_type,
+            "final_url": request_url.as_str(),
+            "page_kind": diagnosis.kind.as_str(),
+            "diagnosis": diagnosis.reason,
+            "fetch_strategy": "browser_fallback",
+            "browser_error": detail,
+        }),
+    )
+}
+
 fn read_cache_entry(key: &str) -> Option<CachedPayload> {
     let cache = web_fetch_cache();
     if let Some(entry) = cache.get(key) {
@@ -1176,6 +1594,8 @@ fn build_tool_result(
         "status": payload.status,
         "title": payload.title,
         "content_type": payload.content_type,
+        "content_kind": payload.content_kind,
+        "fetch_strategy": payload.fetch_strategy,
         "format": extract_mode.as_str(),
         "extractor": payload.extractor,
         "truncated": truncated,
@@ -1238,8 +1658,11 @@ fn extract_html_content(html: &str, mode: ExtractMode) -> Result<HtmlExtraction>
     }
 
     if markdown.trim().is_empty() {
-        markdown = clean_markdown(&html2md::parse_html(html));
-        extractor = "raw-html".to_string();
+        markdown = body_node
+            .as_ref()
+            .map(render_markdown_from_node)
+            .unwrap_or_else(|| clean_markdown(&html2md::parse_html(&document.to_string())));
+        extractor = "sanitized-html".to_string();
     }
 
     let content = match mode {
@@ -1786,9 +2209,9 @@ fn markdown_ordered_list_regex() -> &'static Regex {
 #[cfg(test)]
 mod tests {
     use super::{
-        canonicalize_block_for_dedupe, extract_html_content, ip_is_private_or_internal,
-        is_noise_block, normalize_text_block, strip_invisible_unicode, truncate_chars,
-        web_fetch_failure, ExtractMode,
+        canonicalize_block_for_dedupe, diagnose_html_page, extract_html_content,
+        ip_is_private_or_internal, is_noise_block, normalize_text_block, strip_invisible_unicode,
+        truncate_chars, web_fetch_failure, ExtractMode, HtmlPageKind,
     };
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -1837,6 +2260,54 @@ mod tests {
         assert!(result.content.contains("Visible text"));
         assert!(!result.content.contains("Hidden text"));
         assert!(!result.content.contains("Also hidden"));
+    }
+
+    #[test]
+    fn extract_html_content_rejects_script_only_shells() {
+        let html = r#"
+            <html>
+              <head>
+                <title>Shell Page</title>
+                <script>var buildId = "abc123"; window.__NEXT_DATA__ = {};</script>
+              </head>
+              <body>
+                <div id="__next"></div>
+              </body>
+            </html>
+        "#;
+
+        assert!(extract_html_content(html, ExtractMode::Text).is_err());
+    }
+
+    #[test]
+    fn diagnose_html_page_flags_dynamic_shells() {
+        let html = r#"
+            <html>
+              <head>
+                <script>window.__NEXT_DATA__ = {};</script>
+                <script>console.log("boot")</script>
+                <script>ReactDOM.hydrateRoot(document.getElementById('root'));</script>
+              </head>
+              <body><div id="root"></div></body>
+            </html>
+        "#;
+
+        let diagnosis =
+            diagnose_html_page(html, Some("Shell"), "var buildId = \"abc123\";", "sanitized-html")
+                .expect("dynamic shell should be detected");
+        assert_eq!(diagnosis.kind, HtmlPageKind::DynamicPage);
+    }
+
+    #[test]
+    fn diagnose_html_page_flags_bot_protection() {
+        let diagnosis = diagnose_html_page(
+            "<html><body><h1>Access Denied</h1></body></html>",
+            Some("Access Denied"),
+            "Verify you are human before continuing.",
+            "main-content",
+        )
+        .expect("bot protection should be detected");
+        assert_eq!(diagnosis.kind, HtmlPageKind::BotProtection);
     }
 
     #[test]

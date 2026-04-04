@@ -848,12 +848,13 @@ async fn mock_chat_completions(
         .unwrap_or_default();
     let user_message = last_user_message(&messages);
     let scenario = state.scenario.read().clone();
-    let observations = collect_observation_payloads(&messages);
     let current_observations = collect_current_observation_payloads(&messages);
     let observed_tools = observed_tool_names(&current_observations);
 
     let response = if user_message.contains(MOTHER_MARKER) {
-        if observations.is_empty() {
+        // Demo dispatch decision must be scoped to the current user turn only.
+        // Reused mother sessions may contain historical tool observations.
+        if current_observations.is_empty() {
             mother_dispatch_response(&scenario)
         } else {
             mother_followup_response(&scenario, &current_observations)
@@ -1238,13 +1239,14 @@ fn is_cancel_like(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_worker_tools, extract_message_value, is_swarm_resolvable_agent,
-        mother_dispatch_response, normalize_hive_id, resolve_worker_count, DemoWorkerPlan,
-        MockScenario,
+        choose_worker_tools, collect_current_observation_payloads, collect_observation_payloads,
+        extract_message_value, is_swarm_resolvable_agent, mother_dispatch_response,
+        normalize_hive_id, resolve_worker_count, DemoWorkerPlan, MockScenario, MOTHER_MARKER,
+        OBS_PREFIX,
     };
     use crate::storage::{SqliteStorage, StorageBackend, UserAgentRecord, DEFAULT_HIVE_ID};
     use crate::tools::resolve_tool_name;
-    use serde_json::Value;
+    use serde_json::{json, Value};
     use tempfile::tempdir;
 
     #[test]
@@ -1366,6 +1368,49 @@ mod tests {
     fn hive_id_normalization_is_stable_for_demo_scope() {
         let normalized = normalize_hive_id("  demo-hive  ");
         assert_eq!(normalized, "demo-hive");
+    }
+
+    #[test]
+    fn current_observation_collection_ignores_history_before_latest_user_turn() {
+        let messages = vec![
+            json!({
+                "role": "user",
+                "content": "legacy prompt"
+            }),
+            json!({
+                "role": "tool",
+                "content": r#"{"tool":"agent_swarm","wait":{"all_finished":true}}"#
+            }),
+            json!({
+                "role": "user",
+                "content": format!("{MOTHER_MARKER}: run_id=demo-1; dispatch workers.")
+            }),
+        ];
+        let all_observations = collect_observation_payloads(&messages);
+        assert_eq!(all_observations.len(), 1);
+
+        let current_observations = collect_current_observation_payloads(&messages);
+        assert!(current_observations.is_empty());
+    }
+
+    #[test]
+    fn current_observation_collection_keeps_payloads_after_latest_user_turn() {
+        let messages = vec![
+            json!({
+                "role": "user",
+                "content": format!("{MOTHER_MARKER}: run_id=demo-2; dispatch workers.")
+            }),
+            json!({
+                "role": "user",
+                "content": format!("{OBS_PREFIX}: {{\"tool\":\"agent_swarm\",\"wait\":{{\"all_finished\":false,\"run_ids\":[\"run_1\"]}}}}")
+            }),
+        ];
+        let current_observations = collect_current_observation_payloads(&messages);
+        assert_eq!(current_observations.len(), 1);
+        assert_eq!(
+            current_observations[0].get("tool").and_then(Value::as_str),
+            Some("agent_swarm")
+        );
     }
 
     #[test]

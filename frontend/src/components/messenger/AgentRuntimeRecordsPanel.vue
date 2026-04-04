@@ -90,6 +90,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { getAgentRuntimeRecords } from '@/api/agents';
 import { useI18n } from '@/i18n';
 import { useThemeStore } from '@/stores/theme';
+import { resolveAbilityVisual } from '@/utils/abilityVisuals';
 
 use([CanvasRenderer, GridComponent, LegendComponent, LineChart, TooltipComponent]);
 
@@ -477,6 +478,15 @@ function resolveToolIcon(name: string): string {
   }
   if (lowerName === 'wunder@doc2md' || lowerName.endsWith('@wunder@doc2md')) {
     return 'fa-file-lines';
+  }
+  const unifiedIcon = resolveAbilityVisual({
+    name: toolName,
+    kind: 'tool',
+    group: 'builtin',
+    source: 'builtin'
+  }).icon;
+  if (unifiedIcon && unifiedIcon !== 'fa-toolbox') {
+    return unifiedIcon;
   }
   for (const rule of TOOL_HEATMAP_ICON_RULES) {
     if (matchesToolKeyword(lowerName, normalizedName, rule.keyword)) {
@@ -952,6 +962,26 @@ onBeforeUnmount(() => {
 
 .messenger-agent-runtime-tool-heatmap-item i {
   font-size: 16px;
+}
+
+.messenger-agent-runtime-tool-heatmap-item i.fa-bee {
+  width: 1em;
+  height: 1em;
+  transform: scale(1.4);
+  transform-origin: center;
+}
+
+.messenger-agent-runtime-tool-heatmap-item i.fa-bee::before {
+  content: '';
+}
+
+.messenger-agent-runtime-tool-heatmap-item i.fa-bee::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url('../../assets/fa-bee.svg') center / contain no-repeat;
+  mask: url('../../assets/fa-bee.svg') center / contain no-repeat;
 }
 
 .messenger-agent-runtime-tool-name {

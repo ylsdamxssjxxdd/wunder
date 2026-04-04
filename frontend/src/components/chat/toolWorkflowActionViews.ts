@@ -124,7 +124,7 @@ export const buildCommandCardView = (input: CommandCardInput, t: Translate): Too
   ].filter(Boolean) as ToolWorkflowCommandStream[];
 
   return {
-    command: input.command || '(command)',
+    command: input.command || '',
     shell: input.shell || 'bash',
     terminalText: [input.stdout, input.stderr, input.preview, input.errorText].filter(Boolean).join('\n\n'),
     exitCode: input.exitCode,

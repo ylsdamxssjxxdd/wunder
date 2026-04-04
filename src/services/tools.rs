@@ -1481,6 +1481,7 @@ struct SwarmBatchDispatchTask {
     message: String,
     label: Option<String>,
     agent_id: String,
+    agent_name: String,
     session_id: String,
     created_session: bool,
     tool_names: Vec<String>,
@@ -1580,6 +1581,7 @@ async fn dispatch_swarm_batch_task(
         "run_id": run_id,
         "session_id": task.session_id,
         "agent_id": task.agent_id,
+        "agent_name": task.agent_name,
         "created_session": task.created_session,
     }))
 }
@@ -1663,6 +1665,76 @@ fn create_swarm_team_task_record(
         error: None,
         updated_time: now,
     }
+}
+
+fn build_swarm_timeout_monitoring_payload(
+    run_id: Option<&str>,
+    team_run_id: &str,
+    target_session_id: &str,
+) -> Value {
+    let run_id = run_id.map(str::trim).filter(|value| !value.is_empty());
+    let mut suggestions = Vec::new();
+    if let Some(run_id) = run_id {
+        suggestions.push(json!({
+            "purpose": "继续等待 60 秒",
+            "args": {
+                "action": "wait",
+                "runIds": [run_id],
+                "waitSeconds": 60
+            }
+        }));
+        suggestions.push(json!({
+            "purpose": "立即查看当前快照",
+            "args": {
+                "action": "wait",
+                "runIds": [run_id],
+                "waitSeconds": 0
+            }
+        }));
+    }
+    let session_key = target_session_id.trim();
+    if !session_key.is_empty() {
+        suggestions.push(json!({
+            "purpose": "查看工蜂会话历史",
+            "args": {
+                "action": "history",
+                "sessionKey": session_key
+            }
+        }));
+    }
+    json!({
+        "note": "本次仅等待超时，工蜂可能仍在执行。",
+        "team_run_id": team_run_id,
+        "run_id": run_id,
+        "session_id": if session_key.is_empty() { Value::Null } else { json!(session_key) },
+        "suggested_calls": suggestions
+    })
+}
+
+fn build_swarm_wait_monitoring_payload(run_ids: &[String]) -> Value {
+    let run_ids = dedupe_non_empty_strings(run_ids.to_vec());
+    json!({
+        "note": "任务尚未全部完成，可继续等待或先查看快照。",
+        "run_ids": run_ids,
+        "suggested_calls": [
+            {
+                "purpose": "继续等待 60 秒",
+                "args": {
+                    "action": "wait",
+                    "runIds": run_ids,
+                    "waitSeconds": 60
+                }
+            },
+            {
+                "purpose": "立即查看当前快照",
+                "args": {
+                    "action": "wait",
+                    "runIds": run_ids,
+                    "waitSeconds": 0
+                }
+            }
+        ]
+    })
 }
 
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1950,33 +2022,33 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
+    let wait_timeout_seconds = payload
+        .timeout_seconds
+        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+        .max(0.0);
     let mut send_args = json!({
         "session_id": target_session_id,
         "message": dispatch_message,
     });
-    if let Some(timeout_seconds) = payload.timeout_seconds {
-        send_args["timeoutSeconds"] = json!(timeout_seconds);
-    } else {
-        // Default: block until the worker bee finishes
-        send_args["timeoutSeconds"] = json!(context.config.tools.swarm.default_timeout_s as f64);
-    }
+    send_args["timeoutSeconds"] = json!(wait_timeout_seconds);
     // Notify the parent session (queen bee) so the frontend sub-agent panel refreshes
     send_args["announceParentSessionId"] = json!(context.session_id);
     send_args["announcePersistHistory"] = json!(false);
     send_args["announceEmitParentEvents"] = json!(true);
-    let mut result = sessions_send(context, &send_args).await?;
+    let result = sessions_send(context, &send_args).await?;
     let status = result
         .get("status")
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or("accepted")
         .to_ascii_lowercase();
-    if let Some(run_id) = result
+    let run_id = result
         .get("run_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
+        .map(ToString::to_string);
+    if let Some(run_id) = run_id.as_deref() {
         task_record.session_run_id = Some(run_id.to_string());
     }
     task_record.status = match status.as_str() {
@@ -1986,20 +2058,22 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         "" => "queued".to_string(),
         _ => "queued".to_string(),
     };
-    if let Some(reply) = result
+    let reply = result
         .get("reply")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
+        .map(ToString::to_string);
+    if let Some(reply) = reply.as_deref() {
         task_record.result_summary = Some(truncate_text(reply, SWARM_TASK_RESULT_MAX_CHARS));
     }
-    if let Some(error) = result
+    let error_text = result
         .get("error")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
+        .map(ToString::to_string);
+    if let Some(error) = error_text.as_deref() {
         task_record.error = Some(truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
     }
     task_record.elapsed_s = result
@@ -2017,15 +2091,44 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if terminal {
         emit_swarm_run_terminal(context, &run_record, failed);
     }
-    if let Value::Object(ref mut map) = result {
-        map.insert("agent_id".to_string(), json!(target_agent_id));
-        map.insert("session_id".to_string(), json!(target_session_id));
-        map.insert("created_session".to_string(), json!(created_session));
-        map.insert("team_run_id".to_string(), json!(run_record.team_run_id));
-        map.insert("task_id".to_string(), json!(task_record.task_id));
-        map.insert("hive_id".to_string(), json!(swarm_hive_id));
+    let mut response = json!({
+        "action": "send",
+        "status": status,
+        "run_id": run_id,
+        "team_run_id": run_record.team_run_id,
+        "task_id": task_record.task_id,
+        "elapsed_s": task_record.elapsed_s,
+        "target_agent_id": target_agent_id,
+        "target_agent_name": target_agent.name,
+        "target_session_id": target_session_id,
+        "created_session": created_session,
+        "reply": reply,
+        "error": error_text,
+    });
+    if let Value::Object(ref mut map) = response {
+        let status_message = match status.as_str() {
+            "ok" => "工蜂已完成并返回结果。".to_string(),
+            "timeout" => format!(
+                "等待工蜂结果超时（{} 秒），工蜂可能仍在执行。",
+                wait_timeout_seconds
+            ),
+            "error" => "工蜂执行失败，请查看 error 字段。".to_string(),
+            _ => "任务已派发，可稍后继续调用 wait 监视进度。".to_string(),
+        };
+        map.insert("message".to_string(), json!(status_message));
+        if status == "timeout" {
+            map.insert("timed_out".to_string(), json!(true));
+            map.insert(
+                "monitoring".to_string(),
+                build_swarm_timeout_monitoring_payload(
+                    run_id.as_deref(),
+                    &run_record.team_run_id,
+                    &target_session_id,
+                ),
+            );
+        }
     }
-    Ok(result)
+    Ok(response)
 }
 
 async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2251,6 +2354,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             message: dispatch_message,
             label,
             agent_id: agent_record.agent_id,
+            agent_name: agent_record.name,
             session_id,
             created_session,
             tool_names,
@@ -2335,8 +2439,9 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     "index": index,
                     "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
                     "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
-                    "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
-                    "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                    "target_agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
+                    "target_agent_name": result.get("agent_name").cloned().unwrap_or(Value::Null),
+                    "target_session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
                     "task_id": task_id,
                     "created_session": result
                         .get("created_session")
@@ -2398,6 +2503,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     }
 
     let mut response = json!({
+        "action": "batch_send",
         "status": if accepted_total > 0 {
             if failed_total > 0 { "partial" } else { "accepted" }
         } else {
@@ -2407,7 +2513,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         "accepted_total": accepted_total,
         "failed_total": failed_total,
         "team_run_id": run_record.team_run_id,
-        "hive_id": swarm_hive_id,
         "run_ids": run_ids,
         "items": items,
     });
@@ -2513,6 +2618,12 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             if let Some(status) = wait_result.get("status").and_then(Value::as_str) {
                 map.insert("status".to_string(), json!(status));
             }
+            if let Some(message) = wait_result.get("message") {
+                map.insert("message".to_string(), message.clone());
+            }
+            if let Some(monitoring) = wait_result.get("monitoring") {
+                map.insert("monitoring".to_string(), monitoring.clone());
+            }
         }
     }
 
@@ -2597,7 +2708,8 @@ async fn wait_for_swarm_runs(
                 .into_iter()
                 .map(|item| item.payload)
                 .collect::<Vec<_>>();
-            return Ok(json!({
+            let mut response = json!({
+                "action": "wait",
                 "status": status,
                 "wait_seconds": wait_seconds,
                 "elapsed_s": elapsed_s,
@@ -2608,9 +2720,33 @@ async fn wait_for_swarm_runs(
                 "failed_total": failed_total,
                 "queued_total": queued_total,
                 "running_total": running_total,
-                "run_ids": run_ids,
+                "run_ids": run_ids.clone(),
                 "items": items,
-            }));
+            });
+            if let Value::Object(ref mut map) = response {
+                let message = if timed_out {
+                    format!(
+                        "等待蜂群结果超时（{} 秒），工蜂可能仍在执行。",
+                        wait_seconds
+                    )
+                } else if all_finished {
+                    if failed_total == 0 {
+                        "蜂群任务已全部完成。".to_string()
+                    } else {
+                        "蜂群任务已结束，但存在失败/超时条目。".to_string()
+                    }
+                } else {
+                    "已返回当前快照，任务仍在进行中。".to_string()
+                };
+                map.insert("message".to_string(), json!(message));
+                if timed_out || !all_finished {
+                    map.insert(
+                        "monitoring".to_string(),
+                        build_swarm_wait_monitoring_payload(&run_ids),
+                    );
+                }
+            }
+            return Ok(response);
         }
 
         if emit_progress {

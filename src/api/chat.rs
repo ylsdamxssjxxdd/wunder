@@ -9,6 +9,9 @@ use crate::orchestrator_constants::{
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
+use crate::services::chat_media::{
+    process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
+};
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
@@ -37,6 +40,7 @@ const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+const MAX_MEDIA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
@@ -120,6 +124,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/attachments/convert",
             post(chat_attachment_convert).layer(DefaultBodyLimit::max(MAX_ATTACHMENT_UPLOAD_BYTES)),
+        )
+        .route(
+            "/wunder/chat/attachments/media/process",
+            post(chat_attachment_media_process).layer(DefaultBodyLimit::max(MAX_MEDIA_UPLOAD_BYTES)),
         )
 }
 
@@ -1259,7 +1267,23 @@ pub(crate) async fn build_chat_request(
         ));
     }
     let content = content.trim().to_string();
-    if content.is_empty() {
+    let has_attachments = attachments
+        .as_ref()
+        .map(|items| {
+            items.iter().any(|item| {
+                item.content
+                    .as_ref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+                    || item
+                        .public_path
+                        .as_ref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+    if content.is_empty() && !has_attachments {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
@@ -2179,6 +2203,118 @@ async fn chat_attachment_convert(multipart: Multipart) -> Result<Json<Value>, Re
     Ok(Json(json!({
         "data": build_conversion_payload(conversions),
     })))
+}
+
+#[derive(Default)]
+struct ChatMediaProcessFields {
+    upload: Option<ChatMediaUpload>,
+    source_public_path: Option<String>,
+    frame_rate: Option<f64>,
+}
+
+async fn chat_attachment_media_process(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    multipart: Multipart,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let fields = parse_chat_media_process_multipart(multipart).await?;
+    let config = state.config_store.get().await;
+    let result = if let Some(upload) = fields.upload {
+        process_chat_media_upload(
+            &state.workspace,
+            &config,
+            &resolved.user.user_id,
+            upload,
+            fields.frame_rate,
+        )
+        .await
+    } else if let Some(source_public_path) = fields.source_public_path.as_deref() {
+        reprocess_chat_media_source(
+            &state.workspace,
+            &config,
+            &resolved.user.user_id,
+            source_public_path,
+            fields.frame_rate,
+        )
+        .await
+    } else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "file or source_public_path is required".to_string(),
+        ));
+    }
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": result,
+    })))
+}
+
+async fn parse_chat_media_process_multipart(
+    mut multipart: Multipart,
+) -> Result<ChatMediaProcessFields, Response> {
+    let mut fields = ChatMediaProcessFields::default();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        let name = field.name().unwrap_or("").trim().to_ascii_lowercase();
+        match name.as_str() {
+            "file" => {
+                let filename = field
+                    .file_name()
+                    .map(str::to_string)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "media".to_string());
+                let content_type = field.content_type().map(str::to_string);
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                if bytes.is_empty() {
+                    return Err(error_response(
+                        StatusCode::BAD_REQUEST,
+                        "uploaded media file is empty".to_string(),
+                    ));
+                }
+                fields.upload = Some(ChatMediaUpload {
+                    filename,
+                    content_type,
+                    bytes: bytes.to_vec(),
+                });
+            }
+            "source_public_path" | "sourcepublicpath" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                let normalized = value.trim().to_string();
+                if !normalized.is_empty() {
+                    fields.source_public_path = Some(normalized);
+                }
+            }
+            "frame_rate" | "framerate" | "fps" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parsed = trimmed.parse::<f64>().map_err(|_| {
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        "frame_rate must be a number".to_string(),
+                    )
+                })?;
+                fields.frame_rate = Some(parsed);
+            }
+            _ => {}
+        }
+    }
+    Ok(fields)
 }
 
 fn map_history_message(item: Value, message_feedback: &HashMap<i64, Value>) -> Option<Value> {

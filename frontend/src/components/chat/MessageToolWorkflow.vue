@@ -25,20 +25,11 @@
         >
           <summary class="tool-workflow-entry-summary">
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
-            <span class="tool-workflow-entry-copy">
-              <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
-              <span
-                v-if="entry.summaryNote"
-                :class="[
-                  'tool-workflow-entry-note',
-                  entry.summaryNoteTone ? `is-${entry.summaryNoteTone}` : ''
-                ]"
-              >
-                {{ entry.summaryNote }}
-              </span>
+            <i :class="['fa-solid', 'tool-workflow-entry-tool-icon', entry.toolIconClass]" aria-hidden="true"></i>
+            <span class="tool-workflow-entry-title" :title="entry.toolCallRawTitle">
+              {{ entry.summaryTitle }}
             </span>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
-            <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
           </summary>
 
           <div class="tool-workflow-entry-body">
@@ -76,15 +67,14 @@ import {
   type WorkflowItem
 } from './toolWorkflowRunModel';
 import {
-  buildStructuredToolResultNote,
   buildStructuredToolResultView
 } from './toolWorkflowStructuredView';
 import { chatPerf } from '@/utils/chatPerf';
 import {
   buildCompactionDisplay,
-  type CompactionDisplay,
-  type CompactionView
+  type CompactionDisplay
 } from '@/utils/chatCompactionUi';
+import { resolveAbilityVisual } from '@/utils/abilityVisuals';
 import MessageToolWorkflowSection from './MessageToolWorkflowSection.vue';
 import type {
   ToolWorkflowCommandView as CommandView,
@@ -116,12 +106,10 @@ type PatchDiffBlock = {
 type ToolEntryView = {
   key: string;
   summaryTitle: string;
-  summaryNote: string;
-  summaryNoteTone: '' | 'info' | 'success' | 'warning';
+  toolCallRawTitle: string;
+  toolIconClass: string;
   isCompaction: boolean;
-  compactionView: CompactionView | null;
   status: string;
-  statusLabel: string;
   durationLabel: string;
   sections: ToolWorkflowDetailSection[];
 };
@@ -159,6 +147,7 @@ const PATCH_RESULT_FILE_LIMIT = 10;
 const PATCH_PREVIEW_FILE_LIMIT = 4;
 const PATCH_PREVIEW_LINE_LIMIT = 12;
 const PATCH_PREVIEW_LINE_MAX_CHARS = 140;
+const TOOL_CALL_TOOLTIP_MAX_CHARS = 6000;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
 
@@ -333,13 +322,6 @@ const normalizeStatus = (status: unknown): string => {
   return 'completed';
 };
 
-const statusLabel = (status: string): string => {
-  if (status === 'pending') return t('chat.toolWorkflow.statusWaiting');
-  if (status === 'loading') return t('chat.toolWorkflow.statusRunning');
-  if (status === 'failed') return t('chat.toolWorkflow.statusFailed');
-  return t('chat.toolWorkflow.statusSuccess');
-};
-
 const resolveCommandSessionRefFromItem = (item: WorkflowItem | null): string =>
   String(item?.commandSessionId || item?.toolCallId || '').trim();
 
@@ -471,6 +453,38 @@ const toInt = (...values: unknown[]): number => {
     }
   }
   return 0;
+};
+
+const normalizeListFileItems = (items: unknown[]): { rows: string[]; omittedItems: number } => {
+  const rows: string[] = [];
+  let omittedItems = 0;
+  for (const item of items) {
+    const obj = asObject(item);
+    if (obj) {
+      // Tool-result truncation can inject marker objects into arrays; render a readable omission hint.
+      const isTruncationMarker =
+        Object.prototype.hasOwnProperty.call(obj, 'truncated_items') ||
+        Object.prototype.hasOwnProperty.call(obj, 'omitted_items') ||
+        obj.__truncated === true;
+      if (isTruncationMarker) {
+        omittedItems += toInt(obj.truncated_items, obj.omitted_items, obj.__omitted_items);
+        continue;
+      }
+      const pathLike = pickString(obj.path, obj.file, obj.file_path, obj.name, obj.title);
+      if (pathLike) {
+        rows.push(pathLike);
+        continue;
+      }
+      const serialized = JSON.stringify(obj);
+      if (serialized && serialized !== '{}') {
+        rows.push(serialized);
+      }
+      continue;
+    }
+    const text = String(item ?? '').trim();
+    if (text) rows.push(text);
+  }
+  return { rows, omittedItems };
 };
 
 const toOptionalInt = (...values: unknown[]): number | null => {
@@ -1573,6 +1587,11 @@ const isSkillCallTool = (toolName: string): boolean => {
   return normalized === 'skill_call' || normalized === 'skill_get' || toolName.includes('技能调用');
 };
 
+const isSwarmTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === 'agent_swarm' || normalized === 'swarm_control' || toolName.includes('智能体蜂群');
+};
+
 const resolveSummaryToolDisplay = (toolName: string, fallback: string): string => {
   if (isSkillCallTool(toolName)) return t('chat.toolWorkflow.toolLabel.skillCall');
   if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
@@ -1583,6 +1602,26 @@ const resolveSummaryToolDisplay = (toolName: string, fallback: string): string =
   if (isListFilesTool(toolName)) return t('chat.toolWorkflow.toolLabel.listFiles');
   if (isSearchContentTool(toolName)) return t('chat.toolWorkflow.toolLabel.searchContent');
   return fallback;
+};
+
+const isWebFetchTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return (
+    normalized === 'web_fetch' ||
+    normalized === 'webfetch' ||
+    normalized.includes('web_fetch') ||
+    normalized.includes('web fetch') ||
+    toolName.includes('\u7f51\u9875\u6293\u53d6')
+  );
+};
+
+const resolveToolIconClass = (toolName: string): string => {
+  return resolveAbilityVisual({
+    name: toolName,
+    kind: 'tool',
+    group: 'builtin',
+    source: 'builtin'
+  }).icon;
 };
 
 const formatContextWindowLabel = (before: unknown, after: unknown): string => {
@@ -1786,9 +1825,26 @@ const resolveWriteFileSummaryTitle = (toolDisplay: string, pathHints: string[]):
   return truncateSingleLine(`${toolDisplay}${pathLabel ? ` ${pathLabel}` : ''}`);
 };
 
+const resolveWebFetchSummaryTitle = (entry: RawEntry, toolDisplay: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const rawUrl = pickString(
+    args?.url,
+    dataObject?.url,
+    resultObject?.url,
+    dataObject?.source_url,
+    resultObject?.source_url
+  );
+  if (!rawUrl) return truncateSingleLine(toolDisplay);
+  return truncateSingleLine(`${toolDisplay} ${rawUrl}`, 140);
+};
+
 const resolveFileToolSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
   if (isPtcTool(entry.toolName)) {
     return resolvePtcSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  if (isWebFetchTool(entry.toolName)) {
+    return resolveWebFetchSummaryTitle(entry, toolDisplay);
   }
   if (isWriteFileTool(entry.toolName)) {
     return resolveWriteFileSummaryTitle(toolDisplay, pathHints);
@@ -1882,7 +1938,52 @@ const resolveToolActionLabel = (entry: RawEntry): string => {
     resultObject?.action
   );
   // Keep tool titles explicit for action-driven tools (for example: agent_swarm list/send/wait).
-  return action ? truncateSingleLine(action, 32) : '';
+  if (!action) return '';
+  const actionText = truncateSingleLine(action, 32);
+  if (!isSwarmTool(entry.toolName)) {
+    return actionText;
+  }
+  const actionLower = action.trim().toLowerCase();
+  const swarmTarget = pickString(
+    dataObject?.target_agent_name,
+    resultObject?.target_agent_name,
+    dataObject?.agent_name,
+    resultObject?.agent_name,
+    args?.agentName,
+    args?.agent_name,
+    args?.name,
+    dataObject?.target_agent_id,
+    resultObject?.target_agent_id,
+    dataObject?.agent_id,
+    resultObject?.agent_id,
+    args?.agentId,
+    args?.agent_id
+  );
+  if (['send', 'spawn', 'history'].includes(actionLower) && swarmTarget) {
+    return truncateSingleLine(`${actionText} @${swarmTarget}`, 56);
+  }
+  if (['batch_send', 'dispatch', 'fanout'].includes(actionLower)) {
+    const taskTotal = toInt(
+      dataObject?.task_total,
+      resultObject?.task_total,
+      Array.isArray(args?.tasks) ? args?.tasks.length : null
+    );
+    if (taskTotal > 0) {
+      return `${actionText} ${taskTotal}项`;
+    }
+  }
+  if (actionLower === 'wait') {
+    const runTotal = toInt(
+      dataObject?.total,
+      resultObject?.total,
+      Array.isArray(args?.runIds) ? args?.runIds.length : null,
+      Array.isArray(args?.run_ids) ? args?.run_ids.length : null
+    );
+    if (runTotal > 0) {
+      return `${actionText} ${runTotal}项`;
+    }
+  }
+  return actionText;
 };
 
 const composeEntryTitle = (
@@ -1900,6 +2001,57 @@ const composeEntryTitle = (
     return resolveSkillSummaryTitle(entry, toolTitle, pathHints);
   }
   return resolveFileToolSummaryTitle(entry, toolTitle, pathHints);
+};
+
+const normalizeDetailText = (detail: unknown): string =>
+  String(detail || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+
+const stringifyDebugPayload = (payload: unknown): string => {
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return '';
+  }
+};
+
+const buildToolCallDebugText = (entry: RawEntry): string => {
+  const callArgs = extractCallArgs(entry.callItem);
+  if (callArgs) {
+    const normalized = stringifyDebugPayload({
+      tool: entry.toolName,
+      arguments: callArgs
+    });
+    if (normalized) {
+      return truncateByMiddle(normalizeDetailText(normalized), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+    }
+  }
+  if (isExecuteCommandTool(entry.toolName)) {
+    const command = pickString(
+      resolveCommandFromCall(entry.callItem),
+      resolveCommandFromOutput(entry.outputItem),
+      resolveCommandFromResult(entry.resultItem)
+    );
+    if (command) {
+      const snapshot = stringifyDebugPayload({
+        tool: entry.toolName,
+        arguments: {
+          content: command
+        }
+      });
+      if (snapshot) {
+        return truncateByMiddle(normalizeDetailText(snapshot), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+      }
+    }
+  }
+  const rawDetail = normalizeDetailText(entry.callItem?.detail);
+  if (rawDetail) {
+    return truncateByMiddle(rawDetail, TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+  }
+  const fallbackDetail = pickString(entry.outputItem?.detail, entry.resultItem?.detail);
+  if (fallbackDetail) {
+    return truncateByMiddle(normalizeDetailText(fallbackDetail), TOOL_CALL_TOOLTIP_MAX_CHARS).value;
+  }
+  return '';
 };
 
 const extractResultPayload = (
@@ -1997,10 +2149,13 @@ const buildReadFileResultBlock = (dataObject: UnknownObject | null): string => {
 const buildListFilesResultBlock = (dataObject: UnknownObject | null): string => {
   const items = Array.isArray(dataObject?.items) ? (dataObject.items as unknown[]) : [];
   if (!items.length) return '';
-  const normalized = items.map((item) => String(item || '').trim()).filter(Boolean);
-  if (!normalized.length) return '';
+  const { rows, omittedItems } = normalizeListFileItems(items);
+  if (!rows.length && omittedItems <= 0) return '';
+  const normalized =
+    omittedItems > 0 ? [...rows, `... (+${omittedItems} items omitted)`] : rows;
+  const itemCount = rows.length + omittedItems;
   const metaBlock = buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.items'), value: normalized.length }
+    { label: t('chat.toolWorkflow.detail.items'), value: itemCount }
   ]);
   return [metaBlock, buildBulletListBlock(normalized, 30, 180)].filter(Boolean).join('\n\n');
 };
@@ -2103,8 +2258,8 @@ const buildExecuteCommandTerminalText = (
   includeCommandLine = true
 ): string => {
   const lines: string[] = [];
-  if (includeCommandLine) {
-    lines.push(`$ ${command || '(command)'}`);
+  if (includeCommandLine && command.trim()) {
+    lines.push(`$ ${command}`);
   }
 
   const stdout = buildTerminalStream(stdoutRaw, status, 140, 18000);
@@ -2133,6 +2288,16 @@ const buildExecuteCommandTerminalText = (
     lines.push(`error: ${errorText}`);
   }
   return lines.join('\n').trim();
+};
+
+const hasVisibleCommandViewContent = (view: CommandView): boolean => {
+  if (String(view.command || '').trim()) return true;
+  if (String(view.terminalText || '').trim()) return true;
+  if (String(view.previewBody || '').trim()) return true;
+  if (Array.isArray(view.streams) && view.streams.some((item) => String(item.body || '').trim())) {
+    return true;
+  }
+  return view.exitCode !== null && view.showExitCode !== false;
 };
 
 const buildExecuteCommandView = (
@@ -2231,7 +2396,7 @@ const buildExecuteCommandView = (
   const normalizedStdout = normalizeCommandStreamText(stdoutRaw, 'stdout');
   const normalizedStderr = normalizeCommandStreamText(stderrRaw, 'stderr');
   const previewRaw = compacted.preview;
-  const commandText = resolvedCommand || '(command)';
+  const commandText = resolvedCommand;
   const displayStdout = stripBackendTruncationMarkers(normalizedStdout);
   const displayStderr = stripBackendTruncationMarkers(normalizedStderr);
   const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory, snapshot?.cwd);
@@ -2690,7 +2855,7 @@ const buildToolResultSection = (
   patchEntries: PatchEntry[],
   compactionDisplay: CompactionDisplay | null,
   commandSession: CommandSessionRuntimeEntry | null
-): ToolWorkflowDetailSection => {
+): ToolWorkflowDetailSection | null => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
@@ -2738,16 +2903,20 @@ const buildToolResultSection = (
 
   if (isExecuteCommandTool(entry.toolName)) {
     if (entry.outputItem || entry.resultItem || errorText) {
+      const commandView = {
+        // Keep command workflow detail output-only: hide command input and show terminal result.
+        ...buildExecuteCommandView(entry, command, status, errorText, commandSession, false),
+        showExitCode: false
+      };
+      if (!hasVisibleCommandViewContent(commandView)) {
+        return null;
+      }
       return {
         key: sectionKey,
         title: sectionTitle,
         kind: 'command',
         body: '',
-        commandView: {
-          // Keep command workflow detail output-only: hide command input and show terminal result.
-          ...buildExecuteCommandView(entry, command, status, errorText, commandSession, false),
-          showExitCode: false
-        },
+        commandView,
         patchLines: []
       };
     }
@@ -2767,7 +2936,13 @@ const buildToolResultSection = (
     };
   } else {
     const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-    const structuredView = buildStructuredToolResultView(entry.toolName, resultObject, dataObject, t);
+    const structuredView = buildStructuredToolResultView(
+      entry.toolName,
+      resultObject,
+      dataObject,
+      t,
+      extractCallArgs(entry.callItem)
+    );
     if (structuredView) {
       return {
         key: sectionKey,
@@ -2836,25 +3011,6 @@ const buildErrorText = (
   return hint;
 };
 
-const buildEntrySummaryNote = (
-  entry: RawEntry,
-  status: string,
-  commandSession: CommandSessionRuntimeEntry | null
-): { text: string; tone: '' | 'info' | 'success' | 'warning' } => {
-  if (status === 'failed') {
-    return {
-      text: truncateSingleLine(buildErrorText(entry.resultItem, commandSession), 220),
-      tone: 'warning'
-    };
-  }
-  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-  const text = buildStructuredToolResultNote(entry.toolName, resultObject, dataObject, t);
-  return {
-    text,
-    tone: text ? 'info' : ''
-  };
-};
-
 const resolveEntryStatus = (
   entry: RawEntry,
   commandSession: CommandSessionRuntimeEntry | null
@@ -2893,7 +3049,6 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
-  const entrySummaryNote = buildEntrySummaryNote(entry, status, commandSession);
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(
@@ -2905,17 +3060,15 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     compactionDisplay,
     commandSession
   );
-  const sections = [toolResultSection];
+  const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
     key: entry.key,
     summaryTitle,
-    summaryNote: compactionDisplay?.summaryNote || entrySummaryNote.text,
-    summaryNoteTone: compactionDisplay?.summaryNoteTone || entrySummaryNote.tone,
+    toolCallRawTitle: buildToolCallDebugText(entry),
+    toolIconClass: resolveToolIconClass(entry.toolName),
     isCompaction: Boolean(compactionDisplay),
-    compactionView: compactionDisplay?.view || null,
     status,
-    statusLabel: statusLabel(status),
     durationLabel,
     sections
   };
@@ -3461,7 +3614,14 @@ onBeforeUnmount(() => {
   content: '▾';
 }
 
+.tool-workflow-entry-summary {
+  width: 100%;
+  min-width: 0;
+}
+
 .tool-workflow-entry-title {
+  min-width: 0;
+  flex: 1 1 auto;
   font-size: 12px;
   font-weight: 600;
   color: var(--workflow-term-text);
@@ -3470,34 +3630,33 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.tool-workflow-entry-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.tool-workflow-entry-note {
-  min-width: 0;
-  font-size: 11px;
-  line-height: 1.3;
+.tool-workflow-entry-tool-icon {
+  width: 14px;
+  flex: 0 0 14px;
   color: var(--workflow-term-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 11px;
+  text-align: center;
+  opacity: 0.95;
 }
 
-.tool-workflow-entry-note.is-info {
-  color: rgba(191, 219, 254, 0.92);
+.tool-workflow-entry-tool-icon.fa-bee {
+  width: 1em;
+  height: 1em;
+  transform: scale(1.55);
+  transform-origin: center;
 }
 
-.tool-workflow-entry-note.is-warning {
-  color: rgba(253, 230, 138, 0.95);
+.tool-workflow-entry-tool-icon.fa-bee::before {
+  content: '';
 }
 
-.tool-workflow-entry-note.is-success {
-  color: rgba(187, 247, 208, 0.95);
+.tool-workflow-entry-tool-icon.fa-bee::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url('../../assets/fa-bee.svg') center / contain no-repeat;
+  mask: url('../../assets/fa-bee.svg') center / contain no-repeat;
 }
 
 .tool-workflow-entry-lamp {
@@ -3527,39 +3686,12 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-entry-duration {
+  margin-left: auto;
   flex: 0 0 auto;
   color: var(--workflow-term-muted);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
-}
-
-.tool-workflow-entry-status {
-  flex: 0 0 auto;
-  border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.tool-workflow-entry-status.is-loading,
-.tool-workflow-entry-status.is-pending {
-  background: rgba(59, 130, 246, 0.26);
-  border: 1px solid rgba(147, 197, 253, 0.5);
-  color: #dbeafe;
-}
-
-.tool-workflow-entry-status.is-completed {
-  background: rgba(22, 163, 74, 0.24);
-  border: 1px solid rgba(134, 239, 172, 0.48);
-  color: #dcfce7;
-}
-
-.tool-workflow-entry-status.is-failed {
-  background: rgba(220, 38, 38, 0.24);
-  border: 1px solid rgba(254, 202, 202, 0.45);
-  color: #fee2e2;
 }
 
 @keyframes tool-workflow-status-pulse {

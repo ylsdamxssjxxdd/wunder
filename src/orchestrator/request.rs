@@ -32,7 +32,24 @@ impl Orchestrator {
         }
         self.workspace.touch_user_session(&workspace_id);
         let question = request.question.trim().to_string();
-        if question.is_empty() {
+        let has_attachments = request
+            .attachments
+            .as_ref()
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.content
+                        .as_deref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+                        || item
+                            .public_path
+                            .as_deref()
+                            .map(|value| !value.trim().is_empty())
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if question.is_empty() && !has_attachments {
             return Err(OrchestratorError::invalid_request(i18n::t(
                 "error.question_required",
             )));

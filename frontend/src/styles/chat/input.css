@@ -221,20 +221,62 @@
 .chat-shell .upload-preview-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
+  align-items: flex-start;
 }
 
 .chat-shell .upload-preview-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 6px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
   background: rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--chat-text);
   font-size: 12px;
-  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-shell .upload-preview-item--video {
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1 1 280px;
+  max-width: 100%;
+}
+
+.chat-shell .upload-preview-item--video .upload-preview-main {
+  padding-right: 18px;
+}
+
+.chat-shell .upload-preview-item.is-active {
+  border-color: rgba(var(--chat-primary-rgb), 0.34);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22);
+}
+
+.chat-shell .upload-preview-item.is-processing {
+  opacity: 0.82;
+}
+
+.chat-shell .upload-preview-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.chat-shell .upload-preview-main--button {
+  cursor: pointer;
+}
+
+.chat-shell .upload-preview-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .chat-shell .upload-preview-icon {
@@ -255,6 +297,20 @@
   white-space: nowrap;
 }
 
+.chat-shell .upload-preview-meta {
+  font-size: 11px;
+  color: var(--chat-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-shell .upload-preview-warning {
+  font-size: 11px;
+  color: #fbbf24;
+  line-height: 1.3;
+}
+
 .chat-shell .upload-preview-remove {
   border: none;
   background: transparent;
@@ -264,6 +320,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+}
+
+.chat-shell .upload-preview-item--video .upload-preview-remove {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 
 .chat-shell .upload-preview-remove:hover {
@@ -282,6 +345,64 @@
 
 .chat-shell .upload-preview-status {
   font-size: 12px;
+  color: var(--chat-muted);
+}
+
+.chat-shell .upload-preview-video-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  width: 100%;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.chat-shell .upload-preview-video-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-shell .upload-preview-video-label {
+  font-size: 11px;
+  color: var(--chat-muted);
+}
+
+.chat-shell .upload-preview-video-input {
+  width: 100%;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.28);
+  color: var(--chat-text);
+  padding: 0 10px;
+  outline: none;
+}
+
+.chat-shell .upload-preview-video-input:focus {
+  border-color: rgba(var(--chat-primary-rgb), 0.42);
+}
+
+.chat-shell .upload-preview-video-apply {
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  padding: 0 10px;
+  background: rgba(var(--chat-primary-rgb), 0.22);
+  color: var(--chat-text);
+  cursor: pointer;
+}
+
+.chat-shell .upload-preview-video-apply:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chat-shell .upload-preview-video-summary {
+  grid-column: 1 / -1;
+  font-size: 11px;
   color: var(--chat-muted);
 }
 

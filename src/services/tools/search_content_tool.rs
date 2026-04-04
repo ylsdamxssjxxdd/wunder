@@ -2757,15 +2757,7 @@ mod tests {
             false,
         )
         .expect("attempt");
-        let summary = build_search_summary(
-            &params,
-            &attempt,
-            &[],
-            &[],
-            &[],
-            0,
-            false,
-        );
+        let summary = build_search_summary(&params, &attempt, &[], &[], &[], 0, false);
         assert!(summary
             .next_hint
             .as_deref()

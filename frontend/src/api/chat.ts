@@ -141,6 +141,9 @@ export const convertChatAttachment = (file: File) => {
   return api.post('/chat/attachments/convert', formData);
 };
 
+export const processChatMediaAttachment = (formData: FormData) =>
+  api.post('/chat/attachments/media/process', formData);
+
 export const sendMessageStream = (
   id: string,
   payload: unknown,

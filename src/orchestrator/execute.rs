@@ -13,8 +13,8 @@ use crate::core::approval::{
 };
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::subagents;
-use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 use crate::services::tools::sessions_yield_tool;
+use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 
 struct PlannedToolCall {
     call: ToolCall,
@@ -395,7 +395,9 @@ impl Orchestrator {
                 )
                 .await;
             messages.extend(history_messages);
-            let user_message = self.build_user_message(&question, prepared.attachments.as_deref());
+            let user_message = self
+                .build_user_message(&question, prepared.attachments.as_deref())
+                .await;
             messages.push(user_message.clone());
             let mut user_message_appended = false;
 
@@ -2805,7 +2807,8 @@ fn build_tool_timeout_result(tool_name: &str, timeout: Option<Duration>) -> Tool
     } else {
         format!("Tool `{tool_name}` timed out before it returned a result.")
     };
-    let next_step_hint = build_tool_failure_next_step_hint(tool_name, "TOOL_TIMEOUT", &failure_summary);
+    let next_step_hint =
+        build_tool_failure_next_step_hint(tool_name, "TOOL_TIMEOUT", &failure_summary);
     let message = i18n::t_with_params(
         "error.tool_execution_failed",
         &HashMap::from([("name".to_string(), format!("{tool_name} timeout"))]),

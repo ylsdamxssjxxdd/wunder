@@ -1,10 +1,23 @@
 <template>
   <div class="tool-workflow-command-card">
-    <div class="tool-workflow-command-head">
-      <span class="tool-workflow-command-shell">{{ view.shell }}</span>
-      <span v-if="view.exitCode !== null && view.showExitCode !== false" class="tool-workflow-command-exit">
+    <div
+      v-if="view.exitCode !== null && view.showExitCode !== false"
+      class="tool-workflow-command-head"
+    >
+      <span class="tool-workflow-command-exit">
         exit {{ view.exitCode }}
       </span>
+    </div>
+
+    <div v-if="view.metrics?.length" class="tool-workflow-command-metrics">
+      <div
+        v-for="metric in view.metrics"
+        :key="metric.key"
+        :class="['tool-workflow-command-metric', metric.tone ? `is-${metric.tone}` : '']"
+      >
+        <span class="tool-workflow-command-metric-label">{{ metric.label }}</span>
+        <span class="tool-workflow-command-metric-value">{{ metric.value }}</span>
+      </div>
     </div>
 
     <pre v-if="view.command" class="tool-workflow-command-line">{{ view.command }}</pre>
@@ -72,6 +85,52 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   gap: 10px;
 }
 
+.tool-workflow-command-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-workflow-command-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--workflow-term-border);
+  background: rgba(15, 23, 42, 0.16);
+}
+
+.tool-workflow-command-metric.is-success {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: rgba(22, 163, 74, 0.1);
+}
+
+.tool-workflow-command-metric.is-warning {
+  border-color: rgba(251, 191, 36, 0.24);
+  background: rgba(217, 119, 6, 0.1);
+}
+
+.tool-workflow-command-metric.is-danger {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.tool-workflow-command-metric-label,
+.tool-workflow-command-metric-value {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.tool-workflow-command-metric-label {
+  color: var(--workflow-term-muted);
+  font-weight: 600;
+}
+
+.tool-workflow-command-metric-value {
+  color: var(--workflow-term-text);
+}
+
 .tool-workflow-command-head {
   display: flex;
   align-items: center;
@@ -79,7 +138,6 @@ function bindStreamRef(key: string, el: Element | ComponentPublicInstance | null
   gap: 8px;
 }
 
-.tool-workflow-command-shell,
 .tool-workflow-command-exit {
   color: var(--workflow-term-muted);
   font-size: 11px;

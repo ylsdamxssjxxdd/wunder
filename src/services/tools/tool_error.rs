@@ -86,15 +86,26 @@ mod tests {
         let payload = build_failed_tool_result(
             "failed",
             json!({ "detail": "bad request" }),
-            ToolErrorMeta::new("TOOL_FAILED", Some("retry later".to_string()), true, Some(250)),
+            ToolErrorMeta::new(
+                "TOOL_FAILED",
+                Some("retry later".to_string()),
+                true,
+                Some(250),
+            ),
             false,
         );
-        let data = payload.get("data").and_then(Value::as_object).expect("data object");
+        let data = payload
+            .get("data")
+            .and_then(Value::as_object)
+            .expect("data object");
         let meta = data
             .get("error_meta")
             .and_then(Value::as_object)
             .expect("embedded error_meta");
-        assert_eq!(meta.get("code"), Some(&Value::String("TOOL_FAILED".to_string())));
+        assert_eq!(
+            meta.get("code"),
+            Some(&Value::String("TOOL_FAILED".to_string()))
+        );
         assert_eq!(meta.get("retryable"), Some(&Value::Bool(true)));
     }
 }

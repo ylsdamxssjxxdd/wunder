@@ -24,6 +24,25 @@ const normalizeAssistantText = (value: unknown): string =>
     .replace(/\s+/g, ' ')
     .trim();
 
+const resolveErrorRequestId = (text: string): string => {
+  if (!text) return '';
+  const matched =
+    text.match(/request[_\s-]?id["'\s:=]+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i) ||
+    text.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  return matched?.[1] ? matched[1].toLowerCase() : '';
+};
+
+const isStreamRequestFailureText = (text: string): boolean => {
+  const normalized = String(text || '').toLowerCase();
+  return (
+    normalized.includes('llm stream request failed') ||
+    normalized.includes('模型调用失败') ||
+    normalized.includes('模型请求失败') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('quota')
+  );
+};
+
 const hasWorkflowItems = (message: ChatMessage): boolean =>
   Array.isArray(message?.workflowItems) && message.workflowItems.length > 0;
 
@@ -62,6 +81,11 @@ const shouldDeduplicateAssistantPair = (left: ChatMessage, right: ChatMessage): 
   const rightRound = normalizeComparableNumber(right.stream_round);
   const leftText = normalizeAssistantText(left.content);
   const rightText = normalizeAssistantText(right.content);
+  const leftRequestId = resolveErrorRequestId(leftText);
+  const rightRequestId = resolveErrorRequestId(rightText);
+  if (leftRequestId && rightRequestId && leftRequestId === rightRequestId) {
+    return true;
+  }
   if (!leftText || !rightText) {
     return leftRound !== null && rightRound !== null && leftRound === rightRound;
   }
@@ -74,6 +98,18 @@ const shouldDeduplicateAssistantPair = (left: ChatMessage, right: ChatMessage): 
     if (leftRound !== null && rightRound !== null && leftRound === rightRound) {
       return true;
     }
+    const leftTime = resolveTimestampMs(left.created_at);
+    const rightTime = resolveTimestampMs(right.created_at);
+    if (leftTime !== null && rightTime !== null && Math.abs(leftTime - rightTime) <= 120000) {
+      return true;
+    }
+  }
+  if (
+    shorter.length >= 24 &&
+    longer.includes(shorter) &&
+    isStreamRequestFailureText(leftText) &&
+    isStreamRequestFailureText(rightText)
+  ) {
     const leftTime = resolveTimestampMs(left.created_at);
     const rightTime = resolveTimestampMs(right.created_at);
     if (leftTime !== null && rightTime !== null && Math.abs(leftTime - rightTime) <= 120000) {

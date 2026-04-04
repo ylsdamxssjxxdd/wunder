@@ -1175,6 +1175,18 @@
     "en-US": "No meaningful content could be extracted from the page.",
     "zh-CN": "未能从页面中提取到有效内容。"
   },
+  "tool.web_fetch.dynamic_page": {
+    "en-US": "The page looks like a client-rendered shell, so direct HTTP fetch did not return meaningful content.",
+    "zh-CN": "该页面看起来是客户端渲染壳页，直接 HTTP 抓取未返回有效正文。"
+  },
+  "tool.web_fetch.bot_protection": {
+    "en-US": "The page appears to be protected by verification or anti-bot checks.",
+    "zh-CN": "该页面似乎启用了验证或反爬保护。"
+  },
+  "tool.web_fetch.browser_fallback_failed": {
+    "en-US": "Direct HTTP fetch returned a dynamic page and browser fallback failed: {detail}",
+    "zh-CN": "直接 HTTP 抓取遇到动态页面，且浏览器兜底失败：{detail}"
+  },
   "tool.desktop_controller.disabled": {
     "en-US": "Desktop controller is disabled.",
     "zh-CN": "桌面控制器未启用。"
@@ -1672,12 +1684,12 @@
     "zh-CN": "关闭当前浏览器会话"
   },
   "tool.spec.web_fetch.description": {
-    "en-US": "Fetch a remote public web page directly over HTTP(S) and return cleaned low-noise content. Use this for websites, not for local workspace files or generic keyword search.",
-    "zh-CN": "直接通过 HTTP(S) 抓取远程公网网页，并返回清洗后的低噪声正文内容。它用于网站，不用于本地工作区文件，也不是通用关键词搜索工具。"
+    "en-US": "Fetch a remote public web page directly over HTTP(S) and return cleaned low-noise content. Requires a concrete public URL. Do not use this for local workspace files, generic keyword search, or when you only have search terms.",
+    "zh-CN": "直接通过 HTTP(S) 抓取远程公网网页，并返回清洗后的低噪声正文内容。必须传入明确的公网 URL；不要把它用于本地工作区文件、通用关键词搜索，或仅有搜索词的场景。"
   },
   "tool.spec.web_fetch.args.url": {
-    "en-US": "The target URL to fetch (http/https only).",
-    "zh-CN": "要抓取的目标 URL（仅支持 http/https）。"
+    "en-US": "The exact public URL to fetch (http/https only). Pass a full URL, not keywords or local paths.",
+    "zh-CN": "要抓取的精确公网 URL（仅支持 http/https）。请传完整 URL，不要传关键词或本地路径。"
   },
   "tool.spec.web_fetch.args.extract_mode": {
     "en-US": "Output format: markdown or text. Defaults to markdown.",

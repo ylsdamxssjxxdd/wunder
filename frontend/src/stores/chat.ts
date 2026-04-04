@@ -422,6 +422,14 @@ const normalizeSubagentEventStatus = (value) => {
   return normalized;
 };
 
+const pickSubagentTextValue = (...values: unknown[]): string => {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text) return text;
+  }
+  return '';
+};
+
 const unwrapSubagentDetailPayload = (value: unknown): Record<string, unknown> => {
   let cursor =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -450,6 +458,85 @@ const unwrapSubagentDetailPayload = (value: unknown): Record<string, unknown> =>
   return flattened;
 };
 
+const sanitizeSubagentDetailPayload = (
+  detail: Record<string, unknown>,
+  source: Record<string, unknown>,
+  agentState: Record<string, unknown>
+): Record<string, unknown> => {
+  const normalized = { ...detail };
+  const assistantMessage = pickSubagentTextValue(
+    normalized.assistant_message,
+    normalized.assistantMessage,
+    source.assistant_message,
+    source.assistantMessage,
+    normalized.result,
+    source.result,
+    normalized.message,
+    source.message,
+    agentState.message
+  );
+  if (assistantMessage) {
+    normalized.assistant_message = assistantMessage;
+  }
+  delete normalized.assistantMessage;
+
+  const userMessage = pickSubagentTextValue(
+    normalized.user_message,
+    normalized.userMessage,
+    source.user_message,
+    source.userMessage
+  );
+  if (userMessage) {
+    normalized.user_message = userMessage;
+  }
+  delete normalized.userMessage;
+
+  const errorMessage = pickSubagentTextValue(
+    normalized.error_message,
+    normalized.errorMessage,
+    source.error_message,
+    source.errorMessage,
+    normalized.error,
+    source.error
+  );
+  if (errorMessage) {
+    normalized.error_message = errorMessage;
+  }
+  delete normalized.errorMessage;
+
+  const resultText = pickSubagentTextValue(normalized.result);
+  if (resultText && assistantMessage && resultText === assistantMessage) {
+    delete normalized.result;
+  }
+  const messageText = pickSubagentTextValue(normalized.message);
+  if (messageText && assistantMessage && messageText === assistantMessage) {
+    delete normalized.message;
+  }
+  const errorText = pickSubagentTextValue(normalized.error);
+  if (errorText && errorMessage && errorText === errorMessage) {
+    delete normalized.error;
+  }
+
+  const detailAgentState =
+    normalized.agent_state && typeof normalized.agent_state === 'object' && !Array.isArray(normalized.agent_state)
+      ? (normalized.agent_state as Record<string, unknown>)
+      : {};
+  const mergedAgentState = { ...detailAgentState, ...agentState };
+  const mergedAgentStatus = String(mergedAgentState.status || '').trim();
+  const mergedAgentMessage = pickSubagentTextValue(mergedAgentState.message);
+  if (!mergedAgentStatus && (!mergedAgentMessage || mergedAgentMessage === assistantMessage)) {
+    delete normalized.agent_state;
+  } else {
+    normalized.agent_state = {
+      ...(mergedAgentStatus ? { status: mergedAgentStatus } : {}),
+      ...(mergedAgentMessage && mergedAgentMessage !== assistantMessage
+        ? { message: mergedAgentMessage }
+        : {})
+    };
+  }
+  return normalized;
+};
+
 const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   if (!payload || typeof payload !== 'object') return null;
   const source = payload as Record<string, unknown>;
@@ -457,13 +544,17 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
     source.detail && typeof source.detail === 'object' && !Array.isArray(source.detail)
       ? (source.detail as Record<string, unknown>)
       : source;
-  const normalizedDetail = unwrapSubagentDetailPayload(rawDetail);
   const agentState =
     source.agent_state && typeof source.agent_state === 'object'
       ? (source.agent_state as Record<string, unknown>)
       : source.agentState && typeof source.agentState === 'object'
         ? (source.agentState as Record<string, unknown>)
         : {};
+  const normalizedDetail = sanitizeSubagentDetailPayload(
+    unwrapSubagentDetailPayload(rawDetail),
+    source,
+    agentState
+  );
   const sessionId = String(source.session_id ?? source.sessionId ?? '').trim();
   const runId = String(source.run_id ?? source.runId ?? '').trim();
   const key = runId || sessionId;
@@ -473,8 +564,14 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   ).trim();
   const title = label || sessionId || runId || '子智能体';
   const status = normalizeSubagentEventStatus(source.status);
+  const assistantMessage = pickSubagentTextValue(
+    normalizedDetail.assistant_message,
+    source.assistant_message,
+    source.result,
+    agentState.message
+  );
   const summary = String(
-    source.summary ?? agentState.message ?? source.result ?? source.error ?? ''
+    source.summary ?? assistantMessage ?? normalizedDetail.error_message ?? source.error ?? ''
   ).trim();
   const updatedAtMs = normalizeInteractionTimestamp(
     source.updated_time ??
@@ -486,7 +583,7 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   );
   const updatedAt = resolveTimestampIso(updatedAtMs);
   const agentStateStatus = String(agentState.status ?? status).trim();
-  const agentStateMessage = String(agentState.message ?? summary).trim();
+  const agentStateMessage = pickSubagentTextValue(agentState.message, summary, assistantMessage);
   return {
     key,
     session_id: sessionId,
@@ -1196,7 +1293,7 @@ const normalizeSnapshotAttachments = (attachments) => {
         .toLowerCase();
       const publicPath = String(record?.public_path ?? record?.publicPath ?? '').trim();
       const rawContent = String(record?.content || '').trim();
-      const content = publicPath || (!rawContent.startsWith('data:') ? rawContent : '');
+      const content = !rawContent.startsWith('data:') ? rawContent : '';
       if (!name && !contentType && !publicPath && !content) return null;
       const normalized: Record<string, unknown> = {};
       if (name) normalized.name = name;
@@ -8896,6 +8993,7 @@ export const useChatStore = defineStore('chat', {
           name?: unknown;
           content?: unknown;
           mime_type?: unknown;
+          public_path?: unknown;
         }>;
       };
       if (attachments.length > 0) {
@@ -8903,7 +9001,8 @@ export const useChatStore = defineStore('chat', {
           type: (item as { type?: unknown })?.type,
           name: (item as { name?: unknown })?.name,
           content: (item as { content?: unknown })?.content,
-          mime_type: (item as { mime_type?: unknown })?.mime_type
+          mime_type: (item as { mime_type?: unknown })?.mime_type,
+          public_path: (item as { public_path?: unknown })?.public_path
         }));
       }
       this.messages.push(userMessage);
@@ -8926,13 +9025,14 @@ export const useChatStore = defineStore('chat', {
         }
       }
 
+      const nextLocalStreamRound = (resolveMaxStreamRound(this.messages) || 0) + 1;
       const assistantMessageRaw = {
         ...buildMessage('assistant', ''),
         workflowItems: [],
         workflowStreaming: true,
         stream_incomplete: true,
         stream_event_id: 0,
-        stream_round: null
+        stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
       };
       if (assistantMessageRaw.stats) {
         assistantMessageRaw.stats.interaction_start_ms = requestStartMs;

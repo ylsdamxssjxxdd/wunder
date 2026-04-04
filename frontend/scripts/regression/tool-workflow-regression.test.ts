@@ -8,7 +8,8 @@ import {
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
-  'chat.toolWorkflow.detail.scannedFiles': 'Scanned files'
+  'chat.toolWorkflow.detail.scannedFiles': 'Scanned files',
+  'chat.toolWorkflow.detail.bytes': 'Bytes'
 };
 
 const t = (key: string): string => messages[key] || key;
@@ -39,4 +40,30 @@ test('search structured view keeps local-only guidance when there are zero hits'
     buildStructuredToolResultNote('search_content', null, data, t),
     'Scanned files 3'
   );
+});
+
+test('write structured view reuses call content as result preview', () => {
+  const data = {
+    path: './notes/todo.md',
+    bytes: 19
+  };
+  const view = buildStructuredToolResultView(
+    'write_file',
+    null,
+    data,
+    t,
+    {
+      path: './notes/todo.md',
+      content: '# Todo\n- one\n- two'
+    }
+  );
+  assert.ok(view);
+  assert.equal(view?.variant, 'write');
+  assert.deepEqual(
+    view?.metrics.map((item) => [item.key, item.value]),
+    [['bytes', '19']]
+  );
+  const row = view?.groups[0]?.rows[0];
+  assert.equal(row?.title, './notes/todo.md');
+  assert.equal(row?.body, '# Todo\n- one\n- two');
 });

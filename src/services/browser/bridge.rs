@@ -190,7 +190,9 @@ impl BrowserBridge {
                 .filter(|value| !value.is_empty())
                 .map(|value| format!("\n{value}"))
                 .unwrap_or_default();
-            return Err(format!("Browser bridge failed to start: {error}{traceback}"));
+            return Err(format!(
+                "Browser bridge failed to start: {error}{traceback}"
+            ));
         }
         self.sessions.insert(
             session_key.to_string(),

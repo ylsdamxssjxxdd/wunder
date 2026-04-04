@@ -5,6 +5,15 @@ export type ComposerDraftAttachment = {
   content: string;
   mime_type?: string;
   converter?: string;
+  public_path?: string;
+  source_public_path?: string;
+  derived_attachments?: ComposerDraftAttachment[];
+  requested_frame_rate?: number;
+  applied_frame_rate?: number;
+  duration_ms?: number;
+  frame_count?: number;
+  has_audio?: boolean;
+  warnings?: string[];
 };
 
 export type ComposerDraftState = {
@@ -22,7 +31,30 @@ const cloneAttachment = (attachment: ComposerDraftAttachment): ComposerDraftAtta
   name: String(attachment.name || ''),
   content: String(attachment.content || ''),
   ...(attachment.mime_type ? { mime_type: String(attachment.mime_type) } : {}),
-  ...(attachment.converter ? { converter: String(attachment.converter) } : {})
+  ...(attachment.converter ? { converter: String(attachment.converter) } : {}),
+  ...(attachment.public_path ? { public_path: String(attachment.public_path) } : {}),
+  ...(attachment.source_public_path
+    ? { source_public_path: String(attachment.source_public_path) }
+    : {}),
+  ...(Array.isArray(attachment.derived_attachments)
+    ? { derived_attachments: attachment.derived_attachments.map(cloneAttachment) }
+    : {}),
+  ...(Number.isFinite(attachment.requested_frame_rate)
+    ? { requested_frame_rate: Number(attachment.requested_frame_rate) }
+    : {}),
+  ...(Number.isFinite(attachment.applied_frame_rate)
+    ? { applied_frame_rate: Number(attachment.applied_frame_rate) }
+    : {}),
+  ...(Number.isFinite(attachment.duration_ms) ? { duration_ms: Number(attachment.duration_ms) } : {}),
+  ...(Number.isFinite(attachment.frame_count) ? { frame_count: Number(attachment.frame_count) } : {}),
+  ...(attachment.has_audio === true ? { has_audio: true } : {}),
+  ...(Array.isArray(attachment.warnings)
+    ? {
+        warnings: attachment.warnings
+          .map((item) => String(item || '').trim())
+          .filter((item) => item)
+      }
+    : {})
 });
 
 const cloneState = (state: ComposerDraftState): ComposerDraftState => ({

@@ -10,6 +10,7 @@ type WorkflowTerminalItem = {
 
 export type AssistantFailureNotice = {
   detail: string;
+  comparableDetails: string[];
 };
 
 const FAILURE_STATUSES = new Set([
@@ -71,7 +72,7 @@ const isAbortLikeFailure = (item: UnknownRecord, t: Translator): boolean => {
   return ['aborted', 'cancelled', 'canceled', 'stopped by user'].some((token) => combined.includes(token));
 };
 
-const resolveFailureDetail = (item: UnknownRecord, t: Translator): string => {
+const resolveFailureDetail = (item: UnknownRecord, t: Translator): AssistantFailureNotice => {
   const rawDetail = normalizeText(item.detail ?? item.error ?? item.message);
   const parsedDetail = normalizeText(formatStructuredErrorText(rawDetail, rawDetail));
   const fallbackTitle = normalizeText(item.title);
@@ -81,9 +82,18 @@ const resolveFailureDetail = (item: UnknownRecord, t: Translator): string => {
   ]);
   const detail = parsedDetail || rawDetail || fallbackTitle;
   if (!detail || genericTitles.has(detail)) {
-    return t('chat.workflow.requestFailedDetail');
+    const fallbackDetail = t('chat.workflow.requestFailedDetail');
+    return {
+      detail: fallbackDetail,
+      comparableDetails: [normalizeText(fallbackDetail)].filter(Boolean)
+    };
   }
-  return truncateText(detail);
+  return {
+    detail: truncateText(detail),
+    comparableDetails: Array.from(
+      new Set([rawDetail, parsedDetail, fallbackTitle, detail].map((value) => normalizeText(value)).filter(Boolean))
+    )
+  };
 };
 
 const collectComparableTexts = (value: string): string[] => {
@@ -103,12 +113,33 @@ const matchesFailureText = (candidate: string, expected: string): boolean => {
   return candidateTexts.some((value) => expectedTexts.includes(value));
 };
 
-const sanitizeFailurePartialContent = (baseContent: string, detail: string, t: Translator): string => {
+const collectFailureNoticeComparableTexts = (notice: AssistantFailureNotice, t: Translator): string[] => {
+  const texts = new Set<string>();
+  [...notice.comparableDetails, notice.detail].forEach((detail) => {
+    const normalizedDetail = normalizeText(detail);
+    if (!normalizedDetail) return;
+    texts.add(normalizedDetail);
+    const reasonLine = normalizeText(t('chat.message.failedInlineReason', { detail }));
+    if (reasonLine) {
+      texts.add(reasonLine);
+    }
+  });
+  return Array.from(texts);
+};
+
+const matchesFailureNoticeText = (candidate: string, comparableTexts: string[]): boolean =>
+  comparableTexts.some((expected) => matchesFailureText(candidate, expected));
+
+const sanitizeFailurePartialContent = (
+  baseContent: string,
+  notice: AssistantFailureNotice,
+  t: Translator
+): string => {
   const trimmed = baseContent.trim();
   if (!trimmed) return '';
 
-  const reasonLine = t('chat.message.failedInlineReason', { detail });
-  if (matchesFailureText(trimmed, detail) || matchesFailureText(trimmed, reasonLine)) {
+  const comparableTexts = collectFailureNoticeComparableTexts(notice, t);
+  if (matchesFailureNoticeText(trimmed, comparableTexts)) {
     return '';
   }
 
@@ -117,7 +148,7 @@ const sanitizeFailurePartialContent = (baseContent: string, detail: string, t: T
     const normalizedLine = normalizeText(line);
     if (!normalizedLine) return true;
     if (normalizedLine === normalizedPartialHint || normalizedLine === '---') return true;
-    return matchesFailureText(line, detail) || matchesFailureText(line, reasonLine);
+    return matchesFailureNoticeText(line, comparableTexts);
   };
 
   const lines = trimmed.split(/\r?\n/);
@@ -127,7 +158,7 @@ const sanitizeFailurePartialContent = (baseContent: string, detail: string, t: T
   }
   const cleaned = lines.slice(0, end + 1).join('\n').trim();
   if (!cleaned) return '';
-  if (matchesFailureText(cleaned, detail) || matchesFailureText(cleaned, reasonLine)) {
+  if (matchesFailureNoticeText(cleaned, comparableTexts)) {
     return '';
   }
   return cleaned;
@@ -145,9 +176,7 @@ export const resolveAssistantFailureNotice = (
   if (!FAILURE_STATUSES.has(terminal.status)) return null;
   // User-triggered aborts already have explicit interaction feedback, so keep the bubble clean.
   if (isAbortLikeFailure(terminal.item, t)) return null;
-  return {
-    detail: resolveFailureDetail(terminal.item, t)
-  };
+  return resolveFailureDetail(terminal.item, t);
 };
 
 export const buildAssistantDisplayContent = (
@@ -164,7 +193,7 @@ export const buildAssistantDisplayContent = (
     '',
     t('chat.message.failedInlineReason', { detail: notice.detail })
   ];
-  const partialContent = sanitizeFailurePartialContent(baseContent, notice.detail, t);
+  const partialContent = sanitizeFailurePartialContent(baseContent, notice, t);
   if (partialContent) {
     prefix.push('', t('chat.message.failedInlinePartial'), '', '---', '', partialContent);
   }

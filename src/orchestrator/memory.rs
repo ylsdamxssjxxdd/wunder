@@ -1279,7 +1279,7 @@ impl Orchestrator {
         text.starts_with(OBSERVATION_PREFIX)
     }
 
-    pub(super) fn build_user_message(
+    pub(super) async fn build_user_message(
         &self,
         question: &str,
         attachments: Option<&[AttachmentPayload]>,
@@ -1297,7 +1297,14 @@ impl Orchestrator {
         let mut image_parts: Vec<Value> = Vec::new();
         for attachment in attachments {
             let content = attachment.content.as_deref().unwrap_or("");
-            if content.trim().is_empty() {
+            let trimmed = content.trim();
+            if content.trim().is_empty()
+                && !attachment
+                    .public_path
+                    .as_deref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+            {
                 continue;
             }
             let name = attachment
@@ -1306,15 +1313,35 @@ impl Orchestrator {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(&attachment_default_name);
             let display_name = Self::display_attachment_name(name);
-            if is_image_attachment(attachment, content) {
-                image_parts.push(json!({
-                    "type": "image_url",
-                    "image_url": { "url": content }
-                }));
+            if is_image_attachment(attachment, trimmed) {
+                if let Some(image_url) =
+                    crate::services::chat_media::load_image_attachment_data_url(&self.workspace, attachment)
+                        .await
+                {
+                    image_parts.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": image_url }
+                    }));
+                } else {
+                    let fallback = attachment
+                        .public_path
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or(trimmed);
+                    if !fallback.is_empty() {
+                        attachment_parts.push(format!(
+                            "[{attachment_label}{attachment_separator}{display_name}]\n{fallback}"
+                        ));
+                    }
+                }
+                continue;
+            }
+            if trimmed.is_empty() {
                 continue;
             }
             attachment_parts.push(format!(
-                "[{attachment_label}{attachment_separator}{display_name}]\n{content}"
+                "[{attachment_label}{attachment_separator}{display_name}]\n{trimmed}"
             ));
         }
         let mut text_content = String::new();

@@ -26,6 +26,7 @@
     "../../src/utils/messageWorkspacePath.ts",
     "../../src/utils/workspaceResources.ts",
     "../../src/stores/chatPendingMessage.ts",
+    "../../src/stores/chatMessageDedup.ts",
     "../../src/stores/chatMessageArraySync.ts",
     "../../src/stores/chatRealtimeMessageProtection.ts",
     "../../src/stores/chatWatchChannelMessageRuntime.ts",
@@ -35,7 +36,11 @@
     "../../src/stores/beeroomRealtimeStatus.ts",
     "../../src/views/messenger/composerApprovalMode.ts",
     "../../src/views/messenger/realtimePulse.ts",
+    "../../src/components/chat/toolWorkflowActionViews.ts",
+    "../../src/components/chat/toolWorkflowTypes.ts",
+    "./assistant-failure-notice-regression.test.ts",
     "./message-render-regression.test.ts",
+    "./chat-message-dedup-regression.test.ts",
     "./chat-message-array-sync-regression.test.ts",
     "./chat-session-runtime-regression.test.ts",
     "./chat-realtime-message-protection-regression.test.ts",
@@ -49,6 +54,7 @@
     "./realtime-pulse-regression.test.ts",
     "./composer-approval-regression.test.ts",
     "./message-stats-regression.test.ts",
-    "./tool-workflow-regression.test.ts"
+    "./tool-workflow-regression.test.ts",
+    "./tool-workflow-command-regression.test.ts"
   ]
 }

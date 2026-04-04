@@ -853,17 +853,13 @@ fn build_history_attachments(attachments: &[AttachmentPayload]) -> Option<Value>
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let content_value = if let Some(public_path) = public_path {
-            Some(public_path.to_string())
-        } else {
-            attachment
-                .content
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .filter(|value| !value.starts_with("data:"))
-                .map(ToString::to_string)
-        };
+        let content_value = attachment
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter(|value| !value.starts_with("data:"))
+            .map(ToString::to_string);
         if name.is_none()
             && content_type.is_none()
             && public_path.is_none()
