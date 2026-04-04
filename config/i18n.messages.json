@@ -2144,12 +2144,12 @@
     "zh-CN": "可选，限制搜索范围的目录，相对工程师工作目录。"
   },
   "tool.spec.search.args.pattern": {
-    "en-US": "Preferred rg-style alias of query. Put the literal text or regex pattern here when thinking in ripgrep syntax.",
-    "zh-CN": "推荐的 rg 风格别名，等价于 query。按 ripgrep 思路搜索时，可把字面量或正则模式写在这里。"
+    "en-US": "Preferred rg-style input. When pattern is provided without query_mode or -F, it defaults to regex like ripgrep; use -F/query_mode=literal for fixed-string matching.",
+    "zh-CN": "推荐的 rg 风格输入。仅传 `pattern` 且未显式设置 `query_mode` 或 `-F` 时，会像 ripgrep 一样默认按 regex 处理；若要固定字符串匹配，请使用 `-F` 或 `query_mode=literal`。"
   },
   "tool.spec.search.args.query": {
-    "en-US": "Search text or regex pattern, depending on query_mode. Use pattern when you want rg-style wording.",
-    "zh-CN": "搜索文本或正则模式（由 query_mode 决定）。若按 rg 风格组织参数，优先使用 pattern。"
+    "en-US": "Primary text query input. query defaults to literal matching; if an exact multi-term phrase misses, search_content may retry a smarter term-based fallback. Use pattern when you want rg-style regex wording.",
+    "zh-CN": "主查询输入。`query` 默认按 literal 匹配；若多词精确短语无结果，`search_content` 可能自动回退为按词检索。需要 rg 风格正则表达时优先使用 `pattern`。"
   },
   "tool.spec.search.args.glob": {
     "en-US": "Preferred rg-style alias of file_pattern. Supports comma/semicolon/newline separated --glob style filters.",
@@ -2160,8 +2160,8 @@
     "zh-CN": "可选，rg 风格的语言/文件类型快捷写法。例如 rust、rs、ts、tsx、js、py、md、toml、json。"
   },
   "tool.spec.search.args.query_mode": {
-    "en-US": "Optional. Query mode: literal (default) or regex. Use regex for rg-style alternation like foo|bar|baz.",
-    "zh-CN": "可选。查询模式：literal（默认）或 regex。需要像 rg 那样写 foo|bar|baz 这类并列模式时，请使用 regex。"
+    "en-US": "Optional. Query mode: literal or regex. If omitted, query defaults to literal while pattern defaults to regex; use regex for rg-style alternation like foo|bar|baz.",
+    "zh-CN": "可选。查询模式：`literal` 或 `regex`。省略时，`query` 默认按 literal，`pattern` 默认按 regex；需要 rg 风格并列写法如 `foo|bar|baz` 时请使用 regex。"
   },
   "tool.spec.search.args.regex": {
     "en-US": "Optional alias. true means query_mode=regex.",

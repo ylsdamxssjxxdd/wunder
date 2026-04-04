@@ -242,6 +242,9 @@ impl DesktopRuntime {
         {
             set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
         }
+        if let Some(rg_bin) = resolve_embedded_rg_bin(&app_dir) {
+            set_env_path_if_exists("WUNDER_RG_BIN", &rg_bin);
+        }
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         set_env_path(
             BUILTIN_SKILLS_ROOT_ENV,
@@ -1014,13 +1017,17 @@ fn prepend_path_entry_if_exists(value: &Path) {
 
 fn prepend_embedded_tool_paths(app_dir: &Path) {
     // Keep bundled supplement paths ahead of the system PATH so extracting
-    // opt/python and opt/git into the install root becomes effective immediately.
+    // opt/python/opt/git/opt/rg into the install root becomes effective immediately.
     for candidate in [
         app_dir.join("opt/python"),
         app_dir.join("opt/python/Scripts"),
         app_dir.join("opt/python/bin"),
         app_dir.join("opt/git/cmd"),
         app_dir.join("opt/git/bin"),
+        app_dir.join("opt/rg"),
+        app_dir.join("opt/rg/bin"),
+        app_dir.join("opt/ripgrep"),
+        app_dir.join("opt/ripgrep/bin"),
     ] {
         prepend_path_entry_if_exists(&candidate);
     }
@@ -1038,6 +1045,25 @@ fn resolve_embedded_python_bin(app_dir: &Path) -> Option<PathBuf> {
         vec![
             app_dir.join("opt/python/bin/python3"),
             app_dir.join("opt/python/bin/python"),
+        ]
+    };
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn resolve_embedded_rg_bin(app_dir: &Path) -> Option<PathBuf> {
+    let candidates = if cfg!(windows) {
+        vec![
+            app_dir.join("opt/rg/rg.exe"),
+            app_dir.join("opt/rg/bin/rg.exe"),
+            app_dir.join("opt/ripgrep/rg.exe"),
+            app_dir.join("opt/ripgrep/bin/rg.exe"),
+        ]
+    } else {
+        vec![
+            app_dir.join("opt/rg/bin/rg"),
+            app_dir.join("opt/rg/rg"),
+            app_dir.join("opt/ripgrep/bin/rg"),
+            app_dir.join("opt/ripgrep/rg"),
         ]
     };
     candidates.into_iter().find(|candidate| candidate.is_file())

@@ -50,6 +50,7 @@ import {
 } from './chatPendingMessage';
 import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
 import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
+import { resolveInteractiveControllerRecoveryReason } from './chatInteractiveRuntimeRecovery';
 import {
   normalizeStreamLifecyclePhase,
   shouldForcePreserveWatcherForActiveSession,
@@ -421,9 +422,42 @@ const normalizeSubagentEventStatus = (value) => {
   return normalized;
 };
 
+const unwrapSubagentDetailPayload = (value: unknown): Record<string, unknown> => {
+  let cursor =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  for (let depth = 0; depth < 8; depth += 1) {
+    const nested = cursor.detail;
+    if (!nested || typeof nested !== 'object' || Array.isArray(nested)) {
+      break;
+    }
+    const nestedRecord = nested as Record<string, unknown>;
+    const nestedSession = String(nestedRecord.session_id ?? '').trim();
+    const nestedRun = String(nestedRecord.run_id ?? '').trim();
+    const currentSession = String(cursor.session_id ?? '').trim();
+    const currentRun = String(cursor.run_id ?? '').trim();
+    const sameIdentity =
+      (nestedSession && currentSession && nestedSession === currentSession) ||
+      (nestedRun && currentRun && nestedRun === currentRun);
+    if (!sameIdentity && depth > 0) {
+      break;
+    }
+    cursor = nestedRecord;
+  }
+  const flattened = { ...cursor };
+  delete flattened.detail;
+  return flattened;
+};
+
 const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
   if (!payload || typeof payload !== 'object') return null;
   const source = payload as Record<string, unknown>;
+  const rawDetail =
+    source.detail && typeof source.detail === 'object' && !Array.isArray(source.detail)
+      ? (source.detail as Record<string, unknown>)
+      : source;
+  const normalizedDetail = unwrapSubagentDetailPayload(rawDetail);
   const agentState =
     source.agent_state && typeof source.agent_state === 'object'
       ? (source.agent_state as Record<string, unknown>)
@@ -473,7 +507,7 @@ const normalizeMessageSubagent = (payload): MessageSubagentItem | null => {
     parent_model_round: normalizeStreamRound(
       source.parent_model_round ?? source.parentModelRound
     ),
-    detail: { ...source },
+    detail: normalizedDetail,
     agent_state: {
       status: agentStateStatus,
       message: agentStateMessage
@@ -3355,6 +3389,10 @@ const ensureRuntime = (sessionId) => {
       resumeController: null,
       sendRequestId: null,
       resumeRequestId: null,
+      sendStartedAt: 0,
+      sendLastEventAt: 0,
+      resumeStartedAt: 0,
+      resumeLastEventAt: 0,
       watchController: null,
       watchRequestId: null,
       watchLastEventAt: 0,
@@ -3734,6 +3772,123 @@ const clearSlowClientResume = (runtime) => {
   runtime.slowClientResumeAfterEventId = 0;
 };
 
+function clearRuntimeSendStreamState(runtime, options: { abort?: boolean } = {}) {
+  if (!runtime) return false;
+  const controller = runtime.sendController;
+  if (!controller) return false;
+  if (options.abort === true && controller?.signal?.aborted !== true) {
+    controller.abort();
+  }
+  runtime.sendController = null;
+  runtime.sendRequestId = null;
+  runtime.sendStartedAt = 0;
+  runtime.sendLastEventAt = 0;
+  return true;
+}
+
+function clearRuntimeResumeStreamState(runtime, options: { abort?: boolean } = {}) {
+  if (!runtime) return false;
+  const controller = runtime.resumeController;
+  if (!controller) return false;
+  if (options.abort === true && controller?.signal?.aborted !== true) {
+    controller.abort();
+  }
+  runtime.resumeController = null;
+  runtime.resumeRequestId = null;
+  runtime.resumeStartedAt = 0;
+  runtime.resumeLastEventAt = 0;
+  return true;
+}
+
+function markRuntimeSendStreamStarted(runtime) {
+  if (!runtime) return;
+  const now = Date.now();
+  runtime.sendStartedAt = now;
+  runtime.sendLastEventAt = now;
+}
+
+function markRuntimeResumeStreamStarted(runtime) {
+  if (!runtime) return;
+  const now = Date.now();
+  runtime.resumeStartedAt = now;
+  runtime.resumeLastEventAt = now;
+}
+
+function markRuntimeSendStreamActivity(runtime) {
+  if (!runtime?.sendController) return;
+  runtime.sendLastEventAt = Date.now();
+}
+
+function markRuntimeResumeStreamActivity(runtime) {
+  if (!runtime?.resumeController) return;
+  runtime.resumeLastEventAt = Date.now();
+}
+
+function recoverRuntimeInteractiveControllers(
+  store,
+  sessionId,
+  runtime,
+  options: {
+    remoteRunning?: unknown;
+    remoteLastEventId?: unknown;
+    localLastEventId?: unknown;
+  } = {}
+) {
+  if (!runtime) return false;
+  const key = resolveSessionKey(sessionId);
+  if (!key) return false;
+  const localSessionMessages =
+    getSessionMessages(key) ||
+    (resolveSessionKey(store?.activeSessionId) === key && Array.isArray(store?.messages)
+      ? store.messages
+      : null);
+  const localLastEventId = Math.max(
+    normalizeStreamEventId(options.localLastEventId) || 0,
+    resolveMaterializedMessageEventId(localSessionMessages),
+    getRuntimeLastEventId(runtime)
+  );
+  const remoteLastEventId = normalizeStreamEventId(options.remoteLastEventId) || 0;
+  const loading = Boolean(store?.loadingBySession?.[key]);
+  const nowMs = Date.now();
+  const sendReason = resolveInteractiveControllerRecoveryReason({
+    hasController: Boolean(runtime.sendController),
+    controllerAborted: runtime.sendController?.signal?.aborted === true,
+    startedAt: runtime.sendStartedAt,
+    lastEventAt: runtime.sendLastEventAt,
+    loading,
+    remoteRunning: options.remoteRunning,
+    remoteLastEventId,
+    localLastEventId,
+    nowMs
+  });
+  const resumeReason = resolveInteractiveControllerRecoveryReason({
+    hasController: Boolean(runtime.resumeController),
+    controllerAborted: runtime.resumeController?.signal?.aborted === true,
+    startedAt: runtime.resumeStartedAt,
+    lastEventAt: runtime.resumeLastEventAt,
+    loading,
+    remoteRunning: options.remoteRunning,
+    remoteLastEventId,
+    localLastEventId,
+    nowMs
+  });
+  let changed = false;
+  if (sendReason) {
+    changed = clearRuntimeSendStreamState(runtime, {
+      abort: sendReason !== 'aborted' && sendReason !== 'remote_idle'
+    }) || changed;
+  }
+  if (resumeReason) {
+    changed = clearRuntimeResumeStreamState(runtime, {
+      abort: resumeReason !== 'aborted' && resumeReason !== 'remote_idle'
+    }) || changed;
+  }
+  if (changed) {
+    refreshRuntimeStreamLifecycle(runtime);
+  }
+  return changed;
+}
+
 const abortWatchStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
@@ -4029,12 +4184,7 @@ const startSessionWatcher = (store, sessionId) => {
   sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
   if (!runtime) return;
-  if (runtime.sendController?.signal?.aborted) {
-    runtime.sendController = null;
-  }
-  if (runtime.resumeController?.signal?.aborted) {
-    runtime.resumeController = null;
-  }
+  recoverRuntimeInteractiveControllers(store, key, runtime);
   refreshRuntimeStreamLifecycle(runtime);
   if (runtime.sendController || runtime.resumeController) return;
   const perfEnabled = chatPerf.enabled();
@@ -4368,6 +4518,9 @@ const startSessionWatcher = (store, sessionId) => {
     if (controller.signal.aborted) return;
     if (store.activeSessionId !== key) return;
     if (!hasKnownSessionInStore(store, key)) return;
+    recoverRuntimeInteractiveControllers(store, key, runtime, {
+      localLastEventId: lastEventId
+    });
     if (runtime.sendController || runtime.resumeController) return;
     const now = Date.now();
     const nextAllowedAt = Number(runtime.watchReconcileAt) || 0;
@@ -4401,6 +4554,9 @@ const startSessionWatcher = (store, sessionId) => {
     const runWatchdogTick = async () => {
       if (controller.signal.aborted) return;
       const profile = resolveWatchdogProfile(store, key);
+      recoverRuntimeInteractiveControllers(store, key, runtime, {
+        localLastEventId: lastEventId
+      });
       if (runtime.sendController || runtime.resumeController || runtime.watchdogBusy) {
         scheduleNext(profile.intervalMs);
         return;
@@ -4433,6 +4589,11 @@ const startSessionWatcher = (store, sessionId) => {
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
         updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
+        recoverRuntimeInteractiveControllers(store, key, runtime, {
+          remoteRunning: running,
+          remoteLastEventId,
+          localLastEventId: lastEventId
+        });
         const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
         const shouldReconcileRemoteDrift = shouldWatchdogReconcileDrift({
           remoteLastEventId,
@@ -4480,12 +4641,9 @@ const startSessionWatcher = (store, sessionId) => {
   };
 
   const onEvent = (eventType, dataText, eventId) => {
-    if (runtime.sendController?.signal?.aborted) {
-      runtime.sendController = null;
-    }
-    if (runtime.resumeController?.signal?.aborted) {
-      runtime.resumeController = null;
-    }
+    recoverRuntimeInteractiveControllers(store, key, runtime, {
+      localLastEventId: lastEventId
+    });
     refreshRuntimeStreamLifecycle(runtime);
     markWatchdogEvent();
     const payload = safeJsonParse(dataText);
@@ -4816,11 +4974,7 @@ const abortResumeStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
   clearSlowClientResume(runtime);
-  if (runtime.resumeController) {
-    runtime.resumeController.abort();
-    runtime.resumeController = null;
-  }
-  runtime.resumeRequestId = null;
+  clearRuntimeResumeStreamState(runtime, { abort: true });
   refreshRuntimeStreamLifecycle(runtime);
 };
 
@@ -4828,11 +4982,7 @@ const abortSendStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
   clearSlowClientResume(runtime);
-  if (runtime.sendController) {
-    runtime.sendController.abort();
-    runtime.sendController = null;
-  }
-  runtime.sendRequestId = null;
+  clearRuntimeSendStreamState(runtime, { abort: true });
   refreshRuntimeStreamLifecycle(runtime);
 };
 
@@ -8044,7 +8194,8 @@ export const useChatStore = defineStore('chat', {
       if (!targetSessionId) return null;
       const previousSessionId = this.activeSessionId;
       const previousSessionKey = resolveSessionKey(previousSessionId);
-      const runtimeForPreserveGuard = getRuntime(targetSessionId);
+      const runtimeForPreserveGuard = ensureRuntime(targetSessionId);
+      recoverRuntimeInteractiveControllers(this, targetSessionId, runtimeForPreserveGuard);
       const lifecycleForPreserveGuard = refreshRuntimeStreamLifecycle(runtimeForPreserveGuard);
       const preserveWatcher =
         previousSessionKey === targetSessionId &&
@@ -8151,6 +8302,15 @@ export const useChatStore = defineStore('chat', {
         eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
       );
       updateRuntimeRemoteLastEventId(runtime, remoteLastEventId);
+      recoverRuntimeInteractiveControllers(this, targetSessionId, runtime, {
+        remoteRunning: eventsPayload?.running,
+        remoteLastEventId,
+        localLastEventId: resolveMaterializedMessageEventId(
+          getSessionMessages(targetSessionId) || (resolveSessionKey(this.activeSessionId) === targetSessionId
+            ? this.messages
+            : [])
+        )
+      });
       const sessionCreatedAt = sessionDetail?.created_at;
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
@@ -8213,7 +8373,7 @@ export const useChatStore = defineStore('chat', {
       const activeSessionKey = resolveSessionKey(this.activeSessionId);
       const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
         preserveWatcher,
-        lifecycle: getRuntimeStreamLifecycle(runtime),
+        lifecycle: refreshRuntimeStreamLifecycle(runtime),
         hasWatchController: Boolean(runtime?.watchController),
         hasSendController: Boolean(runtime?.sendController),
         hasResumeController: Boolean(runtime?.resumeController)
@@ -8271,7 +8431,15 @@ export const useChatStore = defineStore('chat', {
         }
       }
       this.scheduleSnapshot(true);
-      if (!preserveWatcher) {
+      const shouldStartWatcher =
+        !preserveWatcher ||
+        (
+          activeSessionKey === targetSessionId &&
+          !runtime?.watchController &&
+          !runtime?.sendController &&
+          !runtime?.resumeController
+        );
+      if (shouldStartWatcher) {
         startSessionWatcher(this, targetSessionId);
       }
       void this.refreshSessionSubagents(targetSessionId).catch(() => null);
@@ -8794,11 +8962,15 @@ export const useChatStore = defineStore('chat', {
       let finalSeen = false;
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
+      let sendRequestId = '';
 
       try {
         if (runtime) {
           clearSlowClientResume(runtime);
+          sendRequestId = buildWsRequestId();
           runtime.sendController = new AbortController();
+          runtime.sendRequestId = sendRequestId;
+          markRuntimeSendStreamStarted(runtime);
           refreshRuntimeStreamLifecycle(runtime);
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
@@ -8811,6 +8983,7 @@ export const useChatStore = defineStore('chat', {
           ...(approvalMode ? { approval_mode: approvalMode } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
+          markRuntimeSendStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = String(eventType || '').trim().toLowerCase();
@@ -8898,7 +9071,8 @@ export const useChatStore = defineStore('chat', {
           await consumeSseStream(response, onEvent);
         };
         const streamWithWs = async () => {
-          const requestId = buildWsRequestId();
+          const requestId = sendRequestId || buildWsRequestId();
+          sendRequestId = requestId;
           if (runtime) {
             runtime.sendRequestId = requestId;
           }
@@ -9016,9 +9190,8 @@ export const useChatStore = defineStore('chat', {
         assistantMessage.reasoningStreaming = false;
         assistantMessage.stream_incomplete = keepStreaming;
         if (runtime) {
-          runtime.sendController = null;
+          clearRuntimeSendStreamState(runtime);
           runtime.stopRequested = false;
-          runtime.sendRequestId = null;
           refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
             clearSlowClientResume(runtime);
@@ -9138,13 +9311,17 @@ export const useChatStore = defineStore('chat', {
       const runtime = ensureRuntime(sessionId);
       if (runtime) {
         clearSlowClientResume(runtime);
+        const nextResumeRequestId = buildWsRequestId();
         runtime.resumeController = new AbortController();
+        runtime.resumeRequestId = nextResumeRequestId;
+        markRuntimeResumeStreamStarted(runtime);
         refreshRuntimeStreamLifecycle(runtime);
       }
       let aborted = false;
       let finalSeen = false;
       let errorSeen = false;
       let slowClientResumeAfterEventId = 0;
+      let resumeRequestId = runtime?.resumeRequestId || '';
       const forcedEventId = options.afterEventId;
       const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
       const afterEventId = Number.isFinite(Number(forcedEventId))
@@ -9158,6 +9335,7 @@ export const useChatStore = defineStore('chat', {
       );
       try {
         const onEvent = (eventType, dataText, eventId) => {
+          markRuntimeResumeStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
           const normalizedEventType = String(eventType || '').trim().toLowerCase();
@@ -9287,7 +9465,8 @@ export const useChatStore = defineStore('chat', {
           await consumeSseStream(response, onEvent);
         };
         const streamWithWs = async () => {
-          const requestId = buildWsRequestId();
+          const requestId = resumeRequestId || buildWsRequestId();
+          resumeRequestId = requestId;
           if (runtime) {
             runtime.resumeRequestId = requestId;
           }
@@ -9365,8 +9544,7 @@ export const useChatStore = defineStore('chat', {
           message.stream_incomplete = keepStreaming;
         }
         if (runtime) {
-          runtime.resumeController = null;
-          runtime.resumeRequestId = null;
+          clearRuntimeResumeStreamState(runtime);
           refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
             clearSlowClientResume(runtime);

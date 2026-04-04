@@ -19,10 +19,12 @@ BUILD_ROOT="${BUILD_ROOT:-${TARGET_DIR}/.build/python}"
 STAGE_DIR="${STAGE_DIR:-${BUILD_ROOT}/stage}"
 PYTHON_ROOT="${PYTHON_ROOT:-${STAGE_DIR}/opt/python}"
 GIT_ROOT="${GIT_ROOT:-${STAGE_DIR}/opt/git}"
+RG_ROOT="${RG_ROOT:-${STAGE_DIR}/opt/rg}"
 OUTPUT_DIR="${OUTPUT_DIR:-${TARGET_DIR}/dist}"
 PACKAGE_DIR_NAME="${PACKAGE_DIR_NAME:-wunder补充包}"
 OUT_NAME="${OUT_NAME:-${PACKAGE_DIR_NAME}-${ARCH}.tar.zst}"
 INCLUDE_GIT="${INCLUDE_GIT:-1}"
+INCLUDE_RG="${INCLUDE_RG:-1}"
 DEREFERENCE_SYMLINKS="${DEREFERENCE_SYMLINKS:-1}"
 FONTS_DIR="${FONTS_DIR:-${ROOT_DIR}/config/fonts}"
 FONT_LIST="${FONT_LIST:-}"
@@ -50,6 +52,19 @@ if [ "${INCLUDE_GIT}" = "1" ]; then
     ITEMS+=("opt/git")
   else
     echo "Embedded Git root not found: ${GIT_ROOT}" >&2
+    exit 1
+  fi
+fi
+
+if [ "${INCLUDE_RG}" = "1" ]; then
+  if [ ! -x "${RG_ROOT}/bin/rg" ]; then
+    BUILD_ROOT="${BUILD_ROOT}" TARGET_DIR="${TARGET_DIR}" ARCH="${ARCH}" \
+      "${ROOT_DIR}/packaging/docker/scripts/build_embedded_rg.sh"
+  fi
+  if [ -d "${RG_ROOT}" ]; then
+    ITEMS+=("opt/rg")
+  else
+    echo "Embedded ripgrep root not found: ${RG_ROOT}" >&2
     exit 1
   fi
 fi

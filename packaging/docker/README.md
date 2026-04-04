@@ -26,12 +26,12 @@ JavaScript 依赖统一走仓库根 `npm workspace`，共享一套根 `node_modu
 - `x86-20` / `arm64-20` 继续保留，不改成 `x64-20`，避免打断现有 sidecar 补充包、Dockerfile 预置工具和离线缓存路径。
 - `desktop/` 目录下不再存放构建产物；桌面源码目录只保留源码、资源与配置。
 - `package_appimage_with_python.sh` 与 `package_sidecar_python.sh` 在未显式传参时，会自动按 `ARCH` 解析到 `target/x86-20` 或 `target/arm64-20`。
-- `build_embedded_python.sh` 与 `build_embedded_git.sh` 在单独执行时，也会默认按 `ARCH` 写入对应 `target/<arch>-20/.build/python/`，不再回落到仓库根 `.build/python/`。
+- `build_embedded_python.sh`、`build_embedded_git.sh`、`build_embedded_rg.sh` 在单独执行时，也会默认按 `ARCH` 写入对应 `target/<arch>-20/.build/python/`，不再回落到仓库根 `.build/python/`。
 
 ## 1. 规则先看
 
 - Linux Desktop 统一打包为 Electron AppImage。
-- sidecar AppImage 默认不内置 Python，也不内置 Git；运行时依赖同目录的 `wunder补充包`。
+- sidecar AppImage 默认不内置 Python，也不内置 Git / ripgrep；运行时依赖同目录的 `wunder补充包`。
 - 打包脚本默认不重建 Python。只有显式设置 `ALLOW_PYTHON_REBUILD=1` 或 `FORCE_PYTHON_SYNC=1` 时才会重建。
 - AppImage 压缩格式默认使用 `gzip`，优先兼容老系统。
 - ARM 与 x86 构建镜像现在都内置了 `squashfs-tools`；若你预先放好了对应架构的 `appimagetool-*.AppImage`，镜像也会把它内置进去，便于离线重打包。
@@ -135,7 +135,7 @@ bash packaging/docker/scripts/build_arm64_desktop_with_python.sh
 3. 在容器内构建最新 `frontend/dist`。
 4. 构建 `wunder-desktop-bridge`（可通过 `SKIP_ARM_BRIDGE_BUILD=1` 复用已有 bridge）。
 5. 构建 Electron arm64 基础 AppImage。
-6. 校验现有 `stage/opt/python` 与 `stage/opt/git`。
+6. 校验现有 `stage/opt/python`、`stage/opt/git` 与 `stage/opt/rg`。
 7. 产出 `wunder补充包-arm64.tar.gz`。
 8. 用 sidecar 模式重打包 `wunder-desktop-arm64-sidecar.AppImage`。
 
@@ -242,11 +242,13 @@ bash packaging/docker/scripts/build_arm64_desktop_with_python.sh
 
 - `target/arm64-20/.build/python/stage/opt/python/bin/python3`
 - `target/arm64-20/.build/python/stage/opt/git/bin/git`
+- `target/arm64-20/.build/python/stage/opt/rg/bin/rg`
 
 如果是 x86，同理放到：
 
 - `target/x86-20/.build/python/stage/opt/python/bin/python3`
 - `target/x86-20/.build/python/stage/opt/git/bin/git`
+- `target/x86-20/.build/python/stage/opt/rg/bin/rg`
 
 Windows 下可用：
 
@@ -272,10 +274,10 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
   OUTPUT_DIR=/app/target/arm64-20/dist \
   PREFER_PREBUILT_PYTHON=1 \
   PREFER_PREBUILT_GIT=1 \
+  PREFER_PREBUILT_RG=1 \
   EMBED_PYTHON=0 \
   EMBED_GIT=0 \
-  BUNDLE_PLAYWRIGHT_DEPS=0 \
-  PLAYWRIGHT_INSTALL_DEPS=0 \
+  EMBED_RG=0 \
   APPIMAGE_COMP=gzip \
   bash /app/packaging/docker/scripts/package_appimage_with_python.sh'
 ```
@@ -284,6 +286,7 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
 
 - `EMBED_PYTHON=0`：不把 Python 打进 AppImage。
 - `EMBED_GIT=0`：不把 Git 打进 AppImage。
+- `EMBED_RG=0`：不把 ripgrep 打进 AppImage。
 - `APPIMAGE_COMP=gzip`：优先兼容老系统。
 
 ## 9. 离线打包最低要求
@@ -295,6 +298,7 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
 - `target/x86-20/.build/python/tools/appimagetool-x86_64.AppImage`
 - `target/x86-20/.build/python/stage/opt/python`
 - `target/x86-20/.build/python/stage/opt/git`
+- `target/x86-20/.build/python/stage/opt/rg`
 
 ### ARM
 
@@ -308,6 +312,7 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
 - `target/arm64-20/.build/python/tools/appimagetool-aarch64.AppImage`
 - `target/arm64-20/.build/python/stage/opt/python`
 - `target/arm64-20/.build/python/stage/opt/git`
+- `target/arm64-20/.build/python/stage/opt/rg`
 
 如果这些文件齐全：
 
@@ -320,6 +325,7 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
 ```bash
 ARCH=arm64 bash packaging/docker/scripts/build_embedded_python.sh
 ARCH=arm64 bash packaging/docker/scripts/build_embedded_git.sh
+ARCH=arm64 bash packaging/docker/scripts/build_embedded_rg.sh
 ```
 
 默认会落到：
@@ -370,7 +376,7 @@ WUNDER_CHROMIUM_LOG_LEVEL=2 \
 
 ### 1. sidecar AppImage 能启动，但业务依赖报错
 
-先解压 `wunder补充包`，再检查 `stage/opt/python` 与 `stage/opt/git` 是否和当前 AppImage / Docker 镜像架构一致。
+先解压 `wunder补充包`，再检查 `stage/opt/python`、`stage/opt/git` 与 `stage/opt/rg` 是否和当前 AppImage / Docker 镜像架构一致。
 
 如果 `cartopy`、`pyproj._crs`、`shapely.lib`、`h5py._proxy` 这类模块缺失，问题不在 AppImage 本体，而在补充包内容不完整或版本不匹配。
 
@@ -383,9 +389,9 @@ WUNDER_CHROMIUM_LOG_LEVEL=2 \
 
 不要依赖某些旧版内置 `mksquashfs` 的默认压缩格式。
 
-### 3. sidecar AppImage 为什么不带 Git
+### 3. sidecar AppImage 为什么不带 Git / ripgrep
 
-这是当前默认设计。sidecar 版本统一从 `wunder补充包` 提供 `git`，避免 AppImage 本体重复塞一份工具链。
+这是当前默认设计。sidecar 版本统一从 `wunder补充包` 提供 `git` 与 `rg`，避免 AppImage 本体重复塞一份工具链。
 
 ## 12. 产物位置
 

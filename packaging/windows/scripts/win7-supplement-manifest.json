@@ -6,7 +6,8 @@
   "distDir": "dist",
   "layout": {
     "pythonRoot": "opt\\python",
-    "gitRoot": "opt\\git"
+    "gitRoot": "opt\\git",
+    "rgRoot": "opt\\rg"
   },
   "python": {
     "version": "3.8.10",
@@ -97,6 +98,24 @@
         "fileName": "MinGit-2.46.2-32-bit.zip",
         "downloadUrl": "https://api.github.com/repos/git-for-windows/git/releases/assets/194599396",
         "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-32-bit.zip"
+      }
+    }
+  },
+  "rg": {
+    "version": "14.1.1",
+    "flavor": "ripgrep official binary",
+    "source": "BurntSushi/ripgrep",
+    "notes": [
+      "ripgrep is bundled as a standalone binary so search_content can use rg without relying on system installation."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "ripgrep-14.1.1-x86_64-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+      },
+      "ia32": {
+        "fileName": "ripgrep-14.1.1-i686-pc-windows-msvc.zip",
+        "url": "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-i686-pc-windows-msvc.zip"
       }
     }
   }

@@ -12,7 +12,7 @@ use ignore::{WalkBuilder, WalkState};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
@@ -74,6 +74,21 @@ impl QueryMode {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum QuerySource {
+    Query,
+    Pattern,
+}
+
+impl QuerySource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Pattern => "pattern",
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum SearchEngine {
     Auto,
     Rust,
@@ -90,12 +105,33 @@ impl SearchEngine {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum SearchStrategy {
+    LiteralExact,
+    LiteralDisjunction,
+    Regex,
+    LiteralTermsFallback,
+}
+
+impl SearchStrategy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LiteralExact => "literal_exact",
+            Self::LiteralDisjunction => "literal_disjunction",
+            Self::Regex => "regex",
+            Self::LiteralTermsFallback => "literal_terms_fallback",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SearchParams {
     query: String,
+    query_source: QuerySource,
     path: String,
     file_pattern_items: Vec<String>,
     query_mode: QueryMode,
+    query_mode_inferred: bool,
     case_sensitive: bool,
     context_before: usize,
     context_after: usize,
@@ -135,8 +171,33 @@ struct SearchHit {
     line: usize,
     content: String,
     segments: Vec<HighlightSegment>,
+    matched_terms: Vec<String>,
     before: Vec<ContextLine>,
     after: Vec<ContextLine>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SearchSummary {
+    query_source: String,
+    query_mode: String,
+    query_mode_inferred: bool,
+    strategy: String,
+    fallback_applied: bool,
+    returned_match_count: usize,
+    matched_file_count: usize,
+    top_files: Vec<String>,
+    matched_terms: Vec<String>,
+    next_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SearchAttemptTrace {
+    strategy: String,
+    query_mode: String,
+    query_used: String,
+    returned_match_count: usize,
+    matched_file_count: usize,
+    scanned_files: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -153,6 +214,11 @@ struct SearchExecutionMeta {
     candidate_limit_hit: bool,
     output_budget_hit: bool,
     scanned_files: usize,
+    query_source: String,
+    query_mode_inferred: bool,
+    strategy: String,
+    fallback_applied: bool,
+    attempts_tried: Vec<SearchAttemptTrace>,
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +242,29 @@ struct RgCandidateResult {
 struct RgLaunchCandidate {
     program: OsString,
     display: String,
+}
+
+#[derive(Debug, Clone)]
+struct SearchAttempt {
+    strategy: SearchStrategy,
+    query: String,
+    query_mode: QueryMode,
+    matcher: Arc<Regex>,
+    match_terms: Vec<String>,
+    preferred_phrase: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SearchAttemptResult {
+    hits: Vec<SearchHit>,
+    scanned_files: usize,
+    timeout_hit: bool,
+    file_limit_hit: bool,
+    match_limit_hit: bool,
+    resolved_engine: SearchEngine,
+    rg_program: Option<String>,
+    fallback_reason: Option<String>,
+    candidate_limit_hit: bool,
 }
 
 pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -223,25 +312,6 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         ));
     }
 
-    let matcher = match build_query_matcher(&params.query, params.query_mode, params.case_sensitive)
-    {
-        Ok(value) => Arc::new(value),
-        Err(err) => {
-            return Ok(build_failed_tool_result(
-                err.to_string(),
-                json!({}),
-                ToolErrorMeta::new(
-                    "TOOL_SEARCH_INVALID_QUERY",
-                    Some(
-                        "Please check query, or regex validity when query_mode=regex.".to_string(),
-                    ),
-                    false,
-                    None,
-                ),
-                false,
-            ));
-        }
-    };
     let file_filter = match build_file_filter(&params.file_pattern_items) {
         Ok(value) => value,
         Err(err) => {
@@ -259,13 +329,35 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         }
     };
 
+    let attempts = match build_search_attempts(&params) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(build_failed_tool_result(
+                err.to_string(),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_SEARCH_INVALID_QUERY",
+                    Some(
+                        "Please check query, pattern, or regex validity when query_mode=regex."
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+
     if dry_run {
         return Ok(json!({
             "ok": true,
             "data": {
                 "dry_run": true,
                 "path": root.to_string_lossy().to_string(),
+                "query_source": params.query_source.as_str(),
                 "query_mode": params.query_mode.as_str(),
+                "query_mode_inferred": params.query_mode_inferred,
                 "case_sensitive": params.case_sensitive,
                 "engine": params.engine.as_str(),
                 "file_pattern_items": params.file_pattern_items,
@@ -277,6 +369,14 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                 "max_candidates": params.max_candidates,
                 "timeout_ms": params.timeout_ms,
                 "output_budget_bytes": params.output_budget_bytes,
+                "attempts": attempts
+                    .iter()
+                    .map(|attempt| json!({
+                        "strategy": attempt.strategy.as_str(),
+                        "query_mode": attempt.query_mode.as_str(),
+                        "query_used": attempt.query.clone(),
+                    }))
+                    .collect::<Vec<_>>(),
             },
             "error": "",
         }));
@@ -286,24 +386,25 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let deadline = started_at + Duration::from_millis(params.timeout_ms);
     let rg_launch_candidates =
         resolve_rg_launch_candidates(context.config.tools.search.rg_path.as_deref());
-    let mut resolved_engine = SearchEngine::Rust;
-    let mut rg_program: Option<String> = None;
-    let mut fallback_reason: Option<String> = None;
-    let mut rg_timeout_hit = false;
-    let mut candidate_limit_hit = false;
-    let mut rg_candidates: Option<Vec<PathBuf>> = None;
+    let mut selected_attempt: Option<&SearchAttempt> = None;
+    let mut selected_result: Option<SearchAttemptResult> = None;
+    let mut last_result: Option<SearchAttemptResult> = None;
+    let mut attempt_traces = Vec::new();
+    let mut any_timeout_hit = false;
 
-    if matches!(params.engine, SearchEngine::Auto | SearchEngine::Rg) {
-        match collect_candidates_with_rg(&root, &params, unrestricted_paths, &rg_launch_candidates)
-            .await
+    for attempt in &attempts {
+        let result = match execute_search_attempt(
+            &root,
+            &params,
+            attempt,
+            file_filter.as_ref(),
+            unrestricted_paths,
+            deadline,
+            &rg_launch_candidates,
+        )
+        .await
         {
-            Ok(result) => {
-                resolved_engine = SearchEngine::Rg;
-                rg_program = Some(result.rg_program);
-                rg_timeout_hit = result.timeout_hit;
-                candidate_limit_hit = result.candidate_limit_hit;
-                rg_candidates = Some(result.paths);
-            }
+            Ok(value) => value,
             Err(err) => {
                 if params.engine == SearchEngine::Rg {
                     return Ok(build_failed_tool_result(
@@ -323,56 +424,59 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                         false,
                     ));
                 }
-                fallback_reason = Some(err.to_string());
+                attempt_traces.push(SearchAttemptTrace {
+                    strategy: attempt.strategy.as_str().to_string(),
+                    query_mode: attempt.query_mode.as_str().to_string(),
+                    query_used: attempt.query.clone(),
+                    returned_match_count: 0,
+                    matched_file_count: 0,
+                    scanned_files: 0,
+                });
+                continue;
             }
+        };
+        any_timeout_hit |= result.timeout_hit;
+        attempt_traces.push(SearchAttemptTrace {
+            strategy: attempt.strategy.as_str().to_string(),
+            query_mode: attempt.query_mode.as_str().to_string(),
+            query_used: attempt.query.clone(),
+            returned_match_count: result.hits.len(),
+            matched_file_count: collect_matched_files(&result.hits).len(),
+            scanned_files: result.scanned_files,
+        });
+        if !result.hits.is_empty() {
+            selected_attempt = Some(attempt);
+            selected_result = Some(result);
+            break;
         }
+        last_result = Some(result);
     }
 
-    let computation = if resolved_engine == SearchEngine::Rg {
-        let candidates = rg_candidates.unwrap_or_default();
-        let matcher = matcher.clone();
-        let file_filter = file_filter.clone();
-        let root_for_task = root.clone();
-        let params_for_task = params.clone();
-        tokio::task::spawn_blocking(move || {
-            search_content_with_candidates(
-                &root_for_task,
-                candidates,
-                matcher.as_ref(),
-                file_filter.as_ref(),
-                &params_for_task,
-                unrestricted_paths,
-                deadline,
-            )
-        })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
-    } else {
-        let matcher = matcher.clone();
-        let file_filter = file_filter.clone();
-        let root_for_task = root.clone();
-        let params_for_task = params.clone();
-        tokio::task::spawn_blocking(move || {
-            search_content_walk(
-                &root_for_task,
-                matcher.as_ref(),
-                file_filter.as_ref(),
-                &params_for_task,
-                unrestricted_paths,
-                deadline,
-            )
-        })
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??
-    };
-
-    let mut hits = computation.hits;
-    hits.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then(left.line.cmp(&right.line))
-            .then(left.content.cmp(&right.content))
+    let selected_attempt = selected_attempt.unwrap_or_else(|| &attempts[attempts.len() - 1]);
+    let selected_result = selected_result.or(last_result).unwrap_or(SearchAttemptResult {
+        hits: Vec::new(),
+        scanned_files: 0,
+        timeout_hit: any_timeout_hit,
+        file_limit_hit: false,
+        match_limit_hit: false,
+        resolved_engine: SearchEngine::Rust,
+        rg_program: None,
+        fallback_reason: None,
+        candidate_limit_hit: false,
     });
+    let SearchAttemptResult {
+        hits: raw_hits,
+        scanned_files,
+        timeout_hit: selected_timeout_hit,
+        file_limit_hit,
+        match_limit_hit,
+        resolved_engine,
+        rg_program,
+        fallback_reason,
+        candidate_limit_hit,
+    } = selected_result;
+
+    let mut hits = rank_search_hits(raw_hits, selected_attempt, params.case_sensitive);
     if hits.len() > params.max_matches {
         hits.truncate(params.max_matches);
     }
@@ -386,8 +490,16 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         .collect::<Vec<_>>();
 
     let elapsed_ms = started_at.elapsed().as_millis();
-    let timeout_hit = rg_timeout_hit || computation.timeout_hit;
+    let timeout_hit = any_timeout_hit || selected_timeout_hit;
     let fallback = params.engine == SearchEngine::Auto && resolved_engine == SearchEngine::Rust;
+    let summary = build_search_summary(
+        &params,
+        selected_attempt,
+        &attempt_traces,
+        &matched_files,
+        &hits,
+        output_budget_hit,
+    );
     let meta = SearchExecutionMeta {
         requested_engine: params.engine.as_str().to_string(),
         resolved_engine: resolved_engine.as_str().to_string(),
@@ -396,29 +508,39 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         fallback_reason,
         elapsed_ms,
         timeout_hit,
-        file_limit_hit: computation.file_limit_hit,
-        match_limit_hit: computation.match_limit_hit,
+        file_limit_hit,
+        match_limit_hit,
         candidate_limit_hit,
         output_budget_hit,
-        scanned_files: computation.scanned_files,
+        scanned_files,
+        query_source: params.query_source.as_str().to_string(),
+        query_mode_inferred: params.query_mode_inferred,
+        strategy: selected_attempt.strategy.as_str().to_string(),
+        fallback_applied: selected_attempt.strategy == SearchStrategy::LiteralTermsFallback,
+        attempts_tried: attempt_traces.clone(),
     };
 
     Ok(json!({
         "query": params.query,
+        "query_source": params.query_source.as_str(),
+        "query_mode_inferred": params.query_mode_inferred,
+        "query_used": selected_attempt.query.clone(),
         "path": params.path,
+        "summary": summary,
         "matches": matches,
         "hits": hits,
         "matched_files": matched_files,
         "matched_file_count": matched_file_count,
         "returned_match_count": returned_match_count,
         "file_pattern_items": params.file_pattern_items,
-        "query_mode": params.query_mode.as_str(),
+        "query_mode": selected_attempt.query_mode.as_str(),
+        "strategy": selected_attempt.strategy.as_str(),
         "case_sensitive": params.case_sensitive,
         "context_before": params.context_before,
         "context_after": params.context_after,
-        "scanned_files": computation.scanned_files,
-        "file_limit_hit": computation.file_limit_hit,
-        "match_limit_hit": computation.match_limit_hit,
+        "scanned_files": scanned_files,
+        "file_limit_hit": file_limit_hit,
+        "match_limit_hit": match_limit_hit,
         "timeout_hit": timeout_hit,
         "engine": resolved_engine.as_str(),
         "budget": {
@@ -435,7 +557,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 }
 
 fn parse_search_params(args: &Value) -> Result<SearchParams> {
-    let query = parse_search_query(args);
+    let (query, query_source) = parse_search_query(args);
     if query.is_empty() {
         return Err(anyhow!(i18n::t("tool.search.empty")));
     }
@@ -447,7 +569,7 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
         .trim()
         .to_string();
     let file_pattern_items = collect_file_pattern_items(args);
-    let query_mode = parse_query_mode(args);
+    let (query_mode, query_mode_inferred) = parse_query_mode(args, query_source);
     let case_sensitive = parse_case_sensitive(args);
     let (context_before, context_after) = parse_context_windows(args);
     let budget = parse_search_budget(args);
@@ -487,9 +609,11 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
 
     Ok(SearchParams {
         query,
+        query_source,
         path,
         file_pattern_items,
         query_mode,
+        query_mode_inferred,
         case_sensitive,
         context_before,
         context_after,
@@ -503,18 +627,22 @@ fn parse_search_params(args: &Value) -> Result<SearchParams> {
     })
 }
 
-fn parse_search_query(args: &Value) -> String {
-    args.get("query")
+fn parse_search_query(args: &Value) -> (String, QuerySource) {
+    if let Some(query) = args
+        .get("query")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            args.get("pattern")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-        })
+    {
+        return (query.trim().to_string(), QuerySource::Query);
+    }
+    let pattern = args
+        .get("pattern")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
         .unwrap_or("")
         .trim()
-        .to_string()
+        .to_string();
+    (pattern, QuerySource::Pattern)
 }
 
 fn parse_search_budget(args: &Value) -> SearchBudget {
@@ -600,14 +728,14 @@ fn parse_search_engine(args: &Value) -> SearchEngine {
     }
 }
 
-fn parse_query_mode(args: &Value) -> QueryMode {
+fn parse_query_mode(args: &Value, query_source: QuerySource) -> (QueryMode, bool) {
     if let Some(raw) = args.get("query_mode").and_then(Value::as_str) {
         let cleaned = raw.trim().to_ascii_lowercase();
         if cleaned == "regex" || cleaned == "re" {
-            return QueryMode::Regex;
+            return (QueryMode::Regex, false);
         }
         if cleaned == "literal" || cleaned == "fixed" || cleaned == "fixed_strings" {
-            return QueryMode::Literal;
+            return (QueryMode::Literal, false);
         }
     }
     if args
@@ -623,16 +751,19 @@ fn parse_query_mode(args: &Value) -> QueryMode {
             .and_then(parse_optional_bool_value)
             .unwrap_or(false)
     {
-        return QueryMode::Literal;
+        return (QueryMode::Literal, false);
     }
     if args
         .get("regex")
         .and_then(parse_optional_bool_value)
         .unwrap_or(false)
     {
-        return QueryMode::Regex;
+        return (QueryMode::Regex, false);
     }
-    QueryMode::Literal
+    if query_source == QuerySource::Pattern {
+        return (QueryMode::Regex, true);
+    }
+    (QueryMode::Literal, true)
 }
 
 fn parse_case_sensitive(args: &Value) -> bool {
@@ -791,6 +922,48 @@ fn literal_query_terms(query: &str) -> Vec<String> {
     }
 }
 
+fn trim_search_term(raw: &str) -> String {
+    raw.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '"' | '\'' | '`' | ',' | ';' | ':' | '|' | '(' | ')' | '[' | ']' | '{' | '}'
+                | '<' | '>' | '，' | '。' | '；' | '：' | '（' | '）' | '【' | '】'
+        )
+    })
+    .trim()
+    .to_string()
+}
+
+fn is_useful_fallback_term(term: &str) -> bool {
+    let char_count = term.chars().count();
+    if term.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
+        return char_count >= 2;
+    }
+    char_count >= 2
+}
+
+fn literal_query_fallback_terms(query: &str) -> Vec<String> {
+    if query.contains('|') {
+        return Vec::new();
+    }
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in query.split_whitespace() {
+        let term = trim_search_term(raw);
+        if term.is_empty() || !is_useful_fallback_term(&term) {
+            continue;
+        }
+        let key = term.to_ascii_lowercase();
+        if seen.insert(key) {
+            output.push(term);
+        }
+    }
+    if output.len() < 2 {
+        return Vec::new();
+    }
+    output
+}
+
 fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool) -> Result<Regex> {
     let pattern = match query_mode {
         QueryMode::Literal => literal_query_terms(query)
@@ -811,6 +984,56 @@ fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool)
             )),
             QueryMode::Literal => anyhow!("build query matcher failed: {err}"),
         })
+}
+
+fn build_search_attempts(params: &SearchParams) -> Result<Vec<SearchAttempt>> {
+    let mut attempts = Vec::new();
+    let primary_strategy = match params.query_mode {
+        QueryMode::Regex => SearchStrategy::Regex,
+        QueryMode::Literal if params.query.contains('|') => SearchStrategy::LiteralDisjunction,
+        QueryMode::Literal => SearchStrategy::LiteralExact,
+    };
+    attempts.push(build_search_attempt(
+        primary_strategy,
+        params.query.clone(),
+        params.query_mode,
+        literal_query_terms(&params.query),
+        Some(params.query.clone()),
+        params.case_sensitive,
+    )?);
+    if params.query_mode == QueryMode::Literal && params.query_source == QuerySource::Query {
+        let fallback_terms = literal_query_fallback_terms(&params.query);
+        if fallback_terms.len() >= 2 {
+            attempts.push(build_search_attempt(
+                SearchStrategy::LiteralTermsFallback,
+                fallback_terms.join("|"),
+                QueryMode::Literal,
+                fallback_terms,
+                Some(params.query.clone()),
+                params.case_sensitive,
+            )?);
+        }
+    }
+    Ok(attempts)
+}
+
+fn build_search_attempt(
+    strategy: SearchStrategy,
+    query: String,
+    query_mode: QueryMode,
+    match_terms: Vec<String>,
+    preferred_phrase: Option<String>,
+    case_sensitive: bool,
+) -> Result<SearchAttempt> {
+    let matcher = Arc::new(build_query_matcher(&query, query_mode, case_sensitive)?);
+    Ok(SearchAttempt {
+        strategy,
+        query,
+        query_mode,
+        matcher,
+        match_terms,
+        preferred_phrase,
+    })
 }
 
 fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
@@ -985,6 +1208,8 @@ fn build_rg_search_command(
     program: &OsString,
     cwd: &Path,
     target: &Path,
+    query: &str,
+    query_mode: QueryMode,
     params: &SearchParams,
     unrestricted_paths: bool,
 ) -> Command {
@@ -997,15 +1222,15 @@ fn build_rg_search_command(
         .arg("never")
         .arg("--max-filesize")
         .arg(MAX_READ_BYTES.to_string());
-    match params.query_mode {
+    match query_mode {
         QueryMode::Literal => {
             command.arg("--fixed-strings");
-            for item in literal_query_terms(&params.query) {
+            for item in literal_query_terms(query) {
                 command.arg("--regexp").arg(item);
             }
         }
         QueryMode::Regex => {
-            command.arg("--regexp").arg(&params.query);
+            command.arg("--regexp").arg(query);
         }
     }
     if unrestricted_paths {
@@ -1037,6 +1262,8 @@ fn build_rg_search_command(
 
 async fn collect_candidates_with_rg(
     root: &Path,
+    query: &str,
+    query_mode: QueryMode,
     params: &SearchParams,
     unrestricted_paths: bool,
     launch_candidates: &[RgLaunchCandidate],
@@ -1057,8 +1284,15 @@ async fn collect_candidates_with_rg(
     let timeout_window = Duration::from_millis(params.timeout_ms);
     let mut launch_errors = Vec::new();
     for launch in launch_candidates {
-        let mut command =
-            build_rg_search_command(&launch.program, &cwd, &target, params, unrestricted_paths);
+        let mut command = build_rg_search_command(
+            &launch.program,
+            &cwd,
+            &target,
+            query,
+            query_mode,
+            params,
+            unrestricted_paths,
+        );
         let output = match timeout(timeout_window, command.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(err)) => {
@@ -1105,6 +1339,100 @@ async fn collect_candidates_with_rg(
         "rg executable not available: {}",
         launch_errors.join("; ")
     ))
+}
+
+async fn execute_search_attempt(
+    root: &Path,
+    params: &SearchParams,
+    attempt: &SearchAttempt,
+    file_filter: Option<&GlobSet>,
+    unrestricted_paths: bool,
+    deadline: Instant,
+    rg_launch_candidates: &[RgLaunchCandidate],
+) -> Result<SearchAttemptResult> {
+    let mut resolved_engine = SearchEngine::Rust;
+    let mut rg_program: Option<String> = None;
+    let mut fallback_reason: Option<String> = None;
+    let mut rg_timeout_hit = false;
+    let mut candidate_limit_hit = false;
+    let mut rg_candidates: Option<Vec<PathBuf>> = None;
+
+    if matches!(params.engine, SearchEngine::Auto | SearchEngine::Rg) {
+        match collect_candidates_with_rg(
+            root,
+            &attempt.query,
+            attempt.query_mode,
+            params,
+            unrestricted_paths,
+            rg_launch_candidates,
+        )
+        .await
+        {
+            Ok(result) => {
+                resolved_engine = SearchEngine::Rg;
+                rg_program = Some(result.rg_program);
+                rg_timeout_hit = result.timeout_hit;
+                candidate_limit_hit = result.candidate_limit_hit;
+                rg_candidates = Some(result.paths);
+            }
+            Err(err) => {
+                if params.engine == SearchEngine::Rg {
+                    return Err(err);
+                }
+                fallback_reason = Some(err.to_string());
+            }
+        }
+    }
+
+    let computation = if resolved_engine == SearchEngine::Rg {
+        let candidates = rg_candidates.unwrap_or_default();
+        let matcher = attempt.matcher.clone();
+        let file_filter = file_filter.cloned();
+        let root_for_task = root.to_path_buf();
+        let params_for_task = params.clone();
+        tokio::task::spawn_blocking(move || {
+            search_content_with_candidates(
+                &root_for_task,
+                candidates,
+                matcher.as_ref(),
+                file_filter.as_ref(),
+                &params_for_task,
+                unrestricted_paths,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??
+    } else {
+        let matcher = attempt.matcher.clone();
+        let file_filter = file_filter.cloned();
+        let root_for_task = root.to_path_buf();
+        let params_for_task = params.clone();
+        tokio::task::spawn_blocking(move || {
+            search_content_walk(
+                &root_for_task,
+                matcher.as_ref(),
+                file_filter.as_ref(),
+                &params_for_task,
+                unrestricted_paths,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??
+    };
+
+    Ok(SearchAttemptResult {
+        hits: computation.hits,
+        scanned_files: computation.scanned_files,
+        timeout_hit: rg_timeout_hit || computation.timeout_hit,
+        file_limit_hit: computation.file_limit_hit,
+        match_limit_hit: computation.match_limit_hit,
+        resolved_engine,
+        rg_program,
+        fallback_reason,
+        candidate_limit_hit,
+    })
 }
 
 fn parse_rg_candidate_output(
@@ -1405,6 +1733,7 @@ fn search_file(
             line: idx + 1,
             content: line.to_string(),
             segments: build_highlight_segments(line, matcher),
+            matched_terms: Vec::new(),
             before: collect_context_lines(&lines, before_start, idx),
             after: collect_context_lines(&lines, idx + 1, after_end),
         });
@@ -1503,6 +1832,192 @@ fn build_highlight_segments(line: &str, matcher: &Regex) -> Vec<HighlightSegment
         });
     }
     segments
+}
+
+fn line_contains_term(line: &str, term: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        return line.contains(term);
+    }
+    line.to_lowercase().contains(&term.to_lowercase())
+}
+
+fn collect_matched_terms_for_line(
+    line: &str,
+    terms: &[String],
+    case_sensitive: bool,
+) -> Vec<String> {
+    if terms.is_empty() {
+        return Vec::new();
+    }
+    let mut output = Vec::new();
+    for term in terms {
+        if line_contains_term(line, term, case_sensitive) {
+            output.push(term.clone());
+        }
+    }
+    output
+}
+
+fn rank_search_hits(
+    mut hits: Vec<SearchHit>,
+    attempt: &SearchAttempt,
+    case_sensitive: bool,
+) -> Vec<SearchHit> {
+    if hits.is_empty() {
+        return hits;
+    }
+    for hit in &mut hits {
+        hit.matched_terms =
+            collect_matched_terms_for_line(&hit.content, &attempt.match_terms, case_sensitive);
+    }
+
+    let mut file_term_coverage: HashMap<String, HashSet<String>> = HashMap::new();
+    for hit in &hits {
+        let entry = file_term_coverage.entry(hit.path.clone()).or_default();
+        for term in &hit.matched_terms {
+            entry.insert(if case_sensitive {
+                term.clone()
+            } else {
+                term.to_lowercase()
+            });
+        }
+    }
+
+    hits.sort_by(|left, right| {
+        let left_file_terms = file_term_coverage
+            .get(&left.path)
+            .map(HashSet::len)
+            .unwrap_or(0);
+        let right_file_terms = file_term_coverage
+            .get(&right.path)
+            .map(HashSet::len)
+            .unwrap_or(0);
+        let left_phrase = attempt
+            .preferred_phrase
+            .as_deref()
+            .map(|phrase| line_contains_term(&left.content, phrase, case_sensitive))
+            .unwrap_or(false);
+        let right_phrase = attempt
+            .preferred_phrase
+            .as_deref()
+            .map(|phrase| line_contains_term(&right.content, phrase, case_sensitive))
+            .unwrap_or(false);
+        right_phrase
+            .cmp(&left_phrase)
+            .then(right_file_terms.cmp(&left_file_terms))
+            .then(right.matched_terms.len().cmp(&left.matched_terms.len()))
+            .then(left.content.len().cmp(&right.content.len()))
+            .then(left.path.cmp(&right.path))
+            .then(left.line.cmp(&right.line))
+    });
+
+    let mut grouped: HashMap<String, VecDeque<SearchHit>> = HashMap::new();
+    let mut order = Vec::new();
+    for hit in hits {
+        let key = hit.path.clone();
+        let queue = grouped.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            VecDeque::new()
+        });
+        queue.push_back(hit);
+    }
+
+    let mut diversified = Vec::new();
+    let mut remaining = true;
+    while remaining {
+        remaining = false;
+        for key in &order {
+            if let Some(queue) = grouped.get_mut(key) {
+                if let Some(hit) = queue.pop_front() {
+                    diversified.push(hit);
+                    remaining = true;
+                }
+            }
+        }
+    }
+    diversified
+}
+
+fn build_search_summary(
+    params: &SearchParams,
+    attempt: &SearchAttempt,
+    attempt_traces: &[SearchAttemptTrace],
+    matched_files: &[String],
+    hits: &[SearchHit],
+    output_budget_hit: bool,
+) -> SearchSummary {
+    let mut matched_terms = Vec::new();
+    let mut seen_terms = HashSet::new();
+    for hit in hits {
+        for term in &hit.matched_terms {
+            let key = if params.case_sensitive {
+                term.clone()
+            } else {
+                term.to_lowercase()
+            };
+            if seen_terms.insert(key) {
+                matched_terms.push(term.clone());
+            }
+        }
+    }
+    let mut top_files = Vec::new();
+    let mut seen_files = HashSet::new();
+    for hit in hits {
+        if seen_files.insert(hit.path.clone()) {
+            top_files.push(hit.path.clone());
+        }
+        if top_files.len() >= 5 {
+            break;
+        }
+    }
+    let next_hint = if hits.is_empty() {
+        let fallback_terms = literal_query_fallback_terms(&params.query);
+        if !fallback_terms.is_empty() {
+            Some(format!(
+                "No exact hit. Also tried term fallback: {}. Narrow path/glob, or switch to pattern/query_mode=regex for structural matching.",
+                fallback_terms.join(" | ")
+            ))
+        } else if params.query_source == QuerySource::Pattern && params.query_mode_inferred {
+            Some(
+                "pattern defaults to regex. If you want fixed-string matching, pass -F or query_mode=literal."
+                    .to_string(),
+            )
+        } else {
+            Some(
+                "No hits. Narrow path/glob, or switch query_mode between literal and regex depending on the query shape."
+                    .to_string(),
+            )
+        }
+    } else if output_budget_hit {
+        Some(
+            "Result was compacted to fit the output budget. Narrow path/glob or raise output_budget_bytes if you need more hits."
+                .to_string(),
+        )
+    } else if matched_files.len() > 5
+        || attempt_traces
+            .iter()
+            .any(|trace| trace.returned_match_count > 20)
+    {
+        Some(
+            "Many matches found. Narrow path/glob, reduce context, or raise max_matches only after scoping the search."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    SearchSummary {
+        query_source: params.query_source.as_str().to_string(),
+        query_mode: attempt.query_mode.as_str().to_string(),
+        query_mode_inferred: params.query_mode_inferred,
+        strategy: attempt.strategy.as_str().to_string(),
+        fallback_applied: attempt.strategy == SearchStrategy::LiteralTermsFallback,
+        returned_match_count: hits.len(),
+        matched_file_count: matched_files.len(),
+        top_files,
+        matched_terms,
+        next_hint,
+    }
 }
 
 fn estimate_hit_bytes(hit: &SearchHit) -> usize {
@@ -1718,7 +2233,6 @@ mod tests {
     fn parse_search_params_accepts_rg_style_aliases() {
         let params = parse_search_params(&json!({
             "pattern": "turn_terminal|event title",
-            "query_mode": "regex",
             "glob": "*.rs,*.md",
             "type": "rust,markdown",
             "-B": 1,
@@ -1729,6 +2243,7 @@ mod tests {
         .expect("params");
         assert_eq!(params.query, "turn_terminal|event title");
         assert_eq!(params.query_mode, QueryMode::Regex);
+        assert!(params.query_mode_inferred);
         assert_eq!(params.file_pattern_items, vec!["*.rs", "*.md", "*.mdx"]);
         assert!(!params.case_sensitive);
         assert_eq!(params.context_before, 1);
@@ -1744,6 +2259,32 @@ mod tests {
         }))
         .expect("params");
         assert_eq!(params.query_mode, QueryMode::Literal);
+        assert!(!params.query_mode_inferred);
+    }
+
+    #[test]
+    fn literal_query_fallback_terms_split_model_style_queries() {
+        let terms = literal_query_fallback_terms("alphaDoc betaRef gammaNode deltaPoint epsilonTag");
+        assert_eq!(
+            terms,
+            vec!["alphaDoc", "betaRef", "gammaNode", "deltaPoint", "epsilonTag"]
+        );
+    }
+
+    #[test]
+    fn build_search_attempts_adds_literal_terms_fallback_for_query() {
+        let params = parse_search_params(&json!({
+            "query": "alphaDoc betaRef gammaNode deltaPoint epsilonTag"
+        }))
+        .expect("params");
+        let attempts = build_search_attempts(&params).expect("attempts");
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].strategy, SearchStrategy::LiteralExact);
+        assert_eq!(attempts[1].strategy, SearchStrategy::LiteralTermsFallback);
+        assert_eq!(
+            attempts[1].match_terms,
+            vec!["alphaDoc", "betaRef", "gammaNode", "deltaPoint", "epsilonTag"]
+        );
     }
 
     #[test]
@@ -1754,6 +2295,7 @@ mod tests {
                 line: 2,
                 content: "beta".to_string(),
                 segments: vec![],
+                matched_terms: vec![],
                 before: vec![],
                 after: vec![],
             },
@@ -1762,6 +2304,7 @@ mod tests {
                 line: 1,
                 content: "alpha".to_string(),
                 segments: vec![],
+                matched_terms: vec![],
                 before: vec![],
                 after: vec![],
             },
@@ -1770,6 +2313,7 @@ mod tests {
                 line: 5,
                 content: "beta two".to_string(),
                 segments: vec![],
+                matched_terms: vec![],
                 before: vec![],
                 after: vec![],
             },
@@ -1784,6 +2328,7 @@ mod tests {
             line: 1,
             content: "alpha".to_string(),
             segments: vec![],
+            matched_terms: vec![],
             before: vec![],
             after: vec![],
         };
@@ -1792,6 +2337,7 @@ mod tests {
             line: 2,
             content: "beta".to_string(),
             segments: vec![],
+            matched_terms: vec![],
             before: vec![],
             after: vec![],
         };
@@ -1800,6 +2346,54 @@ mod tests {
             limit_hits_by_output_budget(vec![hit1, hit2], Some(one_weight + 1));
         assert_eq!(hits.len(), 1);
         assert!(budget_hit);
+    }
+
+    #[test]
+    fn rank_search_hits_prioritizes_broader_term_coverage() {
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralTermsFallback,
+            "alpha|beta|gamma".to_string(),
+            QueryMode::Literal,
+            vec!["alpha".to_string(), "beta".to_string(), "gamma".to_string()],
+            Some("alpha beta gamma".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let ranked = rank_search_hits(
+            vec![
+                SearchHit {
+                    path: "b.md".to_string(),
+                    line: 10,
+                    content: "alpha".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 3,
+                    content: "alpha beta".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+                SearchHit {
+                    path: "a.md".to_string(),
+                    line: 5,
+                    content: "gamma".to_string(),
+                    segments: vec![],
+                    matched_terms: vec![],
+                    before: vec![],
+                    after: vec![],
+                },
+            ],
+            &attempt,
+            false,
+        );
+        assert_eq!(ranked[0].path, "a.md");
+        assert_eq!(ranked[0].content, "alpha beta");
     }
 
     #[test]

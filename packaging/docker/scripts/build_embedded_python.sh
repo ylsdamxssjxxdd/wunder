@@ -30,8 +30,6 @@ SOURCE_FALLBACK_PACKAGES="${SOURCE_FALLBACK_PACKAGES:-odfpy,cinrad,cartopy}"
 REQUIRED_IMPORTS="${REQUIRED_IMPORTS:-matplotlib=matplotlib,cartopy=cartopy,pyproj=pyproj,shapely=shapely,netCDF4=netCDF4,cftime=cftime,h5py=h5py,cinrad=cinrad}"
 REPAIR_MISSING_IMPORTS="${REPAIR_MISSING_IMPORTS:-1}"
 EXTRA_REQUIREMENTS="${EXTRA_REQUIREMENTS:-}"
-INCLUDE_PLAYWRIGHT="${INCLUDE_PLAYWRIGHT:-0}"
-PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${PYTHON_ROOT}/playwright}"
 CARTOPY_DATA_DIR="${CARTOPY_DATA_DIR:-${PYTHON_ROOT}/share/cartopy}"
 CARTOPY_DATA_LEVELS="${CARTOPY_DATA_LEVELS:-110m,50m,10m}"
 CARTOPY_FEATURES="${CARTOPY_FEATURES:-coastline,land,ocean,lakes,rivers_lake_centerlines,admin_0_boundary_lines_land,admin_0_countries}"
@@ -220,10 +218,6 @@ else
 fi
 "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation -r "${REQ_FILE_EFFECTIVE}"
 
-if [ "${INCLUDE_PLAYWRIGHT}" = "1" ]; then
-  EXTRA_REQUIREMENTS="${EXTRA_REQUIREMENTS} playwright"
-fi
-
 if [ -n "${EXTRA_REQUIREMENTS}" ]; then
   "${PYTHON_ROOT}/bin/python3" -m pip download ${EXTRA_REQUIREMENTS} -d "${WHEELHOUSE_DIR}" --only-binary=:all:
   "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation ${EXTRA_REQUIREMENTS}
@@ -353,21 +347,6 @@ if errors:
         print(f"  - {item}", file=sys.stderr)
     sys.exit(1)
 PY
-fi
-
-if [ "${INCLUDE_PLAYWRIGHT}" = "1" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH
-  mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}"
-  for cache_dir in \
-    "${BUILD_ROOT}/playwright-cache/ms-playwright" \
-    "${BUILD_ROOT}/playwright-test/ms-playwright" \
-    "${BUILD_ROOT}/ms-playwright"; do
-    if [ -d "${cache_dir}" ]; then
-      cp -a "${cache_dir}/." "${PLAYWRIGHT_BROWSERS_PATH}/"
-      break
-    fi
-  done
-  "${PYTHON_ROOT}/bin/python3" -m playwright install chromium
 fi
 
 PY_VER=$("${PYTHON_ROOT}/bin/python3" - <<'PY'

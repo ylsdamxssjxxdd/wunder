@@ -4,14 +4,15 @@
 
 - `opt/python`：给智能体、本地脚本与 Python 工具调用使用的内置 Python
 - `opt/git`：给 `git clone`、`git status`、补丁应用与仓库操作使用的内置 Git
+- `opt/rg`：给 `search_content` 与命令行检索使用的内置 ripgrep
 
 补充包设计目标：**直接解压到桌面安装目录即可生效**。
 
 当前约定：
 
-- Win7 `setup.exe` 安装包默认不再内置 Python 与 Git。
-- 如需 Python/Git，请单独分发并解压 `wunder补充包-win7-*.zip` 到安装目录根部。
-- Electron 运行时会自动识别安装目录中的 `opt/python` 与 `opt/git`。
+- Win7 `setup.exe` 安装包默认不再内置 Python、Git 与 ripgrep。
+- 如需 Python/Git/ripgrep，请单独分发并解压 `wunder补充包-win7-*.zip` 到安装目录根部。
+- Electron 运行时会自动识别安装目录中的 `opt/python`、`opt/git` 与 `opt/rg`。
 
 ## 版本选择
 
@@ -57,7 +58,8 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 `
   -Arch ia32 `
   -PythonArchivePath C:\cache\python-3.8.10-embed-win32.zip `
-  -GitArchivePath C:\cache\MinGit-2.46.2-32-bit.zip
+  -GitArchivePath C:\cache\MinGit-2.46.2-32-bit.zip `
+  -RgArchivePath C:\cache\ripgrep-14.1.1-i686-pc-windows-msvc.zip
 ```
 
 ## 默认输出目录
@@ -73,6 +75,7 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
 opt/
   python/
   git/
+  rg/
 README-win7-supplement.txt
 wunder-win7-supplement.json
 ```
@@ -84,20 +87,21 @@ wunder-win7-supplement.json
 3. 解压后确认安装目录下出现：
    - `opt/python`
    - `opt/git`
+   - `opt/rg`
 4. 重新启动桌面端。
 
 Electron Win7 包启动时会自动：
 
 - 把安装目录写入 `WUNDER_DESKTOP_APP_DIR`
-- 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin` 追加到 `PATH` 前部
+- 将 `opt/python`、`opt/python/Scripts`、`opt/git/cmd`、`opt/git/bin`、`opt/rg`、`opt/rg/bin` 追加到 `PATH` 前部
 
-这样桥接层与智能体工具调用就能优先命中内置 Python / Git。
+这样桥接层与智能体工具调用就能优先命中内置 Python / Git / rg。
 
 ## 兼容性提示
 
 - Python 3.8 embeddable package 在 Win7 上建议配合 `KB2533623` 与 Universal CRT 更新使用。
 - 默认 `common` 档位会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
-- `minimal` 档位提供的是 **基础 Python + 基础 Git**，尽量控制体积。
+- `minimal` 档位提供的是 **基础 Python + 基础 Git + ripgrep**，尽量控制体积。
 - 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。
 

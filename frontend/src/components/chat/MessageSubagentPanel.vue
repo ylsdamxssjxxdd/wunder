@@ -25,7 +25,13 @@
               {{ statusText(item.status) }}
             </span>
           </div>
-          <div v-if="item.summary" class="subagent-panel__summary">{{ item.summary }}</div>
+          <div v-if="userPreview(item)" class="subagent-panel__summary">
+            <span class="subagent-panel__role">U:</span>{{ userPreview(item) }}
+          </div>
+          <div v-if="assistantPreview(item)" class="subagent-panel__summary">
+            <span class="subagent-panel__role">A:</span>{{ assistantPreview(item) }}
+          </div>
+          <div v-else-if="item.summary" class="subagent-panel__summary">{{ item.summary }}</div>
           <div class="subagent-panel__detail-line">
             <span v-if="item.run_id">Run {{ item.run_id }}</span>
             <span v-if="item.updated_at">{{ formatTime(item.updated_at) }}</span>
@@ -139,6 +145,28 @@ const formatTime = (value: unknown) => {
   if (Number.isNaN(parsed.getTime())) return text;
   return parsed.toLocaleString();
 };
+
+const resolveItemDetail = (item: SubagentPanelItem): Record<string, unknown> => {
+  const detail = item?.detail;
+  return detail && typeof detail === 'object' ? (detail as Record<string, unknown>) : {};
+};
+
+const pickSubagentText = (item: SubagentPanelItem, ...keys: string[]): string => {
+  const detail = resolveItemDetail(item);
+  for (const key of keys) {
+    const direct = String((item as Record<string, unknown>)[key] || '').trim();
+    if (direct) return direct;
+    const nested = String(detail[key] || '').trim();
+    if (nested) return nested;
+  }
+  return '';
+};
+
+const userPreview = (item: SubagentPanelItem) =>
+  pickSubagentText(item, 'user_message', 'userMessage');
+
+const assistantPreview = (item: SubagentPanelItem) =>
+  pickSubagentText(item, 'assistant_message', 'assistantMessage');
 
 const formatPayload = (value: unknown) => {
   try {
@@ -256,6 +284,13 @@ const terminate = async (item: SubagentPanelItem) => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
+}
+
+.subagent-panel__role {
+  display: inline-block;
+  width: 16px;
+  font-weight: 700;
+  color: var(--chat-text-muted, #8a92a2);
 }
 
 .subagent-panel__detail-line {

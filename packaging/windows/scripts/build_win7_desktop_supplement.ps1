@@ -8,6 +8,7 @@ param(
   [string]$PythonPackageIndexUrl = '',
   [string]$PythonArchivePath = '',
   [string]$GitArchivePath = '',
+  [string]$RgArchivePath = '',
   [switch]$RefreshDownloads,
   [switch]$KeepStage
 )
@@ -243,10 +244,50 @@ function Get-ArchiveEntry {
     }
     return $Config.python.archives.x64
   }
-  if ($Arch -eq 'ia32') {
-    return $Config.git.archives.ia32
+  if ($Section -eq 'git') {
+    if ($Arch -eq 'ia32') {
+      return $Config.git.archives.ia32
+    }
+    return $Config.git.archives.x64
   }
-  return $Config.git.archives.x64
+  if ($Section -eq 'rg') {
+    if ($Arch -eq 'ia32') {
+      return $Config.rg.archives.ia32
+    }
+    return $Config.rg.archives.x64
+  }
+  throw "unsupported archive section: $Section"
+}
+
+function Install-EmbeddedRipgrepRuntime {
+  param(
+    [string]$Archive,
+    [string]$RgRoot
+  )
+
+  $extractRoot = Join-Path $env:TEMP ("wunder-rg-extract-{0}" -f ([System.Guid]::NewGuid().ToString('N')))
+  try {
+    Expand-ZipArchive -Archive $Archive -Destination $extractRoot
+    $rgBinary = Get-ChildItem -Path $extractRoot -Recurse -Filter 'rg.exe' -File | Select-Object -First 1
+    if (-not $rgBinary) {
+      throw "rg.exe not found after extracting $Archive"
+    }
+
+    $rgBinDir = Join-Path $RgRoot 'bin'
+    Ensure-Directory -Path $rgBinDir
+    Copy-Item -Path $rgBinary.FullName -Destination (Join-Path $rgBinDir 'rg.exe') -Force
+
+    $licenseCandidates = @('LICENSE', 'COPYING', 'UNLICENSE')
+    foreach ($licenseName in $licenseCandidates) {
+      $licenseFile = Get-ChildItem -Path $extractRoot -Recurse -Filter $licenseName -File | Select-Object -First 1
+      if ($licenseFile) {
+        Copy-Item -Path $licenseFile.FullName -Destination (Join-Path $RgRoot $licenseName) -Force
+        break
+      }
+    }
+  } finally {
+    Remove-DirectoryIfExists -Path $extractRoot
+  }
 }
 
 function Initialize-EmbeddedPythonLayout {
@@ -434,12 +475,13 @@ function Write-SupplementReadme {
     "Python: $($Config.python.version)",
     "Python profile: $PythonProfile",
     "Git: $($Config.git.flavor) $($Config.git.version)",
+    "Ripgrep: $($Config.rg.flavor) $($Config.rg.version)",
     '',
     'Usage:',
     '1. Close Wunder Desktop.',
     '2. Extract this zip directly into the desktop install directory.',
-    '3. Ensure the install directory now contains opt\python and opt\git.',
-    '4. Start Wunder Desktop again; the Electron runtime will prepend opt\python and opt\git to PATH automatically.',
+    '3. Ensure the install directory now contains opt\python, opt\git, and opt\rg.',
+    '4. Start Wunder Desktop again; the Electron runtime will prepend opt\python, opt\git, and opt\rg to PATH automatically.',
     '',
     'Notes:',
     '- This supplement package is intended for the Win7 Electron desktop build.',
@@ -465,6 +507,7 @@ function Write-SupplementManifest {
     [string]$Arch,
     [string]$PythonUrl,
     [string]$GitUrl,
+    [string]$RgUrl,
     [string]$BuildRoot,
     [psobject]$Config,
     [string]$PythonProfile,
@@ -497,10 +540,17 @@ function Write-SupplementManifest {
       source = $Config.git.source
       url = $GitUrl
     }
+    rg = [ordered]@{
+      version = $Config.rg.version
+      flavor = $Config.rg.flavor
+      source = $Config.rg.source
+      url = $RgUrl
+    }
     install = [ordered]@{
       extractInto = 'desktop install root'
       pythonRoot = 'opt/python'
       gitRoot = 'opt/git'
+      rgRoot = 'opt/rg'
     }
   }
   $json = $payload | ConvertTo-Json -Depth 5
@@ -511,6 +561,7 @@ function Test-StagedRuntime {
   param(
     [string]$PythonRoot,
     [string]$GitRoot,
+    [string]$RgRoot,
     [string]$BuildRoot,
     [string]$PythonProfile,
     [string[]]$ValidateImports,
@@ -540,6 +591,16 @@ function Test-StagedRuntime {
     throw "staged git runtime failed validation"
   }
   Write-Step "validated Git: $gitVersion"
+
+  $rgExe = Join-Path $RgRoot 'bin\rg.exe'
+  if (-not (Test-Path $rgExe)) {
+    throw "staged rg.exe missing under $RgRoot"
+  }
+  $rgVersion = & $rgExe --version 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "staged ripgrep runtime failed validation"
+  }
+  Write-Step "validated ripgrep: $($rgVersion | Select-Object -First 1)"
 
   if ($ValidateImports.Count -gt 0 -or $PlotProbe) {
     $probeModules = $ValidateImports | ConvertTo-Json -Compress
@@ -589,6 +650,7 @@ $distDir = Join-Path $resolvedBuildRoot $config.distDir
 $packageRoot = Join-Path $stageDir 'package-root'
 $pythonRoot = Join-Path $packageRoot $config.layout.pythonRoot
 $gitRoot = Join-Path $packageRoot $config.layout.gitRoot
+$rgRoot = Join-Path $packageRoot $config.layout.rgRoot
 $resolvedPythonRequirementsPath = if ($PythonRequirementsPath) {
   Resolve-RepoRelativePath -Path $PythonRequirementsPath -RepoRoot $repoRoot
 } else {
@@ -604,23 +666,32 @@ Remove-DirectoryIfExists -Path $stageDir
 Ensure-Directory -Path $packageRoot
 Ensure-Directory -Path $pythonRoot
 Ensure-Directory -Path $gitRoot
+Ensure-Directory -Path $rgRoot
 
 $pythonArchive = Get-ArchiveEntry -Config $config -Arch $Arch -Section 'python'
 $gitArchive = Get-ArchiveEntry -Config $config -Arch $Arch -Section 'git'
+$rgArchive = Get-ArchiveEntry -Config $config -Arch $Arch -Section 'rg'
 $cachedPythonArchivePath = Join-Path $downloadsDir $pythonArchive.fileName
 $cachedGitArchivePath = Join-Path $downloadsDir $gitArchive.fileName
+$cachedRgArchivePath = Join-Path $downloadsDir $rgArchive.fileName
 $hasProvidedPythonArchive = -not [string]::IsNullOrWhiteSpace($PythonArchivePath)
 $hasProvidedGitArchive = -not [string]::IsNullOrWhiteSpace($GitArchivePath)
+$hasProvidedRgArchive = -not [string]::IsNullOrWhiteSpace($RgArchivePath)
 $pythonArchivePath = Resolve-ArchiveInput -ProvidedPath $PythonArchivePath -CachedPath $cachedPythonArchivePath
 $gitArchivePath = Resolve-ArchiveInput -ProvidedPath $GitArchivePath -CachedPath $cachedGitArchivePath
+$rgArchivePath = Resolve-ArchiveInput -ProvidedPath $RgArchivePath -CachedPath $cachedRgArchivePath
 $pythonDownloadUrl = if ($pythonArchive.PSObject.Properties['downloadUrl']) { $pythonArchive.downloadUrl } else { $pythonArchive.url }
 $gitDownloadUrl = if ($gitArchive.PSObject.Properties['downloadUrl']) { $gitArchive.downloadUrl } else { $gitArchive.url }
+$rgDownloadUrl = if ($rgArchive.PSObject.Properties['downloadUrl']) { $rgArchive.downloadUrl } else { $rgArchive.url }
 
 if (-not $hasProvidedPythonArchive) {
   Invoke-DownloadIfNeeded -Url $pythonDownloadUrl -Destination $pythonArchivePath -Refresh:$RefreshDownloads -ValidateZip
 }
 if (-not $hasProvidedGitArchive) {
   Invoke-DownloadIfNeeded -Url $gitDownloadUrl -Destination $gitArchivePath -Refresh:$RefreshDownloads -ValidateZip
+}
+if (-not $hasProvidedRgArchive) {
+  Invoke-DownloadIfNeeded -Url $rgDownloadUrl -Destination $rgArchivePath -Refresh:$RefreshDownloads -ValidateZip
 }
 
 Write-Step "extracting Python runtime"
@@ -632,16 +703,18 @@ Install-EmbeddedMatplotlibFonts -PythonRoot $pythonRoot -RepoRoot $repoRoot
 
 Write-Step "extracting Git runtime"
 Expand-ZipArchive -Archive $gitArchivePath -Destination $gitRoot
+Write-Step "extracting ripgrep runtime"
+Install-EmbeddedRipgrepRuntime -Archive $rgArchivePath -RgRoot $rgRoot
 $plotProbeEnabled = $false
 if ($pythonProfileConfig.PSObject.Properties['plotProbe']) {
   $plotProbeEnabled = [bool]$pythonProfileConfig.plotProbe
 }
-Test-StagedRuntime -PythonRoot $pythonRoot -GitRoot $gitRoot -BuildRoot $resolvedBuildRoot -PythonProfile $PythonProfile -ValidateImports @($pythonProfileConfig.validateImports) -PlotProbe:$plotProbeEnabled
+Test-StagedRuntime -PythonRoot $pythonRoot -GitRoot $gitRoot -RgRoot $rgRoot -BuildRoot $resolvedBuildRoot -PythonProfile $PythonProfile -ValidateImports @($pythonProfileConfig.validateImports) -PlotProbe:$plotProbeEnabled
 
 $readmePath = Join-Path $packageRoot 'README-win7-supplement.txt'
 $manifestOutPath = Join-Path $packageRoot 'wunder-win7-supplement.json'
 Write-SupplementReadme -Destination $readmePath -Arch $Arch -Config $config -PythonProfile $PythonProfile -PythonPackages $pythonRequirementsEntries
-Write-SupplementManifest -Destination $manifestOutPath -Arch $Arch -PythonUrl $pythonArchive.url -GitUrl $gitArchive.url -BuildRoot $resolvedBuildRoot -Config $config -PythonProfile $PythonProfile -PythonRequirementsPath $resolvedPythonRequirementsPath -PythonPackages $pythonRequirementsEntries
+Write-SupplementManifest -Destination $manifestOutPath -Arch $Arch -PythonUrl $pythonArchive.url -GitUrl $gitArchive.url -RgUrl $rgArchive.url -BuildRoot $resolvedBuildRoot -Config $config -PythonProfile $PythonProfile -PythonRequirementsPath $resolvedPythonRequirementsPath -PythonPackages $pythonRequirementsEntries
 
 $zipName = if ($PythonProfile -eq 'minimal') {
   "{0}-win7-{1}.zip" -f $config.packageName, $Arch

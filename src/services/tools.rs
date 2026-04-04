@@ -159,6 +159,7 @@ const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
 const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
 const SWARM_TASK_RESULT_MAX_CHARS: usize = 2000;
+const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 
 fn compact_cron_tool_result(value: Value) -> Value {
     let action = value
@@ -3536,6 +3537,21 @@ async fn spawn_session_run(
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))?;
     let user_id = request.user_id.clone();
     let request_config_overrides = request.config_overrides.clone();
+    let mut run_metadata = match run_meta.metadata.clone() {
+        Some(Value::Object(map)) => Value::Object(map),
+        _ => json!({}),
+    };
+    let user_message_preview = truncate_text(
+        request.question.trim(),
+        SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS,
+    );
+    if !user_message_preview.is_empty() {
+        insert_run_metadata_field(
+            &mut run_metadata,
+            "user_message_preview",
+            json!(user_message_preview),
+        );
+    }
     let now = now_ts();
     let record = SessionRunRecord {
         run_id: run_id.clone(),
@@ -3555,7 +3571,7 @@ async fn spawn_session_run(
         result: None,
         error: None,
         updated_time: now,
-        metadata: run_meta.metadata.clone(),
+        metadata: Some(run_metadata),
     };
     {
         let queued_storage = context.storage.clone();
@@ -3569,6 +3585,7 @@ async fn spawn_session_run(
     let workspace = context.workspace.clone();
     let monitor = context.monitor.clone();
     let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
+    let announce_for_start = announce.clone();
     tokio::spawn(async move {
         let started = now_ts();
         let running = SessionRunRecord {
@@ -3591,6 +3608,16 @@ async fn spawn_session_run(
                 );
                 let _ = storage_for_start.upsert_session_run(&running_for_start);
             })
+            .await;
+        }
+        if let Some(config) = announce_for_start.as_ref().filter(|entry| entry.emit_parent_events) {
+            let _ = subagents::emit_child_runtime_update(
+                storage.clone(),
+                monitor.as_ref().map(Arc::clone),
+                &user_id,
+                &config.parent_session_id,
+                &session_id,
+            )
             .await;
         }
 

@@ -25,10 +25,11 @@ PREFER_PREBUILT_PYTHON="${PREFER_PREBUILT_PYTHON:-1}"
 PREBUILT_PYTHON_ROOT="${BUILD_ROOT}/stage/opt/python"
 PREFER_PREBUILT_GIT="${PREFER_PREBUILT_GIT:-1}"
 PREBUILT_GIT_ROOT="${BUILD_ROOT}/stage/opt/git"
-BUNDLE_PLAYWRIGHT_DEPS="${BUNDLE_PLAYWRIGHT_DEPS:-auto}"
-PLAYWRIGHT_INSTALL_DEPS="${PLAYWRIGHT_INSTALL_DEPS:-1}"
+PREFER_PREBUILT_RG="${PREFER_PREBUILT_RG:-1}"
+PREBUILT_RG_ROOT="${BUILD_ROOT}/stage/opt/rg"
 EMBED_PYTHON="${EMBED_PYTHON:-1}"
 EMBED_GIT="${EMBED_GIT:-}"
+EMBED_RG="${EMBED_RG:-}"
 APPIMAGE_SUFFIX="${APPIMAGE_SUFFIX:-}"
 APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
 APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
@@ -40,6 +41,13 @@ if [ -z "${EMBED_GIT}" ]; then
     EMBED_GIT=1
   else
     EMBED_GIT=0
+  fi
+fi
+if [ -z "${EMBED_RG}" ]; then
+  if [ "${EMBED_PYTHON}" = "1" ]; then
+    EMBED_RG=1
+  else
+    EMBED_RG=0
   fi
 fi
 
@@ -137,99 +145,6 @@ extract_appimage() {
     APPIMAGE_EXTRACT_AND_RUN=1 ./app.extract.AppImage --appimage-extract >/dev/null
   fi
   popd >/dev/null
-}
-
-bundle_playwright_deps() {
-  local appdir=$1
-  local pw_dir="${PLAYWRIGHT_SOURCE_DIR:-${appdir}/opt/python/playwright}"
-  local bundle_dir="${appdir}/usr/lib/wunder-playwright"
-
-  if [ ! -d "${pw_dir}" ]; then
-    return 0
-  fi
-  if ! command -v ldd >/dev/null 2>&1; then
-    echo "ldd not found; skipping Playwright dependency bundling." >&2
-    return 0
-  fi
-
-  if [ "${PLAYWRIGHT_INSTALL_DEPS}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
-    echo "Installing Playwright system dependencies (chromium) inside build container..."
-    "${PREBUILT_PYTHON_ROOT}/bin/python3" -m playwright install-deps chromium || true
-  fi
-
-  mkdir -p "${bundle_dir}"
-  local -a queue=()
-  while IFS= read -r -d '' bin; do
-    queue+=("${bin}")
-  done < <(
-    find "${pw_dir}" -type f \( \
-      -name chrome -o -name chrome_sandbox -o -name chrome_crashpad_handler -o \
-      -name headless_shell -o -name ffmpeg-linux \
-    \) -print0
-  )
-
-  if [ "${#queue[@]}" -eq 0 ]; then
-    return 0
-  fi
-
-  declare -A seen
-  declare -A copied
-
-  while [ "${#queue[@]}" -gt 0 ]; do
-    local item="${queue[0]}"
-    queue=("${queue[@]:1}")
-    if [ -z "${item}" ] || [ ! -e "${item}" ]; then
-      continue
-    fi
-    if [[ -n "${seen[${item}]+x}" ]]; then
-      continue
-    fi
-    seen["${item}"]=1
-
-    local ldd_output
-    ldd_output=$(ldd "${item}" 2>/dev/null || true)
-    if [ -z "${ldd_output}" ]; then
-      continue
-    fi
-
-    while IFS= read -r lib; do
-      if [ -z "${lib}" ]; then
-        continue
-      fi
-      case "${lib}" in
-        linux-vdso.so.1) continue ;;
-        /lib/ld-linux*|/lib64/ld-linux*|/usr/lib/ld-linux*|/lib/aarch64-linux-gnu/ld-linux*)
-          continue
-          ;;
-        */libc.so.*|*/libm.so.*|*/librt.so.*|*/libpthread.so.*|*/libdl.so.*)
-          continue
-          ;;
-      esac
-      if [ -e "${lib}" ]; then
-        if [[ -z "${copied[${lib}]+x}" ]]; then
-          cp -a "${lib}" "${bundle_dir}/" || true
-          copied["${lib}"]=1
-        fi
-        if [ -L "${lib}" ]; then
-          local real
-          real=$(readlink -f "${lib}" || true)
-          if [ -n "${real}" ] && [ -e "${real}" ] && [[ -z "${copied[${real}]+x}" ]]; then
-            cp -a "${real}" "${bundle_dir}/" || true
-            copied["${real}"]=1
-          fi
-        fi
-        if [[ -z "${seen[${lib}]+x}" ]]; then
-          queue+=("${lib}")
-        fi
-      fi
-    done < <(
-      printf '%s\n' "${ldd_output}" \
-        | awk '{ if ($1=="linux-vdso.so.1") next; if (NF>=3 && $2=="=>") print $3; else if ($1 ~ /^\\//) print $1; }' \
-        | sort -u
-    )
-  done
-
-  echo "Bundled Playwright runtime libs into ${bundle_dir}."
 }
 
 resolve_appimagetool_arch() {
@@ -377,6 +292,14 @@ if [ "${EMBED_GIT}" = "1" ]; then
       "${ROOT_DIR}/packaging/docker/scripts/build_embedded_git.sh"
   fi
 fi
+if [ "${EMBED_RG}" = "1" ]; then
+  if [ "${PREFER_PREBUILT_RG}" = "1" ] && [ -x "${PREBUILT_RG_ROOT}/bin/rg" ]; then
+    echo "Using prebuilt embedded ripgrep under ${PREBUILT_RG_ROOT}."
+  else
+    BUILD_ROOT="${BUILD_ROOT}" TARGET_DIR="${TARGET_DIR}" ARCH="${ARCH}" \
+      "${ROOT_DIR}/packaging/docker/scripts/build_embedded_rg.sh"
+  fi
+fi
 
 extract_appimage "${APPIMAGE_PATH}" "${APPIMAGE_WORK}"
 
@@ -387,6 +310,10 @@ if [ ! -d "${APPDIR}" ]; then
 fi
 if [ "${EMBED_GIT}" = "1" ] && [ ! -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
   echo "Embedded Git not found under ${PREBUILT_GIT_ROOT}." >&2
+  exit 1
+fi
+if [ "${EMBED_RG}" = "1" ] && [ ! -x "${PREBUILT_RG_ROOT}/bin/rg" ]; then
+  echo "Embedded ripgrep not found under ${PREBUILT_RG_ROOT}." >&2
   exit 1
 fi
 
@@ -402,6 +329,10 @@ fi
 rm -rf "${APPDIR}/opt/git"
 if [ "${EMBED_GIT}" = "1" ]; then
   cp -a "${PREBUILT_GIT_ROOT}" "${APPDIR}/opt/"
+fi
+rm -rf "${APPDIR}/opt/rg"
+if [ "${EMBED_RG}" = "1" ]; then
+  cp -a "${PREBUILT_RG_ROOT}" "${APPDIR}/opt/"
 fi
 if [ "${EMBED_PYTHON}" = "1" ]; then
   if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
@@ -427,7 +358,7 @@ fi
 
 has_extra_payload() {
   local root=$1
-  [ -d "$root/opt/python" ] || [ -d "$root/python" ] || [ -d "$root/opt/git" ] || [ -d "$root/git" ] || [ -d "$root/playwright" ]
+  [ -d "$root/opt/python" ] || [ -d "$root/python" ] || [ -d "$root/opt/git" ] || [ -d "$root/git" ] || [ -d "$root/opt/rg" ] || [ -d "$root/rg" ]
 }
 
 EXTRA_ROOT=""
@@ -467,6 +398,14 @@ elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/git" ]; then
 elif [ -d "$APPDIR/opt/git" ]; then
   GIT_ROOT="$APPDIR/opt/git"
 fi
+RG_ROOT=""
+if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/rg" ]; then
+  RG_ROOT="$EXTRA_ROOT/opt/rg"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/rg" ]; then
+  RG_ROOT="$EXTRA_ROOT/rg"
+elif [ -d "$APPDIR/opt/rg" ]; then
+  RG_ROOT="$APPDIR/opt/rg"
+fi
 PY_VER="3.11"
 if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
   PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
@@ -474,6 +413,9 @@ fi
 PATH_PREFIX=""
 if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
   PATH_PREFIX="$GIT_ROOT/bin"
+fi
+if [ -n "$RG_ROOT" ] && [ -d "$RG_ROOT/bin" ]; then
+  PATH_PREFIX="${PATH_PREFIX:+$PATH_PREFIX:}$RG_ROOT/bin"
 fi
 if [ -n "$PYTHON_ROOT" ]; then
   export PYTHONHOME="$PYTHON_ROOT"
@@ -509,22 +451,8 @@ if [ "${WUNDER_SIDECAR_RUNTIME:-0}" = "1" ] && [ -z "${WUNDER_DISABLE_GPU+x}" ] 
 fi
 
 LD_PREFIX="$APPDIR/usr/lib"
-if [ "${WUNDER_ENABLE_PLAYWRIGHT_LIBS:-0}" = "1" ] && [ -d "$APPDIR/usr/lib/wunder-playwright" ]; then
-  LD_PREFIX="$APPDIR/usr/lib/wunder-playwright:$LD_PREFIX"
-fi
 export LD_LIBRARY_PATH="$LD_PREFIX${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-PLAYWRIGHT_DIR=""
-if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
-  PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
-elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/playwright" ]; then
-  PLAYWRIGHT_DIR="$EXTRA_ROOT/playwright"
-elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
-  PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
-fi
-if [ -n "$PLAYWRIGHT_DIR" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
-fi
 if [ -n "$GIT_ROOT" ]; then
   if [ -d "$GIT_ROOT/libexec/git-core" ]; then
     export GIT_EXEC_PATH="$GIT_ROOT/libexec/git-core"
@@ -535,6 +463,9 @@ if [ -n "$GIT_ROOT" ]; then
   if [ -x "$GIT_ROOT/bin/git" ]; then
     export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
   fi
+fi
+if [ -n "$RG_ROOT" ] && [ -x "$RG_ROOT/bin/rg" ]; then
+  export WUNDER_RG_BIN="$RG_ROOT/bin/rg"
 fi
 
 if [ -x "$APPDIR/AppRun.orig" ]; then
@@ -565,13 +496,6 @@ if [ -z "${APPIMAGE_SUFFIX}" ]; then
   else
     APPIMAGE_SUFFIX="sidecar"
   fi
-fi
-
-if [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "1" ] || \
-   { [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "auto" ] && [ -d "${APPDIR}/opt/python/playwright" ]; }; then
-  bundle_playwright_deps "${APPDIR}"
-elif [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "1" ] && [ "${EMBED_PYTHON}" = "0" ] && [ -d "${PREBUILT_PYTHON_ROOT}/playwright" ]; then
-  PLAYWRIGHT_SOURCE_DIR="${PREBUILT_PYTHON_ROOT}/playwright" bundle_playwright_deps "${APPDIR}"
 fi
 
 APPIMAGETOOL_BIN="${APPIMAGETOOL:-}"
@@ -684,13 +608,18 @@ else
   fi
 fi
 
-if [ "${EMBED_PYTHON}" = "1" ] && [ "${EMBED_GIT}" = "1" ]; then
-  echo "AppImage with embedded Python and Git: ${OUT_PATH}"
-elif [ "${EMBED_PYTHON}" = "1" ]; then
-  echo "AppImage with embedded Python: ${OUT_PATH}"
-elif [ "${EMBED_GIT}" = "1" ]; then
-  echo "AppImage with sidecar Python and embedded Git: ${OUT_PATH}"
-else
-  echo "AppImage with sidecar Python/Git from extra package: ${OUT_PATH}"
+embedded_tools=()
+if [ "${EMBED_PYTHON}" = "1" ]; then
+  embedded_tools+=("Python")
 fi
-
+if [ "${EMBED_GIT}" = "1" ]; then
+  embedded_tools+=("Git")
+fi
+if [ "${EMBED_RG}" = "1" ]; then
+  embedded_tools+=("Ripgrep")
+fi
+if [ "${#embedded_tools[@]}" -gt 0 ]; then
+  echo "AppImage with embedded ${embedded_tools[*]}: ${OUT_PATH}"
+else
+  echo "AppImage with sidecar Python/Git/Ripgrep from extra package: ${OUT_PATH}"
+fi

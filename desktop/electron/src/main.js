@@ -765,6 +765,23 @@ const resolveBundledVenvPythonBin = (appDir) => {
   return candidates.find((candidate) => fs.existsSync(candidate)) || ''
 }
 
+const resolveBundledRgBin = (appDir) => {
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(appDir, 'opt', 'rg', 'rg.exe'),
+        path.join(appDir, 'opt', 'rg', 'bin', 'rg.exe'),
+        path.join(appDir, 'opt', 'ripgrep', 'rg.exe'),
+        path.join(appDir, 'opt', 'ripgrep', 'bin', 'rg.exe')
+      ]
+    : [
+        path.join(appDir, 'opt', 'rg', 'bin', 'rg'),
+        path.join(appDir, 'opt', 'rg', 'rg'),
+        path.join(appDir, 'opt', 'ripgrep', 'bin', 'rg'),
+        path.join(appDir, 'opt', 'ripgrep', 'rg')
+      ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || ''
+}
+
 const collectDetectedPythonBins = (preferred = []) => {
   const output = []
   const seen = new Set()
@@ -959,7 +976,7 @@ const extractZipArchiveWithPowershell = (zipPath, destinationDir) => {
 }
 
 const hasSupplementContent = (rootDir) =>
-  ['opt/python', 'opt/git'].some((relativePath) =>
+  ['opt/python', 'opt/git', 'opt/rg'].some((relativePath) =>
     fs.existsSync(path.join(rootDir, ...relativePath.split('/')))
   )
 
@@ -1068,11 +1085,11 @@ const importSupplementPackage = async () => {
     extractZipArchiveWithPowershell(packagePath, stagingRoot)
     const extractRoot = resolveSupplementExtractRoot(stagingRoot)
     if (!extractRoot) {
-      throw new Error('Supplement package is missing opt/python or opt/git')
+      throw new Error('Supplement package is missing opt/python, opt/git, and opt/rg')
     }
 
     const importedPaths = []
-    for (const relativePath of ['opt/python', 'opt/git']) {
+    for (const relativePath of ['opt/python', 'opt/git', 'opt/rg']) {
       const sourcePath = path.join(extractRoot, ...relativePath.split('/'))
       if (!fs.existsSync(sourcePath)) {
         continue
@@ -1119,13 +1136,21 @@ const registerBundledToolPaths = () => {
   if (bundledPythonBin) {
     process.env.WUNDER_PYTHON_BIN = bundledPythonBin
   }
+  const bundledRgBin = resolveBundledRgBin(appDir)
+  if (bundledRgBin) {
+    process.env.WUNDER_RG_BIN = bundledRgBin
+  }
 
   const candidates = [
     path.join(appDir, 'opt', 'python'),
     path.join(appDir, 'opt', 'python', 'Scripts'),
     path.join(appDir, 'opt', 'python', 'bin'),
     path.join(appDir, 'opt', 'git', 'cmd'),
-    path.join(appDir, 'opt', 'git', 'bin')
+    path.join(appDir, 'opt', 'git', 'bin'),
+    path.join(appDir, 'opt', 'rg'),
+    path.join(appDir, 'opt', 'rg', 'bin'),
+    path.join(appDir, 'opt', 'ripgrep'),
+    path.join(appDir, 'opt', 'ripgrep', 'bin')
   ].filter((candidate) => fs.existsSync(candidate))
 
   if (!candidates.length) {

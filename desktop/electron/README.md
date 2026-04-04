@@ -55,12 +55,12 @@ Ubuntu 20.04 目标建议优先使用：
 - 构建产物：`target/arm64-20`
 - 嵌入式 Python：`target/arm64-20/.build/python`
 
-如果希望一键完成 bridge 编译 + Electron 打包 + 附带 Python + Git 重打包，推荐直接在仓库根目录执行：
+如果希望一键完成 bridge 编译 + Electron 打包 + 附带 Python + Git + ripgrep 重打包，推荐直接在仓库根目录执行：
 ```bash
 bash packaging/docker/scripts/build_arm64_desktop_with_python.sh
 ```
 
-如果需要生成附带 Python + Git 的 Electron AppImage，可在仓库根目录执行：
+如果需要生成附带 Python + Git + ripgrep 的 Electron AppImage，可在仓库根目录执行：
 ```bash
 cp "$(ls -1t target/arm64-20/dist/*.AppImage | grep -v python | head -n 1)" \
   target/arm64-20/dist/wunder-desktop-arm64.AppImage
@@ -72,7 +72,7 @@ OUTPUT_DIR=target/arm64-20/dist \
   bash packaging/docker/scripts/package_appimage_with_python.sh
 ```
 
-该重打包脚本会自动把 `opt/git/bin` 与 `opt/python/bin` 提前到 `PATH`，并在缺失时补齐 `python`/`pip` 软链接到 `python3`/`pip3`。这样 `执行命令` 工具里直接跑 `python`/`git` 都会优先走内置运行时。
+该重打包脚本会自动把 `opt/git/bin`、`opt/rg/bin` 与 `opt/python/bin` 提前到 `PATH`，并在缺失时补齐 `python`/`pip` 软链接到 `python3`/`pip3`。这样 `执行命令` 工具里直接跑 `python`/`git`/`rg` 都会优先走内置运行时。
 
 ## 资源打包机制
 
@@ -124,15 +124,15 @@ npm run build:desktop:win7:gnu:fast
 - GNU 方案的缓存、staging 与安装包统一隔离在 `temp_dir/win7-gnu-lab/`
 - Win7 版本默认优先使用 `build:desktop:win7:gnu`（即 `ia32`）这条链路出包
 - 默认会同时产出 `setup.exe + wunder补充包-win7-ia32-common.zip`
-- Win7 安装包默认不再内置 Python 和 Git；若需要这两项运行时，请使用同目录产出的 `wunder补充包` zip 手工解压到安装目录
+- Win7 安装包默认不再内置 Python、Git、ripgrep；若需要这三项运行时，请使用同目录产出的 `wunder补充包` zip 手工解压到安装目录
 - Win7 `common` 补充包默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖；如需切回官方源，可在脚本层传 `-SupplementPythonPackageIndexUrl https://pypi.org/simple`
 - 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder-desktop-win7-0.1.0-ia32-setup.exe`
 - `common` 补充包路径：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder补充包-win7-ia32-common.zip`
 - 如需显式构建 `x64`，可执行 `npm run build:desktop:win7:gnu:x64`
 
-### Win7 补充包（Python + Git）
+### Win7 补充包（Python + Git + ripgrep）
 
-Win7 默认发布时，安装包与补充包分开交付。补充包用于按需补齐 Python 与 Git。
+Win7 默认发布时，安装包与补充包分开交付。补充包用于按需补齐 Python、Git 与 ripgrep。
 
 如需单独构建补充包，可在仓库根目录执行：
 
@@ -144,7 +144,7 @@ npm run build:desktop:win7:supplement
 - 若只想构建基础运行时，可显式执行 `npm run build:desktop:win7:supplement:minimal`
 - `common` 档位会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达、绘图等 Win7 友好依赖
 - 默认 Python 包索引为 `https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可直接运行脚本并传 `-PythonPackageIndexUrl https://pypi.org/simple`
-- 将补充包解压到 Win7 安装目录根部后，目录下应出现 `opt/python` 与 `opt/git`
+- 将补充包解压到 Win7 安装目录根部后，目录下应出现 `opt/python`、`opt/git` 与 `opt/rg`
 - 详细说明见 `packaging/windows/README.md`
 ## 运行行为说明
 

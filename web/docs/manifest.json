@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-02T13:08:21.870652+00:00",
+  "generated_at": "2026-04-04T03:43:37.312034+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -2452,7 +2452,7 @@
       "language": "zh-CN",
       "title": "文件与工作区工具",
       "summary": "文件与工作区工具是最常用的内置工具，覆盖列出文件、搜索内容、读取文件、写入文件四大核心功能。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-04",
       "read_when": [
         "你需要在工作区中操作文件",
         "你想了解文件工具的正确使用顺序"
@@ -2541,85 +2541,90 @@
         {
           "id": "section-15",
           "level": 4,
-          "text": "按类型过滤并带上下文"
+          "text": "固定字符串模式"
         },
         {
           "id": "section-16",
+          "level": 4,
+          "text": "按类型过滤并带上下文"
+        },
+        {
+          "id": "section-17",
           "level": 2,
           "text": "读取文件"
         },
         {
-          "id": "section-17",
-          "level": 3,
-          "text": "功能说明"
-        },
-        {
           "id": "section-18",
           "level": 3,
-          "text": "参数说明"
+          "text": "功能说明"
         },
         {
           "id": "section-19",
           "level": 3,
-          "text": "使用示例"
+          "text": "参数说明"
         },
         {
           "id": "section-20",
-          "level": 4,
-          "text": "读取整个文件"
+          "level": 3,
+          "text": "使用示例"
         },
         {
           "id": "section-21",
           "level": 4,
-          "text": "读取指定行范围"
+          "text": "读取整个文件"
         },
         {
           "id": "section-22",
           "level": 4,
-          "text": "读取多个不连续范围"
+          "text": "读取指定行范围"
         },
         {
           "id": "section-23",
+          "level": 4,
+          "text": "读取多个不连续范围"
+        },
+        {
+          "id": "section-24",
           "level": 2,
           "text": "写入文件"
         },
         {
-          "id": "section-24",
+          "id": "section-25",
           "level": 3,
           "text": "功能说明"
         },
         {
-          "id": "section-25",
+          "id": "section-26",
           "level": 3,
           "text": "参数说明"
         },
         {
-          "id": "section-26",
+          "id": "section-27",
           "level": 3,
           "text": "使用示例"
         },
         {
-          "id": "section-27",
+          "id": "section-28",
           "level": 4,
           "text": "创建新文件"
         },
         {
-          "id": "section-28",
+          "id": "section-29",
           "level": 4,
           "text": "全量覆盖文件"
         },
         {
-          "id": "section-29",
+          "id": "section-30",
           "level": 2,
           "text": "工具对比"
         },
         {
-          "id": "section-30",
+          "id": "section-31",
           "level": 2,
           "text": "注意事项"
         },
         {
-          "id": "section-31",
+          "id": "section-32",
           "level": 2,
           "text": "延伸阅读"
         }

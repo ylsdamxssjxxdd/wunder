@@ -87,13 +87,13 @@ source_docs:
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `query` | string | ❌ | 搜索关键词；兼容旧写法 |
-| `pattern` | string | ❌ | 推荐的 `rg` 风格别名，等价于 `query` |
+| `query` | string | ❌ | 主查询输入；默认按 `literal` 匹配。若多词精确短语无结果，工具可能自动回退为按词检索 |
+| `pattern` | string | ❌ | 推荐的 `rg` 风格输入；仅传 `pattern` 且未显式设置 `query_mode`/`-F` 时，默认按 `regex` 处理 |
 | `path` | string | ❌ | 搜索路径，默认为工作区根目录 |
 | `file_pattern` | string | ❌ | 文件匹配模式，如 `*.rs` |
 | `glob` | string | ❌ | 推荐的 `rg` 风格别名，等价于 `file_pattern` |
 | `type` | string/array | ❌ | 常见类型快捷过滤，如 `rust`、`rs`、`ts`、`tsx`、`js`、`py`、`md` |
-| `query_mode` | string | ❌ | 搜索模式：`literal`/`regex` |
+| `query_mode` | string | ❌ | 搜索模式：`literal`/`regex`。省略时，`query` 默认按 `literal`，`pattern` 默认按 `regex` |
 | `regex` | boolean | ❌ | `true` 等价于 `query_mode=regex` |
 | `fixed_strings` / `-F` | boolean | ❌ | 强制按字面量匹配，等价于 `query_mode=literal` |
 | `case_sensitive` | boolean | ❌ | 是否区分大小写，默认 false |
@@ -111,6 +111,11 @@ source_docs:
 | `time_budget_ms` | integer | ❌ | 时间预算（毫秒） |
 | `output_budget_bytes` | integer | ❌ | 输出预算（字节） |
 
+补充说明：
+- `query` 适合自然语言或固定短语检索，优先保证精确度；必要时才自动做按词回退。
+- `pattern` 更适合 `rg`/正则心智模型；若需要固定字符串语义，请显式传 `-F` 或 `query_mode=literal`。
+- 返回结果会优先按相关性排序，并在 `summary`/`meta.search` 中提供实际采用的策略、尝试过的查询计划和下一步提示。
+
 ### 使用示例
 
 #### 简单搜索
@@ -125,11 +130,19 @@ source_docs:
 ```json
 {
   "pattern": "turn_terminal|event title|resolve.*title",
-  "query_mode": "regex",
   "path": "src",
   "glob": "*.rs",
   "context": 2,
   "max_count": 50
+}
+```
+
+#### 固定字符串模式
+```json
+{
+  "pattern": "foo.bar",
+  "-F": true,
+  "glob": "*.rs"
 }
 ```
 

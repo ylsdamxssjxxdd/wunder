@@ -52,6 +52,9 @@ struct SubagentRuntimeItem {
     terminal: bool,
     failed: bool,
     summary: Option<String>,
+    user_message: Option<String>,
+    assistant_message: Option<String>,
+    error_message: Option<String>,
     updated_time: f64,
 }
 
@@ -505,6 +508,44 @@ pub async fn handle_child_completion(
     }
 }
 
+pub async fn emit_child_runtime_update(
+    storage: Arc<dyn StorageBackend>,
+    monitor: Option<Arc<MonitorState>>,
+    user_id: &str,
+    parent_session_id: &str,
+    child_session_id: &str,
+) -> Result<()> {
+    let cleaned_user = user_id.trim();
+    let cleaned_parent = parent_session_id.trim();
+    let cleaned_child = child_session_id.trim();
+    if cleaned_user.is_empty() || cleaned_parent.is_empty() || cleaned_child.is_empty() {
+        return Ok(());
+    }
+    let Some(session) = storage.get_chat_session(cleaned_user, cleaned_child)? else {
+        return Ok(());
+    };
+    if session
+        .parent_session_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        != cleaned_parent
+    {
+        return Ok(());
+    }
+    let item = build_runtime_item(storage.as_ref(), monitor.as_deref(), cleaned_user, session)?;
+    let payload = runtime_item_payload(item);
+    let _ = append_parent_stream_event(
+        storage,
+        cleaned_user,
+        cleaned_parent,
+        "subagent_dispatch_item_update",
+        payload,
+    )
+    .await?;
+    Ok(())
+}
+
 async fn append_parent_stream_event(
     storage: Arc<dyn StorageBackend>,
     user_id: &str,
@@ -668,16 +709,28 @@ fn build_runtime_item(
         .as_ref()
         .map(|record| record.updated_time)
         .unwrap_or(session.updated_at);
+    let user_message = run
+        .as_ref()
+        .and_then(|record| record.metadata.as_ref())
+        .and_then(|meta| meta.get("user_message_preview"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS));
+    let assistant_message = run
+        .as_ref()
+        .and_then(|record| record.result.as_deref())
+        .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS));
+    let error_message = run
+        .as_ref()
+        .and_then(|record| record.error.as_deref())
+        .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS));
     let summary = if status == "success" {
-        run.as_ref()
-            .and_then(|record| record.result.as_deref())
-            .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS))
+        assistant_message.clone()
     } else if failed {
-        run.as_ref()
-            .and_then(|record| record.error.as_deref())
-            .map(|text| truncate_text(text, AUTO_WAKE_OBSERVATION_MAX_CHARS))
+        error_message.clone()
     } else {
-        None
+        assistant_message.clone().or_else(|| user_message.clone())
     };
     Ok(SubagentRuntimeItem {
         session,
@@ -686,6 +739,9 @@ fn build_runtime_item(
         terminal,
         failed,
         summary,
+        user_message,
+        assistant_message,
+        error_message,
         updated_time,
     })
 }
@@ -712,6 +768,9 @@ fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
         "terminal": item.terminal,
         "failed": item.failed,
         "summary": item.summary,
+        "user_message": item.user_message,
+        "assistant_message": item.assistant_message,
+        "error_message": item.error_message,
         "updated_time": item.updated_time,
         "queued_time": run.as_ref().map(|record| record.queued_time),
         "started_time": run.as_ref().map(|record| record.started_time),

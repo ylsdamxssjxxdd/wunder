@@ -69,6 +69,10 @@ Set WUNDER_BUILD_FRONTEND=1 to build it automatically."
     echo "Prebuilt embedded Git not found at ${BUILD_ROOT}/stage/opt/git/bin/git."
     echo "Will prepare it automatically during AppImage repack."
   fi
+  if [ ! -x "${BUILD_ROOT}/stage/opt/rg/bin/rg" ]; then
+    echo "Prebuilt embedded ripgrep not found at ${BUILD_ROOT}/stage/opt/rg/bin/rg."
+    echo "Will prepare it automatically during sidecar packaging."
+  fi
 }
 
 start_container() {
@@ -196,7 +200,8 @@ Expected prebuilt runtime under: ${BUILD_ROOT}/stage/opt
 Required files:
   - ${BUILD_ROOT}/stage/opt/python/bin/python3
   - ${BUILD_ROOT}/stage/opt/git/bin/git
-Unpack your sidecar backup so the extracted root contains opt/python and opt/git.
+  - ${BUILD_ROOT}/stage/opt/rg/bin/rg
+Unpack your sidecar backup so the extracted root contains opt/python, opt/git and opt/rg.
 Python rebuild is disabled by default. Set ALLOW_PYTHON_REBUILD=1 or FORCE_PYTHON_SYNC=1 to rebuild explicitly."
 }
 
@@ -209,7 +214,7 @@ EOF
 }
 
 repack_sidecar_appimage() {
-  step "[8/8] Repacking AppImage for sidecar Python/Git runtime (qemu may take 10-30 min)..."
+  step "[8/8] Repacking AppImage for sidecar Python/Git/Ripgrep runtime (qemu may take 10-30 min)..."
   run_in_container <<'EOF'
 set -euo pipefail
 
@@ -223,7 +228,7 @@ elif [ ! -f "${base_appimage}" ]; then
   exit 1
 fi
 
-ARCH=arm64 APPIMAGE_PATH="${base_appimage}" BUILD_ROOT=/app/target/arm64-20/.build/python APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage OUTPUT_DIR="${output_dir}" PREFER_PREBUILT_PYTHON=1 PREFER_PREBUILT_GIT=1 EMBED_PYTHON=0 EMBED_GIT=0 BUNDLE_PLAYWRIGHT_DEPS=0 PLAYWRIGHT_INSTALL_DEPS=0 APPIMAGE_COMP="${APPIMAGE_COMP}"   bash /app/packaging/docker/scripts/package_appimage_with_python.sh
+ARCH=arm64 APPIMAGE_PATH="${base_appimage}" BUILD_ROOT=/app/target/arm64-20/.build/python APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage OUTPUT_DIR="${output_dir}" PREFER_PREBUILT_PYTHON=1 PREFER_PREBUILT_GIT=1 PREFER_PREBUILT_RG=1 EMBED_PYTHON=0 EMBED_GIT=0 EMBED_RG=0 APPIMAGE_COMP="${APPIMAGE_COMP}"   bash /app/packaging/docker/scripts/package_appimage_with_python.sh
 EOF
 }
 
@@ -231,7 +236,7 @@ print_artifacts() {
   step "[done] Artifacts:"
   echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
   echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
-  echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python/Git)"
+  echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python/Git/Ripgrep)"
   sidecar_archive=$(find "${DIST_DIR}" -maxdepth 1 -type f -name '*.tar.gz' | head -n 1 || true)
   if [ -n "${sidecar_archive}" ]; then
     echo "  - ${sidecar_archive} (sidecar extra package)"

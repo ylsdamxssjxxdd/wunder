@@ -202,7 +202,7 @@
   - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
-- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；同时兼容一批更接近 `rg` 心智模型的别名：`pattern -> query`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count` 与 `meta.search`（包含 `requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
+- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并兼容一批更接近 `rg` 心智模型的别名：`pattern`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。默认语义更新为：`query` 省略 `query_mode` 时按 `literal` 处理，`pattern` 省略 `query_mode`/`-F` 时按 `regex` 处理；对 `query` 的多词精确短语在无结果时，工具可能自动回退为按词检索，以更贴近模型的自然查询习惯。
 - `读取文件`（`read_file`）仅用于代码/配置/日志/Markdown 等纯文本文件，不应用于图片、PDF、Office 文档、压缩包或其他二进制文件。该工具支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
 - 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation（管理员会话同样生效）；若仍因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
@@ -210,6 +210,7 @@
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
 - `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
 - 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
+- `搜索内容` 返回保留兼容字段 `matches`，同时提供结构化 `hits`、`matched_files/matched_file_count/returned_match_count`、`summary` 与 `meta.search`。其中 `summary` 会给出实际采用的策略、顶部相关文件、命中词和下一步提示；`meta.search` 额外包含 `query_source`、`query_mode_inferred`、`strategy`、`attempts_tried`、`requested_engine/resolved_engine/rg_program/fallback/elapsed_ms/timeout_hit` 等信息，便于前端与调度层做可观测优化。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。
 - 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，便于前端与模型按错误码做自动恢复。
