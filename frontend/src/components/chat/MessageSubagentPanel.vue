@@ -49,8 +49,10 @@
       v-model="detailVisible"
       title="子智能体详情"
       width="720px"
+      top="clamp(10px, 4vh, 36px)"
       class="subagent-panel__dialog"
       destroy-on-close
+      append-to-body
     >
       <div v-if="activeItem" class="subagent-detail">
         <div class="subagent-detail__top">
@@ -176,7 +178,7 @@ const terminate = async (item: SubagentPanelItem) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 10px;
+  padding: 10px 12px 8px;
   border-bottom: 1px solid rgba(120, 130, 150, 0.12);
 }
 
@@ -188,23 +190,25 @@ const terminate = async (item: SubagentPanelItem) => {
 .subagent-panel__meta {
   display: flex;
   gap: 10px;
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 2px;
+  font-size: 11px;
   color: var(--chat-text-secondary, #6b7280);
 }
 
 .subagent-panel__list {
   display: flex;
   flex-direction: column;
+  max-height: 120px;
+  overflow-y: auto;
 }
 
 .subagent-panel__item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  padding: 12px 14px;
+  padding: 8px 12px;
   border: 0;
   border-top: 1px solid rgba(120, 130, 150, 0.08);
   background: transparent;
@@ -223,53 +227,59 @@ const terminate = async (item: SubagentPanelItem) => {
 .subagent-panel__item-main {
   min-width: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .subagent-panel__item-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .subagent-panel__item-title {
   min-width: 0;
-  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
 }
 
 .subagent-panel__summary {
-  margin-top: 6px;
-  font-size: 12px;
-  line-height: 1.45;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.4;
   color: var(--chat-text-secondary, #6b7280);
   display: -webkit-box;
-  overflow: hidden;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .subagent-panel__detail-line {
   display: flex;
-  gap: 12px;
-  margin-top: 6px;
-  font-size: 11px;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 10px;
   color: var(--chat-text-muted, #8a92a2);
 }
 
 .subagent-panel__item-actions {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .subagent-panel__stop {
-  height: 28px;
-  padding: 0 10px;
+  height: 24px;
+  padding: 0 8px;
   border: 1px solid rgba(210, 70, 70, 0.28);
   border-radius: 999px;
   background: rgba(210, 70, 70, 0.08);
   color: #b42318;
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -280,9 +290,9 @@ const terminate = async (item: SubagentPanelItem) => {
 
 .subagent-panel__status {
   flex: none;
-  padding: 2px 8px;
+  padding: 1px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
 }
 
@@ -299,6 +309,32 @@ const terminate = async (item: SubagentPanelItem) => {
 .subagent-panel__status.is-failed {
   background: rgba(185, 28, 28, 0.12);
   color: #b91c1c;
+}
+</style>
+
+<style>
+/* Dialog styles are global because el-dialog teleports to <body> */
+.subagent-panel__dialog.el-dialog {
+  width: min(720px, calc(100vw - 24px)) !important;
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  margin: 12px auto !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.subagent-panel__dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 14px 18px;
+  overflow: hidden;
+  display: flex;
+}
+
+.subagent-detail {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .subagent-detail__top {
@@ -328,8 +364,34 @@ const terminate = async (item: SubagentPanelItem) => {
   color: #dce7f7;
   font-size: 12px;
   line-height: 1.55;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.subagent-panel__dialog .subagent-panel__status {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.subagent-panel__dialog .subagent-panel__status.is-running {
+  background: rgba(21, 128, 61, 0.12);
+  color: #166534;
+}
+
+.subagent-panel__dialog .subagent-panel__status.is-success {
+  background: rgba(3, 105, 161, 0.12);
+  color: #075985;
+}
+
+.subagent-panel__dialog .subagent-panel__status.is-failed {
+  background: rgba(185, 28, 28, 0.12);
+  color: #b91c1c;
 }
 </style>

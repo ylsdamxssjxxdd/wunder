@@ -41,19 +41,30 @@ const buildTextPreview = (
   if (!normalized) return '';
 
   const chars = Array.from(normalized);
-  const clipped = chars.length > maxChars ? chars.slice(0, maxChars).join('') : normalized;
-  const truncated = chars.length > maxChars;
-  const parts = clipped.split('\n');
-  const visible = parts.slice(0, Math.max(maxLines, 1));
-  const hiddenLines = Math.max(parts.length - visible.length, 0);
-
-  const rows = visible.map((line, index) => (index === 0 ? line : `${indent}${line}`));
-  if (hiddenLines > 0 || truncated) {
-    const extras: string[] = [];
-    if (hiddenLines > 0) extras.push(`${hiddenLines} more lines`);
-    if (truncated) extras.push('truncated');
-    rows.push(`${indent}... (${extras.join(', ')})`);
+  let clipped = normalized;
+  if (chars.length > maxChars) {
+    const headChars = Math.max(1, Math.floor(maxChars * 0.62));
+    const tailChars = Math.max(1, maxChars - headChars);
+    const omittedChars = Math.max(chars.length - headChars - tailChars, 0);
+    clipped = `${chars.slice(0, headChars).join('')}\n... (${omittedChars} chars omitted)\n${chars
+      .slice(chars.length - tailChars)
+      .join('')}`;
   }
+
+  const lines = clipped.split('\n');
+  const keepLines = Math.max(maxLines, 1);
+  let lineText = clipped;
+  if (lines.length > keepLines) {
+    const headLines = Math.max(1, Math.floor(keepLines * 0.62));
+    const tailLines = Math.max(1, keepLines - headLines);
+    const omittedLines = Math.max(lines.length - headLines - tailLines, 0);
+    lineText = [
+      ...lines.slice(0, headLines),
+      `... (${omittedLines} lines omitted)`,
+      ...lines.slice(lines.length - tailLines)
+    ].join('\n');
+  }
+  const rows = lineText.split('\n').map((line, index) => (index === 0 ? line : `${indent}${line}`));
   return rows.join('\n');
 };
 

@@ -7,7 +7,7 @@
       </span>
     </div>
 
-    <pre class="tool-workflow-command-line">{{ view.command }}</pre>
+    <pre v-if="view.command" class="tool-workflow-command-line">{{ view.command }}</pre>
 
     <div v-if="view.streams?.length" class="tool-workflow-command-streams">
       <section

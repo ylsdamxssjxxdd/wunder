@@ -38,6 +38,7 @@ type MergeProtectedRealtimeMessagesResult = {
 };
 
 const MAX_PROTECTED_MESSAGES_PER_SESSION = 24;
+const PROTECTED_EVENT_MATCH_WINDOW_MS = 2500;
 
 const normalizeRole = (value: unknown): 'user' | 'assistant' | null => {
   const normalized = String(value || '').trim().toLowerCase();
@@ -48,6 +49,15 @@ const normalizeRole = (value: unknown): 'user' | 'assistant' | null => {
 };
 
 const normalizeText = (value: unknown): string => String(value || '').trim();
+
+const normalizeComparableText = (value: unknown): string =>
+  normalizeText(value).replace(/\s+/g, ' ');
+
+const resolveMessageTimestampMs = (message: ChatMessage | null | undefined): number | null => {
+  if (!message) return null;
+  const parsed = Date.parse(String(message.created_at ?? ''));
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const isStreamingAssistant = (message: ChatMessage | null | undefined): boolean =>
   Boolean(
@@ -108,6 +118,43 @@ const resolveProtectedInsertIndex = (
   return messages.length;
 };
 
+const resolveMatchingMessage = (
+  messages: ChatMessage[],
+  entry: ProtectedRealtimeMessage,
+  normalizeEventId: (value: unknown) => number | null
+): ChatMessage | null => {
+  const normalizedEntryContent = normalizeComparableText(entry.content);
+  if (!normalizedEntryContent) {
+    return null;
+  }
+  const entryTimestampMs = entry.createdAt ? Date.parse(entry.createdAt) : Number.NaN;
+  const hasEntryTimestamp = Number.isFinite(entryTimestampMs);
+  let matched: ChatMessage | null = null;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate?.role !== entry.role) continue;
+    if (normalizeComparableText(candidate?.content) !== normalizedEntryContent) continue;
+    const candidateEventId = normalizeEventId(candidate?.stream_event_id);
+    if (candidateEventId !== null && candidateEventId !== entry.eventId) continue;
+    if (isStreamingAssistant(candidate)) continue;
+    if (!hasEntryTimestamp) {
+      matched = candidate;
+      break;
+    }
+    const candidateTimestampMs = resolveMessageTimestampMs(candidate);
+    if (!Number.isFinite(candidateTimestampMs)) continue;
+    const delta = Math.abs(Number(candidateTimestampMs) - entryTimestampMs);
+    if (delta > PROTECTED_EVENT_MATCH_WINDOW_MS) continue;
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      matched = candidate;
+      if (delta === 0) break;
+    }
+  }
+  return matched;
+};
+
 // Keep channel-side realtime messages visible until chat history returns the same stream event.
 export const mergeProtectedRealtimeMessages = (
   options: MergeProtectedRealtimeMessagesOptions
@@ -123,12 +170,34 @@ export const mergeProtectedRealtimeMessages = (
     .slice()
     .sort((left, right) => left.eventId - right.eventId || left.trackedAt - right.trackedAt)
     .forEach((entry) => {
-      const existing = messages.find(
+      const existingByEventId = messages.find(
         (message) =>
           message?.role === entry.role &&
           options.normalizeEventId(message?.stream_event_id) === entry.eventId
       );
+      const existing =
+        existingByEventId || resolveMatchingMessage(messages, entry, options.normalizeEventId);
       if (existing) {
+        if (!existingByEventId) {
+          const previousEventId = options.normalizeEventId(existing.stream_event_id);
+          const previousHiddenInternal = existing.hiddenInternal === true;
+          const previousCreatedAt = String(existing.created_at || '').trim();
+          options.assignStreamEventId(existing, entry.eventId);
+          if (!previousCreatedAt && entry.createdAt) {
+            existing.created_at = entry.createdAt;
+          }
+          if (entry.role === 'user' && entry.hiddenInternal === true) {
+            existing.hiddenInternal = true;
+          }
+          const nextEventId = options.normalizeEventId(existing.stream_event_id);
+          if (
+            previousEventId !== nextEventId ||
+            (!previousCreatedAt && entry.createdAt) ||
+            (!previousHiddenInternal && entry.role === 'user' && entry.hiddenInternal === true)
+          ) {
+            mutated = true;
+          }
+        }
         if (existing.realtime_protected === true) {
           retainedEntries.push(entry);
         }

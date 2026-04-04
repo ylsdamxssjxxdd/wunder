@@ -162,6 +162,47 @@ test('watch channel runtime ignores duplicate assistant event ids', () => {
   assert.equal(messages.length, 1);
 });
 
+test('watch channel runtime backfills event ids onto existing user history messages', () => {
+  const messages: Record<string, any>[] = [
+    {
+      role: 'user',
+      content: 'hello',
+      created_at: '2026-04-04T00:14:06.826Z'
+    },
+    {
+      role: 'assistant',
+      content: 'hi',
+      created_at: '2026-04-04T00:14:09.056Z'
+    }
+  ];
+
+  const result = consumeChatWatchChannelMessage({
+    messages,
+    lastEventId: 90,
+    eventId: 91,
+    eventTimestampMs: Date.parse('2026-04-04T00:14:06.826Z'),
+    payload: { role: 'user', content: 'hello' },
+    data: { role: 'user', content: 'hello' },
+    normalizeEventId,
+    buildMessage,
+    assignStreamEventId: (message, eventId) => {
+      message.stream_event_id = eventId;
+    },
+    insertWatchUserMessage: () => {
+      throw new Error('unexpected insert');
+    },
+    clearSupersededPendingAssistantMessages: () => {},
+    dismissStaleInquiryPanels: () => {},
+    touchUpdatedAt: () => {},
+    notifySnapshot: () => {},
+    dedupeAssistantWindowMs: 2000
+  });
+
+  assert.deepEqual(result, { handled: true, lastEventId: 91, mutated: false });
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].stream_event_id, 91);
+});
+
 test('watch channel runtime settles a pending assistant shell when assistant sideband arrives', () => {
   const messages: Record<string, any>[] = [
     { role: 'user', content: 'hello' },

@@ -54,10 +54,6 @@ pub(crate) use freeform::{
     render_prompt_tool_spec,
 };
 pub(crate) use memory_manager_tool::execute_memory_manager_tool;
-pub(crate) use swarm_tool_hint::{
-    build_agent_swarm_tool_hint as build_agent_swarm_tool_hint_for_context,
-    enrich_agent_swarm_tool_spec as enrich_agent_swarm_tool_spec_for_context,
-};
 pub(crate) use thread_control_tool::execute_thread_control_tool;
 
 use crate::a2a_store::A2aTask;
@@ -91,8 +87,8 @@ use crate::services::swarm::beeroom::{
 };
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
-    normalize_hive_id, ChatSessionRecord, SessionRunRecord, StorageBackend, TeamRunRecord,
-    TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord,
+    normalize_hive_id, AgentThreadRecord, ChatSessionRecord, SessionRunRecord, StorageBackend,
+    TeamRunRecord, TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord,
 };
 use crate::user_store::{build_default_agent_record_from_storage, UserStore};
 use crate::user_tools::{UserToolAlias, UserToolKind};
@@ -1144,6 +1140,18 @@ struct SessionSendArgs {
     announce_parent_session_id: Option<String>,
     #[serde(default)]
     label: Option<String>,
+    #[serde(
+        default,
+        rename = "announcePersistHistory",
+        alias = "announce_persist_history"
+    )]
+    announce_persist_history: Option<bool>,
+    #[serde(
+        default,
+        rename = "announceEmitParentEvents",
+        alias = "announce_emit_parent_events"
+    )]
+    announce_emit_parent_events: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1385,8 +1393,6 @@ struct AgentSwarmSendArgs {
     message: String,
     #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
     timeout_seconds: Option<f64>,
-    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
-    create_if_missing: Option<bool>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
@@ -1411,8 +1417,6 @@ struct AgentSwarmBatchTaskArgs {
     message: Option<String>,
     #[serde(default)]
     label: Option<String>,
-    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
-    create_if_missing: Option<bool>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
     include_current: Option<bool>,
 }
@@ -1433,8 +1437,6 @@ struct AgentSwarmBatchSendArgs {
         alias = "poll_interval_seconds"
     )]
     poll_interval_seconds: Option<f64>,
-    #[serde(default, rename = "createIfMissing", alias = "create_if_missing")]
-    create_if_missing: Option<bool>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
     include_current: Option<bool>,
     #[serde(default, rename = "teamRunId", alias = "team_run_id")]
@@ -1533,9 +1535,24 @@ async fn dispatch_swarm_batch_task(
     };
 
     // Swarm tasks are reported via team_* realtime/timeline events.
-    // Avoid injecting child session replies into the parent chat transcript.
+    // Also emit subagent_dispatch_item_update so the frontend sub-agent panel refreshes.
+    // Emit subagent_dispatch_item_update so the frontend sub-agent panel refreshes
+    // without polluting the queen bee's chat transcript.
     let _task_label = task.label.as_deref();
-    let announce = None;
+    let announce = Some(AnnounceConfig {
+        parent_session_id: context.session_id.to_string(),
+        label: task.label.clone(),
+        dispatch_id: None,
+        strategy: None,
+        completion_mode: None,
+        remaining_action: None,
+        parent_turn_ref: None,
+        parent_user_round: None,
+        parent_model_round: None,
+        emit_parent_events: true,
+        auto_wake: false,
+        persist_history_message: false,
+    });
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let _receiver = spawn_session_run(
@@ -1938,7 +1955,14 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     });
     if let Some(timeout_seconds) = payload.timeout_seconds {
         send_args["timeoutSeconds"] = json!(timeout_seconds);
+    } else {
+        // Default: block until the worker bee finishes
+        send_args["timeoutSeconds"] = json!(context.config.tools.swarm.default_timeout_s as f64);
     }
+    // Notify the parent session (queen bee) so the frontend sub-agent panel refreshes
+    send_args["announceParentSessionId"] = json!(context.session_id);
+    send_args["announcePersistHistory"] = json!(false);
+    send_args["announceEmitParentEvents"] = json!(true);
     let mut result = sessions_send(context, &send_args).await?;
     let status = result
         .get("status")
@@ -3104,9 +3128,9 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
             parent_turn_ref: None,
             parent_user_round: None,
             parent_model_round: None,
-            emit_parent_events: false,
+            emit_parent_events: payload.announce_emit_parent_events.unwrap_or(false),
             auto_wake: false,
-            persist_history_message: true,
+            persist_history_message: payload.announce_persist_history.unwrap_or(true),
         });
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
@@ -3245,6 +3269,28 @@ fn prepare_child_session(
         spawned_by: Some("model".to_string()),
     };
     context.storage.upsert_chat_session(&child_record)?;
+    // Bind the child session as the main thread for the child agent so that
+    // messages render on the worker bee's own chat page in the frontend.
+    if let Some(ref child_agent) = child_agent_id {
+        let existing_thread = context.storage.get_agent_thread(user_id, child_agent)?;
+        let thread_record = AgentThreadRecord {
+            thread_id: format!("thread_{child_session_id}"),
+            user_id: user_id.to_string(),
+            agent_id: child_agent.clone(),
+            session_id: child_session_id.clone(),
+            status: existing_thread
+                .as_ref()
+                .map(|r| r.status.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "idle".to_string()),
+            created_at: existing_thread
+                .as_ref()
+                .map(|r| r.created_at)
+                .unwrap_or(now),
+            updated_at: now,
+        };
+        context.storage.upsert_agent_thread(&thread_record)?;
+    }
     let run_metadata = build_prepared_child_run_metadata(
         context,
         cleaned_parent_session_id,

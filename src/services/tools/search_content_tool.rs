@@ -4,7 +4,7 @@ use super::{
     tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
     MAX_SEARCH_MATCHES,
 };
-use crate::core::tool_fs_filter;
+use crate::core::{command_utils::is_not_found_error, tool_fs_filter};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -13,6 +13,7 @@ use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -32,6 +33,21 @@ const MIN_OUTPUT_BUDGET_BYTES: usize = 2 * 1024;
 const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const BINARY_SAMPLE_BYTES: usize = 4096;
 const CONTROL_BYTE_RATIO_THRESHOLD: f64 = 0.12;
+const RG_BINARY_ENV: &str = "WUNDER_RG_BIN";
+const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
+const RG_RELATIVE_DIRS: &[&str] = &[
+    "opt/rg",
+    "opt/rg/bin",
+    "opt/ripgrep",
+    "opt/ripgrep/bin",
+    "resources/opt/rg",
+    "resources/opt/rg/bin",
+    "resources/opt/ripgrep",
+    "resources/opt/ripgrep/bin",
+    "resources/tools",
+    "tools",
+    "bin",
+];
 const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
     "**/.git/**",
     "**/target/**",
@@ -127,6 +143,7 @@ struct SearchHit {
 struct SearchExecutionMeta {
     requested_engine: String,
     resolved_engine: String,
+    rg_program: Option<String>,
     fallback: bool,
     fallback_reason: Option<String>,
     elapsed_ms: u128,
@@ -150,8 +167,15 @@ struct SearchComputation {
 #[derive(Debug, Clone)]
 struct RgCandidateResult {
     paths: Vec<PathBuf>,
+    rg_program: String,
     timeout_hit: bool,
     candidate_limit_hit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RgLaunchCandidate {
+    program: OsString,
+    display: String,
 }
 
 pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -258,16 +282,22 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
 
     let started_at = Instant::now();
     let deadline = started_at + Duration::from_millis(params.timeout_ms);
+    let rg_launch_candidates =
+        resolve_rg_launch_candidates(context.config.tools.search.rg_path.as_deref());
     let mut resolved_engine = SearchEngine::Rust;
+    let mut rg_program: Option<String> = None;
     let mut fallback_reason: Option<String> = None;
     let mut rg_timeout_hit = false;
     let mut candidate_limit_hit = false;
     let mut rg_candidates: Option<Vec<PathBuf>> = None;
 
     if matches!(params.engine, SearchEngine::Auto | SearchEngine::Rg) {
-        match collect_candidates_with_rg(&root, &params, unrestricted_paths).await {
+        match collect_candidates_with_rg(&root, &params, unrestricted_paths, &rg_launch_candidates)
+            .await
+        {
             Ok(result) => {
                 resolved_engine = SearchEngine::Rg;
+                rg_program = Some(result.rg_program);
                 rg_timeout_hit = result.timeout_hit;
                 candidate_limit_hit = result.candidate_limit_hit;
                 rg_candidates = Some(result.paths);
@@ -359,6 +389,7 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let meta = SearchExecutionMeta {
         requested_engine: params.engine.as_str().to_string(),
         resolved_engine: resolved_engine.as_str().to_string(),
+        rg_program,
         fallback,
         fallback_reason,
         elapsed_ms,
@@ -746,7 +777,26 @@ fn expand_type_globs(raw: &str) -> Vec<String> {
 
 fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool) -> Result<Regex> {
     let pattern = match query_mode {
-        QueryMode::Literal => regex::escape(query),
+        QueryMode::Literal => {
+            // 在 literal 模式下，如果查询包含 | 分隔符，我们将其视为 OR 多个关键词
+            if query.contains('|') {
+                let parts: Vec<&str> = query.split('|').collect();
+                let mut escaped_parts = Vec::new();
+                for part in parts {
+                    let trimmed = part.trim();
+                    if !trimmed.is_empty() {
+                        escaped_parts.push(regex::escape(trimmed));
+                    }
+                }
+                if escaped_parts.is_empty() {
+                    regex::escape(query)
+                } else {
+                    escaped_parts.join("|")
+                }
+            } else {
+                regex::escape(query)
+            }
+        }
         QueryMode::Regex => query.to_string(),
     };
     RegexBuilder::new(&pattern)
@@ -778,27 +828,168 @@ fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     Ok(Some(set))
 }
 
-async fn collect_candidates_with_rg(
-    root: &Path,
+fn resolve_rg_launch_candidates(configured_rg_path: Option<&str>) -> Vec<RgLaunchCandidate> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let base_dirs = collect_rg_candidate_base_dirs();
+
+    if let Ok(raw) = std::env::var(RG_BINARY_ENV) {
+        push_rg_candidate_reference(&mut candidates, &mut seen, raw.trim(), &base_dirs);
+    }
+    if let Some(raw) = configured_rg_path {
+        push_rg_candidate_reference(&mut candidates, &mut seen, raw.trim(), &base_dirs);
+    }
+
+    let binary_name = rg_binary_name();
+    for base in &base_dirs {
+        push_rg_candidate_path(&mut candidates, &mut seen, base.join(binary_name));
+        for relative in RG_RELATIVE_DIRS {
+            push_rg_candidate_path(
+                &mut candidates,
+                &mut seen,
+                base.join(relative).join(binary_name),
+            );
+        }
+    }
+
+    push_rg_candidate_program(&mut candidates, &mut seen, "rg");
+    candidates
+}
+
+fn collect_rg_candidate_base_dirs() -> Vec<PathBuf> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(raw) = std::env::var_os(DESKTOP_APP_DIR_ENV) {
+        push_base_dir_with_ancestors(&mut output, &mut seen, PathBuf::from(raw));
+    }
+    if let Some(raw) = std::env::var_os("APPDIR") {
+        push_base_dir_with_ancestors(&mut output, &mut seen, PathBuf::from(raw));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            push_base_dir_with_ancestors(&mut output, &mut seen, parent.to_path_buf());
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        push_base_dir_with_ancestors(&mut output, &mut seen, cwd);
+    }
+    output
+}
+
+fn push_base_dir_with_ancestors(
+    output: &mut Vec<PathBuf>,
+    seen: &mut HashSet<String>,
+    seed: PathBuf,
+) {
+    if !seed.exists() {
+        return;
+    }
+    let mut current = Some(seed);
+    for _ in 0..3 {
+        let Some(path) = current else {
+            break;
+        };
+        if path.is_dir() {
+            let key = normalize_candidate_key(path.to_string_lossy().as_ref());
+            if seen.insert(key) {
+                output.push(path.clone());
+            }
+        }
+        current = path.parent().map(Path::to_path_buf);
+    }
+}
+
+fn push_rg_candidate_reference(
+    candidates: &mut Vec<RgLaunchCandidate>,
+    seen: &mut HashSet<String>,
+    raw: &str,
+    base_dirs: &[PathBuf],
+) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let candidate = PathBuf::from(trimmed);
+    if candidate.components().count() == 1 && !candidate.is_absolute() {
+        push_rg_candidate_program(candidates, seen, trimmed);
+        return;
+    }
+    if candidate.is_absolute() {
+        push_rg_candidate_path(candidates, seen, candidate);
+        return;
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        push_rg_candidate_path(candidates, seen, cwd.join(&candidate));
+    }
+    for base in base_dirs {
+        push_rg_candidate_path(candidates, seen, base.join(&candidate));
+    }
+}
+
+fn push_rg_candidate_path(
+    candidates: &mut Vec<RgLaunchCandidate>,
+    seen: &mut HashSet<String>,
+    path: PathBuf,
+) {
+    if !path.is_file() {
+        return;
+    }
+    let display = path.to_string_lossy().to_string();
+    let key = format!("path:{}", normalize_candidate_key(&display));
+    if !seen.insert(key) {
+        return;
+    }
+    candidates.push(RgLaunchCandidate {
+        program: path.into_os_string(),
+        display,
+    });
+}
+
+fn push_rg_candidate_program(
+    candidates: &mut Vec<RgLaunchCandidate>,
+    seen: &mut HashSet<String>,
+    program: &str,
+) {
+    let trimmed = program.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let key = format!("program:{}", normalize_candidate_key(trimmed));
+    if !seen.insert(key) {
+        return;
+    }
+    candidates.push(RgLaunchCandidate {
+        program: OsString::from(trimmed),
+        display: trimmed.to_string(),
+    });
+}
+
+fn normalize_candidate_key(raw: &str) -> String {
+    if cfg!(windows) {
+        raw.to_ascii_lowercase()
+    } else {
+        raw.to_string()
+    }
+}
+
+fn rg_binary_name() -> &'static str {
+    if cfg!(windows) {
+        "rg.exe"
+    } else {
+        "rg"
+    }
+}
+
+fn build_rg_search_command(
+    program: &OsString,
+    cwd: &Path,
+    target: &Path,
     params: &SearchParams,
     unrestricted_paths: bool,
-) -> Result<RgCandidateResult> {
-    let (cwd, target) = if root.is_dir() {
-        (root.to_path_buf(), PathBuf::from("."))
-    } else {
-        let parent = root
-            .parent()
-            .ok_or_else(|| anyhow!("search path has no parent: {}", root.display()))?;
-        let target = root
-            .file_name()
-            .map(PathBuf::from)
-            .ok_or_else(|| anyhow!("search path has invalid file name: {}", root.display()))?;
-        (parent.to_path_buf(), target)
-    };
-
-    let mut command = Command::new("rg");
+) -> Command {
+    let mut command = Command::new(program);
     command
-        .current_dir(&cwd)
+        .current_dir(cwd)
         .arg("--files-with-matches")
         .arg("--no-messages")
         .arg("--color")
@@ -834,25 +1025,79 @@ async fn collect_candidates_with_rg(
     }
     command.arg("--");
     command.arg(target);
+    command
+}
+
+async fn collect_candidates_with_rg(
+    root: &Path,
+    params: &SearchParams,
+    unrestricted_paths: bool,
+    launch_candidates: &[RgLaunchCandidate],
+) -> Result<RgCandidateResult> {
+    let (cwd, target) = if root.is_dir() {
+        (root.to_path_buf(), PathBuf::from("."))
+    } else {
+        let parent = root
+            .parent()
+            .ok_or_else(|| anyhow!("search path has no parent: {}", root.display()))?;
+        let target = root
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!("search path has invalid file name: {}", root.display()))?;
+        (parent.to_path_buf(), target)
+    };
 
     let timeout_window = Duration::from_millis(params.timeout_ms);
-    let output = timeout(timeout_window, command.output())
-        .await
-        .map_err(|_| anyhow!("rg timed out after {}ms", params.timeout_ms))?
-        .map_err(|err| anyhow!("failed to launch rg: {err}"))?;
+    let mut launch_errors = Vec::new();
+    for launch in launch_candidates {
+        let mut command =
+            build_rg_search_command(&launch.program, &cwd, &target, params, unrestricted_paths);
+        let output = match timeout(timeout_window, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(err)) => {
+                if is_not_found_error(&err) || err.kind() == std::io::ErrorKind::PermissionDenied {
+                    launch_errors.push(format!("{} ({err})", launch.display));
+                    continue;
+                }
+                return Err(anyhow!("failed to launch rg via {}: {err}", launch.display));
+            }
+            Err(_) => return Err(anyhow!("rg timed out after {}ms", params.timeout_ms)),
+        };
 
-    match output.status.code() {
-        Some(0) => parse_rg_candidate_output(&output.stdout, &cwd, params.max_candidates),
-        Some(1) => Ok(RgCandidateResult {
-            paths: Vec::new(),
-            timeout_hit: false,
-            candidate_limit_hit: false,
-        }),
-        _ => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            Err(anyhow!("rg search failed: {stderr}"))
+        match output.status.code() {
+            Some(0) => {
+                let mut result =
+                    parse_rg_candidate_output(&output.stdout, &cwd, params.max_candidates)?;
+                result.rg_program = launch.display.clone();
+                return Ok(result);
+            }
+            Some(1) => {
+                return Ok(RgCandidateResult {
+                    paths: Vec::new(),
+                    rg_program: launch.display.clone(),
+                    timeout_hit: false,
+                    candidate_limit_hit: false,
+                });
+            }
+            _ => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let detail = if stderr.is_empty() {
+                    "unknown rg runtime error".to_string()
+                } else {
+                    stderr
+                };
+                launch_errors.push(format!("{} ({detail})", launch.display));
+            }
         }
     }
+
+    if launch_errors.is_empty() {
+        return Err(anyhow!("rg executable not available"));
+    }
+    Err(anyhow!(
+        "rg executable not available: {}",
+        launch_errors.join("; ")
+    ))
 }
 
 fn parse_rg_candidate_output(
@@ -895,6 +1140,7 @@ fn parse_rg_candidate_output(
 
     Ok(RgCandidateResult {
         paths,
+        rg_program: String::new(),
         timeout_hit: false,
         candidate_limit_hit,
     })
@@ -1527,5 +1773,40 @@ mod tests {
             limit_hits_by_output_budget(vec![hit1, hit2], Some(one_weight + 1));
         assert_eq!(hits.len(), 1);
         assert!(budget_hit);
+    }
+
+    #[test]
+    fn push_rg_candidate_reference_resolves_relative_path_from_base_dirs() {
+        let dir = tempdir().expect("tempdir");
+        let relative = Path::new("opt/rg").join(rg_binary_name());
+        let target = dir.path().join(&relative);
+        std::fs::create_dir_all(
+            target
+                .parent()
+                .expect("relative target should have parent directory"),
+        )
+        .expect("create dir");
+        File::create(&target).expect("create rg binary");
+
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_rg_candidate_reference(
+            &mut candidates,
+            &mut seen,
+            &relative.to_string_lossy(),
+            &[dir.path().to_path_buf()],
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(PathBuf::from(&candidates[0].display), target);
+    }
+
+    #[test]
+    fn push_rg_candidate_reference_treats_single_token_as_program() {
+        let mut candidates = Vec::new();
+        let mut seen = HashSet::new();
+        push_rg_candidate_reference(&mut candidates, &mut seen, "rg-custom", &[]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].display, "rg-custom");
     }
 }

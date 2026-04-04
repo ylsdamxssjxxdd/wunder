@@ -4,6 +4,7 @@
     class="system-prompt-dialog"
     :title="t('chat.systemPrompt.title')"
     width="720px"
+    top="clamp(10px, 4vh, 36px)"
     append-to-body
     @update:model-value="handleVisibleChange"
   >
@@ -132,8 +133,12 @@ const handleVisibleChange = (nextVisible: boolean) => {
   border-radius: 14px;
   background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
   padding: 14px;
-  max-height: 72vh;
-  overflow: auto;
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .system-prompt-full-panel--frozen {
@@ -151,7 +156,9 @@ const handleVisibleChange = (nextVisible: boolean) => {
 
 .system-prompt-content {
   margin: 0;
-  max-height: 46vh;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
 }
 
@@ -193,7 +200,9 @@ const handleVisibleChange = (nextVisible: boolean) => {
 
 .system-prompt-tooling-content {
   margin: 0;
-  max-height: 46vh;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   white-space: normal;
 }

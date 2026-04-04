@@ -3,7 +3,7 @@
     :model-value="visible"
     :title="t('workspace.preview.dialogTitle')"
     :width="dialogWidth"
-    top="4vh"
+    top="clamp(10px, 4vh, 36px)"
     class="workspace-dialog messenger-image-preview-dialog"
     append-to-body
     @update:model-value="handleDialogVisibleChange"
@@ -96,15 +96,15 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 
 .messenger-image-preview-body {
   min-height: 0;
-  height: clamp(260px, 62vh, 760px);
-  max-height: calc(92vh - 180px);
+  height: clamp(280px, 70vh, 820px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 180px);
   overflow: hidden;
 }
 
 :deep(.messenger-image-preview-dialog.el-dialog) {
   max-width: min(92vw, 980px);
-  max-height: 92vh;
-  margin-bottom: 0;
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  margin: 12px auto !important;
   display: flex;
   flex-direction: column;
 }
@@ -131,8 +131,8 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 
 @media (max-width: 960px) {
   .messenger-image-preview-body {
-    height: clamp(220px, 58vh, 700px);
-    max-height: calc(94vh - 170px);
+    height: clamp(220px, 64vh, 700px);
+    max-height: calc(var(--app-viewport-height, 100vh) - 160px);
   }
 }
 </style>

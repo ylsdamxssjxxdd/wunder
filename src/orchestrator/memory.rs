@@ -171,9 +171,6 @@ impl Orchestrator {
         force: bool,
         exclude_current_user: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
-        if is_admin && !force {
-            return Ok(messages);
-        }
         let request_overhead_tokens = request_overhead_tokens.max(0);
         let persisted_context_tokens = persisted_context_tokens.max(0);
         let context_tokens = estimate_messages_tokens(&messages);

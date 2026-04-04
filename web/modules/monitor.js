@@ -703,6 +703,20 @@ const resolveSessionContextTokens = (session) => {
   return Number.isFinite(legacy) ? legacy : null;
 };
 
+// Cumulative consumed tokens for billing/cost tracking
+const resolveSessionConsumedTokens = (session) => {
+  const consumed = parseMetricNumber(session?.consumed_tokens);
+  if (Number.isFinite(consumed) && consumed > 0) {
+    return consumed;
+  }
+  // Fallback: estimate from context tokens peak (legacy sessions)
+  const peak = parseMetricNumber(session?.context_tokens_peak);
+  if (Number.isFinite(peak)) {
+    return peak;
+  }
+  return parseMetricNumber(session?.context_tokens) || null;
+};
+
 const buildSpeedMeta = (tokens, duration, options = {}) => {
   if (!Number.isFinite(tokens) || !Number.isFinite(duration)) {
     return options.cached ? t("monitor.detail.speedCached") : "";
@@ -734,7 +748,7 @@ const recordTokenDeltas = (sessions) => {
     if (!sessionId) {
       return;
     }
-    const current = resolveSessionContextTokens(session) || 0;
+    const current = resolveSessionConsumedTokens(session) || 0;
     const previous = Number(usageMap[sessionId]) || 0;
     const delta = current - previous;
     if (delta > 0) {
@@ -1377,7 +1391,7 @@ const renderUserDashboardMetrics = (summary, hasData) => {
   elements.metricUserRecords.textContent = `${summary.chat_records}`;
   elements.metricUserTools.textContent = `${summary.tool_calls}`;
   elements.metricUserActive.textContent = `${summary.active_sessions}`;
-  elements.metricUserTokens.textContent = formatTokenCount(summary.context_tokens);
+  elements.metricUserTokens.textContent = formatTokenCount(summary.consumed_tokens || summary.context_tokens);
 };
 
 const shouldRefreshUserDashboard = (options = {}) => {
@@ -1425,9 +1439,9 @@ const refreshUserDashboardSummary = async (options = {}) => {
   return null;
 };
 
-// 璁＄畻鎵€鏈変細璇濈疮璁?token 数量
+// 计算所有会话累计 consumed token 数量
 const resolveTotalTokens = (sessions) =>
-  (sessions || []).reduce((sum, session) => sum + (resolveSessionContextTokens(session) || 0), 0);
+  (sessions || []).reduce((sum, session) => sum + (resolveSessionConsumedTokens(session) || 0), 0);
 
 const parseMonitorTimestamp = (value) => {
   const parsed = Date.parse(value);
@@ -1635,18 +1649,11 @@ const buildMonitorDetailMeta = (session, events) => {
       t("monitor.session.quota", { count: formatHeatmapCount(quotaConsumed) })
     );
   }
-  const contextTokens = resolveSessionContextTokens(session);
-  if (Number.isFinite(contextTokens) && contextTokens > 0) {
-    const tokenText = formatTokenCount(contextTokens);
+  const consumedTokens = resolveSessionConsumedTokens(session);
+  if (Number.isFinite(consumedTokens) && consumedTokens > 0) {
+    const tokenText = formatTokenCount(consumedTokens);
     if (tokenText && tokenText !== "-") {
-      metaParts.push(t("monitor.session.contextTokens", { token: tokenText }));
-    }
-  }
-  const billingUsage = resolveMonitorDetailBillingUsage(session, events);
-  if (billingUsage?.total > 0) {
-    const tokenText = formatTokenCount(billingUsage.total);
-    if (tokenText && tokenText !== "-") {
-      metaParts.push(t("monitor.session.billingTokens", { token: tokenText }));
+      metaParts.push(t("monitor.session.consumedTokens", { token: tokenText }));
     }
   }
   const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
@@ -2211,7 +2218,7 @@ const renderMonitorTable = (body, emptyNode, sessions, options = {}) => {
     const feedbackCell = document.createElement("td");
     feedbackCell.textContent = buildSessionFeedbackSummary(session);
     const tokenCell = document.createElement("td");
-    tokenCell.textContent = formatTokenCount(resolveSessionContextTokens(session));
+    tokenCell.textContent = formatTokenCount(resolveSessionConsumedTokens(session));
     const elapsedCell = document.createElement("td");
     elapsedCell.textContent = formatDuration(session.elapsed_s);
     const stageCell = document.createElement("td");
@@ -2375,9 +2382,9 @@ const renderMonitorStatusList = (sessions) => {
     meta.textContent = metaParts.join(" · ");
 
     const detailParts = [];
-    const tokenText = formatTokenCount(resolveSessionContextTokens(session));
+    const tokenText = formatTokenCount(resolveSessionConsumedTokens(session));
     if (tokenText && tokenText !== "-") {
-      detailParts.push(t("monitor.session.contextTokens", { token: tokenText }));
+      detailParts.push(t("monitor.session.consumedTokens", { token: tokenText }));
     }
     const elapsedText = formatDuration(session?.elapsed_s);
     if (elapsedText && elapsedText !== "-") {

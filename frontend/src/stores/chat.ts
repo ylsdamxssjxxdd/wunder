@@ -51,6 +51,11 @@ import {
 import { consumeChatWatchChannelMessage } from './chatWatchChannelMessageRuntime';
 import { shouldWatchdogReconcileDrift } from './chatWatchdogRecovery';
 import {
+  normalizeStreamLifecyclePhase,
+  shouldApplyForegroundDetailHydration,
+  shouldRestartWatchAfterInteractiveStream
+} from './chatWatchLifecycle';
+import {
   isCompactionMarkerAssistantMessage,
   mergeCompactionMarkersIntoMessages
 } from './chatCompactionMarker';
@@ -3358,6 +3363,7 @@ const ensureRuntime = (sessionId) => {
       watchReconcileAt: 0,
       slowClientResumeTimer: null,
       slowClientResumeAfterEventId: 0,
+      streamLifecycle: 'idle',
       stopRequested: false,
       lastEventId: 0,
       remoteLastEventId: 0,
@@ -3378,6 +3384,27 @@ const getRuntime = (sessionId) => {
   if (!key) return null;
   return sessionRuntime.get(key) || null;
 };
+
+const refreshRuntimeStreamLifecycle = (runtime) => {
+  if (!runtime) return 'idle';
+  if (runtime.sendController) {
+    runtime.streamLifecycle = 'sending';
+    return runtime.streamLifecycle;
+  }
+  if (runtime.resumeController) {
+    runtime.streamLifecycle = 'resuming';
+    return runtime.streamLifecycle;
+  }
+  if (runtime.watchController) {
+    runtime.streamLifecycle = 'watching';
+    return runtime.streamLifecycle;
+  }
+  runtime.streamLifecycle = 'idle';
+  return runtime.streamLifecycle;
+};
+
+const getRuntimeStreamLifecycle = (runtime) =>
+  normalizeStreamLifecyclePhase(runtime?.streamLifecycle);
 
 function resolveRuntimeSessionId(sessionId, payload) {
   const direct = resolveSessionKey(sessionId ?? payload?.session_id ?? payload?.sessionId);
@@ -3715,6 +3742,7 @@ const abortWatchStream = (sessionId) => {
   }
   runtime.watchRequestId = null;
   clearWatchdog(runtime);
+  refreshRuntimeStreamLifecycle(runtime);
 };
 
 const clearSessionWatcher = () => {
@@ -4006,9 +4034,11 @@ const startSessionWatcher = (store, sessionId) => {
   if (runtime.resumeController?.signal?.aborted) {
     runtime.resumeController = null;
   }
+  refreshRuntimeStreamLifecycle(runtime);
   if (runtime.sendController || runtime.resumeController) return;
   const perfEnabled = chatPerf.enabled();
   runtime.watchController = new AbortController();
+  refreshRuntimeStreamLifecycle(runtime);
   const controller = runtime.watchController;
   runtime.watchLastEventAt = Date.now();
   runtime.watchReconcileAt = 0;
@@ -4455,6 +4485,7 @@ const startSessionWatcher = (store, sessionId) => {
     if (runtime.resumeController?.signal?.aborted) {
       runtime.resumeController = null;
     }
+    refreshRuntimeStreamLifecycle(runtime);
     markWatchdogEvent();
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
@@ -4732,6 +4763,7 @@ const startSessionWatcher = (store, sessionId) => {
         runtimeSnapshot.watchController = null;
         runtimeSnapshot.watchRequestId = null;
         clearWatchdog(runtimeSnapshot);
+        refreshRuntimeStreamLifecycle(runtimeSnapshot);
         if (sessionWatchSessionId === key) {
           sessionWatchSessionId = '';
         }
@@ -4788,6 +4820,7 @@ const abortResumeStream = (sessionId) => {
     runtime.resumeController = null;
   }
   runtime.resumeRequestId = null;
+  refreshRuntimeStreamLifecycle(runtime);
 };
 
 const abortSendStream = (sessionId) => {
@@ -4799,6 +4832,7 @@ const abortSendStream = (sessionId) => {
     runtime.sendController = null;
   }
   runtime.sendRequestId = null;
+  refreshRuntimeStreamLifecycle(runtime);
 };
 
 const abortCompactRequest = (sessionId) => {
@@ -6464,6 +6498,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           || normalizedStage === 'context_overflow_recovery'
           || normalizedStage === 'context_guard'
         ) {
+          if (finalizeWithNow) {
+            assistantMessage.workflowStreaming = true;
+            assistantMessage.stream_incomplete = true;
+          }
           // Ignore delayed compaction progress events after terminal state to avoid re-opening "running" UI.
           if (compactionTerminalStatusHint) {
             break;
@@ -8159,10 +8197,25 @@ export const useChatStore = defineStore('chat', {
       }
       clearSupersededPendingAssistantMessages(nextMessages);
       applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
-      if (preserveWatcher) {
+      const activeSessionKey = resolveSessionKey(this.activeSessionId);
+      const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
+        preserveWatcher,
+        lifecycle: getRuntimeStreamLifecycle(runtime),
+        hasWatchController: Boolean(runtime?.watchController),
+        hasSendController: Boolean(runtime?.sendController),
+        hasResumeController: Boolean(runtime?.resumeController)
+      });
+      if (preserveWatcher && !hydrateForegroundMessages) {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
-          (resolveSessionKey(this.activeSessionId) === targetSessionId ? this.messages : null);
+          (activeSessionKey === targetSessionId ? this.messages : null);
+        if (Array.isArray(watchedMessages)) {
+          nextMessages = watchedMessages;
+        }
+      } else if (preserveWatcher) {
+        const watchedMessages =
+          getSessionMessages(targetSessionId) ||
+          (activeSessionKey === targetSessionId ? this.messages : null);
         nextMessages = replaceMessageArrayKeepingReference(watchedMessages, nextMessages);
       }
       cacheSessionMessages(targetSessionId, nextMessages);
@@ -8170,35 +8223,39 @@ export const useChatStore = defineStore('chat', {
       writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
       markSessionDetailWarm(targetSessionId);
       // Ignore stale async response: keep current foreground conversation state untouched.
-      if (resolveSessionKey(this.activeSessionId) !== targetSessionId) {
+      if (activeSessionKey !== targetSessionId) {
         return sessionDetail;
       }
       this.draftAgentId = resolvedAgentIdText;
       persistActiveSession(targetSessionId, resolvedAgentIdText);
       this.draftToolOverrides = null;
-      this.messages = nextMessages;
+      if (this.messages !== nextMessages) {
+        this.messages = nextMessages;
+      }
       applyMessageWindow(this, targetSessionId, this.messages);
       syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
-      const pendingMessage = findPendingAssistantMessage(this.messages);
-      if (pendingMessage && remoteRunning) {
-        const resumeAfterEventId =
-          normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
-        if (
-          resumeAfterEventId !== null &&
-          resumeAfterEventId > 0 &&
-          normalizeStreamEventId(pendingMessage.stream_event_id) === null
-        ) {
-          pendingMessage.stream_event_id = resumeAfterEventId;
+      if (hydrateForegroundMessages) {
+        const pendingMessage = findPendingAssistantMessage(this.messages);
+        if (pendingMessage && remoteRunning) {
+          const resumeAfterEventId =
+            normalizeStreamEventId(pendingMessage.stream_event_id) ?? remoteLastEventId;
+          if (
+            resumeAfterEventId !== null &&
+            resumeAfterEventId > 0 &&
+            normalizeStreamEventId(pendingMessage.stream_event_id) === null
+          ) {
+            pendingMessage.stream_event_id = resumeAfterEventId;
+          }
+          this.resumeStream(
+            targetSessionId,
+            pendingMessage,
+            resumeAfterEventId !== null && resumeAfterEventId > 0
+              ? { afterEventId: resumeAfterEventId }
+              : {}
+          );
+        } else if (!remoteRunning) {
+          setSessionLoading(this, targetSessionId, false);
         }
-        this.resumeStream(
-          targetSessionId,
-          pendingMessage,
-          resumeAfterEventId !== null && resumeAfterEventId > 0
-            ? { afterEventId: resumeAfterEventId }
-            : {}
-        );
-      } else if (!remoteRunning) {
-        setSessionLoading(this, targetSessionId, false);
       }
       this.scheduleSnapshot(true);
       if (!preserveWatcher) {
@@ -8729,6 +8786,7 @@ export const useChatStore = defineStore('chat', {
         if (runtime) {
           clearSlowClientResume(runtime);
           runtime.sendController = new AbortController();
+          refreshRuntimeStreamLifecycle(runtime);
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
         const approvalMode = normalizeApprovalMode(options.approvalMode ?? options.approval_mode);
@@ -8948,6 +9006,7 @@ export const useChatStore = defineStore('chat', {
           runtime.sendController = null;
           runtime.stopRequested = false;
           runtime.sendRequestId = null;
+          refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
             clearSlowClientResume(runtime);
           }
@@ -8970,8 +9029,14 @@ export const useChatStore = defineStore('chat', {
             queued
           });
         }
-        if (this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
-          if (slowClientResumeAfterEventId > 0) {
+        if (
+          shouldRestartWatchAfterInteractiveStream({
+            activeSessionId: this.activeSessionId,
+            targetSessionId: sessionId,
+            pageUnloading
+          })
+        ) {
+          if (keepStreaming && slowClientResumeAfterEventId > 0) {
             scheduleSlowClientResume(this, sessionId, assistantMessage, slowClientResumeAfterEventId);
           }
           startSessionWatcher(this, sessionId);
@@ -9061,6 +9126,7 @@ export const useChatStore = defineStore('chat', {
       if (runtime) {
         clearSlowClientResume(runtime);
         runtime.resumeController = new AbortController();
+        refreshRuntimeStreamLifecycle(runtime);
       }
       let aborted = false;
       let finalSeen = false;
@@ -9288,6 +9354,7 @@ export const useChatStore = defineStore('chat', {
         if (runtime) {
           runtime.resumeController = null;
           runtime.resumeRequestId = null;
+          refreshRuntimeStreamLifecycle(runtime);
           if (!keepStreaming) {
             clearSlowClientResume(runtime);
           }
@@ -9304,8 +9371,14 @@ export const useChatStore = defineStore('chat', {
             aborted
           });
         }
-        if (!aborted && this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
-          if (slowClientResumeAfterEventId > 0) {
+        if (
+          shouldRestartWatchAfterInteractiveStream({
+            activeSessionId: this.activeSessionId,
+            targetSessionId: sessionId,
+            pageUnloading
+          })
+        ) {
+          if (keepStreaming && slowClientResumeAfterEventId > 0) {
             scheduleSlowClientResume(this, sessionId, message, slowClientResumeAfterEventId);
           }
           startSessionWatcher(this, sessionId);

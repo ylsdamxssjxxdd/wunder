@@ -51,7 +51,12 @@ const truncateText = (value: string, maxChars = SNIPPET_MAX_CHARS): string => {
   if (!normalized) return '';
   const chars = Array.from(normalized);
   if (chars.length <= maxChars) return normalized;
-  return `${chars.slice(0, maxChars).join('')}\n...`;
+  const headChars = Math.max(1, Math.floor(maxChars * 0.62));
+  const tailChars = Math.max(1, maxChars - headChars);
+  const omittedChars = Math.max(chars.length - headChars - tailChars, 0);
+  return `${chars.slice(0, headChars).join('')}\n... (${omittedChars} chars omitted)\n${chars
+    .slice(chars.length - tailChars)
+    .join('')}`;
 };
 
 const normalizeToolName = (toolName: string): string => String(toolName || '').trim().toLowerCase();

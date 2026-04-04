@@ -371,6 +371,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub swarm: AgentSwarmConfig,
     #[serde(default)]
+    pub search: SearchToolConfig,
+    #[serde(default)]
     pub web: WebToolsConfig,
     #[serde(default)]
     pub browser: BrowserToolConfig,
@@ -530,6 +532,12 @@ impl Default for CronConfig {
 pub struct BuiltinToolsConfig {
     #[serde(default)]
     pub enabled: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchToolConfig {
+    #[serde(default)]
+    pub rg_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

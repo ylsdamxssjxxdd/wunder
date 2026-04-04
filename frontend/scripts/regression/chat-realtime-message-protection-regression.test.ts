@@ -123,3 +123,43 @@ test('protected entries keep local copies that are already marked as realtime pr
   assert.equal(result.mutated, false);
   assert.equal(result.retainedEntries.length, 1);
 });
+
+test('protected entries backfill history messages without stream event ids', () => {
+  const entries = upsertProtectedRealtimeMessage(
+    [],
+    {
+      eventId: 52,
+      role: 'user',
+      content: 'from channel',
+      createdAt: '2026-04-04T00:14:15.183Z'
+    },
+    normalizeEventId
+  );
+  const messages: Record<string, any>[] = [
+    {
+      role: 'user',
+      content: 'from channel',
+      created_at: '2026-04-04T00:14:15.183Z'
+    },
+    {
+      role: 'assistant',
+      content: 'reply'
+    }
+  ];
+
+  const result = mergeProtectedRealtimeMessages({
+    messages,
+    entries,
+    normalizeEventId,
+    buildMessage,
+    assignStreamEventId: (message, eventId) => {
+      message.stream_event_id = eventId;
+    }
+  });
+
+  assert.equal(result.mutated, true);
+  assert.equal(result.retainedEntries.length, 0);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].stream_event_id, 52);
+  assert.equal(messages[0].realtime_protected, undefined);
+});

@@ -2898,8 +2898,21 @@ button.messenger-chat-header-model {
   z-index: 2;
 }
 
+/* Collapsed dock: pointer-events: none on the whole dock so chat scrollbar
+   is never blocked.  Toggle is re-enabled only via JS edge-detection
+   (--edge-active class) or focus-within. */
+.messenger-right-dock.messenger-right-dock--collapsed {
+  pointer-events: none;
+}
+
 .messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle-hitbox {
-  pointer-events: auto;
+  pointer-events: none;
+}
+
+.messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
+  left: -28px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .messenger-right-dock-toggle-hitbox:hover + .messenger-right-dock-toggle,
@@ -2910,13 +2923,6 @@ button.messenger-chat-header-model {
   pointer-events: auto;
 }
 
-.messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
-  left: -18px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle-hitbox:hover + .messenger-right-dock-toggle,
 .messenger-right-dock.messenger-right-dock--collapsed.messenger-right-dock--edge-active .messenger-right-dock-toggle,
 .messenger-right-dock.messenger-right-dock--collapsed:focus-within .messenger-right-dock-toggle {
   opacity: 1;
@@ -6150,6 +6156,54 @@ button.messenger-chat-header-model {
   border: 1px solid #dfe3ea;
   border-radius: 12px;
   box-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+}
+
+.workspace-dialog--file-preview.el-dialog,
+.workspace-dialog--file-editor.el-dialog,
+.system-prompt-dialog.el-dialog {
+  width: min(720px, calc(100vw - 24px)) !important;
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  margin: 12px auto !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-dialog--file-preview .el-dialog__body,
+.workspace-dialog--file-editor .el-dialog__body,
+.system-prompt-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workspace-dialog--file-preview .el-dialog__body,
+.workspace-dialog--file-editor .el-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.workspace-dialog--file-preview .workspace-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.workspace-dialog--file-preview .workspace-preview iframe {
+  min-height: 280px;
+  height: 100%;
+}
+
+.workspace-dialog--file-editor .workspace-editor-text {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.system-prompt-dialog .el-dialog__body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .workspace-dialog .el-dialog__header,

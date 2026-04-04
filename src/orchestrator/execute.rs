@@ -541,9 +541,7 @@ impl Orchestrator {
                 emitter.emit("progress", llm_call_payload).await;
 
                 if !user_message_appended {
-                    let user_content = if current_user_message_marked_skip_persist(&messages) {
-                        None
-                    } else if let Some(display_override) = display_question_override.as_ref() {
+                    let user_content = if let Some(display_override) = display_question_override.as_ref() {
                         Some(Value::String(display_override.clone()))
                     } else {
                         resolve_user_content_for_persist(&messages, &user_message)
@@ -2661,9 +2659,6 @@ fn resolve_user_content_for_persist(
     messages: &[Value],
     fallback_user_message: &Value,
 ) -> Option<Value> {
-    if current_user_message_marked_skip_persist(messages) {
-        return None;
-    }
     if let Some(index) = Orchestrator::locate_current_user_index(messages) {
         if let Some(content) = messages
             .get(index)
@@ -2673,19 +2668,6 @@ fn resolve_user_content_for_persist(
         }
     }
     fallback_user_message.get("content").cloned()
-}
-
-fn current_user_message_marked_skip_persist(messages: &[Value]) -> bool {
-    let Some(index) = Orchestrator::locate_current_user_index(messages) else {
-        return false;
-    };
-    messages
-        .get(index)
-        .and_then(|message| message.get("meta"))
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get(super::memory::COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
 }
 
 fn build_max_rounds_user_guidance(max_rounds: Option<i64>) -> String {
@@ -3351,7 +3333,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_user_content_for_persist_skips_zero_mode_marker() {
+    fn resolve_user_content_for_persist_keeps_current_user_even_with_zero_mode_marker() {
         let messages = vec![
             json!({ "role": "system", "content": "system" }),
             json!({
@@ -3363,7 +3345,10 @@ mod tests {
             }),
         ];
         let fallback = json!({ "role": "user", "content": "raw question" });
-        assert_eq!(resolve_user_content_for_persist(&messages, &fallback), None);
+        let content = resolve_user_content_for_persist(&messages, &fallback)
+            .and_then(|value| value.as_str().map(ToString::to_string))
+            .unwrap_or_default();
+        assert_eq!(content, "current question");
     }
 
     #[test]

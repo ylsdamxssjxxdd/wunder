@@ -1037,7 +1037,7 @@ fn resolve_admin_custom_skills_root() -> PathBuf {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("data").join("admin_skills"))
+        .unwrap_or_else(|| PathBuf::from("config").join("data").join("admin_skills"))
 }
 
 fn append_skill_scan_path(paths: &mut Vec<String>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
@@ -3410,6 +3410,9 @@ async fn admin_monitor_tool_usage(
         let context_tokens_peak = session_info
             .and_then(|value| value.get("context_tokens_peak").and_then(Value::as_i64))
             .unwrap_or(context_tokens);
+        let consumed_tokens = session_info
+            .and_then(|value| value.get("consumed_tokens").and_then(Value::as_i64))
+            .unwrap_or(0);
         let prefill_tokens =
             session_info.and_then(|value| value.get("prefill_tokens").and_then(Value::as_i64));
         let prefill_duration_s =
@@ -3440,6 +3443,7 @@ async fn admin_monitor_tool_usage(
             "context_occupancy_tokens": context_tokens,
             "context_tokens_peak": context_tokens_peak,
             "context_occupancy_tokens_peak": context_tokens_peak,
+            "consumed_tokens": consumed_tokens,
             "prefill_tokens": prefill_tokens,
             "prefill_duration_s": prefill_duration_s,
             "prefill_speed_tps": prefill_speed_tps,
@@ -5071,7 +5075,7 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         active_sessions: i64,
         history_sessions: i64,
         total_sessions: i64,
-        context_tokens: i64,
+        consumed_tokens: i64,
         chat_records: i64,
         tool_calls: i64,
         agent_ids: HashSet<String>,
@@ -5094,11 +5098,16 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
         }
         let entry = summary.entry(user_id.to_string()).or_default();
         entry.total_sessions += 1;
-        entry.context_tokens += session
-            .get("context_tokens_peak")
-            .or_else(|| session.get("context_tokens"))
+        entry.consumed_tokens += session
+            .get("consumed_tokens")
             .and_then(Value::as_i64)
-            .unwrap_or(0);
+            .unwrap_or_else(|| {
+                session
+                    .get("context_tokens_peak")
+                    .or_else(|| session.get("context_tokens"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+            });
         let agent_id = session
             .get("agent_id")
             .and_then(Value::as_str)
@@ -5154,8 +5163,9 @@ async fn admin_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, 
                 "total_sessions": stats.total_sessions,
                 "chat_records": stats.chat_records,
                 "tool_calls": stats.tool_calls,
-                "context_tokens": stats.context_tokens,
-                "context_occupancy_tokens": stats.context_tokens,
+                "consumed_tokens": stats.consumed_tokens,
+                "context_tokens": stats.consumed_tokens,
+                "context_occupancy_tokens": stats.consumed_tokens,
                 "agent_count": agent_count
             })
         })

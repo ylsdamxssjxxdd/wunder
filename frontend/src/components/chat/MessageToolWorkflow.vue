@@ -481,11 +481,23 @@ const truncateSingleLine = (text: string, maxLength = 120): string => {
   return `${normalized.slice(0, maxLength)}...`;
 };
 
-const truncateByChars = (text: string, maxChars: number): { value: string; truncated: boolean } => {
-  if (maxChars <= 0) return { value: '', truncated: text.length > 0 };
+const truncateByChars = (
+  text: string,
+  maxChars: number
+): { value: string; truncated: boolean; omittedChars: number } => {
+  if (maxChars <= 0) return { value: '', truncated: text.length > 0, omittedChars: text.length };
   const chars = Array.from(String(text || ''));
-  if (chars.length <= maxChars) return { value: chars.join(''), truncated: false };
-  return { value: chars.slice(0, maxChars).join(''), truncated: true };
+  if (chars.length <= maxChars) return { value: chars.join(''), truncated: false, omittedChars: 0 };
+  const headChars = Math.max(1, Math.floor(maxChars * 0.62));
+  const tailChars = Math.max(1, maxChars - headChars);
+  const omittedChars = Math.max(chars.length - headChars - tailChars, 0);
+  const head = chars.slice(0, headChars).join('');
+  const tail = chars.slice(chars.length - tailChars).join('');
+  return {
+    value: `${head}\n... (${omittedChars} chars omitted)\n${tail}`,
+    truncated: true,
+    omittedChars
+  };
 };
 
 const buildTextPreview = (
@@ -498,17 +510,21 @@ const buildTextPreview = (
   if (!normalized) return '';
 
   const { value, truncated } = truncateByChars(normalized, maxChars);
-  const parts = value.split('\n');
-  const visible = parts.slice(0, Math.max(maxLines, 1));
-  const hiddenLines = Math.max(parts.length - visible.length, 0);
-
-  const rows = visible.map((line, index) => (index === 0 ? line : `${indent}${line}`));
-  if (hiddenLines > 0 || truncated) {
-    const extras: string[] = [];
-    if (hiddenLines > 0) extras.push(`${hiddenLines} more lines`);
-    if (truncated) extras.push('truncated');
-    rows.push(`${indent}... (${extras.join(', ')})`);
+  let lineText = value;
+  const lines = value.split('\n');
+  const keepLines = Math.max(maxLines, 1);
+  if (lines.length > keepLines) {
+    const headLines = Math.max(1, Math.floor(keepLines * 0.62));
+    const tailLines = Math.max(1, keepLines - headLines);
+    const hiddenLines = Math.max(lines.length - headLines - tailLines, 0);
+    lineText = [
+      ...lines.slice(0, headLines),
+      `... (${hiddenLines} lines omitted)`,
+      ...lines.slice(lines.length - tailLines)
+    ].join('\n');
   }
+  const rows = lineText.split('\n').map((line, index) => (index === 0 ? line : `${indent}${line}`));
+  if (!truncated && lines.length <= keepLines) return rows.join('\n');
   return rows.join('\n');
 };
 
@@ -1843,19 +1859,35 @@ const resolveSkillSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHint
   return composeSummaryTitle(toolDisplay, pathHints);
 };
 
+const resolveToolActionLabel = (entry: RawEntry): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const action = pickString(
+    args?.action,
+    args?.operation,
+    args?.op,
+    dataObject?.action,
+    resultObject?.action
+  );
+  // Keep tool titles explicit for action-driven tools (for example: agent_swarm list/send/wait).
+  return action ? truncateSingleLine(action, 32) : '';
+};
+
 const composeEntryTitle = (
   entry: RawEntry,
   toolDisplay: string,
   command: string,
   pathHints: string[]
 ): string => {
+  const actionLabel = resolveToolActionLabel(entry);
+  const toolTitle = actionLabel ? `${toolDisplay} · ${actionLabel}` : toolDisplay;
   if (command) {
-    return truncateSingleLine(`${toolDisplay} ${command}`);
+    return truncateSingleLine(`${toolTitle} ${command}`);
   }
   if (isSkillCallTool(entry.toolName)) {
-    return resolveSkillSummaryTitle(entry, toolDisplay, pathHints);
+    return resolveSkillSummaryTitle(entry, toolTitle, pathHints);
   }
-  return resolveFileToolSummaryTitle(entry, toolDisplay, pathHints);
+  return resolveFileToolSummaryTitle(entry, toolTitle, pathHints);
 };
 
 const extractResultPayload = (
@@ -2217,7 +2249,7 @@ const buildExecuteCommandView = (
 
   const commandView = buildCommandCardView(
     {
-      command: includeCommandLine ? commandText : commandText,
+      command: includeCommandLine ? commandText : '',
       shell: pickString(snapshot?.shell) || 'bash',
       exitCode,
       stdout: displayStdout,
@@ -2700,8 +2732,8 @@ const buildToolResultSection = (
         kind: 'command',
         body: '',
         commandView: {
-          // Keep command workflows concise: show command + terminal output in one block.
-          ...buildExecuteCommandView(entry, command, status, errorText, commandSession, true),
+          // Keep command workflow detail output-only: hide command input and show terminal result.
+          ...buildExecuteCommandView(entry, command, status, errorText, commandSession, false),
           showExitCode: false
         },
         patchLines: []
@@ -2812,13 +2844,6 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
-  const shouldKeepModelCall = isWriteFileTool(entry.toolName) || isApplyPatchTool(entry.toolName);
-  const modelCallSection = buildModelCallSection(
-    entry,
-    command,
-    patchDiffBlocks,
-    commandSession
-  );
   const toolResultSection = buildToolResultSection(
     entry,
     command,
@@ -2828,7 +2853,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     compactionDisplay,
     commandSession
   );
-  const sections = shouldKeepModelCall ? [modelCallSection, toolResultSection] : [toolResultSection];
+  const sections = [toolResultSection];
 
   return {
     key: entry.key,

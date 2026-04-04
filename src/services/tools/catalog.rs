@@ -676,32 +676,32 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
-            description: "智能体蜂群协作工具。推荐路径：list -> send/batch_send -> wait -> history/status。单目标用 send，多目标用 batch_send。".to_string(),
+            description: "蜂群协作工具。可用 action：send / batch_send / wait / status / history / spawn / list。".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "操作类型：list(列成员)/status(看状态)/send(发单目标)/history(看会话)/spawn(派生执行)/batch_send(并发派发)/wait(等待结果)。",
+                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生)/list(列成员)。",
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": "目标智能体 ID。"},
-                    "agentName": {"type": "string", "description": "目标智能体名称。优先从 list 返回结果中原样复制。"},
+                    "agentName": {"type": "string", "description": "目标智能体名称。"},
                     "name": {"type": "string", "description": "agentName 的简写别名。"},
-                    "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
+                    "sessionKey": {"type": "string", "description": "目标会话 ID。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
                     "task": {"type": "string", "description": "spawn 的任务描述。", "minLength": 1},
                     "tasks": {
                         "type": "array",
-                        "description": "batch_send 任务列表（每项必须包含 message，与 agentId/agentName/name/sessionKey 之一）。",
+                        "description": "batch_send 任务列表。",
                         "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
                                 "agentId": {"type": "string", "description": "目标智能体 ID。"},
-                                "agentName": {"type": "string", "description": "目标智能体名称。优先从 list 返回结果中原样复制。"},
+                                "agentName": {"type": "string", "description": "目标智能体名称。"},
                                 "name": {"type": "string", "description": "agentName 的简写别名。"},
-                                "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
+                                "sessionKey": {"type": "string", "description": "目标会话 ID。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
                             "required": ["message"],
@@ -754,17 +754,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     }
                 ],
                 "examples": [
-                    {"action": "list"},
-                    {"action": "send", "agentName": "政策专家（副）", "message": "请输出 5 条风险要点。"},
-                    {"action": "spawn", "agentName": "政策专家（副）", "task": "给出一页执行计划。"},
-                    {
-                        "action": "batch_send",
-                        "tasks": [
-                            {"agentName": "政策专家（副）", "message": "评估法律约束。"},
-                            {"agentId": "agent_xxx", "message": "评估预算影响。"}
-                        ]
-                    },
-                    {"action": "wait", "runIds": ["run_a", "run_b"]}
+                    {"action": "send", "agentName": "", "message": ""},
+                    {"action": "batch_send", "tasks": [{"agentName": "", "message": ""}]},
+                    {"action": "wait", "runIds": [""]}
                 ]
             }),
         },

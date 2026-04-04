@@ -17,10 +17,7 @@ use crate::services::default_tool_profile::curated_default_tool_candidates;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
-use crate::tools::{
-    a2a_service_schema, build_agent_swarm_tool_hint_for_context, builtin_tool_specs,
-    enrich_agent_swarm_tool_spec_for_context, resolve_tool_name,
-};
+use crate::tools::{a2a_service_schema, builtin_tool_specs, resolve_tool_name};
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
     UserToolContext,
@@ -2396,7 +2393,7 @@ fn build_user_tools_summary(
     allowed: &HashSet<String>,
     context: &UserToolContext,
     include_unavailable_user_skills: bool,
-    storage: &dyn StorageBackend,
+    _storage: &dyn StorageBackend,
 ) -> AvailableToolsResponse {
     let config = &context.config;
     let language = i18n::get_language().to_lowercase();
@@ -2408,8 +2405,7 @@ fn build_user_tools_summary(
 
     let mut builtin_tools = Vec::new();
     let mut seen_builtin = HashSet::new();
-    let swarm_hint = build_agent_swarm_tool_hint_for_context(storage, user_id, None).ok();
-    for mut spec in builtin_tool_specs() {
+    for spec in builtin_tool_specs() {
         let aliases = canonical_aliases
             .get(&spec.name)
             .map(|value| value.as_slice())
@@ -2431,11 +2427,6 @@ fn build_user_tools_summary(
         };
         if !seen_builtin.insert(name.clone()) {
             continue;
-        }
-        if resolve_tool_name(&spec.name) == "智能体蜂群" {
-            if let Some(hint) = swarm_hint.as_ref() {
-                enrich_agent_swarm_tool_spec_for_context(&mut spec, hint);
-            }
         }
         builtin_tools.push(ToolSpec {
             name,
@@ -3643,9 +3634,8 @@ mod tests {
         config.skills.paths = vec![global_root.path().to_string_lossy().to_string()];
         config.skills.enabled = vec!["政策知识库检索".to_string()];
 
-        let resolved =
-            resolve_visible_user_skill(&config, user_root.path(), "政策知识库检索")
-                .expect("resolve global skill");
+        let resolved = resolve_visible_user_skill(&config, user_root.path(), "政策知识库检索")
+            .expect("resolve global skill");
         assert!(matches!(resolved.source, UserSkillSourceKind::Global));
         assert_eq!(resolved.spec.name, "政策知识库检索");
         assert_eq!(

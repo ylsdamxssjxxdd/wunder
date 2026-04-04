@@ -169,7 +169,8 @@
       v-model="preview.visible"
       :title="t('workspace.preview.dialogTitle')"
       width="720px"
-      class="workspace-dialog"
+      top="clamp(10px, 4vh, 36px)"
+      class="workspace-dialog workspace-dialog--file-preview"
       append-to-body
     >
       <div class="workspace-preview-head">
@@ -208,7 +209,8 @@
       v-model="editor.visible"
       :title="t('workspace.editor.dialogTitle')"
       width="720px"
-      class="workspace-dialog"
+      top="clamp(10px, 4vh, 36px)"
+      class="workspace-dialog workspace-dialog--file-editor"
       append-to-body
     >
       <div class="workspace-preview-head">

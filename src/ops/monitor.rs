@@ -307,6 +307,7 @@ struct SessionRecord {
     user_rounds: i64,
     context_tokens: i64,
     context_tokens_peak: i64,
+    consumed_tokens: i64,
     message_feedback: BTreeMap<i64, MessageFeedbackItem>,
     next_event_id: i64,
     events: VecDeque<MonitorEvent>,
@@ -353,6 +354,7 @@ impl SessionRecord {
             user_rounds: 1,
             context_tokens: 0,
             context_tokens_peak: 0,
+            consumed_tokens: 0,
             message_feedback: BTreeMap::new(),
             next_event_id: 1,
             events: VecDeque::new(),
@@ -431,6 +433,7 @@ impl SessionRecord {
             "context_occupancy_tokens": context_tokens,
             "context_tokens_peak": context_tokens_peak,
             "context_occupancy_tokens_peak": context_tokens_peak,
+            "consumed_tokens": self.consumed_tokens,
             "feedback_up_count": feedback_up_count,
             "feedback_down_count": feedback_down_count,
             "feedback_total_count": feedback_total_count,
@@ -463,6 +466,7 @@ impl SessionRecord {
             "rounds": self.user_rounds,
             "context_tokens": self.context_tokens,
             "context_tokens_peak": self.context_tokens_peak,
+            "consumed_tokens": self.consumed_tokens,
             "message_feedback": message_feedback,
             "next_event_id": self.next_event_id,
             "events": self
@@ -550,6 +554,10 @@ impl SessionRecord {
             .get("context_tokens_peak")
             .and_then(Value::as_i64)
             .unwrap_or(0);
+        let consumed_tokens = payload
+            .get("consumed_tokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let mut message_feedback = BTreeMap::new();
         if let Some(items) = payload.get("message_feedback").and_then(Value::as_object) {
             for (raw_history_id, raw_feedback) in items {
@@ -580,6 +588,21 @@ impl SessionRecord {
             }
             cursor = event.event_id.saturating_add(1);
         }
+        // Backfill consumed_tokens from events for sessions persisted before the field existed
+        let consumed_tokens = if consumed_tokens > 0 {
+            consumed_tokens
+        } else {
+            let mut total = 0_i64;
+            for event in &events {
+                if event.event_type == "round_usage" {
+                    let tokens = parse_usage_billing_tokens(&event.data);
+                    if tokens > 0 {
+                        total = total.saturating_add(tokens);
+                    }
+                }
+            }
+            total
+        };
         let next_event_id = payload
             .get("next_event_id")
             .and_then(Value::as_i64)
@@ -604,6 +627,7 @@ impl SessionRecord {
             user_rounds,
             context_tokens,
             context_tokens_peak: context_tokens_peak.max(context_tokens),
+            consumed_tokens,
             message_feedback,
             next_event_id,
             events,
@@ -1551,7 +1575,7 @@ impl MonitorState {
                 let mut finished_sessions = 0;
                 let mut error_sessions = 0;
                 let mut cancelled_sessions = 0;
-                let mut context_tokens_total: i64 = 0;
+                let mut consumed_tokens_total: i64 = 0;
                 let mut elapsed_total = 0.0;
                 let mut elapsed_count = 0.0;
                 let mut prefill_tokens_total = 0.0;
@@ -1570,7 +1594,7 @@ impl MonitorState {
                     let context_peak = derive_effective_context_tokens(&record.events)
                         .map(|(_, peak)| peak)
                         .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
-                    context_tokens_total += context_peak;
+                    consumed_tokens_total += record.consumed_tokens.max(context_peak);
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
                     {
@@ -1624,7 +1648,7 @@ impl MonitorState {
                 };
                 let avg_context_tokens = if history_sessions > 0 {
                     Some(round2(
-                        context_tokens_total as f64 / history_sessions as f64,
+                        consumed_tokens_total as f64 / history_sessions as f64,
                     ))
                 } else {
                     None
@@ -2093,8 +2117,15 @@ impl MonitorState {
             event_id,
             timestamp,
             event_type: event_type.to_string(),
-            data: sanitized,
+            data: sanitized.clone(),
         });
+        // Accumulate consumed tokens on each round_usage event
+        if event_type == "round_usage" {
+            let tokens = parse_usage_billing_tokens(&sanitized);
+            if tokens > 0 {
+                record.consumed_tokens = record.consumed_tokens.saturating_add(tokens);
+            }
+        }
         if record.log_profile.should_apply_event_limit() {
             if let Some(limit) = self.event_limit {
                 while record.events.len() > limit {
@@ -2540,6 +2571,27 @@ fn parse_usage_total_tokens(data: &Value) -> i64 {
         .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
         .unwrap_or(0);
     nested_input.saturating_add(nested_output).max(0)
+}
+
+/// Parse billing tokens (input + output) from usage data, ignoring context_occupancy.
+pub(crate) fn parse_usage_billing_tokens(data: &Value) -> i64 {
+    let input = parse_i64_value(data.get("input_tokens"))
+        .or_else(|| {
+            data.get("usage")
+                .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
+        })
+        .unwrap_or(0);
+    let output = parse_i64_value(data.get("output_tokens"))
+        .or_else(|| {
+            data.get("usage")
+                .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
+        })
+        .unwrap_or(0);
+    if input > 0 || output > 0 {
+        input.saturating_add(output)
+    } else {
+        0
+    }
 }
 
 fn format_panic_payload(payload: &(dyn Any + Send)) -> String {

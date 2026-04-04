@@ -46,6 +46,29 @@ const normalizeFlag = (value: unknown): boolean => {
   return Boolean(value);
 };
 
+const CHANNEL_EVENT_BACKFILL_WINDOW_MS = 2500;
+
+const normalizeComparableContent = (value: unknown): string =>
+  String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const resolveMessageTimestampMs = (message: ChatWatchMessage | null | undefined): number | null => {
+  if (!message) return null;
+  const parsed = Date.parse(String(message.created_at ?? ''));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isStreamingAssistant = (message: ChatWatchMessage | null | undefined): boolean =>
+  Boolean(
+    message?.role === 'assistant' &&
+      (
+        normalizeFlag(message?.stream_incomplete) ||
+        normalizeFlag(message?.workflowStreaming) ||
+        normalizeFlag(message?.reasoningStreaming)
+      )
+  );
+
 const resolveLatestUserIndex = (messages: ChatWatchMessage[]): number => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === 'user') {
@@ -101,6 +124,66 @@ const resolveMessageContent = (
   data: Record<string, any> | null | undefined
 ): string => String(data?.content ?? payload?.content ?? '').trim();
 
+const tryBackfillMessageEventId = (
+  options: Pick<
+    ChatWatchChannelMessageRuntimeOptions,
+    | 'messages'
+    | 'eventId'
+    | 'eventTimestampMs'
+    | 'normalizeEventId'
+    | 'assignStreamEventId'
+    | 'hiddenInternalUser'
+  > & { role: 'user' | 'assistant'; content: string }
+): boolean => {
+  const normalizedEventId = options.normalizeEventId(options.eventId);
+  if (normalizedEventId === null) {
+    return false;
+  }
+  const normalizedContent = normalizeComparableContent(options.content);
+  if (!normalizedContent) {
+    return false;
+  }
+  const eventTimestampMs = Number(options.eventTimestampMs);
+  const hasEventTimestamp = Number.isFinite(eventTimestampMs);
+  let matchedMessage: ChatWatchMessage | null = null;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  for (let index = options.messages.length - 1; index >= 0; index -= 1) {
+    const candidate = options.messages[index];
+    if (!candidate || candidate.role !== options.role) continue;
+    if (normalizeComparableContent(candidate.content) !== normalizedContent) continue;
+    const candidateEventId = options.normalizeEventId(candidate.stream_event_id);
+    if (candidateEventId !== null && candidateEventId !== normalizedEventId) continue;
+    if (options.role === 'assistant' && isStreamingAssistant(candidate)) continue;
+    if (!hasEventTimestamp) {
+      matchedMessage = candidate;
+      break;
+    }
+    const candidateTimestamp = resolveMessageTimestampMs(candidate);
+    if (!Number.isFinite(candidateTimestamp)) continue;
+    const delta = Math.abs(eventTimestampMs - Number(candidateTimestamp));
+    if (delta > CHANNEL_EVENT_BACKFILL_WINDOW_MS) continue;
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      matchedMessage = candidate;
+      if (delta === 0) break;
+    }
+  }
+  if (!matchedMessage) {
+    return false;
+  }
+  options.assignStreamEventId(matchedMessage, options.eventId);
+  if (options.role === 'user' && options.hiddenInternalUser === true) {
+    matchedMessage.hiddenInternal = true;
+  }
+  if (!matchedMessage.created_at) {
+    const createdAt = resolveCreatedAt(options.eventTimestampMs);
+    if (createdAt) {
+      matchedMessage.created_at = createdAt;
+    }
+  }
+  return true;
+};
+
 export const consumeChatWatchChannelMessage = (
   options: ChatWatchChannelMessageRuntimeOptions
 ): ChatWatchChannelMessageRuntimeResult => {
@@ -135,6 +218,20 @@ export const consumeChatWatchChannelMessage = (
     if (duplicateByEventId) {
       return { handled: true, lastEventId: nextLastEventId, mutated: false };
     }
+    if (
+      tryBackfillMessageEventId({
+        messages: options.messages,
+        eventId: options.eventId,
+        eventTimestampMs: options.eventTimestampMs,
+        normalizeEventId: options.normalizeEventId,
+        assignStreamEventId: options.assignStreamEventId,
+        hiddenInternalUser: options.hiddenInternalUser,
+        role: 'user',
+        content
+      })
+    ) {
+      return { handled: true, lastEventId: nextLastEventId, mutated: false };
+    }
 
     const userMessage = options.buildMessage('user', content, resolveCreatedAt(options.eventTimestampMs), {
       hiddenInternal: options.hiddenInternalUser === true
@@ -160,6 +257,20 @@ export const consumeChatWatchChannelMessage = (
         options.normalizeEventId(message?.stream_event_id) === normalizedEventId
     );
     if (duplicateByEventId) {
+      return { handled: true, lastEventId: nextLastEventId, mutated: false };
+    }
+    if (
+      tryBackfillMessageEventId({
+        messages: options.messages,
+        eventId: options.eventId,
+        eventTimestampMs: options.eventTimestampMs,
+        normalizeEventId: options.normalizeEventId,
+        assignStreamEventId: options.assignStreamEventId,
+        hiddenInternalUser: options.hiddenInternalUser,
+        role: 'assistant',
+        content
+      })
+    ) {
       return { handled: true, lastEventId: nextLastEventId, mutated: false };
     }
   }
