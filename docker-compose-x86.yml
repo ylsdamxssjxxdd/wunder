@@ -45,6 +45,7 @@ services:
       - WUNDER_MCP_PORT=${WUNDER_MCP_PORT:-9010}
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
+      - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
       - FONTCONFIG_FILE=/app/config/fonts.conf
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/app/config/matplotlibrc

@@ -1,7 +1,9 @@
 use super::config::Config;
 use anyhow::{Context, Result};
+use chrono::{SecondsFormat, Utc};
 use std::backtrace::Backtrace;
 use std::env;
+use std::fmt as stdfmt;
 use std::fs;
 use std::io;
 use std::io::IsTerminal;
@@ -9,9 +11,13 @@ use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
-use tracing::{error, info, warn};
+use tracing::field::{Field, Visit};
+use tracing::{error, info, warn, Event, Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
+use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter};
 
@@ -21,6 +27,95 @@ const LOG_FILE_BASENAME: &str = "server.jsonl";
 
 static FILE_LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
 static PANIC_HOOK_INSTALLED: OnceLock<()> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+struct ConsoleEventFormatter {
+    ansi: bool,
+}
+
+impl ConsoleEventFormatter {
+    fn new(ansi: bool) -> Self {
+        Self { ansi }
+    }
+
+    fn write_level(&self, writer: &mut Writer<'_>, level: &Level) -> stdfmt::Result {
+        if self.ansi {
+            match *level {
+                Level::TRACE => write!(writer, "[\x1b[35mTRACE\x1b[0m]"),
+                Level::DEBUG => write!(writer, "[\x1b[34mDEBUG\x1b[0m]"),
+                Level::INFO => write!(writer, "[\x1b[32mINFO\x1b[0m]"),
+                Level::WARN => write!(writer, "[\x1b[33mWARN\x1b[0m]"),
+                Level::ERROR => write!(writer, "[\x1b[31mERROR\x1b[0m]"),
+            }
+        } else {
+            write!(writer, "[{level}]")
+        }
+    }
+}
+
+#[derive(Default)]
+struct ConsoleFieldVisitor {
+    message: Option<String>,
+    fields: Vec<(String, String)>,
+}
+
+impl ConsoleFieldVisitor {
+    fn record_pair(&mut self, field: &Field, value: String) {
+        if field.name() == "message" {
+            self.message = Some(value);
+            return;
+        }
+        self.fields.push((field.name().to_string(), value));
+    }
+}
+
+impl Visit for ConsoleFieldVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+            return;
+        }
+        let formatted = if value.chars().any(char::is_whitespace) {
+            format!("{value:?}")
+        } else {
+            value.to_string()
+        };
+        self.record_pair(field, formatted);
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn stdfmt::Debug) {
+        self.record_pair(field, format!("{value:?}"));
+    }
+}
+
+impl<S, N> FormatEvent<S, N> for ConsoleEventFormatter
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+    N: for<'writer> FormatFields<'writer> + 'static,
+{
+    fn format_event(
+        &self,
+        _ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> stdfmt::Result {
+        let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true);
+        write!(writer, "{timestamp} ")?;
+        self.write_level(&mut writer, event.metadata().level())?;
+
+        let mut visitor = ConsoleFieldVisitor::default();
+        event.record(&mut visitor);
+
+        if let Some(message) = visitor.message {
+            write!(writer, " {message}")?;
+        }
+        for (key, value) in visitor.fields {
+            write!(writer, " {key}={value}")?;
+        }
+
+        writeln!(writer)
+    }
+}
 
 pub fn init_server_tracing(
     config: &Config,
@@ -44,13 +139,9 @@ pub fn init_server_tracing(
 
     let console_ansi = resolve_console_ansi_enabled();
     let console_layer = fmt::layer()
-        .compact()
+        .event_format(ConsoleEventFormatter::new(console_ansi))
         .with_ansi(console_ansi)
-        .with_writer(io::stderr)
-        .with_target(false)
-        .with_thread_names(false)
-        .with_file(false)
-        .with_line_number(false);
+        .with_writer(io::stdout);
 
     let (file_layer, file_guard) = if persist_server_logs {
         let file_appender = tracing_appender::rolling::daily(&log_dir, LOG_FILE_BASENAME);
@@ -188,7 +279,14 @@ fn resolve_console_ansi_enabled() -> bool {
             return true;
         }
     }
-    io::stderr().is_terminal() || io::stdout().is_terminal()
+    if io::stdout().is_terminal() {
+        return true;
+    }
+    is_likely_container_runtime()
+}
+
+fn is_likely_container_runtime() -> bool {
+    Path::new("/.dockerenv").exists() || env::var_os("KUBERNETES_SERVICE_HOST").is_some()
 }
 
 fn cleanup_expired_log_files(log_dir: &Path, retention_days: u64) -> io::Result<usize> {
