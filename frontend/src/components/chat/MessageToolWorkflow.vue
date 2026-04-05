@@ -32,7 +32,12 @@
               @mousemove="handleToolCallTitleMouseMove($event)"
               @mouseleave="hideToolCallDebugHint"
             >
-              {{ entry.summaryTitle }}
+              <span class="tool-workflow-entry-tool-name" :title="entry.toolLabel">
+                {{ entry.toolLabel }}
+              </span>
+              <span class="tool-workflow-entry-brief" :title="entry.summaryTitle">
+                {{ entry.summaryBrief || entry.summaryTitle }}
+              </span>
             </span>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
           </summary>
@@ -120,6 +125,8 @@ type PatchDiffBlock = {
 
 type ToolEntryView = {
   key: string;
+  toolLabel: string;
+  summaryBrief: string;
   summaryTitle: string;
   toolCallRawTitle: string;
   toolIconClass: string;
@@ -2092,6 +2099,31 @@ const composeEntryTitle = (
   return resolveFileToolSummaryTitle(entry, toolTitle, pathHints);
 };
 
+const splitEntrySummary = (
+  summaryTitle: string,
+  toolLabel: string
+): { toolLabel: string; summaryBrief: string } => {
+  const normalizedTitle = truncateSingleLine(summaryTitle);
+  const normalizedTool = truncateSingleLine(toolLabel);
+  if (!normalizedTitle) {
+    return { toolLabel: normalizedTool, summaryBrief: '' };
+  }
+  if (!normalizedTool) {
+    return { toolLabel: normalizedTitle, summaryBrief: '' };
+  }
+  if (!normalizedTitle.startsWith(normalizedTool)) {
+    return { toolLabel: normalizedTool, summaryBrief: normalizedTitle };
+  }
+  const brief = normalizedTitle
+    .slice(normalizedTool.length)
+    .replace(/^[\s\u00B7\u2022|:\uFF1A\-\u2014/\\]+/u, '')
+    .trim();
+  return {
+    toolLabel: normalizedTool,
+    summaryBrief: truncateSingleLine(brief)
+  };
+};
+
 const normalizeDetailText = (detail: unknown): string =>
   String(detail || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
 
@@ -2115,11 +2147,7 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
     }
   }
   if (isExecuteCommandTool(entry.toolName)) {
-    const command = pickString(
-      resolveCommandFromCall(entry.callItem),
-      resolveCommandFromOutput(entry.outputItem),
-      resolveCommandFromResult(entry.resultItem)
-    );
+    const command = pickString(resolveCommandFromCall(entry.callItem));
     if (command) {
       const snapshot = stringifyDebugPayload({
         tool: entry.toolName,
@@ -2135,10 +2163,6 @@ const buildToolCallDebugText = (entry: RawEntry): string => {
   const rawDetail = normalizeDetailText(entry.callItem?.detail);
   if (rawDetail) {
     return rawDetail;
-  }
-  const fallbackDetail = pickString(entry.outputItem?.detail, entry.resultItem?.detail);
-  if (fallbackDetail) {
-    return normalizeDetailText(fallbackDetail);
   }
   return '';
 };
@@ -2974,12 +2998,15 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     : null;
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
+  const summary = splitEntrySummary(summaryTitle, toolDisplay);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(entry, status);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
     key: entry.key,
+    toolLabel: summary.toolLabel,
+    summaryBrief: summary.summaryBrief,
     summaryTitle,
     toolCallRawTitle: buildToolCallDebugText(entry),
     toolIconClass: resolveToolIconClass(entry.toolName),
@@ -3539,12 +3566,37 @@ onBeforeUnmount(() => {
 .tool-workflow-entry-title {
   min-width: 0;
   flex: 1 1 auto;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--workflow-term-text);
+  display: grid;
+  grid-template-columns: clamp(80px, 20%, 132px) minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+
+.tool-workflow-entry-tool-name,
+.tool-workflow-entry-brief {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tool-workflow-entry-tool-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--workflow-term-muted);
+}
+
+.tool-workflow-entry-brief {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--workflow-term-muted);
+}
+
+@media (max-width: 760px) {
+  .tool-workflow-entry-title {
+    grid-template-columns: clamp(72px, 30%, 114px) minmax(0, 1fr);
+    column-gap: 5px;
+  }
 }
 
 .tool-workflow-debug-floating {

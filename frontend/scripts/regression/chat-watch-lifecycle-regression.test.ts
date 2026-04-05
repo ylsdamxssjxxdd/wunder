@@ -92,6 +92,20 @@ test('foreground detail hydration remains allowed when preserveWatcher mode is d
   );
 });
 
+test('foreground detail hydration can be forced for manual reconcile even during interactive lifecycle', () => {
+  assert.equal(
+    shouldApplyForegroundDetailHydration({
+      preserveWatcher: true,
+      lifecycle: 'sending',
+      hasWatchController: true,
+      hasSendController: true,
+      hasResumeController: false,
+      forceHydration: true
+    }),
+    true
+  );
+});
+
 test('active-session detail load forces preserveWatcher while send stream is still alive', () => {
   assert.equal(
     shouldForcePreserveWatcherForActiveSession({

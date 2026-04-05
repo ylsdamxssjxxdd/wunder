@@ -218,6 +218,7 @@ type OpenDraftSessionOptions = {
 
 type LoadSessionDetailOptions = {
   preserveWatcher?: boolean;
+  forceHydrateForeground?: boolean;
 };
 
 type SendMessageOptions = {
@@ -6898,25 +6899,39 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'tool_call': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '未知工具';
         const toolCallId = extractToolCallRef(payload, data);
+        const commandSessionId = extractCommandSessionRef(payload, data);
         const detailSource = data && typeof data === 'object' ? data : payload ?? data;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         if (isExecuteCommandTool(toolName)) {
+          if (commandSessionId) {
+            syncCommandSessionSnapshot(detailSource);
+            ensureCommandSessionCallItem(
+              commandSessionId,
+              detailSource,
+              detailSource?.command ?? ''
+            );
+          }
           registerToolStats(toolName);
           if (lastRound !== null) {
             blockedRounds.add(lastRound);
           }
-          break;
+          if (commandSessionId) {
+            break;
+          }
         }
         const item = buildWorkflowItem(`调用工具：${toolName}`, buildDetail(detailSource), 'loading', {
           isTool: true,
           toolCategory,
           eventType: 'tool_call',
           toolName: String(toolName || ''),
-          toolCallId: toolCallId || undefined
+          toolCallId: toolCallId || commandSessionId || undefined,
+          commandSessionId: commandSessionId || undefined
         });
         assistantMessage.workflowItems.push(item);
-        registerToolItem(toolName, item.id, toolCallId);
-        registerToolStats(toolName);
+        registerToolItem(toolName, item.id, toolCallId || commandSessionId);
+        if (!isExecuteCommandTool(toolName)) {
+          registerToolStats(toolName);
+        }
         if (lastRound !== null) {
           // 工具调用后不再接收该轮后续增量，但保留当前已展示的内容/思考。
           blockedRounds.add(lastRound);
@@ -8558,6 +8573,7 @@ export const useChatStore = defineStore('chat', {
       const activeSessionKey = resolveSessionKey(this.activeSessionId);
       const hydrateForegroundMessages = shouldApplyForegroundDetailHydration({
         preserveWatcher,
+        forceHydration: options.forceHydrateForeground === true,
         lifecycle: refreshRuntimeStreamLifecycle(runtime),
         hasWatchController: Boolean(runtime?.watchController),
         hasSendController: Boolean(runtime?.sendController),

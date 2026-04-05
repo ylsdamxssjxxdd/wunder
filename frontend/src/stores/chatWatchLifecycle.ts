@@ -41,6 +41,7 @@ type ForegroundHydrationOptions = {
   hasWatchController?: boolean;
   hasSendController?: boolean;
   hasResumeController?: boolean;
+  forceHydration?: boolean;
 };
 
 type ActiveSessionPreserveOptions = {
@@ -66,6 +67,9 @@ export const shouldForcePreserveWatcherForActiveSession = (
 export const shouldApplyForegroundDetailHydration = (
   options: ForegroundHydrationOptions
 ): boolean => {
+  if (options.forceHydration === true) {
+    return true;
+  }
   if (options.preserveWatcher !== true) {
     return true;
   }

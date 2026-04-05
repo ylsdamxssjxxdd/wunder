@@ -3632,17 +3632,26 @@ const MONITOR_EXPORT_MAX_ARRAY_ITEMS = 24;
 const MONITOR_EXPORT_MAX_OBJECT_KEYS = 24;
 const MONITOR_EXPORT_MAX_DEPTH = 6;
 
-const compactMonitorExportText = (value) => {
+const shouldPreserveMonitorExportString = (path) => {
+  if (!Array.isArray(path) || path.length === 0) return false;
+  const last = String(path[path.length - 1] || "").trim();
+  return last === "model_observation";
+};
+
+const compactMonitorExportText = (value, preserveFull = false) => {
   const text = String(value || "");
+  if (preserveFull) {
+    return text;
+  }
   if (text.length <= MONITOR_EXPORT_MAX_STRING_CHARS) {
     return text;
   }
   return `${text.slice(0, MONITOR_EXPORT_MAX_STRING_CHARS)}...(truncated)`;
 };
 
-const compactMonitorExportValue = (value, depth = 0) => {
+const compactMonitorExportValue = (value, depth = 0, path = []) => {
   if (typeof value === "string") {
-    return compactMonitorExportText(value);
+    return compactMonitorExportText(value, shouldPreserveMonitorExportString(path));
   }
   if (value === null || value === undefined) {
     return value ?? null;
@@ -3655,20 +3664,25 @@ const compactMonitorExportValue = (value, depth = 0) => {
   }
   if (Array.isArray(value)) {
     if (value.length <= MONITOR_EXPORT_MAX_ARRAY_ITEMS) {
-      return value.map((item) => compactMonitorExportValue(item, depth + 1));
+      return value.map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(index)]));
     }
     const headCount = Math.max(1, Math.floor(MONITOR_EXPORT_MAX_ARRAY_ITEMS * 0.75));
     const tailCount = Math.max(1, MONITOR_EXPORT_MAX_ARRAY_ITEMS - headCount);
     const omitted = value.length - headCount - tailCount;
-    const head = value.slice(0, headCount).map((item) => compactMonitorExportValue(item, depth + 1));
-    const tail = value.slice(-tailCount).map((item) => compactMonitorExportValue(item, depth + 1));
+    const head = value
+      .slice(0, headCount)
+      .map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(index)]));
+    const tailStart = Math.max(value.length - tailCount, 0);
+    const tail = value
+      .slice(-tailCount)
+      .map((item, index) => compactMonitorExportValue(item, depth + 1, [...path, String(tailStart + index)]));
     return [...head, { __truncated: true, omitted_items: Math.max(0, omitted) }, ...tail];
   }
   const source = value || {};
   const keys = Object.keys(source);
   const output = {};
   keys.slice(0, MONITOR_EXPORT_MAX_OBJECT_KEYS).forEach((key) => {
-    output[key] = compactMonitorExportValue(source[key], depth + 1);
+    output[key] = compactMonitorExportValue(source[key], depth + 1, [...path, key]);
   });
   if (keys.length > MONITOR_EXPORT_MAX_OBJECT_KEYS) {
     output.__truncated = true;

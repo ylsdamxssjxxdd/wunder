@@ -8715,7 +8715,12 @@ const refreshAgentConversationView = async () => {
         run: async () => {
           const tasks: Promise<unknown>[] = [chatStore.loadSessions({ skipTransportRefresh: true })];
           if (activeSessionId) {
-            tasks.push(chatStore.loadSessionDetail(activeSessionId, { preserveWatcher: true }));
+            tasks.push(
+              chatStore.loadSessionDetail(activeSessionId, {
+                preserveWatcher: true,
+                forceHydrateForeground: true
+              })
+            );
           }
           const settled = await Promise.allSettled(tasks);
           return settled.every((item) => item.status === 'fulfilled');
