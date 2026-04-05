@@ -26,16 +26,14 @@
           <summary class="tool-workflow-entry-summary">
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
             <i :class="['fa-solid', 'tool-workflow-entry-tool-icon', entry.toolIconClass]" aria-hidden="true"></i>
-            <el-tooltip
-              :content="entry.toolCallRawTitle"
-              placement="top-start"
-              popper-class="tool-workflow-debug-popper"
-              :disabled="!entry.toolCallRawTitle"
+            <span
+              class="tool-workflow-entry-title"
+              @mouseenter="handleToolCallTitleMouseEnter(entry, $event)"
+              @mousemove="handleToolCallTitleMouseMove($event)"
+              @mouseleave="hideToolCallDebugHint"
             >
-              <span class="tool-workflow-entry-title">
-                {{ entry.summaryTitle }}
-              </span>
-            </el-tooltip>
+              {{ entry.summaryTitle }}
+            </span>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
           </summary>
 
@@ -51,6 +49,16 @@
         </details>
       </div>
     </details>
+    <Teleport to="body">
+      <div
+        v-if="toolCallDebugHint.visible && toolCallDebugHint.text"
+        ref="toolCallDebugHintRef"
+        class="tool-workflow-debug-floating"
+        :style="toolCallDebugHintStyle"
+      >
+        {{ toolCallDebugHint.text }}
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -121,6 +129,13 @@ type ToolEntryView = {
   sections: ToolWorkflowDetailSection[];
 };
 
+type ToolCallDebugHintState = {
+  visible: boolean;
+  text: string;
+  left: number;
+  top: number;
+};
+
 type CommandRecord = {
   command: string;
   stdout: string;
@@ -156,6 +171,10 @@ const PATCH_PREVIEW_LINE_LIMIT = 12;
 const PATCH_PREVIEW_LINE_MAX_CHARS = 140;
 const DETAIL_PARSE_CACHE_LIMIT = 120;
 const PREVIEW_CACHE_LIMIT = 120;
+const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
+const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
+const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
+const TOOL_CALL_DEBUG_HINT_FALLBACK_HEIGHT = 160;
 
 const PATH_HINT_KEYS = [
   'path',
@@ -203,6 +222,13 @@ const workflowListRef = ref<HTMLElement | null>(null);
 const workflowFollow = ref(true);
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
+const toolCallDebugHintRef = ref<HTMLElement | null>(null);
+const toolCallDebugHint = ref<ToolCallDebugHintState>({
+  visible: false,
+  text: '',
+  left: 0,
+  top: 0
+});
 let workflowLayoutFrame: number | null = null;
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
@@ -250,6 +276,63 @@ const scheduleWorkflowLayoutChange = () => {
     emit('layout-change');
   });
 };
+
+const clampNumber = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+
+const updateToolCallDebugHintPosition = (pointerX: number, pointerY: number): void => {
+  if (typeof window === 'undefined') return;
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const hintWidth = toolCallDebugHintRef.value?.offsetWidth || TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH;
+  const hintHeight = toolCallDebugHintRef.value?.offsetHeight || TOOL_CALL_DEBUG_HINT_FALLBACK_HEIGHT;
+  const safeMaxLeft = Math.max(TOOL_CALL_DEBUG_HINT_MARGIN, viewportWidth - hintWidth - TOOL_CALL_DEBUG_HINT_MARGIN);
+  const safeMaxTop = Math.max(TOOL_CALL_DEBUG_HINT_MARGIN, viewportHeight - hintHeight - TOOL_CALL_DEBUG_HINT_MARGIN);
+
+  let left = pointerX + TOOL_CALL_DEBUG_HINT_OFFSET;
+  let top = pointerY + TOOL_CALL_DEBUG_HINT_OFFSET;
+  if (left + hintWidth > viewportWidth - TOOL_CALL_DEBUG_HINT_MARGIN) {
+    left = pointerX - hintWidth - TOOL_CALL_DEBUG_HINT_OFFSET;
+  }
+  if (top + hintHeight > viewportHeight - TOOL_CALL_DEBUG_HINT_MARGIN) {
+    top = pointerY - hintHeight - TOOL_CALL_DEBUG_HINT_OFFSET;
+  }
+
+  toolCallDebugHint.value.left = clampNumber(left, TOOL_CALL_DEBUG_HINT_MARGIN, safeMaxLeft);
+  toolCallDebugHint.value.top = clampNumber(top, TOOL_CALL_DEBUG_HINT_MARGIN, safeMaxTop);
+};
+
+const showToolCallDebugHint = (text: string, event: MouseEvent): void => {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    toolCallDebugHint.value.visible = false;
+    toolCallDebugHint.value.text = '';
+    return;
+  }
+  toolCallDebugHint.value.visible = true;
+  toolCallDebugHint.value.text = normalized;
+  updateToolCallDebugHintPosition(event.clientX, event.clientY);
+  void nextTick(() => updateToolCallDebugHintPosition(event.clientX, event.clientY));
+};
+
+const handleToolCallTitleMouseEnter = (entry: ToolEntryView, event: MouseEvent): void => {
+  showToolCallDebugHint(entry.toolCallRawTitle, event);
+};
+
+const handleToolCallTitleMouseMove = (event: MouseEvent): void => {
+  if (!toolCallDebugHint.value.visible || !toolCallDebugHint.value.text) return;
+  updateToolCallDebugHintPosition(event.clientX, event.clientY);
+};
+
+const hideToolCallDebugHint = (): void => {
+  if (!toolCallDebugHint.value.visible && !toolCallDebugHint.value.text) return;
+  toolCallDebugHint.value.visible = false;
+  toolCallDebugHint.value.text = '';
+};
+
+const toolCallDebugHintStyle = computed<Record<string, string>>(() => ({
+  left: `${toolCallDebugHint.value.left}px`,
+  top: `${toolCallDebugHint.value.top}px`
+}));
 
 const bindStreamBodyRef = (
   entryKey: string,
@@ -3205,6 +3288,7 @@ const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[ent
 const shouldRender = computed(() => props.visible && entries.value.length > 0);
 
 onBeforeUnmount(() => {
+  hideToolCallDebugHint();
   if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {
     window.cancelAnimationFrame(workflowLayoutFrame);
     workflowLayoutFrame = null;
@@ -3665,10 +3749,19 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-:global(.tool-workflow-debug-popper) {
+.tool-workflow-debug-floating {
+  position: fixed;
+  z-index: 3200;
   max-width: min(820px, calc(100vw - 32px));
   max-height: min(60vh, 720px);
   overflow: auto;
+  pointer-events: none;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--workflow-term-border-strong, #32445f);
+  background: rgba(15, 22, 34, 0.97);
+  color: var(--workflow-term-text, #e5edf8);
+  box-shadow: 0 10px 28px rgba(2, 6, 23, 0.45);
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;

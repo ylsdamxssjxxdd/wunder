@@ -7,15 +7,18 @@ import {
 type CacheState<T> = {
   loadedAt: number;
   promise: Promise<T | null> | null;
+  promiseStartedAt: number;
   value: T | null;
   version: number;
 };
 
 const USER_TOOLS_CACHE_TTL_MS = 30_000;
+const USER_TOOLS_PENDING_STALE_MS = 12_000;
 
 const createCacheState = <T>(): CacheState<T> => ({
   loadedAt: 0,
   promise: null,
+  promiseStartedAt: 0,
   value: null,
   version: 0
 });
@@ -31,6 +34,7 @@ const resetCache = <T>(state: CacheState<T>): void => {
   state.version += 1;
   state.loadedAt = 0;
   state.promise = null;
+  state.promiseStartedAt = 0;
   state.value = null;
 };
 
@@ -44,10 +48,18 @@ const loadCache = async <T>(
     return state.value;
   }
   if (state.promise) {
-    return state.promise;
+    const pendingTooLong =
+      state.promiseStartedAt > 0 && Date.now() - state.promiseStartedAt > USER_TOOLS_PENDING_STALE_MS;
+    if (!force && !pendingTooLong) {
+      return state.promise;
+    }
+    // Drop stale or explicitly bypassed in-flight requests to prevent permanent pending reuse.
+    state.version += 1;
+    state.promise = null;
+    state.promiseStartedAt = 0;
   }
   const version = state.version;
-  state.promise = (async () => {
+  const request = (async () => {
     const payload = await loader();
     if (version !== state.version) {
       return state.value;
@@ -56,10 +68,13 @@ const loadCache = async <T>(
     state.loadedAt = Date.now();
     return state.value;
   })().finally(() => {
-    if (version === state.version) {
+    if (version === state.version && state.promise === request) {
       state.promise = null;
+      state.promiseStartedAt = 0;
     }
   });
+  state.promise = request;
+  state.promiseStartedAt = Date.now();
   return state.promise;
 };
 

@@ -11252,12 +11252,9 @@ const bootstrap = async () => {
   const initialQueryConversationId = String(route.query.conversation_id || '').trim();
   const initialQueryAgentId = String(route.query.agent_id || '').trim();
   const initialQueryEntry = String(route.query.entry || '').trim().toLowerCase();
-  const shouldDeferWorldBootstrap =
+  const shouldPrioritizeWorldBootstrap =
     initialSection === 'messages' &&
-    !initialQueryConversationId &&
-    Boolean(
-      initialQuerySessionId || initialQueryAgentId || initialQueryEntry === 'default'
-    );
+    Boolean(initialQueryConversationId);
   const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
     {
       sections: ['messages', 'agents', 'files', 'swarms'],
@@ -11273,7 +11270,7 @@ const bootstrap = async () => {
       run: () => chatStore.loadSessions()
     },
     {
-      sections: shouldDeferWorldBootstrap ? ['users', 'groups'] : ['messages', 'users', 'groups'],
+      sections: shouldPrioritizeWorldBootstrap ? ['messages', 'users', 'groups'] : ['users', 'groups'],
       run: () => userWorldStore.bootstrap()
     },
     {
@@ -11443,6 +11440,7 @@ watch(
     rightDockSelectedSkillName.value = '';
     rightDockSkillContent.value = '';
     rightDockSkillContentPath.value = '';
+    rightDockSkillCatalogLoading.value = false;
     rightDockSkillContentLoading.value = false;
     rightDockSkillToggleSaving.value = false;
     rightDockSkillCatalogLoadVersion += 1;
