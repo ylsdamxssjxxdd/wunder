@@ -2393,3 +2393,6 @@
 - 现支持“仅附件、无正文”的提交方式：
   - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。
   - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。
+
+- `tool_result` now uses a minimal payload by default: keep `tool/ok/data` plus failure essentials (`error/error_code/retryable`), and drop `tool_call_id/trace_id/user_round/model_round/meta`.
+- To reduce context size, dense arrays in `data` are compacted into JSONL fields (for example `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`) with companion `*_count` fields.

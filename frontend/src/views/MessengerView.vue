@@ -9650,9 +9650,11 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
 
   if (command === 'new') {
     try {
-      await runStartNewSession();
+      const outcome = await runStartNewSession();
       const sessionId = String(chatStore.activeSessionId || '').trim();
-      chatStore.appendLocalMessage('assistant', t('chat.command.newSuccess'), { sessionId });
+      const replyText =
+        outcome === 'already_current' ? t('chat.newSessionAlreadyCurrent') : t('chat.command.newSuccess');
+      chatStore.appendLocalMessage('assistant', replyText, { sessionId });
     } catch (error) {
       appendAgentLocalCommandMessages(
         rawText,
@@ -10546,14 +10548,28 @@ async function openOrReuseFreshAgentSession(targetAgentId: string): Promise<stri
   return sessionId;
 }
 
-async function runStartNewSession(): Promise<void> {
-  if (!isAgentConversationActive.value || creatingAgentSession.value) return;
+type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
+
+async function runStartNewSession(options: { notify?: boolean } = {}): Promise<StartNewSessionOutcome> {
+  if (!isAgentConversationActive.value || creatingAgentSession.value) return 'noop';
   const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgent);
+  if (activeSessionId && reusableSessionId && activeSessionId === reusableSessionId) {
+    if (options.notify === true) {
+      ElMessage.info(t('chat.newSessionAlreadyCurrent'));
+    }
+    return 'already_current';
+  }
   creatingAgentSession.value = true;
   try {
     const sessionId = await openOrReuseFreshAgentSession(targetAgent);
-    if (!sessionId) return;
+    if (!sessionId) return 'noop';
     await openAgentSession(sessionId, targetAgent);
+    if (options.notify === true) {
+      ElMessage.success(t('chat.newSessionOpened'));
+    }
+    return 'opened';
   } finally {
     creatingAgentSession.value = false;
   }
@@ -10561,7 +10577,7 @@ async function runStartNewSession(): Promise<void> {
 
 async function startNewSession() {
   try {
-    await runStartNewSession();
+    await runStartNewSession({ notify: true });
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }

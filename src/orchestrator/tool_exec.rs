@@ -113,6 +113,7 @@ impl ToolResultPayload {
     fn to_compact_payload(&self, tool_name: &str) -> Value {
         let mut payload = self.to_observation_payload(tool_name);
         compact_observation_payload(&mut payload, tool_name);
+        strip_compact_payload_noise(&mut payload, 0);
         payload
     }
 
@@ -1550,6 +1551,56 @@ fn value_to_jsonl_line(value: &Value) -> String {
     }
 }
 
+fn strip_compact_payload_noise(value: &mut Value, depth: usize) {
+    if depth > 8 {
+        return;
+    }
+    let Value::Object(map) = value else {
+        return;
+    };
+    for key in [
+        "meta",
+        "tool_call_id",
+        "trace_id",
+        "model_round",
+        "user_round",
+        "timestamp",
+        "log_profile",
+        "business_ok",
+        "final_ok",
+        "transport_ok",
+    ] {
+        map.remove(key);
+    }
+    if let Some(data) = map.get_mut("data").and_then(Value::as_object_mut) {
+        for key in [
+            "meta",
+            "budget",
+            "scope",
+            "scope_note",
+            "resolved_path",
+            "query_mode_inferred",
+            "query_source",
+            "query_used",
+            "scanned_files",
+            "file_pattern_items",
+            "case_sensitive",
+            "context_after",
+            "context_before",
+            "engine",
+            "path",
+        ] {
+            data.remove(key);
+        }
+        for nested in data.values_mut() {
+            strip_compact_payload_noise(nested, depth + 1);
+        }
+    }
+    for nested in map.values_mut() {
+        strip_compact_payload_noise(nested, depth + 1);
+    }
+}
+
 fn extract_observation_data(value: &Value) -> Value {
     let Value::Object(map) = value else {
         return value.clone();
@@ -2116,6 +2167,52 @@ mod tests {
             event_payload.get("error_code").and_then(Value::as_str),
             Some("TOOL_BUSINESS_FAILED")
         );
+    }
+
+    #[test]
+    fn test_compact_payload_strips_ids_and_budget_noise() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "query": "九段线",
+                "path": "kb",
+                "budget": {"max_matches": 200},
+                "scope": {"kind": "workspace_local"},
+                "scope_note": "local only",
+                "meta": {"search": {"elapsed_ms": 20}},
+                "hits": [{"path": "a.md", "line": 1, "content": "九段线"}],
+                "matches": ["a.md:1:九段线"]
+            }),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "error_retryable": false,
+            })),
+        };
+
+        let mut compacted = payload.to_event_payload("search_content");
+        if let Value::Object(ref mut map) = compacted {
+            map.insert("tool_call_id".to_string(), Value::String("call_x".to_string()));
+            map.insert("trace_id".to_string(), Value::String("trace_x".to_string()));
+            map.insert("model_round".to_string(), json!(2));
+            map.insert("user_round".to_string(), json!(1));
+        }
+        strip_compact_payload_noise(&mut compacted, 0);
+
+        let obj = compacted.as_object().cloned().unwrap_or_default();
+        assert!(obj.get("tool_call_id").is_none());
+        assert!(obj.get("trace_id").is_none());
+        assert!(obj.get("model_round").is_none());
+        assert!(obj.get("user_round").is_none());
+
+        let data = obj.get("data").and_then(Value::as_object).cloned().unwrap_or_default();
+        assert!(data.get("meta").is_none());
+        assert!(data.get("budget").is_none());
+        assert!(data.get("scope").is_none());
+        assert!(data.get("scope_note").is_none());
+        assert!(data.get("hits_jsonl").is_some());
+        assert!(data.get("matches_jsonl").is_some());
     }
 
     #[test]

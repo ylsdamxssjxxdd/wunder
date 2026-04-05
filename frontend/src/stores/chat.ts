@@ -3755,12 +3755,25 @@ const hasSubmittedUserMessage = (messages) =>
     return hasText || hasAttachments;
   });
 
+const isSessionSpawnedFromAnotherThread = (session) => {
+  if (!session || typeof session !== 'object') return false;
+  const source = session as Record<string, unknown>;
+  return Boolean(
+    String(source.parent_session_id ?? '').trim()
+    || String(source.parent_message_id ?? '').trim()
+    || String(source.spawned_by ?? '').trim()
+    || String(source.spawn_label ?? '').trim()
+  );
+};
+
 const isReusableFreshSession = (session, fallbackMessages = null) => {
   if (!session || typeof session !== 'object') return false;
   const sessionId = resolveSessionKey(session.id);
   if (!sessionId) return false;
   const status = String(session.status || '').trim().toLowerCase();
   if (status === 'archived') return false;
+  // "New thread" can only reuse root sessions. Spawned/subagent threads must not be recycled.
+  if (isSessionSpawnedFromAnotherThread(session)) return false;
   const cachedMessages = getSessionMessages(sessionId);
   const messages = Array.isArray(cachedMessages) && cachedMessages.length ? cachedMessages : fallbackMessages;
   if (hasSubmittedUserMessage(messages)) {

@@ -1108,8 +1108,8 @@
     "zh-CN": "请使用升序的包含式行号窗口；长文档应先用 search_content 定位相关标题，再读取更窄的范围。"
   },
   "tool.read.continuation_hint": {
-    "en-US": "This read returned only part of the available text. Continue by locating the relevant heading with search_content or by reading a narrower line range/indentation block. Do not reread the whole document blindly.",
-    "zh-CN": "本次读取只返回了部分可用文本。请先用 search_content 定位相关标题，或改读更窄的行范围/缩进块；不要盲目重复读取整篇文档。"
+    "en-US": "This read returned only part of the available text. Do NOT continue by fixed-step paging on the same file. First use search_content to locate relevant headings/keywords, then read one narrower window (for example hit_line-20 to hit_line+40). If repeated calls produce no new evidence, stop and report the gap.",
+    "zh-CN": "本次读取只返回了部分可用文本。禁止在同一文件上按固定步长连续翻页；请先用 search_content 定位标题或关键词，再读取更窄窗口（例如命中行前 20 到后 40）。若连续调用没有新增依据，应停止重复读取并说明缺口。"
   },
   "tool.read.truncated_prefix": {
     "en-US": "(file is large; returning a safe truncated prefix, so the content may be incomplete)",
@@ -1776,8 +1776,8 @@
     "zh-CN": "可选，要列出的目录（相对工程师工作目录）。留空则使用当前工作目录。"
   },
   "tool.spec.list.description": {
-    "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted.",
-    "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。"
+    "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted. Avoid repeating the same path listing unless the path changes or the user explicitly asks to refresh.",
+    "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。除非路径变化或用户明确要求刷新，不要重复调用同一路径。"
   },
   "tool.spec.plan.args.explanation": {
     "en-US": "Optional. Short explanation for the plan.",
@@ -2128,8 +2128,8 @@
     "zh-CN": "可选起始行（包含），且必须小于等于 end_line。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. For long documents, read narrower line ranges or indentation blocks instead of repeatedly rereading the whole file. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
-    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。面对长文档时，应读取更窄的行范围或缩进块，而不是反复重读整篇文件；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
+    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. For long documents, always locate hits first, then read narrow windows or indentation blocks; do not do blind fixed-step paging, and avoid more than three consecutive reads on the same file without new evidence. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
+    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。面对长文档时，必须先定位命中点再读小窗口或缩进块，禁止盲目固定步长翻页；在没有新增依据时，同一文件连续读取不应超过 3 次。不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",

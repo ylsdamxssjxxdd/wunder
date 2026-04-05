@@ -2840,103 +2840,22 @@ const buildEmptySection = (key: string, title: string, body: string): ToolWorkfl
 const resolveRawWorkflowDetail = (item: WorkflowItem | null): string =>
   typeof item?.detail === 'string' && item.detail.length > 0 ? item.detail : '';
 
-const buildModelCallSection = (
-  entry: RawEntry,
-  command: string,
-  patchDiffBlocks: PatchDiffBlock[],
-  commandSession: CommandSessionRuntimeEntry | null
-): ToolWorkflowDetailSection => {
-  const sectionKey = `${entry.key}-model-call`;
-  const sectionTitle = t('chat.toolWorkflow.modelCallSection');
-
-  if (isApplyPatchTool(entry.toolName)) {
-    const summary = buildApplyPatchCallSummary(entry, patchDiffBlocks);
-    const patchFiles = buildApplyPatchCallFiles(patchDiffBlocks);
-    if (patchFiles.length > 0) {
-      const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'patch',
-        summary,
-        body: '',
-        commandView: null,
-        patchLines: [],
-        patchView: buildPatchCallView(
-          {
-            changedFiles: counts.changedFiles,
-            hunks: counts.hunks
-          },
-          patchFiles,
-          t
-        )
-      };
-    }
-    const patchLines = buildApplyPatchCallLines(command, patchDiffBlocks);
-    if (patchLines.length > 0) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'patch',
-        summary,
-        body: '',
-        commandView: null,
-        patchLines
-      };
-    }
-    const patchInput = buildTextPreview(resolvePatchInput(entry.callItem), 18, 2200, '  ');
-    if (patchInput) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        summary,
-        body: patchInput,
-        commandView: null,
-        patchLines: []
-      };
-    }
-  }
-
-  if (isExecuteCommandTool(entry.toolName)) {
-    const summary = buildExecuteCommandCallSummary(entry, commandSession);
-    const body =
-      buildExecuteCommandCallBody(entry, command, commandSession)
-      || buildGenericModelCallBlock(entry, command);
-    if (summary || body) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        summary,
-        body,
-        commandView: null,
-        patchLines: []
-      };
-    }
-  }
-
-  const body = isWriteFileTool(entry.toolName)
-    ? buildWriteFileCallBlock(entry, command)
-    : isReadFileTool(entry.toolName)
-      ? buildReadFileCallBlock(entry)
-      : isListFilesTool(entry.toolName)
-        ? buildListFilesCallBlock(entry)
-        : isSearchContentTool(entry.toolName)
-          ? buildSearchContentCallBlock(entry)
-          : buildGenericModelCallBlock(entry, command);
-  if (body) {
+const buildModelCallSection = (entry: RawEntry): ToolWorkflowDetailSection => {
+  const sectionKey = `${entry.key}-tool-request`;
+  const sectionTitle = t('chat.toolWorkflow.toolRequestSection');
+  const rawRequestDetail = resolveRawWorkflowDetail(entry.callItem);
+  if (rawRequestDetail) {
     return {
       key: sectionKey,
       title: sectionTitle,
       kind: 'text',
-      body,
+      body: rawRequestDetail,
+      copyText: rawRequestDetail,
       commandView: null,
       patchLines: []
     };
   }
-
-  return buildEmptySection(sectionKey, sectionTitle, t('chat.toolWorkflow.modelCallMissing'));
+  return buildEmptySection(sectionKey, sectionTitle, t('chat.toolWorkflow.toolRequestMissing'));
 };
 
 const buildToolResultSection = (
@@ -3178,7 +3097,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     compactionDisplay,
     commandSession
   );
-  const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
+  const modelCallSection = buildModelCallSection(entry);
+  const sections = [toolResultSection, modelCallSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
     key: entry.key,
