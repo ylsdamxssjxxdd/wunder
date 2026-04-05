@@ -9,7 +9,8 @@
       'messenger-view--nav-collapsed': navigationPaneCollapsed,
       'messenger-view--host-medium': isRightDockOverlay,
       'messenger-view--host-small': isMiddlePaneOverlay,
-      'messenger-view--host-tight': viewportWidth <= MESSENGER_TIGHT_HOST_BREAKPOINT
+      'messenger-view--host-tight': viewportWidth <= MESSENGER_TIGHT_HOST_BREAKPOINT,
+      'messenger-view--action-blocked': isMessengerInteractionBlocked
     }"
     @pointerenter="handleMessengerRootPointerMove"
     @pointermove="handleMessengerRootPointerMove"
@@ -319,7 +320,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
             type="button"
-            :disabled="creatingAgentSession"
+            :disabled="creatingAgentSession || isMessengerInteractionBlocked"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="startNewSession"
@@ -341,7 +342,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
-            :disabled="agentConversationRefreshLoading"
+            :disabled="agentConversationRefreshLoading || isMessengerInteractionBlocked"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
             @click="refreshAgentConversationView"
@@ -1409,6 +1410,20 @@
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
     />
 
+    <div
+      v-if="isMessengerInteractionBlocked"
+      class="messenger-action-blocker"
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div class="messenger-action-blocker-card">
+        <span class="messenger-action-blocker-spinner" aria-hidden="true"></span>
+        <div class="messenger-action-blocker-title">{{ messengerInteractionBlockingLabel }}</div>
+        <div class="messenger-action-blocker-subtitle">{{ t('common.loading') }}</div>
+      </div>
+    </div>
+
     <MessengerFileContainerMenu
       ref="fileContainerMenuViewRef"
       :visible="fileContainerContextMenu.visible"
@@ -1554,6 +1569,8 @@ import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/vie
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
+import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
+import { settleAgentSessionBusyAfterRefresh } from '@/views/messenger/chatRefreshRecovery';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
@@ -1660,6 +1677,7 @@ import {
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
+import { chatDebugLog } from '@/utils/chatDebug';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -1997,6 +2015,15 @@ const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
 const agentConversationRefreshLoading = ref(false);
 const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
+const {
+  isBlocked: isMessengerInteractionBlocked,
+  label: messengerInteractionBlockingLabel,
+  activeReason: messengerInteractionBlockReason,
+  runWithBlock: runWithMessengerInteractionBlock
+} = useMessengerInteractionBlocker({
+  rootRef: messengerRootRef,
+  resolveLabel: (reason) => (reason === 'new_session' ? t('chat.newSession') : t('common.refresh'))
+});
 const middlePaneOverlayVisible = ref(false);
 const middlePaneMounted = ref(false);
 const standardNavigationCollapsed = ref(false);
@@ -4415,6 +4442,69 @@ const agentSessionLoading = computed(() => {
   if (!sessionId) return false;
   return isSessionBusy(sessionId);
 });
+
+const buildActiveSessionBusyDebugSnapshot = () => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  const runtimeStatus = activeSessionId
+    ? String(chatStore.sessionRuntimeStatus?.(activeSessionId) || '')
+    : '';
+  const loadingBySession =
+    activeSessionId && chatStore.loadingBySession && typeof chatStore.loadingBySession === 'object'
+      ? Boolean((chatStore.loadingBySession as Record<string, unknown>)[activeSessionId])
+      : false;
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (String((messages[index] as Record<string, unknown> | null)?.role || '') === 'user') {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  let tailAssistant: Record<string, unknown> | null = null;
+  for (let index = messages.length - 1; index > lastUserIndex; index -= 1) {
+    const item = messages[index] as Record<string, unknown> | null;
+    if (String(item?.role || '') === 'assistant') {
+      tailAssistant = item;
+      break;
+    }
+  }
+  return {
+    activeSessionId,
+    section: sessionHub.activeSection,
+    loadingProp: agentSessionLoading.value,
+    isBusyGetter: activeSessionId ? Boolean(chatStore.isSessionBusy?.(activeSessionId)) : false,
+    isLoadingGetter: activeSessionId ? Boolean(chatStore.isSessionLoading?.(activeSessionId)) : false,
+    loadingBySession,
+    runtimeStatus,
+    pendingApprovals: Array.isArray(chatStore.pendingApprovals) ? chatStore.pendingApprovals.length : 0,
+    messageCount: messages.length,
+    lastUserIndex,
+    hasTailAssistant: Boolean(tailAssistant),
+    tailAssistantState: tailAssistant ? String(tailAssistant.state || '') : '',
+    tailAssistantStreamIncomplete: Boolean(tailAssistant?.stream_incomplete),
+    tailAssistantWorkflowStreaming: Boolean(tailAssistant?.workflowStreaming),
+    tailAssistantReasoningStreaming: Boolean(tailAssistant?.reasoningStreaming),
+    tailAssistantCompactionRunning: tailAssistant
+      ? isCompactionRunningFromWorkflowItems(tailAssistant.workflowItems)
+      : false,
+    interactionBlocked: isMessengerInteractionBlocked.value,
+    interactionBlockReason: messengerInteractionBlockReason.value
+  };
+};
+
+watch(
+  [
+    () => String(chatStore.activeSessionId || ''),
+    () => agentSessionLoading.value,
+    () => String(chatStore.sessionRuntimeStatus?.(chatStore.activeSessionId || '') || ''),
+    () => Array.isArray(chatStore.messages) ? chatStore.messages.length : 0,
+    () => Boolean(isMessengerInteractionBlocked.value)
+  ],
+  () => {
+    chatDebugLog('messenger.busy', 'snapshot-change', buildActiveSessionBusyDebugSnapshot());
+  },
+  { immediate: true }
+);
 
 const canSendWorldMessage = computed(
   () =>
@@ -8701,85 +8791,148 @@ const formatRefreshSectionLabels = (labels: string[]): string => {
   return labels.join(separator);
 };
 
-const refreshAgentConversationView = async () => {
-  if (!isAgentConversationActive.value || agentConversationRefreshLoading.value) return;
-  agentConversationRefreshLoading.value = true;
-  try {
-    const activeSessionId = String(chatStore.activeSessionId || '').trim();
-    const refreshSections: Array<{
-      label: string;
-      run: () => Promise<boolean>;
-    }> = [
-      {
-        label: t('messenger.refresh.target.chat'),
-        run: async () => {
-          const tasks: Promise<unknown>[] = [chatStore.loadSessions({ skipTransportRefresh: true })];
-          if (activeSessionId) {
-            tasks.push(
-              chatStore.loadSessionDetail(activeSessionId, {
-                preserveWatcher: true,
-                forceHydrateForeground: true
-              })
-            );
-          }
-          const settled = await Promise.allSettled(tasks);
-          return settled.every((item) => item.status === 'fulfilled');
-        }
-      },
-      {
-        label: t('messenger.right.sandbox'),
-        run: async () => {
-          const refreshWorkspace = rightDockRef.value?.refreshWorkspace;
-          if (typeof refreshWorkspace !== 'function') {
-            return true;
-          }
-          try {
-            return (await refreshWorkspace({ background: true })) !== false;
-          } catch {
-            return false;
-          }
-        }
-      },
-      {
-        label: t('userTools.skills.title'),
-        run: async () => (await loadRightDockSkills({ force: true, silent: true })) !== false
-      }
-    ];
-    const sectionPromises = refreshSections.map(async (section): Promise<AgentConversationRefreshSectionResult> => ({
-      label: section.label,
-      success: await section.run()
-    }));
-    const refreshResults = await Promise.allSettled([
-      loadAgentToolSummary({ force: true }),
-      ...sectionPromises
-    ]);
-    const sectionResults = refreshResults
-      .slice(1)
-      .map((item, index): AgentConversationRefreshSectionResult => {
-        if (item.status === 'fulfilled') {
-          return item.value as AgentConversationRefreshSectionResult;
-        }
-        return {
-          label: refreshSections[index]?.label || t('common.refresh'),
-          success: false
-        };
-      });
-    const failedLabels = sectionResults.filter((item) => !item.success).map((item) => item.label);
-    if (!failedLabels.length) {
-      ElMessage.success(t('common.refreshSuccess'));
-      return;
-    }
-    const failedText = formatRefreshSectionLabels(failedLabels);
-    if (failedLabels.length === sectionResults.length) {
-      ElMessage.error(t('messenger.refresh.failed', { targets: failedText }));
-      return;
-    }
-    ElMessage.warning(t('messenger.refresh.partial', { targets: failedText }));
-  } catch (error) {
-    showApiError(error, t('common.requestFailed'));
-  } finally {
-    agentConversationRefreshLoading.value = false;
+const refreshActiveAgentConversationChat = async (activeSessionId: string): Promise<boolean> => {
+  chatDebugLog('messenger.refresh', 'chat-refresh-start', {
+    activeSessionId,
+    snapshot: buildActiveSessionBusyDebugSnapshot()
+  });
+  const tasks: Promise<unknown>[] = [chatStore.loadSessions({ skipTransportRefresh: true })];
+  if (activeSessionId) {
+    tasks.push(
+      chatStore.loadSessionDetail(activeSessionId, {
+        preserveWatcher: true,
+        forceHydrateForeground: true
+      })
+    );
   }
+  const settled = await Promise.allSettled(tasks);
+  if (!settled.every((item) => item.status === 'fulfilled')) {
+    chatDebugLog('messenger.refresh', 'chat-refresh-load-failed', {
+      activeSessionId,
+      settled
+    });
+    return false;
+  }
+  if (!activeSessionId) {
+    chatDebugLog('messenger.refresh', 'chat-refresh-no-active-session');
+    return true;
+  }
+  if (String(chatStore.activeSessionId || '').trim() !== activeSessionId) {
+    chatDebugLog('messenger.refresh', 'chat-refresh-session-switched', {
+      from: activeSessionId,
+      to: String(chatStore.activeSessionId || '').trim()
+    });
+    return true;
+  }
+  const recovery = await settleAgentSessionBusyAfterRefresh({
+    sessionId: activeSessionId,
+    isSessionBusy,
+    resolveRuntimeStatus: (sessionId) => String(chatStore.sessionRuntimeStatus?.(sessionId) || ''),
+    loadSessionDetail: (sessionId, options) =>
+      chatStore.loadSessionDetail(sessionId, {
+        preserveWatcher: options?.preserveWatcher === true,
+        forceHydrateForeground: options?.forceHydrateForeground === true
+      }),
+    attempts: 3,
+    settleDelayMs: 140
+  });
+  chatDebugLog('messenger.refresh', 'chat-refresh-recovery-finish', {
+    activeSessionId,
+    recovery,
+    snapshot: buildActiveSessionBusyDebugSnapshot()
+  });
+  return recovery !== 'unsettled';
+};
+
+const refreshAgentConversationView = async () => {
+  if (
+    !isAgentConversationActive.value ||
+    agentConversationRefreshLoading.value ||
+    isMessengerInteractionBlocked.value
+  ) {
+    chatDebugLog('messenger.refresh', 'skip-refresh', {
+      isAgentConversationActive: isAgentConversationActive.value,
+      refreshLoading: agentConversationRefreshLoading.value,
+      interactionBlocked: isMessengerInteractionBlocked.value,
+      snapshot: buildActiveSessionBusyDebugSnapshot()
+    });
+    return;
+  }
+  chatDebugLog('messenger.refresh', 'start-refresh-view', buildActiveSessionBusyDebugSnapshot());
+  await runWithMessengerInteractionBlock('refresh', async () => {
+    agentConversationRefreshLoading.value = true;
+    try {
+      const activeSessionId = String(chatStore.activeSessionId || '').trim();
+      const refreshSections: Array<{
+        label: string;
+        run: () => Promise<boolean>;
+      }> = [
+        {
+          label: t('messenger.refresh.target.chat'),
+          run: async () => refreshActiveAgentConversationChat(activeSessionId)
+        },
+        {
+          label: t('messenger.right.sandbox'),
+          run: async () => {
+            const refreshWorkspace = rightDockRef.value?.refreshWorkspace;
+            if (typeof refreshWorkspace !== 'function') {
+              return true;
+            }
+            try {
+              return (await refreshWorkspace({ background: true })) !== false;
+            } catch {
+              return false;
+            }
+          }
+        },
+        {
+          label: t('userTools.skills.title'),
+          run: async () => (await loadRightDockSkills({ force: true, silent: true })) !== false
+        }
+      ];
+      const sectionPromises = refreshSections.map(
+        async (section): Promise<AgentConversationRefreshSectionResult> => ({
+          label: section.label,
+          success: await section.run()
+        })
+      );
+      const refreshResults = await Promise.allSettled([
+        loadAgentToolSummary({ force: true }),
+        ...sectionPromises
+      ]);
+      const sectionResults = refreshResults
+        .slice(1)
+        .map((item, index): AgentConversationRefreshSectionResult => {
+          if (item.status === 'fulfilled') {
+            return item.value as AgentConversationRefreshSectionResult;
+          }
+          return {
+            label: refreshSections[index]?.label || t('common.refresh'),
+            success: false
+          };
+        });
+      const failedLabels = sectionResults.filter((item) => !item.success).map((item) => item.label);
+      chatDebugLog('messenger.refresh', 'finish-refresh-view', {
+        failedLabels,
+        sectionResults,
+        snapshot: buildActiveSessionBusyDebugSnapshot()
+      });
+      if (!failedLabels.length) {
+        ElMessage.success(t('common.refreshSuccess'));
+        return;
+      }
+      const failedText = formatRefreshSectionLabels(failedLabels);
+      if (failedLabels.length === sectionResults.length) {
+        ElMessage.error(t('messenger.refresh.failed', { targets: failedText }));
+        return;
+      }
+      ElMessage.warning(t('messenger.refresh.partial', { targets: failedText }));
+    } catch (error) {
+      showApiError(error, t('common.requestFailed'));
+    } finally {
+      agentConversationRefreshLoading.value = false;
+    }
+  });
 };
 
 const handleRightDockSkillArchiveUpload = async (file: File) => {
@@ -9656,10 +9809,12 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
   if (command === 'new') {
     try {
       const outcome = await runStartNewSession();
-      const sessionId = String(chatStore.activeSessionId || '').trim();
-      const replyText =
-        outcome === 'already_current' ? t('chat.newSessionAlreadyCurrent') : t('chat.command.newSuccess');
-      chatStore.appendLocalMessage('assistant', replyText, { sessionId });
+      if (outcome !== 'noop') {
+        const sessionId = String(chatStore.activeSessionId || '').trim();
+        const replyText =
+          outcome === 'already_current' ? t('chat.newSessionAlreadyCurrent') : t('chat.command.newSuccess');
+        chatStore.appendLocalMessage('assistant', replyText, { sessionId });
+      }
     } catch (error) {
       appendAgentLocalCommandMessages(
         rawText,
@@ -9706,6 +9861,10 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
 };
 
 const sendAgentMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
+  if (isMessengerInteractionBlocked.value) {
+    chatDebugLog('messenger.send', 'blocked-send-during-interaction-lock', buildActiveSessionBusyDebugSnapshot());
+    return;
+  }
   const content = String(payload?.content || '').trim();
   const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
   const activeInquiry = activeAgentInquiryPanel.value;
@@ -9779,6 +9938,11 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
 };
 
 const stopAgentMessage = async () => {
+  if (isMessengerInteractionBlocked.value) {
+    chatDebugLog('messenger.send', 'blocked-stop-during-interaction-lock', buildActiveSessionBusyDebugSnapshot());
+    return;
+  }
+  chatDebugLog('messenger.send', 'manual-stop-click', buildActiveSessionBusyDebugSnapshot());
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   setRuntimeStateOverride(targetAgentId, 'done', 20_000);
   pendingAssistantCenter = false;
@@ -10475,6 +10639,7 @@ const handleWorldUploadInput = async (event: Event) => {
 };
 
 const sendWorldMessage = async () => {
+  if (isMessengerInteractionBlocked.value) return;
   if (worldVoiceRecording.value) return;
   if (!canSendWorldMessage.value) return;
   const text = worldDraft.value.trim();
@@ -10529,34 +10694,25 @@ function resolveReusableFreshAgentSessionId(targetAgentId: string): string {
   return chatStore.resolveReusableFreshSessionId(targetAgentId);
 }
 
-function requestStopActiveAgentSessionStream() {
-  if (!chatStore.activeSessionId) return;
-  // Stop active stream immediately before switching to a fresh thread.
-  void chatStore.stopStream().catch(() => null);
-}
-
 async function openOrReuseFreshAgentSession(targetAgentId: string): Promise<string> {
   const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgentId);
   if (reusableSessionId) {
-    if (String(chatStore.activeSessionId || '').trim() !== reusableSessionId) {
-      requestStopActiveAgentSessionStream();
-    }
-    await chatStore.setMainSession(reusableSessionId);
+    void chatStore.setMainSession(reusableSessionId).catch(() => null);
     return reusableSessionId;
   }
-  requestStopActiveAgentSessionStream();
   const payloadAgentId = targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId;
   const session = await chatStore.createSession(payloadAgentId ? { agent_id: payloadAgentId } : {});
   const sessionId = String((session as Record<string, unknown> | null)?.id || '').trim();
   if (!sessionId) return '';
-  await chatStore.setMainSession(sessionId);
   return sessionId;
 }
 
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 async function runStartNewSession(options: { notify?: boolean } = {}): Promise<StartNewSessionOutcome> {
-  if (!isAgentConversationActive.value || creatingAgentSession.value) return 'noop';
+  if (!isAgentConversationActive.value || creatingAgentSession.value || isMessengerInteractionBlocked.value) {
+    return 'noop';
+  }
   const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
   const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgent);
@@ -10566,18 +10722,22 @@ async function runStartNewSession(options: { notify?: boolean } = {}): Promise<S
     }
     return 'already_current';
   }
-  creatingAgentSession.value = true;
-  try {
-    const sessionId = await openOrReuseFreshAgentSession(targetAgent);
-    if (!sessionId) return 'noop';
-    await openAgentSession(sessionId, targetAgent);
-    if (options.notify === true) {
-      ElMessage.success(t('chat.newSessionOpened'));
+  const runResult = await runWithMessengerInteractionBlock('new_session', async () => {
+    creatingAgentSession.value = true;
+    try {
+      const sessionId = await openOrReuseFreshAgentSession(targetAgent);
+      if (!sessionId) return 'noop';
+      if (options.notify === true) {
+        ElMessage.success(t('chat.newSessionOpened'));
+      }
+      // Keep "new thread" action responsive; detail hydration continues in background.
+      void openAgentSession(sessionId, targetAgent);
+      return 'opened';
+    } finally {
+      creatingAgentSession.value = false;
     }
-    return 'opened';
-  } finally {
-    creatingAgentSession.value = false;
-  }
+  });
+  return runResult || 'noop';
 }
 
 async function startNewSession() {

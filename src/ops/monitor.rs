@@ -1464,8 +1464,20 @@ impl MonitorState {
     fn calc_workspace_usage_incremental(&self, now: f64) -> u64 {
         let user_dirs = self.collect_workspace_user_dirs();
         let mut scan_state = self.workspace_usage_scan_state.lock();
-        let need_full_scan = !scan_state.initialized
-            || now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s;
+        if !scan_state.initialized {
+            // Keep cold-start monitor requests responsive by avoiding a full recursive scan here.
+            // We bootstrap with a bounded incremental pass and fill the rest across later polls.
+            update_workspace_usage_state_incremental(
+                &mut scan_state,
+                &user_dirs,
+                self.workspace_usage_scan_batch_users,
+            );
+            scan_state.initialized = true;
+            scan_state.last_full_scan_ts = now;
+            return workspace_usage_total(scan_state.per_user.values().copied());
+        }
+        let need_full_scan =
+            now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s;
         if need_full_scan {
             return rebuild_workspace_usage_state(&mut scan_state, &user_dirs, now);
         }
@@ -2904,12 +2916,12 @@ fn update_workspace_usage_state_incremental(
         .retain(|user| current_map.contains_key(user.as_str()));
 
     let mut has_new_user = false;
-    for (user, path) in user_dirs {
+    for (user, _path) in user_dirs {
         if scan_state.per_user.contains_key(user) {
             continue;
         }
-        let size = calc_dir_size(path.as_path(), None);
-        scan_state.per_user.insert(user.clone(), size);
+        // Defer expensive size traversal to the batched scan loop below.
+        scan_state.per_user.insert(user.clone(), 0);
         scan_state.user_order.push(user.clone());
         has_new_user = true;
     }

@@ -439,6 +439,7 @@ import {
 } from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
+import { chatDebugLog } from '@/utils/chatDebug';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 
@@ -2487,5 +2488,21 @@ watch(
   () => {
     syncWorldComposerHeight();
   }
+);
+
+watch(
+  () => Boolean(props.loading),
+  (next, previous) => {
+    if (next === previous) return;
+    chatDebugLog('chat.composer', 'loading-prop-change', {
+      from: previous,
+      to: next,
+      sessionId: String(chatStore.activeSessionId || '').trim(),
+      canSendOrStop: canSendOrStop.value,
+      attachmentBusy: attachmentBusy.value,
+      voiceRecording: voiceRecording.value
+    });
+  },
+  { immediate: true }
 );
 </script>

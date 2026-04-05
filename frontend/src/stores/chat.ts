@@ -41,6 +41,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
@@ -2144,6 +2145,63 @@ const resolveEventType = (eventName, payload) => {
   return normalized || 'message';
 };
 
+const normalizeStreamEventType = (eventType) => String(eventType || '').trim().toLowerCase();
+
+const isTerminalStreamEventType = (eventType) => {
+  const normalized = normalizeStreamEventType(eventType);
+  return (
+    normalized === 'final' ||
+    normalized === 'error' ||
+    normalized === 'queue_fail' ||
+    normalized === 'turn_terminal'
+  );
+};
+
+const isTerminalRuntimeStatus = (status) => {
+  const normalizedStatus = normalizeThreadRuntimeStatus(status);
+  return normalizedStatus !== 'running' && !isThreadRuntimeWaiting(normalizedStatus);
+};
+
+const shouldTreatRuntimeEventAsTerminal = (eventType, payload) => {
+  const normalizedEventType = normalizeStreamEventType(eventType);
+  if (normalizedEventType === 'thread_closed') {
+    return true;
+  }
+  if (normalizedEventType !== 'thread_status') {
+    return false;
+  }
+  return isTerminalRuntimeStatus(payload?.thread_status ?? payload?.status);
+};
+
+const isTerminalLlmOutputPayload = (payload, data = null) => {
+  const source = data && typeof data === 'object' ? data : {};
+  const stopReason = String(
+    source?.stop_reason ??
+      source?.stopReason ??
+      source?.finish_reason ??
+      source?.finishReason ??
+      payload?.stop_reason ??
+      payload?.stopReason ??
+      payload?.finish_reason ??
+      payload?.finishReason ??
+      ''
+  ).trim();
+  if (stopReason) {
+    return true;
+  }
+  const terminalFlags = [
+    source?.done,
+    source?.is_final,
+    source?.isFinal,
+    source?.final,
+    payload?.done,
+    payload?.is_final,
+    payload?.isFinal,
+    payload?.final
+  ];
+  return terminalFlags.some((flag) => flag === true);
+};
+
 const handleApprovalEvent = (store, eventType, payload, requestId, sessionId) => {
   if (!store) return;
   if (eventType === 'approval_request') {
@@ -3698,11 +3756,21 @@ function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread
     runtime.waitingForUserInput = false;
     runtime.threadStatus = 'not_loaded';
   }
-  const normalizedStatus = normalizeThreadRuntimeStatus(runtime.threadStatus);
+  const terminalRuntimeStatus = isTerminalRuntimeStatus(runtime.threadStatus);
+  if (terminalRuntimeStatus) {
+    // Terminal runtime status is authoritative for this thread; clear stale interactive
+    // controllers so they cannot keep the session in a phantom "running" state.
+    clearRuntimeInteractiveControllers(runtime, { abort: false });
+    chatDebugLog('chat.store.runtime', 'terminal-runtime-event', {
+      sessionId: targetId,
+      eventType,
+      threadStatus: runtime.threadStatus,
+      runtime: buildRuntimeDebugSnapshot(runtime)
+    });
+  }
   const shouldSettleTerminalState =
     !hasRuntimeControllers(runtime)
-    && normalizedStatus !== 'running'
-    && !isThreadRuntimeWaiting(normalizedStatus);
+    && terminalRuntimeStatus;
   if (shouldSettleTerminalState) {
     const targetMessages = resolveSessionKey(store?.activeSessionId) === targetId
       ? store?.messages
@@ -3713,6 +3781,13 @@ function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread
       notifySessionSnapshot(store, targetId, targetMessages, true);
     }
     setSessionLoading(store, targetId, false);
+    chatDebugLog('chat.store.runtime', 'settle-terminal-state', {
+      sessionId: targetId,
+      eventType,
+      threadStatus: runtime.threadStatus,
+      clearedSuperseded,
+      clearedTrailing
+    });
   }
   return runtime;
 }
@@ -3864,24 +3939,68 @@ const clearCompletedAssistantStreamingState = (messages) => {
   });
 };
 
+function buildRuntimeDebugSnapshot(runtime) {
+  return {
+    threadStatus: normalizeThreadRuntimeStatus(runtime?.threadStatus),
+    loaded: Boolean(runtime?.loaded),
+    streamLifecycle: normalizeStreamLifecyclePhase(runtime?.streamLifecycle),
+    hasWatchController: Boolean(runtime?.watchController),
+    hasSendController: Boolean(runtime?.sendController),
+    hasResumeController: Boolean(runtime?.resumeController),
+    sendAborted: runtime?.sendController?.signal?.aborted === true,
+    resumeAborted: runtime?.resumeController?.signal?.aborted === true
+  };
+}
+
 const setSessionLoading = (store, sessionId, value) => {
   const key = resolveSessionKey(sessionId);
   if (!key) return;
+  const beforeLoading = Boolean(store.loadingBySession[key]);
+  const runtime = ensureRuntime(key);
+  const beforeRuntime = buildRuntimeDebugSnapshot(runtime);
   if (value) {
     store.loadingBySession[key] = true;
   } else if (store.loadingBySession[key]) {
     delete store.loadingBySession[key];
   }
-  const runtime = ensureRuntime(key);
   if (!runtime) return;
   if (value) {
     runtime.loaded = true;
     if (!isThreadRuntimeWaiting(runtime.threadStatus)) {
       runtime.threadStatus = 'running';
     }
+    const afterRuntime = buildRuntimeDebugSnapshot(runtime);
+    if (
+      beforeLoading !== Boolean(value) ||
+      beforeRuntime.threadStatus !== afterRuntime.threadStatus
+    ) {
+      chatDebugLog('chat.store.loading', 'set-session-loading', {
+        sessionId: key,
+        nextLoading: true,
+        beforeLoading,
+        beforeRuntime,
+        afterRuntime
+      });
+    }
     return;
   }
   applyRuntimeDerivedStatus(store, key, runtime);
+  const afterRuntime = buildRuntimeDebugSnapshot(runtime);
+  const hasResidualControllers = afterRuntime.hasSendController || afterRuntime.hasResumeController;
+  if (
+    beforeLoading !== Boolean(value) ||
+    beforeRuntime.threadStatus !== afterRuntime.threadStatus ||
+    hasResidualControllers
+  ) {
+    chatDebugLog('chat.store.loading', 'set-session-loading', {
+      sessionId: key,
+      nextLoading: false,
+      beforeLoading,
+      beforeRuntime,
+      afterRuntime,
+      hasResidualControllers
+    });
+  }
 };
 
 let sessionWatchSessionId = '';
@@ -3936,6 +4055,17 @@ function clearRuntimeResumeStreamState(runtime, options: { abort?: boolean } = {
   runtime.resumeStartedAt = 0;
   runtime.resumeLastEventAt = 0;
   return true;
+}
+
+function clearRuntimeInteractiveControllers(runtime, options: { abort?: boolean } = {}) {
+  if (!runtime) return false;
+  const clearedSend = clearRuntimeSendStreamState(runtime, options);
+  const clearedResume = clearRuntimeResumeStreamState(runtime, options);
+  if (clearedSend || clearedResume) {
+    runtime.stopRequested = false;
+    refreshRuntimeStreamLifecycle(runtime);
+  }
+  return clearedSend || clearedResume;
 }
 
 function markRuntimeSendStreamStarted(runtime) {
@@ -4012,11 +4142,25 @@ function recoverRuntimeInteractiveControllers(
   });
   let changed = false;
   if (sendReason) {
+    chatDebugLog('chat.store.controller-recovery', 'clear-send-controller', {
+      sessionId: key,
+      reason: sendReason,
+      remoteRunning: options.remoteRunning,
+      localLastEventId,
+      remoteLastEventId
+    });
     changed = clearRuntimeSendStreamState(runtime, {
       abort: sendReason !== 'aborted' && sendReason !== 'remote_idle'
     }) || changed;
   }
   if (resumeReason) {
+    chatDebugLog('chat.store.controller-recovery', 'clear-resume-controller', {
+      sessionId: key,
+      reason: resumeReason,
+      remoteRunning: options.remoteRunning,
+      localLastEventId,
+      remoteLastEventId
+    });
     changed = clearRuntimeResumeStreamState(runtime, {
       abort: resumeReason !== 'aborted' && resumeReason !== 'remote_idle'
     }) || changed;
@@ -4555,6 +4699,7 @@ const startSessionWatcher = (store, sessionId) => {
       hasContentDelta ||
       normalizedEventType === 'final' ||
       normalizedEventType === 'error' ||
+      normalizedEventType === 'turn_terminal' ||
       normalizedEventType === 'queue_enter' ||
       normalizedEventType === 'queue_start' ||
       normalizedEventType === 'queue_finish' ||
@@ -4592,13 +4737,14 @@ const startSessionWatcher = (store, sessionId) => {
     return fallbackRound;
   };
 
+  const isWatchTerminalEventType = (normalizedEventType) =>
+    isTerminalStreamEventType(normalizedEventType);
+
   const isWatchWorkflowEventType = (normalizedEventType) =>
-    normalizedEventType === 'final' ||
-    normalizedEventType === 'error' ||
+    isWatchTerminalEventType(normalizedEventType) ||
     normalizedEventType === 'queue_enter' ||
     normalizedEventType === 'queue_start' ||
     normalizedEventType === 'queue_finish' ||
-    normalizedEventType === 'queue_fail' ||
     normalizedEventType === 'received' ||
     normalizedEventType === 'round_start' ||
     normalizedEventType === 'progress' ||
@@ -4756,6 +4902,7 @@ const startSessionWatcher = (store, sessionId) => {
           scheduleWatchReconcile(running === false ? 0 : WATCH_RECONCILE_DELAY_MS);
         }
         if (running === false) {
+          clearRuntimeInteractiveControllers(runtime, { abort: false });
           clearSupersededPendingAssistantMessages(sessionMessagesRef);
           stopPendingAssistantMessage(pendingMessage);
           setSessionLoading(store, key, false);
@@ -4778,6 +4925,15 @@ const startSessionWatcher = (store, sessionId) => {
     scheduleNext(initialProfile.intervalMs);
   };
 
+  const tryFinalizeWatchRound = (roundHint) => {
+    const normalizedRound = normalizeStreamRound(roundHint);
+    if (normalizedRound === null || !roundStates.has(normalizedRound)) {
+      return false;
+    }
+    finalizeRound(normalizedRound, false);
+    return true;
+  };
+
   const onEvent = (eventType, dataText, eventId) => {
     recoverRuntimeInteractiveControllers(store, key, runtime, {
       localLastEventId: lastEventId
@@ -4786,7 +4942,7 @@ const startSessionWatcher = (store, sessionId) => {
     markWatchdogEvent();
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
-    const normalizedEventType = String(eventType || '').trim().toLowerCase();
+    const normalizedEventType = normalizeStreamEventType(eventType);
     if (normalizedEventType !== 'heartbeat' && normalizedEventType !== 'ping') {
       clearSessionEventsSnapshot(key, { keepInFlight: true });
     }
@@ -4805,13 +4961,13 @@ const startSessionWatcher = (store, sessionId) => {
       return;
     }
     if (perfEnabled) {
-      chatPerf.count('chat_watch_event', 1, { eventType, sessionId: key });
+      chatPerf.count('chat_watch_event', 1, { eventType: normalizedEventType || eventType, sessionId: key });
     }
-    if (eventType === 'heartbeat' || eventType === 'ping') {
+    if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
       return;
     }
-    handleApprovalEvent(store, eventType, data, requestId, key);
-    if (eventType === 'slow_client' && !data) {
+    handleApprovalEvent(store, normalizedEventType || eventType, data, requestId, key);
+    if (normalizedEventType === 'slow_client' && !data) {
       return;
     }
     const stage = data?.stage ?? payload?.stage;
@@ -4871,6 +5027,8 @@ const startSessionWatcher = (store, sessionId) => {
       normalizedEventType === 'round_start' ||
       normalizedEventType === 'received' ||
       (normalizedEventType === 'progress' && stage === 'start');
+    const llmOutputTerminal =
+      normalizedEventType === 'llm_output' && isTerminalLlmOutputPayload(payload, data);
     if (normalizedEventId !== null) {
       if (normalizedEventId <= lastEventId) {
         const latestAssistantTimestamp = resolveLastAssistantTimestampMs(sessionMessagesRef);
@@ -4900,6 +5058,22 @@ const startSessionWatcher = (store, sessionId) => {
           isWatchWorkflowEventType(normalizedEventType) &&
           (directRoundAdvanced || userRoundAdvanced);
         if (!canResetByStart && !canResetByRoundHint) {
+          if (isWatchTerminalEventType(normalizedEventType) || llmOutputTerminal) {
+            const finalizedByRound =
+              tryFinalizeWatchRound(directRoundNumber) ||
+              tryFinalizeWatchRound(userRoundNumber) ||
+              (roundStates.size === 1 && tryFinalizeWatchRound(Array.from(roundStates.keys())[0]));
+            if (finalizedByRound || roundStates.size === 0) {
+              setSessionLoading(store, key, false);
+              if (perfEnabled) {
+                chatPerf.count('chat_watch_terminal', 1, {
+                  eventType: normalizedEventType || eventType,
+                  sessionId: key
+                });
+              }
+              return;
+            }
+          }
           if (isWatchWorkflowEventType(normalizedEventType)) {
             scheduleWatchReconcile();
           }
@@ -4963,19 +5137,28 @@ const startSessionWatcher = (store, sessionId) => {
     assignStreamEventId(state.message, eventId);
     if (perfEnabled) {
       const start = performance.now();
-      state.processor.handleEvent(eventType, dataText);
+      state.processor.handleEvent(normalizedEventType || eventType, dataText);
       chatPerf.recordDuration('chat_watch_event_handle', performance.now() - start, {
-        eventType,
+        eventType: normalizedEventType || eventType,
         sessionId: key
       });
     } else {
-      state.processor.handleEvent(eventType, dataText);
+      state.processor.handleEvent(normalizedEventType || eventType, dataText);
     }
-    if (eventType === 'final' || eventType === 'error' || eventType === 'queue_fail') {
-      finalizeRound(roundNumber, false);
-      setSessionLoading(store, key, false);
+    if (isWatchTerminalEventType(normalizedEventType) || llmOutputTerminal) {
+      const finalized =
+        tryFinalizeWatchRound(roundNumber) ||
+        (roundStates.size === 1 && tryFinalizeWatchRound(Array.from(roundStates.keys())[0]));
+      if (finalized || roundStates.size === 0) {
+        setSessionLoading(store, key, false);
+      } else {
+        scheduleWatchReconcile();
+      }
       if (perfEnabled) {
-        chatPerf.count('chat_watch_terminal', 1, { eventType, sessionId: key });
+        chatPerf.count('chat_watch_terminal', 1, {
+          eventType: normalizedEventType || eventType,
+          sessionId: key
+        });
       }
     }
   };
@@ -7552,6 +7735,56 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         break;
       }
+      case 'turn_terminal': {
+        flushStream(true);
+        const terminalPayload =
+          (data && typeof data === 'object' ? data : null)
+          ?? (payload && typeof payload === 'object' ? payload : null)
+          ?? {};
+        const terminalStatus = String(terminalPayload?.status ?? '').trim().toLowerCase();
+        const finalOk = terminalPayload?.final_ok;
+        const terminalFailed =
+          terminalStatus === 'failed' ||
+          terminalStatus === 'error' ||
+          terminalStatus === 'aborted' ||
+          terminalStatus === 'cancelled' ||
+          terminalStatus === 'canceled' ||
+          finalOk === false;
+        compactionTerminalStatusHint = terminalFailed ? 'failed' : 'completed';
+        finalizeLingeringCompactionProgressItems(
+          terminalPayload,
+          terminalFailed ? 'failed' : 'completed'
+        );
+        const stopReasonRaw = terminalPayload?.stop_reason;
+        const stopReason = normalizeStopReason(stopReasonRaw);
+        if (stopReason) {
+          assistantMessage.stop_reason = stopReason;
+        }
+        if (lastRound !== null) {
+          assistantMessage.stream_round = lastRound;
+        }
+        outputState.streaming = false;
+        outputState.reasoningStreaming = false;
+        syncReasoningToMessage();
+        const hasOutputTrace = Boolean(
+          String(outputContent || '').trim() || String(resolveReasoningOutput() || '').trim()
+        );
+        if (outputItemId || hasOutputTrace) {
+          const outputId = ensureOutputItem();
+          updateWorkflowItem(assistantMessage.workflowItems, outputId, {
+            status: terminalFailed ? 'failed' : 'completed',
+            detail: buildOutputDetail()
+          });
+        }
+        if (terminalFailed && !assistantMessage.content) {
+          const terminalDetail = pickText(
+            terminalPayload?.message ?? terminalPayload?.error,
+            t('chat.error.retry')
+          );
+          assistantMessage.content = terminalDetail;
+        }
+        break;
+      }
       case 'error': {
         compactionTerminalStatusHint = 'failed';
         const detail = data?.message ?? payload?.message ?? raw ?? t('chat.error.generic');
@@ -8365,11 +8598,10 @@ export const useChatStore = defineStore('chat', {
         messages: this.messages
       });
       if (session?.is_main !== true) {
-        try {
-          await this.setMainSession(session.id);
-        } catch (error) {
+        // Keep creation flow responsive; main-session sync can finish in background.
+        void this.setMainSession(session.id).catch(() => {
           // Keep local session state when explicit main-session sync fails.
-        }
+        });
       }
       startSessionWatcher(this, session.id);
       return session;
@@ -8511,6 +8743,9 @@ export const useChatStore = defineStore('chat', {
             : [])
         )
       });
+      if (eventsPayload?.running === false) {
+        clearRuntimeInteractiveControllers(runtime, { abort: false });
+      }
       const sessionCreatedAt = sessionDetail?.created_at;
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
@@ -8599,6 +8834,7 @@ export const useChatStore = defineStore('chat', {
         Math.max(resolveMaterializedMessageEventId(nextMessages), remoteLastEventId || 0)
       );
       if (!hasPendingAssistantAfterHydration) {
+        clearRuntimeInteractiveControllers(runtime, { abort: false });
         // Keep historical threads idle on entry; avoid reviving stale running status.
         setSessionLoading(this, targetSessionId, false);
       }
@@ -9200,27 +9436,37 @@ export const useChatStore = defineStore('chat', {
           markRuntimeSendStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
-          const normalizedEventType = String(eventType || '').trim().toLowerCase();
+          const normalizedEventType = normalizeStreamEventType(eventType);
           handleApprovalEvent(
             this,
-            eventType,
+            normalizedEventType || eventType,
             approvalPayload,
             runtime?.sendRequestId || '',
             sessionId
           );
           if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+            if (shouldTreatRuntimeEventAsTerminal(normalizedEventType, approvalPayload)) {
+              const runtimeStatus = normalizeThreadRuntimeStatus(
+                approvalPayload?.thread_status ?? approvalPayload?.status
+              );
+              if (runtimeStatus === 'system_error') {
+                errorSeen = true;
+              } else {
+                finalSeen = true;
+              }
+            }
             updateRuntimeLastEventId(runtime, eventId);
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
           }
           if (perfEnabled) {
-            chatPerf.count('chat_stream_event', 1, { eventType, sessionId });
+            chatPerf.count('chat_stream_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }
-          if (eventType === 'heartbeat' || eventType === 'ping') {
+          if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
             return;
           }
           const queuedFlag =
-            eventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
+            normalizedEventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
           if (queuedFlag) {
             if (!queued) {
               queued = true;
@@ -9235,12 +9481,19 @@ export const useChatStore = defineStore('chat', {
             assistantMessage.workflowStreaming = true;
             return;
           }
-          if (eventType === 'final') {
-            finalSeen = true;
-          } else if (eventType === 'error') {
-            errorSeen = true;
+          if (isTerminalStreamEventType(normalizedEventType)) {
+            if (normalizedEventType === 'error' || normalizedEventType === 'queue_fail') {
+              errorSeen = true;
+            } else {
+              finalSeen = true;
+            }
           } else if (
-            eventType === 'slow_client' &&
+            normalizedEventType === 'llm_output' &&
+            isTerminalLlmOutputPayload(payload, approvalPayload)
+          ) {
+            finalSeen = true;
+          } else if (
+            normalizedEventType === 'slow_client' &&
             String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
           ) {
             slowClientResumeAfterEventId = Math.max(
@@ -9263,13 +9516,13 @@ export const useChatStore = defineStore('chat', {
           updateRuntimeLastEventId(runtime, eventId);
           if (perfEnabled) {
             const start = performance.now();
-            processor.handleEvent(eventType, dataText);
+            processor.handleEvent(normalizedEventType || eventType, dataText);
             chatPerf.recordDuration('chat_stream_event_handle', performance.now() - start, {
-              eventType,
+              eventType: normalizedEventType || eventType,
               sessionId
             });
           } else {
-            processor.handleEvent(eventType, dataText);
+            processor.handleEvent(normalizedEventType || eventType, dataText);
           }
         };
         const streamWithSse = async () => {
@@ -9398,7 +9651,10 @@ export const useChatStore = defineStore('chat', {
       } finally {
         const stopped = interruptedByStop || Boolean(runtime?.stopRequested);
         const terminalSeen = finalSeen || errorSeen;
-        const keepStreaming = !stopped && !terminalSeen;
+        let keepStreaming = !stopped && !terminalSeen;
+        if (keepStreaming && runtime && isTerminalRuntimeStatus(runtime.threadStatus)) {
+          keepStreaming = false;
+        }
         const finishedRequestId = runtime?.sendRequestId || '';
         assistantMessage.workflowStreaming = keepStreaming;
         assistantMessage.reasoningStreaming = false;
@@ -9552,21 +9808,31 @@ export const useChatStore = defineStore('chat', {
           markRuntimeResumeStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
           const approvalPayload = payload?.data ?? payload;
-          const normalizedEventType = String(eventType || '').trim().toLowerCase();
+          const normalizedEventType = normalizeStreamEventType(eventType);
           if (perfEnabled) {
-            chatPerf.count('chat_resume_event', 1, { eventType, sessionId });
+            chatPerf.count('chat_resume_event', 1, { eventType: normalizedEventType || eventType, sessionId });
           }
-          if (eventType === 'heartbeat' || eventType === 'ping') {
+          if (normalizedEventType === 'heartbeat' || normalizedEventType === 'ping') {
             return;
           }
           handleApprovalEvent(
             this,
-            eventType,
+            normalizedEventType || eventType,
             approvalPayload,
             runtime?.resumeRequestId || '',
             sessionId
           );
           if (normalizedEventType === 'thread_status' || normalizedEventType === 'thread_closed') {
+            if (shouldTreatRuntimeEventAsTerminal(normalizedEventType, approvalPayload)) {
+              const runtimeStatus = normalizeThreadRuntimeStatus(
+                approvalPayload?.thread_status ?? approvalPayload?.status
+              );
+              if (runtimeStatus === 'system_error') {
+                errorSeen = true;
+              } else {
+                finalSeen = true;
+              }
+            }
             updateRuntimeRemoteLastEventId(runtime, eventId);
             applySessionRuntimeEvent(this, sessionId, approvalPayload, normalizedEventType);
             return;
@@ -9640,12 +9906,19 @@ export const useChatStore = defineStore('chat', {
             resumeLastEventId,
             normalizeStreamEventId(eventId) || 0
           );
-          if (eventType === 'final') {
-            finalSeen = true;
-          } else if (eventType === 'error') {
-            errorSeen = true;
+          if (isTerminalStreamEventType(normalizedEventType)) {
+            if (normalizedEventType === 'error' || normalizedEventType === 'queue_fail') {
+              errorSeen = true;
+            } else {
+              finalSeen = true;
+            }
           } else if (
-            eventType === 'slow_client' &&
+            normalizedEventType === 'llm_output' &&
+            isTerminalLlmOutputPayload(payload, approvalPayload)
+          ) {
+            finalSeen = true;
+          } else if (
+            normalizedEventType === 'slow_client' &&
             String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
           ) {
             slowClientResumeAfterEventId = Math.max(
@@ -9656,13 +9929,13 @@ export const useChatStore = defineStore('chat', {
           }
           if (perfEnabled) {
             const start = performance.now();
-            processor.handleEvent(eventType, dataText);
+            processor.handleEvent(normalizedEventType || eventType, dataText);
             chatPerf.recordDuration('chat_resume_event_handle', performance.now() - start, {
-              eventType,
+              eventType: normalizedEventType || eventType,
               sessionId
             });
           } else {
-            processor.handleEvent(eventType, dataText);
+            processor.handleEvent(normalizedEventType || eventType, dataText);
           }
         };
         const streamWithSse = async () => {
@@ -9752,7 +10025,10 @@ export const useChatStore = defineStore('chat', {
       } finally {
         const finishedRequestId = runtime?.resumeRequestId || '';
         const terminalSeen = finalSeen || errorSeen;
-        const keepStreaming = !aborted && !terminalSeen;
+        let keepStreaming = !aborted && !terminalSeen;
+        if (keepStreaming && runtime && isTerminalRuntimeStatus(runtime.threadStatus)) {
+          keepStreaming = false;
+        }
         message.workflowStreaming = keepStreaming;
         if (!aborted) {
           message.stream_incomplete = keepStreaming;

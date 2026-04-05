@@ -30,6 +30,7 @@ let userDashboardLoading = false;
 // 监控轮询配置：full 为完整监控面板，sessions 为用户管理页轻量轮询
 let monitorPollMode = "full";
 let monitorPollIntervalMs = APP_CONFIG.monitorPollIntervalMs;
+let monitorLoadPromise = null;
 // 工具热力图按总调用次数渐变配色（10/20/30/40 次为蓝/绿/黄/红）
 const TOOL_HEATMAP_ZERO_RGB = [230, 233, 240];
 const TOOL_HEATMAP_MAX_VALUE = 40;
@@ -2613,53 +2614,63 @@ const closeMonitorStatusModal = () => {
 };
 
 export const loadMonitorData = async (options = {}) => {
-  ensureMonitorState();
-  const mode = options?.mode === "sessions" ? "sessions" : "full";
-  const wunderBase = getWunderBase();
-  const toolListPromise =
-    mode === "full"
-      ? loadAvailableTools().catch((error) => {
-          appendLog(t("monitor.toolListLoadFailed", { message: error.message }));
-          return null;
-        })
-      : Promise.resolve(null);
-  const params = new URLSearchParams({ active_only: "false" });
-  const timeRange = resolveMonitorTimeFilterRange();
-  if (timeRange) {
-    params.set("start_time", (timeRange.start / 1000).toFixed(3));
-    params.set("end_time", (timeRange.end / 1000).toFixed(3));
-  } else {
-    const toolHours = getMonitorTimeRangeHours();
-    params.set("tool_hours", String(toolHours));
+  if (monitorLoadPromise) {
+    return monitorLoadPromise;
   }
-  const endpoint = `${wunderBase}/admin/monitor?${params.toString()}`;
-  const response = await fetch(endpoint);
-  if (!response.ok) {
-    throw new Error(t("common.requestFailed", { status: response.status }));
-  }
-  const result = await response.json();
-  const sessions = Array.isArray(result.sessions) ? result.sessions : [];
-  state.monitor.sessions = sessions;
-  if (mode === "full") {
-    renderMonitorMetrics(result.system);
-    renderServiceMetrics(result.service);
-    refreshUserDashboardSummary({ silent: true });
-    state.monitor.serviceSnapshot = result.service || null;
-    state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
-    recordTokenDeltas(sessions);
-  }
-  renderMonitorSessions(state.monitor.sessions);
-  if (mode === "full") {
-    if (elements.metricServiceTokenTotal) {
-      renderServiceCharts(result.service, state.monitor.sessions);
+  monitorLoadPromise = (async () => {
+    ensureMonitorState();
+    const mode = options?.mode === "sessions" ? "sessions" : "full";
+    const wunderBase = getWunderBase();
+    const toolListPromise =
+      mode === "full"
+        ? loadAvailableTools().catch((error) => {
+            appendLog(t("monitor.toolListLoadFailed", { message: error.message }));
+            return null;
+          })
+        : Promise.resolve(null);
+    const params = new URLSearchParams({ active_only: "false" });
+    const timeRange = resolveMonitorTimeFilterRange();
+    if (timeRange) {
+      params.set("start_time", (timeRange.start / 1000).toFixed(3));
+      params.set("end_time", (timeRange.end / 1000).toFixed(3));
+    } else {
+      const toolHours = getMonitorTimeRangeHours();
+      params.set("tool_hours", String(toolHours));
     }
-    renderToolHeatmap(state.monitor.toolStats);
-    toolListPromise.then((tools) => {
-      if (!tools) {
-        return;
+    const endpoint = `${wunderBase}/admin/monitor?${params.toString()}`;
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(t("common.requestFailed", { status: response.status }));
+    }
+    const result = await response.json();
+    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+    state.monitor.sessions = sessions;
+    if (mode === "full") {
+      renderMonitorMetrics(result.system);
+      renderServiceMetrics(result.service);
+      refreshUserDashboardSummary({ silent: true });
+      state.monitor.serviceSnapshot = result.service || null;
+      state.monitor.toolStats = Array.isArray(result.tool_stats) ? result.tool_stats : [];
+      recordTokenDeltas(sessions);
+    }
+    renderMonitorSessions(state.monitor.sessions);
+    if (mode === "full") {
+      if (elements.metricServiceTokenTotal) {
+        renderServiceCharts(result.service, state.monitor.sessions);
       }
       renderToolHeatmap(state.monitor.toolStats);
-    });
+      toolListPromise.then((tools) => {
+        if (!tools) {
+          return;
+        }
+        renderToolHeatmap(state.monitor.toolStats);
+      });
+    }
+  })();
+  try {
+    await monitorLoadPromise;
+  } finally {
+    monitorLoadPromise = null;
   }
 };
 

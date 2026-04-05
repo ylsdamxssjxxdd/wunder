@@ -1363,33 +1363,18 @@ const init = async () => {
 const resolveReusableFreshSessionId = () =>
   chatStore.resolveReusableFreshSessionId(String(activeAgentId.value || '').trim());
 
-const requestStopActiveSessionStream = () => {
-  if (!chatStore.activeSessionId) {
-    return;
-  }
-  // Stop the previous active thread immediately before opening a new one.
-  void chatStore.stopStream().catch(() => null);
-};
-
 const openOrReuseFreshSession = async () => {
   const reusableSessionId = resolveReusableFreshSessionId();
   if (reusableSessionId) {
-    if (String(chatStore.activeSessionId || '').trim() !== reusableSessionId) {
-      requestStopActiveSessionStream();
-    }
-    await chatStore.setMainSession(reusableSessionId);
+    void chatStore.setMainSession(reusableSessionId).catch(() => null);
     manualDraftPending.value = false;
     return reusableSessionId;
   }
 
-  requestStopActiveSessionStream();
   const agentId = String(activeAgentId.value || '').trim();
   const payload = agentId ? { agent_id: agentId } : {};
   const session = await chatStore.createSession(payload);
   const sessionId = String(session?.id || '').trim();
-  if (sessionId) {
-    await chatStore.setMainSession(sessionId);
-  }
   manualDraftPending.value = false;
   return sessionId;
 };

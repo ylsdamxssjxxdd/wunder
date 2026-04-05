@@ -78,6 +78,31 @@ const buildEventText = (data: unknown): string =>
 const asPayloadRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 
+const normalizeEventType = (eventType: unknown): string => String(eventType || '').trim().toLowerCase();
+
+const resolveWsEventType = (eventPayload: Record<string, unknown>): string => {
+  const directType = String(eventPayload.event ?? eventPayload.type ?? '').trim();
+  if (directType && directType !== 'message') {
+    return directType;
+  }
+  const dataPayload = asPayloadRecord(eventPayload.data);
+  const nestedType = String(dataPayload.event ?? dataPayload.type ?? '').trim();
+  if (nestedType) {
+    return nestedType;
+  }
+  return directType || 'message';
+};
+
+const isTerminalEventType = (eventType: unknown): boolean => {
+  const normalized = normalizeEventType(eventType);
+  return (
+    normalized === 'final' ||
+    normalized === 'error' ||
+    normalized === 'queue_fail' ||
+    normalized === 'turn_terminal'
+  );
+};
+
 const buildWsPayloadError = (payload: unknown, phase?: string): WsError => {
   const meta = parseStructuredErrorPayload(payload);
   const err = normalizeError(meta.message || t('chat.error.requestFailed'), phase);
@@ -193,13 +218,14 @@ export const consumeWsStream = (
       const type = String(payload?.type || '').toLowerCase();
       if (type === 'event') {
         const eventPayload = asPayloadRecord(payload?.payload);
-        const eventType = String(eventPayload.event || 'message');
+        const eventType = resolveWsEventType(eventPayload);
+        const normalizedEventType = normalizeEventType(eventType);
         const eventId = String(eventPayload.id || '');
         const dataText = buildEventText(eventPayload.data);
         onEvent(eventType, dataText, eventId);
-        if (options.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
+        if (options.closeOnFinal && isTerminalEventType(normalizedEventType)) {
           try {
-            socket.close(1000, eventType === 'final' ? 'final' : 'error_event');
+            socket.close(1000, normalizedEventType === 'error' ? 'error_event' : 'terminal_event');
           } catch {
             // ignore
           }
@@ -390,12 +416,15 @@ export const createWsMultiplexer = (
       const entry = pending.get(requestId);
       if (!entry) return;
       const eventPayload = asPayloadRecord(payload?.payload);
-      const eventType = String(eventPayload.event || 'message');
+      const eventType = resolveWsEventType(eventPayload);
+      const normalizedEventType = normalizeEventType(eventType);
       const eventId = String(eventPayload.id || '');
       const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
       const queuedFlag =
-        eventType === 'queued' || eventPayload.queued === true || asPayloadRecord(eventPayload.data).queued === true;
+        normalizedEventType === 'queued' ||
+        eventPayload.queued === true ||
+        asPayloadRecord(eventPayload.data).queued === true;
       if (entry.resolveOnQueued && queuedFlag) {
         resolveRequest(requestId);
         return;
@@ -404,7 +433,7 @@ export const createWsMultiplexer = (
         rejectRequest(requestId, buildSlowClientError(eventPayload));
         return;
       }
-      if (entry.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
+      if (entry.closeOnFinal && isTerminalEventType(normalizedEventType)) {
         resolveRequest(requestId);
       }
       return;

@@ -63,6 +63,67 @@
   height: 100%;
 }
 
+.messenger-view.messenger-view--action-blocked {
+  cursor: progress;
+}
+
+.messenger-action-blocker {
+  position: absolute;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(247, 249, 252, 0.62);
+  pointer-events: auto;
+}
+
+.messenger-action-blocker-card {
+  min-width: 220px;
+  max-width: min(86vw, 360px);
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--hula-border);
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(16, 24, 40, 0.14);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.messenger-action-blocker-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 0, 0, 0.14);
+  border-top-color: var(--hula-accent);
+  animation: messenger-action-blocker-spin 0.82s linear infinite;
+}
+
+.messenger-action-blocker-title {
+  color: var(--hula-text);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.messenger-action-blocker-subtitle {
+  color: var(--hula-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+}
+
+@keyframes messenger-action-blocker-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .messenger-view.messenger-view--without-right {
   grid-template-columns:
     var(--messenger-left-rail-width)

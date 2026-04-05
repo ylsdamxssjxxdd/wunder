@@ -70,11 +70,11 @@ export const shouldApplyForegroundDetailHydration = (
   if (options.forceHydration === true) {
     return true;
   }
-  if (options.preserveWatcher !== true) {
-    return true;
-  }
   if (options.hasSendController || options.hasResumeController) {
     return false;
+  }
+  if (options.preserveWatcher !== true) {
+    return true;
   }
   const lifecycle = normalizeStreamLifecyclePhase(options.lifecycle);
   return lifecycle !== 'sending' && lifecycle !== 'resuming';

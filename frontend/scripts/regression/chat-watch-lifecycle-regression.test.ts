@@ -85,10 +85,23 @@ test('foreground detail hydration remains allowed when preserveWatcher mode is d
       preserveWatcher: false,
       lifecycle: 'watching',
       hasWatchController: true,
-      hasSendController: true,
-      hasResumeController: true
+      hasSendController: false,
+      hasResumeController: false
     }),
     true
+  );
+});
+
+test('foreground detail hydration is blocked whenever interactive stream controllers are alive', () => {
+  assert.equal(
+    shouldApplyForegroundDetailHydration({
+      preserveWatcher: false,
+      lifecycle: 'watching',
+      hasWatchController: true,
+      hasSendController: true,
+      hasResumeController: false
+    }),
+    false
   );
 });
 
