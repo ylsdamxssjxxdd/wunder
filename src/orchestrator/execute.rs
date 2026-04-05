@@ -1121,8 +1121,7 @@ impl Orchestrator {
                         }
 
                         let observation = self.build_tool_observation(&name, &result);
-                        let observation_value = serde_json::from_str::<Value>(&observation)
-                            .unwrap_or_else(|_| Value::String(observation.clone()));
+                        let observation_value = Value::String(observation.clone());
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
                             match build_read_image_followup_user_message(&result.data).await {
                                 Ok(payload) => payload,

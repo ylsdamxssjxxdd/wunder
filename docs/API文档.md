@@ -2398,6 +2398,6 @@
 - 工具结果现在采用“双通道”：
   - 前端事件通道（`tool_result` SSE）保留结构化结果用于渲染与工作流关联：`tool/ok/data/tool_call_id`，并保留 `meta` 与失败关键信息（`error/error_code/retryable`）；仍会裁剪 `trace_id/user_round/model_round` 等轮次追踪噪声。
   - 模型 observation 通道走极简压缩：在不破坏可继续执行语义的前提下移除冗余字段并压缩大体积结构。
-- `tool_result` 事件额外提供 `model_observation`（结构化 JSON），其内容与本轮实际送入模型的 observation 对齐，可直接用于前端排障展示。
+- `tool_result` 事件额外提供 `model_observation`（JSONL 文本，单行 JSON），其内容与本轮实际送入模型的 observation 对齐，可直接用于前端排障展示。
 - 为减少模型上下文占用，observation 压缩阶段会将 `data` 下密集数组压缩为 JSONL 字段（如 `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`）并附带 `*_count` 计数。
 - When truncation happens, payload/meta may include `truncation_reasons` (for example `array_items`/`string_chars`/`char_budget`), and multiple reasons can co-exist in the same result to indicate compound truncation.
