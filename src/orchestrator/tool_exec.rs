@@ -7,6 +7,7 @@ pub(super) struct ToolResultPayload {
     pub(super) data: Value,
     pub(super) error: String,
     pub(super) sandbox: bool,
+    #[allow(dead_code)]
     pub(super) timestamp: DateTime<Utc>,
     pub(super) meta: Option<Value>,
 }
@@ -109,37 +110,14 @@ impl ToolResultPayload {
         payload
     }
 
-    pub(super) fn to_event_payload(&self, tool_name: &str) -> Value {
-        let mut payload = json!({
-            "tool": tool_name,
-            "ok": self.ok,
-            "data": self.data,
-            "timestamp": self.timestamp.with_timezone(&Local).to_rfc3339(),
-        });
-        if !self.error.trim().is_empty() {
-            if let Value::Object(ref mut map) = payload {
-                map.insert("error".to_string(), Value::String(self.error.clone()));
-            }
-        }
-        if self.sandbox {
-            if let Value::Object(ref mut map) = payload {
-                map.insert("sandbox".to_string(), Value::Bool(true));
-            }
-        }
-        if let Some(meta) = &self.meta {
-            if let Value::Object(ref mut map) = payload {
-                if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
-                    let cleaned = code.trim();
-                    if !cleaned.is_empty() {
-                        map.insert("error_code".to_string(), Value::String(cleaned.to_string()));
-                    }
-                }
-                if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
-                    map.insert("retryable".to_string(), Value::Bool(retryable));
-                }
-            }
-        }
+    fn to_compact_payload(&self, tool_name: &str) -> Value {
+        let mut payload = self.to_observation_payload(tool_name);
+        compact_observation_payload(&mut payload, tool_name);
         payload
+    }
+
+    pub(super) fn to_event_payload(&self, tool_name: &str) -> Value {
+        self.to_compact_payload(tool_name)
     }
 }
 
@@ -209,8 +187,7 @@ impl Orchestrator {
         tool_name: &str,
         result: &ToolResultPayload,
     ) -> String {
-        let mut payload = result.to_observation_payload(tool_name);
-        compact_observation_payload(&mut payload, tool_name);
+        let payload = result.to_compact_payload(tool_name);
         serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -1482,6 +1459,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let continuation_supported = supports_tool_result_continuation(&raw_data, None);
     let mut compacted_data = extract_observation_data(&raw_data);
     compact_tabular_observation_data(&mut compacted_data);
+    compact_dense_arrays_to_jsonl(&mut compacted_data);
     let mut observation_truncated = truncate_observation_data(
         &mut compacted_data,
         OBSERVATION_HEAD_CHARS,
@@ -1517,6 +1495,59 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         }
     }
     map.remove("meta");
+}
+
+fn compact_dense_arrays_to_jsonl(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let keys = map.keys().cloned().collect::<Vec<_>>();
+            for key in keys {
+                let should_convert =
+                    matches!(key.as_str(), "items" | "matches" | "hits" | "files" | "rows");
+                if !should_convert {
+                    continue;
+                }
+                let lines = map.get(&key).and_then(Value::as_array).map(|items| {
+                    items
+                        .iter()
+                        .map(value_to_jsonl_line)
+                        .filter(|line| !line.is_empty())
+                        .collect::<Vec<_>>()
+                });
+                let Some(lines) = lines else {
+                    continue;
+                };
+                if lines.is_empty() {
+                    map.remove(&key);
+                    continue;
+                }
+                map.insert(format!("{key}_count"), json!(lines.len()));
+                map.insert(format!("{key}_jsonl"), Value::String(lines.join("\n")));
+                map.remove(&key);
+            }
+            for nested in map.values_mut() {
+                compact_dense_arrays_to_jsonl(nested);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                compact_dense_arrays_to_jsonl(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn value_to_jsonl_line(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(text) => text.trim().to_string(),
+        Value::Bool(flag) => flag.to_string(),
+        Value::Number(num) => num.to_string(),
+        Value::Array(_) | Value::Object(_) => {
+            serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+        }
+    }
 }
 
 fn extract_observation_data(value: &Value) -> Value {
@@ -2078,7 +2109,7 @@ mod tests {
         };
 
         let event_payload = payload.to_event_payload("demo_tool");
-        assert!(event_payload.get("timestamp").is_some());
+        assert!(event_payload.get("timestamp").is_none());
         assert!(event_payload.get("meta").is_none());
         assert!(event_payload.get("final_ok").is_none());
         assert_eq!(
@@ -2282,12 +2313,10 @@ mod tests {
         assert!(data.get("meta").is_none());
         assert!(data.get("scope").is_none());
         assert!(data.get("scope_note").is_none());
-        let compacted_hits = data
-            .get("hits")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert!(compacted_hits.len() <= OBSERVATION_SEARCH_HIT_LIMIT + 1);
+        assert!(data.get("hits").is_none());
+        assert!(data.get("hits_jsonl").and_then(Value::as_str).is_some());
+        assert!(data.get("matches").is_none());
+        assert!(data.get("matches_jsonl").and_then(Value::as_str).is_some());
     }
 
     #[test]
@@ -2310,12 +2339,8 @@ mod tests {
         compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
         let data = payload.get("data").cloned().unwrap_or(Value::Null);
-        let rows = data
-            .get("rows")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(rows.len(), OBSERVATION_TABLE_SAMPLE_ROWS);
+        assert!(data.get("rows").is_none());
+        assert!(data.get("rows_jsonl").and_then(Value::as_str).is_some());
         assert_eq!(
             data.get("rows_sampled").and_then(Value::as_u64),
             Some(OBSERVATION_TABLE_SAMPLE_ROWS as u64)

@@ -1216,13 +1216,10 @@ impl Orchestrator {
 
                         let mut tool_result_payload = result.to_event_payload(&name);
                         if let Value::Object(ref mut map) = tool_result_payload {
-                            if let Some(tool_call_id) = event_tool_call_id.as_ref() {
-                                map.insert(
-                                    "tool_call_id".to_string(),
-                                    Value::String(tool_call_id.clone()),
-                                );
-                            }
-                            round_info.insert_into(map);
+                            map.remove("tool_call_id");
+                            map.remove("trace_id");
+                            map.remove("user_round");
+                            map.remove("model_round");
                         }
                         emitter.emit("tool_result", tool_result_payload).await;
                         if let Some(tree_version) = result

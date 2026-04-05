@@ -3,7 +3,7 @@ import { state } from "./state.js";
 import { escapeHtml } from "./utils.js?v=20251229-02";
 import { getWunderBase } from "./api.js";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260215-01";
+import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
 
 const TEMPLATE_FILES = [
   { key: "role", labelKey: "prompt.template.file.role", defaultLabel: "角色定位" },
@@ -31,6 +31,9 @@ const normalizePackId = (value) => {
   return raw || "default";
 };
 
+const resolveTemplateLocale = () =>
+  String(getCurrentLanguage() || "").toLowerCase().startsWith("en") ? "en" : "zh";
+
 const buildPromptTemplateBase = () => `${getWunderBase()}/admin/prompt_templates`;
 
 const fetchPromptTemplateStatus = async () => {
@@ -45,9 +48,10 @@ const fetchPromptTemplateStatus = async () => {
 
 const fetchPromptTemplateFile = async (packId, key) => {
   const base = buildPromptTemplateBase();
+  const locale = resolveTemplateLocale();
   const endpoint = `${base}/file?pack_id=${encodeURIComponent(packId)}&key=${encodeURIComponent(
     key
-  )}`;
+  )}&locale=${encodeURIComponent(locale)}`;
   const response = await fetch(endpoint);
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));
@@ -58,12 +62,13 @@ const fetchPromptTemplateFile = async (packId, key) => {
 
 const savePromptTemplateFile = async (packId, key, content) => {
   const base = buildPromptTemplateBase();
+  const locale = resolveTemplateLocale();
   const response = await fetch(`${base}/file`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ pack_id: packId, key, content }),
+    body: JSON.stringify({ pack_id: packId, key, locale, content }),
   });
   if (!response.ok) {
     throw new Error(t("common.requestFailed", { status: response.status }));

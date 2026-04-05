@@ -155,6 +155,14 @@ const BUILTIN_PACK_IDS = new Set([DEFAULT_PACK_ID, DEFAULT_ZH_PACK_ID, DEFAULT_E
 
 const { t, language } = useI18n();
 
+function resolveLocale() {
+  return String(language.value || '').toLowerCase().startsWith('en') ? 'en' : 'zh';
+}
+
+function resolveSystemLanguageBuiltinPackId() {
+  return resolveLocale() === 'en' ? DEFAULT_EN_PACK_ID : DEFAULT_ZH_PACK_ID;
+}
+
 const packs = ref<PromptPack[]>([]);
 const segments = ref<PromptSegment[]>([...DEFAULT_SEGMENTS]);
 const selectedPack = ref(resolveSystemLanguageBuiltinPackId());
@@ -187,12 +195,6 @@ const resolveErrorMessage = (error: unknown, fallback: string) => {
   }
   return fallback;
 };
-
-const resolveLocale = () => (String(language.value || '').toLowerCase().startsWith('en') ? 'en' : 'zh');
-
-function resolveSystemLanguageBuiltinPackId() {
-  return resolveLocale() === 'en' ? DEFAULT_EN_PACK_ID : DEFAULT_ZH_PACK_ID;
-}
 
 const packMap = computed(() => {
   const next = new Map<string, PromptPack>();

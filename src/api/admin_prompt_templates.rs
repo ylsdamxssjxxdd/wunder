@@ -119,7 +119,7 @@ fn resolve_packs_root(config: &Config) -> PathBuf {
 
 fn resolve_pack_root(config: &Config, pack_id: &str) -> PathBuf {
     if pack_id.trim().eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        return user_prompt_templates::resolve_prompts_root();
+        return user_prompt_templates::resolve_default_prompt_pack_root();
     }
     resolve_packs_root(config).join(pack_id.trim())
 }
@@ -147,7 +147,7 @@ async fn list_prompt_templates(
     let config = state.config_store.get().await;
     let active = normalize_pack_id(Some(&config.prompt_templates.active));
     let packs_root = resolve_packs_root(&config);
-    let default_root = user_prompt_templates::resolve_prompts_root();
+    let default_root = user_prompt_templates::resolve_default_prompt_pack_root();
 
     let mut packs = Vec::new();
     packs.push(json!({
