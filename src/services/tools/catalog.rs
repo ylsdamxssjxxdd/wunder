@@ -372,7 +372,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.list.args.path")},
-                    "max_depth": {"type": "integer", "minimum": 0}
+                    "max_depth": {"type": "integer", "minimum": 0},
+                    "cursor": {"type": "string", "description": t("tool.spec.list.args.cursor")},
+                    "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.list.args.offset")},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": t("tool.spec.list.args.limit")}
                 }
             }),
         },

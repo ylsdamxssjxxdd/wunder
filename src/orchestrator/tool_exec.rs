@@ -1428,6 +1428,17 @@ fn is_non_empty_continuation_value(value: &Value) -> bool {
     }
 }
 
+fn map_has_continuation_signal(map: &Map<String, Value>) -> bool {
+    if map.get("continuation_required").and_then(Value::as_bool) == Some(true)
+        || map.get("has_more").and_then(Value::as_bool) == Some(true)
+    {
+        return true;
+    }
+    CONTINUATION_SIGNAL_KEYS
+        .iter()
+        .any(|key| map.get(*key).is_some_and(is_non_empty_continuation_value))
+}
+
 fn looks_like_read_file_payload(data: &Value) -> bool {
     let Some(meta) = data.get("meta").and_then(Value::as_object) else {
         return false;
@@ -1503,25 +1514,16 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
         Value::Object(map) => {
             let keys = map.keys().cloned().collect::<Vec<_>>();
             for key in keys {
-                let should_convert =
-                    matches!(key.as_str(), "items" | "matches" | "hits" | "files" | "rows");
-                if !should_convert {
+                if key.ends_with("_jsonl") || key.ends_with("_count") {
                     continue;
                 }
-                let lines = map.get(&key).and_then(Value::as_array).map(|items| {
-                    items
-                        .iter()
-                        .map(value_to_jsonl_line)
-                        .filter(|line| !line.is_empty())
-                        .collect::<Vec<_>>()
-                });
+                let lines = map
+                    .get(&key)
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().map(value_to_jsonl_line).collect::<Vec<_>>());
                 let Some(lines) = lines else {
                     continue;
                 };
-                if lines.is_empty() {
-                    map.remove(&key);
-                    continue;
-                }
                 map.insert(format!("{key}_count"), json!(lines.len()));
                 map.insert(format!("{key}_jsonl"), Value::String(lines.join("\n")));
                 map.remove(&key);
@@ -1541,8 +1543,8 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
 
 fn value_to_jsonl_line(value: &Value) -> String {
     match value {
-        Value::Null => String::new(),
-        Value::String(text) => text.trim().to_string(),
+        Value::Null => "null".to_string(),
+        Value::String(text) => text.to_string(),
         Value::Bool(flag) => flag.to_string(),
         Value::Number(num) => num.to_string(),
         Value::Array(_) | Value::Object(_) => {
@@ -1851,6 +1853,26 @@ fn truncate_tool_result_data(
     tail_chars: usize,
     marker: &str,
 ) -> bool {
+    truncate_tool_result_data_with_array_limits(
+        value,
+        head_chars,
+        tail_chars,
+        marker,
+        TOOL_RESULT_MAX_ARRAY_ITEMS,
+        TOOL_RESULT_ARRAY_HEAD_ITEMS,
+        TOOL_RESULT_ARRAY_TAIL_ITEMS,
+    )
+}
+
+fn truncate_tool_result_data_with_array_limits(
+    value: &mut Value,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+    max_array_items: usize,
+    head_array_items: usize,
+    tail_array_items: usize,
+) -> bool {
     match value {
         Value::String(text) => {
             if text.chars().count() > head_chars + tail_chars {
@@ -1862,10 +1884,10 @@ fn truncate_tool_result_data(
         }
         Value::Array(items) => {
             let mut truncated = false;
-            if items.len() > TOOL_RESULT_MAX_ARRAY_ITEMS {
+            if items.len() > max_array_items {
                 let original_len = items.len();
-                let head_items = TOOL_RESULT_ARRAY_HEAD_ITEMS.min(original_len);
-                let tail_items = TOOL_RESULT_ARRAY_TAIL_ITEMS.min(original_len - head_items);
+                let head_items = head_array_items.min(original_len);
+                let tail_items = tail_array_items.min(original_len - head_items);
                 let omitted = original_len.saturating_sub(head_items + tail_items);
                 let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
                 compacted.extend(items.iter().take(head_items).cloned());
@@ -1877,7 +1899,15 @@ fn truncate_tool_result_data(
                 truncated = true;
             }
             for item in items.iter_mut() {
-                if truncate_tool_result_data(item, head_chars, tail_chars, marker) {
+                if truncate_tool_result_data_with_array_limits(
+                    item,
+                    head_chars,
+                    tail_chars,
+                    marker,
+                    max_array_items,
+                    head_array_items,
+                    tail_array_items,
+                ) {
                     truncated = true;
                 }
             }
@@ -1885,8 +1915,26 @@ fn truncate_tool_result_data(
         }
         Value::Object(map) => {
             let mut truncated = false;
+            let (next_max_items, next_head_items, next_tail_items) =
+                if map_has_continuation_signal(map) {
+                    (
+                        TOOL_RESULT_PAGINATED_MAX_ARRAY_ITEMS,
+                        TOOL_RESULT_PAGINATED_ARRAY_HEAD_ITEMS,
+                        TOOL_RESULT_PAGINATED_ARRAY_TAIL_ITEMS,
+                    )
+                } else {
+                    (max_array_items, head_array_items, tail_array_items)
+                };
             for value in map.values_mut() {
-                if truncate_tool_result_data(value, head_chars, tail_chars, marker) {
+                if truncate_tool_result_data_with_array_limits(
+                    value,
+                    head_chars,
+                    tail_chars,
+                    marker,
+                    next_max_items,
+                    next_head_items,
+                    next_tail_items,
+                ) {
                     truncated = true;
                 }
             }
@@ -2115,6 +2163,70 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_tool_result_data_keeps_paginated_arrays_under_500() {
+        let mut items = Vec::new();
+        for idx in 0..200 {
+            items.push(json!(format!("file-{idx}.md")));
+        }
+        let mut value = json!({
+            "items": items,
+            "cursor": "0",
+            "limit": 200,
+            "next_cursor": "200",
+            "has_more": true
+        });
+        let truncated = truncate_tool_result_data(
+            &mut value,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert!(!truncated);
+        let rows = value
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(rows.len(), 200);
+        let has_marker = rows
+            .iter()
+            .any(|item| item.get("__truncated").and_then(Value::as_bool) == Some(true));
+        assert!(!has_marker);
+    }
+
+    #[test]
+    fn test_truncate_tool_result_data_keeps_final_paginated_page_under_500() {
+        let mut items = Vec::new();
+        for idx in 0..74 {
+            items.push(json!(format!("file-{idx}.md")));
+        }
+        let mut value = json!({
+            "items": items,
+            "cursor": "0",
+            "limit": 200,
+            "has_more": false,
+            "next_cursor": null
+        });
+        let truncated = truncate_tool_result_data(
+            &mut value,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert!(!truncated);
+        let rows = value
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(rows.len(), 74);
+        let has_marker = rows
+            .iter()
+            .any(|item| item.get("__truncated").and_then(Value::as_bool) == Some(true));
+        assert!(!has_marker);
+    }
+
+    #[test]
     fn test_observation_payload_is_compact_for_model_context() {
         let payload = ToolResultPayload {
             ok: true,
@@ -2193,7 +2305,10 @@ mod tests {
 
         let mut compacted = payload.to_event_payload("search_content");
         if let Value::Object(ref mut map) = compacted {
-            map.insert("tool_call_id".to_string(), Value::String("call_x".to_string()));
+            map.insert(
+                "tool_call_id".to_string(),
+                Value::String("call_x".to_string()),
+            );
             map.insert("trace_id".to_string(), Value::String("trace_x".to_string()));
             map.insert("model_round".to_string(), json!(2));
             map.insert("user_round".to_string(), json!(1));
@@ -2206,7 +2321,11 @@ mod tests {
         assert!(obj.get("model_round").is_none());
         assert!(obj.get("user_round").is_none());
 
-        let data = obj.get("data").and_then(Value::as_object).cloned().unwrap_or_default();
+        let data = obj
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         assert!(data.get("meta").is_none());
         assert!(data.get("budget").is_none());
         assert!(data.get("scope").is_none());
@@ -2285,9 +2404,14 @@ mod tests {
 
         compact_observation_payload(&mut payload, "执行命令");
 
-        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
         assert_eq!(
-            payload.get("continuation_required").and_then(Value::as_bool),
+            payload.get("truncated").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("continuation_required")
+                .and_then(Value::as_bool),
             None
         );
         assert!(
@@ -2319,7 +2443,9 @@ mod tests {
         compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
         assert_eq!(
-            payload.get("continuation_required").and_then(Value::as_bool),
+            payload
+                .get("continuation_required")
+                .and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
@@ -2356,7 +2482,9 @@ mod tests {
         compact_observation_payload(&mut payload, "读取文件");
 
         assert_eq!(
-            payload.get("continuation_required").and_then(Value::as_bool),
+            payload
+                .get("continuation_required")
+                .and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
@@ -2414,6 +2542,51 @@ mod tests {
         assert!(data.get("hits_jsonl").and_then(Value::as_str).is_some());
         assert!(data.get("matches").is_none());
         assert!(data.get("matches_jsonl").and_then(Value::as_str).is_some());
+    }
+
+    #[test]
+    fn test_compact_dense_arrays_to_jsonl_converts_all_array_keys() {
+        let mut data = json!({
+            "items": ["a", "b"],
+            "summary": {
+                "top_files": ["x.md", "y.md"],
+                "scores": [1, 2, 3]
+            },
+            "empty_list": []
+        });
+
+        compact_dense_arrays_to_jsonl(&mut data);
+
+        let obj = data.as_object().cloned().unwrap_or_default();
+        assert!(obj.get("items").is_none());
+        assert_eq!(obj.get("items_count").and_then(Value::as_u64), Some(2));
+        assert!(obj.get("items_jsonl").and_then(Value::as_str).is_some());
+        assert_eq!(obj.get("empty_list_count").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            obj.get("empty_list_jsonl").and_then(Value::as_str),
+            Some("")
+        );
+
+        let summary = obj
+            .get("summary")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert!(summary.get("top_files").is_none());
+        assert!(summary.get("scores").is_none());
+        assert_eq!(
+            summary.get("top_files_count").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(summary.get("scores_count").and_then(Value::as_u64), Some(3));
+        assert!(summary
+            .get("top_files_jsonl")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(summary
+            .get("scores_jsonl")
+            .and_then(Value::as_str)
+            .is_some());
     }
 
     #[test]

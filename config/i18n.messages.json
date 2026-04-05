@@ -1775,6 +1775,18 @@
     "en-US": "Optional. Directory to list, relative to the workspace root. Empty uses the current directory.",
     "zh-CN": "可选，要列出的目录（相对工程师工作目录）。留空则使用当前工作目录。"
   },
+  "tool.spec.list.args.cursor": {
+    "en-US": "Opaque pagination cursor from previous list_files result; omit for first page.",
+    "zh-CN": "分页游标（来自上一次 list_files 返回的 next_cursor）；首轮可省略。"
+  },
+  "tool.spec.list.args.offset": {
+    "en-US": "Numeric offset alias for pagination (legacy-compatible).",
+    "zh-CN": "分页偏移量（兼容旧参数写法）。"
+  },
+  "tool.spec.list.args.limit": {
+    "en-US": "Page size for this call. Default 200, max 500.",
+    "zh-CN": "本次返回条数。默认 200，最大 500。"
+  },
   "tool.spec.list.description": {
     "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted. Avoid repeating the same path listing unless the path changes or the user explicitly asks to refresh.",
     "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。除非路径变化或用户明确要求刷新，不要重复调用同一路径。"

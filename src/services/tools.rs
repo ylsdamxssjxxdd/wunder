@@ -141,7 +141,8 @@ const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_READ_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
 const MAX_RANGE_SPAN: usize = 2000;
 const DEFAULT_LIST_DEPTH: usize = 2;
-const MAX_LIST_ITEMS: usize = 200;
+const DEFAULT_LIST_PAGE_LIMIT: usize = 200;
+const MAX_LIST_ITEMS: usize = 500;
 const MAX_SEARCH_MATCHES: usize = 200;
 const MAX_LSP_DIAGNOSTICS: usize = 20;
 const MAX_SESSION_LIST_ITEMS: i64 = 200;
@@ -5892,14 +5893,117 @@ async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .get("max_depth")
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_LIST_DEPTH as u64) as usize;
+    let pagination = match parse_list_files_pagination(args) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(build_failed_tool_result(
+                err.to_string(),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_LIST_INVALID_ARGS",
+                    Some(
+                        "Use cursor/offset as non-negative integers and limit within 1..500."
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
     tokio::task::spawn_blocking(move || {
-        list_files_inner(workspace.as_ref(), &user_id, &path, &extra_roots, max_depth)
+        list_files_inner(
+            workspace.as_ref(),
+            &user_id,
+            &path,
+            &extra_roots,
+            max_depth,
+            pagination.start,
+            pagination.limit,
+        )
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))?
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ListFilesPagination {
+    start: usize,
+    limit: usize,
+}
+
+fn parse_list_files_pagination(args: &Value) -> Result<ListFilesPagination> {
+    let start = if let Some(cursor) = args.get("cursor") {
+        parse_list_cursor_value(cursor)?
+    } else if let Some(offset) = args.get("offset") {
+        parse_list_offset_value(offset)?
+    } else {
+        0
+    };
+    let limit = if let Some(limit) = args.get("limit") {
+        parse_list_limit_value(limit)?
+    } else {
+        DEFAULT_LIST_PAGE_LIMIT
+    };
+    Ok(ListFilesPagination {
+        start,
+        limit: limit.clamp(1, MAX_LIST_ITEMS),
+    })
+}
+
+fn parse_list_cursor_value(value: &Value) -> Result<usize> {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return Ok(0);
+            }
+            trimmed
+                .parse::<usize>()
+                .map_err(|_| anyhow!("cursor must be a non-negative integer string"))
+        }
+        Value::Number(number) => number
+            .as_u64()
+            .map(|raw| raw as usize)
+            .ok_or_else(|| anyhow!("cursor must be a non-negative integer string")),
+        Value::Null => Ok(0),
+        _ => Err(anyhow!("cursor must be a non-negative integer string")),
+    }
+}
+
+fn parse_list_offset_value(value: &Value) -> Result<usize> {
+    match value {
+        Value::Number(number) => number
+            .as_u64()
+            .map(|raw| raw as usize)
+            .ok_or_else(|| anyhow!("offset must be a non-negative integer")),
+        Value::String(text) => text
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| anyhow!("offset must be a non-negative integer")),
+        Value::Null => Ok(0),
+        _ => Err(anyhow!("offset must be a non-negative integer")),
+    }
+}
+
+fn parse_list_limit_value(value: &Value) -> Result<usize> {
+    let parsed = match value {
+        Value::Number(number) => number
+            .as_u64()
+            .map(|raw| raw as usize)
+            .ok_or_else(|| anyhow!("limit must be a positive integer"))?,
+        Value::String(text) => text
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| anyhow!("limit must be a positive integer"))?,
+        Value::Null => DEFAULT_LIST_PAGE_LIMIT,
+        _ => return Err(anyhow!("limit must be a positive integer")),
+    };
+    Ok(parsed.max(1).min(MAX_LIST_ITEMS))
 }
 
 fn list_files_inner(
@@ -5908,6 +6012,8 @@ fn list_files_inner(
     path: &str,
     extra_roots: &[PathBuf],
     max_depth: usize,
+    page_start: usize,
+    page_limit: usize,
 ) -> Result<Value> {
     let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
@@ -5918,6 +6024,8 @@ fn list_files_inner(
         }));
     }
     let mut items = Vec::new();
+    let mut seen_entries: usize = 0;
+    let mut has_more = false;
     let unrestricted_paths = roots_allow_any_path(extra_roots);
     if unrestricted_paths {
         for entry in WalkDir::new(&root)
@@ -5931,10 +6039,16 @@ fn list_files_inner(
             if entry.file_type().is_dir() {
                 display.push('/');
             }
-            items.push(display);
-            if items.len() >= MAX_LIST_ITEMS {
+            if seen_entries < page_start {
+                seen_entries += 1;
+                continue;
+            }
+            if items.len() >= page_limit {
+                has_more = true;
                 break;
             }
+            items.push(display);
+            seen_entries += 1;
         }
     } else {
         for entry in WalkDir::new(&root)
@@ -5949,13 +6063,31 @@ fn list_files_inner(
             if entry.file_type().is_dir() {
                 display.push('/');
             }
-            items.push(display);
-            if items.len() >= MAX_LIST_ITEMS {
+            if seen_entries < page_start {
+                seen_entries += 1;
+                continue;
+            }
+            if items.len() >= page_limit {
+                has_more = true;
                 break;
             }
+            items.push(display);
+            seen_entries += 1;
         }
     }
-    Ok(json!({ "items": items }))
+    let returned = items.len();
+    let next_offset = page_start.saturating_add(returned);
+    let next_cursor = has_more.then(|| next_offset.to_string());
+    Ok(json!({
+        "items": items,
+        "cursor": page_start.to_string(),
+        "offset": page_start,
+        "limit": page_limit,
+        "returned": returned,
+        "has_more": has_more,
+        "next_offset": has_more.then_some(next_offset),
+        "next_cursor": next_cursor,
+    }))
 }
 
 #[derive(Clone, Debug)]
@@ -8167,6 +8299,94 @@ mod tests {
         let content = "@/workspaces/another_owner/demo.md";
         let refs = extract_user_world_file_refs(content, "owner__c__2");
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn parse_list_files_pagination_accepts_cursor_and_clamps_limit() {
+        let pagination = parse_list_files_pagination(&json!({
+            "cursor": "12",
+            "limit": 9999
+        }))
+        .expect("pagination should parse");
+        assert_eq!(pagination.start, 12);
+        assert_eq!(pagination.limit, MAX_LIST_ITEMS);
+    }
+
+    #[test]
+    fn parse_list_files_pagination_rejects_invalid_cursor() {
+        let err = parse_list_files_pagination(&json!({
+            "cursor": "not-a-number"
+        }))
+        .expect_err("cursor should be validated");
+        assert!(err.to_string().contains("cursor"));
+    }
+
+    #[test]
+    fn list_files_inner_supports_cursor_pagination() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("list-files-pagination.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let user_root = workspace_root.join("admin");
+        std::fs::create_dir_all(&user_root).expect("create user root");
+        for idx in 0..5usize {
+            std::fs::write(user_root.join(format!("f{idx}.txt")), "demo").expect("write file");
+        }
+
+        let page1 = list_files_inner(&workspace, "admin", ".", &[], 1, 0, 2).expect("page1");
+        assert_eq!(
+            page1
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .map(|v| v.len()),
+            Some(2)
+        );
+        assert_eq!(
+            page1.pointer("/next_cursor").and_then(Value::as_str),
+            Some("2")
+        );
+        assert_eq!(
+            page1.pointer("/has_more").and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let page2 = list_files_inner(&workspace, "admin", ".", &[], 1, 2, 2).expect("page2");
+        assert_eq!(
+            page2
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .map(|v| v.len()),
+            Some(2)
+        );
+        assert_eq!(
+            page2.pointer("/next_cursor").and_then(Value::as_str),
+            Some("4")
+        );
+        assert_eq!(
+            page2.pointer("/has_more").and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let page3 = list_files_inner(&workspace, "admin", ".", &[], 1, 4, 2).expect("page3");
+        assert_eq!(
+            page3
+                .pointer("/items")
+                .and_then(Value::as_array)
+                .map(|v| v.len()),
+            Some(1)
+        );
+        assert_eq!(page3.pointer("/next_cursor"), Some(&Value::Null));
+        assert_eq!(
+            page3.pointer("/has_more").and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

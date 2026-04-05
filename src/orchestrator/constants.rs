@@ -40,3 +40,6 @@ pub const TOOL_RESULT_TRUNCATION_MARKER: &str = "...(truncated)...";
 pub const TOOL_RESULT_MAX_ARRAY_ITEMS: usize = 64;
 pub const TOOL_RESULT_ARRAY_HEAD_ITEMS: usize = 24;
 pub const TOOL_RESULT_ARRAY_TAIL_ITEMS: usize = 8;
+pub const TOOL_RESULT_PAGINATED_MAX_ARRAY_ITEMS: usize = 500;
+pub const TOOL_RESULT_PAGINATED_ARRAY_HEAD_ITEMS: usize = 180;
+pub const TOOL_RESULT_PAGINATED_ARRAY_TAIL_ITEMS: usize = 60;

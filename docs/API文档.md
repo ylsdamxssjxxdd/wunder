@@ -202,6 +202,7 @@
   - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+- `列出文件`（`list_files`）新增分页参数：`cursor`（字符串游标）/`offset`（兼容数值偏移）与 `limit`（默认 `200`，最大 `500`）；返回结果补充 `cursor/offset/limit/returned/has_more/next_cursor/next_offset`。推荐优先按页续取，避免一次性回放超长目录导致上下文膨胀。
 - `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并兼容一批更接近 `rg` 心智模型的别名：`pattern`、`glob -> file_pattern`、`type`（常见语言/后缀快捷过滤）、`context/-C`、`-A/-B`、`ignore_case/-i`、`fixed_strings/-F`、`max_count/head_limit -> max_matches`。默认语义更新为：`query` 省略 `query_mode` 时按 `literal` 处理，`pattern` 省略 `query_mode`/`-F` 时按 `regex` 处理；对 `query` 的多词精确短语在无结果时，工具可能自动回退为按词检索，以更贴近模型的自然查询习惯。对于单个超长文件的高密度命中，结果会优先分散暴露不同区段的代表命中，避免预览长期偏在文件前部。该工具只搜索本地工作区文本文件，不会访问网页；返回结果会补充 `resolved_path/scope/scope_note`，零命中时 `summary.next_hint` 会明确提示“本地范围为空或需先 list_files”。
 - `读取文件`（`read_file`）仅用于代码/配置/日志/Markdown 等本地纯文本的定点读取，不应用于图片、PDF、Office 文档、压缩包或其他二进制文件，也不应把它当作“整篇吞长文档”的工具。该工具支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。`slice` 模式的 `start_line/end_line` 采用包含式区间；当模型传入 `start_line=0` 时会自动归一化到首行，但若 `start_line > end_line` 会直接返回 `TOOL_READ_INVALID_RANGE`，避免把反向区间静默吞成假成功。同文件相邻/重叠切片在同一次调用内会合并展示，以减少重复输出与外层截断。另兼容 Codex 常见的 `file_path + offset/limit` 读取窗口写法，并在 `meta.files[]` 中补充 `resolved_path/requested_ranges/effective_ranges/range_args_normalized/used_default_range/request_satisfied` 方便前端与模型判断原始请求、实际生效范围及本次请求是否真正满足。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
@@ -2395,4 +2396,4 @@
   - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。
 
 - `tool_result` now uses a minimal payload by default: keep `tool/ok/data` plus failure essentials (`error/error_code/retryable`), and drop `tool_call_id/trace_id/user_round/model_round/meta`.
-- To reduce context size, dense arrays in `data` are compacted into JSONL fields (for example `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`) with companion `*_count` fields.
+- To reduce context size, array fields under `data` are compacted into JSONL fields (for example `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`) with companion `*_count` fields.
