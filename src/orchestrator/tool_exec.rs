@@ -118,7 +118,36 @@ impl ToolResultPayload {
     }
 
     pub(super) fn to_event_payload(&self, tool_name: &str) -> Value {
-        self.to_compact_payload(tool_name)
+        let mut payload = json!({
+            "tool": tool_name,
+            "ok": self.ok,
+            "data": self.data,
+        });
+        if !self.error.trim().is_empty() {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("error".to_string(), Value::String(self.error.clone()));
+            }
+        }
+        if self.sandbox {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("sandbox".to_string(), Value::Bool(true));
+            }
+        }
+        if let Some(meta) = &self.meta {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("meta".to_string(), meta.clone());
+                if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
+                    let cleaned = code.trim();
+                    if !cleaned.is_empty() {
+                        map.insert("error_code".to_string(), Value::String(cleaned.to_string()));
+                    }
+                }
+                if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
+                    map.insert("retryable".to_string(), Value::Bool(retryable));
+                }
+            }
+        }
+        payload
     }
 }
 
@@ -241,6 +270,7 @@ impl Orchestrator {
         let continuation_supported =
             supports_tool_result_continuation(&result.data, result.meta.as_ref());
         let mut truncated = false;
+        let mut truncation_reasons: Vec<String> = Vec::new();
         if !skip_truncation {
             truncated = truncate_tool_result_data(
                 &mut result.data,
@@ -256,10 +286,19 @@ impl Orchestrator {
                     TOOL_RESULT_TRUNCATION_MARKER,
                 );
                 truncated = true;
+                append_truncation_reason(&mut truncation_reasons, "string_chars");
+            }
+            if truncated {
+                truncation_reasons.extend(collect_truncation_reasons_from_value(
+                    &result.data,
+                    TOOL_RESULT_TRUNCATION_MARKER,
+                ));
+                dedupe_truncation_reasons(&mut truncation_reasons);
             }
         }
         let mut output_chars = estimate_tool_result_chars(&result.data);
         if !skip_truncation && output_chars > TOOL_RESULT_MAX_CHARS {
+            append_truncation_reason(&mut truncation_reasons, "char_budget");
             result.data = compact_large_tool_result_data(
                 &result.data,
                 output_chars,
@@ -267,6 +306,7 @@ impl Orchestrator {
                 TOOL_RESULT_TAIL_CHARS,
                 TOOL_RESULT_TRUNCATION_MARKER,
                 continuation_supported,
+                &truncation_reasons,
             );
             truncated = true;
             output_chars = estimate_tool_result_chars(&result.data);
@@ -276,6 +316,18 @@ impl Orchestrator {
         meta.insert("duration_ms".to_string(), json!(duration_ms));
         meta.insert("truncated".to_string(), json!(truncated));
         meta.insert("output_chars".to_string(), json!(output_chars));
+        if truncated && !truncation_reasons.is_empty() {
+            meta.insert(
+                "truncation_reasons".to_string(),
+                Value::Array(
+                    truncation_reasons
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
         if truncated && continuation_supported {
             meta.insert("continuation_required".to_string(), Value::Bool(true));
             meta.insert(
@@ -1353,12 +1405,12 @@ fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
 const OBSERVATION_MAX_CHARS: usize = 20_000;
 const OBSERVATION_HEAD_CHARS: usize = 10_000;
 const OBSERVATION_TAIL_CHARS: usize = 10_000;
-const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
-const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
-const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
+const OBSERVATION_MAX_ARRAY_ITEMS: usize = 32;
+const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 20;
+const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 8;
 const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
-const OBSERVATION_SEARCH_HIT_LIMIT: usize = 6;
-const OBSERVATION_READ_FILE_LIMIT: usize = 4;
+const OBSERVATION_SEARCH_HIT_LIMIT: usize = 10;
+const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 const OBSERVATION_TEXT_HEAD_CHARS: usize = 320;
 const OBSERVATION_TEXT_TAIL_CHARS: usize = 120;
 const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
@@ -1478,8 +1530,14 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
         OBSERVATION_TAIL_CHARS,
         TOOL_RESULT_TRUNCATION_MARKER,
     );
+    let mut truncation_reasons = if observation_truncated {
+        collect_truncation_reasons_from_value(&compacted_data, TOOL_RESULT_TRUNCATION_MARKER)
+    } else {
+        Vec::new()
+    };
     let chars_before_compact = estimate_tool_result_chars(&compacted_data);
     if chars_before_compact > OBSERVATION_MAX_CHARS {
+        append_truncation_reason(&mut truncation_reasons, "char_budget");
         compacted_data = compact_large_tool_result_data(
             &compacted_data,
             chars_before_compact,
@@ -1487,6 +1545,7 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             OBSERVATION_TAIL_CHARS,
             TOOL_RESULT_TRUNCATION_MARKER,
             continuation_supported,
+            &truncation_reasons,
         );
         observation_truncated = true;
     }
@@ -1498,6 +1557,18 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
             "observation_output_chars".to_string(),
             json!(observation_output_chars),
         );
+        if !truncation_reasons.is_empty() {
+            map.insert(
+                "truncation_reasons".to_string(),
+                Value::Array(
+                    truncation_reasons
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
         if continuation_supported {
             map.insert("continuation_required".to_string(), Value::Bool(true));
             map.insert(
@@ -1514,7 +1585,8 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
         Value::Object(map) => {
             let keys = map.keys().cloned().collect::<Vec<_>>();
             for key in keys {
-                if key.ends_with("_jsonl") || key.ends_with("_count") {
+                if key.ends_with("_jsonl") || key.ends_with("_count") || key == "truncation_reasons"
+                {
                     continue;
                 }
                 let lines = map
@@ -1788,6 +1860,7 @@ fn compact_truncated_observation_wrapper(map: &Map<String, Value>) -> Value {
     for key in [
         "truncated",
         "original_chars",
+        "truncation_reasons",
         "continuation_required",
         "continuation_hint",
         "exit_code",
@@ -2002,6 +2075,7 @@ fn compact_large_tool_result_data(
     tail_chars: usize,
     marker: &str,
     continuation_supported: bool,
+    truncation_reasons: &[String],
 ) -> Value {
     let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
     let preview = truncate_tool_result_string(&serialized, head_chars, tail_chars, marker);
@@ -2010,6 +2084,20 @@ fn compact_large_tool_result_data(
         "original_chars": original_chars,
         "preview": preview,
     });
+    if !truncation_reasons.is_empty() {
+        if let Value::Object(ref mut map) = payload {
+            map.insert(
+                "truncation_reasons".to_string(),
+                Value::Array(
+                    truncation_reasons
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
+    }
     if continuation_supported {
         if let Value::Object(ref mut map) = payload {
             map.insert("continuation_required".to_string(), Value::Bool(true));
@@ -2025,6 +2113,67 @@ fn compact_large_tool_result_data(
         }
     }
     payload
+}
+
+fn append_truncation_reason(reasons: &mut Vec<String>, reason: &str) {
+    if reasons.iter().any(|item| item == reason) {
+        return;
+    }
+    reasons.push(reason.to_string());
+}
+
+fn dedupe_truncation_reasons(reasons: &mut Vec<String>) {
+    let mut deduped = Vec::with_capacity(reasons.len());
+    for reason in reasons.iter() {
+        if deduped.iter().any(|item: &String| item == reason) {
+            continue;
+        }
+        deduped.push(reason.clone());
+    }
+    *reasons = deduped;
+}
+
+fn collect_truncation_reasons_from_value(value: &Value, marker: &str) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if value_contains_omitted_items_marker(value) {
+        append_truncation_reason(&mut reasons, "array_items");
+    }
+    if value_contains_string_truncation_marker(value, marker) {
+        append_truncation_reason(&mut reasons, "string_chars");
+    }
+    reasons
+}
+
+fn value_contains_omitted_items_marker(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map.get("__truncated").and_then(Value::as_bool) == Some(true)
+                && map
+                    .get("omitted_items")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default()
+                    > 0
+            {
+                return true;
+            }
+            map.values().any(value_contains_omitted_items_marker)
+        }
+        Value::Array(items) => items.iter().any(value_contains_omitted_items_marker),
+        _ => false,
+    }
+}
+
+fn value_contains_string_truncation_marker(value: &Value, marker: &str) -> bool {
+    match value {
+        Value::String(text) => text.contains(marker),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_contains_string_truncation_marker(item, marker)),
+        Value::Object(map) => map
+            .values()
+            .any(|item| value_contains_string_truncation_marker(item, marker)),
+        _ => false,
+    }
 }
 
 fn estimate_tool_result_chars(value: &Value) -> usize {
@@ -2227,6 +2376,20 @@ mod tests {
     }
 
     #[test]
+    fn test_collect_truncation_reasons_from_value_detects_array_and_string() {
+        let value = json!({
+            "items": [
+                "a",
+                {"__truncated": true, "omitted_items": 10}
+            ],
+            "preview": format!("head{}tail", TOOL_RESULT_TRUNCATION_MARKER)
+        });
+        let reasons = collect_truncation_reasons_from_value(&value, TOOL_RESULT_TRUNCATION_MARKER);
+        assert!(reasons.iter().any(|item| item == "array_items"));
+        assert!(reasons.iter().any(|item| item == "string_chars"));
+    }
+
+    #[test]
     fn test_observation_payload_is_compact_for_model_context() {
         let payload = ToolResultPayload {
             ok: true,
@@ -2246,16 +2409,23 @@ mod tests {
             })),
         };
 
-        let observation = payload.to_observation_payload("list_files");
+        let observation = payload.to_compact_payload("list_files");
         assert!(observation.get("timestamp").is_none());
         assert!(observation.get("final_ok").is_none());
         assert!(observation.get("transport_ok").is_none());
         assert!(observation.get("business_ok").is_none());
         assert!(observation.get("meta").is_none());
+        let data = observation
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert!(data.get("items").is_none());
+        assert!(data.get("items_jsonl").is_some());
     }
 
     #[test]
-    fn test_event_payload_is_compact_without_meta() {
+    fn test_event_payload_keeps_meta_for_frontend() {
         let payload = ToolResultPayload {
             ok: false,
             data: json!({"error": "boom"}),
@@ -2273,7 +2443,7 @@ mod tests {
 
         let event_payload = payload.to_event_payload("demo_tool");
         assert!(event_payload.get("timestamp").is_none());
-        assert!(event_payload.get("meta").is_none());
+        assert!(event_payload.get("meta").is_some());
         assert!(event_payload.get("final_ok").is_none());
         assert_eq!(
             event_payload.get("error_code").and_then(Value::as_str),
@@ -2303,7 +2473,7 @@ mod tests {
             })),
         };
 
-        let mut compacted = payload.to_event_payload("search_content");
+        let mut compacted = payload.to_compact_payload("search_content");
         if let Value::Object(ref mut map) = compacted {
             map.insert(
                 "tool_call_id".to_string(),
@@ -2352,6 +2522,7 @@ mod tests {
             TOOL_RESULT_TAIL_CHARS,
             TOOL_RESULT_TRUNCATION_MARKER,
             true,
+            &["char_budget".to_string()],
         );
         assert_eq!(
             compacted.get("truncated").and_then(Value::as_bool),
@@ -2369,6 +2540,14 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("");
         assert!(!preview.is_empty());
+        let reasons = compacted
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(reasons
+            .iter()
+            .any(|item| item.as_str() == Some("char_budget")));
         assert_eq!(
             compacted
                 .get("continuation_required")
@@ -2382,6 +2561,52 @@ mod tests {
                 .unwrap_or(""),
             TRUNCATION_CONTINUATION_HINT
         );
+    }
+
+    #[test]
+    fn test_compact_large_tool_result_data_keeps_combined_truncation_reasons() {
+        let items = (0..900)
+            .map(|idx| json!(format!("file-{idx}.md")))
+            .collect::<Vec<_>>();
+        let mut value = json!({
+            "items": items,
+            "cursor": "0",
+            "next_cursor": "900",
+            "has_more": true
+        });
+        let truncated = truncate_tool_result_data(
+            &mut value,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert!(truncated);
+
+        let mut reasons =
+            collect_truncation_reasons_from_value(&value, TOOL_RESULT_TRUNCATION_MARKER);
+        append_truncation_reason(&mut reasons, "char_budget");
+        dedupe_truncation_reasons(&mut reasons);
+
+        let compacted = compact_large_tool_result_data(
+            &value,
+            estimate_tool_result_chars(&value),
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+            true,
+            &reasons,
+        );
+        let reasons = compacted
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(reasons
+            .iter()
+            .any(|item| item.as_str() == Some("array_items")));
+        assert!(reasons
+            .iter()
+            .any(|item| item.as_str() == Some("char_budget")));
     }
 
     #[test]
@@ -2634,6 +2859,7 @@ mod tests {
                 "truncated": true,
                 "original_chars": 4096,
                 "preview": preview,
+                "truncation_reasons": ["array_items", "char_budget"],
                 "continuation_required": true,
                 "continuation_hint": TRUNCATION_CONTINUATION_HINT
             }
@@ -2649,6 +2875,17 @@ mod tests {
             data.get("continuation_required").and_then(Value::as_bool),
             Some(true)
         );
+        let reasons = data
+            .get("truncation_reasons")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(reasons
+            .iter()
+            .any(|item| item.as_str() == Some("array_items")));
+        assert!(reasons
+            .iter()
+            .any(|item| item.as_str() == Some("char_budget")));
     }
 
     #[test]

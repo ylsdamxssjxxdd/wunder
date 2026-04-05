@@ -141,7 +141,7 @@ const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_READ_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
 const MAX_RANGE_SPAN: usize = 2000;
 const DEFAULT_LIST_DEPTH: usize = 2;
-const DEFAULT_LIST_PAGE_LIMIT: usize = 200;
+const DEFAULT_LIST_PAGE_LIMIT: usize = 500;
 const MAX_LIST_ITEMS: usize = 500;
 const MAX_SEARCH_MATCHES: usize = 200;
 const MAX_LSP_DIAGNOSTICS: usize = 20;
@@ -8299,6 +8299,13 @@ mod tests {
         let content = "@/workspaces/another_owner/demo.md";
         let refs = extract_user_world_file_refs(content, "owner__c__2");
         assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn parse_list_files_pagination_defaults_to_500() {
+        let pagination = parse_list_files_pagination(&json!({})).expect("default pagination");
+        assert_eq!(pagination.start, 0);
+        assert_eq!(pagination.limit, DEFAULT_LIST_PAGE_LIMIT);
     }
 
     #[test]

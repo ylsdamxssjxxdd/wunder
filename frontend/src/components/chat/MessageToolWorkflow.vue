@@ -2860,57 +2860,10 @@ const buildModelCallSection = (entry: RawEntry): ToolWorkflowDetailSection => {
 
 const buildToolResultSection = (
   entry: RawEntry,
-  command: string,
-  status: string,
-  errorText: string,
-  patchEntries: PatchEntry[],
-  compactionDisplay: CompactionDisplay | null,
-  commandSession: CommandSessionRuntimeEntry | null
+  status: string
 ): ToolWorkflowDetailSection | null => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
-
-  if (isApplyPatchTool(entry.toolName)) {
-    const summary = buildApplyPatchResultSummary(entry);
-    const counts = resolveApplyPatchCounts(entry);
-    const patchFiles = buildApplyPatchResultFiles(patchEntries, errorText);
-    if (patchFiles.length > 0) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'patch',
-        summary,
-        body: '',
-        commandView: null,
-        patchLines: [],
-        patchView: buildPatchResultView(counts, patchFiles, t)
-      };
-    }
-    const patchLines = buildApplyPatchResultLines(patchEntries, errorText);
-    if (patchLines.length > 0) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'patch',
-        summary,
-        body: '',
-        commandView: null,
-        patchLines
-      };
-    }
-    if (summary) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        summary,
-        body: errorText || '',
-        commandView: null,
-        patchLines: [],
-        empty: !errorText
-      };
-    }
-  }
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
   if (rawResultDetail) {
@@ -2936,72 +2889,6 @@ const buildToolResultSection = (
       commandView: null,
       patchLines: []
     };
-  }
-
-  if (isExecuteCommandTool(entry.toolName)) {
-    if (entry.outputItem || entry.resultItem || errorText) {
-      const commandView = {
-        // Keep command workflow detail output-only: hide command input and show terminal result.
-        ...buildExecuteCommandView(entry, command, status, errorText, commandSession, false),
-        showExitCode: false
-      };
-      if (!hasVisibleCommandViewContent(commandView)) {
-        return null;
-      }
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'command',
-        body: '',
-        commandView,
-        patchLines: []
-      };
-    }
-  } else if (isCompactionTool(entry.toolName) && compactionDisplay) {
-    const body = [errorText ? `error: ${errorText}` : '']
-      .filter((item) => item.trim())
-      .join('\n');
-    return {
-      key: sectionKey,
-      title: sectionTitle,
-      kind: 'compaction',
-      summary: compactionDisplay.resultSummary,
-      body,
-      commandView: null,
-      patchLines: [],
-      compactionView: compactionDisplay.view
-    };
-  } else {
-    const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-    const structuredView = buildStructuredToolResultView(
-      entry.toolName,
-      resultObject,
-      dataObject,
-      t,
-      extractCallArgs(entry.callItem)
-    );
-    if (structuredView) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'structured',
-        body: errorText ? `error: ${errorText}` : '',
-        commandView: null,
-        patchLines: [],
-        structuredView
-      };
-    }
-    const body = buildToolResultTextBlock(entry, command, errorText);
-    if (body) {
-      return {
-        key: sectionKey,
-        title: sectionTitle,
-        kind: 'text',
-        body,
-        commandView: null,
-        patchLines: []
-      };
-    }
   }
 
   const placeholder =
@@ -3088,17 +2975,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
-  const toolResultSection = buildToolResultSection(
-    entry,
-    command,
-    status,
-    errorText,
-    patchEntries,
-    compactionDisplay,
-    commandSession
-  );
-  const modelCallSection = buildModelCallSection(entry);
-  const sections = [toolResultSection, modelCallSection].filter(Boolean) as ToolWorkflowDetailSection[];
+  const toolResultSection = buildToolResultSection(entry, status);
+  const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
     key: entry.key,

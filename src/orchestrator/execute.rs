@@ -1121,6 +1121,8 @@ impl Orchestrator {
                         }
 
                         let observation = self.build_tool_observation(&name, &result);
+                        let observation_value = serde_json::from_str::<Value>(&observation)
+                            .unwrap_or_else(|_| Value::String(observation.clone()));
                         let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
                             match build_read_image_followup_user_message(&result.data).await {
                                 Ok(payload) => payload,
@@ -1216,7 +1218,16 @@ impl Orchestrator {
 
                         let mut tool_result_payload = result.to_event_payload(&name);
                         if let Value::Object(ref mut map) = tool_result_payload {
-                            map.remove("tool_call_id");
+                            if let Some(tool_call_id) = event_tool_call_id.as_ref() {
+                                map.insert(
+                                    "tool_call_id".to_string(),
+                                    Value::String(tool_call_id.clone()),
+                                );
+                            }
+                            map.insert(
+                                "model_observation".to_string(),
+                                observation_value.clone(),
+                            );
                             map.remove("trace_id");
                             map.remove("user_round");
                             map.remove("model_round");

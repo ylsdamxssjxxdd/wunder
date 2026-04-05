@@ -7012,6 +7012,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           sandboxed && detailSource && typeof detailSource === 'object' && !('sandbox' in detailSource)
             ? { ...detailSource, sandbox: true }
             : detailSource;
+        const modelObservation = data?.model_observation ?? payload?.model_observation ?? null;
+        const detail = buildDetail(modelObservation ?? detailPayload ?? result);
         const commandSessionRows = isExecuteCommandTool(toolName)
           ? extractCommandSessionResultRows(detailPayload ?? result)
           : [];
@@ -7073,9 +7075,27 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             upsertCommandSessionResultItem(commandSessionId, source, rowFailed);
             finalizeToolOutputItem(outputKey, rowFailed);
           });
+          if (targetId) {
+            updateWorkflowItem(assistantMessage.workflowItems, targetId, {
+              status: failed ? 'failed' : 'completed'
+            });
+          }
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(
+              `工具结果：${toolName || '未知工具'}`,
+              detail,
+              failed ? 'failed' : 'completed',
+              {
+                isTool: true,
+                toolCategory,
+                eventType: 'tool_result',
+                toolName: String(toolName || ''),
+                toolCallId: toolCallId || undefined
+              }
+            )
+          );
           break;
         }
-        const detail = buildDetail(detailPayload ?? result);
         if (targetId) {
           updateWorkflowItem(assistantMessage.workflowItems, targetId, {
             status: failed ? 'failed' : 'completed'

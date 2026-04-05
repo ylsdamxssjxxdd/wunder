@@ -1784,8 +1784,8 @@
     "zh-CN": "分页偏移量（兼容旧参数写法）。"
   },
   "tool.spec.list.args.limit": {
-    "en-US": "Page size for this call. Default 200, max 500.",
-    "zh-CN": "本次返回条数。默认 200，最大 500。"
+    "en-US": "Page size for this call. Default 500, max 500.",
+    "zh-CN": "本次返回条数。默认 500，最大 500。"
   },
   "tool.spec.list.description": {
     "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted. Avoid repeating the same path listing unless the path changes or the user explicitly asks to refresh.",
