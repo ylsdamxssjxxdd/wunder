@@ -2679,6 +2679,7 @@ const sessionDetailSnapshotCache = new Map<string, SessionDetailSnapshotCacheEnt
 const sessionHydratedMessageVersion = new Map<string, string>();
 const sessionDetailPrefetchInFlight = new Map();
 const sessionSubagentsInFlight = new Map();
+const sessionSubagentsCache = new Map<string, { cachedAt: number; items: unknown[] }>();
 const sessionDetailWarmState = new Map();
 const sessionHistoryState = new Map();
 
@@ -2687,6 +2688,7 @@ const SESSION_EVENTS_CACHE_TTL_MS = 2500;
 const SESSION_EVENTS_RUNNING_CACHE_TTL_MS = 600;
 const SESSION_DETAIL_SNAPSHOT_TTL_MS = 2500;
 const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
+const SESSION_SUBAGENTS_CACHE_TTL_MS = 12 * 1000;
 
 const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
 
@@ -3447,6 +3449,7 @@ const purgeUnavailableSession = (store, sessionId) => {
   sessionDetailWarmState.delete(targetId);
   sessionDetailPrefetchInFlight.delete(targetId);
   sessionSubagentsInFlight.delete(targetId);
+  sessionSubagentsCache.delete(targetId);
   sessionHistoryState.delete(targetId);
   sessionWorkflowState.delete(targetId);
   clearSessionCommandSessions(targetId);
@@ -5201,6 +5204,7 @@ const resetChatRuntimeState = () => {
   sessionHydratedMessageVersion.clear();
   sessionDetailPrefetchInFlight.clear();
   sessionSubagentsInFlight.clear();
+  sessionSubagentsCache.clear();
   sessionDetailWarmState.clear();
   sessionHistoryState.clear();
   sessionWorkflowState.clear();
@@ -7984,9 +7988,12 @@ export const useChatStore = defineStore('chat', {
         const runtime = ensureRuntime(targetId);
         applySessionRuntimeSnapshot(runtime, eventsPayload?.runtime);
         const remoteRunning = eventsPayload?.running === true;
+        const remoteLastEventId = normalizeStreamEventId(
+          eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
+        );
         updateRuntimeRemoteLastEventId(
           runtime,
-          normalizeStreamEventId(eventsPayload?.last_event_id ?? eventsPayload?.lastEventId)
+          remoteLastEventId
         );
         const cachedHydratedMessages = dedupeAssistantMessages(getSessionMessages(targetId));
         const canReuseHydratedMessages =
@@ -8016,7 +8023,10 @@ export const useChatStore = defineStore('chat', {
         applyHistoryMeta(targetId, sessionDetail, greetingMessages);
         applyMessageWindow(this, targetId, greetingMessages);
         cacheSessionMessages(targetId, greetingMessages);
-        updateRuntimeLastEventId(runtime, resolveMaterializedMessageEventId(greetingMessages));
+        updateRuntimeLastEventId(
+          runtime,
+          Math.max(resolveMaterializedMessageEventId(greetingMessages), remoteLastEventId || 0)
+        );
         writeSessionHydratedMessageVersion(targetId, hydratedVersion);
         markSessionDetailWarm(targetId);
         void this.refreshSessionSubagents(targetId).catch(() => null);
@@ -8059,9 +8069,24 @@ export const useChatStore = defineStore('chat', {
       };
       this.scheduleSnapshot(true);
     },
-    async refreshSessionSubagents(sessionId) {
+    async refreshSessionSubagents(sessionId, options: { force?: boolean } = {}) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
       if (!targetSessionId) return [];
+      const force = options.force === true;
+      if (!force) {
+        const cached = sessionSubagentsCache.get(targetSessionId);
+        if (cached && Number.isFinite(cached.cachedAt) && Date.now() - cached.cachedAt <= SESSION_SUBAGENTS_CACHE_TTL_MS) {
+          const targetMessages =
+            resolveSessionKey(this.activeSessionId) === targetSessionId
+              ? this.messages
+              : getSessionMessages(targetSessionId) || [];
+          if (Array.isArray(targetMessages) && targetMessages.length > 0) {
+            attachSubagentsToMessages(targetMessages, cached.items);
+            cacheSessionMessages(targetSessionId, targetMessages);
+          }
+          return cached.items;
+        }
+      }
       const inFlight = sessionSubagentsInFlight.get(targetSessionId);
       if (inFlight) {
         return inFlight;
@@ -8069,6 +8094,10 @@ export const useChatStore = defineStore('chat', {
       const request = getSessionSubagents(targetSessionId)
         .then(({ data }) => {
           const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+          sessionSubagentsCache.set(targetSessionId, {
+            cachedAt: Date.now(),
+            items
+          });
           const targetMessages =
             resolveSessionKey(this.activeSessionId) === targetSessionId
               ? this.messages
@@ -8101,7 +8130,7 @@ export const useChatStore = defineStore('chat', {
         action,
         session_ids: sessionIds
       });
-      await this.refreshSessionSubagents(targetSessionId);
+      await this.refreshSessionSubagents(targetSessionId, { force: true });
       return data?.data || null;
     },
     async ensureAssistantMessageHistoryId(sessionId, message = null) {
@@ -8383,7 +8412,9 @@ export const useChatStore = defineStore('chat', {
       }
       if (sessionDetail && isSessionDetailWarm(targetSessionId)) {
         eventsPayload = readSessionEventsSnapshot(targetSessionId, {
-          allowRunning: true,
+          // Avoid trusting stale running cache when switching into a historical thread.
+          // If cache says running, fall back to fresh events snapshot request below.
+          allowRunning: false,
           minLastEventId: knownEventFloor
         });
       }
@@ -8499,6 +8530,7 @@ export const useChatStore = defineStore('chat', {
         hasSendController: Boolean(runtime?.sendController),
         hasResumeController: Boolean(runtime?.resumeController)
       });
+      const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
       if (preserveWatcher && !hydrateForegroundMessages) {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
@@ -8513,7 +8545,14 @@ export const useChatStore = defineStore('chat', {
         nextMessages = replaceMessageArrayKeepingReference(watchedMessages, nextMessages);
       }
       cacheSessionMessages(targetSessionId, nextMessages);
-      updateRuntimeLastEventId(runtime, resolveMaterializedMessageEventId(nextMessages));
+      updateRuntimeLastEventId(
+        runtime,
+        Math.max(resolveMaterializedMessageEventId(nextMessages), remoteLastEventId || 0)
+      );
+      if (!hasPendingAssistantAfterHydration) {
+        // Keep historical threads idle on entry; avoid reviving stale running status.
+        setSessionLoading(this, targetSessionId, false);
+      }
       writeSessionHydratedMessageVersion(targetSessionId, hydratedVersion);
       markSessionDetailWarm(targetSessionId);
       // Ignore stale async response: keep current foreground conversation state untouched.
@@ -8547,7 +8586,7 @@ export const useChatStore = defineStore('chat', {
               ? { afterEventId: resumeAfterEventId }
               : {}
           );
-        } else if (!remoteRunning) {
+        } else {
           setSessionLoading(this, targetSessionId, false);
         }
       }
@@ -8691,6 +8730,7 @@ export const useChatStore = defineStore('chat', {
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
+      sessionSubagentsCache.delete(resolveSessionKey(targetId));
       sessionHistoryState.delete(resolveSessionKey(targetId));
       const { data } = await archiveSessionApi(targetId);
       const archived = data?.data || null;
@@ -8780,6 +8820,7 @@ export const useChatStore = defineStore('chat', {
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       sessionSubagentsInFlight.delete(resolveSessionKey(targetId));
+      sessionSubagentsCache.delete(resolveSessionKey(targetId));
       sessionHistoryState.delete(resolveSessionKey(targetId));
       clearSessionCommandSessions(targetId);
       await deleteSessionApi(targetId);

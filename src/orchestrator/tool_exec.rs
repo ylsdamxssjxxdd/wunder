@@ -82,7 +82,6 @@ impl ToolResultPayload {
             "tool": tool_name,
             "ok": self.ok,
             "data": self.data,
-            "timestamp": self.timestamp.with_timezone(&Local).to_rfc3339(),
         });
         if !self.error.trim().is_empty() {
             if let Value::Object(ref mut map) = payload {
@@ -96,16 +95,6 @@ impl ToolResultPayload {
         }
         if let Some(meta) = &self.meta {
             if let Value::Object(ref mut map) = payload {
-                map.insert("meta".to_string(), meta.clone());
-                if let Some(flag) = meta.get("normalized_transport_ok").and_then(Value::as_bool) {
-                    map.insert("transport_ok".to_string(), Value::Bool(flag));
-                }
-                if let Some(flag) = meta.get("normalized_business_ok").and_then(Value::as_bool) {
-                    map.insert("business_ok".to_string(), Value::Bool(flag));
-                }
-                if let Some(flag) = meta.get("normalized_final_ok").and_then(Value::as_bool) {
-                    map.insert("final_ok".to_string(), Value::Bool(flag));
-                }
                 if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
                     let cleaned = code.trim();
                     if !cleaned.is_empty() {
@@ -121,7 +110,36 @@ impl ToolResultPayload {
     }
 
     pub(super) fn to_event_payload(&self, tool_name: &str) -> Value {
-        self.to_observation_payload(tool_name)
+        let mut payload = json!({
+            "tool": tool_name,
+            "ok": self.ok,
+            "data": self.data,
+            "timestamp": self.timestamp.with_timezone(&Local).to_rfc3339(),
+        });
+        if !self.error.trim().is_empty() {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("error".to_string(), Value::String(self.error.clone()));
+            }
+        }
+        if self.sandbox {
+            if let Value::Object(ref mut map) = payload {
+                map.insert("sandbox".to_string(), Value::Bool(true));
+            }
+        }
+        if let Some(meta) = &self.meta {
+            if let Value::Object(ref mut map) = payload {
+                if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
+                    let cleaned = code.trim();
+                    if !cleaned.is_empty() {
+                        map.insert("error_code".to_string(), Value::String(cleaned.to_string()));
+                    }
+                }
+                if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
+                    map.insert("retryable".to_string(), Value::Bool(retryable));
+                }
+            }
+        }
+        payload
     }
 }
 
@@ -1361,6 +1379,10 @@ const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
 const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
+const OBSERVATION_SEARCH_HIT_LIMIT: usize = 6;
+const OBSERVATION_READ_FILE_LIMIT: usize = 4;
+const OBSERVATION_TEXT_HEAD_CHARS: usize = 320;
+const OBSERVATION_TEXT_TAIL_CHARS: usize = 120;
 const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
 const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
 const TRUNCATION_CONTINUATION_HINT: &str =
@@ -1457,10 +1479,8 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let Some(raw_data) = map.get("data").cloned() else {
         return;
     };
-    let continuation_supported = supports_tool_result_continuation(&raw_data, map.get("meta"));
-    let Some(mut compacted_data) = extract_mcp_observation_data(&raw_data) else {
-        return;
-    };
+    let continuation_supported = supports_tool_result_continuation(&raw_data, None);
+    let mut compacted_data = extract_observation_data(&raw_data);
     compact_tabular_observation_data(&mut compacted_data);
     let mut observation_truncated = truncate_observation_data(
         &mut compacted_data,
@@ -1483,76 +1503,176 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let observation_output_chars = estimate_tool_result_chars(&compacted_data);
     map.insert("data".to_string(), compacted_data);
     if observation_truncated {
-        let mut meta = merge_tool_result_meta(map.get("meta").cloned());
-        meta.insert("truncated".to_string(), Value::Bool(true));
-        meta.insert("observation_truncated".to_string(), Value::Bool(true));
-        meta.insert(
+        map.insert("truncated".to_string(), Value::Bool(true));
+        map.insert(
             "observation_output_chars".to_string(),
             json!(observation_output_chars),
         );
         if continuation_supported {
-            meta.insert("continuation_required".to_string(), Value::Bool(true));
-            meta.insert(
+            map.insert("continuation_required".to_string(), Value::Bool(true));
+            map.insert(
                 "continuation_hint".to_string(),
                 Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
             );
         }
-        map.insert("meta".to_string(), Value::Object(meta));
     }
-    if let Some(meta_value) = map.get("meta").cloned() {
-        if let Some(meta) = compact_observation_meta(&meta_value) {
-            map.insert("meta".to_string(), meta);
-        } else {
-            map.remove("meta");
-        }
-    }
+    map.remove("meta");
 }
 
-fn compact_observation_meta(value: &Value) -> Option<Value> {
+fn extract_observation_data(value: &Value) -> Value {
     let Value::Object(map) = value else {
-        return None;
-    };
-    let mut compacted = Map::new();
-    for key in [
-        "duration_ms",
-        "truncated",
-        "output_chars",
-        "observation_truncated",
-        "observation_output_chars",
-        "continuation_required",
-        "continuation_hint",
-        "exit_code",
-    ] {
-        if let Some(item) = map.get(key) {
-            compacted.insert(key.to_string(), item.clone());
-        }
-    }
-    if compacted.is_empty() {
-        None
-    } else {
-        Some(Value::Object(compacted))
-    }
-}
-
-fn extract_mcp_observation_data(value: &Value) -> Option<Value> {
-    let Value::Object(map) = value else {
-        return None;
+        return value.clone();
     };
     if map.get("truncated").and_then(Value::as_bool) == Some(true) && map.contains_key("preview") {
-        return Some(compact_truncated_observation_wrapper(map));
+        return compact_truncated_observation_wrapper(map);
     }
-    if !map.contains_key("structured_content") && !map.contains_key("content") {
-        return None;
+    if let Some(compacted_search) = compact_search_observation_data(map) {
+        return compacted_search;
+    }
+    if let Some(compacted_read) = compact_read_file_observation_data(map) {
+        return compacted_read;
     }
     if let Some(structured_content) = map.get("structured_content") {
         if !structured_content.is_null() {
-            return Some(structured_content.clone());
+            return structured_content.clone();
         }
     }
     if let Some(parsed) = parse_json_from_content_text_blocks(value) {
-        return Some(parsed);
+        return parsed;
     }
-    map.get("content").cloned().filter(|item| !item.is_null())
+    if let Some(content) = map.get("content").filter(|item| !item.is_null()) {
+        return content.clone();
+    }
+    value.clone()
+}
+
+fn compact_search_observation_data(map: &Map<String, Value>) -> Option<Value> {
+    if !map.contains_key("hits") || !map.contains_key("query") {
+        return None;
+    }
+    let mut compacted = Map::new();
+    for key in [
+        "query",
+        "query_mode",
+        "path",
+        "strategy",
+        "returned_match_count",
+        "matched_file_count",
+        "timeout_hit",
+        "match_limit_hit",
+        "file_limit_hit",
+    ] {
+        if let Some(value) = map.get(key) {
+            compacted.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(summary) = map.get("summary").and_then(Value::as_object) {
+        let mut summary_compacted = Map::new();
+        for key in ["focus_points", "matched_terms", "top_files", "next_hint"] {
+            if let Some(value) = summary.get(key) {
+                summary_compacted.insert(key.to_string(), value.clone());
+            }
+        }
+        if !summary_compacted.is_empty() {
+            compacted.insert("summary".to_string(), Value::Object(summary_compacted));
+        }
+    }
+    if let Some(hits) = map.get("hits").and_then(Value::as_array) {
+        let mut compacted_hits = Vec::new();
+        for hit in hits.iter().take(OBSERVATION_SEARCH_HIT_LIMIT) {
+            let Some(hit_obj) = hit.as_object() else {
+                continue;
+            };
+            let mut item = Map::new();
+            for key in ["path", "line", "matched_terms"] {
+                if let Some(value) = hit_obj.get(key) {
+                    item.insert(key.to_string(), value.clone());
+                }
+            }
+            if let Some(content) = hit_obj.get("content").and_then(Value::as_str) {
+                item.insert(
+                    "content".to_string(),
+                    Value::String(truncate_tool_result_string(
+                        content,
+                        OBSERVATION_TEXT_HEAD_CHARS,
+                        OBSERVATION_TEXT_TAIL_CHARS,
+                        TOOL_RESULT_TRUNCATION_MARKER,
+                    )),
+                );
+            }
+            if !item.is_empty() {
+                compacted_hits.push(Value::Object(item));
+            }
+        }
+        if hits.len() > OBSERVATION_SEARCH_HIT_LIMIT {
+            compacted_hits.push(build_omitted_items_marker(
+                hits.len().saturating_sub(OBSERVATION_SEARCH_HIT_LIMIT),
+            ));
+        }
+        if !compacted_hits.is_empty() {
+            compacted.insert("hits".to_string(), Value::Array(compacted_hits));
+        }
+    }
+    if let Some(matches) = map.get("matches").and_then(Value::as_array) {
+        let mut compacted_matches = matches
+            .iter()
+            .take(OBSERVATION_SEARCH_HIT_LIMIT)
+            .cloned()
+            .collect::<Vec<_>>();
+        if matches.len() > OBSERVATION_SEARCH_HIT_LIMIT {
+            compacted_matches.push(build_omitted_items_marker(
+                matches.len().saturating_sub(OBSERVATION_SEARCH_HIT_LIMIT),
+            ));
+        }
+        if !compacted_matches.is_empty() {
+            compacted.insert("matches".to_string(), Value::Array(compacted_matches));
+        }
+    }
+    Some(Value::Object(compacted))
+}
+
+fn compact_read_file_observation_data(map: &Map<String, Value>) -> Option<Value> {
+    let content = map.get("content").and_then(Value::as_str)?;
+    let mut compacted = Map::new();
+    compacted.insert("content".to_string(), Value::String(content.to_string()));
+    let files = map
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("files"))
+        .and_then(Value::as_array);
+    if let Some(files) = files {
+        let mut file_entries = Vec::new();
+        for file in files.iter().take(OBSERVATION_READ_FILE_LIMIT) {
+            let Some(file_obj) = file.as_object() else {
+                continue;
+            };
+            let mut item = Map::new();
+            for key in ["path", "read_lines", "total_lines", "complete"] {
+                if let Some(value) = file_obj.get(key) {
+                    item.insert(key.to_string(), value.clone());
+                }
+            }
+            if !item.is_empty() {
+                file_entries.push(Value::Object(item));
+            }
+        }
+        if files.len() > OBSERVATION_READ_FILE_LIMIT {
+            file_entries.push(build_omitted_items_marker(
+                files.len().saturating_sub(OBSERVATION_READ_FILE_LIMIT),
+            ));
+        }
+        if !file_entries.is_empty() {
+            compacted.insert("files".to_string(), Value::Array(file_entries));
+        }
+    }
+    Some(Value::Object(compacted))
+}
+
+fn build_omitted_items_marker(omitted_items: usize) -> Value {
+    json!({
+        "__truncated": true,
+        "omitted_items": omitted_items,
+    })
 }
 
 fn compact_tabular_observation_data(value: &mut Value) {
@@ -1667,10 +1787,7 @@ fn truncate_tool_result_data(
                 let omitted = original_len.saturating_sub(head_items + tail_items);
                 let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
                 compacted.extend(items.iter().take(head_items).cloned());
-                compacted.push(json!({
-                    "truncated_items": omitted,
-                    "marker": marker,
-                }));
+                compacted.push(build_omitted_items_marker(omitted));
                 if tail_items > 0 {
                     compacted.extend(items.iter().skip(original_len - tail_items).cloned());
                 }
@@ -1721,10 +1838,7 @@ fn truncate_observation_data(
                 let omitted = original_len.saturating_sub(head_items + tail_items);
                 let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
                 compacted.extend(items.iter().take(head_items).cloned());
-                compacted.push(json!({
-                    "truncated_items": omitted,
-                    "marker": marker,
-                }));
+                compacted.push(build_omitted_items_marker(omitted));
                 if tail_items > 0 {
                     compacted.extend(items.iter().skip(original_len - tail_items).cloned());
                 }
@@ -1909,12 +2023,68 @@ mod tests {
             .unwrap_or_default();
         assert!(rows.len() <= TOOL_RESULT_MAX_ARRAY_ITEMS + 1);
         let has_marker = rows.iter().any(|item| {
-            item.get("truncated_items")
+            item.get("omitted_items")
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
                 > 0
+                && item.get("__truncated").and_then(Value::as_bool) == Some(true)
         });
         assert!(has_marker);
+    }
+
+    #[test]
+    fn test_observation_payload_is_compact_for_model_context() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"items": ["a", "b"]}),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "normalized_transport_ok": true,
+                "normalized_business_ok": true,
+                "normalized_final_ok": true,
+                "error_retryable": false,
+                "duration_ms": 12,
+                "truncated": true,
+                "continuation_required": true,
+                "continuation_hint": TRUNCATION_CONTINUATION_HINT,
+            })),
+        };
+
+        let observation = payload.to_observation_payload("list_files");
+        assert!(observation.get("timestamp").is_none());
+        assert!(observation.get("final_ok").is_none());
+        assert!(observation.get("transport_ok").is_none());
+        assert!(observation.get("business_ok").is_none());
+        assert!(observation.get("meta").is_none());
+    }
+
+    #[test]
+    fn test_event_payload_is_compact_without_meta() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({"error": "boom"}),
+            error: "boom".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "normalized_transport_ok": true,
+                "normalized_business_ok": false,
+                "normalized_final_ok": false,
+                "error_retryable": false,
+                "error_code": "TOOL_BUSINESS_FAILED"
+            })),
+        };
+
+        let event_payload = payload.to_event_payload("demo_tool");
+        assert!(event_payload.get("timestamp").is_some());
+        assert!(event_payload.get("meta").is_none());
+        assert!(event_payload.get("final_ok").is_none());
+        assert_eq!(
+            event_payload.get("error_code").and_then(Value::as_str),
+            Some("TOOL_BUSINESS_FAILED")
+        );
     }
 
     #[test]
@@ -1968,7 +2138,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_observation_payload_marks_truncation_meta() {
+    fn test_compact_observation_payload_marks_truncation_fields() {
         let text = "x".repeat(OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80);
         let mut payload = json!({
             "tool": "extra_mcp@db_query",
@@ -1987,35 +2157,19 @@ mod tests {
 
         compact_observation_payload(&mut payload, "执行命令");
 
+        assert_eq!(payload.get("truncated").and_then(Value::as_bool), Some(true));
         assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("truncated"))
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("observation_truncated"))
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_required"))
-                .and_then(Value::as_bool),
+            payload.get("continuation_required").and_then(Value::as_bool),
             None
         );
         assert!(
             payload
-                .get("meta")
-                .and_then(|value| value.get("observation_output_chars"))
+                .get("observation_output_chars")
                 .and_then(Value::as_u64)
                 .unwrap_or_default()
                 > 0
         );
+        assert!(payload.get("meta").is_none());
     }
 
     #[test]
@@ -2037,17 +2191,11 @@ mod tests {
         compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
         assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_required"))
-                .and_then(Value::as_bool),
+            payload.get("continuation_required").and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_hint"))
-                .and_then(Value::as_str),
+            payload.get("continuation_hint").and_then(Value::as_str),
             Some(TRUNCATION_CONTINUATION_HINT)
         );
     }
@@ -2080,19 +2228,66 @@ mod tests {
         compact_observation_payload(&mut payload, "读取文件");
 
         assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_required"))
-                .and_then(Value::as_bool),
+            payload.get("continuation_required").and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("continuation_hint"))
-                .and_then(Value::as_str),
+            payload.get("continuation_hint").and_then(Value::as_str),
             Some(TRUNCATION_CONTINUATION_HINT)
         );
+        let data = payload.get("data").and_then(Value::as_object);
+        assert!(data.and_then(|value| value.get("meta")).is_none());
+        assert!(data.and_then(|value| value.get("preview")).is_some());
+    }
+
+    #[test]
+    fn test_compact_observation_payload_compacts_search_payload() {
+        let hits = (0..12)
+            .map(|idx| {
+                json!({
+                    "path": format!("docs/{idx}.md"),
+                    "line": idx + 1,
+                    "content": format!("match-{idx}-{}", "x".repeat(240)),
+                    "before": [],
+                    "after": [],
+                    "segments": [{"matched": true, "text": "match"}]
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut payload = json!({
+            "tool": "search_content",
+            "ok": true,
+            "data": {
+                "query": "match",
+                "query_mode": "literal",
+                "path": "docs",
+                "strategy": "literal_exact",
+                "returned_match_count": 12,
+                "matched_file_count": 12,
+                "hits": hits,
+                "matches": ["a:1:match", "b:2:match"],
+                "meta": {"search": {"elapsed_ms": 20}},
+                "scope": {"kind": "workspace_local"},
+                "scope_note": "debug"
+            }
+        });
+
+        compact_observation_payload(&mut payload, "search_content");
+
+        let data = payload
+            .get("data")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert!(data.get("meta").is_none());
+        assert!(data.get("scope").is_none());
+        assert!(data.get("scope_note").is_none());
+        let compacted_hits = data
+            .get("hits")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(compacted_hits.len() <= OBSERVATION_SEARCH_HIT_LIMIT + 1);
     }
 
     #[test]
@@ -2174,13 +2369,8 @@ mod tests {
 
         compact_observation_payload(&mut payload, "技能调用");
 
-        assert_eq!(
-            payload
-                .get("meta")
-                .and_then(|value| value.get("observation_truncated"))
-                .and_then(Value::as_bool),
-            None
-        );
+        assert!(payload.get("meta").is_none());
+        assert!(payload.get("truncated").is_none());
         assert!(
             payload
                 .get("data")

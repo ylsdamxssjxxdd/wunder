@@ -2068,6 +2068,7 @@ let channelBoundAgentIdsLoadedAt = 0;
 let toolsCatalogLoadVersion = 0;
 let rightDockSkillCatalogLoadVersion = 0;
 let rightDockSkillContentLoadVersion = 0;
+let rightDockSkillAutoRetryTimer: number | null = null;
 let desktopDefaultModelMetaFetchPromise: Promise<{
   hearingSupported: boolean;
   modelDisplayName: string;
@@ -2106,6 +2107,7 @@ type AttachmentResourceState = {
 };
 const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const KEYWORD_INPUT_DEBOUNCE_MS = 120;
+const RIGHT_DOCK_SKILL_AUTO_RETRY_DELAY_MS = 1200;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 const userAttachmentResourceCache = ref(new Map<string, AttachmentResourceState>());
 let workspaceResourceHydrationFrame: number | null = null;
@@ -5286,7 +5288,8 @@ watch(
       return;
     }
     warmMessengerUserToolsData({
-      skills: true
+      skills: true,
+      summary: true
     });
   },
   { immediate: true }
@@ -8511,11 +8514,33 @@ const syncAgentPromptPreviewSelectedNames = async (options: { force?: boolean } 
   }
 };
 
+const clearRightDockSkillAutoRetry = () => {
+  if (typeof window === 'undefined') return;
+  if (rightDockSkillAutoRetryTimer !== null) {
+    window.clearTimeout(rightDockSkillAutoRetryTimer);
+    rightDockSkillAutoRetryTimer = null;
+  }
+};
+
+const scheduleRightDockSkillAutoRetry = () => {
+  if (typeof window === 'undefined') return;
+  if (rightDockSkillAutoRetryTimer !== null) return;
+  rightDockSkillAutoRetryTimer = window.setTimeout(() => {
+    rightDockSkillAutoRetryTimer = null;
+    if (!showAgentRightDock.value) return;
+    if (rightDockSkillCatalog.value.length > 0) return;
+    void loadRightDockSkills({ force: true, silent: true });
+  }, RIGHT_DOCK_SKILL_AUTO_RETRY_DELAY_MS);
+};
+
 async function loadRightDockSkills(
   options: { force?: boolean; silent?: boolean } = {}
 ) {
   const force = options.force === true;
   const silent = options.silent !== false;
+  if (force) {
+    clearRightDockSkillAutoRetry();
+  }
   if (rightDockSkillCatalogLoading.value && !force) {
     return false;
   }
@@ -8525,11 +8550,18 @@ async function loadRightDockSkills(
     const skills = await loadUserSkillsCache({ force });
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
     rightDockSkillCatalog.value = normalizeRightDockSkillCatalog(skills);
+    if (!force && rightDockSkillCatalog.value.length === 0) {
+      // First pass may race with startup auth/cache warmup and return empty transiently.
+      scheduleRightDockSkillAutoRetry();
+    }
     return true;
   } catch (error) {
     if (currentVersion !== rightDockSkillCatalogLoadVersion) return;
     if (!silent) {
       showApiError(error, t('userTools.skills.loadFailed'));
+    }
+    if (!force) {
+      scheduleRightDockSkillAutoRetry();
     }
     return false;
   } finally {
@@ -11070,6 +11102,19 @@ const refreshRealtimeChatSessions = async () => {
   });
 };
 
+const REALTIME_CONTACT_REFRESH_MIN_MS = 7_000;
+
+const refreshRealtimeContacts = async () => {
+  const lastRefreshedAt = Number(userWorldStore.lastContactRealtimeRefreshAt || 0);
+  if (lastRefreshedAt > 0 && Date.now() - lastRefreshedAt < REALTIME_CONTACT_REFRESH_MIN_MS) {
+    return;
+  }
+  await userWorldStore.refreshContacts('', {
+    shouldApply: () =>
+      sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages'
+  });
+};
+
 const shouldRefreshRealtimeChatSessions = () => sessionHub.activeSection === 'messages';
 const shouldRefreshAgentMeta = () =>
   sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools';
@@ -11443,6 +11488,7 @@ watch(
     rightDockSkillCatalogLoading.value = false;
     rightDockSkillContentLoading.value = false;
     rightDockSkillToggleSaving.value = false;
+    clearRightDockSkillAutoRetry();
     rightDockSkillCatalogLoadVersion += 1;
     rightDockSkillContentLoadVersion += 1;
     agentToolSummaryPromise = null;
@@ -11454,7 +11500,7 @@ watch(
     warmMessengerUserToolsData({
       catalog: sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools',
       skills: showAgentRightDock.value,
-      summary: sessionHub.activeSection === 'agents'
+      summary: sessionHub.activeSection === 'agents' || showAgentRightDock.value
     });
     scheduleWorkspaceResourceHydration();
   },
@@ -12052,7 +12098,7 @@ onMounted(async () => {
   warmMessengerUserToolsData({
     catalog: sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'tools',
     skills: showAgentRightDock.value,
-    summary: sessionHub.activeSection === 'agents'
+    summary: sessionHub.activeSection === 'agents' || showAgentRightDock.value
   });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
   stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
@@ -12064,11 +12110,7 @@ onMounted(async () => {
     refreshCronAgentIds: loadCronAgentIds,
     refreshChannelBoundAgentIds: loadChannelBoundAgentIds,
     refreshChatSessions: refreshRealtimeChatSessions,
-    refreshContacts: () =>
-      userWorldStore.refreshContacts('', {
-        shouldApply: () =>
-          sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages'
-      }),
+    refreshContacts: refreshRealtimeContacts,
     isHotState: () => hasHotRuntimeState.value,
     shouldRefreshCron: () => !cronPermissionDenied.value,
     shouldRefreshChannelBoundAgentIds: shouldRefreshAgentMeta,
@@ -12121,6 +12163,7 @@ onBeforeUnmount(() => {
       audioRecordingSupportRetryTimer = null;
     }
   }
+  clearRightDockSkillAutoRetry();
   closeFileContainerMenu();
   clearWorldQuickPanelClose();
   clearMiddlePaneOverlayHide();
