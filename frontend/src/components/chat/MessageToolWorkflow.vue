@@ -89,6 +89,7 @@ import {
 import {
   buildStructuredToolResultView
 } from './toolWorkflowStructuredView';
+import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { chatPerf } from '@/utils/chatPerf';
 import {
   buildCompactionDisplay,
@@ -1607,6 +1608,10 @@ const extractDurationMs = (
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
   return toOptionalInt(
+    resultObject?.duration_ms,
+    resultObject?.elapsed_ms,
+    resultObject?.durationMs,
+    resultObject?.elapsedMs,
     asObject(resultObject?.meta)?.duration_ms,
     dataObject?.duration_ms,
     dataObject?.elapsed_ms,
@@ -2891,11 +2896,12 @@ const buildToolResultSection = (
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
   if (rawResultDetail) {
+    const displayResultDetail = formatWorkflowDetailForDisplay(rawResultDetail);
     return {
       key: sectionKey,
       title: sectionTitle,
       kind: 'text',
-      body: rawResultDetail,
+      body: displayResultDetail,
       copyText: rawResultDetail,
       commandView: null,
       patchLines: []
@@ -2904,11 +2910,12 @@ const buildToolResultSection = (
 
   const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
   if (rawOutputDetail) {
+    const displayOutputDetail = formatWorkflowDetailForDisplay(rawOutputDetail);
     return {
       key: sectionKey,
       title: sectionTitle,
       kind: 'text',
-      body: rawOutputDetail,
+      body: displayOutputDetail,
       copyText: rawOutputDetail,
       commandView: null,
       patchLines: []

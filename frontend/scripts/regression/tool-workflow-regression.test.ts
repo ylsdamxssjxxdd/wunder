@@ -5,6 +5,7 @@ import {
   buildStructuredToolResultNote,
   buildStructuredToolResultView
 } from '../../src/components/chat/toolWorkflowStructuredView';
+import { formatWorkflowDetailForDisplay } from '../../src/components/chat/toolWorkflowDetailFormatter';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
@@ -66,4 +67,25 @@ test('write structured view reuses call content as result preview', () => {
   const row = view?.groups[0]?.rows[0];
   assert.equal(row?.title, './notes/todo.md');
   assert.equal(row?.body, '# Todo\n- one\n- two');
+});
+
+test('tool detail formatter pretty prints valid JSON', () => {
+  const raw = '{"summary":"ok","count":2}';
+  assert.equal(
+    formatWorkflowDetailForDisplay(raw),
+    '{\n  "summary": "ok",\n  "count": 2\n}'
+  );
+});
+
+test('tool detail formatter converts JSONL into readable JSON array', () => {
+  const raw = '{"step":1,"status":"ok"}\n{"step":2,"status":"done"}';
+  assert.equal(
+    formatWorkflowDetailForDisplay(raw),
+    '[\n  {\n    "step": 1,\n    "status": "ok"\n  },\n  {\n    "step": 2,\n    "status": "done"\n  }\n]'
+  );
+});
+
+test('tool detail formatter keeps plain text when detail is not JSON', () => {
+  const raw = 'tool result text';
+  assert.equal(formatWorkflowDetailForDisplay(raw), raw);
 });

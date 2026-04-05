@@ -96,6 +96,11 @@ impl ToolResultPayload {
         }
         if let Some(meta) = &self.meta {
             if let Value::Object(ref mut map) = payload {
+                if let Some(duration_ms) = meta.get("duration_ms").and_then(Value::as_i64) {
+                    if duration_ms > 0 {
+                        map.insert("duration_ms".to_string(), json!(duration_ms));
+                    }
+                }
                 if let Some(code) = meta.get("error_code").and_then(Value::as_str) {
                     let cleaned = code.trim();
                     if !cleaned.is_empty() {
@@ -1415,6 +1420,7 @@ const OBSERVATION_TEXT_HEAD_CHARS: usize = 320;
 const OBSERVATION_TEXT_TAIL_CHARS: usize = 120;
 const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
 const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
+const OBSERVATION_JSONL_ITEM_MAX_DEPTH: usize = 8;
 const TRUNCATION_CONTINUATION_HINT: &str =
     "result_truncated_continue_with_pagination_or_narrower_query";
 const CONTINUATION_SIGNAL_KEYS: [&str; 10] = [
@@ -1592,7 +1598,13 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
                 let lines = map
                     .get(&key)
                     .and_then(Value::as_array)
-                    .map(|items| items.iter().map(value_to_jsonl_line).collect::<Vec<_>>());
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| compact_jsonl_item_for_model(item, key.as_str(), 0))
+                            .map(|item| value_to_jsonl_line(&item))
+                            .collect::<Vec<_>>()
+                    });
                 let Some(lines) = lines else {
                     continue;
                 };
@@ -1610,6 +1622,116 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
             }
         }
         _ => {}
+    }
+}
+
+fn compact_jsonl_item_for_model(value: &Value, parent_key: &str, depth: usize) -> Value {
+    if depth >= OBSERVATION_JSONL_ITEM_MAX_DEPTH {
+        return value.clone();
+    }
+    match value {
+        Value::Object(map) => {
+            if parent_key == "results" {
+                if let Some(compacted) = compact_execute_command_result_item(map) {
+                    return compacted;
+                }
+            }
+            let mut compacted = Map::new();
+            for (key, nested_value) in map {
+                if should_drop_jsonl_observation_key(key) {
+                    continue;
+                }
+                let nested = compact_jsonl_item_for_model(nested_value, key, depth + 1);
+                if is_empty_observation_value(&nested) {
+                    continue;
+                }
+                compacted.insert(key.clone(), nested);
+            }
+            Value::Object(compacted)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| compact_jsonl_item_for_model(item, parent_key, depth + 1))
+                .filter(|item| !is_empty_observation_value(item))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+fn compact_execute_command_result_item(map: &Map<String, Value>) -> Option<Value> {
+    if !map.contains_key("command") {
+        return None;
+    }
+    let has_exec_result = map.contains_key("returncode")
+        || map.get("stdout").and_then(Value::as_str).is_some()
+        || map.get("stderr").and_then(Value::as_str).is_some();
+    if !has_exec_result {
+        return None;
+    }
+    let mut compacted = Map::new();
+    if let Some(command) = map.get("command").cloned() {
+        compacted.insert("command".to_string(), command);
+    }
+    if let Some(returncode) = map.get("returncode").cloned() {
+        compacted.insert("returncode".to_string(), returncode);
+    }
+    if let Some(stdout) = map.get("stdout").and_then(Value::as_str) {
+        if !stdout.trim().is_empty() {
+            compacted.insert("stdout".to_string(), Value::String(stdout.to_string()));
+        }
+    }
+    if let Some(stderr) = map.get("stderr").and_then(Value::as_str) {
+        if !stderr.trim().is_empty() {
+            compacted.insert("stderr".to_string(), Value::String(stderr.to_string()));
+        }
+    }
+    if compacted.is_empty() {
+        None
+    } else {
+        Some(Value::Object(compacted))
+    }
+}
+
+fn should_drop_jsonl_observation_key(key: &str) -> bool {
+    if key.ends_with("_session_id") || key.ends_with("_round") {
+        return true;
+    }
+    if key.ends_with("_meta") && key != "error_meta" {
+        return true;
+    }
+    matches!(
+        key,
+        "meta"
+            | "tool_call_id"
+            | "trace_id"
+            | "timestamp"
+            | "log_profile"
+            | "transport_ok"
+            | "business_ok"
+            | "final_ok"
+            | "command_index"
+            | "output_meta"
+            | "elapsed_ms"
+            | "duration_ms"
+            | "latency_ms"
+            | "timing"
+            | "timings"
+            | "stats"
+            | "metrics"
+            | "performance"
+            | "perf"
+    )
+}
+
+fn is_empty_observation_value(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(text) => text.trim().is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 
@@ -2452,6 +2574,24 @@ mod tests {
     }
 
     #[test]
+    fn test_observation_payload_keeps_duration_for_workflow_display() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"ok": true}),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "duration_ms": 1280,
+                "error_retryable": false
+            })),
+        };
+
+        let compacted = payload.to_compact_payload("demo_tool");
+        assert_eq!(compacted.get("duration_ms").and_then(Value::as_i64), Some(1280));
+    }
+
+    #[test]
     fn test_compact_payload_strips_ids_and_budget_noise() {
         let payload = ToolResultPayload {
             ok: true,
@@ -2812,6 +2952,51 @@ mod tests {
             .get("scores_jsonl")
             .and_then(Value::as_str)
             .is_some());
+    }
+
+    #[test]
+    fn test_compact_dense_arrays_to_jsonl_slims_execute_command_rows() {
+        let mut data = json!({
+            "results": [
+                {
+                    "command": "python draw_heart.py",
+                    "command_index": 0,
+                    "command_session_id": "cmd_123",
+                    "returncode": 127,
+                    "stdout": "",
+                    "stderr": "python: command not found",
+                    "output_meta": {
+                        "truncated": false,
+                        "total_bytes": 40
+                    }
+                }
+            ]
+        });
+
+        compact_dense_arrays_to_jsonl(&mut data);
+
+        let obj = data.as_object().cloned().unwrap_or_default();
+        assert!(obj.get("results").is_none());
+        assert_eq!(obj.get("results_count").and_then(Value::as_u64), Some(1));
+        let line = obj
+            .get("results_jsonl")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let parsed = serde_json::from_str::<Value>(line).unwrap_or(Value::Null);
+        let parsed_obj = parsed.as_object().cloned().unwrap_or_default();
+        assert_eq!(
+            parsed_obj.get("command").and_then(Value::as_str),
+            Some("python draw_heart.py")
+        );
+        assert_eq!(parsed_obj.get("returncode").and_then(Value::as_i64), Some(127));
+        assert_eq!(
+            parsed_obj.get("stderr").and_then(Value::as_str),
+            Some("python: command not found")
+        );
+        assert!(parsed_obj.get("stdout").is_none());
+        assert!(parsed_obj.get("output_meta").is_none());
+        assert!(parsed_obj.get("command_session_id").is_none());
+        assert!(parsed_obj.get("command_index").is_none());
     }
 
     #[test]
