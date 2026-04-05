@@ -1643,6 +1643,7 @@ import {
   buildAssistantDisplayContent,
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
+import { hasRunningAssistantMessage } from '@/utils/chatSessionRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
   isCompactionOnlyWorkflowItems,
@@ -3131,6 +3132,21 @@ const pendingApprovalAgentIdSet = computed(() => {
 const isSessionBusy = (sessionId: unknown): boolean =>
   Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
 
+const TERMINAL_RUNTIME_STATUS_SET = new Set(['idle', 'not_loaded', 'system_error']);
+
+const resolveSessionRuntimeStatus = (sessionId: string): string =>
+  String(chatStore.sessionRuntimeStatus?.(sessionId) || '')
+    .trim()
+    .toLowerCase();
+
+const resolveSessionLoadingFlag = (sessionId: string): boolean => {
+  const loadingBySession =
+    (chatStore.loadingBySession && typeof chatStore.loadingBySession === 'object'
+      ? chatStore.loadingBySession
+      : {}) as Record<string, unknown>;
+  return Boolean(loadingBySession[sessionId]);
+};
+
 const streamingAgentIdSet = computed(() => {
   const sessionAgentMap = buildSessionAgentMap();
   const loadingBySession =
@@ -4438,20 +4454,36 @@ const chatPanelKindLabel = computed(() => {
 
 const agentSessionLoading = computed(() => {
   if (!isAgentConversationActive.value) return false;
-  const sessionId = String(chatStore.activeSessionId || '');
+  const sessionId = String(chatStore.activeSessionId || '').trim();
   if (!sessionId) return false;
-  return isSessionBusy(sessionId);
+  const runtimeStatus = resolveSessionRuntimeStatus(sessionId);
+  const loadingBySession = resolveSessionLoadingFlag(sessionId);
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  const hasTrailingRunningAssistant = hasRunningAssistantMessage(messages);
+  const busyByStoreGetter = isSessionBusy(sessionId);
+  if (
+    !loadingBySession &&
+    TERMINAL_RUNTIME_STATUS_SET.has(runtimeStatus) &&
+    hasTrailingRunningAssistant
+  ) {
+    chatDebugLog('messenger.busy', 'force-idle-after-terminal-runtime', {
+      sessionId,
+      runtimeStatus,
+      loadingBySession,
+      busyByStoreGetter,
+      messageCount: messages.length
+    });
+    return false;
+  }
+  return busyByStoreGetter;
 });
 
 const buildActiveSessionBusyDebugSnapshot = () => {
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
   const runtimeStatus = activeSessionId
-    ? String(chatStore.sessionRuntimeStatus?.(activeSessionId) || '')
+    ? resolveSessionRuntimeStatus(activeSessionId)
     : '';
-  const loadingBySession =
-    activeSessionId && chatStore.loadingBySession && typeof chatStore.loadingBySession === 'object'
-      ? Boolean((chatStore.loadingBySession as Record<string, unknown>)[activeSessionId])
-      : false;
+  const loadingBySession = activeSessionId ? resolveSessionLoadingFlag(activeSessionId) : false;
   const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
   let lastUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -4478,6 +4510,7 @@ const buildActiveSessionBusyDebugSnapshot = () => {
     runtimeStatus,
     pendingApprovals: Array.isArray(chatStore.pendingApprovals) ? chatStore.pendingApprovals.length : 0,
     messageCount: messages.length,
+    hasRunningAssistantAfterLatestUser: hasRunningAssistantMessage(messages),
     lastUserIndex,
     hasTailAssistant: Boolean(tailAssistant),
     tailAssistantState: tailAssistant ? String(tailAssistant.state || '') : '',
@@ -4496,7 +4529,7 @@ watch(
   [
     () => String(chatStore.activeSessionId || ''),
     () => agentSessionLoading.value,
-    () => String(chatStore.sessionRuntimeStatus?.(chatStore.activeSessionId || '') || ''),
+    () => resolveSessionRuntimeStatus(String(chatStore.activeSessionId || '').trim()),
     () => Array.isArray(chatStore.messages) ? chatStore.messages.length : 0,
     () => Boolean(isMessengerInteractionBlocked.value)
   ],

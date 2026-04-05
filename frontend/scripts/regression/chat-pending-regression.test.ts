@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
   findPendingAssistantMessage,
   stopPendingAssistantMessage
@@ -28,6 +29,16 @@ test('ignores superseded pending assistant messages once a newer user turn exist
     { role: 'user', content: 'continue' }
   ];
   assert.equal(findPendingAssistantMessage(messages), null);
+});
+
+test('finds pending assistant even when a non-pending assistant is at the tail', () => {
+  const pending = { role: 'assistant', stream_incomplete: true, content: 'pending before summary' };
+  const messages = [
+    { role: 'user', content: 'first' },
+    pending,
+    { role: 'assistant', stream_incomplete: false, content: 'summary' }
+  ];
+  assert.equal(findPendingAssistantMessage(messages), pending);
 });
 
 test('clears only superseded pending assistant messages', () => {
@@ -80,6 +91,22 @@ test('stops an assistant that only retains workflow and reasoning streaming flag
   assert.equal(pending.stream_incomplete, false);
   assert.equal(pending.workflowStreaming, false);
   assert.equal(pending.reasoningStreaming, false);
+});
+
+test('clears all trailing pending assistants in current user turn', () => {
+  const firstPending = { role: 'assistant', stream_incomplete: true };
+  const secondPending = { role: 'assistant', workflowStreaming: true, reasoningStreaming: true };
+  const trailingDone = { role: 'assistant', stream_incomplete: false, content: 'done' };
+  const messages = [
+    { role: 'user', content: 'turn' },
+    firstPending,
+    secondPending,
+    trailingDone
+  ];
+  assert.equal(clearTrailingPendingAssistantMessages(messages), 2);
+  assert.equal(firstPending.stream_incomplete, false);
+  assert.equal(secondPending.workflowStreaming, false);
+  assert.equal(secondPending.reasoningStreaming, false);
 });
 
 test('session busy remains true when compaction progress is still running', () => {

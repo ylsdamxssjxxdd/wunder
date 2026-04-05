@@ -27,6 +27,7 @@ import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
+  hasRunningAssistantMessage,
   isSessionBusyFromSignals,
   isThreadRuntimeWaiting,
   normalizeThreadRuntimeStatus
@@ -45,6 +46,7 @@ import { chatDebugLog } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
+  clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
   findPendingAssistantMessage,
   stopPendingAssistantMessage
@@ -3776,7 +3778,7 @@ function applySessionRuntimeEvent(store, sessionId, payload, eventType = 'thread
       ? store?.messages
       : getSessionMessages(targetId);
     const clearedSuperseded = clearSupersededPendingAssistantMessages(targetMessages);
-    const clearedTrailing = stopPendingAssistantMessage(findPendingAssistantMessage(targetMessages));
+    const clearedTrailing = clearTrailingPendingAssistantMessages(targetMessages) > 0;
     if (clearedSuperseded || clearedTrailing) {
       notifySessionSnapshot(store, targetId, targetMessages, true);
     }
@@ -4904,7 +4906,7 @@ const startSessionWatcher = (store, sessionId) => {
         if (running === false) {
           clearRuntimeInteractiveControllers(runtime, { abort: false });
           clearSupersededPendingAssistantMessages(sessionMessagesRef);
-          stopPendingAssistantMessage(pendingMessage);
+          clearTrailingPendingAssistantMessages(sessionMessagesRef);
           setSessionLoading(store, key, false);
           notifySessionSnapshot(store, key, sessionMessagesRef, true);
           if (perfEnabled) {
@@ -7993,11 +7995,28 @@ export const useChatStore = defineStore('chat', {
       if (!key) return false;
       const activeKey = resolveSessionKey(state.activeSessionId);
       const messages = activeKey === key ? state.messages : getSessionMessages(key);
-      return isSessionBusyFromSignals(
+      const runtime = getRuntime(key);
+      const busyBySignals = isSessionBusyFromSignals(
         state.loadingBySession[key],
         messages,
-        getRuntime(key)?.threadStatus
+        runtime?.threadStatus
       );
+      if (!busyBySignals) return false;
+      const hasLoadingFlag = Boolean(state.loadingBySession[key]);
+      const runtimeTerminal =
+        Boolean(runtime) &&
+        !hasRuntimeControllers(runtime) &&
+        isTerminalRuntimeStatus(runtime?.threadStatus);
+      if (!hasLoadingFlag && runtimeTerminal && hasRunningAssistantMessage(messages)) {
+        chatDebugLog('chat.store.busy', 'suppress-stale-assistant-busy-after-terminal', {
+          sessionId: key,
+          runtime: buildRuntimeDebugSnapshot(runtime),
+          activeSessionId: resolveSessionKey(state.activeSessionId),
+          messageCount: Array.isArray(messages) ? messages.length : 0
+        });
+        return false;
+      }
+      return busyBySignals;
     },
     sessionRuntimeStatus: () => (sessionId) => {
       const runtime = getRuntime(sessionId);
@@ -9318,6 +9337,7 @@ export const useChatStore = defineStore('chat', {
           supersededPendingAssistant.questionPanel = { ...panel, status: 'dismissed' };
         }
       }
+      clearTrailingPendingAssistantMessages(this.messages);
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;
       const initialRuntime = ensureRuntime(initialSessionId);

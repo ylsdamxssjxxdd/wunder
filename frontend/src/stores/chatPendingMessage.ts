@@ -65,7 +65,25 @@ export const findPendingAssistantMessage = (
   for (let i = messages.length - 1; i > latestUserIndex; i -= 1) {
     const message = messages[i];
     if (message?.role !== 'assistant') continue;
-    return isPendingAssistantMessage(message) ? message : null;
+    if (isPendingAssistantMessage(message)) {
+      return message;
+    }
   }
   return null;
+};
+
+export const clearTrailingPendingAssistantMessages = (
+  messages: ChatMessage[] | null | undefined
+): number => {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  const latestUserIndex = resolveLatestUserIndex(messages);
+  let clearedCount = 0;
+  for (let i = latestUserIndex + 1; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    if (stopPendingAssistantMessage(message)) {
+      clearedCount += 1;
+    }
+  }
+  return clearedCount;
 };
