@@ -1,6 +1,6 @@
 use super::config::Config;
 use anyhow::{Context, Result};
-use chrono::{SecondsFormat, Utc};
+use chrono::{Local, SecondsFormat};
 use std::backtrace::Backtrace;
 use std::env;
 use std::fmt as stdfmt;
@@ -15,6 +15,7 @@ use tracing::field::{Field, Visit};
 use tracing::{error, info, warn, Event, Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -50,6 +51,19 @@ impl ConsoleEventFormatter {
         } else {
             write!(writer, "[{level}]")
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LocalRfc3339Timer;
+
+impl FormatTime for LocalRfc3339Timer {
+    fn format_time(&self, writer: &mut Writer<'_>) -> stdfmt::Result {
+        write!(
+            writer,
+            "{}",
+            Local::now().to_rfc3339_opts(SecondsFormat::Micros, true)
+        )
     }
 }
 
@@ -99,7 +113,7 @@ where
         mut writer: Writer<'_>,
         event: &Event<'_>,
     ) -> stdfmt::Result {
-        let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true);
+        let timestamp = Local::now().to_rfc3339_opts(SecondsFormat::Micros, true);
         write!(writer, "{timestamp} ")?;
         self.write_level(&mut writer, event.metadata().level())?;
 
@@ -139,6 +153,7 @@ pub fn init_server_tracing(
 
     let console_ansi = resolve_console_ansi_enabled();
     let console_layer = fmt::layer()
+        .with_timer(LocalRfc3339Timer)
         .event_format(ConsoleEventFormatter::new(console_ansi))
         .with_ansi(console_ansi)
         .with_writer(io::stdout);
@@ -148,6 +163,7 @@ pub fn init_server_tracing(
         let (file_writer, file_guard) = tracing_appender::non_blocking(file_appender);
         let file_layer = fmt::layer()
             .json()
+            .with_timer(LocalRfc3339Timer)
             .with_ansi(false)
             .with_target(true)
             .with_thread_names(false)

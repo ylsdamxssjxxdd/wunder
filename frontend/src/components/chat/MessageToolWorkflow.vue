@@ -7,7 +7,7 @@
     >
       <summary>
         <span class="tool-workflow-title">{{ t('chat.toolWorkflow.title') }}</span>
-        <span v-if="latestEntry" class="tool-workflow-latest" :title="latestEntry.summaryTitle">
+        <span v-if="latestEntry" class="tool-workflow-latest">
           {{ latestEntry.summaryTitle }}
         </span>
         <span v-else class="tool-workflow-spacer" />
@@ -32,10 +32,10 @@
               @mousemove="handleToolCallTitleMouseMove($event)"
               @mouseleave="hideToolCallDebugHint"
             >
-              <span class="tool-workflow-entry-tool-name" :title="entry.toolLabel">
+              <span class="tool-workflow-entry-tool-name">
                 {{ entry.toolLabel }}
               </span>
-              <span class="tool-workflow-entry-brief" :title="entry.summaryTitle">
+              <span class="tool-workflow-entry-brief">
                 {{ entry.summaryBrief || entry.summaryTitle }}
               </span>
             </span>

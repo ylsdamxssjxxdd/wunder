@@ -94,32 +94,12 @@
       <button
         class="beeroom-canvas-tool-btn"
         type="button"
-        :title="canvasControlLabels.resetZoom"
-        :aria-label="canvasControlLabels.resetZoom"
-        @click="resetZoom"
-      >
-        <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">{{ canvasControlLabels.resetZoom }}</span>
-      </button>
-      <button
-        class="beeroom-canvas-tool-btn"
-        type="button"
         :title="canvasControlLabels.fitView"
         :aria-label="canvasControlLabels.fitView"
         @click="fitView(true)"
       >
         <i class="fa-solid fa-expand" aria-hidden="true"></i>
         <span class="beeroom-visually-hidden">{{ canvasControlLabels.fitView }}</span>
-      </button>
-      <button
-        class="beeroom-canvas-tool-btn"
-        type="button"
-        :title="canvasControlLabels.autoArrange"
-        :aria-label="canvasControlLabels.autoArrange"
-        @click="autoArrangeCanvas"
-      >
-        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
-        <span class="beeroom-visually-hidden">{{ canvasControlLabels.autoArrange }}</span>
       </button>
       <button
         class="beeroom-canvas-tool-btn"
@@ -211,6 +191,7 @@ import {
 const MINIMAP_WIDTH = 132;
 const MINIMAP_HEIGHT = 80;
 const WORLD_DRAG_BUFFER = 720;
+const MINIMAP_REFERENCE_BUFFER = 720;
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -247,14 +228,12 @@ type PanState = {
 
 const { t } = useI18n();
 const canvasControlLabels = {
-  toolbar: 'Canvas Controls',
-  zoomIn: 'Zoom In',
-  zoomOut: 'Zoom Out',
-  resetZoom: 'Reset Zoom 100%',
-  fitView: 'Fit View',
-  autoArrange: 'Auto Arrange',
-  enterFullscreen: 'Enter Fullscreen',
-  exitFullscreen: 'Exit Fullscreen'
+  toolbar: '画布工具',
+  zoomIn: '放大',
+  zoomOut: '缩小',
+  fitView: '适应视图',
+  enterFullscreen: '进入全屏',
+  exitFullscreen: '退出全屏'
 } as const;
 const viewportRef = ref<HTMLDivElement | null>(null);
 const containerSize = ref(normalizeSwarmViewportSize({ width: 0, height: 0 }));
@@ -386,65 +365,113 @@ const condensedNodeCards = computed(
     clampSwarmScale(viewportState.value.scale) < 0.82
 );
 
-const worldStyle = computed(() => ({
-  width: `${worldSize.value.width}px`,
-  height: `${worldSize.value.height}px`,
-  transform: `translate(${Math.round(viewportState.value.offsetX)}px, ${Math.round(viewportState.value.offsetY)}px) scale(${viewportState.value.scale})`
-}));
+const worldStyle = computed(() => {
+  // Always render with normalized scale to avoid stale fractional values from cache/history.
+  const scale = clampSwarmScale(viewportState.value.scale);
+  return {
+    width: `${worldSize.value.width}px`,
+    height: `${worldSize.value.height}px`,
+    transform: `translate(${Math.round(viewportState.value.offsetX)}px, ${Math.round(viewportState.value.offsetY)}px) scale(${scale})`
+  };
+});
 
 const surfaceGridStyle = computed(() => {
   const scale = clampSwarmScale(viewportState.value.scale);
-  const minorStep = Math.max(20, Math.round(32 * scale));
+  const dpr = typeof window !== 'undefined' ? Math.max(1, Number(window.devicePixelRatio || 1)) : 1;
+  const snapToDevicePixel = (value: number) => Math.round(value * dpr) / dpr;
+  const minorStep = Math.max(20, snapToDevicePixel(32 * scale));
   const majorStep = minorStep * 5;
+  const minorStroke = 1 / dpr;
+  const majorStroke = 1 / dpr;
   const normalizeOffset = (value: number, size: number) => {
-    const remainder = Math.round(value) % size;
-    return remainder < 0 ? remainder + size : remainder;
+    const remainder = value % size;
+    const normalized = remainder < 0 ? remainder + size : remainder;
+    return snapToDevicePixel(normalized);
   };
+  const formatPixel = (value: number) => `${Number(value.toFixed(3))}px`;
   return {
     backgroundImage: [
-      'linear-gradient(rgba(148, 163, 184, 0.14) 1px, transparent 1px)',
-      'linear-gradient(90deg, rgba(148, 163, 184, 0.14) 1px, transparent 1px)',
-      'linear-gradient(rgba(148, 163, 184, 0.24) 1px, transparent 1px)',
-      'linear-gradient(90deg, rgba(148, 163, 184, 0.24) 1px, transparent 1px)'
+      `linear-gradient(rgba(148, 163, 184, 0.12) ${formatPixel(minorStroke)}, transparent ${formatPixel(minorStroke)})`,
+      `linear-gradient(90deg, rgba(148, 163, 184, 0.12) ${formatPixel(minorStroke)}, transparent ${formatPixel(minorStroke)})`,
+      `linear-gradient(rgba(148, 163, 184, 0.24) ${formatPixel(majorStroke)}, transparent ${formatPixel(majorStroke)})`,
+      `linear-gradient(90deg, rgba(148, 163, 184, 0.24) ${formatPixel(majorStroke)}, transparent ${formatPixel(majorStroke)})`
     ].join(', '),
     backgroundSize: [
-      `${minorStep}px ${minorStep}px`,
-      `${minorStep}px ${minorStep}px`,
-      `${majorStep}px ${majorStep}px`,
-      `${majorStep}px ${majorStep}px`
+      `${formatPixel(minorStep)} ${formatPixel(minorStep)}`,
+      `${formatPixel(minorStep)} ${formatPixel(minorStep)}`,
+      `${formatPixel(majorStep)} ${formatPixel(majorStep)}`,
+      `${formatPixel(majorStep)} ${formatPixel(majorStep)}`
     ].join(', '),
     backgroundPosition: [
-      `0 ${normalizeOffset(viewportState.value.offsetY, minorStep)}px`,
-      `${normalizeOffset(viewportState.value.offsetX, minorStep)}px 0`,
-      `0 ${normalizeOffset(viewportState.value.offsetY, majorStep)}px`,
-      `${normalizeOffset(viewportState.value.offsetX, majorStep)}px 0`
+      `0 ${formatPixel(normalizeOffset(viewportState.value.offsetY, minorStep))}`,
+      `${formatPixel(normalizeOffset(viewportState.value.offsetX, minorStep))} 0`,
+      `0 ${formatPixel(normalizeOffset(viewportState.value.offsetY, majorStep))}`,
+      `${formatPixel(normalizeOffset(viewportState.value.offsetX, majorStep))} 0`
     ].join(', ')
   };
 });
 
 const workflowEmptyLabel = computed(() => t('chat.toolWorkflow.empty'));
 
+const minimapReferenceWorldSize = computed(() => {
+  const baseBounds = baseProjection.value.bounds;
+  const worldMinX = baseBounds.minX - WORLD_DRAG_BUFFER;
+  const worldMinY = baseBounds.minY - WORLD_DRAG_BUFFER;
+  const worldMaxX = baseBounds.maxX + MINIMAP_REFERENCE_BUFFER;
+  const worldMaxY = baseBounds.maxY + MINIMAP_REFERENCE_BUFFER;
+  return {
+    width: Math.max(NODE_WIDTH + WORLD_PADDING * 2, Math.ceil(worldMaxX - worldMinX + WORLD_PADDING * 2)),
+    height: Math.max(NODE_HEIGHT + WORLD_PADDING * 2, Math.ceil(worldMaxY - worldMinY + WORLD_PADDING * 2))
+  };
+});
+
 const minimapScale = computed(() =>
   Math.min(
-    (MINIMAP_WIDTH - 10) / Math.max(1, worldSize.value.width),
-    (MINIMAP_HEIGHT - 10) / Math.max(1, worldSize.value.height)
+    (MINIMAP_WIDTH - 10) / Math.max(1, minimapReferenceWorldSize.value.width),
+    (MINIMAP_HEIGHT - 10) / Math.max(1, minimapReferenceWorldSize.value.height)
   )
 );
 
 const minimapOffset = computed(() => ({
-  x: (MINIMAP_WIDTH - worldSize.value.width * minimapScale.value) / 2,
-  y: (MINIMAP_HEIGHT - worldSize.value.height * minimapScale.value) / 2
+  x: (MINIMAP_WIDTH - minimapReferenceWorldSize.value.width * minimapScale.value) / 2,
+  y: (MINIMAP_HEIGHT - minimapReferenceWorldSize.value.height * minimapScale.value) / 2
 }));
 
+const minimapWorldWindow = computed(() => {
+  const width = minimapReferenceWorldSize.value.width;
+  const height = minimapReferenceWorldSize.value.height;
+  const scale = clampSwarmScale(viewportState.value.scale);
+  const viewportCenterX = (-viewportState.value.offsetX + containerSize.value.width / 2) / scale;
+  const viewportCenterY = (-viewportState.value.offsetY + containerSize.value.height / 2) / scale;
+  return {
+    left: viewportCenterX - width / 2,
+    top: viewportCenterY - height / 2,
+    width,
+    height
+  };
+});
+
+const mapWorldXToMinimap = (worldX: number) =>
+  minimapOffset.value.x + (worldX - minimapWorldWindow.value.left) * minimapScale.value;
+
+const mapWorldYToMinimap = (worldY: number) =>
+  minimapOffset.value.y + (worldY - minimapWorldWindow.value.top) * minimapScale.value;
+
 const minimapNodes = computed(() =>
-  worldNodes.value.map((node) => ({
-    id: node.id,
-    status: node.status,
-    x: minimapOffset.value.x + node.left * minimapScale.value,
-    y: minimapOffset.value.y + node.top * minimapScale.value,
-    width: Math.max(4, node.width * minimapScale.value),
-    height: Math.max(4, node.height * minimapScale.value)
-  }))
+  worldNodes.value.map((node) => {
+    const width = Math.max(4, node.width * minimapScale.value);
+    const height = Math.max(4, node.height * minimapScale.value);
+    const rawX = mapWorldXToMinimap(node.left);
+    const rawY = mapWorldYToMinimap(node.top);
+    return {
+      id: node.id,
+      status: node.status,
+      x: rawX,
+      y: rawY,
+      width,
+      height
+    };
+  })
 );
 
 const minimapEdges = computed(() =>
@@ -453,11 +480,10 @@ const minimapEdges = computed(() =>
       const source = worldNodeMap.value.get(edge.source);
       const target = worldNodeMap.value.get(edge.target);
       if (!source || !target) return null;
-      const scale = minimapScale.value;
-      const sx = minimapOffset.value.x + source.centerX * scale;
-      const sy = minimapOffset.value.y + source.centerY * scale;
-      const tx = minimapOffset.value.x + target.centerX * scale;
-      const ty = minimapOffset.value.y + target.centerY * scale;
+      const sx = mapWorldXToMinimap(source.centerX);
+      const sy = mapWorldYToMinimap(source.centerY);
+      const tx = mapWorldXToMinimap(target.centerX);
+      const ty = mapWorldYToMinimap(target.centerY);
       const dx = tx - sx;
       const controlOffset = Math.max(6, Math.abs(dx) * 0.22);
       return {
@@ -470,15 +496,17 @@ const minimapEdges = computed(() =>
 
 const minimapViewportRect = computed(() => {
   const scale = clampSwarmScale(viewportState.value.scale);
-  const worldX = Math.max(0, -viewportState.value.offsetX / scale);
-  const worldY = Math.max(0, -viewportState.value.offsetY / scale);
-  const width = Math.min(worldSize.value.width, containerSize.value.width / scale);
-  const height = Math.min(worldSize.value.height, containerSize.value.height / scale);
+  const viewportWorldWidth = Math.min(minimapWorldWindow.value.width, containerSize.value.width / scale);
+  const viewportWorldHeight = Math.min(minimapWorldWindow.value.height, containerSize.value.height / scale);
+  const worldX = -viewportState.value.offsetX / scale;
+  const worldY = -viewportState.value.offsetY / scale;
+  const width = Math.max(6, viewportWorldWidth * minimapScale.value);
+  const height = Math.max(6, viewportWorldHeight * minimapScale.value);
   return {
-    x: minimapOffset.value.x + worldX * minimapScale.value,
-    y: minimapOffset.value.y + worldY * minimapScale.value,
-    width: Math.max(10, width * minimapScale.value),
-    height: Math.max(10, height * minimapScale.value)
+    x: mapWorldXToMinimap(worldX),
+    y: mapWorldYToMinimap(worldY),
+    width,
+    height
   };
 });
 
@@ -586,20 +614,6 @@ const zoomTo = (nextScale: number, anchorX = containerSize.value.width / 2, anch
 
 const zoomIn = () => zoomTo(viewportState.value.scale + SWARM_SCALE_STEP);
 const zoomOut = () => zoomTo(viewportState.value.scale - SWARM_SCALE_STEP);
-const resetZoom = () => {
-  viewportState.value = {
-    ...viewportState.value,
-    scale: 1
-  };
-  scheduleViewportStateSave();
-};
-
-const autoArrangeCanvas = async () => {
-  nodePositionOverrides.value = {};
-  saveNodeState();
-  pendingFitView.value = true;
-  await fitView(true);
-};
 
 const handleViewportWheel = (event: WheelEvent) => {
   const rect = viewportRef.value?.getBoundingClientRect();
@@ -759,8 +773,8 @@ const handleMinimapClick = (event: MouseEvent) => {
   const rect = target?.getBoundingClientRect();
   if (!rect) return;
   const scale = minimapScale.value;
-  const x = (event.clientX - rect.left - minimapOffset.value.x) / scale;
-  const y = (event.clientY - rect.top - minimapOffset.value.y) / scale;
+  const x = minimapWorldWindow.value.left + (event.clientX - rect.left - minimapOffset.value.x) / scale;
+  const y = minimapWorldWindow.value.top + (event.clientY - rect.top - minimapOffset.value.y) / scale;
   viewportState.value = {
     ...viewportState.value,
     offsetX: Math.round(containerSize.value.width / 2 - x * viewportState.value.scale),
@@ -989,6 +1003,7 @@ onBeforeUnmount(() => {
   left: 14px;
   top: 12px;
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   gap: 5px;
   padding: 5px;
@@ -1072,6 +1087,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-minimap-svg {
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .beeroom-canvas-minimap-edge {
@@ -1103,8 +1119,8 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-minimap-viewport {
-  fill: rgba(148, 163, 184, 0.1);
-  stroke: rgba(203, 213, 225, 0.62);
+  fill: rgba(16, 185, 129, 0.12);
+  stroke: rgba(52, 211, 153, 0.78);
   stroke-width: 1.2;
 }
 

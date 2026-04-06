@@ -342,16 +342,12 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
-            :disabled="agentConversationRefreshLoading || isMessengerInteractionBlocked"
+            :disabled="isMessengerInteractionBlocked"
             :title="t('common.refresh')"
             :aria-label="t('common.refresh')"
-            @click="refreshAgentConversationView"
+            @click="handleChatPageRefresh"
           >
-            <i
-              class="fa-solid fa-rotate-right"
-              :class="{ 'fa-spin': agentConversationRefreshLoading }"
-              aria-hidden="true"
-            ></i>
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
@@ -1570,7 +1566,6 @@ import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversa
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
-import { settleAgentSessionBusyAfterRefresh } from '@/views/messenger/chatRefreshRecovery';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
@@ -2014,7 +2009,6 @@ const groupCreateKeyword = ref('');
 const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
-const agentConversationRefreshLoading = ref(false);
 const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
 const {
   isBlocked: isMessengerInteractionBlocked,
@@ -4220,7 +4214,10 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
   >();
   (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).forEach((sessionRaw) => {
     const session = (sessionRaw || {}) as Record<string, unknown>;
-    const agentId = normalizeAgentId(session.agent_id);
+    const agentId = normalizeAgentId(session.agent_id || (session.is_default === true ? DEFAULT_AGENT_KEY : ''));
+    if (!agentId) {
+      return;
+    }
     const list = sessionsByAgent.get(agentId) || [];
     list.push({
       session,
@@ -4255,6 +4252,7 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
         lastAt: Number(latest?.lastAt || main?.lastAt || 0)
       } as MixedConversation;
     })
+    .filter((item) => agentMap.value.has(item.agentId))
     .filter((item) => {
       const dismissedAt = Number(dismissedMap[item.agentId] || 0);
       if (!dismissedAt) return true;
@@ -4265,7 +4263,11 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
   if (draftIdentity?.kind === 'agent' && draftIdentity.id.startsWith('draft:')) {
     const draftAgentId = normalizeAgentId(draftIdentity.agentId || draftIdentity.id.slice('draft:'.length));
     const draftDismissedAt = Number(dismissedMap[draftAgentId] || 0);
-    if (!agentItems.some((item) => item.agentId === draftAgentId) && !draftDismissedAt) {
+    if (
+      agentMap.value.has(draftAgentId) &&
+      !agentItems.some((item) => item.agentId === draftAgentId) &&
+      !draftDismissedAt
+    ) {
       const agent = agentMap.value.get(draftAgentId) || null;
       agentItems.unshift({
         key: `agent:${draftAgentId}`,
@@ -8809,163 +8811,11 @@ const handleUserToolsUpdatedEvent = (event: CustomEvent<{ scope?: string; action
   }
 };
 
-type AgentConversationRefreshSectionResult = {
-  label: string;
-  success: boolean;
-};
-
-const formatRefreshSectionLabels = (labels: string[]): string => {
-  if (!labels.length) return '';
-  const locale = String(getCurrentLanguage() || '').trim() || undefined;
-  if (typeof Intl !== 'undefined' && typeof Intl.ListFormat === 'function') {
-    return new Intl.ListFormat(locale, { style: 'long', type: 'conjunction' }).format(labels);
-  }
-  const separator = locale?.toLowerCase().startsWith('zh') ? '、' : ', ';
-  return labels.join(separator);
-};
-
-const refreshActiveAgentConversationChat = async (activeSessionId: string): Promise<boolean> => {
-  chatDebugLog('messenger.refresh', 'chat-refresh-start', {
-    activeSessionId,
-    snapshot: buildActiveSessionBusyDebugSnapshot()
-  });
-  const tasks: Promise<unknown>[] = [chatStore.loadSessions({ skipTransportRefresh: true })];
-  if (activeSessionId) {
-    tasks.push(
-      chatStore.loadSessionDetail(activeSessionId, {
-        preserveWatcher: true,
-        forceHydrateForeground: true
-      })
-    );
-  }
-  const settled = await Promise.allSettled(tasks);
-  if (!settled.every((item) => item.status === 'fulfilled')) {
-    chatDebugLog('messenger.refresh', 'chat-refresh-load-failed', {
-      activeSessionId,
-      settled
-    });
-    return false;
-  }
-  if (!activeSessionId) {
-    chatDebugLog('messenger.refresh', 'chat-refresh-no-active-session');
-    return true;
-  }
-  if (String(chatStore.activeSessionId || '').trim() !== activeSessionId) {
-    chatDebugLog('messenger.refresh', 'chat-refresh-session-switched', {
-      from: activeSessionId,
-      to: String(chatStore.activeSessionId || '').trim()
-    });
-    return true;
-  }
-  const recovery = await settleAgentSessionBusyAfterRefresh({
-    sessionId: activeSessionId,
-    isSessionBusy,
-    resolveRuntimeStatus: (sessionId) => String(chatStore.sessionRuntimeStatus?.(sessionId) || ''),
-    loadSessionDetail: (sessionId, options) =>
-      chatStore.loadSessionDetail(sessionId, {
-        preserveWatcher: options?.preserveWatcher === true,
-        forceHydrateForeground: options?.forceHydrateForeground === true
-      }),
-    attempts: 3,
-    settleDelayMs: 140
-  });
-  chatDebugLog('messenger.refresh', 'chat-refresh-recovery-finish', {
-    activeSessionId,
-    recovery,
-    snapshot: buildActiveSessionBusyDebugSnapshot()
-  });
-  return recovery !== 'unsettled';
-};
-
-const refreshAgentConversationView = async () => {
-  if (
-    !isAgentConversationActive.value ||
-    agentConversationRefreshLoading.value ||
-    isMessengerInteractionBlocked.value
-  ) {
-    chatDebugLog('messenger.refresh', 'skip-refresh', {
-      isAgentConversationActive: isAgentConversationActive.value,
-      refreshLoading: agentConversationRefreshLoading.value,
-      interactionBlocked: isMessengerInteractionBlocked.value,
-      snapshot: buildActiveSessionBusyDebugSnapshot()
-    });
+const handleChatPageRefresh = () => {
+  if (isMessengerInteractionBlocked.value) {
     return;
   }
-  chatDebugLog('messenger.refresh', 'start-refresh-view', buildActiveSessionBusyDebugSnapshot());
-  await runWithMessengerInteractionBlock('refresh', async () => {
-    agentConversationRefreshLoading.value = true;
-    try {
-      const activeSessionId = String(chatStore.activeSessionId || '').trim();
-      const refreshSections: Array<{
-        label: string;
-        run: () => Promise<boolean>;
-      }> = [
-        {
-          label: t('messenger.refresh.target.chat'),
-          run: async () => refreshActiveAgentConversationChat(activeSessionId)
-        },
-        {
-          label: t('messenger.right.sandbox'),
-          run: async () => {
-            const refreshWorkspace = rightDockRef.value?.refreshWorkspace;
-            if (typeof refreshWorkspace !== 'function') {
-              return true;
-            }
-            try {
-              return (await refreshWorkspace({ background: true })) !== false;
-            } catch {
-              return false;
-            }
-          }
-        },
-        {
-          label: t('userTools.skills.title'),
-          run: async () => (await loadRightDockSkills({ force: true, silent: true })) !== false
-        }
-      ];
-      const sectionPromises = refreshSections.map(
-        async (section): Promise<AgentConversationRefreshSectionResult> => ({
-          label: section.label,
-          success: await section.run()
-        })
-      );
-      const refreshResults = await Promise.allSettled([
-        loadAgentToolSummary({ force: true }),
-        ...sectionPromises
-      ]);
-      const sectionResults = refreshResults
-        .slice(1)
-        .map((item, index): AgentConversationRefreshSectionResult => {
-          if (item.status === 'fulfilled') {
-            return item.value as AgentConversationRefreshSectionResult;
-          }
-          return {
-            label: refreshSections[index]?.label || t('common.refresh'),
-            success: false
-          };
-        });
-      const failedLabels = sectionResults.filter((item) => !item.success).map((item) => item.label);
-      chatDebugLog('messenger.refresh', 'finish-refresh-view', {
-        failedLabels,
-        sectionResults,
-        snapshot: buildActiveSessionBusyDebugSnapshot()
-      });
-      if (!failedLabels.length) {
-        ElMessage.success(t('common.refreshSuccess'));
-        return;
-      }
-      const failedText = formatRefreshSectionLabels(failedLabels);
-      if (failedLabels.length === sectionResults.length) {
-        ElMessage.error(t('messenger.refresh.failed', { targets: failedText }));
-        return;
-      }
-      ElMessage.warning(t('messenger.refresh.partial', { targets: failedText }));
-    } catch (error) {
-      showApiError(error, t('common.requestFailed'));
-    } finally {
-      agentConversationRefreshLoading.value = false;
-    }
-  });
+  window.location.reload();
 };
 
 const handleRightDockSkillArchiveUpload = async (file: File) => {
@@ -9671,23 +9521,56 @@ const handleAgentDeleteStart = () => {
 };
 
 const handleAgentDeleted = async (deletedAgentId: string) => {
+  const normalizedDeletedAgentId = normalizeAgentId(deletedAgentId);
+  const currentIdsWithoutDeleted = visibleAgentIdsForSelection.value.filter(
+    (item) => normalizeAgentId(item) !== normalizedDeletedAgentId
+  );
   selectedAgentId.value = resolveAgentSelectionAfterRemoval({
-    removedId: deletedAgentId,
+    removedId: normalizedDeletedAgentId,
     previousIds: deletingAgentSelectionSnapshot.value,
-    currentIds: visibleAgentIdsForSelection.value,
+    currentIds: currentIdsWithoutDeleted,
     fallbackId: DEFAULT_AGENT_KEY
   });
+  const currentIdentity = activeConversation.value;
+  const activeConversationAgentId = currentIdentity?.kind === 'agent'
+    ? normalizeAgentId(currentIdentity.agentId || String(currentIdentity.id || '').replace(/^draft:/, ''))
+    : '';
+  if (activeConversationAgentId && activeConversationAgentId === normalizedDeletedAgentId) {
+    sessionHub.clearActiveConversation();
+  }
+  if (normalizeAgentId(chatStore.draftAgentId) === normalizedDeletedAgentId) {
+    chatStore.draftAgentId = '';
+    chatStore.draftToolOverrides = null;
+  }
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (activeSessionId) {
+    const activeSession = (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).find(
+      (item) => String(item?.id || '') === activeSessionId
+    );
+    const activeSessionAgentId = normalizeAgentId(
+      activeSession?.agent_id || (activeSession?.is_default === true ? DEFAULT_AGENT_KEY : '')
+    );
+    if (activeSessionAgentId && activeSessionAgentId === normalizedDeletedAgentId) {
+      chatStore.activeSessionId = null;
+      chatStore.messages = [];
+    }
+  }
+  activeAgentDetailProfile.value = null;
   deletingAgentSelectionSnapshot.value = [];
   const tasks: Promise<unknown>[] = [
-    chatStore.loadSessions(),
+    refreshAgentMutationState(),
+    chatStore.loadSessions({ skipTransportRefresh: true }),
     loadRunningAgents({ force: true }),
     loadAgentUserRounds(),
-    loadChannelBoundAgentIds({ force: true })
+    loadChannelBoundAgentIds({ force: true }),
+    loadDefaultAgentProfile(),
+    loadAgentToolSummary({ force: true })
   ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds({ force: true }));
   }
   await Promise.allSettled(tasks);
+  ensureSectionSelection();
 };
 
 const clearMessagePanelWhenConversationEmpty = () => {

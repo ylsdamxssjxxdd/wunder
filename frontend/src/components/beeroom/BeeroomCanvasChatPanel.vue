@@ -484,6 +484,7 @@ watch(
 .beeroom-canvas-chat-avatar {
   width: 34px;
   height: 34px;
+  padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 12px;
   background: rgba(23, 25, 34, 0.9);
@@ -495,6 +496,8 @@ watch(
   font-weight: 700;
   flex-shrink: 0;
   overflow: hidden;
+  box-sizing: border-box;
+  line-height: 0;
   cursor: pointer;
 }
 
@@ -511,9 +514,11 @@ watch(
 }
 
 .beeroom-canvas-chat-avatar-img {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: inherit;
 }
 
 .beeroom-canvas-chat-main {

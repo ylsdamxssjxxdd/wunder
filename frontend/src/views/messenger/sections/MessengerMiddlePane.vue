@@ -377,7 +377,6 @@
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ group.name || group.group_id }}</span>
-            <span class="messenger-list-time">{{ group.running_mission_total || 0 }} {{ t('beeroom.summary.runningTeams') }}</span>
           </div>
           <div class="messenger-list-row">
             <span class="messenger-list-preview">

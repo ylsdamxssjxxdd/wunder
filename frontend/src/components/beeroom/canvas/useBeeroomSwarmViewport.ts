@@ -13,10 +13,36 @@ export type SwarmViewportSize = {
 
 export const SWARM_SCALE_MIN = 0.5;
 export const SWARM_SCALE_MAX = 1.8;
-export const SWARM_SCALE_STEP = 0.12;
+export const SWARM_SCALE_STEP = 0.1;
 
-export const clampSwarmScale = (value: number) =>
-  Math.min(SWARM_SCALE_MAX, Math.max(SWARM_SCALE_MIN, value));
+const SWARM_CRISP_SCALE_UNIT = 1 / 14;
+
+const SWARM_CRISP_SCALES = (() => {
+  const values = new Set<number>();
+  for (let scale = SWARM_SCALE_MIN; scale <= SWARM_SCALE_MAX + SWARM_CRISP_SCALE_UNIT; scale += SWARM_CRISP_SCALE_UNIT) {
+    const normalized = Number(scale.toFixed(4));
+    if (normalized < SWARM_SCALE_MIN || normalized > SWARM_SCALE_MAX) continue;
+    values.add(normalized);
+  }
+  values.add(1);
+  values.add(SWARM_SCALE_MAX);
+  return Array.from(values).sort((a, b) => a - b);
+})();
+
+export const clampSwarmScale = (value: number) => {
+  const clamped = Math.min(SWARM_SCALE_MAX, Math.max(SWARM_SCALE_MIN, Number(value || 0)));
+  let nearest = SWARM_CRISP_SCALES[0] ?? 1;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  // Snap to a stable scale ladder so transformed cards/text land on cleaner raster positions.
+  for (const candidate of SWARM_CRISP_SCALES) {
+    const distance = Math.abs(candidate - clamped);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+};
 
 export const createDefaultSwarmViewportState = (): SwarmViewportState => ({
   scale: 1,

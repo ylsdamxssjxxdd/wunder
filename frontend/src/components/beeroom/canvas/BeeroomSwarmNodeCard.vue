@@ -104,6 +104,8 @@ const visibleWorkflowLines = computed(() =>
   -webkit-user-drag: none;
   touch-action: none;
   box-shadow: 0 10px 22px rgba(2, 6, 23, 0.18);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease,
@@ -227,10 +229,14 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-avatar-img {
   position: relative;
   z-index: 1;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(0.78) contrast(1.06) brightness(0.84);
+  image-rendering: auto;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  filter: saturate(0.92) contrast(1.02) brightness(0.96);
 }
 
 .beeroom-node-avatar-text {
