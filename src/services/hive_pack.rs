@@ -338,6 +338,7 @@ struct WorkerImportSnapshot {
     role_prompt: String,
     declared_tool_names: Vec<String>,
     declared_skill_names: Vec<String>,
+    referenced_skills: Vec<String>,
     preset_questions: Vec<String>,
     sandbox_container_id: i32,
     installed_skills: Vec<String>,
@@ -366,6 +367,7 @@ struct WorkerSkillSource {
 struct ExportSkillSource {
     name: String,
     source_dir: PathBuf,
+    include_in_package: bool,
 }
 
 #[derive(Debug)]
@@ -678,6 +680,11 @@ async fn run_import_job_inner(
                 tool_names.push(runtime_name);
             }
         }
+        for skill_name in &snapshot.referenced_skills {
+            if let Some(runtime_name) = resolve_declared_skill_runtime_name(skill_name, &allowed) {
+                tool_names.push(runtime_name);
+            }
+        }
         tool_names.sort();
         tool_names.dedup();
         let preferred_agent_name = if snapshot.display_name.trim().is_empty() {
@@ -878,6 +885,10 @@ async fn run_export_job_inner(
             if skill_name.is_empty() {
                 continue;
             }
+            if !skill.include_in_package {
+                attached_skill_names.push(skill_name.to_string());
+                continue;
+            }
             let source = &skill.source_dir;
             if !source.exists() || !source.is_dir() || !source.join("SKILL.md").is_file() {
                 continue;
@@ -1069,6 +1080,23 @@ fn install_worker_snapshot(
     );
 
     let skill_sources = resolve_worker_skill_sources(package_root, &worker_root, &worker_card)?;
+    let embedded_skill_name_keys = skill_sources
+        .iter()
+        .flat_map(|item| {
+            [
+                item.preferred_name.trim().to_string(),
+                item.source_skill_id.trim().to_string(),
+            ]
+        })
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+    let referenced_skills = declared_skill_names
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty() && !embedded_skill_name_keys.contains(value))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
     for skill_source in &skill_sources {
@@ -1118,6 +1146,7 @@ fn install_worker_snapshot(
         role_prompt,
         declared_tool_names,
         declared_skill_names,
+        referenced_skills,
         preset_questions,
         sandbox_container_id,
         installed_skills,
@@ -1545,11 +1574,36 @@ fn collect_agent_skills_for_export(
         }
         output.push(ExportSkillSource {
             name: skill_name,
+            include_in_package: source_dir.starts_with(skill_root),
             source_dir,
         });
     }
 
     output
+}
+
+fn resolve_declared_skill_runtime_name(
+    declared_skill_name: &str,
+    allowed: &HashSet<String>,
+) -> Option<String> {
+    let cleaned = declared_skill_name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if allowed.contains(cleaned) {
+        return Some(cleaned.to_string());
+    }
+    let suffix = format!("@{cleaned}");
+    let matches = allowed
+        .iter()
+        .filter(|item| item.ends_with(&suffix))
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.len() == 1 {
+        matches.first().cloned()
+    } else {
+        None
+    }
 }
 
 fn resolve_or_create_target_hive(
@@ -2380,7 +2434,8 @@ mod tests {
     use super::{
         collect_agent_skills_for_export, export_worker_id, load_worker_card_manifest,
         normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
-        normalize_import_conflict_mode, normalize_name, resolve_import_skill_name,
+        normalize_import_conflict_mode, normalize_name, resolve_declared_skill_runtime_name,
+        resolve_import_skill_name,
         resolve_import_workers, resolve_worker_skill_sources, unique_label_with_reserved,
         unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
         validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode,
@@ -2741,6 +2796,7 @@ mod tests {
         assert_eq!(skill_refs.len(), 1);
         assert_eq!(skill_refs[0].name, "鎷涜仒鍔╂墜");
         assert_eq!(skill_refs[0].source_dir, skill_dir);
+        assert!(skill_refs[0].include_in_package);
     }
 
     #[test]
@@ -2796,6 +2852,37 @@ mod tests {
         assert_eq!(skill_refs.len(), 1);
         assert_eq!(skill_refs[0].name, "report_writer");
         assert_eq!(skill_refs[0].source_dir, global_skill_dir);
+        assert!(!skill_refs[0].include_in_package);
+    }
+
+    #[test]
+    fn resolve_declared_skill_runtime_name_prefers_exact_match() {
+        let allowed = HashSet::from([
+            "report_writer".to_string(),
+            "alice@report_writer".to_string(),
+        ]);
+        assert_eq!(
+            resolve_declared_skill_runtime_name("report_writer", &allowed).as_deref(),
+            Some("report_writer")
+        );
+    }
+
+    #[test]
+    fn resolve_declared_skill_runtime_name_accepts_single_suffix_match() {
+        let allowed = HashSet::from(["alice@report_writer".to_string()]);
+        assert_eq!(
+            resolve_declared_skill_runtime_name("report_writer", &allowed).as_deref(),
+            Some("alice@report_writer")
+        );
+    }
+
+    #[test]
+    fn resolve_declared_skill_runtime_name_rejects_ambiguous_suffix_match() {
+        let allowed = HashSet::from([
+            "alice@report_writer".to_string(),
+            "bob@report_writer".to_string(),
+        ]);
+        assert!(resolve_declared_skill_runtime_name("report_writer", &allowed).is_none());
     }
 
     #[test]
