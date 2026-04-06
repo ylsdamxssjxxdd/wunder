@@ -430,6 +430,7 @@ impl Orchestrator {
                 resolve_tool_failure_guard_threshold(&request_config);
             let mut retry_governor = RetryGovernor::new(repeated_tool_failure_threshold);
             let mut reroute_notice_count = 0_u32;
+            let mut reroute_notice_fingerprints: HashSet<String> = HashSet::new();
             let memory_manager_tool_name = resolve_tool_name("memory_manager");
             let tool_budget_limits = ToolBudgetLimits {
                 total: DEFAULT_TOOL_CALL_BUDGET_PER_TURN,
@@ -1356,9 +1357,12 @@ impl Orchestrator {
                             if should_request_tool_failure_reroute(
                                 stop_reason_key,
                                 reroute_notice_count,
+                                stop_fingerprint.as_str(),
+                                &reroute_notice_fingerprints,
                             )
                             {
                                 reroute_notice_count = reroute_notice_count.saturating_add(1);
+                                reroute_notice_fingerprints.insert(stop_fingerprint.clone());
                                 let model_notice = build_tool_failure_reroute_model_notice(
                                     &name,
                                     &stop,
@@ -1415,9 +1419,6 @@ impl Orchestrator {
                                     stop_error_code.as_str(),
                                     result.error.as_str(),
                                 );
-                                if !next_step_hint.trim().is_empty() {
-                                    answer = format!("{answer}\n\n{next_step_hint}");
-                                }
                                 stop_reason = Some("tool_failure_guard".to_string());
                                 let guard_meta = json!({
                                     "type": "tool_failure_guard",
@@ -1926,26 +1927,48 @@ impl Orchestrator {
                             .into_iter()
                             .map(|item| item.to_value())
                             .collect::<Vec<_>>();
+                        let preflight = json!({
+                            "status": "reject",
+                            "code": code,
+                            "diagnostics": diagnostics,
+                        });
+                        let hint = preflight
+                            .get("diagnostics")
+                            .and_then(Value::as_array)
+                            .and_then(|items| {
+                                items.iter().find_map(|item| {
+                                    item.get("hint")
+                                        .and_then(Value::as_str)
+                                        .map(str::trim)
+                                        .filter(|value| !value.is_empty())
+                                        .map(ToString::to_string)
+                                })
+                            });
                         let mut reject_payload = json!({
                             "stage": "tool_preflight_reject",
                             "summary": "Tool preflight blocked execution due to deterministic failure pattern.",
                             "tool": name.clone(),
                             "code": code,
-                            "diagnostics": diagnostics,
+                            "diagnostics": preflight
+                                .get("diagnostics")
+                                .cloned()
+                                .unwrap_or_else(|| Value::Array(Vec::new())),
                         });
                         if let Value::Object(ref mut map) = reject_payload {
                             round_info.insert_into(map);
                         }
                         emitter.emit("progress", reject_payload).await;
-                        let mut rejected =
-                            ToolResultPayload::error(message, json!({ "tool": name.clone() }));
+                        let data = with_error_meta(
+                            json!({
+                                "tool": name.clone(),
+                                "preflight": preflight.clone(),
+                            }),
+                            ToolErrorMeta::new(code, hint, false, None),
+                        );
+                        let mut rejected = ToolResultPayload::error(message, data);
                         rejected.insert_meta(
                             "preflight",
-                            json!({
-                                "status": "reject",
-                                "code": code,
-                                "diagnostics": diagnostics,
-                            }),
+                            preflight,
                         );
                         if let Some(repair) = args_repair.clone() {
                             rejected.insert_meta("repair", repair);
@@ -2725,11 +2748,19 @@ fn build_tool_failure_guard_answer(
     i18n::t_with_params("error.tool_failure_guard_user_guidance_with_error", &params)
 }
 
-fn should_request_tool_failure_reroute(reason: &str, reroute_notice_count: u32) -> bool {
+fn should_request_tool_failure_reroute(
+    reason: &str,
+    reroute_notice_count: u32,
+    fingerprint: &str,
+    rerouted_fingerprints: &HashSet<String>,
+) -> bool {
+    if rerouted_fingerprints.contains(fingerprint.trim()) {
+        return false;
+    }
     match reason {
-        // Non-retryable identical failures should still get one explicit reroute chance
-        // before hard-stop, so the model can apply deterministic fixes.
-        "same_non_retryable_failure" => reroute_notice_count < 1,
+        // Non-retryable deterministic failures still get reroute guidance.
+        // Cap globally but avoid repeating the same fingerprint notice.
+        "same_non_retryable_failure" => reroute_notice_count < 2,
         "tool_failure_reroute_required" | "same_retryable_failure_exhausted" => {
             reroute_notice_count < 2
         }
@@ -3428,25 +3459,45 @@ mod tests {
 
     #[test]
     fn reroute_reason_allows_soft_reroute_within_budget() {
+        let mut routed = HashSet::new();
+        let first_fingerprint = "PRECHECK_A:111";
+        let second_fingerprint = "PRECHECK_B:222";
         assert!(should_request_tool_failure_reroute(
             "tool_failure_reroute_required",
-            0
+            0,
+            first_fingerprint,
+            &routed,
         ));
+        routed.insert(first_fingerprint.to_string());
         assert!(should_request_tool_failure_reroute(
             "same_retryable_failure_exhausted",
-            1
+            1,
+            second_fingerprint,
+            &routed,
         ));
         assert!(should_request_tool_failure_reroute(
             "same_non_retryable_failure",
-            0
+            1,
+            "PRECHECK_C:333",
+            &routed,
         ));
         assert!(!should_request_tool_failure_reroute(
             "same_non_retryable_failure",
-            1
+            1,
+            first_fingerprint,
+            &routed,
+        ));
+        assert!(!should_request_tool_failure_reroute(
+            "same_non_retryable_failure",
+            2,
+            "PRECHECK_D:444",
+            &routed,
         ));
         assert!(!should_request_tool_failure_reroute(
             "tool_failure_reroute_required",
-            2
+            2,
+            "PRECHECK_E:555",
+            &routed,
         ));
     }
 

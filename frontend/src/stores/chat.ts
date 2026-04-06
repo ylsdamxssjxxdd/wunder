@@ -7213,7 +7213,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             ? { ...detailSource, sandbox: true }
             : detailSource;
         const modelObservation = data?.model_observation ?? payload?.model_observation ?? null;
-        const detail = buildDetail(modelObservation ?? detailPayload ?? result);
+        const detailPayloadForDisplay =
+          detailPayload && typeof detailPayload === 'object' && !Array.isArray(detailPayload)
+            ? (() => {
+                // Prefer raw tool payload in workflow detail; model_observation is compact text for LLM context only.
+                const next = { ...detailPayload };
+                delete next.model_observation;
+                return Object.keys(next).length > 0 ? next : null;
+              })()
+            : detailPayload;
+        const detail = buildDetail(detailPayloadForDisplay ?? modelObservation ?? result);
         const commandSessionRows = isExecuteCommandTool(toolName)
           ? extractCommandSessionResultRows(detailPayload ?? result)
           : [];

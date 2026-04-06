@@ -846,6 +846,15 @@
     @change="handleSwarmPackFileChange"
   />
 
+  <BeeroomPackWaitingOverlay
+    :visible="packOverlayVisible"
+    :mode="activePackMode"
+    :phase="activePackJob?.phase"
+    :progress="activePackJob?.progress"
+    :summary="activePackJob?.summary"
+    :target-name="packOverlayTargetName"
+  />
+
   <Teleport to="body">
     <div
       v-if="agentContextMenuVisible"
@@ -881,6 +890,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
+import BeeroomPackWaitingOverlay from '@/components/beeroom/BeeroomPackWaitingOverlay.vue';
 import { useBeeroomStore } from '@/stores/beeroom';
 import { runUnsavedChangesGuards } from '@/utils/unsavedChangesGuard';
 
@@ -889,6 +899,8 @@ const beeroomStore = useBeeroomStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 const swarmCreateVisible = ref(false);
 const swarmCreateSaving = ref(false);
+const packOverlayMode = ref<'import' | 'export'>('export');
+const packOverlayTargetName = ref('');
 const selectedAgentIds = ref<string[]>([]);
 const agentSelectionAnchorId = ref('');
 const agentContextMenuVisible = ref(false);
@@ -1355,6 +1367,36 @@ const swarmCreateCandidateAgents = computed(() => {
   return Array.from(unique.values());
 });
 
+const packOverlayVisible = computed(
+  () => beeroomStore.packImportLoading || beeroomStore.packExportLoading
+);
+
+const activePackMode = computed<'import' | 'export'>(() => {
+  if (beeroomStore.packExportLoading) {
+    return 'export';
+  }
+  if (beeroomStore.packImportLoading) {
+    return 'import';
+  }
+  return packOverlayMode.value;
+});
+
+const activePackJob = computed(() => {
+  if (activePackMode.value === 'export') {
+    return beeroomStore.packExportJob;
+  }
+  return beeroomStore.packImportJob;
+});
+
+const beginPackWaiting = (mode: 'import' | 'export', targetName: unknown) => {
+  packOverlayMode.value = mode;
+  packOverlayTargetName.value = String(targetName || '').trim();
+};
+
+const clearPackWaiting = () => {
+  packOverlayTargetName.value = '';
+};
+
 const resolvePackReportRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null;
@@ -1534,6 +1576,7 @@ const handleSwarmPackFileChange = async (event: Event) => {
     resetSwarmPackInput();
     return;
   }
+  beginPackWaiting('import', file.name);
   try {
     const job = await beeroomStore.importHivePack(file);
     const status = String(job?.status || '').trim().toLowerCase();
@@ -1571,6 +1614,7 @@ const handleSwarmPackFileChange = async (event: Event) => {
     ElMessage.error(message);
   } finally {
     resetSwarmPackInput();
+    clearPackWaiting();
   }
 };
 
@@ -1583,6 +1627,7 @@ const handleSwarmExport = async (group: Record<string, any>) => {
     ElMessage.warning(t('beeroom.pack.message.busy'));
     return;
   }
+  beginPackWaiting('export', group?.name || groupId);
   try {
     const job = await beeroomStore.exportHivePack(groupId, 'full');
     const status = String(job?.status || '').trim().toLowerCase();
@@ -1601,6 +1646,8 @@ const handleSwarmExport = async (group: Record<string, any>) => {
     const detail = String(error?.response?.data?.detail || '').trim();
     const message = detail || beeroomStore.packError || t('beeroom.pack.message.exportFailed');
     ElMessage.error(message);
+  } finally {
+    clearPackWaiting();
   }
 };
 </script>
