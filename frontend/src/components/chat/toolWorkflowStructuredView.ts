@@ -46,6 +46,16 @@ const toInt = (...values: unknown[]): number => {
   return 0;
 };
 
+const parseJsonlRows = (value: unknown): string[] => {
+  if (typeof value !== 'string') return [];
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+};
+
 const normalizeListFileItems = (
   items: unknown[]
 ): { rows: string[]; omittedItems: number } => {
@@ -246,8 +256,15 @@ const buildListStructuredView = (
   dataObject: UnknownObject,
   t: Translate
 ): ToolWorkflowStructuredView | null => {
-  const items = Array.isArray(dataObject.items) ? dataObject.items : [];
+  const items = Array.isArray(dataObject.items)
+    ? dataObject.items
+    : parseJsonlRows(dataObject.items_jsonl);
   const normalized = normalizeListFileItems(items);
+  const declaredCount = toInt(dataObject.items_count);
+  const hiddenByCount =
+    declaredCount > normalized.rows.length + normalized.omittedItems
+      ? declaredCount - normalized.rows.length - normalized.omittedItems
+      : 0;
   const rows: ToolWorkflowStructuredGroup['rows'] = normalized.rows
     .slice(0, LIST_ITEM_LIMIT)
     .map((title, index) => ({
@@ -255,16 +272,17 @@ const buildListStructuredView = (
       title,
       mono: true
     }));
-  if (normalized.omittedItems > 0) {
+  if (normalized.omittedItems > 0 || hiddenByCount > 0) {
+    const omitted = normalized.omittedItems + hiddenByCount;
     rows.push({
       key: 'list-omitted-items',
-      title: `... (+${normalized.omittedItems} items omitted)`,
+      title: `... (+${omitted} items omitted)`,
       mono: true,
       tone: 'warning'
     });
   }
   if (!rows.length) return null;
-  const itemCount = normalized.rows.length + normalized.omittedItems;
+  const itemCount = declaredCount || normalized.rows.length + normalized.omittedItems + hiddenByCount;
   return {
     variant: 'list',
     metrics: [
@@ -301,11 +319,14 @@ const buildSearchStructuredView = (
   t: Translate
 ): ToolWorkflowStructuredView | null => {
   const summary = asObject(dataObject.summary);
-  const rawHits = Array.isArray(dataObject.hits) && dataObject.hits.length > 0
-    ? dataObject.hits
-    : Array.isArray(dataObject.matches)
-      ? dataObject.matches
-      : [];
+  const rawHits =
+    Array.isArray(dataObject.hits) && dataObject.hits.length > 0
+      ? dataObject.hits
+      : Array.isArray(dataObject.matches) && dataObject.matches.length > 0
+        ? dataObject.matches
+        : parseJsonlRows(dataObject.hits_jsonl).length > 0
+          ? parseJsonlRows(dataObject.hits_jsonl)
+          : parseJsonlRows(dataObject.matches_jsonl);
   const hits = rawHits
     .map(parseSearchHit)
     .filter(Boolean)
@@ -364,7 +385,11 @@ const buildSearchStructuredView = (
     buildMetric(
       'hits',
       t('chat.toolWorkflow.detail.hits'),
-      toInt(dataObject.returned_match_count) || hits.length
+      toInt(
+        dataObject.returned_match_count,
+        dataObject.hits_count,
+        dataObject.matches_count
+      ) || hits.length
     ),
     buildMetric('scanned', t('chat.toolWorkflow.detail.scannedFiles'), toInt(dataObject.scanned_files))
   ].filter(Boolean) as ToolWorkflowStructuredMetric[];
@@ -471,15 +496,21 @@ export const buildStructuredToolResultNote = (
     return count > 0 ? `${t('chat.toolWorkflow.detail.files')} ${count}` : '';
   }
   if (isListFilesTool(toolName)) {
-    const count = Array.isArray(dataObject.items) ? dataObject.items.length : 0;
+    const count =
+      toInt(dataObject.items_count)
+      || (Array.isArray(dataObject.items)
+        ? dataObject.items.length
+        : parseJsonlRows(dataObject.items_jsonl).length);
     return count > 0 ? `${t('chat.toolWorkflow.detail.items')} ${count}` : '';
   }
   if (isSearchContentTool(toolName)) {
-    const count = Array.isArray(dataObject.hits)
-      ? dataObject.hits.length
-      : Array.isArray(dataObject.matches)
-        ? dataObject.matches.length
-        : 0;
+    const count =
+      toInt(dataObject.returned_match_count, dataObject.hits_count, dataObject.matches_count)
+      || (Array.isArray(dataObject.hits)
+        ? dataObject.hits.length
+        : Array.isArray(dataObject.matches)
+          ? dataObject.matches.length
+          : parseJsonlRows(dataObject.hits_jsonl).length || parseJsonlRows(dataObject.matches_jsonl).length);
     const scanned = toInt(dataObject.scanned_files);
     if (count > 0 && scanned > 0) {
       return `${t('chat.toolWorkflow.detail.hits')} ${count} · ${t('chat.toolWorkflow.detail.scannedFiles')} ${scanned}`;

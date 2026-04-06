@@ -552,6 +552,16 @@ const toInt = (...values: unknown[]): number => {
   return 0;
 };
 
+const parseJsonlRows = (value: unknown): string[] => {
+  if (typeof value !== 'string') return [];
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+};
+
 const normalizeListFileItems = (items: unknown[]): { rows: string[]; omittedItems: number } => {
   const rows: string[] = [];
   let omittedItems = 0;
@@ -2265,13 +2275,20 @@ const buildReadFileResultBlock = (dataObject: UnknownObject | null): string => {
 };
 
 const buildListFilesResultBlock = (dataObject: UnknownObject | null): string => {
-  const items = Array.isArray(dataObject?.items) ? (dataObject.items as unknown[]) : [];
+  const items = Array.isArray(dataObject?.items)
+    ? (dataObject.items as unknown[])
+    : parseJsonlRows(dataObject?.items_jsonl);
   if (!items.length) return '';
   const { rows, omittedItems } = normalizeListFileItems(items);
-  if (!rows.length && omittedItems <= 0) return '';
+  const declaredCount = toInt(dataObject?.items_count);
+  const hiddenByCount =
+    declaredCount > rows.length + omittedItems ? declaredCount - rows.length - omittedItems : 0;
+  if (!rows.length && omittedItems <= 0 && hiddenByCount <= 0) return '';
   const normalized =
-    omittedItems > 0 ? [...rows, `... (+${omittedItems} items omitted)`] : rows;
-  const itemCount = rows.length + omittedItems;
+    omittedItems > 0 || hiddenByCount > 0
+      ? [...rows, `... (+${omittedItems + hiddenByCount} items omitted)`]
+      : rows;
+  const itemCount = declaredCount || rows.length + omittedItems + hiddenByCount;
   const metaBlock = buildLabeledTextBlock([
     { label: t('chat.toolWorkflow.detail.items'), value: itemCount }
   ]);
@@ -2279,12 +2296,24 @@ const buildListFilesResultBlock = (dataObject: UnknownObject | null): string => 
 };
 
 const buildSearchResultBlock = (dataObject: UnknownObject | null): string => {
-  const matches = Array.isArray(dataObject?.matches) ? (dataObject.matches as unknown[]) : [];
+  const matches =
+    Array.isArray(dataObject?.matches) && dataObject.matches.length > 0
+      ? (dataObject.matches as unknown[])
+      : Array.isArray(dataObject?.hits) && dataObject.hits.length > 0
+        ? (dataObject.hits as unknown[])
+        : parseJsonlRows(dataObject?.matches_jsonl).length > 0
+          ? parseJsonlRows(dataObject?.matches_jsonl)
+          : parseJsonlRows(dataObject?.hits_jsonl);
   if (!matches.length) return '';
   const normalized = matches.map((item) => String(item || '').trim()).filter(Boolean);
   if (!normalized.length) return '';
+  const declaredHits = toInt(
+    dataObject?.returned_match_count,
+    dataObject?.hits_count,
+    dataObject?.matches_count
+  );
   const metaBlock = buildLabeledTextBlock([
-    { label: t('chat.toolWorkflow.detail.hits'), value: normalized.length },
+    { label: t('chat.toolWorkflow.detail.hits'), value: declaredHits || normalized.length },
     { label: t('chat.toolWorkflow.detail.scannedFiles'), value: toInt(dataObject?.scanned_files) }
   ]);
   return [metaBlock, buildBulletListBlock(normalized, 24, 160)].filter(Boolean).join('\n\n');

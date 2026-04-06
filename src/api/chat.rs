@@ -1154,7 +1154,9 @@ async fn send_message(
             i18n::t("error.content_required"),
         ));
     }
-    if payload.content.trim().is_empty() {
+    if payload.content.trim().is_empty()
+        && !has_non_empty_chat_attachments(payload.attachments.as_deref())
+    {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
@@ -1251,6 +1253,24 @@ async fn send_message(
     }
 }
 
+fn has_non_empty_chat_attachments(attachments: Option<&[ChatAttachment]>) -> bool {
+    attachments
+        .map(|items| {
+            items.iter().any(|item| {
+                item.content
+                    .as_ref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
+                    || item
+                        .public_path
+                        .as_ref()
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub(crate) async fn build_chat_request(
     state: &Arc<AppState>,
     user: &crate::storage::UserAccountRecord,
@@ -1268,22 +1288,7 @@ pub(crate) async fn build_chat_request(
         ));
     }
     let content = content.trim().to_string();
-    let has_attachments = attachments
-        .as_ref()
-        .map(|items| {
-            items.iter().any(|item| {
-                item.content
-                    .as_ref()
-                    .map(|value| !value.trim().is_empty())
-                    .unwrap_or(false)
-                    || item
-                        .public_path
-                        .as_ref()
-                        .map(|value| !value.trim().is_empty())
-                        .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false);
+    let has_attachments = has_non_empty_chat_attachments(attachments.as_deref());
     if content.is_empty() && !has_attachments {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -3538,8 +3543,9 @@ mod tests {
         build_projected_queue_user_message, collect_session_event_rounds,
         count_system_prompt_memory_items, extract_system_prompt_memory_preview,
         extract_system_prompt_memory_total_count, has_active_queue_task,
+        has_non_empty_chat_attachments,
         is_session_stream_active_or_queued, project_queued_session_messages,
-        should_merge_round_event,
+        should_merge_round_event, ChatAttachment,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -3555,6 +3561,28 @@ mod tests {
         let storage: Arc<dyn StorageBackend> =
             Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         UserStore::new(storage)
+    }
+
+    #[test]
+    fn has_non_empty_chat_attachments_accepts_public_path_only_attachment() {
+        let attachments = vec![ChatAttachment {
+            name: Some("heart.png".to_string()),
+            content: Some("   ".to_string()),
+            mime_type: Some("image/png".to_string()),
+            public_path: Some("users/u1/heart.png".to_string()),
+        }];
+        assert!(has_non_empty_chat_attachments(Some(&attachments)));
+    }
+
+    #[test]
+    fn has_non_empty_chat_attachments_rejects_blank_attachment_entries() {
+        let attachments = vec![ChatAttachment {
+            name: Some("blank.txt".to_string()),
+            content: Some("   ".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            public_path: Some("   ".to_string()),
+        }];
+        assert!(!has_non_empty_chat_attachments(Some(&attachments)));
     }
 
     #[test]
