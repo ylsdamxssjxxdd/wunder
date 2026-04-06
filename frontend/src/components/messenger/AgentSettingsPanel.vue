@@ -337,6 +337,15 @@
       </Teleport>
 
     </template>
+    <HoneycombWaitingOverlay
+      :visible="Boolean(agentSettingsWaitingState)"
+      :title="agentSettingsWaitingState?.title || t('messenger.waiting.title')"
+      :target-name="agentSettingsWaitingState?.targetName || ''"
+      :phase-label="agentSettingsWaitingState?.phaseLabel || ''"
+      :summary-label="agentSettingsWaitingState?.summaryLabel || ''"
+      :progress="agentSettingsWaitingState?.progress ?? 0"
+      :teleport-to-body="false"
+    />
   </div>
 </template>
 
@@ -351,6 +360,7 @@ import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsFi
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -529,6 +539,7 @@ const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
 const currentAgent = ref<Record<string, unknown> | null>(null);
+const agentLoading = ref(false);
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
@@ -973,6 +984,40 @@ const dependencyStatus = computed(() =>
   resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
 );
 
+type AgentSettingsWaitingState = {
+  title: string;
+  targetName: string;
+  phaseLabel: string;
+  summaryLabel: string;
+  progress: number;
+};
+
+const agentSettingsWaitingState = computed<AgentSettingsWaitingState | null>(() => {
+  if (!canView.value) {
+    return null;
+  }
+  const targetName = String(form.name || normalizedAgentId.value || t('messenger.section.agents')).trim();
+  if (agentLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName,
+      phaseLabel: t('messenger.waiting.phase.preparing'),
+      summaryLabel: t('messenger.waiting.summary.agentSettings'),
+      progress: 28
+    };
+  }
+  if (toolLoading.value || modelLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName,
+      phaseLabel: t('messenger.waiting.phase.loading'),
+      summaryLabel: t('messenger.waiting.summary.agentSettings'),
+      progress: 54
+    };
+  }
+  return null;
+});
+
 const isGroupFullSelected = (group: AgentToolGroup<ToolOption>): boolean => {
   if (!group.options.length) return false;
   const selected = new Set(form.tool_names);
@@ -1027,8 +1072,10 @@ const loadModelOptions = async () => {
 const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
   if (!canView.value) {
     loadedSnapshot.value = null;
+    agentLoading.value = false;
     return;
   }
+  agentLoading.value = true;
   try {
     if (!beeroomStore.groups.length) {
       await beeroomStore.loadGroups().catch(() => null);
@@ -1060,6 +1107,10 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     markFormClean();
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
+  } finally {
+    if (isAgentLoadRequestActive(requestId)) {
+      agentLoading.value = false;
+    }
   }
 };
 
@@ -1259,6 +1310,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.messenger-agent-settings {
+  position: relative;
+  min-height: 320px;
+}
+
 .messenger-agent-name-row {
   width: 100%;
   display: grid;

@@ -445,6 +445,24 @@
               {{ knowledgeTestResultMessage }}
             </div>
             <template v-else>
+              <template v-if="showKnowledgeTestModelBlocks && knowledgeTestCompleted">
+                <div class="knowledge-test-result-item">
+                  <div class="knowledge-test-result-header">
+                    {{ t('knowledge.test.output.title') }}
+                  </div>
+                  <div class="knowledge-test-result-content">
+                    {{ knowledgeTestText || t('knowledge.test.output.empty') }}
+                  </div>
+                </div>
+                <div class="knowledge-test-result-item">
+                  <div class="knowledge-test-result-header">
+                    {{ t('knowledge.test.reasoning.title') }}
+                  </div>
+                  <div class="knowledge-test-result-content">
+                    {{ knowledgeTestReasoning || t('knowledge.test.reasoning.empty') }}
+                  </div>
+                </div>
+              </template>
               <div
                 v-for="(hit, index) in knowledgeTestResults"
                 :key="`${hit.doc_id || hit.document}-${hit.chunk_index}-${index}`"
@@ -458,12 +476,6 @@
                   }}
                 </div>
                 <div class="knowledge-test-result-content">{{ hit.content || '' }}</div>
-              </div>
-              <div v-if="knowledgeTestText" class="knowledge-test-result-item">
-                <div class="knowledge-test-result-header">
-                  {{ t('knowledge.test.output.title') }}
-                </div>
-                <div class="knowledge-test-result-content">{{ knowledgeTestText }}</div>
               </div>
             </template>
           </div>
@@ -604,6 +616,8 @@ const knowledgeTestQuery = ref('');
 const knowledgeTestStatus = ref('');
 const knowledgeTestResults = ref([]);
 const knowledgeTestText = ref('');
+const knowledgeTestReasoning = ref('');
+const knowledgeTestCompleted = ref(false);
 const knowledgeTestLoading = ref(false);
 const knowledgeForm = reactive({
   name: '',
@@ -754,11 +768,17 @@ const knowledgeTestRunLabel = computed(() =>
 const knowledgeTestRunIcon = computed(() =>
   knowledgeTestLoading.value ? 'fa-spinner' : 'fa-play'
 );
+const showKnowledgeTestModelBlocks = computed(
+  () => normalizeBaseType(activeBase.value?.base_type) === 'literal'
+);
 const knowledgeTestResultMessage = computed(() => {
   if (knowledgeTestLoading.value) {
     return t('common.loading');
   }
-  if (knowledgeTestResults.value.length || knowledgeTestText.value) {
+  if (knowledgeTestResults.value.length) {
+    return '';
+  }
+  if (knowledgeTestCompleted.value && showKnowledgeTestModelBlocks.value) {
     return '';
   }
   return t('knowledge.test.empty');
@@ -1418,12 +1438,19 @@ const openTestModal = () => {
   knowledgeTestStatus.value = '';
   knowledgeTestResults.value = [];
   knowledgeTestText.value = '';
+  knowledgeTestReasoning.value = '';
+  knowledgeTestCompleted.value = false;
   knowledgeTestVisible.value = true;
 };
 
 const closeTestModal = () => {
   knowledgeTestVisible.value = false;
   knowledgeTestLoading.value = false;
+  knowledgeTestStatus.value = '';
+  knowledgeTestResults.value = [];
+  knowledgeTestText.value = '';
+  knowledgeTestReasoning.value = '';
+  knowledgeTestCompleted.value = false;
 };
 
 const formatTestScore = (score) => {
@@ -1448,12 +1475,16 @@ const runKnowledgeTest = async () => {
   knowledgeTestStatus.value = t('knowledge.test.running');
   knowledgeTestResults.value = [];
   knowledgeTestText.value = '';
+  knowledgeTestReasoning.value = '';
+  knowledgeTestCompleted.value = false;
   try {
     const { data } = await testUserKnowledge({ base: base.name, query });
     const payload = data?.data || {};
     const hits = Array.isArray(payload.hits) ? payload.hits : [];
     knowledgeTestResults.value = hits;
     knowledgeTestText.value = payload.text || '';
+    knowledgeTestReasoning.value = payload.reasoning || '';
+    knowledgeTestCompleted.value = true;
     knowledgeTestStatus.value = t('knowledge.test.done');
   } catch (error) {
     const message =

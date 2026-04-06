@@ -1,17 +1,17 @@
 <template>
-  <section
-    v-if="showRuntimePanel"
-    class="desktop-system-settings-panel desktop-system-settings-panel--stack"
-  >
-    <DesktopRuntimePreferencesPanel />
-  </section>
+  <div class="desktop-system-settings-shell">
+    <section
+      v-if="showRuntimePanel"
+      class="desktop-system-settings-panel desktop-system-settings-panel--stack"
+    >
+      <DesktopRuntimePreferencesPanel />
+    </section>
 
-  <section
-    v-if="showModelPanel"
-    class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
-    v-loading="loading"
-  >
-    <div class="desktop-system-settings-layout">
+    <section
+      v-if="showModelPanel"
+      class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
+    >
+      <div class="desktop-system-settings-layout">
       <aside class="desktop-system-settings-model-list-wrap">
         <div class="desktop-system-settings-model-list-head">
           <span class="desktop-system-settings-model-list-title">{{ t('desktop.system.modelsTitle') }}</span>
@@ -439,8 +439,19 @@
         </div>
       </div>
       <div v-else class="desktop-system-settings-empty">{{ t('desktop.system.lan.peerListEmpty') }}</div>
-    </div>
-  </section>
+      </div>
+    </section>
+
+    <HoneycombWaitingOverlay
+      :visible="Boolean(desktopSettingsWaitingState)"
+      :title="desktopSettingsWaitingState?.title || t('messenger.waiting.title')"
+      :target-name="desktopSettingsWaitingState?.targetName || ''"
+      :phase-label="desktopSettingsWaitingState?.phaseLabel || ''"
+      :summary-label="desktopSettingsWaitingState?.summaryLabel || ''"
+      :progress="desktopSettingsWaitingState?.progress ?? 0"
+      :teleport-to-body="false"
+    />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -464,6 +475,7 @@ import {
   isDesktopRemoteAuthMode,
   setDesktopRemoteApiBaseOverride
 } from '@/config/desktop';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 import DesktopRuntimePreferencesPanel from '@/components/messenger/DesktopRuntimePreferencesPanel.vue';
 import {
@@ -568,6 +580,42 @@ const showRuntimePanel = computed(() => props.panel === 'all' || props.panel ===
 const showModelPanel = computed(() => props.panel === 'all' || props.panel === 'models');
 const showRemotePanel = computed(() => props.panel === 'all' || props.panel === 'remote');
 const showLanPanel = computed(() => props.panel === 'all' || props.panel === 'lan');
+
+type DesktopSettingsWaitingState = {
+  title: string;
+  targetName: string;
+  phaseLabel: string;
+  summaryLabel: string;
+  progress: number;
+};
+
+const desktopSettingsWaitingTargetName = computed(() => {
+  switch (props.panel) {
+    case 'models':
+      return t('desktop.system.llm');
+    case 'remote':
+      return t('desktop.system.remote.title');
+    case 'lan':
+      return t('desktop.system.lan.title');
+    case 'system':
+      return t('desktop.system.runtimeTitle');
+    default:
+      return t('messenger.settings.desktopSystem');
+  }
+});
+
+const desktopSettingsWaitingState = computed<DesktopSettingsWaitingState | null>(() => {
+  if (!loading.value) {
+    return null;
+  }
+  return {
+    title: t('messenger.waiting.title'),
+    targetName: desktopSettingsWaitingTargetName.value,
+    phaseLabel: t('messenger.waiting.phase.preparing'),
+    summaryLabel: t('messenger.waiting.summary.desktopSettings'),
+    progress: 34
+  };
+});
 
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
@@ -1391,6 +1439,14 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.desktop-system-settings-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 320px;
+}
+
 .desktop-system-settings-panel {
   display: grid;
   gap: 14px;

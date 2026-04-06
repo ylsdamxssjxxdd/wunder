@@ -92,6 +92,16 @@
       </div>
       <pre class="messenger-prompt-preview">{{ previewPrompt }}</pre>
     </section>
+
+    <HoneycombWaitingOverlay
+      :visible="Boolean(promptSettingsWaitingState)"
+      :title="promptSettingsWaitingState?.title || t('messenger.waiting.title')"
+      :target-name="promptSettingsWaitingState?.targetName || ''"
+      :phase-label="promptSettingsWaitingState?.phaseLabel || ''"
+      :summary-label="promptSettingsWaitingState?.summaryLabel || ''"
+      :progress="promptSettingsWaitingState?.progress ?? 0"
+      :teleport-to-body="false"
+    />
   </div>
 </template>
 
@@ -109,6 +119,7 @@ import {
 } from '@/api/promptTemplates';
 import { fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchUserToolsCatalog } from '@/api/userTools';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 
 type PromptPack = {
@@ -184,6 +195,14 @@ const deletingPack = ref(false);
 const previewLoading = ref(false);
 let fileLoadSequence = 0;
 
+type PromptSettingsWaitingState = {
+  title: string;
+  targetName: string;
+  phaseLabel: string;
+  summaryLabel: string;
+  progress: number;
+};
+
 const resolveErrorMessage = (error: unknown, fallback: string) => {
   const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
   if (detail && String(detail).trim()) {
@@ -219,6 +238,28 @@ const isReadonlyPack = (pack?: PromptPack | null, packId = '') =>
 
 const selectedPackBuiltin = computed(() => isBuiltinPack(selectedPack.value, selectedPackMeta.value));
 const selectedPackReadonly = computed(() => isReadonlyPack(selectedPackMeta.value, selectedPack.value));
+const promptSettingsWaitingState = computed<PromptSettingsWaitingState | null>(() => {
+  const targetName = resolvePackLabel(selectedPack.value, selectedPackMeta.value);
+  if (metaLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName,
+      phaseLabel: t('messenger.waiting.phase.preparing'),
+      summaryLabel: t('messenger.waiting.summary.promptSettings'),
+      progress: 24
+    };
+  }
+  if (fileLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName,
+      phaseLabel: t('messenger.waiting.phase.loading'),
+      summaryLabel: t('messenger.waiting.summary.promptSettings'),
+      progress: 52
+    };
+  }
+  return null;
+});
 
 const resolvePackLocale = (packId: string, pack?: PromptPack | null) => {
   const normalizedPackId = String(packId || '').trim().toLowerCase();
@@ -621,10 +662,12 @@ onMounted(async () => {
 
 <style scoped>
 .messenger-prompt-settings {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  min-height: 360px;
 }
 
 .messenger-prompt-toolbar {

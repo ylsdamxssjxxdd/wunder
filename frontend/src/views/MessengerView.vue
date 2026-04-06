@@ -1525,6 +1525,14 @@
       style="display: none"
       @change="handleWorkerCardImportInput"
     />
+    <HoneycombWaitingOverlay
+      :visible="Boolean(messengerPageWaitingState)"
+      :title="messengerPageWaitingState?.title || t('messenger.waiting.title')"
+      :target-name="messengerPageWaitingState?.targetName || ''"
+      :phase-label="messengerPageWaitingState?.phaseLabel || ''"
+      :summary-label="messengerPageWaitingState?.summaryLabel || ''"
+      :progress="messengerPageWaitingState?.progress ?? 0"
+    />
     <WorkerCardImportWaitingOverlay
       :visible="workerCardImportOverlayVisible"
       :phase="workerCardImportOverlayPhase"
@@ -1638,6 +1646,7 @@ import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportWaitingOverlay.vue';
 import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
@@ -4463,6 +4472,89 @@ const chatPanelSubtitle = computed(() => {
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
   }
   return activeSectionSubtitle.value;
+});
+
+type MessengerPageWaitingState = {
+  title: string;
+  targetName: string;
+  phaseLabel: string;
+  summaryLabel: string;
+  progress: number;
+};
+
+const resolveMessengerPageWaitingTarget = (): string => {
+  if (showHelperAppsWorkspace.value && helperAppsActiveKind.value === 'online') {
+    return helperAppsActiveTitle.value || t('userWorld.helperApps.title');
+  }
+  const chatTitle = String(chatPanelTitle.value || '').trim();
+  if (chatTitle) {
+    return chatTitle;
+  }
+  const sectionTitle = String(activeSectionTitle.value || '').trim();
+  if (sectionTitle) {
+    return sectionTitle;
+  }
+  return t('common.loading');
+};
+
+const resolveMessengerPageWaitingSummary = (): string => {
+  if (showHelperAppsWorkspace.value && helperAppsActiveKind.value === 'online') {
+    return t('messenger.waiting.summary.helperApps');
+  }
+  switch (sessionHub.activeSection) {
+    case 'agents':
+      return t('messenger.waiting.summary.agents');
+    case 'tools':
+      return t('messenger.waiting.summary.tools');
+    case 'more':
+      return t('messenger.waiting.summary.settings');
+    case 'messages':
+      return t('messenger.waiting.summary.messages');
+    default:
+      return t('messenger.waiting.summary.general');
+  }
+};
+
+const messengerPageWaitingState = computed<MessengerPageWaitingState | null>(() => {
+  if (workerCardImportOverlayVisible.value || isMessengerInteractionBlocked.value) {
+    return null;
+  }
+
+  if (bootLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName: resolveMessengerPageWaitingTarget(),
+      phaseLabel: t('messenger.waiting.phase.preparing'),
+      summaryLabel: resolveMessengerPageWaitingSummary(),
+      progress: 22
+    };
+  }
+
+  if (
+    showHelperAppsWorkspace.value &&
+    helperAppsActiveKind.value === 'online' &&
+    helperAppsOnlineLoading.value
+  ) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName: resolveMessengerPageWaitingTarget(),
+      phaseLabel: t('messenger.waiting.phase.syncing'),
+      summaryLabel: t('messenger.waiting.summary.helperApps'),
+      progress: 48
+    };
+  }
+
+  if (sessionHub.activeSection === 'tools' && toolsCatalogLoading.value) {
+    return {
+      title: t('messenger.waiting.title'),
+      targetName: resolveMessengerPageWaitingTarget(),
+      phaseLabel: t('messenger.waiting.phase.loading'),
+      summaryLabel: t('messenger.waiting.summary.tools'),
+      progress: 56
+    };
+  }
+
+  return null;
 });
 
 const chatPanelKindLabel = computed(() => {

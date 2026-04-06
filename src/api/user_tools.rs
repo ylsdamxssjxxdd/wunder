@@ -2217,7 +2217,7 @@ async fn user_knowledge_test(
         })))
     } else {
         let llm_config = knowledge::resolve_llm_config(&config, None);
-        let reply = knowledge::query_knowledge_raw(
+        let (reply, reasoning, _) = knowledge::query_knowledge_raw_with_documents(
             query,
             &knowledge_config,
             llm_config.as_ref(),
@@ -2230,7 +2230,8 @@ async fn user_knowledge_test(
             "data": {
                 "base": base.name,
                 "query": query,
-                "text": reply
+                "text": reply,
+                "reasoning": reasoning
             }
         })))
     }

@@ -1450,44 +1450,21 @@ const renderKnowledgeTestResults = (hits) => {
   });
 };
 
-const renderKnowledgeTestText = (text) => {
+const appendKnowledgeTestBlock = (titleKey, text, emptyKey) => {
   if (!knowledgeTestResult) {
     return;
   }
-  knowledgeTestResult.textContent = "";
-  const output = String(text || "");
-  if (!output.trim()) {
-    knowledgeTestResult.textContent = t("knowledge.test.empty");
-    return;
-  }
-  const item = document.createElement("div");
-  item.className = "knowledge-test-result-item";
-  const content = document.createElement("div");
-  content.className = "knowledge-test-result-content";
-  content.textContent = output;
-  item.appendChild(content);
-  knowledgeTestResult.appendChild(item);
-};
-
-const appendKnowledgeTestText = (text) => {
-  if (!knowledgeTestResult) {
-    return false;
-  }
-  const output = String(text || "");
-  if (!output.trim()) {
-    return false;
-  }
+  const output = String(text ?? "");
   const item = document.createElement("div");
   item.className = "knowledge-test-result-item";
   const header = document.createElement("div");
   header.className = "knowledge-test-result-header";
-  header.textContent = t("knowledge.test.output.title");
+  header.textContent = t(titleKey);
   const content = document.createElement("div");
   content.className = "knowledge-test-result-content";
-  content.textContent = output;
+  content.textContent = output.trim() ? output : t(emptyKey);
   item.append(header, content);
   knowledgeTestResult.appendChild(item);
-  return true;
 };
 
 const appendKnowledgeTestResults = (hits, options = {}) => {
@@ -1593,7 +1570,16 @@ const runKnowledgeTest = async () => {
     const hits = Array.isArray(result.hits) ? result.hits : [];
     clearKnowledgeTestResult();
     if (!isVectorBase(base)) {
-      appendKnowledgeTestText(result.text);
+      appendKnowledgeTestBlock(
+        "knowledge.test.output.title",
+        result.text,
+        "knowledge.test.output.empty"
+      );
+      appendKnowledgeTestBlock(
+        "knowledge.test.reasoning.title",
+        result.reasoning,
+        "knowledge.test.reasoning.empty"
+      );
       appendKnowledgeTestResults(hits, { showEmpty: true });
     } else {
       appendKnowledgeTestResults(hits, { showEmpty: true });

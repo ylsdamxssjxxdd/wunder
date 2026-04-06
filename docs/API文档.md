@@ -632,6 +632,7 @@
   - `top_k`：召回数量（向量知识库）
   - `hits`：召回列表（doc_id/document/chunk_index/start/end/content/embedding_model/score）
   - `text`：字面知识库结果文本
+  - `reasoning`：字面知识库测试时模型返回的思考过程文本
 - 说明：支持向量/字面知识库。
 
 ### 4.1.2.18 `/wunder/user_tools/knowledge/reindex`
@@ -1937,7 +1938,8 @@
       - `content`：切片内容
       - `score`：相似度分数
   - 字面知识库：
-    - `text`：模型原始输出
+    - `text`：模型正式输出
+    - `reasoning`：模型返回的思考过程
     - `hits`：命中文档列表
       - `doc_id`：文档编码
       - `document`：文档名称

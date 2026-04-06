@@ -275,7 +275,7 @@ pub async fn query_knowledge_raw(
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
 ) -> Result<String> {
-    let (reply, _) =
+    let (reply, _, _) =
         query_knowledge_raw_with_documents(query, base, llm_config, limit, request_logger).await?;
     Ok(reply)
 }
@@ -286,14 +286,14 @@ pub async fn query_knowledge_raw_with_documents(
     llm_config: Option<&LlmModelConfig>,
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
-) -> Result<(String, Vec<KnowledgeDocument>)> {
+) -> Result<(String, String, Vec<KnowledgeDocument>)> {
     let normalized_query = query.trim();
     if normalized_query.is_empty() {
-        return Ok((String::new(), Vec::new()));
+        return Ok((String::new(), String::new(), Vec::new()));
     }
     let sections = store().get_sections(base, false).await;
     if sections.is_empty() {
-        return Ok((String::new(), Vec::new()));
+        return Ok((String::new(), String::new(), Vec::new()));
     }
     let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
     let candidates =
@@ -346,9 +346,10 @@ pub async fn query_knowledge_raw_with_documents(
         ))
     })?;
     let reply = response.content;
+    let reasoning = response.reasoning;
     let structured = extract_structured_documents(&reply);
     let documents = materialize_documents(&structured, &sections, max_docs);
-    Ok((reply, documents))
+    Ok((reply, reasoning, documents))
 }
 
 impl KnowledgeStore {
