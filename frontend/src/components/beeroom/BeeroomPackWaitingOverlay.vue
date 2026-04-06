@@ -52,12 +52,18 @@ const props = withDefaults(
     progress?: number | null;
     summary?: string | null;
     targetName?: string | null;
+    customTitle?: string | null;
+    customPhaseLabel?: string | null;
+    customSummaryLabel?: string | null;
   }>(),
   {
     phase: '',
     progress: null,
     summary: '',
-    targetName: ''
+    targetName: '',
+    customTitle: '',
+    customPhaseLabel: '',
+    customSummaryLabel: ''
   }
 );
 
@@ -74,8 +80,10 @@ const resolveText = (key: string): string => {
   return translated === key ? '' : translated;
 };
 
-const actionTitle = computed(() =>
-  props.mode === 'import' ? t('beeroom.pack.action.import') : t('beeroom.pack.action.exportFull')
+const actionTitle = computed(
+  () =>
+    String(props.customTitle || '').trim() ||
+    (props.mode === 'import' ? t('beeroom.pack.action.import') : t('beeroom.pack.action.exportFull'))
 );
 
 const displayTarget = computed(() => {
@@ -95,12 +103,17 @@ const normalizedPhase = computed(() => normalizePhaseToken(props.phase) || 'unkn
 
 const phaseLabel = computed(
   () =>
+    String(props.customPhaseLabel || '').trim() ||
     resolveText(`beeroom.pack.phase.${normalizedPhase.value}`) ||
     String(props.phase || '').trim() ||
     t('beeroom.pack.phase.unknown')
 );
 
 const summaryLabel = computed(() => {
+  const customSummary = String(props.customSummaryLabel || '').trim();
+  if (customSummary) {
+    return customSummary;
+  }
   const detailedKey = `beeroom.pack.wait.${props.mode}.${normalizedPhase.value}`;
   const detailed = resolveText(detailedKey);
   if (detailed) {

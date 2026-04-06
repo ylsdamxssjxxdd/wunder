@@ -1525,6 +1525,14 @@
       style="display: none"
       @change="handleWorkerCardImportInput"
     />
+    <WorkerCardImportWaitingOverlay
+      :visible="workerCardImportOverlayVisible"
+      :phase="workerCardImportOverlayPhase"
+      :progress="workerCardImportOverlayProgress"
+      :target-name="workerCardImportOverlayTargetName"
+      :current="workerCardImportOverlayCurrent"
+      :total="workerCardImportOverlayTotal"
+    />
   </div>
 </template>
 
@@ -1630,6 +1638,7 @@ import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportWaitingOverlay.vue';
 import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
@@ -1791,6 +1800,13 @@ const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const agentQuickCreateVisible = ref(false);
 const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
+const workerCardImporting = ref(false);
+const workerCardImportOverlayVisible = ref(false);
+const workerCardImportOverlayPhase = ref<'preparing' | 'creating' | 'refreshing'>('preparing');
+const workerCardImportOverlayProgress = ref(0);
+const workerCardImportOverlayTargetName = ref('');
+const workerCardImportOverlayCurrent = ref(0);
+const workerCardImportOverlayTotal = ref(0);
 const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | ''>('');
 const worldDraft = ref('');
@@ -8087,21 +8103,72 @@ const refreshAgentMutationState = async () => {
   await Promise.all(tasks);
 };
 
+const normalizeWorkerCardImportProgress = (value: number) =>
+  Math.max(0, Math.min(100, Math.round(value)));
+
+const resetWorkerCardImportOverlay = () => {
+  workerCardImportOverlayVisible.value = false;
+  workerCardImportOverlayPhase.value = 'preparing';
+  workerCardImportOverlayProgress.value = 0;
+  workerCardImportOverlayTargetName.value = '';
+  workerCardImportOverlayCurrent.value = 0;
+  workerCardImportOverlayTotal.value = 0;
+};
+
+const beginWorkerCardImportOverlay = (targetName) => {
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'preparing';
+  workerCardImportOverlayProgress.value = 6;
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = 0;
+  workerCardImportOverlayTotal.value = 0;
+};
+
+const setWorkerCardImportCreatingOverlay = (targetName, current, total) => {
+  const safeTotal = Math.max(1, Number(total || 0));
+  const safeCurrent = Math.max(1, Math.min(safeTotal, Number(current || 0)));
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'creating';
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = safeCurrent;
+  workerCardImportOverlayTotal.value = safeTotal;
+  workerCardImportOverlayProgress.value = normalizeWorkerCardImportProgress(
+    18 + ((safeCurrent - 1) / safeTotal) * 64
+  );
+};
+
+const setWorkerCardImportRefreshingOverlay = (targetName, total) => {
+  const safeTotal = Math.max(0, Number(total || 0));
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'refreshing';
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = safeTotal;
+  workerCardImportOverlayTotal.value = safeTotal;
+  workerCardImportOverlayProgress.value = 92;
+};
+
 const openWorkerCardImportPicker = () => {
+  if (workerCardImporting.value || quickCreatingAgent.value) {
+    return;
+  }
   workerCardImportInputRef.value?.click();
 };
 
 const handleWorkerCardImportInput = async (event) => {
   const input = event?.target as HTMLInputElement | null;
   const file = input?.files?.[0];
-  if (!file || quickCreatingAgent.value) return;
-  quickCreatingAgent.value = true;
+  if (!file || quickCreatingAgent.value || workerCardImporting.value) return;
+  workerCardImporting.value = true;
+  beginWorkerCardImportOverlay(file.name);
   try {
     const dependencyCatalog = await loadUserToolsSummaryCache().catch(() => null);
     const documents = parseWorkerCardText(await file.text());
+    workerCardImportOverlayTotal.value = documents.length;
+    workerCardImportOverlayProgress.value = normalizeWorkerCardImportProgress(documents.length > 0 ? 12 : 18);
     const createdItems: Record<string, unknown>[] = [];
     const warnings: string[] = [];
-    for (const document of documents) {
+    for (const [index, document] of documents.entries()) {
+      setWorkerCardImportCreatingOverlay(document.metadata.name || file.name, index + 1, documents.length);
       const dependencyStatus = resolveAgentDependencyStatus(
         {
           declared_tool_names: document.abilities.tool_names,
@@ -8124,8 +8191,13 @@ const handleWorkerCardImportInput = async (event) => {
         );
       }
     }
+    setWorkerCardImportRefreshingOverlay(
+      documents.length === 1 ? documents[0].metadata.name || file.name : file.name,
+      documents.length
+    );
     await refreshAgentMutationState();
     await loadAgentToolSummary({ force: true });
+    workerCardImportOverlayProgress.value = 100;
     if (createdItems[0]?.id) {
       openCreatedAgentSettings(createdItems[0].id);
     }
@@ -8140,7 +8212,8 @@ const handleWorkerCardImportInput = async (event) => {
   } catch (error) {
     showApiError(error, t('portal.agent.workerCardImportFailed'));
   } finally {
-    quickCreatingAgent.value = false;
+    workerCardImporting.value = false;
+    resetWorkerCardImportOverlay();
     if (input) {
       input.value = '';
     }

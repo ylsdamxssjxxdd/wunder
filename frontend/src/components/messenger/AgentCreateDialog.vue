@@ -461,7 +461,7 @@ const handleSave = async () => {
       name,
       description: String(form.description || '').trim(),
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
-      ...buildBeeroomGroupPayload(form.group),
+      ...buildBeeroomGroupPayload(form.group, props.beeroomGroups),
       system_prompt: String(form.system_prompt || ''),
       model_name: String(form.model_name || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],

@@ -119,25 +119,40 @@ const normalizedGroups = computed(() =>
 
 const localDraft = reactive<BeeroomGroupDraft>(createBeeroomGroupDraft(props.defaultGroupId));
 
+const resolveSelectedGroupMeta = (value: unknown) => {
+  const groupId = normalizePayloadGroupId(value);
+  if (!groupId) {
+    return { hive_name: '', hive_description: '' };
+  }
+  const matched = normalizedGroups.value.find((group) => group.group_id === groupId);
+  return {
+    hive_name: String(matched?.name || '').trim(),
+    hive_description: String(matched?.description || '').trim()
+  };
+};
+
 const syncLocalDraft = (value: Partial<BeeroomGroupDraft> | null | undefined) => {
   const next = normalizeBeeroomGroupDraft(value, props.defaultGroupId);
   localDraft.mode = props.allowCreate ? next.mode : 'existing';
   localDraft.hive_id =
     localDraft.mode === 'existing' ? normalizeSelectableGroupId(next.hive_id) : next.hive_id;
-  localDraft.hive_name = props.allowCreate ? next.hive_name : '';
-  localDraft.hive_description = props.allowCreate ? next.hive_description : '';
+  const selectedMeta =
+    localDraft.mode === 'existing' ? resolveSelectedGroupMeta(next.hive_id) : { hive_name: '', hive_description: '' };
+  localDraft.hive_name = next.hive_name || selectedMeta.hive_name;
+  localDraft.hive_description = next.hive_description || selectedMeta.hive_description;
 };
 
 const emitChange = () => {
   const next = normalizeBeeroomGroupDraft(localDraft, props.defaultGroupId);
   const nextHiveId =
     next.mode === 'existing' ? normalizePayloadGroupId(next.hive_id) : next.hive_id;
-  if (!props.allowCreate) {
+  if (next.mode === 'existing') {
+    const selectedMeta = resolveSelectedGroupMeta(nextHiveId);
     emit('update:modelValue', {
       mode: 'existing',
       hive_id: nextHiveId,
-      hive_name: '',
-      hive_description: ''
+      hive_name: next.hive_name || selectedMeta.hive_name,
+      hive_description: next.hive_description || selectedMeta.hive_description
     });
     return;
   }
@@ -154,8 +169,9 @@ const setMode = (mode: 'existing' | 'new') => {
     if (!localDraft.hive_id) {
       localDraft.hive_id = String(props.defaultGroupId || '').trim();
     }
-    localDraft.hive_name = '';
-    localDraft.hive_description = '';
+    const selectedMeta = resolveSelectedGroupMeta(localDraft.hive_id);
+    localDraft.hive_name = selectedMeta.hive_name;
+    localDraft.hive_description = selectedMeta.hive_description;
   } else {
     localDraft.hive_id = '';
   }
@@ -185,10 +201,31 @@ watch(
   (allowCreate) => {
     if (allowCreate || localDraft.mode === 'existing') return;
     localDraft.mode = 'existing';
-    localDraft.hive_name = '';
-    localDraft.hive_description = '';
+    const selectedMeta = resolveSelectedGroupMeta(localDraft.hive_id);
+    localDraft.hive_name = selectedMeta.hive_name;
+    localDraft.hive_description = selectedMeta.hive_description;
     emitChange();
   }
+);
+
+watch(
+  normalizedGroups,
+  () => {
+    if (localDraft.mode !== 'existing') {
+      return;
+    }
+    const selectedMeta = resolveSelectedGroupMeta(localDraft.hive_id);
+    if (
+      selectedMeta.hive_name === localDraft.hive_name &&
+      selectedMeta.hive_description === localDraft.hive_description
+    ) {
+      return;
+    }
+    localDraft.hive_name = selectedMeta.hive_name;
+    localDraft.hive_description = selectedMeta.hive_description;
+    emitChange();
+  },
+  { deep: true }
 );
 </script>
 

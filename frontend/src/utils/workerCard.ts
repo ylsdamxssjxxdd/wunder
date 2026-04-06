@@ -504,13 +504,15 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
   const hiveId = trimString(document.hive.id);
   const hiveName = trimString(document.hive.name);
   const hiveDescription = trimString(document.hive.description);
+  const isDefaultHive = hiveId === 'default';
   if (hiveId) {
     payload.hive_id = hiveId;
-  } else if (hiveName) {
+  }
+  if (!isDefaultHive && hiveName) {
     payload.hive_name = hiveName;
-    if (hiveDescription) {
-      payload.hive_description = hiveDescription;
-    }
+  }
+  if (!isDefaultHive && hiveDescription) {
+    payload.hive_description = hiveDescription;
   }
   return payload;
 };

@@ -396,6 +396,14 @@
       style="display: none"
       @change="handleWorkerCardFileChange"
     />
+    <WorkerCardImportWaitingOverlay
+      :visible="workerCardImportOverlayVisible"
+      :phase="workerCardImportOverlayPhase"
+      :progress="workerCardImportOverlayProgress"
+      :target-name="workerCardImportOverlayTargetName"
+      :current="workerCardImportOverlayCurrent"
+      :total="workerCardImportOverlayTotal"
+    />
   </div>
 </template>
 
@@ -411,6 +419,7 @@ import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
+import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportWaitingOverlay.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
@@ -465,6 +474,13 @@ const dialogVisible = ref(false);
 const saving = ref(false);
 const editingId = ref('');
 const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
+const workerCardImporting = ref(false);
+const workerCardImportOverlayVisible = ref(false);
+const workerCardImportOverlayPhase = ref<'preparing' | 'creating' | 'refreshing'>('preparing');
+const workerCardImportOverlayProgress = ref(0);
+const workerCardImportOverlayTargetName = ref('');
+const workerCardImportOverlayCurrent = ref(0);
+const workerCardImportOverlayTotal = ref(0);
 const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref<string[]>([]);
@@ -761,6 +777,50 @@ const matchesQuery = (agent, query) => {
 
 const formatAgentCopyLabel = (agent) => {
   return String(agent?.name || '').trim() || String(agent?.id || '').trim();
+};
+
+const normalizeWorkerCardImportProgress = (value: number) =>
+  Math.max(0, Math.min(100, Math.round(value)));
+
+const resetWorkerCardImportOverlay = () => {
+  workerCardImportOverlayVisible.value = false;
+  workerCardImportOverlayPhase.value = 'preparing';
+  workerCardImportOverlayProgress.value = 0;
+  workerCardImportOverlayTargetName.value = '';
+  workerCardImportOverlayCurrent.value = 0;
+  workerCardImportOverlayTotal.value = 0;
+};
+
+const beginWorkerCardImportOverlay = (targetName) => {
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'preparing';
+  workerCardImportOverlayProgress.value = 6;
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = 0;
+  workerCardImportOverlayTotal.value = 0;
+};
+
+const setWorkerCardImportCreatingOverlay = (targetName, current, total) => {
+  const safeTotal = Math.max(1, Number(total || 0));
+  const safeCurrent = Math.max(1, Math.min(safeTotal, Number(current || 0)));
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'creating';
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = safeCurrent;
+  workerCardImportOverlayTotal.value = safeTotal;
+  workerCardImportOverlayProgress.value = normalizeWorkerCardImportProgress(
+    18 + ((safeCurrent - 1) / safeTotal) * 64
+  );
+};
+
+const setWorkerCardImportRefreshingOverlay = (targetName, total) => {
+  const safeTotal = Math.max(0, Number(total || 0));
+  workerCardImportOverlayVisible.value = true;
+  workerCardImportOverlayPhase.value = 'refreshing';
+  workerCardImportOverlayTargetName.value = String(targetName || '').trim();
+  workerCardImportOverlayCurrent.value = safeTotal;
+  workerCardImportOverlayTotal.value = safeTotal;
+  workerCardImportOverlayProgress.value = 92;
 };
 
 const loadAgents = async () => {
@@ -1405,13 +1465,17 @@ const loadRunningAgents = async () => {
 const handleWorkerCardFileChange = async (event) => {
   const input = event?.target as HTMLInputElement | null;
   const file = input?.files?.[0];
-  if (!file) return;
-  saving.value = true;
+  if (!file || workerCardImporting.value) return;
+  workerCardImporting.value = true;
+  beginWorkerCardImportOverlay(file.name);
   try {
     const dependencyCatalog = toolCatalog.value || (await fetchUserToolsCatalog().catch(() => ({ data: { data: null } })))?.data?.data || null;
     const documents = parseWorkerCardText(await file.text());
+    workerCardImportOverlayTotal.value = documents.length;
+    workerCardImportOverlayProgress.value = normalizeWorkerCardImportProgress(documents.length > 0 ? 12 : 18);
     const warnings: string[] = [];
-    for (const document of documents) {
+    for (const [index, document] of documents.entries()) {
+      setWorkerCardImportCreatingOverlay(document.metadata.name || file.name, index + 1, documents.length);
       const dependencyStatus = resolveAgentDependencyStatus(
         {
           declared_tool_names: document.abilities.tool_names,
@@ -1430,7 +1494,12 @@ const handleWorkerCardFileChange = async (event) => {
         );
       }
     }
+    setWorkerCardImportRefreshingOverlay(
+      documents.length === 1 ? documents[0].metadata.name || file.name : file.name,
+      documents.length
+    );
     await Promise.all([loadAgents(), beeroomStore.loadGroups().catch(() => null), loadAgentCopyOptions()]);
+    workerCardImportOverlayProgress.value = 100;
     ElMessage.success(
       documents.length === 1
         ? t('portal.agent.workerCardImportSuccess', { name: documents[0].metadata.name })
@@ -1442,7 +1511,8 @@ const handleWorkerCardFileChange = async (event) => {
   } catch (error) {
     showApiError(error, t('portal.agent.workerCardImportFailed'));
   } finally {
-    saving.value = false;
+    workerCardImporting.value = false;
+    resetWorkerCardImportOverlay();
     if (input) {
       input.value = '';
     }
@@ -1480,7 +1550,7 @@ const saveAgent = async () => {
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
-      ...buildBeeroomGroupPayload(form.group),
+      ...buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value),
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)

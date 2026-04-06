@@ -35,7 +35,7 @@ const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
 const DEFAULT_LOG_USAGE_TTL_S: f64 = 15.0;
 const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
 const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
-const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 8;
+const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
 const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
@@ -1476,10 +1476,11 @@ impl MonitorState {
             scan_state.last_full_scan_ts = now;
             return workspace_usage_total(scan_state.per_user.values().copied());
         }
-        let need_full_scan =
-            now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s;
-        if need_full_scan {
-            return rebuild_workspace_usage_state(&mut scan_state, &user_dirs, now);
+        if now - scan_state.last_full_scan_ts >= self.workspace_usage_full_scan_interval_s {
+            // Restart the incremental cycle instead of forcing a synchronous full rebuild on the
+            // request path. This keeps the admin monitor responsive even when workspaces grow.
+            scan_state.cursor = 0;
+            scan_state.last_full_scan_ts = now;
         }
         update_workspace_usage_state_incremental(
             &mut scan_state,
@@ -1503,7 +1504,7 @@ impl MonitorState {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().trim().to_string();
-            if name.is_empty() {
+            if !is_workspace_usage_dir_name(&name) {
                 continue;
             }
             dirs.push((name, entry.path()));
@@ -2880,24 +2881,6 @@ where
         .fold(0_u64, |acc, value| acc.saturating_add(value))
 }
 
-fn rebuild_workspace_usage_state(
-    scan_state: &mut WorkspaceUsageScanState,
-    user_dirs: &[(String, PathBuf)],
-    now: f64,
-) -> u64 {
-    scan_state.per_user.clear();
-    scan_state.user_order.clear();
-    for (user, path) in user_dirs {
-        let size = calc_dir_size(path.as_path(), None);
-        scan_state.per_user.insert(user.clone(), size);
-        scan_state.user_order.push(user.clone());
-    }
-    scan_state.cursor = 0;
-    scan_state.initialized = true;
-    scan_state.last_full_scan_ts = now;
-    workspace_usage_total(scan_state.per_user.values().copied())
-}
-
 fn update_workspace_usage_state_incremental(
     scan_state: &mut WorkspaceUsageScanState,
     user_dirs: &[(String, PathBuf)],
@@ -2955,6 +2938,16 @@ fn update_workspace_usage_state_incremental(
         let size = calc_dir_size(path.as_path(), None);
         scan_state.per_user.insert(user, size);
     }
+}
+
+fn is_workspace_usage_dir_name(name: &str) -> bool {
+    let cleaned = name.trim();
+    if cleaned.is_empty() || cleaned.starts_with('.') {
+        return false;
+    }
+    cleaned
+        .bytes()
+        .all(|value| value.is_ascii_alphanumeric() || value == b'-' || value == b'_')
 }
 
 fn calc_dir_size(path: &Path, extensions: Option<&[&str]>) -> u64 {
@@ -3064,11 +3057,14 @@ fn localize_summary(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_llm_speed_summary, derive_effective_context_tokens, should_skip_event_for_profile,
-        trim_string_fields, MonitorEvent, MonitorLogProfile,
+        build_llm_speed_summary, derive_effective_context_tokens, is_workspace_usage_dir_name,
+        should_skip_event_for_profile, trim_string_fields,
+        update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile,
+        WorkspaceUsageScanState,
     };
     use serde_json::{json, Value};
-    use std::collections::VecDeque;
+    use std::{collections::VecDeque, fs};
+    use tempfile::tempdir;
 
     #[test]
     fn normal_profile_skips_high_volume_events() {
@@ -3221,5 +3217,45 @@ mod tests {
             summary.get("decode_speed_tps").and_then(Value::as_f64),
             Some(60.0)
         );
+    }
+
+    #[test]
+    fn workspace_usage_dir_name_filters_hidden_cache_dirs() {
+        assert!(!is_workspace_usage_dir_name(""));
+        assert!(!is_workspace_usage_dir_name(".cache"));
+        assert!(!is_workspace_usage_dir_name(".fontconfig"));
+        assert!(!is_workspace_usage_dir_name("cache.dir"));
+        assert!(is_workspace_usage_dir_name("admin"));
+        assert!(is_workspace_usage_dir_name("zhang__c__1"));
+        assert!(is_workspace_usage_dir_name("worker_agent"));
+    }
+
+    #[test]
+    fn workspace_usage_incremental_scan_respects_batch_size() {
+        let temp = tempdir().expect("tempdir");
+        let alpha = temp.path().join("alpha");
+        let beta = temp.path().join("beta");
+        let gamma = temp.path().join("gamma");
+        fs::create_dir_all(&alpha).expect("create alpha");
+        fs::create_dir_all(&beta).expect("create beta");
+        fs::create_dir_all(&gamma).expect("create gamma");
+        fs::write(alpha.join("a.txt"), vec![b'a'; 3]).expect("write alpha");
+        fs::write(beta.join("b.txt"), vec![b'b'; 5]).expect("write beta");
+        fs::write(gamma.join("c.txt"), vec![b'c'; 7]).expect("write gamma");
+
+        let user_dirs = vec![
+            ("alpha".to_string(), alpha),
+            ("beta".to_string(), beta),
+            ("gamma".to_string(), gamma),
+        ];
+        let mut scan_state = WorkspaceUsageScanState::default();
+        update_workspace_usage_state_incremental(&mut scan_state, &user_dirs, 1);
+        assert_eq!(scan_state.per_user.get("alpha").copied(), Some(3));
+        assert_eq!(scan_state.per_user.get("beta").copied(), Some(0));
+        assert_eq!(scan_state.per_user.get("gamma").copied(), Some(0));
+
+        update_workspace_usage_state_incremental(&mut scan_state, &user_dirs, 1);
+        assert_eq!(scan_state.per_user.get("beta").copied(), Some(5));
+        assert_eq!(scan_state.per_user.get("gamma").copied(), Some(0));
     }
 }

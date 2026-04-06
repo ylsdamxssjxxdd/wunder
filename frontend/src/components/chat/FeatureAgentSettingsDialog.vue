@@ -389,7 +389,10 @@ const loadAgent = async () => {
     form.model_name = resolveConfiguredModelName(currentAgent.value);
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
-    form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
+    form.group = resolveBeeroomGroupDraftForAgent(
+      agent.hive_id,
+      beeroomGroupOptions.value
+    ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
   } catch (error) {
@@ -415,7 +418,7 @@ const saveAgent = async () => {
       declared_tool_names: dependencyPayload.declared_tool_names,
       declared_skill_names: dependencyPayload.declared_skill_names,
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
-      ...buildBeeroomGroupPayload(form.group),
+      ...buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value),
       system_prompt: form.system_prompt || '',
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
@@ -436,7 +439,7 @@ const saveAgent = async () => {
 };
 
 const exportWorkerCard = () => {
-  const groupPayload = buildBeeroomGroupPayload(form.group);
+  const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
   const dependencyPayload = buildWorkerCardDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
   const filename = downloadWorkerCard({
     id: normalizedAgentId.value,

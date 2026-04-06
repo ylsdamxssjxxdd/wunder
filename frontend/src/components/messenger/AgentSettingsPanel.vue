@@ -798,7 +798,7 @@ const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
 };
 
 const buildFormSnapshot = (): AgentFormSnapshot => {
-  const groupPayload = buildBeeroomGroupPayload(form.group);
+  const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
   return {
     name: String(form.name || '').trim(),
     description: String(form.description || '').trim(),
@@ -1030,11 +1030,11 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     return;
   }
   try {
+    if (!beeroomStore.groups.length) {
+      await beeroomStore.loadGroups().catch(() => null);
+    }
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!isAgentLoadRequestActive(requestId)) return;
-    if (!beeroomStore.groups.length) {
-      void beeroomStore.loadGroups().catch(() => null);
-    }
     if (!agent) {
       ElMessage.error(t('portal.agent.loadingFailed'));
       return;
@@ -1049,7 +1049,10 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.model_name = resolveConfiguredModelName(currentAgent.value);
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
-    form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
+    form.group = resolveBeeroomGroupDraftForAgent(
+      agent.hive_id,
+      beeroomGroupOptions.value
+    ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
     form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
@@ -1097,7 +1100,7 @@ const saveAgent = async () => {
       declared_tool_names: dependencyPayload.declared_tool_names,
       declared_skill_names: dependencyPayload.declared_skill_names,
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
-      ...buildBeeroomGroupPayload(form.group),
+      ...buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value),
       system_prompt: String(form.system_prompt || ''),
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
@@ -1123,7 +1126,7 @@ const saveAgent = async () => {
 };
 
 const exportWorkerCard = () => {
-  const groupPayload = buildBeeroomGroupPayload(form.group);
+  const groupPayload = buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value);
   const dependencyPayload = buildWorkerCardDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
   const filename = downloadWorkerCard({
     id: normalizedAgentId.value,

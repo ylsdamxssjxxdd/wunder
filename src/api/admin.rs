@@ -62,7 +62,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 use url::Url;
@@ -74,6 +74,8 @@ const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
+const ADMIN_MONITOR_TIMING_INFO_MS: u128 = 200;
+const ADMIN_MONITOR_TIMING_WARN_MS: u128 = 1000;
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AdminSkillSourceKind {
     Builtin,
@@ -3228,11 +3230,19 @@ async fn admin_monitor(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MonitorQuery>,
 ) -> Result<Json<Value>, Response> {
+    let request_started_at = Instant::now();
+    let mut stage_started_at = Instant::now();
     state.monitor.warm_history(true);
+    let warm_history_ms = stage_started_at.elapsed().as_millis();
     let active_only = query.active_only.unwrap_or(true);
+    stage_started_at = Instant::now();
     let system = state.monitor.get_system_metrics();
+    let system_ms = stage_started_at.elapsed().as_millis();
+    stage_started_at = Instant::now();
     let sessions = state.monitor.list_sessions(active_only);
+    let sessions_ms = stage_started_at.elapsed().as_millis();
 
+    stage_started_at = Instant::now();
     let mut since_time = None;
     let mut until_time = None;
     let mut recent_window_s = None;
@@ -3258,19 +3268,133 @@ async fn admin_monitor(
         recent_window_s = Some(window);
         since_time = Some(now_ts() - window);
     }
+    let query_window_ms = stage_started_at.elapsed().as_millis();
 
+    stage_started_at = Instant::now();
     let service = state
         .monitor
         .get_service_metrics(recent_window_s, service_now);
+    let service_ms = stage_started_at.elapsed().as_millis();
+    stage_started_at = Instant::now();
     let tool_stats =
         normalize_tool_stats(state.workspace.get_tool_usage_stats(since_time, until_time));
-    Ok(Json(json!({
+    let tool_stats_ms = stage_started_at.elapsed().as_millis();
+    stage_started_at = Instant::now();
+    let sandbox = state.monitor.get_sandbox_metrics(since_time, until_time);
+    let sandbox_ms = stage_started_at.elapsed().as_millis();
+    stage_started_at = Instant::now();
+    let response = Json(json!({
         "system": system,
         "service": service,
-        "sandbox": state.monitor.get_sandbox_metrics(since_time, until_time),
+        "sandbox": sandbox,
         "sessions": sessions,
         "tool_stats": tool_stats
-    })))
+    }));
+    let payload_ms = stage_started_at.elapsed().as_millis();
+    let total_ms = request_started_at.elapsed().as_millis();
+    log_admin_monitor_timing(
+        &query,
+        active_only,
+        recent_window_s,
+        response.0["sessions"]
+            .as_array()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        response.0["tool_stats"]
+            .as_array()
+            .map(|items| items.len())
+            .unwrap_or(0),
+        warm_history_ms,
+        query_window_ms,
+        system_ms,
+        sessions_ms,
+        service_ms,
+        tool_stats_ms,
+        sandbox_ms,
+        payload_ms,
+        total_ms,
+    );
+    Ok(response)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn log_admin_monitor_timing(
+    query: &MonitorQuery,
+    active_only: bool,
+    recent_window_s: Option<f64>,
+    session_count: usize,
+    tool_stats_count: usize,
+    warm_history_ms: u128,
+    query_window_ms: u128,
+    system_ms: u128,
+    sessions_ms: u128,
+    service_ms: u128,
+    tool_stats_ms: u128,
+    sandbox_ms: u128,
+    payload_ms: u128,
+    total_ms: u128,
+) {
+    let max_stage_ms = [
+        warm_history_ms,
+        query_window_ms,
+        system_ms,
+        sessions_ms,
+        service_ms,
+        tool_stats_ms,
+        sandbox_ms,
+        payload_ms,
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0);
+    if total_ms < ADMIN_MONITOR_TIMING_INFO_MS && max_stage_ms < ADMIN_MONITOR_TIMING_INFO_MS {
+        return;
+    }
+    let has_range = query.start_time.is_some() || query.end_time.is_some();
+    let recent_window_s = recent_window_s.unwrap_or_default();
+    if total_ms >= ADMIN_MONITOR_TIMING_WARN_MS || max_stage_ms >= ADMIN_MONITOR_TIMING_WARN_MS {
+        warn!(
+            endpoint = "/wunder/admin/monitor",
+            active_only,
+            has_range,
+            tool_hours = query.tool_hours.unwrap_or_default(),
+            recent_window_s,
+            session_count,
+            tool_stats_count,
+            warm_history_ms,
+            query_window_ms,
+            system_ms,
+            sessions_ms,
+            service_ms,
+            tool_stats_ms,
+            sandbox_ms,
+            payload_ms,
+            max_stage_ms,
+            total_ms,
+            "admin monitor timing"
+        );
+    } else {
+        info!(
+            endpoint = "/wunder/admin/monitor",
+            active_only,
+            has_range,
+            tool_hours = query.tool_hours.unwrap_or_default(),
+            recent_window_s,
+            session_count,
+            tool_stats_count,
+            warm_history_ms,
+            query_window_ms,
+            system_ms,
+            sessions_ms,
+            service_ms,
+            tool_stats_ms,
+            sandbox_ms,
+            payload_ms,
+            max_stage_ms,
+            total_ms,
+            "admin monitor timing"
+        );
+    }
 }
 
 async fn admin_monitor_tool_usage(
