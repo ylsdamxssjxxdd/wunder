@@ -325,6 +325,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             label.clone(),
             agent_id,
             model_name,
+            super::ChildSessionToolMode::InheritParentSession,
         ) {
             Ok(prepared) => {
                 let PreparedChildSession {

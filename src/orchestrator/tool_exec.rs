@@ -1616,16 +1616,13 @@ fn compact_dense_arrays_to_jsonl(value: &mut Value) {
                 {
                     continue;
                 }
-                let lines = map
-                    .get(&key)
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .map(|item| compact_jsonl_item_for_model(item, key.as_str(), 0))
-                            .map(|item| value_to_jsonl_line(&item))
-                            .collect::<Vec<_>>()
-                    });
+                let lines = map.get(&key).and_then(Value::as_array).map(|items| {
+                    items
+                        .iter()
+                        .map(|item| compact_jsonl_item_for_model(item, key.as_str(), 0))
+                        .map(|item| value_to_jsonl_line(&item))
+                        .collect::<Vec<_>>()
+                });
                 let Some(lines) = lines else {
                     continue;
                 };
@@ -2000,7 +1997,9 @@ fn strip_read_output_truncation_notice(content: &str) -> (String, Option<u64>) {
         return (content.to_string(), None);
     }
     let number_start = READ_OUTPUT_TRUNCATION_PREFIX.len();
-    let number_end = notice.len().saturating_sub(READ_OUTPUT_TRUNCATION_SUFFIX.len());
+    let number_end = notice
+        .len()
+        .saturating_sub(READ_OUTPUT_TRUNCATION_SUFFIX.len());
     let omitted = notice
         .get(number_start..number_end)
         .and_then(|value| value.trim().parse::<u64>().ok());
@@ -2662,7 +2661,10 @@ mod tests {
         };
 
         let compacted = payload.to_compact_payload("demo_tool");
-        assert_eq!(compacted.get("duration_ms").and_then(Value::as_i64), Some(1280));
+        assert_eq!(
+            compacted.get("duration_ms").and_then(Value::as_i64),
+            Some(1280)
+        );
     }
 
     #[test]
@@ -2936,7 +2938,10 @@ mod tests {
         assert_eq!(
             data.and_then(|value| value.get("content_omitted_chars"))
                 .and_then(Value::as_u64),
-            Some((OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80 - OBSERVATION_READ_CONTENT_HEAD_CHARS) as u64)
+            Some(
+                (OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80
+                    - OBSERVATION_READ_CONTENT_HEAD_CHARS) as u64
+            )
         );
     }
 
@@ -2971,7 +2976,11 @@ mod tests {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
-        assert_eq!(data.get("read_output_omitted_bytes").and_then(Value::as_u64), Some(512));
+        assert_eq!(
+            data.get("read_output_omitted_bytes")
+                .and_then(Value::as_u64),
+            Some(512)
+        );
         assert_eq!(
             data.get("continuation_required").and_then(Value::as_bool),
             Some(true)
@@ -3079,13 +3088,14 @@ mod tests {
             .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
         assert!(first_hit.get("content").is_none());
-        assert!(first_hit.get("content_head").and_then(Value::as_str).is_some());
-        assert!(
-            first_hit
-                .get("content_head")
-                .and_then(Value::as_str)
-                .is_some_and(|text| !text.contains(TOOL_RESULT_TRUNCATION_MARKER))
-        );
+        assert!(first_hit
+            .get("content_head")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(first_hit
+            .get("content_head")
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.contains(TOOL_RESULT_TRUNCATION_MARKER)));
     }
 
     #[test]
@@ -3167,7 +3177,10 @@ mod tests {
             parsed_obj.get("command").and_then(Value::as_str),
             Some("python draw_heart.py")
         );
-        assert_eq!(parsed_obj.get("returncode").and_then(Value::as_i64), Some(127));
+        assert_eq!(
+            parsed_obj.get("returncode").and_then(Value::as_i64),
+            Some(127)
+        );
         assert_eq!(
             parsed_obj.get("stderr").and_then(Value::as_str),
             Some("python: command not found")

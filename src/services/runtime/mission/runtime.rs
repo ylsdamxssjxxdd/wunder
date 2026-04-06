@@ -3,6 +3,7 @@ use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::stream_events::StreamEventService;
 use crate::storage::{SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord};
@@ -1264,10 +1265,15 @@ fn build_task_request(
     session_id: &str,
     question: String,
 ) -> WunderRequest {
-    let tool_names = if agent.tool_names.is_empty() {
+    let resolved_tool_names = resolve_agent_runtime_tool_names(
+        &agent.tool_names,
+        &agent.declared_tool_names,
+        &agent.declared_skill_names,
+    );
+    let tool_names = if resolved_tool_names.is_empty() {
         vec!["__no_tools__".to_string()]
     } else {
-        agent.tool_names.clone()
+        resolved_tool_names
     };
     let agent_prompt = {
         let prompt = agent.system_prompt.trim();

@@ -9,6 +9,7 @@ use crate::orchestrator_constants::{
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
+use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::chat_media::{
     process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
 };
@@ -625,11 +626,7 @@ async fn get_session_events(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let rounds = state
-        .monitor
-        .get_record(&session_id)
-        .map(|record| collect_session_event_rounds(&record))
-        .unwrap_or_default();
+    let rounds = load_session_event_rounds(&state, &session_id).await;
     let command_sessions = state
         .control
         .command_sessions
@@ -668,6 +665,56 @@ async fn get_session_events(
             "command_sessions": command_sessions
         }
     })))
+}
+
+async fn load_session_event_rounds(state: &Arc<AppState>, session_id: &str) -> Vec<Value> {
+    let stream_events = load_all_session_stream_events(state, session_id).await;
+    if !stream_events.is_empty() {
+        return collect_session_event_rounds(&json!({ "events": stream_events }));
+    }
+    state
+        .monitor
+        .get_record(session_id)
+        .map(|record| collect_session_event_rounds(&record))
+        .unwrap_or_default()
+}
+
+async fn load_all_session_stream_events(state: &Arc<AppState>, session_id: &str) -> Vec<Value> {
+    let cleaned_session_id = session_id.trim().to_string();
+    if cleaned_session_id.is_empty() {
+        return Vec::new();
+    }
+    let workspace = state.workspace.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut after_event_id = 0;
+        let mut records = Vec::new();
+        let batch_limit = STREAM_EVENT_FETCH_LIMIT.max(1);
+        loop {
+            let batch =
+                workspace.load_stream_events(&cleaned_session_id, after_event_id, batch_limit);
+            if batch.is_empty() {
+                break;
+            }
+            let batch_len = batch.len();
+            let mut last_event_id = after_event_id;
+            for record in &batch {
+                if let Some(event_id) = record.get("event_id").and_then(Value::as_i64) {
+                    last_event_id = last_event_id.max(event_id);
+                }
+            }
+            records.extend(batch);
+            if last_event_id <= after_event_id {
+                break;
+            }
+            after_event_id = last_event_id;
+            if batch_len < batch_limit as usize {
+                break;
+            }
+        }
+        records
+    })
+    .await
+    .unwrap_or_default()
 }
 
 async fn list_session_command_sessions(
@@ -2918,26 +2965,11 @@ fn resolve_agent_tool_defaults(agent: Option<&crate::storage::UserAgentRecord>) 
     let Some(record) = agent else {
         return Vec::new();
     };
-    if !record.declared_tool_names.is_empty() || !record.declared_skill_names.is_empty() {
-        let mut merged = Vec::new();
-        let mut seen = HashSet::new();
-        for name in record
-            .declared_tool_names
-            .iter()
-            .chain(record.declared_skill_names.iter())
-        {
-            let cleaned = name.trim();
-            if cleaned.is_empty() {
-                continue;
-            }
-            let owned = cleaned.to_string();
-            if seen.insert(owned.clone()) {
-                merged.push(owned);
-            }
-        }
-        return merged;
-    }
-    record.tool_names.clone()
+    resolve_agent_runtime_tool_names(
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+    )
 }
 
 fn resolve_agent_workspace_id(
@@ -3255,6 +3287,63 @@ fn format_ts_text(value: &str) -> String {
     text.to_string()
 }
 
+fn unwrap_session_event_data(value: &Value) -> Value {
+    let Some(map) = value.as_object() else {
+        return value.clone();
+    };
+    let Some(inner) = map.get("data") else {
+        return value.clone();
+    };
+    if map
+        .get("session_id")
+        .and_then(Value::as_str)
+        .is_some_and(|session_id| !session_id.trim().is_empty())
+        && map
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .is_some_and(|timestamp| !timestamp.trim().is_empty())
+    {
+        return inner.clone();
+    }
+    value.clone()
+}
+
+fn extract_session_event_round(data: &Value) -> Option<i64> {
+    data.get("user_round")
+        .and_then(Value::as_i64)
+        .or_else(|| {
+            data.get("user_round")
+                .and_then(Value::as_str)
+                .and_then(|value| value.trim().parse::<i64>().ok())
+        })
+        .or_else(|| data.get("round").and_then(Value::as_i64))
+        .or_else(|| {
+            data.get("round")
+                .and_then(Value::as_str)
+                .and_then(|value| value.trim().parse::<i64>().ok())
+        })
+}
+
+fn extract_session_event_type(event: &Value) -> &str {
+    event
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| event.get("event").and_then(Value::as_str))
+        .unwrap_or("")
+}
+
+fn format_session_event_timestamp(event: &Value) -> String {
+    if let Some(timestamp) = event.get("timestamp").and_then(Value::as_f64) {
+        if timestamp > 0.0 {
+            return format_ts(timestamp);
+        }
+    }
+    if let Some(timestamp) = event.get("timestamp").and_then(Value::as_str) {
+        return format_ts_text(timestamp);
+    }
+    String::new()
+}
+
 fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
     let Some(events) = record.get("events").and_then(Value::as_array) else {
         return Vec::new();
@@ -3277,9 +3366,9 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
         *current_round = Some(round);
     };
     for event in events {
-        let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-        let data = event.get("data").cloned().unwrap_or(Value::Null);
-        let data_round = data.get("user_round").and_then(Value::as_i64);
+        let event_type = extract_session_event_type(event);
+        let data = unwrap_session_event_data(&event.get("data").cloned().unwrap_or(Value::Null));
+        let data_round = extract_session_event_round(&data);
         if event_type == "round_start" {
             let round = data_round
                 .or_else(|| current_round.map(|value| value + 1))
@@ -3305,19 +3394,10 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
         if !is_workflow_event(event_type) {
             continue;
         }
-        let timestamp = event
-            .get("timestamp")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
-        let timestamp = if timestamp > 0.0 {
-            format_ts(timestamp)
-        } else {
-            String::new()
-        };
         let entry = json!({
             "event": event_type,
             "data": data,
-            "timestamp": timestamp,
+            "timestamp": format_session_event_timestamp(event),
         });
         let round_events = grouped.entry(round).or_default();
         if let Some(previous) = round_events.last_mut() {
@@ -3543,9 +3623,8 @@ mod tests {
         build_projected_queue_user_message, collect_session_event_rounds,
         count_system_prompt_memory_items, extract_system_prompt_memory_preview,
         extract_system_prompt_memory_total_count, has_active_queue_task,
-        has_non_empty_chat_attachments,
-        is_session_stream_active_or_queued, project_queued_session_messages,
-        should_merge_round_event, ChatAttachment,
+        has_non_empty_chat_attachments, is_session_stream_active_or_queued,
+        project_queued_session_messages, should_merge_round_event, ChatAttachment,
     };
     use crate::storage::{AgentTaskRecord, SqliteStorage, StorageBackend};
     use crate::user_store::UserStore;
@@ -3904,6 +3983,80 @@ mod tests {
                 .and_then(|value| value.get("status"))
                 .and_then(|value| value.as_str()),
             Some("done")
+        );
+    }
+
+    #[test]
+    fn collect_session_event_rounds_supports_stream_event_wrappers() {
+        let record = json!({
+            "events": [
+                {
+                    "event": "progress",
+                    "timestamp": "2026-04-06T15:47:50+08:00",
+                    "data": {
+                        "session_id": "sess_demo",
+                        "timestamp": "2026-04-06T15:47:50+08:00",
+                        "data": {
+                            "user_round": 1,
+                            "stage": "start"
+                        }
+                    }
+                },
+                {
+                    "event": "tool_result",
+                    "timestamp": "2026-04-06T15:47:56+08:00",
+                    "data": {
+                        "session_id": "sess_demo",
+                        "timestamp": "2026-04-06T15:47:56+08:00",
+                        "data": {
+                            "user_round": 2,
+                            "tool": "knowledge",
+                            "ok": true
+                        }
+                    }
+                }
+            ]
+        });
+
+        let rounds = collect_session_event_rounds(&record);
+        assert_eq!(rounds.len(), 2);
+        assert_eq!(rounds[0].get("user_round").and_then(Value::as_i64), Some(1));
+        assert_eq!(rounds[1].get("user_round").and_then(Value::as_i64), Some(2));
+
+        let first_event = rounds[0]
+            .get("events")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or(Value::Null);
+        assert_eq!(
+            first_event.get("event").and_then(Value::as_str),
+            Some("progress")
+        );
+        assert_eq!(
+            first_event.get("timestamp").and_then(Value::as_str),
+            Some("2026-04-06T15:47:50+08:00")
+        );
+        assert_eq!(
+            first_event
+                .get("data")
+                .and_then(|value| value.get("stage"))
+                .and_then(Value::as_str),
+            Some("start")
+        );
+
+        let second_event = rounds[1]
+            .get("events")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .unwrap_or(Value::Null);
+        assert_eq!(
+            second_event
+                .get("data")
+                .and_then(|value| value.get("tool"))
+                .and_then(Value::as_str),
+            Some("knowledge")
         );
     }
 

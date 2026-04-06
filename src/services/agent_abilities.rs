@@ -300,6 +300,32 @@ pub fn resolve_record_declared_names(
     }
 }
 
+pub fn resolve_agent_runtime_tool_names(
+    tool_names: &[String],
+    declared_tool_names: &[String],
+    declared_skill_names: &[String],
+) -> Vec<String> {
+    if declared_tool_names.is_empty() && declared_skill_names.is_empty() {
+        return normalize_names(tool_names.iter().map(String::as_str));
+    }
+    let mut merged = Vec::new();
+    let mut seen = HashSet::new();
+    for name in declared_tool_names
+        .iter()
+        .chain(declared_skill_names.iter())
+    {
+        let cleaned = name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if seen.insert(owned.clone()) {
+            merged.push(owned);
+        }
+    }
+    merged
+}
+
 pub fn resolve_agent_ability_selection(
     requested_tool_names: &[String],
     requested_ability_items: Option<Vec<AbilityDescriptor>>,
@@ -380,7 +406,8 @@ impl IfEmptyThen for String {
 mod tests {
     use super::{
         build_ability_items_from_legacy, normalize_ability_items, resolve_agent_ability_selection,
-        resolve_record_declared_names, resolve_selected_declared_names, split_ability_item_names,
+        resolve_agent_runtime_tool_names, resolve_record_declared_names,
+        resolve_selected_declared_names, split_ability_item_names,
     };
     use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
     use serde_json::json;
@@ -515,5 +542,18 @@ mod tests {
         );
         assert_eq!(tool_names, vec!["read_file".to_string()]);
         assert_eq!(skill_names, vec!["writer".to_string()]);
+    }
+
+    #[test]
+    fn resolve_agent_runtime_tool_names_prefers_declared_lists() {
+        let resolved = resolve_agent_runtime_tool_names(
+            &["技能创建器".to_string()],
+            &["read_file".to_string()],
+            &["政策知识库检索技能".to_string()],
+        );
+        assert_eq!(
+            resolved,
+            vec!["read_file".to_string(), "政策知识库检索技能".to_string()]
+        );
     }
 }

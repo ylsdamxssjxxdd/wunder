@@ -15,6 +15,7 @@ use walkdir::WalkDir;
 
 const DEFAULT_MAX_DOCUMENTS: usize = 5;
 const DEFAULT_CANDIDATE_LIMIT: usize = 80;
+const KNOWLEDGE_RETRIEVAL_REASONING_EFFORT: &str = "none";
 
 #[derive(Debug, Clone)]
 pub struct KnowledgeSection {
@@ -209,6 +210,7 @@ pub async fn query_knowledge_documents(
     let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
     let candidates =
         select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
+    let retrieval_llm_config = build_literal_knowledge_llm_config(llm_config);
     let prompt = build_system_prompt(max_docs);
     let question = build_question(&base.name, normalized_query, &candidates);
     let messages = vec![
@@ -228,8 +230,9 @@ pub async fn query_knowledge_documents(
         },
     ];
     if let Some(logger) = request_logger {
-        let payload = build_llm_payload(&messages, llm_config);
-        let base_url = llm_config
+        let payload = build_llm_payload(&messages, retrieval_llm_config.as_ref());
+        let base_url = retrieval_llm_config
+            .as_ref()
             .and_then(|config| config.base_url.clone())
             .unwrap_or_default();
         logger(json!({
@@ -242,7 +245,7 @@ pub async fn query_knowledge_documents(
         }));
     }
 
-    let reply = match llm_config {
+    let reply = match retrieval_llm_config.as_ref() {
         Some(config) if is_llm_configured(config) => {
             let client = build_llm_client(config, reqwest::Client::new());
             match client.complete(&messages).await {
@@ -295,6 +298,7 @@ pub async fn query_knowledge_raw_with_documents(
     let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
     let candidates =
         select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
+    let retrieval_llm_config = build_literal_knowledge_llm_config(llm_config);
     let prompt = build_system_prompt(max_docs);
     let question = build_question(&base.name, normalized_query, &candidates);
     let messages = vec![
@@ -314,8 +318,9 @@ pub async fn query_knowledge_raw_with_documents(
         },
     ];
     if let Some(logger) = request_logger {
-        let payload = build_llm_payload(&messages, llm_config);
-        let base_url = llm_config
+        let payload = build_llm_payload(&messages, retrieval_llm_config.as_ref());
+        let base_url = retrieval_llm_config
+            .as_ref()
             .and_then(|config| config.base_url.clone())
             .unwrap_or_default();
         logger(json!({
@@ -327,7 +332,10 @@ pub async fn query_knowledge_raw_with_documents(
             "base_url": base_url,
         }));
     }
-    let Some(config) = llm_config.filter(|config| is_llm_configured(config)) else {
+    let Some(config) = retrieval_llm_config
+        .as_ref()
+        .filter(|config| is_llm_configured(config))
+    else {
         return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
     };
     let client = build_llm_client(config, reqwest::Client::new());
@@ -425,14 +433,19 @@ fn parse_markdown_sections(path: &Path) -> Vec<KnowledgeSection> {
     };
     let text = text.replace('\u{feff}', "");
     let document_content = text.trim().to_string();
+    let document = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("")
+        .to_string();
     let mut sections = Vec::new();
-    let mut current_h1: Option<String> = None;
+    let mut heading_stack: Vec<(usize, String)> = Vec::new();
     let mut buffer: Vec<String> = Vec::new();
 
     let flush = |sections: &mut Vec<KnowledgeSection>,
                  buffer: &mut Vec<String>,
-                 current_h1: &Option<String>| {
-        if buffer.is_empty() || current_h1.is_none() {
+                 heading_stack: &[(usize, String)]| {
+        if buffer.is_empty() || heading_stack.is_empty() {
             buffer.clear();
             return;
         }
@@ -441,14 +454,12 @@ fn parse_markdown_sections(path: &Path) -> Vec<KnowledgeSection> {
         if content.is_empty() {
             return;
         }
-        let section_path = vec![current_h1.clone().unwrap_or_default()];
         sections.push(KnowledgeSection {
-            document: path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("")
-                .to_string(),
-            section_path,
+            document: document.clone(),
+            section_path: heading_stack
+                .iter()
+                .map(|(_, title)| title.clone())
+                .collect(),
             content,
             code: String::new(),
         });
@@ -458,22 +469,27 @@ fn parse_markdown_sections(path: &Path) -> Vec<KnowledgeSection> {
     for line in text.lines() {
         if let Some(regex) = heading_re {
             if let Some(caps) = regex.captures(line.trim()) {
-                flush(&mut sections, &mut buffer, &current_h1);
-                current_h1 = Some(caps[1].trim().to_string());
-                buffer.clear();
+                flush(&mut sections, &mut buffer, &heading_stack);
+                let level = caps.get(1).map(|value| value.as_str().len()).unwrap_or(1);
+                let title = caps.get(2).map(|value| value.as_str().trim()).unwrap_or("");
+                while heading_stack
+                    .last()
+                    .is_some_and(|(current_level, _)| *current_level >= level)
+                {
+                    heading_stack.pop();
+                }
+                if !title.is_empty() {
+                    heading_stack.push((level, title.to_string()));
+                }
                 continue;
             }
         }
         buffer.push(line.to_string());
     }
-    flush(&mut sections, &mut buffer, &current_h1);
+    flush(&mut sections, &mut buffer, &heading_stack);
     if sections.is_empty() && !document_content.is_empty() {
         sections.push(KnowledgeSection {
-            document: path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or("")
-                .to_string(),
+            document,
             section_path: vec![i18n::t("knowledge.section.full_text")],
             content: document_content.clone(),
             code: String::new(),
@@ -499,6 +515,17 @@ fn build_system_prompt(limit: usize) -> String {
         KNOWLEDGE_PROMPT_ZH
     };
     template.replace("{limit}", &limit.to_string())
+}
+
+fn build_literal_knowledge_llm_config(
+    llm_config: Option<&LlmModelConfig>,
+) -> Option<LlmModelConfig> {
+    llm_config.map(|config| {
+        let mut config = config.clone();
+        // Keep literal retrieval deterministic and cheap by disabling auxiliary reasoning.
+        config.reasoning_effort = Some(KNOWLEDGE_RETRIEVAL_REASONING_EFFORT.to_string());
+        config
+    })
 }
 
 fn build_llm_payload(messages: &[ChatMessage], llm_config: Option<&LlmModelConfig>) -> Value {
@@ -766,7 +793,7 @@ fn is_chinese(ch: char) -> bool {
 fn heading_regex() -> Option<&'static Regex> {
     static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
     REGEX
-        .get_or_init(|| compile_regex(r"^#\\s+(.+?)\\s*$", "heading"))
+        .get_or_init(|| compile_regex(r"^(#{1,6})\s+(.+?)\s*$", "heading"))
         .as_ref()
 }
 
@@ -780,7 +807,7 @@ fn markdown_clean_regex() -> Option<&'static Regex> {
 fn whitespace_regex() -> Option<&'static Regex> {
     static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
     REGEX
-        .get_or_init(|| compile_regex(r"\\s+", "whitespace"))
+        .get_or_init(|| compile_regex(r"\s+", "whitespace"))
         .as_ref()
 }
 
@@ -856,3 +883,105 @@ Follow these requirements strictly:\n\
 3. Output must be JSON wrapped by <knowledge></knowledge>, with field documents (List).\n\
 4. Each document item must include code, name, score(0~1), and reason (brief).\n\
 5. If nothing matches, return an empty array only, and do not output extra text outside JSON.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn llm_config(value: Value) -> LlmModelConfig {
+        serde_json::from_value(value).expect("parse llm model config")
+    }
+
+    #[test]
+    fn literal_knowledge_payload_disables_reasoning() {
+        let config = llm_config(json!({
+            "provider": "openai",
+            "api_mode": "responses",
+            "model": "gpt-5-mini",
+            "reasoning_effort": "high"
+        }));
+        let retrieval_config =
+            build_literal_knowledge_llm_config(Some(&config)).expect("retrieval config");
+        let payload = build_llm_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: json!("find policy"),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            Some(&retrieval_config),
+        );
+
+        assert_eq!(retrieval_config.reasoning_effort.as_deref(), Some("none"));
+        assert_eq!(payload["reasoning"]["effort"], "none");
+    }
+
+    #[test]
+    fn parse_markdown_sections_splits_nested_headings() {
+        let temp_dir = tempdir().expect("tempdir");
+        let path = temp_dir.path().join("policy.md");
+        fs::write(
+            &path,
+            "# 文档标题\n\
+\n\
+# 第1章 总则\n\
+章节概述\n\
+\n\
+### 1.1 目的\n\
+用于说明目标\n\
+\n\
+### 1.2 范围\n\
+适用于全员\n\
+\n\
+# 第2章 劳动合同\n\
+### 2.1 劳动合同解除\n\
+解除总述\n\
+\n\
+#### 2.1.1 协商解除\n\
+双方协商一致可以解除\n",
+        )
+        .expect("write markdown");
+
+        let sections = parse_markdown_sections(&path);
+        let section_paths = sections
+            .iter()
+            .map(|section| section.section_path.clone())
+            .collect::<Vec<_>>();
+
+        assert!(section_paths.contains(&vec!["第1章 总则".to_string()]));
+        assert!(section_paths.contains(&vec!["第1章 总则".to_string(), "1.1 目的".to_string()]));
+        assert!(section_paths.contains(&vec!["第1章 总则".to_string(), "1.2 范围".to_string()]));
+        assert!(section_paths.contains(&vec![
+            "第2章 劳动合同".to_string(),
+            "2.1 劳动合同解除".to_string()
+        ]));
+        assert!(section_paths.contains(&vec![
+            "第2章 劳动合同".to_string(),
+            "2.1 劳动合同解除".to_string(),
+            "2.1.1 协商解除".to_string()
+        ]));
+
+        let intro = sections
+            .iter()
+            .find(|section| section.section_path == vec!["第1章 总则".to_string()])
+            .expect("chapter intro");
+        assert!(intro.content.contains("章节概述"));
+
+        let nested = sections
+            .iter()
+            .find(|section| {
+                section.section_path
+                    == vec![
+                        "第2章 劳动合同".to_string(),
+                        "2.1 劳动合同解除".to_string(),
+                        "2.1.1 协商解除".to_string(),
+                    ]
+            })
+            .expect("nested section");
+        assert!(nested.content.contains("双方协商一致可以解除"));
+    }
+}

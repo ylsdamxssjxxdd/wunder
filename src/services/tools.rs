@@ -79,6 +79,7 @@ use crate::path_utils::{
 };
 use crate::sandbox;
 use crate::schemas::WunderRequest;
+use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
@@ -1203,6 +1204,12 @@ struct PreparedChildSession {
 enum SessionCleanup {
     Keep,
     Delete,
+}
+
+#[derive(Clone, Copy)]
+enum ChildSessionToolMode {
+    InheritParentSession,
+    UseTargetAgentDefaults,
 }
 
 #[derive(Debug, Clone)]
@@ -3100,6 +3107,7 @@ fn prepare_swarm_child_session(
         label,
         Some(agent_id.to_string()),
         None,
+        ChildSessionToolMode::UseTargetAgentDefaults,
     )
 }
 
@@ -3337,6 +3345,7 @@ fn prepare_child_session(
     label: Option<String>,
     agent_id: Option<String>,
     model_name: Option<String>,
+    tool_mode: ChildSessionToolMode,
 ) -> Result<PreparedChildSession> {
     let cleaned_task = task.trim();
     if cleaned_task.is_empty() {
@@ -3380,6 +3389,11 @@ fn prepare_child_session(
         agent_id.as_deref(),
         parent_agent_id.as_deref(),
     )?;
+    let child_tool_names = resolve_child_session_tool_names(
+        tool_mode,
+        &parent_tool_names,
+        child_agent_record.as_ref(),
+    );
     let agent_prompt = child_agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -3400,7 +3414,7 @@ fn prepare_child_session(
         updated_at: now,
         last_message_at: now,
         agent_id: child_agent_id.clone(),
-        tool_overrides: parent_tool_names.clone(),
+        tool_overrides: child_tool_names.clone(),
         parent_session_id: Some(cleaned_parent_session_id.to_string()),
         parent_message_id: parent_turn_ref.clone(),
         spawn_label: label.clone(),
@@ -3443,7 +3457,7 @@ fn prepare_child_session(
         request: WunderRequest {
             user_id: user_id.to_string(),
             question: cleaned_task.to_string(),
-            tool_names: parent_tool_names,
+            tool_names: child_tool_names,
             skip_tool_calls: false,
             stream: true,
             debug_payload: false,
@@ -3487,6 +3501,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         payload.label.clone(),
         payload.agent_id.clone(),
         payload.model.clone(),
+        ChildSessionToolMode::InheritParentSession,
     )?;
     let PreparedChildSession {
         child_session_id,
@@ -4112,9 +4127,36 @@ fn resolve_session_tool_overrides(
     } else if let Some(snapshot) = frozen_tool_overrides {
         normalize_tool_overrides(snapshot.to_vec())
     } else {
-        agent
-            .map(|record| record.tool_names.clone())
-            .unwrap_or_default()
+        resolve_agent_tool_defaults(agent)
+    }
+}
+
+fn resolve_agent_tool_defaults(agent: Option<&UserAgentRecord>) -> Vec<String> {
+    let Some(record) = agent else {
+        return Vec::new();
+    };
+    resolve_agent_runtime_tool_names(
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+    )
+}
+
+fn resolve_child_session_tool_names(
+    mode: ChildSessionToolMode,
+    parent_tool_names: &[String],
+    child_agent: Option<&UserAgentRecord>,
+) -> Vec<String> {
+    match mode {
+        ChildSessionToolMode::InheritParentSession => parent_tool_names.to_vec(),
+        ChildSessionToolMode::UseTargetAgentDefaults => {
+            let defaults = resolve_agent_tool_defaults(child_agent);
+            if defaults.is_empty() {
+                parent_tool_names.to_vec()
+            } else {
+                defaults
+            }
+        }
     }
 }
 
@@ -8270,9 +8312,53 @@ fn is_a2a_task_finished(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::SqliteStorage;
+    use crate::storage::{ChatSessionRecord, SqliteStorage, UserAgentRecord};
     use serde_json::json;
     use tempfile::tempdir;
+
+    fn sample_chat_session_record(agent_id: &str) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: "sess_test".to_string(),
+            user_id: "alice".to_string(),
+            title: "test".to_string(),
+            status: "active".to_string(),
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_message_at: 1.0,
+            agent_id: Some(agent_id.to_string()),
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        }
+    }
+
+    fn sample_agent_record() -> UserAgentRecord {
+        UserAgentRecord {
+            agent_id: "agent_policy_worker".to_string(),
+            user_id: "alice".to_string(),
+            hive_id: "hive_policy".to_string(),
+            name: "政策副手".to_string(),
+            description: String::new(),
+            system_prompt: "use policy knowledge".to_string(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: vec!["技能创建器".to_string()],
+            declared_tool_names: vec!["read_file".to_string()],
+            declared_skill_names: vec!["政策知识库检索技能".to_string()],
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "auto_edit".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 1.0,
+            preset_binding: None,
+        }
+    }
 
     #[test]
     fn extract_user_world_file_refs_handles_quotes_suffix_and_email_mentions() {
@@ -8812,6 +8898,42 @@ PATCH"#;
 
         assert_eq!(record.agent_id, "__default__");
         assert_eq!(record.user_id, "alice");
+    }
+
+    #[test]
+    fn resolve_session_tool_overrides_prefers_declared_agent_defaults() {
+        let session = sample_chat_session_record("agent_policy_worker");
+        let agent = sample_agent_record();
+
+        let overrides = resolve_session_tool_overrides(&session, None, Some(&agent));
+
+        assert_eq!(
+            overrides,
+            vec!["read_file".to_string(), "政策知识库检索技能".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_child_session_tool_names_uses_target_agent_defaults_for_swarm_children() {
+        let parent_tool_names = vec!["技能创建器".to_string()];
+        let agent = sample_agent_record();
+
+        let inherited = resolve_child_session_tool_names(
+            ChildSessionToolMode::InheritParentSession,
+            &parent_tool_names,
+            Some(&agent),
+        );
+        let swarm_defaults = resolve_child_session_tool_names(
+            ChildSessionToolMode::UseTargetAgentDefaults,
+            &parent_tool_names,
+            Some(&agent),
+        );
+
+        assert_eq!(inherited, vec!["技能创建器".to_string()]);
+        assert_eq!(
+            swarm_defaults,
+            vec!["read_file".to_string(), "政策知识库检索技能".to_string()]
+        );
     }
 
     #[test]

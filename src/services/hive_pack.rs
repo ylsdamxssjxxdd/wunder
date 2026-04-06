@@ -2435,10 +2435,10 @@ mod tests {
         collect_agent_skills_for_export, export_worker_id, load_worker_card_manifest,
         normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
         normalize_import_conflict_mode, normalize_name, resolve_declared_skill_runtime_name,
-        resolve_import_skill_name,
-        resolve_import_workers, resolve_worker_skill_sources, unique_label_with_reserved,
-        unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
-        validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode,
+        resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
+        unique_label_with_reserved, unique_slug_with_reserved, validate_archive_entry_path,
+        validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
+        ImportConflictMode,
     };
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::SkillSpec;

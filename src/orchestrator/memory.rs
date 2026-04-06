@@ -5,6 +5,7 @@ const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
     "compaction_skip_persist_current_user";
+const COMPACTION_SUMMARY_REASONING_EFFORT: &str = "none";
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -457,13 +458,7 @@ impl Orchestrator {
                 .map(|value| value.to_string());
         }
 
-        let mut summary_config = llm_config.clone();
-        let max_output = llm_config
-            .max_output
-            .unwrap_or(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
-            .min(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
-        summary_config.max_output = Some(max_output);
-        summary_config.max_rounds = Some(1);
+        let summary_config = build_compaction_summary_config(llm_config);
 
         let summary_limit =
             HistoryManager::get_auto_compact_limit(&summary_config).unwrap_or(limit);
@@ -1763,6 +1758,19 @@ fn build_compaction_instruction(
     blocks.join("\n\n")
 }
 
+fn build_compaction_summary_config(llm_config: &LlmModelConfig) -> LlmModelConfig {
+    let mut summary_config = llm_config.clone();
+    let max_output = llm_config
+        .max_output
+        .unwrap_or(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
+        .min(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
+    summary_config.max_output = Some(max_output);
+    summary_config.max_rounds = Some(1);
+    // Disable reasoning for compaction summaries to keep the auxiliary request lean.
+    summary_config.reasoning_effort = Some(COMPACTION_SUMMARY_REASONING_EFFORT.to_string());
+    summary_config
+}
+
 fn strip_existing_memory_block_text(text: &str) -> String {
     let cleaned = text.trim_end();
     let mut prefixes = i18n::get_known_prefixes("memory.block_prefix");
@@ -2287,6 +2295,37 @@ mod tests {
     fn test_resolve_message_budget_reserves_tool_overhead() {
         assert_eq!(resolve_message_budget(4096, 512), 3584);
         assert_eq!(resolve_message_budget(256, 4096), 1);
+    }
+
+    #[test]
+    fn test_build_compaction_summary_config_disables_reasoning_in_payload() {
+        let cfg = llm_config(json!({
+            "provider": "openai",
+            "api_mode": "responses",
+            "model": "gpt-5-mini",
+            "max_output": 2048,
+            "reasoning_effort": "high"
+        }));
+        let summary_config = build_compaction_summary_config(&cfg);
+        let client = build_llm_client(&summary_config, reqwest::Client::new());
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: json!("compress this"),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+
+        assert_eq!(summary_config.reasoning_effort.as_deref(), Some("none"));
+        assert_eq!(summary_config.max_rounds, Some(1));
+        assert_eq!(
+            summary_config.max_output,
+            Some(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
+        );
+        assert_eq!(payload["reasoning"]["effort"], "none");
     }
 
     #[test]

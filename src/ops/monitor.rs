@@ -28,7 +28,6 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 const DEFAULT_EVENT_LIMIT: usize = 500;
-const DEFAULT_PAYLOAD_LIMIT: usize = 4000;
 const MIN_PAYLOAD_LIMIT: usize = 256;
 const DEFAULT_PERSIST_INTERVAL_S: f64 = 15.0;
 const DEFAULT_SYSTEM_SNAPSHOT_TTL_S: f64 = 1.0;
@@ -2633,10 +2632,7 @@ fn resolve_event_limit(raw: i64) -> Option<usize> {
 }
 
 fn resolve_payload_limit(raw: i64) -> Option<usize> {
-    if raw == 0 {
-        return Some(DEFAULT_PAYLOAD_LIMIT);
-    }
-    if raw < 0 {
+    if raw <= 0 {
         return None;
     }
     let value = raw as usize;
@@ -3058,9 +3054,9 @@ fn localize_summary(summary: &str) -> String {
 mod tests {
     use super::{
         build_llm_speed_summary, derive_effective_context_tokens, is_workspace_usage_dir_name,
-        should_skip_event_for_profile, trim_string_fields,
+        resolve_payload_limit, should_skip_event_for_profile, trim_string_fields,
         update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile,
-        WorkspaceUsageScanState,
+        WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
     use serde_json::{json, Value};
     use std::{collections::VecDeque, fs};
@@ -3132,6 +3128,14 @@ mod tests {
         assert_eq!(trimmed["nested"]["inner"], json!("hijk...(truncated)"));
         assert_eq!(trimmed["arr"][0], json!("opqr...(truncated)"));
         assert_eq!(trimmed["arr"][1]["deep"], json!("uvwx...(truncated)"));
+    }
+
+    #[test]
+    fn resolve_payload_limit_zero_disables_truncation() {
+        assert_eq!(resolve_payload_limit(0), None);
+        assert_eq!(resolve_payload_limit(-1), None);
+        assert_eq!(resolve_payload_limit(64), Some(MIN_PAYLOAD_LIMIT));
+        assert_eq!(resolve_payload_limit(4096), Some(4096));
     }
 
     #[test]
