@@ -143,10 +143,6 @@ type TimelineDetailSession = {
 type TimelineExportLine = Record<string, unknown>;
 
 const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
-const TIMELINE_EXPORT_MAX_STRING_CHARS = 1200;
-const TIMELINE_EXPORT_MAX_ARRAY_ITEMS = 24;
-const TIMELINE_EXPORT_MAX_OBJECT_KEYS = 24;
-const TIMELINE_EXPORT_MAX_DEPTH = 6;
 
 const props = defineProps<{
   visible: boolean;
@@ -799,54 +795,6 @@ const buildEventSummary = (eventType: string, payload: unknown): Record<string, 
   return summary;
 };
 
-const compactExportText = (value: string): string => {
-  if (value.length <= TIMELINE_EXPORT_MAX_STRING_CHARS) {
-    return value;
-  }
-  return `${value.slice(0, TIMELINE_EXPORT_MAX_STRING_CHARS)}...(truncated)`;
-};
-
-const compactExportValue = (value: unknown, depth = 0): unknown => {
-  if (typeof value === 'string') {
-    return compactExportText(value);
-  }
-  if (value === null || value === undefined) {
-    return value ?? null;
-  }
-  if (typeof value !== 'object') {
-    return value;
-  }
-  if (depth >= TIMELINE_EXPORT_MAX_DEPTH) {
-    return '[truncated depth]';
-  }
-  if (Array.isArray(value)) {
-    if (value.length <= TIMELINE_EXPORT_MAX_ARRAY_ITEMS) {
-      return value.map((item) => compactExportValue(item, depth + 1));
-    }
-    const headCount = Math.max(1, Math.floor(TIMELINE_EXPORT_MAX_ARRAY_ITEMS * 0.75));
-    const tailCount = Math.max(1, TIMELINE_EXPORT_MAX_ARRAY_ITEMS - headCount);
-    const omitted = value.length - headCount - tailCount;
-    const head = value.slice(0, headCount).map((item) => compactExportValue(item, depth + 1));
-    const tail = value.slice(-tailCount).map((item) => compactExportValue(item, depth + 1));
-    return [
-      ...head,
-      { __truncated: true, omitted_items: Math.max(0, omitted) },
-      ...tail
-    ];
-  }
-  const source = value as Record<string, unknown>;
-  const keys = Object.keys(source);
-  const output: Record<string, unknown> = {};
-  for (const key of keys.slice(0, TIMELINE_EXPORT_MAX_OBJECT_KEYS)) {
-    output[key] = compactExportValue(source[key], depth + 1);
-  }
-  if (keys.length > TIMELINE_EXPORT_MAX_OBJECT_KEYS) {
-    output.__truncated = true;
-    output.__omitted_keys = keys.length - TIMELINE_EXPORT_MAX_OBJECT_KEYS;
-  }
-  return output;
-};
-
 const normalizeExportTimestamp = (value: unknown): string => {
   const text = String(value || '').trim();
   if (text) {
@@ -882,8 +830,8 @@ const buildTimelineExportLines = (): TimelineExportLine[] => {
         timestamp: normalizeExportTimestamp(event?.timestamp),
         timestamp_ms: normalizeTimestamp(event?.timestamp),
         title: resolveEventTitle(eventType, event?.data),
-        summary: compactExportValue(buildEventSummary(eventType, event?.data)),
-        data: compactExportValue(unwrapEventData(event?.data))
+        summary: buildEventSummary(eventType, event?.data),
+        data: unwrapEventData(event?.data)
       });
     });
   });
@@ -895,20 +843,14 @@ const buildTimelineExportLines = (): TimelineExportLine[] => {
     export_format: 'jsonl',
     exported_at: new Date().toISOString(),
     summary: {
-      question: compactExportText(detailQuestion.value),
+      question: detailQuestion.value,
       round_count: rounds.value.length,
       event_count: order,
       event_types: Array.from(uniqueEventTypes).sort((left, right) => left.localeCompare(right)),
       running: running.value,
       last_event_id: lastEventId.value
     },
-    session: compactExportValue(session),
-    compact_policy: {
-      max_string_chars: TIMELINE_EXPORT_MAX_STRING_CHARS,
-      max_array_items: TIMELINE_EXPORT_MAX_ARRAY_ITEMS,
-      max_object_keys: TIMELINE_EXPORT_MAX_OBJECT_KEYS,
-      max_depth: TIMELINE_EXPORT_MAX_DEPTH
-    }
+    session
   });
 
   return output;
