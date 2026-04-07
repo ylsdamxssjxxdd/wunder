@@ -201,6 +201,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   WORLD_PADDING,
+  type BeeroomSwarmDispatchPreview,
   buildBeeroomSwarmProjection,
   hasBeeroomSwarmNodes,
   resolveBeeroomSwarmScopeKey
@@ -223,6 +224,7 @@ const props = defineProps<{
   group: BeeroomGroup | null;
   mission: BeeroomMission | null;
   agents: BeeroomMember[];
+  dispatchPreview: BeeroomSwarmDispatchPreview | null;
   subagentsByTask: Record<string, BeeroomMissionSubagentItem[]>;
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
@@ -296,6 +298,7 @@ const projection = computed(() =>
     agents: props.agents,
     selectedNodeId: selectedNodeId.value,
     nodePositionOverrides: nodePositionOverrides.value,
+    dispatchPreview: props.dispatchPreview,
     subagentsByTask: props.subagentsByTask,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
@@ -310,6 +313,7 @@ const baseProjection = computed(() =>
     agents: props.agents,
     selectedNodeId: selectedNodeId.value,
     nodePositionOverrides: {},
+    dispatchPreview: props.dispatchPreview,
     subagentsByTask: props.subagentsByTask,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,

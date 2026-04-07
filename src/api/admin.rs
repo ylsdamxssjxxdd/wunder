@@ -2204,9 +2204,7 @@ fn build_admin_vector_knowledge_test_hits(
         .collect()
 }
 
-fn build_admin_literal_knowledge_test_hits(
-    docs: Vec<knowledge::KnowledgeDocument>,
-) -> Vec<Value> {
+fn build_admin_literal_knowledge_test_hits(docs: Vec<knowledge::KnowledgeDocument>) -> Vec<Value> {
     docs.into_iter()
         .map(|doc| {
             let document = if doc.document.trim().is_empty() {
@@ -2255,7 +2253,8 @@ async fn admin_knowledge_test_stream(
         let outcome = async {
             if base.is_vector() {
                 let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
-                let embed_config = vector_knowledge::resolve_embedding_model(&config, embedding_name)?;
+                let embed_config =
+                    vector_knowledge::resolve_embedding_model(&config, embedding_name)?;
                 let timeout_s = embed_config.timeout_s.unwrap_or(120);
                 let effective_top_k = top_k
                     .filter(|value| *value > 0)

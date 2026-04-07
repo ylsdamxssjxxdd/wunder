@@ -210,7 +210,8 @@ pub async fn query_knowledge_documents(
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
 ) -> Vec<KnowledgeDocument> {
-    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await
+    else {
         return Vec::new();
     };
     if let Some(logger) = request_logger {
@@ -258,7 +259,8 @@ pub async fn query_knowledge_raw_with_documents(
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
 ) -> Result<(String, String, Vec<KnowledgeDocument>)> {
-    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await
+    else {
         return Ok((String::new(), String::new(), Vec::new()));
     };
     if let Some(logger) = request_logger {
@@ -296,7 +298,8 @@ where
     F: FnMut(String, String) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await
+    else {
         return Ok((String::new(), String::new(), Vec::new()));
     };
     if let Some(logger) = request_logger {

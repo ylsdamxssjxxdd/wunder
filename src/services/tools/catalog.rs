@@ -600,10 +600,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
                     "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
                     "messageLimit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
-                    "parentId": {"type": "string", "description": t("tool.spec.sessions_list.args.parent_id")},
-                    "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                    "sessionId": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                    "sessionIds": {"type": "array", "description": "Target child session ids.", "items": {"type": "string"}},
+                    "parentId": {"type": "string", "description": "Parent session id. list/status/wait default to the current session when omitted."},
+                    "session_id": {"type": "string", "description": "Target child session id under the current session."},
+                    "sessionId": {"type": "string", "description": "Target child session id under the current session."},
+                    "sessionIds": {"type": "array", "description": "Target child session ids under the current session.", "items": {"type": "string"}},
                     "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
                     "runId": {"type": "string", "description": "Target run id."},
                     "runIds": {"type": "array", "description": "Target run ids.", "items": {"type": "string"}},
@@ -701,13 +701,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
-            description: "蜂群协作工具。可用 action：send / batch_send / wait / status / history / spawn / list。".to_string(),
+            description: "蜂群协作工具，只管理已存在的其他智能体。spawn 必须提供 agentId/agentName；临时子会话请改用子智能体控制。".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生)/list(列成员)。",
+                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生到已存在智能体)/list(列成员)。",
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": "目标智能体 ID。"},
@@ -715,7 +715,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "name": {"type": "string", "description": "agentName 的简写别名。"},
                     "sessionKey": {"type": "string", "description": "目标会话 ID。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
-                    "task": {"type": "string", "description": "spawn 的任务描述。", "minLength": 1},
+                    "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agentId/agentName 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
                     "tasks": {
                         "type": "array",
                         "description": "batch_send 任务列表。",
@@ -1629,8 +1629,12 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "智能体蜂群")
             .expect("agent_swarm spec");
+        assert!(spec.description.contains("子智能体控制"));
         assert!(spec.input_schema["properties"]["agentName"].is_object());
         assert!(spec.input_schema["properties"]["name"].is_object());
+        assert!(spec.input_schema["properties"]["task"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("subagent_control.spawn")));
         let task_props = &spec.input_schema["properties"]["tasks"]["items"]["properties"];
         assert!(task_props["agentName"].is_object());
         assert!(task_props["name"].is_object());
@@ -1653,6 +1657,21 @@ mod tests {
         assert!(spawn_any_of
             .iter()
             .any(|item| item["required"][0] == "name"));
+    }
+
+    #[test]
+    fn subagent_control_schema_defaults_to_current_parent_scope() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "子智能体控制")
+            .expect("subagent_control spec");
+        assert!(spec.description.contains("当前会话"));
+        assert!(spec.input_schema["properties"]["parentId"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("current session")));
+        assert!(spec.input_schema["properties"]["sessionId"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("child session")));
     }
 
     #[test]

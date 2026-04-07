@@ -238,13 +238,13 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
     }
     match action.to_ascii_lowercase().as_str() {
         "list" | "sessions_list" | "session_list" | "会话列表" | "列表" => {
-            super::sessions_list(context, args).await
+            list(context, args).await
         }
         "history" | "sessions_history" | "session_history" | "会话历史" | "历史" => {
-            super::sessions_history(context, args).await
+            history(context, args).await
         }
         "send" | "sessions_send" | "session_send" | "会话发送" | "发送" => {
-            super::sessions_send(context, args).await
+            send(context, args).await
         }
         "spawn" | "sessions_spawn" | "session_spawn" | "会话派生" | "派生" => {
             super::sessions_spawn(context, args).await
@@ -259,6 +259,79 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
         "resume" | "reopen" | "恢复" => resume(context, args).await,
         _ => Err(anyhow!("unknown subagent_control action: {action}")),
     }
+}
+
+async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: super::SessionListArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let parent_session_id = resolve_subagent_parent_scope(payload.parent_id, context.session_id)?;
+    let mut scoped_args = args.clone();
+    if let Value::Object(ref mut map) = scoped_args {
+        map.insert("parentId".to_string(), json!(parent_session_id));
+    }
+    super::sessions_list(context, &scoped_args).await
+}
+
+async fn history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: super::SessionHistoryArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    ensure_current_child_session(context, payload.session_key, "history")?;
+    super::sessions_history(context, args).await
+}
+
+async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: super::SessionSendArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    ensure_current_child_session(context, payload.session_key, "send")?;
+    super::sessions_send(context, args).await
+}
+
+fn resolve_subagent_parent_scope(
+    explicit_parent_id: Option<String>,
+    current_session_id: &str,
+) -> Result<String> {
+    normalize_optional_string(explicit_parent_id)
+        .or_else(|| normalize_optional_string(Some(current_session_id.to_string())))
+        .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))
+}
+
+fn ensure_current_child_session(
+    context: &ToolContext<'_>,
+    session_key: Option<String>,
+    action: &str,
+) -> Result<String> {
+    let user_id = context.user_id.trim();
+    if user_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let current_session_id = context.session_id.trim();
+    if current_session_id.is_empty() {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    }
+    let session_id = super::resolve_session_key(session_key)?;
+    let Some(record) = context.storage.get_chat_session(user_id, &session_id)? else {
+        return Err(anyhow!(i18n::t("error.session_not_found")));
+    };
+    if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
+        return Err(anyhow!(
+            "subagent_control {action} requires a direct child session of the current session"
+        ));
+    }
+    Ok(session_id)
+}
+
+fn is_direct_child_session(
+    target_parent_session_id: Option<&str>,
+    current_session_id: &str,
+) -> bool {
+    let current_session_id = current_session_id.trim();
+    if current_session_id.is_empty() {
+        return false;
+    }
+    target_parent_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value == current_session_id)
 }
 
 async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1963,6 +2036,32 @@ mod tests {
         let error = resolve_targets(&SubagentTargetArgs::default(), None)
             .expect_err("empty selector should fail");
         assert!(error.to_string().contains("target is required"));
+    }
+
+    #[test]
+    fn resolve_subagent_parent_scope_defaults_to_current_session() {
+        let resolved = resolve_subagent_parent_scope(None, " sess_parent ")
+            .expect("current session should become default parent");
+        assert_eq!(resolved, "sess_parent");
+    }
+
+    #[test]
+    fn resolve_subagent_parent_scope_prefers_explicit_parent() {
+        let resolved =
+            resolve_subagent_parent_scope(Some(" sess_explicit ".to_string()), "sess_current")
+                .expect("explicit parent should win");
+        assert_eq!(resolved, "sess_explicit");
+    }
+
+    #[test]
+    fn direct_child_session_requires_parent_match() {
+        assert!(is_direct_child_session(
+            Some(" sess_parent "),
+            "sess_parent"
+        ));
+        assert!(!is_direct_child_session(Some("sess_other"), "sess_parent"));
+        assert!(!is_direct_child_session(None, "sess_parent"));
+        assert!(!is_direct_child_session(Some("sess_parent"), ""));
     }
 
     #[test]

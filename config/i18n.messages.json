@@ -2260,8 +2260,8 @@
     "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Control sub-agent sessions and dispatches. Prefer spawn or batch_spawn for background work, then yield the parent turn instead of blocking on polling.",
-    "zh-CN": "控制子智能体会话与批量调度。处理后台任务时，优先先 spawn 或 batch_spawn，再让出父会话，而不是阻塞轮询。"
+    "en-US": "Control child sub-agent sessions under the current parent session. list/status/wait default to the current session's children; history/send only accept child sessions of the current session.",
+    "zh-CN": "控制当前父会话下的子智能体会话。list/status/wait 默认只看当前会话的子会话；history/send 只接受当前会话的子会话。"
   },
   "tool.spec.subagent_control.args.action": {
     "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume.",

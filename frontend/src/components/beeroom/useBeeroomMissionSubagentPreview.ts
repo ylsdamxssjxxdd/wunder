@@ -76,7 +76,9 @@ const normalizeSubagentStatus = (value: unknown): string => {
   return normalized || 'running';
 };
 
-const normalizeSubagentItem = (value: unknown): BeeroomMissionSubagentItem | null => {
+export const normalizeBeeroomMissionSubagentItem = (
+  value: unknown
+): BeeroomMissionSubagentItem | null => {
   const source = asRecord(value);
   if (!source) return null;
   const sessionId = normalizeText(source.session_id ?? source.sessionId);
@@ -314,7 +316,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
       if (disposed || !mounted || controller.signal.aborted) return;
       const source = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
       const normalized = source
-        .map((item: unknown) => normalizeSubagentItem(item))
+        .map((item: unknown) => normalizeBeeroomMissionSubagentItem(item))
         .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item))
         .sort((left, right) => {
           const activeDiff =

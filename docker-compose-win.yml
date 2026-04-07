@@ -20,9 +20,14 @@ services:
       - "0.0.0.0:${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
     volumes:
       - ./:/app
-      - ./config/data/workspaces:/workspaces
-      - ./config/data/browser:/app/config/data/browser
-      - ./config/data/ms-playwright:/ms-playwright
+      - wunder_win_workspaces:/workspaces
+      - wunder_win_browser:/app/config/data/browser
+      - wunder_win_user_tools:/app/config/data/user_tools
+      - wunder_win_vector_knowledge:/app/config/data/vector_knowledge
+      - wunder_win_temp_dir:/app/config/data/temp_dir
+      - wunder_win_playwright:/ms-playwright
+      - wunder_win_cargo_home:/app/.cargo/x86
+      - wunder_win_cargo_target:/app/target/x86
       - ./config/fonts:/usr/share/fonts/wunder:ro
     environment:
       - TZ=Asia/Shanghai
@@ -100,9 +105,14 @@ services:
       - CARGO_TARGET_DIR=/app/target/x86
     volumes:
       - ./:/app
-      - ./config/data/workspaces:/workspaces
-      - ./config/data/browser:/app/config/data/browser
-      - ./config/data/ms-playwright:/ms-playwright
+      - wunder_win_workspaces:/workspaces
+      - wunder_win_browser:/app/config/data/browser
+      - wunder_win_user_tools:/app/config/data/user_tools
+      - wunder_win_vector_knowledge:/app/config/data/vector_knowledge
+      - wunder_win_temp_dir:/app/config/data/temp_dir
+      - wunder_win_playwright:/ms-playwright
+      - wunder_win_cargo_home:/app/.cargo/x86
+      - wunder_win_cargo_target:/app/target/x86
       - ./config/fonts:/usr/share/fonts/wunder:ro
     command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     healthcheck:
@@ -123,7 +133,7 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
-      - ./config/data/workspaces:/workspaces
+      - wunder_win_workspaces:/workspaces
     ports:
       - "127.0.0.1:${MCP_PORT:-9010}:${MCP_PORT:-9010}"
     environment:
@@ -150,7 +160,7 @@ services:
     ports:
       - "127.0.0.1:${WUNDER_POSTGRES_PORT:-5432}:5432"
     volumes:
-      - ./config/data/postgres:/var/lib/postgresql/data
+      - wunder_win_postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wunder -d wunder"]
       interval: 5s
@@ -175,7 +185,7 @@ services:
     ports:
       - "127.0.0.1:${WEAVIATE_PORT:-18003}:8080"
     volumes:
-      - ./config/data/weaviate:/var/lib/weaviate
+      - wunder_win_weaviate:/var/lib/weaviate
     restart: always
 
   wunder-frontend:
@@ -188,7 +198,9 @@ services:
     restart: always
     volumes:
       - ./:/workspace
-      - ./node_modules-linux-x86:/workspace/node_modules
+      - wunder_win_frontend_node_modules:/workspace/node_modules
+      - wunder_win_frontend_dist:/workspace/frontend/dist
+      - wunder_win_frontend_dist_tmp:/workspace/frontend/dist.__docker_tmp
     ports:
       - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
     environment:
@@ -230,12 +242,23 @@ services:
     command: ["/bin/sh", "-lc", "until [ -f /usr/share/nginx/html/index.html ]; do echo '[wunder-nginx] waiting for frontend dist/index.html'; sleep 1; done; exec nginx -g 'daemon off;'"]
     restart: always
     volumes:
-      - ./frontend/dist:/usr/share/nginx/html:ro${NGINX_BIND_OPTS:-}
+      - wunder_win_frontend_dist:/usr/share/nginx/html:ro
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro${NGINX_BIND_OPTS:-}
       - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
     ports:
       - "${NGINX_PORT:-18002}:80"
 
-
-
-
+volumes:
+  wunder_win_workspaces:
+  wunder_win_browser:
+  wunder_win_user_tools:
+  wunder_win_vector_knowledge:
+  wunder_win_temp_dir:
+  wunder_win_playwright:
+  wunder_win_cargo_home:
+  wunder_win_cargo_target:
+  wunder_win_postgres:
+  wunder_win_weaviate:
+  wunder_win_frontend_node_modules:
+  wunder_win_frontend_dist:
+  wunder_win_frontend_dist_tmp:

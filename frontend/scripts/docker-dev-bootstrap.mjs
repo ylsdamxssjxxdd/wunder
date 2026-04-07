@@ -65,6 +65,23 @@ const run = (command, args, options = {}) =>
     });
   });
 
+const ensureEmptyDirectory = async (targetPath) => {
+  const stat = await fs.lstat(targetPath).catch(() => null);
+  if (stat && !stat.isDirectory()) {
+    await fs.rm(targetPath, { recursive: true, force: true });
+  }
+
+  // Preserve the directory root because Docker named-volume mount points can
+  // fail with EBUSY when the script tries to remove the mount itself.
+  await fs.mkdir(targetPath, { recursive: true });
+  const entries = await fs.readdir(targetPath, { withFileTypes: true });
+  await Promise.all(
+    entries.map((entry) =>
+      fs.rm(path.join(targetPath, entry.name), { recursive: true, force: true })
+    )
+  );
+};
+
 const resolveLinuxRollupNativePackageName = () => {
   if (process.platform !== 'linux') return '';
   const isMusl = !process.report?.getReport?.()?.header?.glibcVersionRuntime;
@@ -177,7 +194,7 @@ const ensureDependencies = async () => {
 
 const clearCaches = async () => {
   await Promise.all(viteCacheRoots.map((targetPath) => fs.rm(targetPath, { recursive: true, force: true })));
-  await fs.rm(tempDistRoot, { recursive: true, force: true });
+  await ensureEmptyDirectory(tempDistRoot);
 };
 
 const buildTempDist = async (viteEntry) => {
@@ -261,7 +278,7 @@ const syncDist = async () => {
   }
 
   await removeStaleEntries(tempDistRoot, distRoot);
-  await fs.rm(tempDistRoot, { recursive: true, force: true });
+  await ensureEmptyDirectory(tempDistRoot);
   log('static dist is ready for nginx');
 };
 

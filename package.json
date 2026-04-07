@@ -6,6 +6,14 @@
     "desktop/electron"
   ],
   "scripts": {
+    "deps:status": "python scripts/node_modules_profile.py status",
+    "deps:use:auto": "python scripts/node_modules_profile.py use --profile auto",
+    "deps:use:win-x86": "python scripts/node_modules_profile.py use --profile win-x86",
+    "deps:use:linux-x86": "python scripts/node_modules_profile.py use --profile linux-x86",
+    "deps:use:linux-arm": "python scripts/node_modules_profile.py use --profile linux-arm",
+    "deps:adopt:win-x86": "python scripts/node_modules_profile.py adopt --profile win-x86",
+    "deps:adopt:linux-x86": "python scripts/node_modules_profile.py adopt --profile linux-x86",
+    "deps:adopt:linux-arm": "python scripts/node_modules_profile.py adopt --profile linux-arm",
     "sync:app-version": "python scripts/sync_app_version.py",
     "build:frontend": "npm run build --workspace wunder-frontend",
     "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",

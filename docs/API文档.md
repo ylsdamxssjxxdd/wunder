@@ -6,7 +6,7 @@
 
 - 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
 - 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
-- 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
+- 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`；Windows 本地开发如果 bind mount 导致前端/编译 I/O 明显卡顿，可改用新增的 `docker-compose-win.yml`，保留源码目录挂载并把运行态数据、前端产物和依赖缓存切到 Docker named volume。
 - MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `config/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`config/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准；默认优先读取该路径，不存在时兼容回退到 `extra_mcp/mcp_config.json`。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
@@ -15,6 +15,7 @@
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
 - docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
+- 前端多平台依赖目录约定：仓库根使用并行 profile 保存不同系统的依赖树，当前默认包括 `node_modules-win-x86/`、`node_modules-linux-x86/`、`node_modules-linux-arm/`；根 `node_modules/` 只作为当前宿主平台的活动入口（链接/联接点），宿主机可通过 `python scripts/node_modules_profile.py status|use|adopt ...` 管理。`docker-compose-x86.yml` 会把 `./node_modules-linux-x86` 挂到 `/workspace/node_modules`，`docker-compose-arm.yml` 会把 `./node_modules-linux-arm` 挂到 `/workspace/node_modules`，从而避免 Linux 容器内的 `npm ci` 改写宿主机 Windows 依赖目录。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。

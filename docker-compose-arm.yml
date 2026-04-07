@@ -195,6 +195,7 @@ services:
     restart: always
     volumes:
       - ./:/workspace
+      - ./node_modules-linux-arm:/workspace/node_modules
     ports:
       - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
     environment:

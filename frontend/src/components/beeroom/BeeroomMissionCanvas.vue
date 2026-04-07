@@ -12,6 +12,7 @@
           :group="group"
           :mission="mission"
           :agents="agents"
+          :dispatch-preview="dispatchPreview"
           :subagents-by-task="subagentsByTask"
           :workflow-items-by-task="workflowItemsByTask"
           :workflow-preview-by-task="workflowPreviewByTask"
@@ -119,6 +120,7 @@ const {
   dispatchRuntimeStatus,
   dispatchRuntimeTone,
   dispatchSessionId,
+  dispatchPreview,
   displayChatMessages,
   subagentsByTask,
   workflowItemsByTask,

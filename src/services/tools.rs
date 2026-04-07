@@ -2933,7 +2933,11 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         requested_agent_id.as_deref(),
         requested_agent_name.as_deref(),
     )?
-    .ok_or_else(|| anyhow!("agent_swarm spawn requires agent_id/agent_name"))?;
+    .ok_or_else(|| {
+        anyhow!(
+            "agent_swarm spawn requires agent_id/agent_name; use subagent_control spawn for ad-hoc child sessions"
+        )
+    })?;
     let mut spawn_args = args.clone();
     if let Value::Object(ref mut map) = spawn_args {
         map.insert("agentId".to_string(), json!(target_agent.agent_id));

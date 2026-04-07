@@ -19,6 +19,8 @@ source_docs:
 
 `智能体蜂群` 是 Wunder 里最接近「多智能体协作总线」的内置工具。
 
+它只管理**已存在的其他智能体**。如果你只是想临时派生一个当前会话的子会话，不要用这里的 `spawn`，而是改用 [子智能体控制](/docs/zh-CN/tools/subagent-control/) 的 `spawn`。
+
 **别名**：
 - `agent_swarm`
 - `swarm_control`
@@ -42,7 +44,7 @@ source_docs:
 | `status` | 查看运行状态 | `runIds` |
 | `send` | 单目标发送 | `agentId`, `sessionKey`, `message`, `task` |
 | `history` | 查看历史 | `sessionKey` |
-| `spawn` | 派生运行 | `agentId`, `task`, `label` |
+| `spawn` | 向已存在智能体派生运行 | `agentId`, `task`, `label` |
 | `batch_send` | 批量派发 | `tasks` |
 | `wait` | 等待结果 | `runIds` |
 
@@ -67,6 +69,21 @@ source_docs:
   "task": "研究这个技术方案的可行性"
 }
 ```
+
+`send` / `spawn` 面向的是已经存在的目标智能体或其会话，不负责“临时新建一个匿名子会话”。
+
+### 派生到已存在智能体
+
+```json
+{
+  "action": "spawn",
+  "agentId": "researcher",
+  "task": "继续分析这个方案的风险",
+  "label": "风险分析"
+}
+```
+
+`spawn` 必须提供 `agentId`、`agentName` 或 `name` 之一。
 
 ### 批量派发
 
@@ -198,7 +215,11 @@ source_docs:
    - `send` 适合单目标
    - `batch_send` 适合多目标
 
-3. **wait 的输入**：
+3. **spawn 的目标**：
+   - `spawn` 只面向已存在智能体
+   - 想临时派生当前会话的子会话，请改用 `subagent_control.spawn`
+
+4. **wait 的输入**：
    - `wait` 的输入是运行 ID
    - 不是普通会话标题
 
