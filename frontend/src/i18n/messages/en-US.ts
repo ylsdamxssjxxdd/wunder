@@ -1487,9 +1487,9 @@ export default {
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.toolFailureGuardTriggered': 'Tool failure guard triggered',
   'chat.workflow.toolFailureGuardDetail':
-    'Tool "{tool}" failed {repeatCount} times (threshold {threshold}). Automatic retries for this turn were stopped. You can continue the conversation, or adjust parameters before retrying this step.',
+    'Tool "{tool}" failed {repeatCount} times (threshold {threshold}). This step was paused so the conversation does not stay stuck on the same error. You can continue chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or continue in smaller steps.',
   'chat.workflow.toolFailureGuardDetailNoTool':
-    'Repeated tool failures reached the threshold ({repeatCount}/{threshold}). Automatic retries for this turn were stopped. You can continue the conversation, or adjust parameters before retrying this step.',
+    'Repeated tool failures reached the threshold ({repeatCount}/{threshold}). This step was paused so the conversation does not stay stuck on the same error. You can continue chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or continue in smaller steps.',
   'chat.workflow.title': 'Event Stream',
   'chat.workflow.toolCall': 'Tool call: {tool}',
   'chat.workflow.toolOutput': 'Tool output: {tool}',

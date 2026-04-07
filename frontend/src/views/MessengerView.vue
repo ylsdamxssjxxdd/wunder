@@ -961,6 +961,20 @@
                   />
                 </template>
                 <template v-else>
+                <MessageCompactionDivider
+                  v-if="
+                    item.message.role === 'assistant' &&
+                      shouldShowCompactionDivider(item.message)
+                  "
+                  :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
+                  :is-streaming="
+                    Boolean(
+                      item.message.workflowStreaming ||
+                        item.message.reasoningStreaming ||
+                        item.message.stream_incomplete
+                    )
+                  "
+                />
                 <div class="messenger-message-meta">
                   <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
@@ -1148,17 +1162,6 @@
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
-                <MessageCompactionDivider
-                  v-if="shouldShowCompactionDivider(item.message)"
-                  :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
-                  :is-streaming="
-                    Boolean(
-                      item.message.workflowStreaming ||
-                        item.message.reasoningStreaming ||
-                        item.message.stream_incomplete
-                    )
-                  "
-                />
                 </template>
               </div>
             </div>
@@ -4951,27 +4954,7 @@ const collectMainAgentSessionEntries = (): AgentMainSessionEntry[] => {
 const resolvePreferredAgentSessionId = (agentId: unknown): string => {
   const normalizedAgentId = normalizeAgentId(agentId);
   const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
-  let fallbackSessionId = '';
-  let fallbackActivity = -1;
-  for (const sessionRaw of sessions) {
-    const session = (sessionRaw || {}) as Record<string, unknown>;
-    if (normalizeAgentId(session.agent_id) !== normalizedAgentId) {
-      continue;
-    }
-    const sessionId = String(session.id || '').trim();
-    if (!sessionId) {
-      continue;
-    }
-    if (Boolean(session.is_main)) {
-      return sessionId;
-    }
-    const activity = resolveSessionActivityTimestamp(session);
-    if (!fallbackSessionId || activity > fallbackActivity) {
-      fallbackSessionId = sessionId;
-      fallbackActivity = activity;
-    }
-  }
-  return fallbackSessionId;
+  return chatStore.resolveInitialSessionId(normalizedAgentId, sessions);
 };
 
 const queuedSessionDetailPrefetchIds = new Set<string>();
@@ -6596,8 +6579,8 @@ const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean 
   if (isCompactionMarkerMessage(message)) return true;
   const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
   if (!snapshot) return false;
-  if (snapshot.status === 'failed' || snapshot.status === 'cancelled') return true;
-  return isCompactionRunningFromWorkflowItems(message?.workflowItems);
+  const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
+  return detailStatus !== 'skipped';
 };
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
@@ -10875,12 +10858,24 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
   await sendWorldMessage();
 };
 
-function resolveReusableFreshAgentSessionId(targetAgentId: string): string {
-  return chatStore.resolveReusableFreshSessionId(targetAgentId);
+function resolveReusableFreshAgentSessionId(
+  targetAgentId: string,
+  options: { activeOnly?: boolean } = {}
+): string {
+  return chatStore.resolveReusableFreshSessionId(targetAgentId, options);
 }
 
-async function openOrReuseFreshAgentSession(targetAgentId: string): Promise<string> {
-  const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgentId);
+async function openOrReuseFreshAgentSession(
+  targetAgentId: string,
+  options: { reuseScope?: 'any' | 'active_only' | 'none' } = {}
+): Promise<string> {
+  const reuseScope = options.reuseScope || 'any';
+  const reusableSessionId =
+    reuseScope === 'none'
+      ? ''
+      : resolveReusableFreshAgentSessionId(targetAgentId, {
+          activeOnly: reuseScope === 'active_only'
+        });
   if (reusableSessionId) {
     void chatStore.setMainSession(reusableSessionId).catch(() => null);
     return reusableSessionId;
@@ -10900,7 +10895,9 @@ async function runStartNewSession(options: { notify?: boolean } = {}): Promise<S
   }
   const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
-  const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgent);
+  const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgent, {
+    activeOnly: true
+  });
   if (activeSessionId && reusableSessionId && activeSessionId === reusableSessionId) {
     if (options.notify === true) {
       ElMessage.info(t('chat.newSessionAlreadyCurrent'));
@@ -10910,7 +10907,9 @@ async function runStartNewSession(options: { notify?: boolean } = {}): Promise<S
   const runResult = await runWithMessengerInteractionBlock('new_session', async () => {
     creatingAgentSession.value = true;
     try {
-      const sessionId = await openOrReuseFreshAgentSession(targetAgent);
+      const sessionId = await openOrReuseFreshAgentSession(targetAgent, {
+        reuseScope: 'active_only'
+      });
       if (!sessionId) return 'noop';
       if (options.notify === true) {
         ElMessage.success(t('chat.newSessionOpened'));

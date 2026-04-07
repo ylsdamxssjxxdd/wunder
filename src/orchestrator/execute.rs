@@ -11,6 +11,7 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
+use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
 use crate::services::chat_attachments::persist_user_chat_attachments;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
@@ -417,6 +418,7 @@ impl Orchestrator {
                 output: 0,
                 total: 0,
             };
+            let mut turn_decode_speed = TurnDecodeSpeedAccumulator::default();
             let mut answer = String::new();
             let mut stop_reason: Option<String> = None;
             let mut stop_meta: Option<Value> = None;
@@ -572,7 +574,7 @@ impl Orchestrator {
                 }
 
                 let mut overflow_recovery_attempts = 0_u32;
-                let (content, reasoning, usage, tool_calls_payload) = loop {
+                let (content, reasoning, usage, tool_calls_payload, round_speed) = loop {
                     match self
                         .call_llm(
                             &llm_config,
@@ -737,6 +739,7 @@ impl Orchestrator {
                     }
                 };
                 last_response = Some((content.clone(), reasoning.clone()));
+                turn_decode_speed.record_summary(&round_speed);
                 update_round_usage_authority(&mut round_usage, &usage);
                 let usage_context_tokens = if usage.total > 0 {
                     usage.total
@@ -1725,6 +1728,7 @@ impl Orchestrator {
                     map.insert("stop_meta".to_string(), meta);
                 }
                 last_round_info.insert_into(map);
+                turn_decode_speed.insert_into_map(map);
             }
             emitter.emit("final", final_payload).await;
             emit_turn_terminal_event(
@@ -3452,6 +3456,10 @@ mod tests {
         assert!(answer.contains("read_file"));
         assert!(answer.contains("3"));
         assert!(answer.contains("5"));
+        assert!(answer.contains("先分析刚才的报错"));
+        assert!(answer.contains("不要再重复这一步"));
+        assert!(answer.contains("换一种方法"));
+        assert!(answer.contains("改用其他工具"));
         assert!(!answer.contains("{tool_name}"));
         assert!(!answer.contains("{repeat_count}"));
         assert!(!answer.contains("{threshold}"));

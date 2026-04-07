@@ -145,7 +145,7 @@
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
-- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试。
+- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；若同一工具命中同一个明确的不可重试错误，默认会在第 3 次相同失败后提前触发保护，避免模型持续硬撞同一错误。
 - 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
@@ -246,8 +246,8 @@
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 浏览器工具重构（2026-03-27）：内置工具 `浏览器`（英文别名 `browser`）升级为浏览器运行时入口，支持 `status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/screenshot/read_page`；保留 `browser_navigate/browser_click/browser_type/browser_screenshot/browser_read_page/browser_close` 旧别名兼容。浏览器工具对模型的可见性由 `tools.browser.enabled` 控制，浏览器运行时由顶层 `browser.*` 配置控制；非 desktop 模式下无需再把 `浏览器` 写进 `tools.builtin.enabled`，`desktop + tools.browser.enabled` 仍兼容 legacy 模式。
 - 新增浏览器控制接口（2026-03-27）：`/wunder/browser/health`、`/wunder/browser/status`、`/wunder/browser/profiles`、`/wunder/browser/session/start`、`/wunder/browser/session/stop`、`/wunder/browser/tabs`、`/wunder/browser/tabs/open`、`/wunder/browser/tabs/focus`、`/wunder/browser/tabs/close`、`/wunder/browser/navigate`、`/wunder/browser/snapshot`、`/wunder/browser/act`、`/wunder/browser/screenshot`、`/wunder/browser/read_page`。
-- 内置工具 `网页抓取`（英文别名 `web_fetch`）现要求传入明确公网 URL，支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
-- `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置私网地址拦截、重定向复校验、响应体大小限制与短 TTL 缓存，配置位于 `tools.web.fetch.*`。
+- 内置工具 `网页抓取`（英文别名 `web_fetch`）支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不用于本地文件或关键词搜索，并会对明显的前端壳页/验证页返回结构化失败或自动切换浏览器兜底。
+- `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置重定向复校验、响应体大小限制与短 TTL 缓存。私网/内网目标默认拦截，但现可通过 `tools.web.fetch.allow_private_network=true` 全量放开，或用 `tools.web.fetch.hostname_allowlist` 按主机名/IP 精确放行。
 - `网页抓取` 的失败结果现结构化暴露 `phase`（如 `validation/dns_lookup/request/response_body/extract`）、`failure_summary`、`next_step_hint` 与 `error_meta`；浏览器桥启动失败也会在 ready 前返回结构化 JSON，便于工作流区域直接展示真实故障原因（例如缺少 Playwright 浏览器二进制）。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
@@ -1259,6 +1259,7 @@
   - `service`：服务状态指标（active_sessions/history_sessions/finished_sessions/error_sessions/cancelled_sessions/total_sessions/avg_token_usage/avg_elapsed_s/avg_prefill_speed_tps/avg_decode_speed_tps）
   - `sandbox`：沙盒状态（mode/network/readonly_rootfs/idle_ttl_s/timeout_s/endpoint/image/resources(cpu/memory_mb/pids)/recent_calls/recent_sessions）
   - `sessions`：活动线程列表（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
     + decode_tokens/decode_duration_s/decode_speed_tps）
   - `tool_stats`：工具调用统计列表（tool/calls）
@@ -1276,6 +1277,7 @@
   - `tool`：工具名称
   - `tool_name`：工具真实名称（用于事件定位）
   - `sessions`：调用会话列表（session_id/user_id/question/status/stage/start_time/updated_time/elapsed_s/token_usage/tool_calls/last_time
+    + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
     + decode_tokens/decode_duration_s/decode_speed_tps）
 
@@ -1284,6 +1286,7 @@
 - 方法：`GET`
 - 返回（JSON）：
   - `session`：线程详情（start_time/session_id/user_id/question/status/token_usage/elapsed_s/stage/summary
+    + ttft_ms
     + prefill_tokens/prefill_duration_s/prefill_speed_tps/prefill_speed_lower_bound
     + decode_tokens/decode_duration_s/decode_speed_tps）
   - `events`：事件详情列表
@@ -1296,7 +1299,7 @@
 - `normal` 日志画像默认跳过高频增量事件：`llm_output_delta`、`tool_output_delta`；`debug` 日志画像仅在管理员调试会话（`is_admin=true` 且 `debug_payload=true`）启用，并保留这些高频事件与完整字段。
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
-- 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
+- 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；当只能从“请求发出到首个输出事件”反推 TTFT 时，`prefill_speed_lower_bound=true`，表示该预填充速度是下界而非模型内部精确值。
 - `session.context_tokens/context_tokens_peak` 汇总优先采用 `round_usage.total_tokens` 作为有效占用；`context_usage` 仍保留估算值用于过程观测。
 - `round_usage.total_tokens` 表示单轮请求完成后的实际上下文占用，是当前线程上下文占用的权威口径；实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
 - `round_usage` 事件额外提供 `context_occupancy_tokens` 与 `request_consumed_tokens` 两个显式语义别名；它们当前都与 `round_usage.total_tokens` 相同，新接入可直接按字段名区分“当前占用”和“单次请求消耗”。
@@ -2151,7 +2154,9 @@
   - `error_requests`：失败数
   - `rps`：每秒请求数（四舍五入到两位小数）
   - `avg_latency_ms`：平均耗时（毫秒）
+  - `ttft_ms`：TTFT/首 token 到达延迟（毫秒）
   - `first_token_latency_ms`：首包延迟（毫秒）
+  - 兼容说明：`first_token_latency_ms` 当前与 `ttft_ms` 等价，保留给旧版调用方。
   - `min_latency_ms`：最小耗时（毫秒）
   - `max_latency_ms`：最大耗时（毫秒）
   - `p50_latency_ms`：P50 耗时（毫秒，基于桶估算）
@@ -2175,6 +2180,7 @@
 - `total_requests/success_requests/error_requests`：该档位请求指标
 - `rps`：该档位吞吐
 - `avg_latency_ms`：平均耗时（毫秒）
+- `ttft_ms`：该档位 TTFT（毫秒）
 - `p50_latency_ms/p90_latency_ms/p99_latency_ms`：延迟分位（毫秒）
 - `total_prefill_speed_tps`：总预填充速度（token/s）
 - `single_prefill_speed_tps`：单预填充速度（token/s）

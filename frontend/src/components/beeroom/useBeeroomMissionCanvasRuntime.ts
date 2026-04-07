@@ -669,23 +669,6 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return Number.isNaN(parsed) ? 0 : parsed;
   };
 
-  const sortChatSessionsByActivity = (sessions: Record<string, unknown>[]): Record<string, unknown>[] =>
-    [...sessions]
-      .map((session, index) => ({ session, index }))
-      .sort((left, right) => {
-        const leftAt = toSessionTimestampMs(
-          left.session.updated_at ?? left.session.last_message_at ?? left.session.created_at
-        );
-        const rightAt = toSessionTimestampMs(
-          right.session.updated_at ?? right.session.last_message_at ?? right.session.created_at
-        );
-        if (leftAt !== rightAt) {
-          return rightAt - leftAt;
-        }
-        return left.index - right.index;
-      })
-      .map((item) => item.session);
-
   const syncDispatchSessionToChatStore = (payload: {
     sessionId: string;
     agentId: string;
@@ -713,20 +696,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (!String(nextSession.title || '').trim()) {
       nextSession.title = preview || options.t('chat.newSession');
     }
-    const currentSessions = Array.isArray(chatStore.sessions)
-      ? (chatStore.sessions as Record<string, unknown>[])
-      : [];
-    const targetIndex = currentSessions.findIndex((item) => String(item?.id || '').trim() === targetSessionId);
-    const mergedSessions = [...currentSessions];
-    if (targetIndex >= 0) {
-      mergedSessions[targetIndex] = {
-        ...mergedSessions[targetIndex],
-        ...nextSession
-      };
-    } else {
-      mergedSessions.unshift(nextSession);
-    }
-    chatStore.sessions = sortChatSessionsByActivity(mergedSessions);
+    chatStore.syncSessionSummary(nextSession, {
+      agentId: fallbackAgentId,
+      remember: true
+    });
   };
 
   const ensureDispatchSession = async (agentId: string): Promise<DispatchSessionTarget> => {
@@ -773,7 +746,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
   };
 
-  const resetDispatchRuntime = (options: { keepSession?: boolean; persist?: boolean } = {}) => {
+  const resetDispatchRuntime = (
+    options: { keepSession?: boolean; keepRuntimeStatus?: boolean; persist?: boolean } = {}
+  ) => {
     if (dispatchStreamController) {
       dispatchStreamController.abort();
       dispatchStreamController = null;
@@ -782,7 +757,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchStopRequested = false;
     dispatchRespondingApprovalId.value = '';
     dispatchRequestId.value = '';
-    dispatchRuntimeStatus.value = 'idle';
+    if (!options.keepRuntimeStatus) {
+      dispatchRuntimeStatus.value = 'idle';
+    }
     if (!options.keepSession) {
       dispatchSessionId.value = '';
       dispatchLastEventId.value = 0;
@@ -1414,7 +1391,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   });
 
   onBeforeUnmount(() => {
-    resetDispatchRuntime();
+    // Preserve the last dispatch session snapshot so returning to swarms can replay
+    // the mother/worker/subagent canvas from cached session references.
+    resetDispatchRuntime({ keepSession: true, keepRuntimeStatus: true });
     stopChatPolling();
     stopChatRealtimeWatch();
   });

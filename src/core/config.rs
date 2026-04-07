@@ -580,6 +580,10 @@ pub struct WebFetchToolConfig {
         deserialize_with = "deserialize_u64_from_any"
     )]
     pub cache_ttl_secs: u64,
+    #[serde(default)]
+    pub allow_private_network: bool,
+    #[serde(default)]
+    pub hostname_allowlist: Vec<String>,
     #[serde(default = "default_web_fetch_user_agent")]
     pub user_agent: String,
 }
@@ -719,6 +723,8 @@ impl Default for WebFetchToolConfig {
             max_chars: default_web_fetch_max_chars(),
             max_chars_cap: default_web_fetch_max_chars_cap(),
             cache_ttl_secs: default_web_fetch_cache_ttl_secs(),
+            allow_private_network: false,
+            hostname_allowlist: Vec::new(),
             user_agent: default_web_fetch_user_agent(),
         }
     }

@@ -1159,6 +1159,7 @@ struct SessionSendArgs {
 
 #[derive(Debug, Deserialize)]
 struct SessionSpawnArgs {
+    #[serde(alias = "message", alias = "prompt")]
     task: String,
     #[serde(default)]
     label: Option<String>,
@@ -3552,7 +3553,10 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         return Ok(json!({
             "status": "accepted",
             "run_id": run_id,
-            "child_session_id": child_session_id.clone()
+            "session_id": child_session_id.clone(),
+            "child_session_id": child_session_id.clone(),
+            "task_started": true,
+            "next_step_hint": "spawn already dispatched the initial task to the child session; use send only for a follow-up turn"
         }));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
@@ -3599,7 +3603,9 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                 Ok(json!({
                     "status": "ok",
                     "run_id": run_id,
+                    "session_id": child_session_id.clone(),
                     "child_session_id": child_session_id.clone(),
+                    "task_started": true,
                     "reply": outcome.answer.unwrap_or_default(),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3607,7 +3613,9 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                 Ok(json!({
                     "status": outcome.status,
                     "run_id": run_id,
+                    "session_id": child_session_id.clone(),
                     "child_session_id": child_session_id.clone(),
+                    "task_started": true,
                     "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3616,13 +3624,17 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         Ok(Err(err)) => Ok(json!({
             "status": "error",
             "run_id": run_id,
+            "session_id": child_session_id.clone(),
             "child_session_id": child_session_id.clone(),
+            "task_started": true,
             "error": err.to_string()
         })),
         Err(_) => Ok(json!({
             "status": "timeout",
             "run_id": run_id,
+            "session_id": child_session_id.clone(),
             "child_session_id": child_session_id,
+            "task_started": true,
             "error": "timeout"
         })),
     }
@@ -8416,6 +8428,15 @@ mod tests {
         }))
         .expect_err("cursor should be validated");
         assert!(err.to_string().contains("cursor"));
+    }
+
+    #[test]
+    fn session_spawn_args_accept_message_alias() {
+        let payload: SessionSpawnArgs = serde_json::from_value(json!({
+            "message": "hello child"
+        }))
+        .expect("message alias should deserialize");
+        assert_eq!(payload.task, "hello child");
     }
 
     #[test]

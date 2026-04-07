@@ -2918,12 +2918,31 @@ const buildModelCallSection = (entry: RawEntry): ToolWorkflowDetailSection => {
 
 const buildToolResultSection = (
   entry: RawEntry,
-  status: string
+  status: string,
+  compactionDisplay: CompactionDisplay | null
 ): ToolWorkflowDetailSection | null => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
   const rawResultDetail = resolveRawWorkflowDetail(entry.resultItem);
+  const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
+  const rawCallDetail = resolveRawWorkflowDetail(entry.callItem);
+  if (compactionDisplay) {
+    const rawCompactionDetail = rawResultDetail || rawOutputDetail || rawCallDetail;
+    const detailBody = rawCompactionDetail || compactionDisplay.resultBody;
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'compaction',
+      summary: compactionDisplay.resultSummary,
+      body: detailBody,
+      copyText: detailBody,
+      commandView: null,
+      patchLines: [],
+      compactionView: compactionDisplay.view
+    };
+  }
+
   if (rawResultDetail) {
     const displayResultDetail = formatWorkflowDetailForDisplay(rawResultDetail);
     return {
@@ -2937,7 +2956,6 @@ const buildToolResultSection = (
     };
   }
 
-  const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
   if (rawOutputDetail) {
     const displayOutputDetail = formatWorkflowDetailForDisplay(rawOutputDetail);
     return {
@@ -3036,7 +3054,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
   const summary = splitEntrySummary(summaryTitle, toolDisplay);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
-  const toolResultSection = buildToolResultSection(entry, status);
+  const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
   return {
@@ -3091,8 +3109,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 
 const buildEntries = (): ToolEntryView[] => {
   return buildWorkflowToolRuns(props.items)
-    .map(buildEntryView)
-    .filter((entry) => !entry.isCompaction);
+    .map(buildEntryView);
 };
 
 const entries = computed<ToolEntryView[]>(() => {

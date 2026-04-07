@@ -260,12 +260,12 @@
     "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
   },
   "error.tool_failure_guard_user_guidance": {
-    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). Automatic retries for this turn were stopped to keep the session alive. You can continue from the current progress, or adjust the request/tool arguments before retrying this step.",
-    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。为保证会话可继续使用，系统已停止本轮自动重试。你可以直接基于当前进度继续对话，或调整请求/工具参数后再让这一步重试。"
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or split the task into smaller steps.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
   },
   "error.tool_failure_guard_user_guidance_with_error": {
-    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. Automatic retries for this turn were stopped to keep the session alive. You can continue from the current progress, or adjust the request/tool arguments before retrying this step.",
-    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。为保证会话可继续使用，系统已停止本轮自动重试。你可以直接基于当前进度继续对话，或调整请求/工具参数后再让这一步重试。"
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. This step was paused so the conversation does not stay stuck on the same error. You can keep chatting, for example: ask the model to inspect the error first, stop repeating the same step, try a different approach, switch tools, or continue in smaller steps.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。这一步已先暂停，避免会话一直卡在同一个错误上。你可以直接继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法完成、改用其他工具，或拆成更小的步骤继续。"
   },
   "error.empty_no_final_answer": {
     "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
@@ -2260,12 +2260,12 @@
     "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Control child sub-agent sessions under the current parent session. list/status/wait default to the current session's children; history/send only accept child sessions of the current session.",
-    "zh-CN": "控制当前父会话下的子智能体会话。list/status/wait 默认只看当前会话的子会话；history/send 只接受当前会话的子会话。"
+    "en-US": "Control child sub-agent sessions under the current parent session. spawn immediately dispatches the initial task to the child and returns its session_id/run_id. list/status/wait default to the current session's children; history/send only accept one child session of the current session.",
+    "zh-CN": "控制当前父会话下的子智能体会话。spawn 会立即把初始任务派发给子会话，并返回它的 session_id/run_id。list/status/wait 默认查看当前会话的子会话；history/send 只接受当前会话下的单个子会话。"
   },
   "tool.spec.subagent_control.args.action": {
-    "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume.",
-    "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。"
+    "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume. Typical flow: spawn(task=...) for the first turn, then send(...) only for follow-up turns on the existing child session.",
+    "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。典型流程是先用 spawn(task=...) 发起第一轮，再仅在需要继续追问时对现有子会话调用 send(...)。"
   },
   "tool.spec.agent_swarm.description": {
     "en-US": "Swarm dispatch tool. Typical flow: batch_send then wait.",
@@ -2388,8 +2388,8 @@
     "zh-CN": "创建子智能体会话并执行任务。对于后台任务，优先立即返回并让出父会话，而不是原地轮询等待。"
   },
   "tool.spec.sessions_spawn.args.task": {
-    "en-US": "Task or prompt for the sub-agent.",
-    "zh-CN": "子智能体任务或提示词。"
+    "en-US": "Initial task or first prompt for the sub-agent. spawn dispatches this task immediately; prefer task here instead of sending the same message again in a follow-up send call.",
+    "zh-CN": "子智能体的初始任务或第一条提示词。spawn 会立即派发这条任务；优先把首条指令写在 task 里，而不是随后再用 send 重复发送同样内容。"
   },
   "tool.spec.sessions_spawn.args.label": {
     "en-US": "Optional. Display label for the sub-session.",

@@ -2,6 +2,7 @@ use super::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+const MAX_SAME_NON_RETRYABLE_FAILURES: u32 = 3;
 const MAX_SAME_RETRYABLE_FAILURES: u32 = 2;
 const MAX_SAME_TOOL_FAILURES: u32 = 3;
 const FINGERPRINT_DETAIL_MAX_CHARS: usize = 240;
@@ -70,13 +71,15 @@ impl RetryGovernor {
             self.same_tool_failures = 1;
         }
 
-        if !fingerprint.retryable && self.same_fingerprint_failures >= 2 {
+        if !fingerprint.retryable
+            && self.same_fingerprint_failures >= MAX_SAME_NON_RETRYABLE_FAILURES
+        {
             return Some(RetryStopDecision {
                 reason: "same_non_retryable_failure",
                 fingerprint: fingerprint.key,
                 repeat_count: self.same_fingerprint_failures,
                 same_tool_failures: self.same_tool_failures,
-                threshold: 2,
+                threshold: MAX_SAME_NON_RETRYABLE_FAILURES,
                 retryable: false,
                 error_code: fingerprint.code,
                 detail: fingerprint.detail,
@@ -229,7 +232,7 @@ fn normalize_detail(detail: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{RetryGovernor, ToolResultPayload};
+    use super::{RetryGovernor, ToolResultPayload, MAX_SAME_NON_RETRYABLE_FAILURES};
     use chrono::Utc;
     use serde_json::json;
 
@@ -248,11 +251,12 @@ mod tests {
             })),
         };
         assert!(governor.record_failure("ptc", &payload).is_none());
+        assert!(governor.record_failure("ptc", &payload).is_none());
         let stop = governor
             .record_failure("ptc", &payload)
-            .expect("should stop on second same non-retryable failure");
+            .expect("should stop on third same non-retryable failure");
         assert_eq!(stop.reason, "same_non_retryable_failure");
-        assert_eq!(stop.threshold, 2);
+        assert_eq!(stop.threshold, MAX_SAME_NON_RETRYABLE_FAILURES);
     }
 
     #[test]

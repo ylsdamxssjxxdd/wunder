@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-07T09:07:18.219119+00:00",
+  "generated_at": "2026-04-07T15:45:26.198767+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -704,7 +704,7 @@
       "language": "zh-CN",
       "title": "wunder 心舰",
       "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；入口建议先按角色和目标分流，再进入具体文档。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你第一次了解 wunder",
         "你需要快速判断先看 desktop、server 还是 cli",
@@ -1446,7 +1446,7 @@
       "language": "zh-CN",
       "title": "概念概览",
       "summary": "先建立 Wunder 的基础运行模型，再阅读接口和工具细节，会明显降低接入与排障成本。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你第一次系统性理解 Wunder",
         "你在接入或排障时遇到概念混淆"
@@ -2222,7 +2222,7 @@
       "language": "zh-CN",
       "title": "额度与 Token 占用",
       "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你在看监控、额度或会话资源占用",
         "你要理解为什么系统强调 round_usage.total_tokens 与 context 占用"
@@ -3261,7 +3261,7 @@
       "language": "zh-CN",
       "title": "网页抓取",
       "summary": "web_fetch 适合读取网页正文，通过 HTTP/HTTPS 拉取页面，不维护浏览器会话，与浏览器工具分工明确。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你要让模型读取网页正文",
         "你不确定该用网页抓取还是浏览器"
@@ -4500,7 +4500,7 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你准备把 Wunder 接入业务系统",
         "你不确定该从 `/wunder`、聊天域还是工作区接口开始"
@@ -6187,7 +6187,7 @@
       "language": "zh-CN",
       "title": "监控与 Benchmark",
       "summary": "Wunder 的观测面不是单一监控页，而是由会话监控、工具统计、性能采样、吞吐压测和 benchmark 共同组成。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你在排查线程、工具或模型链路问题",
         "你要区分 monitor、throughput、performance 和 benchmark 的职责"
@@ -6581,7 +6581,7 @@
       "language": "zh-CN",
       "title": "流式事件参考",
       "summary": "接 Wunder 的流式链路时，最重要的不是把每个事件都背下来，而是知道哪些事件承担真正的生命周期语义。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你在接 SSE 或 WebSocket",
         "你想知道 turn_terminal、approval_resolved、thread_status 为什么重要"
@@ -7103,7 +7103,7 @@
       "language": "zh-CN",
       "title": "FAQ",
       "summary": "wunder 的高频问题快速答复，适合在进入详细排障前先做判断。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你有高频使用疑问",
         "你想先快速判断是否属于故障"

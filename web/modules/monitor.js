@@ -1600,6 +1600,17 @@ const buildMonitorDetailSpeedSummary = (
   return summary;
 };
 
+const buildMonitorDetailTtftSummary = (ttftMs) => {
+  if (!Number.isFinite(ttftMs) || ttftMs <= 0) {
+    return "";
+  }
+  const durationText =
+    ttftMs < 1000 ? `${Math.max(1, Math.round(ttftMs))}ms` : formatDurationSeconds(ttftMs / 1000);
+  return t("monitor.session.ttft", {
+    duration: durationText,
+  });
+};
+
 const resolveMonitorSessionAgentDisplay = (session) => {
   const agentName = String(session?.agent_name || "").trim();
   const agentId = String(session?.agent_id || "").trim();
@@ -1660,6 +1671,11 @@ const buildMonitorDetailMeta = (session, events) => {
   const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
   const prefillTokens = parseMetricNumber(session?.prefill_tokens);
   const prefillDuration = parseMetricNumber(session?.prefill_duration_s);
+  const ttftMs = parseMetricNumber(session?.ttft_ms);
+  const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
+  if (ttftSummary) {
+    metaParts.push(ttftSummary);
+  }
   const prefillLowerBound = Boolean(session?.prefill_speed_lower_bound);
   const prefillSummary = buildMonitorDetailSpeedSummary(
     "monitor.session.prefillSpeed",
@@ -2391,6 +2407,11 @@ const renderMonitorStatusList = (sessions) => {
     if (elapsedText && elapsedText !== "-") {
       detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
     }
+    const ttftMs = parseMetricNumber(session?.ttft_ms);
+    const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
+    if (ttftSummary) {
+      detailParts.push(ttftSummary);
+    }
     const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
     if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {
       detailParts.push(
@@ -2481,6 +2502,11 @@ const renderMonitorToolList = (sessions, toolName = "") => {
       const elapsedText = formatDuration(session?.elapsed_s);
       if (elapsedText && elapsedText !== "-") {
         detailParts.push(t("monitor.session.elapsed", { elapsed: elapsedText }));
+      }
+      const ttftMs = parseMetricNumber(session?.ttft_ms);
+      const ttftSummary = buildMonitorDetailTtftSummary(ttftMs);
+      if (ttftSummary) {
+        detailParts.push(ttftSummary);
       }
       const prefillSpeed = parseMetricNumber(session?.prefill_speed_tps);
       if (Number.isFinite(prefillSpeed) && prefillSpeed > 0) {

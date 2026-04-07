@@ -3729,6 +3729,7 @@ async fn admin_monitor_tool_usage(
             .unwrap_or(0);
         let prefill_tokens =
             session_info.and_then(|value| value.get("prefill_tokens").and_then(Value::as_i64));
+        let ttft_ms = session_info.and_then(|value| value.get("ttft_ms").and_then(Value::as_u64));
         let prefill_duration_s =
             session_info.and_then(|value| value.get("prefill_duration_s").and_then(Value::as_f64));
         let prefill_speed_tps =
@@ -3758,6 +3759,7 @@ async fn admin_monitor_tool_usage(
             "context_tokens_peak": context_tokens_peak,
             "context_occupancy_tokens_peak": context_tokens_peak,
             "consumed_tokens": consumed_tokens,
+            "ttft_ms": ttft_ms,
             "prefill_tokens": prefill_tokens,
             "prefill_duration_s": prefill_duration_s,
             "prefill_speed_tps": prefill_speed_tps,

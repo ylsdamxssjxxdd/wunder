@@ -29,6 +29,8 @@ struct SubagentTargetArgs {
         default,
         alias = "sessionId",
         alias = "session_id",
+        alias = "childSessionId",
+        alias = "child_session_id",
         alias = "sessionKey",
         alias = "session_key"
     )]
@@ -50,6 +52,45 @@ struct SubagentTargetArgs {
 struct SubagentStatusArgs {
     #[serde(flatten)]
     target: SubagentTargetArgs,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentHistoryArgs {
+    #[serde(flatten)]
+    target: SubagentTargetArgs,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default, rename = "includeTools", alias = "include_tools")]
+    include_tools: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubagentSendArgs {
+    #[serde(flatten)]
+    target: SubagentTargetArgs,
+    message: String,
+    #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
+    timeout_seconds: Option<f64>,
+    #[serde(
+        default,
+        rename = "announceParentSessionId",
+        alias = "announce_parent_session_id"
+    )]
+    announce_parent_session_id: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(
+        default,
+        rename = "announcePersistHistory",
+        alias = "announce_persist_history"
+    )]
+    announce_persist_history: Option<bool>,
+    #[serde(
+        default,
+        rename = "announceEmitParentEvents",
+        alias = "announce_emit_parent_events"
+    )]
+    announce_emit_parent_events: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +139,7 @@ struct SubagentSessionControlArgs {
 
 #[derive(Debug, Deserialize, Clone)]
 struct SubagentBatchTaskArgs {
+    #[serde(alias = "message", alias = "prompt")]
     task: String,
     #[serde(default)]
     label: Option<String>,
@@ -115,7 +157,7 @@ struct SubagentBatchTaskArgs {
 struct SubagentBatchSpawnArgs {
     #[serde(default)]
     tasks: Vec<SubagentBatchTaskArgs>,
-    #[serde(default)]
+    #[serde(default, alias = "message", alias = "prompt")]
     task: Option<String>,
     #[serde(default)]
     label: Option<String>,
@@ -273,17 +315,31 @@ async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 }
 
 async fn history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: super::SessionHistoryArgs =
+    let payload: SubagentHistoryArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    ensure_current_child_session(context, payload.session_key, "history")?;
-    super::sessions_history(context, args).await
+    let session_id = resolve_single_child_session_target(context, &payload.target, "history")?;
+    let scoped_args = json!({
+        "session_id": session_id,
+        "limit": payload.limit,
+        "includeTools": payload.include_tools.unwrap_or(false),
+    });
+    super::sessions_history(context, &scoped_args).await
 }
 
 async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: super::SessionSendArgs =
+    let payload: SubagentSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    ensure_current_child_session(context, payload.session_key, "send")?;
-    super::sessions_send(context, args).await
+    let session_id = resolve_single_child_session_target(context, &payload.target, "send")?;
+    let scoped_args = json!({
+        "session_id": session_id,
+        "message": payload.message,
+        "timeoutSeconds": payload.timeout_seconds,
+        "announceParentSessionId": payload.announce_parent_session_id,
+        "label": payload.label,
+        "announcePersistHistory": payload.announce_persist_history,
+        "announceEmitParentEvents": payload.announce_emit_parent_events,
+    });
+    super::sessions_send(context, &scoped_args).await
 }
 
 fn resolve_subagent_parent_scope(
@@ -295,9 +351,9 @@ fn resolve_subagent_parent_scope(
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))
 }
 
-fn ensure_current_child_session(
+fn resolve_single_child_session_target(
     context: &ToolContext<'_>,
-    session_key: Option<String>,
+    target: &SubagentTargetArgs,
     action: &str,
 ) -> Result<String> {
     let user_id = context.user_id.trim();
@@ -308,16 +364,205 @@ fn ensure_current_child_session(
     if current_session_id.is_empty() {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
-    let session_id = super::resolve_session_key(session_key)?;
-    let Some(record) = context.storage.get_chat_session(user_id, &session_id)? else {
-        return Err(anyhow!(i18n::t("error.session_not_found")));
+
+    let mut resolved_session_ids = Vec::new();
+    let mut requested_session_ids = target.session_ids.clone().unwrap_or_default();
+    if let Some(session_id) = target.session_id.clone() {
+        requested_session_ids.push(session_id);
+    }
+    let requested_session_ids = dedupe_non_empty_strings(requested_session_ids);
+    let first_requested_session_id = requested_session_ids.first().cloned();
+    for requested_session_id in requested_session_ids {
+        match resolve_direct_child_session_id(
+            context,
+            user_id,
+            current_session_id,
+            &requested_session_id,
+            action,
+        )? {
+            Some(session_id) => resolved_session_ids.push(session_id),
+            None => {
+                return Err(build_child_session_target_error(
+                    action,
+                    Some(&requested_session_id),
+                ));
+            }
+        }
+    }
+
+    let should_resolve_selector = !target.run_ids.as_ref().is_none_or(Vec::is_empty)
+        || target.run_id.as_ref().is_some()
+        || normalize_optional_string(target.dispatch_id.clone()).is_some()
+        || normalize_optional_string(target.parent_id.clone()).is_some();
+    if should_resolve_selector {
+        let selector = resolve_targets(target, None)?;
+        for snapshot in collect_snapshots(context, &selector)? {
+            if let Some(session_id) = snapshot
+                .payload
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+            {
+                let session_id = ensure_direct_child_session_id(
+                    context,
+                    user_id,
+                    current_session_id,
+                    &session_id,
+                    action,
+                )?;
+                resolved_session_ids.push(session_id);
+            }
+        }
+    }
+
+    let resolved_session_ids = dedupe_non_empty_strings(resolved_session_ids);
+    match resolved_session_ids.as_slice() {
+        [session_id] => Ok(session_id.clone()),
+        [] => Err(build_child_session_target_error(
+            action,
+            first_requested_session_id.as_deref(),
+        )),
+        _ => Err(anyhow!(
+            "subagent_control {action} requires exactly one child session target; use the exact session_id returned by spawn or a single runId"
+        )),
+    }
+}
+
+fn resolve_direct_child_session_id(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    current_session_id: &str,
+    requested_session_id: &str,
+    action: &str,
+) -> Result<Option<String>> {
+    let requested_session_id = requested_session_id.trim();
+    if requested_session_id.is_empty() {
+        return Ok(None);
+    }
+    if let Some(record) = context
+        .storage
+        .get_chat_session(user_id, requested_session_id)?
+    {
+        if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
+            return Err(anyhow!(
+                "subagent_control {action} requires a direct child session of the current session"
+            ));
+        }
+        return Ok(Some(record.session_id));
+    }
+    find_similar_child_session_id(context, user_id, current_session_id, requested_session_id)
+}
+
+fn ensure_direct_child_session_id(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    current_session_id: &str,
+    session_id: &str,
+    action: &str,
+) -> Result<String> {
+    let Some(record) = context.storage.get_chat_session(user_id, session_id)? else {
+        return Err(build_child_session_target_error(action, Some(session_id)));
     };
     if !is_direct_child_session(record.parent_session_id.as_deref(), current_session_id) {
         return Err(anyhow!(
             "subagent_control {action} requires a direct child session of the current session"
         ));
     }
-    Ok(session_id)
+    Ok(record.session_id)
+}
+
+fn build_child_session_target_error(
+    action: &str,
+    requested_session_id: Option<&str>,
+) -> anyhow::Error {
+    let mut message = format!(
+        "subagent_control {action} target not found under the current session; use the exact session_id returned by spawn or a runId returned by spawn/list"
+    );
+    if let Some(requested_session_id) = requested_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        message.push_str(&format!(" (requested: {requested_session_id})"));
+    }
+    anyhow!(message)
+}
+
+fn find_similar_child_session_id(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    current_session_id: &str,
+    requested_session_id: &str,
+) -> Result<Option<String>> {
+    let requested_session_id = requested_session_id.trim();
+    if requested_session_id.is_empty() {
+        return Ok(None);
+    }
+    let (sessions, _) = context.storage.list_chat_sessions(
+        user_id,
+        None,
+        Some(current_session_id),
+        0,
+        MAX_SESSION_LIST_ITEMS,
+    )?;
+    let mut best_distance: Option<usize> = None;
+    let mut matches = Vec::new();
+    for session in sessions {
+        let candidate = session.session_id.trim();
+        let Some(distance) = bounded_edit_distance(requested_session_id, candidate, 2) else {
+            continue;
+        };
+        match best_distance {
+            None => {
+                best_distance = Some(distance);
+                matches.clear();
+                matches.push(session.session_id);
+            }
+            Some(current_best) if distance < current_best => {
+                best_distance = Some(distance);
+                matches.clear();
+                matches.push(session.session_id);
+            }
+            Some(current_best) if distance == current_best => {
+                matches.push(session.session_id);
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(if matches.len() == 1 {
+        matches.into_iter().next()
+    } else {
+        None
+    })
+}
+
+fn bounded_edit_distance(left: &str, right: &str, max_distance: usize) -> Option<usize> {
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let left_len = left_chars.len();
+    let right_len = right_chars.len();
+    if left_len.abs_diff(right_len) > max_distance {
+        return None;
+    }
+    let mut previous = (0..=right_len).collect::<Vec<_>>();
+    for (left_index, left_char) in left_chars.iter().enumerate() {
+        let mut current = vec![left_index + 1; right_len + 1];
+        let mut row_min = current[0];
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let substitution_cost = usize::from(left_char != right_char);
+            let insertion = current[right_index] + 1;
+            let deletion = previous[right_index + 1] + 1;
+            let substitution = previous[right_index] + substitution_cost;
+            let value = insertion.min(deletion).min(substitution);
+            current[right_index + 1] = value;
+            row_min = row_min.min(value);
+        }
+        if row_min > max_distance {
+            return None;
+        }
+        previous = current;
+    }
+    let distance = previous[right_len];
+    (distance <= max_distance).then_some(distance)
 }
 
 fn is_direct_child_session(
@@ -639,7 +884,7 @@ async fn status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         false,
     );
     emit_control_event(context, "subagent_status", &summary);
-    Ok(summary)
+    Ok(wrap_missing_target_summary(summary, "status"))
 }
 
 async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -666,7 +911,40 @@ async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     } else {
         emit_control_event(context, "subagent_status", &result);
     }
-    Ok(result)
+    Ok(wrap_missing_target_summary(result, "wait"))
+}
+
+fn wrap_missing_target_summary(summary: Value, action: &str) -> Value {
+    if !selected_items_all_not_found(&summary) {
+        return summary;
+    }
+    super::build_failed_tool_result(
+        format!(
+            "subagent_control {action} target not found under the current session"
+        ),
+        summary,
+        super::ToolErrorMeta::new(
+            "SUBAGENT_TARGET_NOT_FOUND",
+            Some(
+                "Use the exact `session_id`/`child_session_id` returned by `spawn`, or pass a `runId` returned by `spawn`/`list`.".to_string(),
+            ),
+            false,
+            None,
+        ),
+        false,
+    )
+}
+
+fn selected_items_all_not_found(summary: &Value) -> bool {
+    let Some(items) = summary.get("selected_items").and_then(Value::as_array) else {
+        return false;
+    };
+    !items.is_empty()
+        && items.iter().all(|item| {
+            item.get("status").and_then(Value::as_str) == Some("not_found")
+                || item.get("error").and_then(Value::as_str) == Some("session not found")
+                || item.get("error").and_then(Value::as_str) == Some("run not found")
+        })
 }
 
 async fn interrupt(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2249,6 +2527,34 @@ mod tests {
             result.get("remaining_action").and_then(Value::as_str),
             Some("interrupt")
         );
+    }
+
+    #[test]
+    fn bounded_edit_distance_handles_single_missing_character() {
+        let requested = "sess_3d1c426e1e524e59d73b05045a68326";
+        let actual = "sess_3d1c426e1e5244e59d73b05045a68326";
+        assert_eq!(bounded_edit_distance(requested, actual, 2), Some(1));
+    }
+
+    #[test]
+    fn bounded_edit_distance_rejects_far_match() {
+        assert_eq!(bounded_edit_distance("sess_alpha", "sess_omega", 2), None);
+    }
+
+    #[test]
+    fn selected_items_all_not_found_only_matches_full_not_found_sets() {
+        assert!(selected_items_all_not_found(&json!({
+            "selected_items": [
+                {"status": "not_found", "error": "session not found"},
+                {"status": "not_found", "error": "run not found"}
+            ]
+        })));
+        assert!(!selected_items_all_not_found(&json!({
+            "selected_items": [
+                {"status": "not_found", "error": "session not found"},
+                {"status": "running"}
+            ]
+        })));
     }
 
     fn snapshot(key: &str, status: &str, terminal: bool) -> SubagentRunSnapshot {

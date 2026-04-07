@@ -1468,9 +1468,9 @@ export default {
   'chat.workflow.stage': '阶段：{stage}',
   'chat.workflow.toolFailureGuardTriggered': '工具失败保护已触发',
   'chat.workflow.toolFailureGuardDetail':
-    '工具「{tool}」连续失败 {repeatCount} 次（阈值 {threshold}），本轮已停止自动重试。你可以继续对话，或调整参数后再试这一步。',
+    '工具「{tool}」连续失败 {repeatCount} 次（阈值 {threshold}），这一步已先暂停，避免一直卡在同一个错误上。你可以继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法、改用其他工具，或拆成更小的步骤继续。',
   'chat.workflow.toolFailureGuardDetailNoTool':
-    '同类工具连续失败达到阈值（{repeatCount}/{threshold}），本轮已停止自动重试。你可以继续对话，或调整参数后再试这一步。',
+    '同类工具连续失败达到阈值（{repeatCount}/{threshold}），这一步已先暂停，避免一直卡在同一个错误上。你可以继续对话，例如让模型先分析刚才的报错、不要再重复这一步、换一种方法、改用其他工具，或拆成更小的步骤继续。',
   'chat.workflow.title': '事件流',
   'chat.workflow.toolCall': '调用工具：{tool}',
   'chat.workflow.toolOutput': '工具输出：{tool}',

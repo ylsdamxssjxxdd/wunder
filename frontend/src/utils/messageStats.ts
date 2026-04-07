@@ -31,14 +31,8 @@ const formatSpeed = (value: unknown): string => {
   return `${parsed.toFixed(2)} token/s`;
 };
 
-const MIN_SPEED_DURATION_S = 0.2;
-const MAX_REASONABLE_SPEED = 10000;
-const DIRECT_SPEED_OUTLIER_RATIO = 2.5;
-
-const normalizeSpeed = (speed: number, durationSeconds: number | null): number | null => {
+const normalizeSpeed = (speed: number): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
-  if (durationSeconds !== null && durationSeconds < MIN_SPEED_DURATION_S) return null;
-  if (speed > MAX_REASONABLE_SPEED) return null;
   return speed;
 };
 
@@ -62,74 +56,25 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
-  const usageOutputTokens = Number(
-    stats?.usage?.output ?? stats?.usage?.output_tokens ?? stats?.usage?.outputTokens
+  const averageSpeed = normalizeSpeed(
+    Number(
+      stats?.avg_model_round_speed_tps ??
+        stats?.avg_model_round_decode_speed_tps ??
+        stats?.avgModelRoundDecodeSpeedTps ??
+        stats?.avgModelRoundSpeedTps ??
+        stats?.average_speed_tps ??
+        stats?.averageSpeedTps
+    )
   );
-  const usageTotalTokens = Number(
-    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
-  );
-  const usageInputTokens = Number(
-    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
-  );
-  const derivedOutputTokens =
-    Number.isFinite(usageTotalTokens) &&
-    usageTotalTokens > 0 &&
-    Number.isFinite(usageInputTokens) &&
-    usageInputTokens >= 0
-      ? Math.max(0, usageTotalTokens - usageInputTokens)
-      : NaN;
-  const outputTokens =
-    Number.isFinite(usageOutputTokens) && usageOutputTokens > 0
-      ? usageOutputTokens
-      : derivedOutputTokens;
-  const averageSpeedRaw = Number(
-    stats?.avg_model_round_speed_tps ??
-      stats?.avgModelRoundSpeedTps ??
-      stats?.average_speed_tps ??
-      stats?.averageSpeedTps
-  );
-  const averageRoundsRaw = Number(
+  const averageRounds = Number(
     stats?.avg_model_round_speed_rounds ??
       stats?.avgModelRoundSpeedRounds ??
       stats?.average_speed_rounds ??
       stats?.averageSpeedRounds
   );
-  const averageSpeed = normalizeSpeed(averageSpeedRaw, null);
-  const averageRounds = Number.isFinite(averageRoundsRaw) ? averageRoundsRaw : 0;
-  const hasMultiRoundAverage = averageSpeed !== null && averageRounds >= 2;
-  const toolCalls = Number(stats?.toolCalls ?? stats?.tool_calls ?? stats?.toolCallsTotal);
-  const hasToolCalls = Number.isFinite(toolCalls) && toolCalls > 0;
-  if (hasToolCalls) {
-    return averageSpeed !== null && averageRounds > 0 ? averageSpeed : null;
-  }
-  const decode = normalizeDurationSeconds(
-    stats?.decode_duration_s ??
-      stats?.decodeDurationS ??
-      stats?.decodeDuration ??
-      stats?.decode_duration_total_s ??
-      stats?.decodeDurationTotalS
-  );
-  if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
-    const speed = normalizeSpeed(outputTokens / decode, decode);
-    if (speed !== null) {
-      if (
-        hasMultiRoundAverage &&
-        speed > (averageSpeed as number) * DIRECT_SPEED_OUTLIER_RATIO
-      ) {
-        return averageSpeed;
-      }
-      return speed;
-    }
-  }
-  if (Number.isFinite(outputTokens) && outputTokens > 0 && hasMultiRoundAverage) {
-    return averageSpeed;
-  }
-  const hasSingleAverageRound =
-    !Number.isFinite(averageRounds) || averageRounds <= 0 || averageRounds === 1;
-  if (averageSpeed !== null && hasSingleAverageRound) {
-    return averageSpeed;
-  }
-  return null;
+  return averageSpeed !== null && (!Number.isFinite(averageRounds) || averageRounds > 0)
+    ? averageSpeed
+    : null;
 };
 
 const isAssistantStreaming = (message: Record<string, any>): boolean =>

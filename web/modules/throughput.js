@@ -597,7 +597,7 @@ const renderSnapshot = (snapshot, fromHistory, options = {}) => {
   setText(elements.throughputAvgLatency, formatLatency(metrics.avg_latency_ms));
   setText(
     elements.throughputFirstTokenLatency,
-    formatLatency(metrics.first_token_latency_ms)
+    formatLatency(metrics.ttft_ms ?? metrics.first_token_latency_ms)
   );
   setText(elements.throughputTotalTokens, formatTokenCount(metrics.total_tokens));
   setText(elements.throughputAvgTokens, formatTokenCount(metrics.avg_total_tokens));
@@ -1957,7 +1957,7 @@ const buildHtmlReport = (report, options = {}) => {
     { label: t("throughput.metric.avgLatency"), value: formatLatency(metrics.avg_latency_ms) },
     {
       label: t("throughput.metric.firstTokenLatency"),
-      value: formatLatency(metrics.first_token_latency_ms),
+      value: formatLatency(metrics.ttft_ms ?? metrics.first_token_latency_ms),
     },
     { label: t("throughput.metric.p50"), value: formatLatency(metrics.p50_latency_ms) },
     { label: t("throughput.metric.p90"), value: formatLatency(metrics.p90_latency_ms) },
@@ -2005,6 +2005,10 @@ const buildHtmlReport = (report, options = {}) => {
     {
       label: t("throughput.metric.avgLatency"),
       value: (sample) => formatLatency(sample.avg_latency_ms),
+    },
+    {
+      label: t("throughput.metric.firstTokenLatency"),
+      value: (sample) => formatLatency(sample.ttft_ms ?? sample.first_token_latency_ms),
     },
     { label: t("throughput.metric.p50"), value: (sample) => formatLatency(sample.p50_latency_ms) },
     { label: t("throughput.metric.p90"), value: (sample) => formatLatency(sample.p90_latency_ms) },

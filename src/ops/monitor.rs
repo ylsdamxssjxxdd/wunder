@@ -1,5 +1,6 @@
 // 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
 use crate::config::{ObservabilityConfig, SandboxConfig};
+use crate::core::llm_speed::{build_llm_speed_summary, LlmSpeedEvent};
 use crate::i18n;
 use crate::ops::sysinfo_compat::{
     disk_space, load_average, new_disks, new_system, refresh_system_snapshot, MonitorDisks,
@@ -35,7 +36,6 @@ const DEFAULT_LOG_USAGE_TTL_S: f64 = 15.0;
 const DEFAULT_WORKSPACE_USAGE_TTL_S: f64 = 10.0;
 const DEFAULT_WORKSPACE_USAGE_FULL_SCAN_INTERVAL_S: f64 = 300.0;
 const DEFAULT_WORKSPACE_USAGE_SCAN_BATCH_USERS: usize = 2;
-const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const MONITOR_WRITE_QUEUE_SIZE: usize = 1024;
 const MONITOR_WRITE_BATCH_SIZE: usize = 64;
 const MONITOR_HISTORY_LOAD_LIMIT: i64 = 5000;
@@ -220,17 +220,6 @@ impl MonitorWriteQueue {
             MonitorWriteTask::Upsert(payload) => storage.upsert_monitor_record(&payload),
         }
     }
-}
-
-#[derive(Debug, Default, Clone)]
-struct LlmRoundMetrics {
-    start_ts: Option<f64>,
-    first_output_ts: Option<f64>,
-    last_output_ts: Option<f64>,
-    input_tokens: Option<i64>,
-    output_tokens: Option<i64>,
-    prefill_duration_s: Option<f64>,
-    decode_duration_s: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1308,10 +1297,9 @@ impl MonitorState {
                 })
                 .map(|record| {
                     let mut summary = record.to_summary();
+                    let speed = llm_speed_summary_from_monitor_events(&record.events);
                     if let Value::Object(ref mut map) = summary {
-                        for (key, value) in build_llm_speed_summary(&record.events) {
-                            map.insert(key, value);
-                        }
+                        speed.insert_into_map(map);
                     }
                     summary
                 })
@@ -1350,10 +1338,9 @@ impl MonitorState {
                     .map(|event| event.to_dict())
                     .collect::<Vec<_>>();
                 let mut session = record.to_summary();
+                let speed = llm_speed_summary_from_monitor_events(&record.events);
                 if let Value::Object(ref mut map) = session {
-                    for (key, value) in build_llm_speed_summary(&record.events) {
-                        map.insert(key, value);
-                    }
+                    speed.insert_into_map(map);
                 }
                 Some(json!({
                     "session": session,
@@ -1621,17 +1608,17 @@ impl MonitorState {
                         cancelled_sessions += 1;
                     }
                     let end_ts = record.ended_time.unwrap_or(record.updated_time);
-                    let summary = build_llm_speed_summary(&record.events);
-                    let prefill_tokens = parse_i64_value(summary.get("prefill_tokens"));
-                    let prefill_duration = parse_f64_value(summary.get("prefill_duration_s"));
+                    let summary = llm_speed_summary_from_monitor_events(&record.events);
+                    let prefill_tokens = summary.prefill_tokens;
+                    let prefill_duration = summary.prefill_duration_s;
                     if let (Some(tokens), Some(duration)) = (prefill_tokens, prefill_duration) {
                         if tokens > 0 && duration > 0.0 {
                             prefill_tokens_total += tokens as f64;
                             prefill_duration_total += duration;
                         }
                     }
-                    let decode_tokens = parse_i64_value(summary.get("decode_tokens"));
-                    let decode_duration = parse_f64_value(summary.get("decode_duration_s"));
+                    let decode_tokens = summary.decode_tokens;
+                    let decode_duration = summary.decode_duration_s;
                     if let (Some(tokens), Some(duration)) = (decode_tokens, decode_duration) {
                         if tokens > 0 && duration > 0.0 {
                             decode_tokens_total += tokens as f64;
@@ -2209,356 +2196,24 @@ impl MonitorState {
     }
 }
 
-fn build_llm_speed_summary(events: &VecDeque<MonitorEvent>) -> serde_json::Map<String, Value> {
-    let mut rounds: HashMap<i64, LlmRoundMetrics> = HashMap::new();
-    let mut first_round: Option<i64> = None;
-    let mut latest_round: Option<i64> = None;
-    let mut last_round_seen: Option<i64> = None;
-    let mut implicit_round: i64 = 0;
-    let mut last_round_number: Option<i64> = None;
-    let mut request_start_ts: Option<f64> = None;
-
-    fn reset_request(
-        rounds: &mut HashMap<i64, LlmRoundMetrics>,
-        first_round: &mut Option<i64>,
-        latest_round: &mut Option<i64>,
-        last_round_seen: &mut Option<i64>,
-        implicit_round: &mut i64,
-        last_round_number: &mut Option<i64>,
-        request_start_ts: &mut Option<f64>,
-    ) {
-        rounds.clear();
-        *first_round = None;
-        *latest_round = None;
-        *last_round_seen = None;
-        *implicit_round = 0;
-        *last_round_number = None;
-        *request_start_ts = None;
-    }
-    let is_request_boundary = |event: &MonitorEvent| {
-        if matches!(event.event_type.as_str(), "round_start" | "received") {
-            return true;
-        }
-        if event.event_type == "progress" {
-            return event
-                .data
-                .get("stage")
-                .and_then(Value::as_str)
-                .map(|stage| stage == "start")
-                .unwrap_or(false);
-        }
-        false
-    };
-
-    for event in events {
-        if is_request_boundary(event) {
-            reset_request(
-                &mut rounds,
-                &mut first_round,
-                &mut latest_round,
-                &mut last_round_seen,
-                &mut implicit_round,
-                &mut last_round_number,
-                &mut request_start_ts,
-            );
-            request_start_ts = Some(event.timestamp);
-            continue;
-        }
-
-        let event_type = event.event_type.as_str();
-        if matches!(
-            event_type,
-            "llm_request" | "llm_output_delta" | "llm_output" | "token_usage"
-        ) {
-            if let Some(round_value) = parse_model_round(&event.data) {
-                if let Some(last_round) = last_round_number {
-                    if round_value < last_round {
-                        reset_request(
-                            &mut rounds,
-                            &mut first_round,
-                            &mut latest_round,
-                            &mut last_round_seen,
-                            &mut implicit_round,
-                            &mut last_round_number,
-                            &mut request_start_ts,
-                        );
-                        request_start_ts = Some(event.timestamp);
-                    }
-                }
-                last_round_number = Some(round_value);
-            }
-        }
-
-        match event_type {
-            "llm_request" => {
-                let round = parse_model_round(&event.data).unwrap_or_else(|| {
-                    implicit_round += 1;
-                    implicit_round
-                });
-                last_round_seen = Some(round);
-                if first_round.is_none() {
-                    first_round = Some(round);
-                }
-                let entry = rounds.entry(round).or_default();
-                if entry.start_ts.is_none() {
-                    entry.start_ts = Some(event.timestamp);
-                }
-            }
-            "llm_output_delta" | "llm_output" => {
-                let round = parse_model_round(&event.data).or(last_round_seen);
-                if let Some(round) = round {
-                    last_round_seen = Some(round);
-                    let entry = rounds.entry(round).or_default();
-                    if entry.first_output_ts.is_none() {
-                        entry.first_output_ts = Some(event.timestamp);
-                    }
-                    entry.last_output_ts = Some(event.timestamp);
-                    if event.event_type == "llm_output" {
-                        let (input_tokens, output_tokens) = parse_usage_tokens(&event.data);
-                        let decode_output_tokens =
-                            parse_decode_output_tokens(&event.data).or(output_tokens);
-                        if entry.input_tokens.is_none() {
-                            entry.input_tokens = input_tokens;
-                        }
-                        if let Some(tokens) = decode_output_tokens {
-                            if entry.output_tokens.is_none_or(|current| tokens > current) {
-                                entry.output_tokens = Some(tokens);
-                            }
-                        }
-                        if entry.prefill_duration_s.is_none() {
-                            entry.prefill_duration_s =
-                                parse_f64_value(event.data.get("prefill_duration_s"));
-                        }
-                        if entry.decode_duration_s.is_none() {
-                            entry.decode_duration_s =
-                                parse_f64_value(event.data.get("decode_duration_s"));
-                        }
-                        if entry.output_tokens.is_some() {
-                            latest_round = Some(round);
-                        }
-                    }
-                }
-            }
-            "token_usage" => {
-                let round = parse_model_round(&event.data).or(last_round_seen);
-                if let Some(round) = round {
-                    last_round_seen = Some(round);
-                    let entry = rounds.entry(round).or_default();
-                    if entry.input_tokens.is_none() {
-                        entry.input_tokens = parse_i64_value(event.data.get("input_tokens"));
-                    }
-                    let decode_output_tokens = parse_decode_output_tokens(&event.data)
-                        .or_else(|| parse_i64_value(event.data.get("output_tokens")));
-                    if let Some(tokens) = decode_output_tokens {
-                        if entry.output_tokens.is_none_or(|current| tokens > current) {
-                            entry.output_tokens = Some(tokens);
-                        }
-                    }
-                    if entry.prefill_duration_s.is_none() {
-                        entry.prefill_duration_s =
-                            parse_f64_value(event.data.get("prefill_duration_s"));
-                    }
-                    if entry.decode_duration_s.is_none() {
-                        entry.decode_duration_s =
-                            parse_f64_value(event.data.get("decode_duration_s"));
-                    }
-                    if entry.output_tokens.is_some() {
-                        latest_round = Some(round);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut earliest_start_ts: Option<f64> = None;
-    let mut earliest_output_ts: Option<f64> = None;
-    let mut earliest_output_round: Option<i64> = None;
-    let mut latest_output_ts: Option<f64> = None;
-    let mut output_tokens_total: i64 = 0;
-    let mut decode_duration_total = 0.0;
-    let mut has_decode_duration = false;
-    for (round, metrics) in rounds.iter() {
-        if let Some(start_ts) = metrics.start_ts {
-            earliest_start_ts = Some(match earliest_start_ts {
-                Some(value) => value.min(start_ts),
-                None => start_ts,
-            });
-        }
-        if let Some(first_output_ts) = metrics.first_output_ts {
-            let update = match earliest_output_ts {
-                Some(value) => first_output_ts < value,
-                None => true,
-            };
-            if update {
-                earliest_output_ts = Some(first_output_ts);
-                earliest_output_round = Some(*round);
-            }
-        }
-        if let Some(last_output_ts) = metrics.last_output_ts {
-            latest_output_ts = Some(match latest_output_ts {
-                Some(value) => value.max(last_output_ts),
-                None => last_output_ts,
-            });
-        }
-        if let Some(tokens) = metrics.output_tokens {
-            if tokens > 0 {
-                output_tokens_total = output_tokens_total.saturating_add(tokens);
-            }
-        }
-        let decode_duration = metrics.decode_duration_s.and_then(|value| {
-            let duration = value.max(0.0);
-            if duration > 0.0 {
-                Some(duration)
-            } else {
-                None
-            }
-        });
-        if let Some(duration) = decode_duration {
-            decode_duration_total += duration;
-            has_decode_duration = true;
-        } else if let (Some(first_output_ts), Some(last_output_ts)) =
-            (metrics.first_output_ts, metrics.last_output_ts)
-        {
-            let duration = (last_output_ts - first_output_ts).max(0.0);
-            if duration > 0.0 {
-                decode_duration_total += duration;
-                has_decode_duration = true;
-            }
-        }
-    }
-
-    let prefill_round = earliest_output_round
-        .or(first_round)
-        .or_else(|| rounds.keys().copied().min());
-    let decode_round = latest_round
-        .or(last_round_seen)
-        .or_else(|| rounds.keys().copied().max());
-    let prefill_metrics = prefill_round.and_then(|round| rounds.get(&round));
-    let prefill_tokens = prefill_metrics.and_then(|metrics| metrics.input_tokens);
-    let mut prefill_duration_s = prefill_metrics.and_then(|metrics| metrics.prefill_duration_s);
-    let mut prefill_speed_lower_bound = false;
-    let mut start_ts = prefill_metrics
-        .and_then(|metrics| metrics.start_ts)
-        .or(earliest_start_ts);
-    if let Some(request_start_ts) = request_start_ts {
-        start_ts = Some(match start_ts {
-            Some(value) => value.min(request_start_ts),
-            None => request_start_ts,
-        });
-    }
-    let first_output_ts = prefill_metrics
-        .and_then(|metrics| metrics.first_output_ts)
-        .or(earliest_output_ts);
-    if let (Some(start_ts), Some(first_output_ts)) = (start_ts, first_output_ts) {
-        let observed_duration = (first_output_ts - start_ts).max(0.0);
-        if prefill_duration_s.is_none_or(|provided| observed_duration > provided) {
-            prefill_duration_s = Some(observed_duration);
-            prefill_speed_lower_bound = true;
-        }
-    }
-    prefill_duration_s = prefill_duration_s.map(|value| {
-        let duration = value.max(0.0);
-        if duration < MIN_PREFILL_DURATION_S {
-            MIN_PREFILL_DURATION_S
-        } else {
-            duration
-        }
-    });
-    let prefill_speed_tps = match (prefill_tokens, prefill_duration_s) {
-        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
-            Some(tokens as f64 / duration)
-        }
-        _ => None,
-    };
-
-    let decode_metrics = decode_round.and_then(|round| rounds.get(&round));
-    let decode_tokens = if output_tokens_total > 0 {
-        Some(output_tokens_total)
-    } else {
-        decode_metrics.and_then(|metrics| metrics.output_tokens)
-    };
-    let mut decode_duration_s = if has_decode_duration && decode_duration_total > 0.0 {
-        Some(decode_duration_total)
-    } else {
-        match (earliest_output_ts, latest_output_ts) {
-            (Some(start), Some(end)) => {
-                let duration = (end - start).max(0.0);
-                if duration > 0.0 {
-                    Some(duration)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    };
-    if decode_duration_s.is_none() {
-        decode_duration_s = decode_metrics
-            .and_then(|metrics| metrics.decode_duration_s)
-            .map(|value| value.max(0.0))
-            .or_else(|| {
-                decode_metrics.and_then(|metrics| {
-                    let first_output_ts = metrics.first_output_ts?;
-                    let last_output_ts = metrics.last_output_ts?;
-                    Some((last_output_ts - first_output_ts).max(0.0))
-                })
-            });
-    }
-    let decode_speed_tps = match (decode_tokens, decode_duration_s) {
-        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
-            Some(tokens as f64 / duration)
-        }
-        _ => None,
-    };
-
-    let mut result = serde_json::Map::new();
-    result.insert("prefill_tokens".to_string(), json!(prefill_tokens));
-    result.insert("prefill_duration_s".to_string(), json!(prefill_duration_s));
-    result.insert("prefill_speed_tps".to_string(), json!(prefill_speed_tps));
-    result.insert(
-        "prefill_speed_lower_bound".to_string(),
-        json!(prefill_speed_lower_bound),
-    );
-    result.insert("decode_tokens".to_string(), json!(decode_tokens));
-    result.insert("decode_duration_s".to_string(), json!(decode_duration_s));
-    result.insert("decode_speed_tps".to_string(), json!(decode_speed_tps));
-    result
+fn llm_speed_summary_from_monitor_events(
+    events: &VecDeque<MonitorEvent>,
+) -> crate::core::llm_speed::LlmSpeedSummary {
+    let normalized_events = events
+        .iter()
+        .map(|event| LlmSpeedEvent {
+            event_type: event.event_type.as_str(),
+            timestamp_s: Some(event.timestamp),
+            data: &event.data,
+        })
+        .collect::<Vec<_>>();
+    build_llm_speed_summary(&normalized_events)
 }
 
 fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
     value
         .and_then(Value::as_i64)
         .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
-}
-
-fn parse_f64_value(value: Option<&Value>) -> Option<f64> {
-    value
-        .and_then(Value::as_f64)
-        .or_else(|| value.and_then(Value::as_i64).map(|value| value as f64))
-        .or_else(|| value.and_then(Value::as_u64).map(|value| value as f64))
-}
-
-fn parse_model_round(data: &Value) -> Option<i64> {
-    parse_i64_value(data.get("model_round"))
-}
-
-fn parse_usage_tokens(data: &Value) -> (Option<i64>, Option<i64>) {
-    let Some(usage) = data.get("usage").and_then(Value::as_object) else {
-        return (None, None);
-    };
-    (
-        parse_i64_value(usage.get("input_tokens")),
-        parse_i64_value(usage.get("output_tokens")),
-    )
-}
-
-fn parse_decode_output_tokens(data: &Value) -> Option<i64> {
-    parse_i64_value(data.get("decode_output_tokens")).or_else(|| {
-        data.get("usage")
-            .and_then(Value::as_object)
-            .and_then(|usage| parse_i64_value(usage.get("decode_output_tokens")))
-    })
 }
 
 fn parse_usage_total_tokens(data: &Value) -> i64 {
@@ -3053,12 +2708,13 @@ fn localize_summary(summary: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_llm_speed_summary, derive_effective_context_tokens, is_workspace_usage_dir_name,
-        resolve_payload_limit, should_skip_event_for_profile, trim_string_fields,
+        derive_effective_context_tokens, is_workspace_usage_dir_name,
+        llm_speed_summary_from_monitor_events, resolve_payload_limit,
+        should_skip_event_for_profile, trim_string_fields,
         update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile,
         WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
-    use serde_json::{json, Value};
+    use serde_json::json;
     use std::{collections::VecDeque, fs};
     use tempfile::tempdir;
 
@@ -3208,19 +2864,10 @@ mod tests {
                 "decode_duration_s": 2.0
             }),
         });
-        let summary = build_llm_speed_summary(&events);
-        assert_eq!(
-            summary.get("decode_tokens").and_then(Value::as_i64),
-            Some(120)
-        );
-        assert_eq!(
-            summary.get("decode_duration_s").and_then(Value::as_f64),
-            Some(2.0)
-        );
-        assert_eq!(
-            summary.get("decode_speed_tps").and_then(Value::as_f64),
-            Some(60.0)
-        );
+        let summary = llm_speed_summary_from_monitor_events(&events);
+        assert_eq!(summary.decode_tokens, Some(120));
+        assert_eq!(summary.decode_duration_s, Some(2.0));
+        assert_eq!(summary.decode_speed_tps, Some(60.0));
     }
 
     #[test]

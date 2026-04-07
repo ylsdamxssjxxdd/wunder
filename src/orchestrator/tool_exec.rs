@@ -1418,8 +1418,6 @@ const OBSERVATION_SEARCH_HIT_LIMIT: usize = 10;
 const OBSERVATION_SEARCH_CONTENT_HEAD_CHARS: usize = 180;
 const OBSERVATION_READ_FILE_LIMIT: usize = 8;
 const OBSERVATION_READ_CONTENT_HEAD_CHARS: usize = 3200;
-const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
-const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
 const OBSERVATION_JSONL_ITEM_MAX_DEPTH: usize = 8;
 const READ_OUTPUT_TRUNCATION_PREFIX: &str = "...(truncated read output, omitted ";
 const READ_OUTPUT_TRUNCATION_SUFFIX: &str = " bytes)...";
@@ -2056,12 +2054,17 @@ fn compact_truncated_observation_wrapper(map: &Map<String, Value>) -> Value {
         }
     }
     if let Some(preview) = map.get("preview").and_then(Value::as_str) {
+        // Keep wrapper previews close to the observation budget so the model
+        // still sees the overall shape of a large tool result.
+        let preview_budget_chars = OBSERVATION_MAX_CHARS.saturating_sub(
+            estimate_tool_result_chars(&Value::Object(compacted.clone()))
+                .saturating_add("preview".chars().count()),
+        );
         compacted.insert(
             "preview".to_string(),
-            Value::String(truncate_tool_result_string(
+            Value::String(truncate_tool_result_string_to_budget(
                 preview,
-                OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS,
-                OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS,
+                preview_budget_chars,
                 TOOL_RESULT_TRUNCATION_MARKER,
             )),
         );
@@ -2104,6 +2107,21 @@ fn truncate_tool_result_string(
         output.extend(value.chars().skip(value_len - tail_chars).take(tail_chars));
     }
     output
+}
+
+fn truncate_tool_result_string_to_budget(value: &str, budget_chars: usize, marker: &str) -> String {
+    let value_len = value.chars().count();
+    if value_len <= budget_chars {
+        return value.to_string();
+    }
+    let marker_chars = marker.chars().count();
+    if budget_chars <= marker_chars {
+        return marker.chars().take(budget_chars).collect();
+    }
+    let visible_chars = budget_chars.saturating_sub(marker_chars);
+    let head_chars = visible_chars / 2;
+    let tail_chars = visible_chars.saturating_sub(head_chars);
+    truncate_tool_result_string(value, head_chars, tail_chars, marker)
 }
 
 fn truncate_text_head(value: &str, max_chars: usize) -> (String, usize) {
@@ -3221,14 +3239,8 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_observation_payload_compacts_truncated_wrapper_preview() {
-        let preview = format!(
-            "{{\"rows\":[{}]}}",
-            (0..16)
-                .map(|idx| format!("{{\"id\":{idx},\"text\":\"{}\"}}", "x".repeat(72)))
-                .collect::<Vec<_>>()
-                .join(",")
-        );
+    fn test_compact_observation_payload_preserves_truncated_wrapper_preview_budget() {
+        let preview = "x".repeat(OBSERVATION_MAX_CHARS + 4_096);
         let mut payload = json!({
             "tool": "extra_mcp@db_query",
             "ok": true,
@@ -3246,8 +3258,16 @@ mod tests {
 
         let data = payload.get("data").cloned().unwrap_or(Value::Null);
         let preview = data.get("preview").and_then(Value::as_str).unwrap_or("");
+        let mut data_without_preview = data.as_object().cloned().unwrap_or_default();
+        data_without_preview.remove("preview");
+        let expected_budget = OBSERVATION_MAX_CHARS.saturating_sub(
+            estimate_tool_result_chars(&Value::Object(data_without_preview))
+                .saturating_add("preview".chars().count()),
+        );
         assert!(preview.contains(TOOL_RESULT_TRUNCATION_MARKER));
-        assert!(preview.chars().count() < 500);
+        assert!(expected_budget > 18_000);
+        assert_eq!(preview.chars().count(), expected_budget);
+        assert!(estimate_tool_result_chars(&data) <= OBSERVATION_MAX_CHARS);
         assert_eq!(
             data.get("continuation_required").and_then(Value::as_bool),
             Some(true)

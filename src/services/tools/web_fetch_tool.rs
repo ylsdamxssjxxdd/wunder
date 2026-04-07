@@ -737,7 +737,7 @@ async fn fetch_url(
     let mut visited = HashSet::new();
 
     for redirect_index in 0..=max_redirects {
-        validate_remote_target(raw_url, &current, timeout_secs).await?;
+        validate_remote_target(raw_url, &current, timeout_secs, config).await?;
         if !visited.insert(current.to_string()) {
             return Err(web_fetch_failure(
                 raw_url,
@@ -930,6 +930,7 @@ async fn validate_remote_target(
     raw_url: &str,
     url: &Url,
     timeout_secs: u64,
+    config: &WebFetchToolConfig,
 ) -> std::result::Result<(), WebFetchFailure> {
     let host = url.host_str().ok_or_else(|| {
         web_fetch_failure(
@@ -958,7 +959,8 @@ async fn validate_remote_target(
         )
     })?;
 
-    if is_obviously_private_host(&ascii_host) {
+    let allow_private_target = web_fetch_allows_private_target(&ascii_host, config);
+    if !allow_private_target && is_obviously_private_host(&ascii_host) {
         let mut params = HashMap::new();
         params.insert("host".to_string(), ascii_host);
         return Err(web_fetch_failure(
@@ -967,7 +969,7 @@ async fn validate_remote_target(
             "validation",
             "TOOL_WEB_FETCH_BLOCKED_HOST",
             i18n::t_with_params("tool.web_fetch.blocked_host", &params),
-            Some("Use a public internet host. Private/internal targets are blocked.".to_string()),
+            Some(private_target_hint()),
             false,
             None,
             json!({}),
@@ -975,7 +977,7 @@ async fn validate_remote_target(
     }
 
     if let Ok(ip) = ascii_host.parse::<IpAddr>() {
-        ensure_public_ip(raw_url, url, ip)?;
+        ensure_public_ip(raw_url, url, ip, allow_private_target)?;
         return Ok(());
     }
 
@@ -1026,7 +1028,7 @@ async fn validate_remote_target(
     let mut resolved_any = false;
     for ip in lookup.iter() {
         resolved_any = true;
-        ensure_public_ip(raw_url, url, ip)?;
+        ensure_public_ip(raw_url, url, ip, allow_private_target)?;
     }
     if !resolved_any {
         return Err(web_fetch_failure(
@@ -1048,8 +1050,9 @@ fn ensure_public_ip(
     raw_url: &str,
     url: &Url,
     ip: IpAddr,
+    allow_private_target: bool,
 ) -> std::result::Result<(), WebFetchFailure> {
-    if ip_is_private_or_internal(ip) {
+    if !allow_private_target && ip_is_private_or_internal(ip) {
         let mut params = HashMap::new();
         params.insert("host".to_string(), ip.to_string());
         return Err(web_fetch_failure(
@@ -1058,7 +1061,7 @@ fn ensure_public_ip(
             "validation",
             "TOOL_WEB_FETCH_BLOCKED_HOST",
             i18n::t_with_params("tool.web_fetch.blocked_host", &params),
-            Some("Use a public internet host. Private/internal targets are blocked.".to_string()),
+            Some(private_target_hint()),
             false,
             None,
             json!({ "resolved_ip": ip.to_string() }),
@@ -1127,6 +1130,39 @@ fn is_obviously_private_host(host: &str) -> bool {
         || normalized.ends_with(".internal")
         || normalized.ends_with(".intranet")
         || !normalized.contains('.')
+}
+
+fn web_fetch_allows_private_target(host: &str, config: &WebFetchToolConfig) -> bool {
+    if config.allow_private_network {
+        return true;
+    }
+    let normalized_host = normalize_host_for_allowlist(host);
+    if normalized_host.is_empty() {
+        return false;
+    }
+    config
+        .hostname_allowlist
+        .iter()
+        .map(String::as_str)
+        .any(|entry| normalize_host_for_allowlist(entry) == normalized_host)
+}
+
+fn normalize_host_for_allowlist(host: &str) -> String {
+    let trimmed = host
+        .trim()
+        .trim_end_matches('.')
+        .trim_matches(|value| matches!(value, '[' | ']'));
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    idna::domain_to_ascii(trimmed)
+        .unwrap_or_else(|_| trimmed.to_ascii_lowercase())
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn private_target_hint() -> String {
+    "Use a public internet host, or explicitly allow this target with tools.web.fetch.allow_private_network or tools.web.fetch.hostname_allowlist.".to_string()
 }
 
 fn web_fetch_client() -> Result<&'static reqwest::Client> {
@@ -2218,9 +2254,11 @@ fn markdown_ordered_list_regex() -> &'static Regex {
 mod tests {
     use super::{
         canonicalize_block_for_dedupe, diagnose_html_page, extract_html_content,
-        ip_is_private_or_internal, is_noise_block, normalize_text_block, strip_invisible_unicode,
-        truncate_chars, web_fetch_failure, ExtractMode, HtmlPageKind,
+        ip_is_private_or_internal, is_noise_block, normalize_host_for_allowlist,
+        normalize_text_block, strip_invisible_unicode, truncate_chars,
+        web_fetch_allows_private_target, web_fetch_failure, ExtractMode, HtmlPageKind,
     };
+    use crate::config::WebFetchToolConfig;
     use serde_json::json;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
     use url::Url;
@@ -2366,6 +2404,37 @@ mod tests {
         assert!(!ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(
             93, 184, 216, 34
         ))));
+    }
+
+    #[test]
+    fn private_target_access_requires_explicit_override() {
+        let config = WebFetchToolConfig::default();
+        assert!(!web_fetch_allows_private_target("192.168.1.10", &config));
+
+        let mut allow_all = WebFetchToolConfig::default();
+        allow_all.allow_private_network = true;
+        assert!(web_fetch_allows_private_target("192.168.1.10", &allow_all));
+
+        let mut allowlist = WebFetchToolConfig::default();
+        allowlist.hostname_allowlist = vec![
+            "192.168.1.10".to_string(),
+            "Internal.Example.Local".to_string(),
+        ];
+        assert!(web_fetch_allows_private_target("192.168.1.10", &allowlist));
+        assert!(web_fetch_allows_private_target(
+            "internal.example.local",
+            &allowlist
+        ));
+        assert!(!web_fetch_allows_private_target("192.168.1.11", &allowlist));
+    }
+
+    #[test]
+    fn allowlist_host_normalization_handles_case_and_ipv6_brackets() {
+        assert_eq!(
+            normalize_host_for_allowlist(" Internal.Example.Local. "),
+            "internal.example.local"
+        );
+        assert_eq!(normalize_host_for_allowlist("[::1]"), "::1");
     }
 
     #[test]

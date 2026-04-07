@@ -136,6 +136,8 @@ source_docs:
 | `max_chars` | `12000` | 默认最大字符数 |
 | `max_chars_cap` | `30000` | 最大字符数上限 |
 | `cache_ttl_secs` | `600` | 缓存 TTL（秒） |
+| `allow_private_network` | `false` | 是否允许抓取私网/内网目标；开启后可直接访问 `192.168.x.x`、`.local` 等地址 |
+| `hostname_allowlist` | `[]` | 私网例外白名单；即使 `allow_private_network=false`，也可按主机名或 IP 精确放行 |
 
 ---
 
@@ -152,6 +154,11 @@ source_docs:
 3. **JS 强交互页面**：
    - web_fetch 往往不如浏览器可靠
    - 建议用浏览器工具
+
+4. **私网抓取是显式配置项**：
+   - 默认仍拦截私网/内网目标，避免 SSRF 和误抓取内部系统
+   - 需要放开时可配置 `tools.web.fetch.allow_private_network=true`
+   - 若只想放开少量目标，优先使用 `tools.web.fetch.hostname_allowlist`
 
 ---
 

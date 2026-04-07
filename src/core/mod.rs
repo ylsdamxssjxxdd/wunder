@@ -9,6 +9,7 @@ pub mod dpi;
 pub mod exec_policy;
 pub mod i18n;
 pub mod json_schema;
+pub(crate) mod llm_speed;
 pub mod logging;
 pub mod path_utils;
 pub mod python_runtime;

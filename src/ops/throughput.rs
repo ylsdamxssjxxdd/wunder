@@ -1,7 +1,9 @@
+use crate::core::llm_speed::{
+    build_llm_speed_summary_from_value_events, ttft_ms_from_duration, LlmSpeedSummary,
+};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::{TokenUsage, WunderRequest};
-use crate::token_utils::approx_token_count;
 use chrono::{DateTime, Local, Utc};
 use futures::future::join_all;
 use parking_lot::Mutex as ParkingMutex;
@@ -25,7 +27,6 @@ const MAX_ERROR_SAMPLES: usize = 20;
 const MAX_REPORT_HISTORY: usize = 50;
 const REPORT_DIR: &str = "config/data/throughput";
 const REPORT_INDEX_FILE: &str = "index.json";
-const MIN_PREFILL_DURATION_S: f64 = 0.05;
 const LATENCY_BUCKETS_MS: [u64; 12] = [
     50, 100, 200, 300, 500, 800, 1000, 1500, 2000, 3000, 5000, 10000,
 ];
@@ -409,6 +410,7 @@ impl ThroughputMetrics {
             error_requests: error,
             rps,
             avg_latency_ms,
+            ttft_ms: first_token_latency_ms,
             first_token_latency_ms,
             min_latency_ms,
             max_latency_ms: if total > 0 {
@@ -466,6 +468,8 @@ pub struct ThroughputMetricsSnapshot {
     pub rps: f64,
     pub avg_latency_ms: Option<u64>,
     #[serde(default)]
+    pub ttft_ms: Option<u64>,
+    #[serde(default)]
     pub first_token_latency_ms: Option<u64>,
     pub min_latency_ms: Option<u64>,
     pub max_latency_ms: Option<u64>,
@@ -502,6 +506,7 @@ pub struct ThroughputSample {
     pub error_requests: u64,
     pub rps: f64,
     pub avg_latency_ms: Option<u64>,
+    pub ttft_ms: Option<u64>,
     pub p50_latency_ms: Option<u64>,
     pub p90_latency_ms: Option<u64>,
     pub p99_latency_ms: Option<u64>,
@@ -692,17 +697,6 @@ impl ActiveRun {
 }
 
 #[derive(Default)]
-struct SessionSpeed {
-    prefill_tokens: Option<i64>,
-    prefill_duration_s: Option<f64>,
-    prefill_speed_tps: Option<f64>,
-    decode_tokens: Option<i64>,
-    decode_duration_s: Option<f64>,
-    decode_speed_tps: Option<f64>,
-    decode_stream_chunk_tokens: Option<i64>,
-}
-
-#[derive(Default)]
 struct SpeedAccumulator {
     prefill_speed_sum: f64,
     prefill_speed_count: u64,
@@ -748,7 +742,7 @@ fn record_speed_sample(
 }
 
 impl SpeedAccumulator {
-    fn record(&mut self, speed: &SessionSpeed) {
+    fn record(&mut self, speed: &LlmSpeedSummary) {
         record_speed_sample(
             speed.prefill_tokens,
             speed.prefill_duration_s,
@@ -844,7 +838,7 @@ struct RequestOutcome {
     latency_ms: u64,
     usage: Option<TokenUsage>,
     error_message: Option<String>,
-    speed: SessionSpeed,
+    speed: LlmSpeedSummary,
 }
 
 fn compute_speed_drift_percent(main: Option<f64>, approx: Option<f64>) -> Option<f64> {
@@ -905,7 +899,7 @@ async fn run_supervisor(
         let mut decode_stream_chunk_speed_count_by_request = 0u64;
         for outcome in results {
             let usage = outcome.usage.clone();
-            if let Some(decode_tokens) = resolve_decode_tokens(&outcome.speed, usage.as_ref()) {
+            if let Some(decode_tokens) = outcome.speed.resolve_decode_tokens(usage.as_ref()) {
                 decode_tokens_total_by_request =
                     decode_tokens_total_by_request.saturating_add(decode_tokens);
                 let request_elapsed_s = outcome.latency_ms as f64 / 1000.0;
@@ -929,13 +923,10 @@ async fn run_supervisor(
                     decode_stream_chunk_speed_count_by_request += 1;
                 }
             }
-            let first_token_latency_ms = outcome.speed.prefill_duration_s.and_then(|duration| {
-                if duration > 0.0 {
-                    Some((duration * 1000.0).round() as u64)
-                } else {
-                    None
-                }
-            });
+            let first_token_latency_ms = outcome
+                .speed
+                .ttft_ms
+                .or_else(|| ttft_ms_from_duration(outcome.speed.prefill_duration_s));
             metrics.record(
                 outcome.latency_ms,
                 usage.clone(),
@@ -1048,6 +1039,7 @@ async fn run_supervisor(
             error_requests: snapshot.error_requests,
             rps: snapshot.rps,
             avg_latency_ms: snapshot.avg_latency_ms,
+            ttft_ms: snapshot.ttft_ms,
             p50_latency_ms: snapshot.p50_latency_ms,
             p90_latency_ms: snapshot.p90_latency_ms,
             p99_latency_ms: snapshot.p99_latency_ms,
@@ -1167,7 +1159,7 @@ async fn run_request(
     {
         if let Some(record) = monitor.get_record(&session_id) {
             let fallback = extract_session_speed_from_record(&record);
-            merge_session_speed(&mut speed, &fallback);
+            speed.merge_missing(&fallback);
         }
     }
     RequestOutcome {
@@ -1178,29 +1170,8 @@ async fn run_request(
     }
 }
 
-fn extract_session_speed(detail: Option<Value>) -> SessionSpeed {
-    let Some(detail) = detail else {
-        return SessionSpeed::default();
-    };
-    let session = detail.get("session").unwrap_or(&detail);
-    let decode_stream_chunk_tokens = parse_i64_value(session.get("decode_stream_chunk_tokens"))
-        .or_else(|| {
-            detail
-                .get("events")
-                .and_then(Value::as_array)
-                .and_then(|events| count_stream_chunk_tokens(events))
-        });
-    SessionSpeed {
-        prefill_tokens: parse_i64_value(session.get("prefill_tokens")),
-        prefill_duration_s: normalize_prefill_duration(parse_f64_value(
-            session.get("prefill_duration_s"),
-        )),
-        prefill_speed_tps: parse_f64_value(session.get("prefill_speed_tps")),
-        decode_tokens: parse_i64_value(session.get("decode_tokens")),
-        decode_duration_s: normalize_duration(parse_f64_value(session.get("decode_duration_s"))),
-        decode_speed_tps: parse_f64_value(session.get("decode_speed_tps")),
-        decode_stream_chunk_tokens,
-    }
+fn extract_session_speed(detail: Option<Value>) -> LlmSpeedSummary {
+    LlmSpeedSummary::from_session_payload(detail.as_ref())
 }
 
 fn build_max_tokens_override(model_name: Option<&str>, max_tokens: Option<u32>) -> Option<Value> {
@@ -1220,234 +1191,12 @@ fn build_max_tokens_override(model_name: Option<&str>, max_tokens: Option<u32>) 
     }))
 }
 
-fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
-    value
-        .and_then(Value::as_i64)
-        .or_else(|| value.and_then(Value::as_u64).map(|value| value as i64))
-}
-
-fn parse_f64_value(value: Option<&Value>) -> Option<f64> {
-    value
-        .and_then(Value::as_f64)
-        .or_else(|| value.and_then(Value::as_i64).map(|value| value as f64))
-        .or_else(|| value.and_then(Value::as_u64).map(|value| value as f64))
-}
-
-fn parse_event_timestamp(value: Option<&Value>) -> Option<f64> {
-    if let Some(timestamp) = parse_f64_value(value) {
-        return Some(timestamp);
-    }
-    let text = value.and_then(Value::as_str)?;
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
-}
-
-fn normalize_duration(value: Option<f64>) -> Option<f64> {
-    let value = value?;
-    if !value.is_finite() || value <= 0.0 {
-        return None;
-    }
-    Some(value)
-}
-
-fn normalize_prefill_duration(value: Option<f64>) -> Option<f64> {
-    let value = normalize_duration(value)?;
-    if value < MIN_PREFILL_DURATION_S {
-        return Some(MIN_PREFILL_DURATION_S);
-    }
-    Some(value)
-}
-
-fn parse_usage_tokens_from_event(data: &Value) -> (Option<i64>, Option<i64>) {
-    if let Some(usage) = data.get("usage").and_then(Value::as_object) {
-        let input = parse_i64_value(usage.get("input_tokens"));
-        let output = parse_i64_value(data.get("decode_output_tokens"))
-            .or_else(|| parse_i64_value(usage.get("decode_output_tokens")))
-            .or_else(|| parse_i64_value(usage.get("output_tokens")));
-        if input.is_some() || output.is_some() {
-            return (input, output);
-        }
-    }
-    (
-        parse_i64_value(data.get("input_tokens")),
-        parse_i64_value(data.get("decode_output_tokens"))
-            .or_else(|| parse_i64_value(data.get("output_tokens"))),
-    )
-}
-
-fn has_stream_output_chunk(data: &Value) -> bool {
-    let has_text = |value: Option<&Value>| -> bool {
-        value
-            .and_then(Value::as_str)
-            .is_some_and(|text| !text.trim().is_empty())
-    };
-    has_text(data.get("delta"))
-        || has_text(data.get("reasoning_delta"))
-        || has_text(data.get("reasoning"))
-}
-
-fn estimate_stream_chunk_tokens(data: &Value) -> i64 {
-    let parse_non_empty_text = |key: &str| {
-        data.get(key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-    };
-    let mut tokens = 0i64;
-    if let Some(text) = parse_non_empty_text("delta").or_else(|| parse_non_empty_text("content")) {
-        tokens = tokens.saturating_add(approx_token_count(text).max(0));
-    }
-    if let Some(text) =
-        parse_non_empty_text("reasoning_delta").or_else(|| parse_non_empty_text("reasoning"))
-    {
-        tokens = tokens.saturating_add(approx_token_count(text).max(0));
-    }
-    tokens
-}
-
-fn count_stream_chunk_tokens(events: &[Value]) -> Option<i64> {
-    let mut total = 0i64;
-    for event in events {
-        if event.get("type").and_then(Value::as_str) != Some("llm_output_delta") {
-            continue;
-        }
-        let data = event.get("data").unwrap_or(&Value::Null);
-        let token_estimate = estimate_stream_chunk_tokens(data);
-        if token_estimate > 0 {
-            total = total.saturating_add(token_estimate);
-        } else if has_stream_output_chunk(data) {
-            // Keep a minimal fallback for malformed or legacy payloads.
-            total = total.saturating_add(1);
-        }
-    }
-    (total > 0).then_some(total)
-}
-
-fn extract_session_speed_from_record(record: &Value) -> SessionSpeed {
-    let mut start_ts: Option<f64> = None;
-    let mut first_output_ts: Option<f64> = None;
-    let mut last_output_ts: Option<f64> = None;
-    let mut input_tokens: Option<i64> = None;
-    let mut output_tokens: Option<i64> = None;
-    let mut prefill_duration_s: Option<f64> = None;
-    let mut decode_duration_s: Option<f64> = None;
-    let Some(events) = record.get("events").and_then(Value::as_array) else {
-        return SessionSpeed::default();
-    };
-    let decode_stream_chunk_tokens = count_stream_chunk_tokens(events);
-    for event in events {
-        let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
-        let timestamp = parse_event_timestamp(event.get("timestamp"));
-        let data = event.get("data").unwrap_or(&Value::Null);
-        match event_type {
-            "llm_request" => {
-                if start_ts.is_none() {
-                    start_ts = timestamp;
-                }
-            }
-            "llm_output_delta" | "llm_output" => {
-                if first_output_ts.is_none() {
-                    first_output_ts = timestamp;
-                }
-                if let Some(ts) = timestamp {
-                    last_output_ts = Some(ts);
-                }
-            }
-            _ => {}
-        }
-        if matches!(event_type, "llm_output" | "token_usage") {
-            let (input, output) = parse_usage_tokens_from_event(data);
-            if input_tokens.is_none() {
-                input_tokens = input;
-            }
-            if output.is_some() {
-                output_tokens = output;
-            }
-            if prefill_duration_s.is_none() {
-                prefill_duration_s =
-                    normalize_prefill_duration(parse_f64_value(data.get("prefill_duration_s")));
-            }
-            if decode_duration_s.is_none() {
-                decode_duration_s =
-                    normalize_duration(parse_f64_value(data.get("decode_duration_s")));
-            }
-        }
-    }
-    if prefill_duration_s.is_none() {
-        if let (Some(start), Some(first_output)) = (start_ts, first_output_ts) {
-            prefill_duration_s = normalize_prefill_duration(Some((first_output - start).max(0.0)));
-        }
-    }
-    if decode_duration_s.is_none() {
-        if let (Some(first_output), Some(last_output)) = (first_output_ts, last_output_ts) {
-            decode_duration_s = normalize_duration(Some((last_output - first_output).max(0.0)));
-        }
-    }
-    let prefill_speed_tps = match (input_tokens, prefill_duration_s) {
-        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
-            Some(tokens as f64 / duration)
-        }
-        _ => None,
-    };
-    let decode_speed_tps = match (output_tokens, decode_duration_s) {
-        (Some(tokens), Some(duration)) if tokens > 0 && duration > 0.0 => {
-            Some(tokens as f64 / duration)
-        }
-        _ => None,
-    };
-    SessionSpeed {
-        prefill_tokens: input_tokens,
-        prefill_duration_s,
-        prefill_speed_tps,
-        decode_tokens: output_tokens,
-        decode_duration_s,
-        decode_speed_tps,
-        decode_stream_chunk_tokens,
-    }
-}
-
-fn merge_session_speed(target: &mut SessionSpeed, fallback: &SessionSpeed) {
-    if target.prefill_tokens.is_none() {
-        target.prefill_tokens = fallback.prefill_tokens;
-    }
-    if target.prefill_duration_s.is_none() {
-        target.prefill_duration_s = fallback.prefill_duration_s;
-    }
-    if target.prefill_speed_tps.is_none() {
-        target.prefill_speed_tps = fallback.prefill_speed_tps;
-    }
-    if target.decode_tokens.is_none() {
-        target.decode_tokens = fallback.decode_tokens;
-    }
-    if target.decode_duration_s.is_none() {
-        target.decode_duration_s = fallback.decode_duration_s;
-    }
-    if target.decode_speed_tps.is_none() {
-        target.decode_speed_tps = fallback.decode_speed_tps;
-    }
-    if target.decode_stream_chunk_tokens.is_none() {
-        target.decode_stream_chunk_tokens = fallback.decode_stream_chunk_tokens;
-    }
-}
-
-fn decode_tokens_from_usage(usage: Option<&TokenUsage>) -> Option<u64> {
-    let usage = usage?;
-    let decode_tokens = usage.total.saturating_sub(usage.input);
-    if decode_tokens > 0 {
-        return Some(decode_tokens);
-    }
-    if usage.output > 0 {
-        return Some(usage.output);
-    }
-    None
-}
-
-fn resolve_decode_tokens(speed: &SessionSpeed, usage: Option<&TokenUsage>) -> Option<u64> {
-    if let Some(tokens) = speed.decode_tokens.filter(|value| *value > 0) {
-        return Some(tokens as u64);
-    }
-    decode_tokens_from_usage(usage)
+fn extract_session_speed_from_record(record: &Value) -> LlmSpeedSummary {
+    record
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|events| build_llm_speed_summary_from_value_events(events))
+        .unwrap_or_default()
 }
 
 fn seed_for_user(user_id: &str) -> u64 {

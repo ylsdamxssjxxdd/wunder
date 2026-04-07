@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
+import { summarizeTurnDecodeSpeed } from '../../src/utils/turnDecodeSpeed';
 
 const createTranslator = () => {
   const table: Record<string, string> = {
@@ -21,7 +22,7 @@ const findEntryValue = (
   return matched ? String(matched.value || '') : null;
 };
 
-test('message stats prefer final-round decode speed over aggregated average speed', () => {
+test('message stats use backend-provided user-round average decode speed', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -40,10 +41,10 @@ test('message stats prefer final-round decode speed over aggregated average spee
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '146.16 token/s');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
-test('message stats suppresses multi-round aggregate speed fallback when usage is absent', () => {
+test('message stats shows backend average decode speed even when usage is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -56,7 +57,7 @@ test('message stats suppresses multi-round aggregate speed fallback when usage i
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Speed'), '-');
+  assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
 test('message stats context uses roundUsage.total_tokens when explicit context is absent', () => {
@@ -156,7 +157,7 @@ test('message stats context supports explicit context_occupancy_tokens alias', (
   assert.equal(findEntryValue(entries, 'Context'), '6123');
 });
 
-test('message stats clamps direct outlier speed to multi-round average speed', () => {
+test('message stats keeps backend average speed without frontend clamping', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -217,4 +218,60 @@ test('message stats hides tool-turn speed when no reliable average exists', () =
     t
   );
   assert.equal(findEntryValue(entries, 'Speed'), '-');
+});
+
+test('turn decode speed summary matches backend user-round average semantics', () => {
+  const summary = summarizeTurnDecodeSpeed([
+    {
+      prefill: 0.42,
+      decode: 2.4,
+      usage: {
+        output: 120
+      }
+    },
+    {
+      prefill: 0.33,
+      decode: 1.6,
+      usage: {
+        output: 80
+      }
+    },
+    {
+      prefill: 0.28,
+      decode: 0.9,
+      usage: null
+    }
+  ]);
+
+  assert.ok(Math.abs(Number(summary.prefillDurationTotalS) - 1.03) < 1e-9);
+  assert.equal(summary.decodeDurationTotalS, 4);
+  assert.equal(summary.avgModelRoundSpeedRounds, 2);
+  assert.equal(summary.avgModelRoundSpeedTps, 50);
+});
+
+test('turn decode speed summary ignores rounds without both decode time and output tokens', () => {
+  const summary = summarizeTurnDecodeSpeed([
+    {
+      decode: 1.2,
+      usage: {
+        output: 60
+      }
+    },
+    {
+      decode: 0,
+      usage: {
+        output: 100
+      }
+    },
+    {
+      decode: 1.1,
+      usage: {
+        output: 0
+      }
+    }
+  ]);
+
+  assert.equal(summary.decodeDurationTotalS, 1.2);
+  assert.equal(summary.avgModelRoundSpeedRounds, 1);
+  assert.equal(summary.avgModelRoundSpeedTps, 50);
 });

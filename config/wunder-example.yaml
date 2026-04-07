@@ -195,6 +195,8 @@ tools: # 内置工具配置
       max_chars: 12000
       max_chars_cap: 30000
       cache_ttl_secs: 600
+      allow_private_network: true
+      hostname_allowlist: []
       user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36
 
   browser:
@@ -212,6 +214,9 @@ browser:
   enabled: ${WUNDER_BROWSER_ENABLED:-false}
   docker:
     enabled: ${WUNDER_BROWSER_DOCKER_ENABLED:-false}
+  security:
+    allow_private_network: true
+    hostname_allowlist: []
 
 cron: # 定时任务配置
   enabled: true

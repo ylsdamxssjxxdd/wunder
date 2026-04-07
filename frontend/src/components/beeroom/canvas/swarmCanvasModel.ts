@@ -136,9 +136,9 @@ export const ACTIVE_DISPATCH_STATUSES = new Set(['queued', 'running', 'awaiting_
 
 const SUBAGENT_NODE_WIDTH = 224;
 const SUBAGENT_NODE_HEIGHT = 142;
-const SUBAGENT_BRANCH_BASE_GAP = 158;
-const SUBAGENT_BRANCH_ROW_GAP = 128;
-const SUBAGENT_BRANCH_LANE_GAP = 174;
+const SUBAGENT_BRANCH_FORWARD_PADDING = 46;
+const SUBAGENT_BRANCH_ROW_PADDING = 44;
+const SUBAGENT_BRANCH_LANE_PADDING = 34;
 const SUBAGENT_ROW_CAPACITY = 3;
 const SUBAGENT_ACTIVE_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
 const SUBAGENT_FAILED_STATUSES = new Set(['failed', 'error', 'timeout', 'partial', 'not_found']);
@@ -533,6 +533,9 @@ const resolveSubagentBranchVector = (
   };
 };
 
+const resolveProjectedHalfExtent = (width: number, height: number, axisX: number, axisY: number) =>
+  (Math.abs(axisX) * width + Math.abs(axisY) * height) / 2;
+
 const resolveSubagentBranchPosition = (
   workerNode: Pick<SwarmProjectionNode, 'x' | 'y'>,
   motherNode: Pick<SwarmProjectionNode, 'x' | 'y'> | null,
@@ -545,8 +548,29 @@ const resolveSubagentBranchPosition = (
   const indexInRow = index % SUBAGENT_ROW_CAPACITY;
   const rowCount = Math.min(SUBAGENT_ROW_CAPACITY, total - row * SUBAGENT_ROW_CAPACITY);
   const lane = indexInRow - (rowCount - 1) / 2;
-  const forward = SUBAGENT_BRANCH_BASE_GAP + row * SUBAGENT_BRANCH_ROW_GAP;
-  const lateral = lane * SUBAGENT_BRANCH_LANE_GAP;
+  const workerForwardHalf = resolveProjectedHalfExtent(
+    NODE_WIDTH,
+    NODE_HEIGHT,
+    vector.axisX,
+    vector.axisY
+  );
+  const subagentForwardHalf = resolveProjectedHalfExtent(
+    SUBAGENT_NODE_WIDTH,
+    SUBAGENT_NODE_HEIGHT,
+    vector.axisX,
+    vector.axisY
+  );
+  const subagentLateralHalf = resolveProjectedHalfExtent(
+    SUBAGENT_NODE_WIDTH,
+    SUBAGENT_NODE_HEIGHT,
+    vector.perpX,
+    vector.perpY
+  );
+  const forwardBase = workerForwardHalf + subagentForwardHalf + SUBAGENT_BRANCH_FORWARD_PADDING;
+  const rowAdvance = subagentForwardHalf * 2 + SUBAGENT_BRANCH_ROW_PADDING;
+  const lateralGap = subagentLateralHalf * 2 + SUBAGENT_BRANCH_LANE_PADDING;
+  const forward = forwardBase + row * rowAdvance;
+  const lateral = lane * lateralGap;
   return {
     x: Math.round(workerNode.x + vector.axisX * forward + vector.perpX * lateral),
     y: Math.round(workerNode.y + vector.axisY * forward + vector.perpY * lateral)

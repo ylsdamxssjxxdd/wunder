@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::llm_speed::LlmSpeedSummary;
 
 #[derive(Default)]
 struct OutputTiming {
@@ -302,15 +303,22 @@ impl Orchestrator {
         log_payload: bool,
         tools: Option<&[Value]>,
         llm_config_override: Option<LlmModelConfig>,
-    ) -> Result<(String, String, TokenUsage, Option<Value>), OrchestratorError> {
+    ) -> Result<(String, String, TokenUsage, Option<Value>, LlmSpeedSummary), OrchestratorError>
+    {
         self.ensure_not_cancelled(session_id)?;
         let effective_config = llm_config_override.unwrap_or_else(|| llm_config.clone());
         if !is_llm_configured(&effective_config) {
             if effective_config.mock_if_unconfigured.unwrap_or(false) {
                 let content = i18n::t("error.llm_not_configured");
                 let usage = self.estimate_token_usage(messages, &content, "");
+                let decode_output_tokens = usage.total.saturating_sub(usage.input);
+                let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                    Some(usage.input),
+                    Some(decode_output_tokens),
+                    None,
+                    None,
+                );
                 if emit_events {
-                    let decode_output_tokens = usage.total.saturating_sub(usage.input);
                     let mut output_payload = json!({
                         "content": content,
                         "reasoning": "",
@@ -319,6 +327,7 @@ impl Orchestrator {
                     });
                     if let Value::Object(ref mut map) = output_payload {
                         round_info.insert_into(map);
+                        round_speed.insert_into_map(map);
                     }
                     emitter.emit("llm_output", output_payload).await;
                     let mut usage_payload = json!({
@@ -329,10 +338,11 @@ impl Orchestrator {
                     });
                     if let Value::Object(ref mut map) = usage_payload {
                         round_info.insert_into(map);
+                        round_speed.insert_into_map(map);
                     }
                     emitter.emit("token_usage", usage_payload).await;
                 }
-                return Ok((content, String::new(), usage, None));
+                return Ok((content, String::new(), usage, None, round_speed));
             }
             let detail = i18n::t("error.llm_config_missing");
             return Err(OrchestratorError::llm_unavailable(i18n::t_with_params(
@@ -485,6 +495,12 @@ impl Orchestrator {
                         (None, None)
                     };
                     let decode_output_tokens = usage.total.saturating_sub(usage.input);
+                    let round_speed = LlmSpeedSummary::from_usage_and_durations(
+                        Some(usage.input),
+                        Some(decode_output_tokens),
+                        prefill_duration_s,
+                        decode_duration_s,
+                    );
                     if emit_events {
                         let tool_calls_snapshot = tool_calls.clone();
                         let mut output_payload = json!({
@@ -498,6 +514,7 @@ impl Orchestrator {
                         });
                         if let Value::Object(ref mut map) = output_payload {
                             round_info.insert_into(map);
+                            round_speed.insert_into_map(map);
                         }
                         emitter.emit("llm_output", output_payload).await;
                         let mut usage_payload = json!({
@@ -510,10 +527,11 @@ impl Orchestrator {
                         });
                         if let Value::Object(ref mut map) = usage_payload {
                             round_info.insert_into(map);
+                            round_speed.insert_into_map(map);
                         }
                         emitter.emit("token_usage", usage_payload).await;
                     }
-                    return Ok((content, reasoning, usage, tool_calls));
+                    return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }
                 Err(err) => {
                     last_err = err;
