@@ -349,6 +349,8 @@ impl Orchestrator {
             }
         }
 
+        let replay_system_message =
+            merge_compaction_system_message(system_message.clone(), &artifact_content);
         let user_content = self.build_compaction_user_content(&source_messages);
         let has_candidates = !source_messages.is_empty();
         if user_content.trim().is_empty() && (!force || !has_candidates) {
@@ -570,11 +572,8 @@ impl Orchestrator {
         let recent_user_messages_retained = recent_user_messages.len();
         let recent_user_tokens_retained = estimate_messages_tokens(&recent_user_messages);
         let mut base_messages: Vec<Value> = Vec::new();
-        if let Some(system_message) = system_message.clone() {
+        if let Some(system_message) = replay_system_message.clone() {
             base_messages.push(system_message);
-        }
-        if !artifact_content.is_empty() {
-            base_messages.push(json!({ "role": "system", "content": artifact_content.clone() }));
         }
         base_messages.extend(recent_user_messages.iter().cloned());
         if let Some(current_user_message) = current_user_message.clone() {
@@ -656,11 +655,8 @@ impl Orchestrator {
         });
 
         let mut rebuilt = Vec::new();
-        if let Some(system_message) = system_message {
+        if let Some(system_message) = replay_system_message {
             rebuilt.push(system_message);
-        }
-        if !artifact_content.is_empty() {
-            rebuilt.push(json!({ "role": "system", "content": artifact_content }));
         }
         rebuilt.extend(recent_user_messages);
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
@@ -1758,6 +1754,72 @@ fn build_compaction_instruction(
     blocks.join("\n\n")
 }
 
+fn merge_compaction_system_message(
+    system_message: Option<Value>,
+    artifact_content: &str,
+) -> Option<Value> {
+    let artifact = artifact_content.trim();
+    match system_message {
+        Some(mut message) => {
+            if artifact.is_empty() {
+                return Some(message);
+            }
+            let existing_text = message
+                .as_object()
+                .and_then(|obj| obj.get("content"))
+                .map(flatten_compaction_system_content)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let merged_content = if existing_text.is_empty() {
+                artifact.to_string()
+            } else if existing_text.contains(artifact) {
+                existing_text
+            } else {
+                format!("{existing_text}\n\n{artifact}")
+            };
+            if let Some(obj) = message.as_object_mut() {
+                obj.insert("role".to_string(), Value::String("system".to_string()));
+                obj.insert("content".to_string(), Value::String(merged_content));
+                Some(message)
+            } else {
+                Some(json!({ "role": "system", "content": merged_content }))
+            }
+        }
+        None => {
+            if artifact.is_empty() {
+                None
+            } else {
+                Some(json!({ "role": "system", "content": artifact }))
+            }
+        }
+    }
+}
+
+fn flatten_compaction_system_content(content: &Value) -> String {
+    match content {
+        Value::String(text) => text.to_string(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                item.as_str()
+                    .or_else(|| item.get("text").and_then(Value::as_str))
+                    .or_else(|| item.get("content").and_then(Value::as_str))
+                    .map(ToString::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| map.get("content").and_then(Value::as_str))
+            .unwrap_or("")
+            .to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
 fn build_compaction_summary_config(llm_config: &LlmModelConfig) -> LlmModelConfig {
     let mut summary_config = llm_config.clone();
     let max_output = llm_config
@@ -2332,6 +2394,33 @@ mod tests {
     fn test_resolve_projected_request_tokens_prefers_persisted_peak() {
         assert_eq!(resolve_projected_request_tokens(2000, 3000, 400), 3400);
         assert_eq!(resolve_projected_request_tokens(5000, 3000, 400), 5400);
+    }
+
+    #[test]
+    fn test_merge_compaction_system_message_merges_artifact_into_existing_system() {
+        let merged = merge_compaction_system_message(
+            Some(json!({ "role": "system", "content": "system prompt" })),
+            "Artifact index",
+        )
+        .expect("merged system message");
+        assert_eq!(merged.get("role").and_then(Value::as_str), Some("system"));
+        let content = merged
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(content.contains("system prompt"));
+        assert!(content.contains("Artifact index"));
+    }
+
+    #[test]
+    fn test_merge_compaction_system_message_creates_system_from_artifact_only() {
+        let merged =
+            merge_compaction_system_message(None, "Artifact index").expect("artifact system");
+        assert_eq!(merged.get("role").and_then(Value::as_str), Some("system"));
+        assert_eq!(
+            merged.get("content").and_then(Value::as_str),
+            Some("Artifact index")
+        );
     }
 
     #[test]

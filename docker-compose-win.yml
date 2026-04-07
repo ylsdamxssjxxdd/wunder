@@ -20,6 +20,7 @@ services:
       - "0.0.0.0:${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
     volumes:
       - ./:/app
+      - wunder_win_data:/app/config/data
       - wunder_win_workspaces:/workspaces
       - wunder_win_browser:/app/config/data/browser
       - wunder_win_user_tools:/app/config/data/user_tools
@@ -105,6 +106,7 @@ services:
       - CARGO_TARGET_DIR=/app/target/x86
     volumes:
       - ./:/app
+      - wunder_win_data:/app/config/data
       - wunder_win_workspaces:/workspaces
       - wunder_win_browser:/app/config/data/browser
       - wunder_win_user_tools:/app/config/data/user_tools
@@ -133,6 +135,7 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
+      - wunder_win_data:/app/config/data
       - wunder_win_workspaces:/workspaces
     ports:
       - "127.0.0.1:${MCP_PORT:-9010}:${MCP_PORT:-9010}"
@@ -198,6 +201,7 @@ services:
     restart: always
     volumes:
       - ./:/workspace
+      - wunder_win_data:/workspace/config/data
       - wunder_win_frontend_node_modules:/workspace/node_modules
       - wunder_win_frontend_dist:/workspace/frontend/dist
       - wunder_win_frontend_dist_tmp:/workspace/frontend/dist.__docker_tmp
@@ -249,6 +253,7 @@ services:
       - "${NGINX_PORT:-18002}:80"
 
 volumes:
+  wunder_win_data:
   wunder_win_workspaces:
   wunder_win_browser:
   wunder_win_user_tools:

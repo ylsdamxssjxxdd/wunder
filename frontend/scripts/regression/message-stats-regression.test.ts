@@ -176,3 +176,45 @@ test('message stats clamps direct outlier speed to multi-round average speed', (
   );
   assert.equal(findEntryValue(entries, 'Speed'), '1800.00 token/s');
 });
+
+test('message stats prefers average speed for tool turns', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        toolCalls: 3,
+        usage: {
+          input_tokens: 19897,
+          output_tokens: 1218,
+          total_tokens: 21115
+        },
+        decode_duration_s: 0.23,
+        avg_model_round_speed_tps: 312.5,
+        avg_model_round_speed_rounds: 4
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '312.50 token/s');
+});
+
+test('message stats hides tool-turn speed when no reliable average exists', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        toolCalls: 1,
+        usage: {
+          input_tokens: 9244,
+          output_tokens: 700,
+          total_tokens: 9944
+        },
+        decode_duration_s: 0.21
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Speed'), '-');
+});

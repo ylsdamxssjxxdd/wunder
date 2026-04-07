@@ -203,6 +203,50 @@ export const resolveBeeroomMotherAgentId = (
 ) =>
   String(mission?.mother_agent_id || group?.mother_agent_id || mission?.entry_agent_id || agents[0]?.agent_id || '').trim();
 
+const mergeProjectionMembers = (
+  group: BeeroomGroup | null | undefined,
+  agents: BeeroomMember[],
+  dispatchPreview: BeeroomSwarmDispatchPreview | null | undefined
+): BeeroomMember[] => {
+  const merged = new Map<string, BeeroomMember>();
+  const pushMember = (member: BeeroomMember | null | undefined) => {
+    const agentId = String(member?.agent_id || '').trim();
+    if (!agentId) return;
+    const current = merged.get(agentId) || ({} as BeeroomMember);
+    merged.set(agentId, {
+      ...current,
+      ...member,
+      agent_id: agentId
+    });
+  };
+
+  (Array.isArray(group?.members) ? group?.members : []).forEach(pushMember);
+  (Array.isArray(agents) ? agents : []).forEach(pushMember);
+
+  const motherAgentId = String(group?.mother_agent_id || '').trim();
+  if (motherAgentId && !merged.has(motherAgentId)) {
+    pushMember({
+      agent_id: motherAgentId,
+      name: String(group?.mother_agent_name || motherAgentId).trim() || motherAgentId,
+      idle: true,
+      active_session_total: 0
+    });
+  }
+
+  const dispatchAgentId = String(dispatchPreview?.targetAgentId || '').trim();
+  if (dispatchAgentId && !merged.has(dispatchAgentId)) {
+    const active = ACTIVE_DISPATCH_STATUSES.has(String(dispatchPreview?.status || '').trim().toLowerCase());
+    pushMember({
+      agent_id: dispatchAgentId,
+      name: String(dispatchPreview?.targetName || dispatchAgentId).trim() || dispatchAgentId,
+      idle: !active,
+      active_session_total: active ? 1 : 0
+    });
+  }
+
+  return Array.from(merged.values());
+};
+
 const resolveNodeStatus = (tasks: BeeroomMissionTask[], member: BeeroomMember | undefined, missionStatus: string) => {
   if (member?.idle === false) return 'running';
   if (!tasks.length) return missionStatus || 'idle';
@@ -513,11 +557,13 @@ export const hasBeeroomSwarmNodes = (options: {
   group: BeeroomGroup | null;
   mission: BeeroomMission | null;
   agents: BeeroomMember[];
+  dispatchPreview?: BeeroomSwarmDispatchPreview | null;
 }) => {
   const mission = options.mission;
+  const members = mergeProjectionMembers(options.group, options.agents, options.dispatchPreview || null);
   const activeAgentIds = new Set<string>();
   const involvedAgentIds = new Set<string>();
-  options.agents.forEach((member) => {
+  members.forEach((member) => {
     const agentId = String(member.agent_id || '').trim();
     if (!agentId) return;
     activeAgentIds.add(agentId);
@@ -527,11 +573,18 @@ export const hasBeeroomSwarmNodes = (options: {
     const agentId = String(task.agent_id || '').trim();
     if (agentId && activeAgentIds.has(agentId)) involvedAgentIds.add(agentId);
   });
-  const motherAgentId = resolveBeeroomMotherAgentId(mission, options.group, options.agents);
+  const motherAgentId = resolveBeeroomMotherAgentId(mission, options.group, members);
   if (motherAgentId && activeAgentIds.has(motherAgentId)) involvedAgentIds.add(motherAgentId);
   const entryAgentId = String(mission?.entry_agent_id || '').trim();
   if (entryAgentId && activeAgentIds.has(entryAgentId)) {
     involvedAgentIds.add(entryAgentId);
+  }
+  const dispatchAgentId = String(options.dispatchPreview?.targetAgentId || '').trim();
+  if (dispatchAgentId) {
+    involvedAgentIds.add(dispatchAgentId);
+  }
+  if (options.dispatchPreview?.subagents?.length) {
+    return true;
   }
   return involvedAgentIds.size > 0;
 };
@@ -550,7 +603,7 @@ export const buildBeeroomSwarmProjection = (options: {
 }): SwarmProjection => {
   const mission = options.mission;
   const tasks = Array.isArray(mission?.tasks) ? mission.tasks : [];
-  const members = Array.isArray(options.agents) ? options.agents : [];
+  const members = mergeProjectionMembers(options.group, options.agents, options.dispatchPreview || null);
   const memberMap = new Map(members.map((agent) => [String(agent.agent_id || '').trim(), agent]));
   const activeAgentIds = new Set(Array.from(memberMap.keys()).filter(Boolean));
   const motherAgentId = resolveBeeroomMotherAgentId(mission, options.group, members);

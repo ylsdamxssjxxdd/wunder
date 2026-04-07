@@ -90,17 +90,6 @@ const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
 const agentsRef = toRef(props, 'agents');
 
-const hasSwarmNodes = computed(() => {
-  if (props.hideStandbyWhenMissionEmpty && !props.mission) {
-    return false;
-  }
-  return hasBeeroomSwarmNodes({
-    group: props.group,
-    mission: props.mission,
-    agents: props.agents
-  });
-});
-
 const {
   chatCollapsed,
   composerText,
@@ -139,6 +128,18 @@ const {
   agents: agentsRef,
   t,
   onRefresh: () => emit('refresh')
+});
+
+const hasSwarmNodes = computed(() => {
+  if (props.hideStandbyWhenMissionEmpty && !props.mission) {
+    return false;
+  }
+  return hasBeeroomSwarmNodes({
+    group: props.group,
+    mission: props.mission,
+    agents: props.agents,
+    dispatchPreview: dispatchPreview.value
+  });
 });
 
 const refreshCanvasFullscreen = () => {

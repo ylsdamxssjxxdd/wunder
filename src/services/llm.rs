@@ -1953,6 +1953,10 @@ fn extract_tool_calls(message: &Value) -> Option<Value> {
         .map(sanitize_tool_call_payload)
 }
 
+fn has_stream_tool_activity(payload: Option<&Value>) -> bool {
+    payload.is_some_and(|value| extract_tool_calls(value).is_some())
+}
+
 fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
     messages
         .iter()
@@ -2170,6 +2174,10 @@ where
                         },
                     ));
             }
+            let tool_activity = has_stream_tool_activity(Some(&delta))
+                || has_stream_tool_activity(choice.and_then(|value| value.get("message")))
+                || has_stream_tool_activity(choice)
+                || has_stream_tool_activity(Some(&payload));
             update_stream_tool_calls(tool_calls_accumulator, &delta);
             if let Some(message) = choice.and_then(|value| value.get("message")) {
                 update_stream_tool_calls(tool_calls_accumulator, message);
@@ -2191,6 +2199,8 @@ where
             }
             if !content_delta.is_empty() || !reasoning_delta.is_empty() {
                 on_delta(content_delta, reasoning_delta).await?;
+            } else if tool_activity {
+                on_delta(String::new(), String::new()).await?;
             }
         }
         Err(err) => {
@@ -2300,6 +2310,7 @@ where
                             }
                         });
                         merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                        on_delta(String::new(), String::new()).await?;
                     }
                     _ => {}
                 }
@@ -2346,6 +2357,7 @@ where
                                 }
                             });
                             merge_stream_tool_call_item(tool_calls_accumulator, &call);
+                            on_delta(String::new(), String::new()).await?;
                         }
                     }
                     _ => {}
@@ -2367,6 +2379,9 @@ where
             }
             if let Some(Value::Array(items)) = tool_calls {
                 upsert_responses_tool_calls(tool_calls_accumulator, &items);
+                if combined.is_empty() && reasoning_combined.is_empty() {
+                    on_delta(String::new(), String::new()).await?;
+                }
             }
             return Ok(true);
         }
@@ -2429,13 +2444,16 @@ where
         "response.output_item.added" => {
             if let Some(item) = payload.get("item") {
                 update_responses_tool_call_from_item(tool_calls_accumulator, item);
+                on_delta(String::new(), String::new()).await?;
             }
         }
         "response.function_call_arguments.delta" => {
             update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+            on_delta(String::new(), String::new()).await?;
         }
         "response.function_call_arguments.done" => {
             update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+            on_delta(String::new(), String::new()).await?;
         }
         "response.completed" => {
             if let Some(response) = payload.get("response") {
@@ -2453,6 +2471,9 @@ where
                 }
                 if !tool_calls.is_empty() {
                     upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+                    if combined.is_empty() && reasoning_combined.is_empty() {
+                        on_delta(String::new(), String::new()).await?;
+                    }
                 }
             }
             return Ok(true);
@@ -2472,6 +2493,9 @@ where
         }
         if !tool_calls.is_empty() {
             upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+            if combined.is_empty() && reasoning_combined.is_empty() {
+                on_delta(String::new(), String::new()).await?;
+            }
         }
         if let Some(new_usage) = normalize_usage(payload.get("usage")) {
             *usage = Some(new_usage);
@@ -3926,6 +3950,88 @@ mod tests {
         assert!(!done);
         assert_eq!(combined, "raw-json");
         assert!(reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_marks_openai_tool_stream_as_activity() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"execute_command\",\"arguments\":\"{\\\"command\\\":\\\"echo hi\\\"}\"}}]}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process tool-call stream block");
+
+        assert!(!done);
+        assert!(combined.is_empty());
+        assert!(reasoning.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[(String::new(), String::new())]
+        );
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "execute_command");
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_marks_responses_tool_stream_as_activity() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let callbacks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let callbacks_for_closure = std::sync::Arc::clone(&callbacks);
+        let mut on_delta = move |content: String, reasoning: String| {
+            let callbacks = std::sync::Arc::clone(&callbacks_for_closure);
+            async move {
+                callbacks
+                    .lock()
+                    .expect("lock callbacks")
+                    .push((content, reasoning));
+                Ok(())
+            }
+        };
+
+        let done = process_sse_event_block(
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"execute_command\",\"arguments\":\"{\\\"command\\\":\\\"echo hi\\\"}\"}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process responses tool stream block");
+
+        assert!(!done);
+        assert!(combined.is_empty());
+        assert!(reasoning.is_empty());
+        assert_eq!(
+            callbacks.lock().expect("lock callbacks").as_slice(),
+            &[(String::new(), String::new())]
+        );
+        let finalized = finalize_stream_tool_calls(&tool_calls).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "execute_command");
     }
 
     #[tokio::test]

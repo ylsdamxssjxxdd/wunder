@@ -45,7 +45,6 @@
           >
             <i class="fa-solid fa-play" aria-hidden="true"></i>
           </button>
-          <span class="beeroom-canvas-chat-count">{{ messages.length }}</span>
         </div>
       </div>
 
@@ -422,20 +421,6 @@ watch(
 
 .beeroom-canvas-runtime-session {
   font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
-}
-
-.beeroom-canvas-chat-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(127, 29, 29, 0.22);
-  border: 1px solid rgba(239, 68, 68, 0.28);
-  color: rgba(248, 113, 113, 0.98);
-  font-size: 11px;
 }
 
 .beeroom-canvas-icon-btn,

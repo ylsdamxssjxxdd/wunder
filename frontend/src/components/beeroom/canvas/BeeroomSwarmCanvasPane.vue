@@ -325,7 +325,8 @@ const hasNodes = computed(() =>
   hasBeeroomSwarmNodes({
     group: props.group,
     mission: props.mission,
-    agents: props.agents
+    agents: props.agents,
+    dispatchPreview: props.dispatchPreview
   })
 );
 

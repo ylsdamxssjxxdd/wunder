@@ -405,10 +405,8 @@ impl Orchestrator {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
-                        if !delta.is_empty() || !reasoning_delta.is_empty() {
-                            timing.lock().mark_output(Instant::now());
-                        }
-                        if emit_events {
+                        timing.lock().mark_output(Instant::now());
+                        if emit_events && (!delta.is_empty() || !reasoning_delta.is_empty()) {
                             let mut payload = serde_json::Map::new();
                             if !delta.is_empty() {
                                 payload.insert("delta".to_string(), Value::String(delta));

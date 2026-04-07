@@ -49,17 +49,23 @@ pub(super) fn should_compact_by_context(
 ) -> CompactionDecision {
     let limit = limit.max(1);
     let presampling_limit = resolve_pre_sampling_trigger_limit(limit);
+    let presampling_floor = history_threshold
+        .filter(|threshold| *threshold > 0)
+        .map(|threshold| threshold.min(limit))
+        .unwrap_or(1);
+    let effective_presampling_limit = presampling_limit.max(presampling_floor);
     let by_history = history_threshold
         .map(|threshold| projected_request_tokens >= threshold)
         .unwrap_or(false);
     let by_overflow = projected_request_tokens >= limit;
-    // Trigger compaction before hard overflow so we keep request headroom stable.
-    let by_presampling = !by_overflow && projected_request_tokens >= presampling_limit;
+    // Do not let speculative pre-sampling undercut an explicit history threshold.
+    let by_presampling =
+        !by_overflow && !by_history && projected_request_tokens >= effective_presampling_limit;
     CompactionDecision {
         by_history,
         by_overflow,
         by_presampling,
-        presampling_limit,
+        presampling_limit: effective_presampling_limit,
     }
 }
 
@@ -81,6 +87,15 @@ mod tests {
         assert!(decision.by_presampling);
         assert!(decision.should_compact());
         assert_eq!(decision.trigger(), "pre_sampling");
+    }
+
+    #[test]
+    fn explicit_history_threshold_prevents_earlier_presampling() {
+        let decision = should_compact_by_context(7600, 8000, Some(8000));
+        assert!(!decision.by_presampling);
+        assert!(!decision.by_history);
+        assert!(!decision.should_compact());
+        assert_eq!(decision.presampling_limit, 8000);
     }
 
     #[test]

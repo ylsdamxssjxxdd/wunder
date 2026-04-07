@@ -97,6 +97,11 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const averageSpeed = normalizeSpeed(averageSpeedRaw, null);
   const averageRounds = Number.isFinite(averageRoundsRaw) ? averageRoundsRaw : 0;
   const hasMultiRoundAverage = averageSpeed !== null && averageRounds >= 2;
+  const toolCalls = Number(stats?.toolCalls ?? stats?.tool_calls ?? stats?.toolCallsTotal);
+  const hasToolCalls = Number.isFinite(toolCalls) && toolCalls > 0;
+  if (hasToolCalls) {
+    return averageSpeed !== null && averageRounds > 0 ? averageSpeed : null;
+  }
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_s ??
       stats?.decodeDurationS ??

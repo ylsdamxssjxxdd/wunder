@@ -382,7 +382,6 @@
             <span class="messenger-list-preview">
               {{ group.description || group.mother_agent_name || t('beeroom.empty.description') }}
             </span>
-            <span class="messenger-list-unread">{{ group.active_agent_total || 0 }}</span>
           </div>
         </div>
         <div class="messenger-list-item-actions">
