@@ -16,7 +16,6 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::future::Future;
-use std::net::IpAddr;
 use std::time::Duration;
 use tracing::warn;
 use url::{form_urlencoded::byte_serialize, Url};
@@ -133,42 +132,10 @@ fn should_emit_enable_thinking_flag(config: &LlmModelConfig) -> bool {
 
 fn should_emit_vllm_chat_template_kwargs(config: &LlmModelConfig) -> bool {
     let provider = normalize_provider(config.provider.as_deref());
-    matches!(provider.as_str(), "vllm" | "vllm_ascend")
-        || (provider == "openai_compatible" && base_url_points_to_local_or_private_host(config))
-}
-
-fn base_url_points_to_local_or_private_host(config: &LlmModelConfig) -> bool {
-    let Some(base_url) = config
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
-        return false;
-    };
-    let Ok(parsed) = Url::parse(base_url) else {
-        return false;
-    };
-    let Some(host) = parsed.host_str() else {
-        return false;
-    };
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    let Ok(ip) = host.parse::<IpAddr>() else {
-        return false;
-    };
-    match ip {
-        IpAddr::V4(addr) => {
-            addr.is_loopback() || addr.is_private() || addr.is_link_local() || addr.is_unspecified()
-        }
-        IpAddr::V6(addr) => {
-            addr.is_loopback()
-                || addr.is_unique_local()
-                || addr.is_unicast_link_local()
-                || addr.is_unspecified()
-        }
-    }
+    matches!(
+        provider.as_str(),
+        "openai_compatible" | "vllm" | "vllm_ascend"
+    )
 }
 
 fn apply_disable_thinking_controls(payload: &mut Value, config: &LlmModelConfig) {
@@ -4284,6 +4251,50 @@ mod tests {
             base_url: Some("http://127.0.0.1:8000/v1".to_string()),
             api_key: Some("test-key".to_string()),
             model: Some("Qwen/Qwen3-8B".to_string()),
+            temperature: Some(0.7),
+            timeout_s: Some(15),
+            retry: Some(0),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: Some("none".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let client = LlmClient::new(Client::new(), config);
+        let payload = client.build_request_payload(
+            &[ChatMessage {
+                role: "user".to_string(),
+                content: Value::String("hello".to_string()),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            false,
+        );
+
+        assert_eq!(payload["reasoning_effort"], "none");
+        assert_eq!(payload["enable_thinking"], false);
+        assert_eq!(payload["chat_template_kwargs"]["enable_thinking"], false);
+    }
+
+    #[test]
+    fn build_chat_payload_disables_thinking_for_remote_openai_compatible_requests() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai_compatible".to_string()),
+            api_mode: Some("chat_completions".to_string()),
+            base_url: Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("qwen3.5-35b-a3b".to_string()),
             temperature: Some(0.7),
             timeout_s: Some(15),
             retry: Some(0),

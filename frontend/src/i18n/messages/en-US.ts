@@ -194,6 +194,8 @@ export default {
   'beeroom.canvas.timelineEmpty': 'No timeline events yet',
   'beeroom.canvas.legendMother': 'Mother',
   'beeroom.canvas.legendWorker': 'Worker',
+  'beeroom.canvas.legendSubagent': 'Subagent',
+  'beeroom.canvas.subagentSummary': 'Summary',
   'beeroom.canvas.legendDispatch': 'Dispatch',
   'beeroom.canvas.legendReport': 'Report',
   'beeroom.canvas.legendAwaitingIdle': 'Awaiting Idle',

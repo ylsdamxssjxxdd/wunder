@@ -12,6 +12,7 @@
           :group="group"
           :mission="mission"
           :agents="agents"
+          :subagents-by-task="subagentsByTask"
           :workflow-items-by-task="workflowItemsByTask"
           :workflow-preview-by-task="workflowPreviewByTask"
           :fullscreen="canvasFullscreen"
@@ -119,6 +120,7 @@ const {
   dispatchRuntimeTone,
   dispatchSessionId,
   displayChatMessages,
+  subagentsByTask,
   workflowItemsByTask,
   workflowPreviewByTask,
   clearManualChatHistory,

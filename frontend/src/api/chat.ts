@@ -116,8 +116,11 @@ export const getSessionCommandSession = (
 ) => api.get(`/chat/sessions/${sessionId}/command-sessions/${commandSessionId}`, options);
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
   api.get(`/chat/sessions/${id}/history`, { params });
-export const getSessionSubagents = (id: string, params: QueryParams = {}) =>
-  api.get(`/chat/sessions/${id}/subagents`, { params });
+export const getSessionSubagents = (
+  id: string,
+  params: QueryParams = {},
+  options: { signal?: AbortSignal } = {}
+) => api.get(`/chat/sessions/${id}/subagents`, { params, ...options });
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
 export const archiveSession = (id: string) => api.post(`/chat/sessions/${id}/archive`);
 export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/restore`);

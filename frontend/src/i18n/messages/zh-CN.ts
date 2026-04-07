@@ -192,6 +192,8 @@ export default {
   'beeroom.canvas.timelineEmpty': '暂无事件记录',
   'beeroom.canvas.legendMother': '母蜂',
   'beeroom.canvas.legendWorker': '工蜂',
+  'beeroom.canvas.legendSubagent': '子智能体',
+  'beeroom.canvas.subagentSummary': '摘要',
   'beeroom.canvas.legendDispatch': '任务派发',
   'beeroom.canvas.legendReport': '结果回传',
   'beeroom.canvas.legendAwaitingIdle': '等待全员空闲',

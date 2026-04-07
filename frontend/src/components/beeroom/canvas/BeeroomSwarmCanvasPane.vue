@@ -18,15 +18,29 @@
             <path
               v-if="edge.active"
               class="beeroom-swarm-edge-activity"
-              :class="{ 'is-selected': edge.selected }"
+              :class="{
+                'is-selected': edge.selected,
+                'is-subagent': edge.kind === 'subagent',
+                'is-revealing': edge.revealing
+              }"
               :d="edge.path"
             />
             <path
               class="beeroom-swarm-edge"
-              :class="{ 'is-active': edge.active, 'is-selected': edge.selected }"
+              :class="{
+                'is-active': edge.active,
+                'is-selected': edge.selected,
+                'is-subagent': edge.kind === 'subagent',
+                'is-revealing': edge.revealing
+              }"
               :d="edge.path"
             />
-            <circle v-if="edge.active" class="beeroom-swarm-edge-orb" r="4.5">
+            <circle
+              v-if="edge.active"
+              class="beeroom-swarm-edge-orb"
+              :class="{ 'is-subagent': edge.kind === 'subagent' }"
+              r="4.5"
+            >
               <animateMotion
                 :dur="edge.motionDuration"
                 :begin="edge.motionDelay"
@@ -35,7 +49,12 @@
                 rotate="auto"
               />
             </circle>
-            <circle v-if="edge.active" class="beeroom-swarm-edge-orb is-trailing" r="3">
+            <circle
+              v-if="edge.active"
+              class="beeroom-swarm-edge-orb is-trailing"
+              :class="{ 'is-subagent': edge.kind === 'subagent' }"
+              r="3"
+            >
               <animateMotion
                 :dur="edge.motionDuration"
                 :begin="edge.motionTrailDelay"
@@ -47,7 +66,11 @@
             <text
               v-if="edge.label"
               class="beeroom-swarm-edge-label"
-              :class="{ 'is-active': edge.active, 'is-selected': edge.selected }"
+              :class="{
+                'is-active': edge.active,
+                'is-selected': edge.selected,
+                'is-subagent': edge.kind === 'subagent'
+              }"
               :x="edge.labelX"
               :y="edge.labelY"
             >
@@ -61,11 +84,12 @@
             v-for="node in worldNodes"
             :key="node.id"
             :node="node"
+            :reveal="node.reveal"
             :condensed="condensedNodeCards"
             :empty-label="workflowEmptyLabel"
             :style="{ left: `${node.left}px`, top: `${node.top}px` }"
             @click="handleNodeClick(node.id)"
-            @dblclick="emit('open-agent', node.agentId)"
+            @dblclick="node.agentId && emit('open-agent', node.agentId)"
           />
         </div>
       </div>
@@ -130,13 +154,14 @@
             v-for="edge in minimapEdges"
             :key="edge.id"
             class="beeroom-canvas-minimap-edge"
+            :class="{ 'is-subagent': edge.kind === 'subagent' }"
             :d="edge.path"
           />
           <rect
             v-for="node in minimapNodes"
             :key="node.id"
             class="beeroom-canvas-minimap-node"
-            :class="`is-${node.status}`"
+            :class="[`is-${node.status}`, `is-${node.role}`, `is-emphasis-${node.emphasis}`]"
             :x="node.x"
             :y="node.y"
             :width="node.width"
@@ -167,6 +192,7 @@ import {
   type BeeroomCanvasPositionOverride,
   type BeeroomCanvasViewportState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import type { BeeroomMissionSubagentItem } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
 import type { BeeroomWorkflowItem, BeeroomTaskWorkflowPreview } from '@/components/beeroom/beeroomTaskWorkflow';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 
@@ -197,6 +223,7 @@ const props = defineProps<{
   group: BeeroomGroup | null;
   mission: BeeroomMission | null;
   agents: BeeroomMember[];
+  subagentsByTask: Record<string, BeeroomMissionSubagentItem[]>;
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   fullscreen?: boolean;
@@ -242,6 +269,7 @@ const nodePositionOverrides = ref<Record<string, BeeroomCanvasPositionOverride>>
 const viewportState = ref<SwarmViewportState>(createDefaultSwarmViewportState());
 const pendingViewportRestore = ref<BeeroomCanvasViewportState | null>(null);
 const pendingFitView = ref(false);
+const nodeRevealMap = ref<Record<string, { fromId: string; order: number }>>({});
 
 let resizeObserver: ResizeObserver | null = null;
 let viewportSaveTimer: number | null = null;
@@ -250,6 +278,8 @@ let panState: PanState | null = null;
 let releaseInteractionListeners: (() => void) | null = null;
 let dragPointerTarget: HTMLElement | null = null;
 let suppressSelection = false;
+const knownProjectionNodeIds = new Set<string>();
+const revealCleanupTimers = new Map<string, number>();
 
 const scopeKey = computed(() =>
   resolveBeeroomSwarmScopeKey({
@@ -266,6 +296,7 @@ const projection = computed(() =>
     agents: props.agents,
     selectedNodeId: selectedNodeId.value,
     nodePositionOverrides: nodePositionOverrides.value,
+    subagentsByTask: props.subagentsByTask,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     t
@@ -279,6 +310,7 @@ const baseProjection = computed(() =>
     agents: props.agents,
     selectedNodeId: selectedNodeId.value,
     nodePositionOverrides: {},
+    subagentsByTask: props.subagentsByTask,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     t
@@ -313,8 +345,8 @@ const worldSize = computed(() => ({
   height: worldMetrics.value.height
 }));
 
-const worldNodes = computed(() =>
-  projection.value.nodes.map((node) => {
+const worldNodes = computed(() => {
+  const baseNodes = projection.value.nodes.map((node) => {
     const centerX = Math.round(node.x + worldMetrics.value.originX);
     const centerY = Math.round(node.y + worldMetrics.value.originY);
     return {
@@ -324,8 +356,26 @@ const worldNodes = computed(() =>
       left: Math.round(centerX - node.width / 2),
       top: Math.round(centerY - node.height / 2)
     };
-  })
-);
+  });
+  const baseNodeMap = new Map<string, (typeof baseNodes)[number]>();
+  baseNodes.forEach((node) => {
+    baseNodeMap.set(node.id, node);
+  });
+  return baseNodes.map((node) => {
+    const reveal = nodeRevealMap.value[node.id];
+    const sourceNode = reveal ? baseNodeMap.get(reveal.fromId) : null;
+    return {
+      ...node,
+      reveal: reveal
+        ? {
+            offsetX: Math.round(node.centerX - Number(sourceNode?.centerX || node.centerX)),
+            offsetY: Math.round(node.centerY - Number(sourceNode?.centerY || node.centerY)),
+            order: reveal.order
+          }
+        : null
+    };
+  });
+});
 
 const worldNodeMap = computed(() => {
   const map = new Map<string, (typeof worldNodes.value)[number]>();
@@ -343,14 +393,16 @@ const worldEdges = computed(() =>
       if (!source || !target) return null;
       const dx = target.centerX - source.centerX;
       const controlOffset = Math.max(42, Math.abs(dx) * 0.22);
+      const revealing = Boolean(nodeRevealMap.value[target.id]);
       const motionSeed = index % 4;
       const path = `M ${source.centerX} ${source.centerY} C ${source.centerX + controlOffset} ${source.centerY} ${target.centerX - controlOffset} ${target.centerY} ${target.centerX} ${target.centerY}`;
       return {
         ...edge,
         path,
+        revealing,
         labelX: Math.round(source.centerX + dx / 2),
         labelY: Math.round(source.centerY + (target.centerY - source.centerY) / 2 - 10),
-        motionDuration: `${1.4 + motionSeed * 0.12}s`,
+        motionDuration: `${edge.kind === 'subagent' ? 1.18 : 1.4 + motionSeed * 0.12}s`,
         motionDelay: `${-(motionSeed * 0.18)}s`,
         motionTrailDelay: `${-(0.72 + motionSeed * 0.18)}s`
       };
@@ -466,6 +518,8 @@ const minimapNodes = computed(() =>
     return {
       id: node.id,
       status: node.status,
+      role: node.role,
+      emphasis: node.emphasis,
       x: rawX,
       y: rawY,
       width,
@@ -488,6 +542,7 @@ const minimapEdges = computed(() =>
       const controlOffset = Math.max(6, Math.abs(dx) * 0.22);
       return {
         id: edge.id,
+        kind: edge.kind,
         path: `M ${sx} ${sy} C ${sx + controlOffset} ${sy} ${tx - controlOffset} ${ty} ${tx} ${ty}`
       };
     })
@@ -513,10 +568,69 @@ const minimapViewportRect = computed(() => {
 const projectionSignature = computed(() =>
   [
     scopeKey.value,
-    projection.value.nodes.map((node) => `${node.id}:${node.x}:${node.y}:${node.selected}:${node.workflowTaskId}:${node.status}`).join('|'),
-    projection.value.edges.map((edge) => `${edge.id}:${edge.active}:${edge.selected}:${edge.label}`).join('|')
+    projection.value.nodes
+      .map(
+        (node) =>
+          `${node.id}:${node.role}:${node.parentId}:${node.x}:${node.y}:${node.selected}:${node.workflowTaskId}:${node.status}:${node.emphasis}`
+      )
+      .join('|'),
+    projection.value.edges.map((edge) => `${edge.id}:${edge.kind}:${edge.active}:${edge.selected}:${edge.label}`).join('|')
   ].join('||')
 );
+
+const syncNodeRevealState = () => {
+  const currentNodes = projection.value.nodes;
+  const currentIds = new Set(currentNodes.map((node) => node.id));
+  const nextRevealState = { ...nodeRevealMap.value };
+  let changed = false;
+
+  Object.keys(nextRevealState).forEach((nodeId) => {
+    if (currentIds.has(nodeId)) return;
+    const cleanupTimer = revealCleanupTimers.get(nodeId);
+    if (cleanupTimer !== undefined && typeof window !== 'undefined') {
+      window.clearTimeout(cleanupTimer);
+      revealCleanupTimers.delete(nodeId);
+    }
+    delete nextRevealState[nodeId];
+    changed = true;
+  });
+
+  Array.from(knownProjectionNodeIds).forEach((nodeId) => {
+    if (currentIds.has(nodeId)) return;
+    knownProjectionNodeIds.delete(nodeId);
+  });
+
+  currentNodes.forEach((node) => {
+    if (knownProjectionNodeIds.has(node.id)) return;
+    if (node.role === 'subagent' && node.introFromId) {
+      nextRevealState[node.id] = {
+        fromId: node.introFromId,
+        order: Number(node.introOrder || 0)
+      };
+      if (typeof window !== 'undefined') {
+        const existingTimer = revealCleanupTimers.get(node.id);
+        if (existingTimer !== undefined) {
+          window.clearTimeout(existingTimer);
+        }
+        const revealDuration = 900 + Math.max(0, Number(node.introOrder || 0)) * 70;
+        const timer = window.setTimeout(() => {
+          revealCleanupTimers.delete(node.id);
+          if (!nodeRevealMap.value[node.id]) return;
+          const next = { ...nodeRevealMap.value };
+          delete next[node.id];
+          nodeRevealMap.value = next;
+        }, revealDuration);
+        revealCleanupTimers.set(node.id, timer);
+      }
+      changed = true;
+    }
+    knownProjectionNodeIds.add(node.id);
+  });
+
+  if (changed) {
+    nodeRevealMap.value = nextRevealState;
+  }
+};
 
 const clearViewportSaveTimer = () => {
   if (viewportSaveTimer !== null) {
@@ -786,6 +900,14 @@ const handleMinimapClick = (event: MouseEvent) => {
 watch(
   scopeKey,
   () => {
+    revealCleanupTimers.forEach((timer) => {
+      if (typeof window !== 'undefined') {
+        window.clearTimeout(timer);
+      }
+    });
+    revealCleanupTimers.clear();
+    knownProjectionNodeIds.clear();
+    nodeRevealMap.value = {};
     hydrateCanvasState();
   },
   { immediate: true }
@@ -794,6 +916,7 @@ watch(
 watch(
   projectionSignature,
   async () => {
+    syncNodeRevealState();
     if (!projection.value.nodes.length) {
       selectedNodeId.value = '';
       return;
@@ -849,6 +972,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', handleWindowResize);
   releaseInteractionListeners?.();
   clearInteractions();
+  revealCleanupTimers.forEach((timer) => {
+    window.clearTimeout(timer);
+  });
+  revealCleanupTimers.clear();
+  knownProjectionNodeIds.clear();
+  nodeRevealMap.value = {};
 });
 </script>
 
@@ -952,6 +1081,10 @@ onBeforeUnmount(() => {
   stroke: rgba(248, 113, 113, 0.3);
 }
 
+.beeroom-swarm-edge-activity.is-subagent {
+  stroke: rgba(34, 211, 238, 0.2);
+}
+
 .beeroom-swarm-edge.is-selected {
   stroke: rgba(96, 165, 250, 0.84);
 }
@@ -961,6 +1094,26 @@ onBeforeUnmount(() => {
   stroke-width: 1.52;
   stroke-dasharray: 10 8;
   animation: beeroom-edge-flow 1.8s linear infinite;
+}
+
+.beeroom-swarm-edge.is-subagent {
+  stroke: rgba(103, 132, 161, 0.42);
+  stroke-dasharray: 4 7;
+}
+
+.beeroom-swarm-edge.is-subagent.is-active {
+  stroke: rgba(34, 211, 238, 0.9);
+  stroke-width: 1.46;
+  stroke-dasharray: 8 7;
+}
+
+.beeroom-swarm-edge.is-revealing,
+.beeroom-swarm-edge-activity.is-revealing {
+  animation: beeroom-edge-reveal 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.beeroom-swarm-edge-activity.is-subagent.is-revealing {
+  animation: beeroom-edge-reveal 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .beeroom-swarm-edge-orb {
@@ -977,6 +1130,16 @@ onBeforeUnmount(() => {
   opacity: 0.7;
 }
 
+.beeroom-swarm-edge-orb.is-subagent {
+  fill: rgba(165, 243, 252, 0.96);
+  stroke: rgba(224, 242, 254, 0.9);
+}
+
+.beeroom-swarm-edge-orb.is-trailing.is-subagent {
+  fill: rgba(34, 211, 238, 0.72);
+  stroke: rgba(165, 243, 252, 0.52);
+}
+
 .beeroom-swarm-edge-label {
   fill: rgba(226, 232, 240, 0.8);
   font-size: 11px;
@@ -991,6 +1154,10 @@ onBeforeUnmount(() => {
 .beeroom-swarm-edge-label.is-active {
   fill: rgba(254, 202, 202, 0.96);
   animation: beeroom-edge-label-breathe 1.3s ease-in-out infinite;
+}
+
+.beeroom-swarm-edge-label.is-subagent {
+  fill: rgba(186, 230, 253, 0.88);
 }
 
 .beeroom-canvas-tools,
@@ -1096,8 +1263,24 @@ onBeforeUnmount(() => {
   stroke-width: 0.8;
 }
 
+.beeroom-canvas-minimap-edge.is-subagent {
+  stroke: rgba(103, 132, 161, 0.46);
+}
+
 .beeroom-canvas-minimap-node {
   fill: rgba(148, 163, 184, 0.92);
+}
+
+.beeroom-canvas-minimap-node.is-subagent {
+  fill: rgba(100, 116, 139, 0.84);
+}
+
+.beeroom-canvas-minimap-node.is-subagent.is-emphasis-active {
+  fill: rgba(34, 211, 238, 0.9);
+}
+
+.beeroom-canvas-minimap-node.is-subagent.is-emphasis-dormant {
+  fill: rgba(100, 116, 139, 0.62);
 }
 
 .beeroom-canvas-minimap-node.is-running,
@@ -1176,6 +1359,18 @@ onBeforeUnmount(() => {
 
   50% {
     opacity: 1;
+  }
+}
+
+@keyframes beeroom-edge-reveal {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: -28;
+  }
+
+  100% {
+    opacity: 1;
+    stroke-dashoffset: 0;
   }
 }
 

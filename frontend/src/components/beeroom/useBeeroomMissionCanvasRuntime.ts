@@ -29,6 +29,7 @@ import {
 } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
 import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
+import { useBeeroomMissionSubagentPreview } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
 import {
   shouldForceImmediateTeamRealtimeReconcile,
   shouldForceWorkflowRefresh
@@ -137,6 +138,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   } = useBeeroomMissionWorkflowPreview({
     mission: computed(() => options.mission.value || null),
     t: options.t
+  });
+
+  const { subagentsByTask } = useBeeroomMissionSubagentPreview({
+    mission: computed(() => options.mission.value || null),
+    clearedAfter: chatMessagesClearedAfter
   });
 
   const {
@@ -1355,6 +1361,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchRuntimeTone,
     dispatchSessionId,
     displayChatMessages,
+    subagentsByTask,
     workflowItemsByTask,
     workflowItemsSignature,
     workflowPreviewByTask,

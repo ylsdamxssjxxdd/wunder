@@ -66,7 +66,7 @@ const ABILITY_RULES: AbilityRule[] = [
     tone: 'automation'
   },
   { keywords: ['thread_control', 'session_thread', '会话线程控制'], icon: 'fa-code-branch', tone: 'automation' },
-  { keywords: ['skill_call', 'skill_get', '技能调用'], icon: 'fa-wand-magic-sparkles', tone: 'skill' },
+  { keywords: ['skill_call', 'skill_get', '技能调用'], icon: 'fa-book-open', tone: 'skill' },
   { keywords: ['cron', 'schedule_task', 'scheduled task', 'timer'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['计划任务', '定时任务'], icon: 'fa-clock', tone: 'automation' },
   { keywords: ['sleep_wait', 'sleep', 'pause'], icon: 'fa-hourglass-half', tone: 'automation' },
@@ -254,8 +254,14 @@ const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
 export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMeta => {
   const kind = resolveAbilityKind(input.kind, input.group || input.source);
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
+  if (kind === 'skill') {
+    return {
+      icon: resolveDefaultIcon('skill'),
+      tone: preferredTone || 'skill'
+    };
+  }
   const matchedRule = findAbilityRule(input);
-  const tone = preferredTone || matchedRule?.tone || (kind === 'skill' ? 'skill' : 'general');
+  const tone = preferredTone || matchedRule?.tone || 'general';
 
   return {
     icon: matchedRule?.icon || resolveContextualDefaultIcon(input, tone),

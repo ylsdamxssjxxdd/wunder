@@ -3,7 +3,14 @@
     class="beeroom-node-card"
     :class="[
       `is-${node.status}`,
-      { 'is-mother': node.role === 'mother', 'is-selected': node.selected, 'is-condensed': condensed }
+      `is-${node.role}`,
+      `is-emphasis-${node.emphasis}`,
+      {
+        'is-mother': node.role === 'mother',
+        'is-selected': node.selected,
+        'is-condensed': condensed,
+        'is-revealing': !!reveal
+      }
     ]"
     :aria-label="`${node.name} ${node.roleLabel} ${node.statusLabel}`"
     :data-node-id="node.id"
@@ -63,6 +70,11 @@ const props = defineProps<{
   node: SwarmProjectionNode;
   condensed?: boolean;
   emptyLabel: string;
+  reveal?: {
+    offsetX: number;
+    offsetY: number;
+    order: number;
+  } | null;
 }>();
 
 const emit = defineEmits<{
@@ -72,6 +84,9 @@ const emit = defineEmits<{
 
 const cardStyle = computed(() => ({
   '--node-accent': props.node.accentColor,
+  '--node-intro-x': `${Math.round(props.reveal?.offsetX || 0)}px`,
+  '--node-intro-y': `${Math.round(props.reveal?.offsetY || 0)}px`,
+  '--node-intro-delay': `${Math.max(0, Number(props.reveal?.order || 0)) * 70}ms`,
   width: `${props.node.width}px`,
   height: `${props.node.height}px`
 }));
@@ -143,6 +158,27 @@ const visibleWorkflowLines = computed(() =>
   background: linear-gradient(180deg, rgba(26, 33, 45, 0.98), rgba(12, 15, 22, 0.98));
 }
 
+.beeroom-node-card.is-subagent {
+  gap: 7px;
+  padding: 12px 12px 10px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(12, 18, 28, 0.96), rgba(8, 13, 22, 0.97));
+  box-shadow: 0 10px 18px rgba(2, 6, 23, 0.16);
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-active {
+  border-color: rgba(34, 211, 238, 0.34);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.08),
+    0 14px 24px rgba(8, 47, 73, 0.18);
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-dormant {
+  border-color: rgba(100, 116, 139, 0.24);
+  background: linear-gradient(180deg, rgba(18, 24, 34, 0.94), rgba(12, 16, 24, 0.96));
+  box-shadow: 0 8px 16px rgba(2, 6, 23, 0.1);
+}
+
 .beeroom-node-card:active {
   cursor: grabbing;
 }
@@ -192,6 +228,18 @@ const visibleWorkflowLines = computed(() =>
   box-shadow:
     inset 0 0 0 1px rgba(187, 247, 208, 0.1),
     0 8px 18px rgba(6, 78, 59, 0.18);
+}
+
+.beeroom-node-card.is-subagent .beeroom-node-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border-color: rgba(56, 189, 248, 0.2);
+}
+
+.beeroom-node-card.is-subagent .beeroom-node-avatar::before {
+  inset: 2px;
+  border-radius: 8px;
 }
 
 .beeroom-node-avatar::before {
@@ -258,6 +306,10 @@ const visibleWorkflowLines = computed(() =>
   text-overflow: ellipsis;
 }
 
+.beeroom-node-card.is-subagent .beeroom-node-title {
+  font-size: 13px;
+}
+
 .beeroom-node-role-chip {
   display: inline-flex;
   align-items: center;
@@ -269,6 +321,13 @@ const visibleWorkflowLines = computed(() =>
   color: #d1d5db;
   font-size: 10px;
   letter-spacing: 0.06em;
+}
+
+.beeroom-node-card.is-subagent .beeroom-node-role-chip {
+  padding: 2px 7px;
+  border-color: rgba(71, 85, 105, 0.28);
+  background: rgba(15, 23, 42, 0.74);
+  color: #cbd5e1;
 }
 
 .beeroom-node-status {
@@ -340,6 +399,28 @@ const visibleWorkflowLines = computed(() =>
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
 }
 
+.beeroom-node-card.is-subagent.is-emphasis-active .beeroom-node-status {
+  border-color: rgba(34, 211, 238, 0.32);
+  background: rgba(8, 47, 73, 0.28);
+  color: #cffafe;
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-active .beeroom-node-status-dot {
+  background: rgba(34, 211, 238, 0.98);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.14);
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-status {
+  border-color: rgba(100, 116, 139, 0.22);
+  background: rgba(30, 41, 59, 0.34);
+  color: #94a3b8;
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-status-dot {
+  background: rgba(100, 116, 139, 0.92);
+  box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.12);
+}
+
 .beeroom-node-workflow {
   flex: 1 1 auto;
   min-height: 0;
@@ -352,6 +433,11 @@ const visibleWorkflowLines = computed(() =>
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
+}
+
+.beeroom-node-card.is-subagent .beeroom-node-workflow {
+  padding: 7px 10px;
+  border-radius: 12px;
 }
 
 .beeroom-node-workflow.is-completed {
@@ -408,6 +494,10 @@ const visibleWorkflowLines = computed(() =>
   white-space: nowrap;
 }
 
+.beeroom-node-card.is-subagent .beeroom-node-workflow-step-main {
+  font-size: 11px;
+}
+
 .beeroom-node-workflow-step-detail,
 .beeroom-node-workflow-empty {
   font-size: 11px;
@@ -453,4 +543,37 @@ const visibleWorkflowLines = computed(() =>
 .beeroom-node-card.is-condensed .beeroom-node-workflow {
   padding: 7px 10px;
 }
+
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-workflow,
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-workflow-step-main,
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-workflow-step-detail,
+.beeroom-node-card.is-subagent.is-emphasis-dormant .beeroom-node-workflow-empty {
+  color: rgba(148, 163, 184, 0.72);
+}
+
+.beeroom-node-card.is-revealing {
+  animation: beeroom-subagent-bloom 640ms cubic-bezier(0.18, 0.9, 0.25, 1) both;
+  animation-delay: var(--node-intro-delay, 0ms);
+}
+
+@keyframes beeroom-subagent-bloom {
+  0% {
+    opacity: 0;
+    transform: translate(
+        calc(var(--node-intro-x, 0px) * -0.26),
+        calc(var(--node-intro-y, 0px) * -0.26)
+      )
+      scale(0.72);
+  }
+
+  70% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
 </style>
