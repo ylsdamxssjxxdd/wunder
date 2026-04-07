@@ -52,18 +52,23 @@ use crate::{
 use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
 use chrono::{Local, TimeZone, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
 use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
@@ -224,6 +229,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_knowledge_chunk_delete),
         )
         .route("/wunder/admin/knowledge/test", post(admin_knowledge_test))
+        .route(
+            "/wunder/admin/knowledge/test/stream",
+            post(admin_knowledge_test_stream),
+        )
         .route(
             "/wunder/admin/knowledge/upload",
             post(admin_knowledge_upload),
@@ -2166,6 +2175,203 @@ async fn admin_knowledge_chunks(
     })))
 }
 
+type AdminKnowledgeTestEvent = (String, Value);
+
+fn send_admin_knowledge_test_event(
+    sender: &UnboundedSender<AdminKnowledgeTestEvent>,
+    event_type: &str,
+    payload: Value,
+) {
+    let _ = sender.send((event_type.to_string(), payload));
+}
+
+fn build_admin_vector_knowledge_test_hits(
+    hits: Vec<vector_knowledge::VectorSearchHit>,
+) -> Vec<Value> {
+    hits.into_iter()
+        .map(|hit| {
+            json!({
+                "doc_id": hit.doc_id,
+                "document": hit.doc_name,
+                "chunk_index": hit.chunk_index,
+                "start": hit.start,
+                "end": hit.end,
+                "content": hit.content,
+                "embedding_model": hit.embedding_model,
+                "score": hit.score
+            })
+        })
+        .collect()
+}
+
+fn build_admin_literal_knowledge_test_hits(
+    docs: Vec<knowledge::KnowledgeDocument>,
+) -> Vec<Value> {
+    docs.into_iter()
+        .map(|doc| {
+            let document = if doc.document.trim().is_empty() {
+                doc.name.clone()
+            } else {
+                doc.document.clone()
+            };
+            json!({
+                "doc_id": doc.code,
+                "document": document,
+                "chunk_index": Value::Null,
+                "content": doc.content,
+                "score": doc.score,
+                "section_path": doc.section_path,
+                "reason": doc.reason
+            })
+        })
+        .collect()
+}
+
+async fn admin_knowledge_test_stream(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<KnowledgeTestRequest>,
+) -> Result<Response, Response> {
+    let base_name = payload.base.trim();
+    if base_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_base_name_required"),
+        ));
+    }
+    let query = payload.query.trim();
+    if query.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.knowledge_query_required"),
+        ));
+    }
+    let top_k = payload.top_k;
+    let config = state.config_store.get().await;
+    let base = resolve_knowledge_base(&config, base_name)?;
+    let query = query.to_string();
+
+    let (event_tx, event_rx) = unbounded_channel::<AdminKnowledgeTestEvent>();
+    tokio::spawn(async move {
+        let outcome = async {
+            if base.is_vector() {
+                let embedding_name = base.embedding_model.as_deref().unwrap_or("").trim();
+                let embed_config = vector_knowledge::resolve_embedding_model(&config, embedding_name)?;
+                let timeout_s = embed_config.timeout_s.unwrap_or(120);
+                let effective_top_k = top_k
+                    .filter(|value| *value > 0)
+                    .unwrap_or_else(|| vector_knowledge::resolve_top_k(&base));
+                send_admin_knowledge_test_event(
+                    &event_tx,
+                    "request",
+                    json!({
+                        "knowledge_base": base.name,
+                        "base_type": "vector",
+                        "query": query,
+                        "embedding_model": embedding_name,
+                        "top_k": effective_top_k,
+                    }),
+                );
+                let vectors = llm::embed_texts(&embed_config, &[query.clone()], timeout_s).await?;
+                let vector = vectors
+                    .first()
+                    .ok_or_else(|| anyhow!(i18n::t("error.llm_request_failed")))?;
+                let client = vector_knowledge::resolve_weaviate_client(&config)?;
+                let owner_key = vector_knowledge::resolve_owner_key(None);
+                let mut hits = client
+                    .query_chunks(
+                        &owner_key,
+                        &base.name,
+                        embedding_name,
+                        vector,
+                        effective_top_k,
+                    )
+                    .await?;
+                if let Some(threshold) = base.score_threshold {
+                    hits.retain(|hit| hit.score.unwrap_or(0.0) >= f64::from(threshold));
+                }
+                if hits.len() > effective_top_k {
+                    hits.truncate(effective_top_k);
+                }
+                send_admin_knowledge_test_event(
+                    &event_tx,
+                    "complete",
+                    json!({
+                        "base": base.name,
+                        "query": query,
+                        "embedding_model": embedding_name,
+                        "top_k": effective_top_k,
+                        "hits": build_admin_vector_knowledge_test_hits(hits),
+                    }),
+                );
+                return Ok::<(), anyhow::Error>(());
+            }
+
+            let _ = knowledge::resolve_knowledge_root(&base, false)?;
+            let llm_config = knowledge::resolve_llm_config(&config, None);
+            let request_sender = event_tx.clone();
+            let request_logger = move |request: Value| {
+                send_admin_knowledge_test_event(&request_sender, "request", request);
+            };
+            let delta_sender = event_tx.clone();
+            let (reply, reasoning, docs) = knowledge::query_knowledge_raw_with_documents_streaming(
+                &query,
+                &base,
+                llm_config.as_ref(),
+                top_k,
+                Some(&request_logger),
+                move |content_delta: String, reasoning_delta: String| {
+                    let delta_sender = delta_sender.clone();
+                    async move {
+                        if !reasoning_delta.is_empty() {
+                            send_admin_knowledge_test_event(
+                                &delta_sender,
+                                "reasoning",
+                                json!({ "delta": reasoning_delta }),
+                            );
+                        }
+                        if !content_delta.is_empty() {
+                            send_admin_knowledge_test_event(
+                                &delta_sender,
+                                "output",
+                                json!({ "delta": content_delta }),
+                            );
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                },
+            )
+            .await?;
+            send_admin_knowledge_test_event(
+                &event_tx,
+                "complete",
+                json!({
+                    "base": base.name,
+                    "query": query,
+                    "text": reply,
+                    "reasoning": reasoning,
+                    "hits": build_admin_literal_knowledge_test_hits(docs),
+                }),
+            );
+            Ok::<(), anyhow::Error>(())
+        }
+        .await;
+
+        if let Err(err) = outcome {
+            send_admin_knowledge_test_event(
+                &event_tx,
+                "error",
+                json!({ "message": err.to_string() }),
+            );
+        }
+    });
+
+    let stream = UnboundedReceiverStream::new(event_rx).map(|(event_type, payload)| {
+        Ok::<Event, Infallible>(Event::default().event(event_type).data(payload.to_string()))
+    });
+    let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)));
+    Ok(sse.into_response())
+}
+
 async fn admin_knowledge_test(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<KnowledgeTestRequest>,
@@ -2214,65 +2420,49 @@ async fn admin_knowledge_test(
         if hits.len() > top_k {
             hits.truncate(top_k);
         }
-        let items = hits
-            .into_iter()
-            .map(|hit| {
-                json!({
-                    "doc_id": hit.doc_id,
-                    "document": hit.doc_name,
-                    "chunk_index": hit.chunk_index,
-                    "start": hit.start,
-                    "end": hit.end,
-                    "content": hit.content,
-                    "embedding_model": hit.embedding_model,
-                    "score": hit.score
-                })
-            })
-            .collect::<Vec<_>>();
+        let request = json!({
+            "knowledge_base": base.name,
+            "base_type": "vector",
+            "query": query,
+            "embedding_model": embedding_name,
+            "top_k": top_k,
+        });
         Ok(Json(json!({
             "base": base.name,
             "query": query,
             "embedding_model": embedding_name,
             "top_k": top_k,
-            "hits": items
+            "request": request,
+            "hits": build_admin_vector_knowledge_test_hits(hits)
         })))
     } else {
         let _ = resolve_knowledge_root(&base, false)?;
         let llm_config = knowledge::resolve_llm_config(&config, None);
+        let request_log = StdMutex::new(None::<Value>);
+        let request_logger = |request: Value| {
+            let mut guard = request_log.lock().expect("knowledge test request log lock");
+            *guard = Some(request);
+        };
         let (reply, reasoning, docs) = knowledge::query_knowledge_raw_with_documents(
             query,
             &base,
             llm_config.as_ref(),
             payload.top_k,
-            None,
+            Some(&request_logger),
         )
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let items = docs
-            .into_iter()
-            .map(|doc| {
-                let document = if doc.document.trim().is_empty() {
-                    doc.name.clone()
-                } else {
-                    doc.document.clone()
-                };
-                json!({
-                    "doc_id": doc.code,
-                    "document": document,
-                    "chunk_index": Value::Null,
-                    "content": doc.content,
-                    "score": doc.score,
-                    "section_path": doc.section_path,
-                    "reason": doc.reason
-                })
-            })
-            .collect::<Vec<_>>();
+        let request = request_log
+            .lock()
+            .expect("knowledge test request log lock")
+            .clone();
         Ok(Json(json!({
             "base": base.name,
             "query": query,
+            "request": request,
             "text": reply,
             "reasoning": reasoning,
-            "hits": items
+            "hits": build_admin_literal_knowledge_test_hits(docs)
         })))
     }
 }

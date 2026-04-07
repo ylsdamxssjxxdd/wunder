@@ -3478,6 +3478,14 @@
   word-break: break-word;
 }
 
+.knowledge-test-result-content--mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 220px;
+  overflow: auto;
+}
+
 .btn-with-icon.is-loading i {
   animation: knowledge-spin 0.9s linear infinite;
 }

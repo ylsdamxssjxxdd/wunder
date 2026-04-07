@@ -7,6 +7,7 @@ use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Mutex;
@@ -16,6 +17,16 @@ use walkdir::WalkDir;
 const DEFAULT_MAX_DOCUMENTS: usize = 5;
 const DEFAULT_CANDIDATE_LIMIT: usize = 80;
 const KNOWLEDGE_RETRIEVAL_REASONING_EFFORT: &str = "none";
+
+#[derive(Debug, Clone)]
+struct LiteralKnowledgeQueryContext {
+    normalized_query: String,
+    max_docs: usize,
+    sections: Vec<KnowledgeSection>,
+    candidates: Vec<KnowledgeSection>,
+    retrieval_llm_config: Option<LlmModelConfig>,
+    messages: Vec<ChatMessage>,
+}
 
 #[derive(Debug, Clone)]
 pub struct KnowledgeSection {
@@ -199,73 +210,33 @@ pub async fn query_knowledge_documents(
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
 ) -> Vec<KnowledgeDocument> {
-    let normalized_query = query.trim();
-    if normalized_query.is_empty() {
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
         return Vec::new();
-    }
-    let sections = store().get_sections(base, false).await;
-    if sections.is_empty() {
-        return Vec::new();
-    }
-    let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
-    let candidates =
-        select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
-    let retrieval_llm_config = build_literal_knowledge_llm_config(llm_config);
-    let prompt = build_system_prompt(max_docs);
-    let question = build_question(&base.name, normalized_query, &candidates);
-    let messages = vec![
-        ChatMessage {
-            role: "system".to_string(),
-            content: json!(prompt),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        },
-        ChatMessage {
-            role: "user".to_string(),
-            content: json!(question.clone()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        },
-    ];
+    };
     if let Some(logger) = request_logger {
-        let payload = build_llm_payload(&messages, retrieval_llm_config.as_ref());
-        let base_url = retrieval_llm_config
-            .as_ref()
-            .and_then(|config| config.base_url.clone())
-            .unwrap_or_default();
-        logger(json!({
-            "knowledge_base": base.name.clone(),
-            "query": normalized_query.to_string(),
-            "limit": max_docs,
-            "candidate_count": candidates.len(),
-            "payload": payload,
-            "base_url": base_url,
-        }));
+        logger(build_literal_knowledge_request_log(base, &context, false));
     }
 
-    let reply = match retrieval_llm_config.as_ref() {
+    let reply = match context.retrieval_llm_config.as_ref() {
         Some(config) if is_llm_configured(config) => {
             let client = build_llm_client(config, reqwest::Client::new());
-            match client.complete(&messages).await {
+            match client.complete(&context.messages).await {
                 Ok(response) => response.content,
                 Err(_) => {
-                    return fallback_documents(&candidates, max_docs);
+                    return fallback_documents(&context.candidates, context.max_docs);
                 }
             }
         }
         _ => {
-            return fallback_documents(&candidates, max_docs);
+            return fallback_documents(&context.candidates, context.max_docs);
         }
     };
 
-    let structured = extract_structured_documents(&reply);
-    let documents = materialize_documents(&structured, &sections, max_docs);
+    let documents = materialize_documents_from_reply(&reply, &context.sections, context.max_docs);
     if !documents.is_empty() {
         return documents;
     }
-    fallback_documents(&candidates, max_docs)
+    fallback_documents(&context.candidates, context.max_docs)
 }
 
 pub async fn query_knowledge_raw(
@@ -287,59 +258,21 @@ pub async fn query_knowledge_raw_with_documents(
     limit: Option<usize>,
     request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
 ) -> Result<(String, String, Vec<KnowledgeDocument>)> {
-    let normalized_query = query.trim();
-    if normalized_query.is_empty() {
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
         return Ok((String::new(), String::new(), Vec::new()));
-    }
-    let sections = store().get_sections(base, false).await;
-    if sections.is_empty() {
-        return Ok((String::new(), String::new(), Vec::new()));
-    }
-    let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
-    let candidates =
-        select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
-    let retrieval_llm_config = build_literal_knowledge_llm_config(llm_config);
-    let prompt = build_system_prompt(max_docs);
-    let question = build_question(&base.name, normalized_query, &candidates);
-    let messages = vec![
-        ChatMessage {
-            role: "system".to_string(),
-            content: json!(prompt),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        },
-        ChatMessage {
-            role: "user".to_string(),
-            content: json!(question.clone()),
-            reasoning_content: None,
-            tool_calls: None,
-            tool_call_id: None,
-        },
-    ];
+    };
     if let Some(logger) = request_logger {
-        let payload = build_llm_payload(&messages, retrieval_llm_config.as_ref());
-        let base_url = retrieval_llm_config
-            .as_ref()
-            .and_then(|config| config.base_url.clone())
-            .unwrap_or_default();
-        logger(json!({
-            "knowledge_base": base.name.clone(),
-            "query": normalized_query.to_string(),
-            "limit": max_docs,
-            "candidate_count": candidates.len(),
-            "payload": payload,
-            "base_url": base_url,
-        }));
+        logger(build_literal_knowledge_request_log(base, &context, false));
     }
-    let Some(config) = retrieval_llm_config
+    let Some(config) = context
+        .retrieval_llm_config
         .as_ref()
         .filter(|config| is_llm_configured(config))
     else {
         return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
     };
     let client = build_llm_client(config, reqwest::Client::new());
-    let response = client.complete(&messages).await.map_err(|err| {
+    let response = client.complete(&context.messages).await.map_err(|err| {
         anyhow::anyhow!(i18n::t_with_params(
             "error.llm_call_failed",
             &HashMap::from([("detail".to_string(), err.to_string())]),
@@ -347,8 +280,48 @@ pub async fn query_knowledge_raw_with_documents(
     })?;
     let reply = response.content;
     let reasoning = response.reasoning;
-    let structured = extract_structured_documents(&reply);
-    let documents = materialize_documents(&structured, &sections, max_docs);
+    let documents = materialize_documents_from_reply(&reply, &context.sections, context.max_docs);
+    Ok((reply, reasoning, documents))
+}
+
+pub async fn query_knowledge_raw_with_documents_streaming<F, Fut>(
+    query: &str,
+    base: &KnowledgeBaseConfig,
+    llm_config: Option<&LlmModelConfig>,
+    limit: Option<usize>,
+    request_logger: Option<&(dyn Fn(Value) + Send + Sync)>,
+    on_delta: F,
+) -> Result<(String, String, Vec<KnowledgeDocument>)>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    let Some(context) = prepare_literal_knowledge_query(query, base, llm_config, limit).await else {
+        return Ok((String::new(), String::new(), Vec::new()));
+    };
+    if let Some(logger) = request_logger {
+        logger(build_literal_knowledge_request_log(base, &context, true));
+    }
+    let Some(config) = context
+        .retrieval_llm_config
+        .as_ref()
+        .filter(|config| is_llm_configured(config))
+    else {
+        return Err(anyhow::anyhow!(i18n::t("error.llm_not_configured")));
+    };
+    let client = build_llm_client(config, reqwest::Client::new());
+    let response = client
+        .stream_complete_with_callback(&context.messages, on_delta)
+        .await
+        .map_err(|err| {
+            anyhow::anyhow!(i18n::t_with_params(
+                "error.llm_call_failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            ))
+        })?;
+    let reply = response.content;
+    let reasoning = response.reasoning;
+    let documents = materialize_documents_from_reply(&reply, &context.sections, context.max_docs);
     Ok((reply, reasoning, documents))
 }
 
@@ -529,16 +502,100 @@ fn build_literal_knowledge_llm_config(
     })
 }
 
-fn build_llm_payload(messages: &[ChatMessage], llm_config: Option<&LlmModelConfig>) -> Value {
+fn build_llm_payload(
+    messages: &[ChatMessage],
+    llm_config: Option<&LlmModelConfig>,
+    stream: bool,
+) -> Value {
     if let Some(config) = llm_config {
         let client = build_llm_client(config, Client::new());
-        return client.build_request_payload(messages, false);
+        return client.build_request_payload(messages, stream);
     }
     json!({
         "model": "",
         "messages": messages,
-        "stream": false,
+        "stream": stream,
     })
+}
+
+async fn prepare_literal_knowledge_query(
+    query: &str,
+    base: &KnowledgeBaseConfig,
+    llm_config: Option<&LlmModelConfig>,
+    limit: Option<usize>,
+) -> Option<LiteralKnowledgeQueryContext> {
+    let normalized_query = query.trim();
+    if normalized_query.is_empty() {
+        return None;
+    }
+    let sections = store().get_sections(base, false).await;
+    if sections.is_empty() {
+        return None;
+    }
+    let max_docs = resolve_positive_int(limit, DEFAULT_MAX_DOCUMENTS);
+    let candidates =
+        select_candidate_sections(&sections, normalized_query, DEFAULT_CANDIDATE_LIMIT);
+    let retrieval_llm_config = build_literal_knowledge_llm_config(llm_config);
+    let prompt = build_system_prompt(max_docs);
+    let question = build_question(&base.name, normalized_query, &candidates);
+    let messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: json!(prompt),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: json!(question),
+            reasoning_content: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+    ];
+    Some(LiteralKnowledgeQueryContext {
+        normalized_query: normalized_query.to_string(),
+        max_docs,
+        sections,
+        candidates,
+        retrieval_llm_config,
+        messages,
+    })
+}
+
+fn build_literal_knowledge_request_log(
+    base: &KnowledgeBaseConfig,
+    context: &LiteralKnowledgeQueryContext,
+    stream: bool,
+) -> Value {
+    let payload = build_llm_payload(
+        &context.messages,
+        context.retrieval_llm_config.as_ref(),
+        stream,
+    );
+    let base_url = context
+        .retrieval_llm_config
+        .as_ref()
+        .and_then(|config| config.base_url.clone())
+        .unwrap_or_default();
+    json!({
+        "knowledge_base": base.name.clone(),
+        "query": context.normalized_query.clone(),
+        "limit": context.max_docs,
+        "candidate_count": context.candidates.len(),
+        "payload": payload,
+        "base_url": base_url,
+    })
+}
+
+fn materialize_documents_from_reply(
+    reply: &str,
+    sections: &[KnowledgeSection],
+    max_docs: usize,
+) -> Vec<KnowledgeDocument> {
+    let structured = extract_structured_documents(reply);
+    materialize_documents(&structured, sections, max_docs)
 }
 
 fn build_question(base_name: &str, query: &str, candidates: &[KnowledgeSection]) -> String {
@@ -915,6 +972,7 @@ mod tests {
                 tool_call_id: None,
             }],
             Some(&retrieval_config),
+            false,
         );
 
         assert_eq!(retrieval_config.reasoning_effort.as_deref(), Some("none"));

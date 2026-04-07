@@ -57,6 +57,7 @@ const knowledgeFileUploadInput = document.getElementById("knowledgeFileUploadInp
 // 记录当前正在编辑的知识库索引（-1 表示新增）
 let knowledgeEditingIndex = -1;
 let editingChunkIndex = null;
+let knowledgeTestAbortController = null;
 
 const resetVectorState = () => {
   state.knowledge.vectorDocs = [];
@@ -1418,6 +1419,72 @@ const clearKnowledgeTestResult = () => {
   knowledgeTestResult.textContent = "";
 };
 
+const abortKnowledgeTestRequest = () => {
+  if (!knowledgeTestAbortController) {
+    return;
+  }
+  knowledgeTestAbortController.abort();
+  knowledgeTestAbortController = null;
+};
+
+const parseKnowledgeTestSseBlock = (block) => {
+  const lines = String(block || "").split(/\r?\n/);
+  let eventType = "message";
+  const dataLines = [];
+  lines.forEach((line) => {
+    if (line.startsWith("event:")) {
+      eventType = line.slice(6).trim();
+      return;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trim());
+    }
+  });
+  return {
+    eventType,
+    dataText: dataLines.join("\n"),
+  };
+};
+
+const resolveKnowledgeTestErrorMessage = async (response) => {
+  const statusText = response && response.statusText ? response.statusText : "";
+  const fallback = statusText
+    ? `${String(response.status || "")} ${statusText}`
+    : String((response && response.status) || "");
+  const message = await resolveApiErrorMessage(response, fallback || "request_failed");
+  return message || "request_failed";
+};
+
+const formatKnowledgeTestRequestPayload = (payload) => {
+  if (payload == null) {
+    return "";
+  }
+  if (typeof payload === "string") {
+    return payload;
+  }
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return String(payload);
+  }
+};
+
+const setKnowledgeTestBlockText = (block, text) => {
+  if (!block?.content) {
+    return;
+  }
+  const value = String(text ?? "");
+  block.value = value;
+  block.content.textContent = value.trim() ? value : t(block.emptyKey);
+};
+
+const appendKnowledgeTestBlockDelta = (block, delta) => {
+  if (!block || !delta) {
+    return;
+  }
+  setKnowledgeTestBlockText(block, `${block.value || ""}${delta}`);
+};
+
 const formatTestScore = (score) => {
   if (!Number.isFinite(score)) {
     return "-";
@@ -1450,11 +1517,10 @@ const renderKnowledgeTestResults = (hits) => {
   });
 };
 
-const appendKnowledgeTestBlock = (titleKey, text, emptyKey) => {
+const appendKnowledgeTestBlock = (titleKey, text, emptyKey, options = {}) => {
   if (!knowledgeTestResult) {
-    return;
+    return null;
   }
-  const output = String(text ?? "");
   const item = document.createElement("div");
   item.className = "knowledge-test-result-item";
   const header = document.createElement("div");
@@ -1462,9 +1528,47 @@ const appendKnowledgeTestBlock = (titleKey, text, emptyKey) => {
   header.textContent = t(titleKey);
   const content = document.createElement("div");
   content.className = "knowledge-test-result-content";
-  content.textContent = output.trim() ? output : t(emptyKey);
+  if (options.mono) {
+    content.classList.add("knowledge-test-result-content--mono");
+  }
   item.append(header, content);
   knowledgeTestResult.appendChild(item);
+  const block = {
+    item,
+    header,
+    content,
+    emptyKey,
+    value: "",
+  };
+  setKnowledgeTestBlockText(block, text);
+  return block;
+};
+
+const createKnowledgeTestBlocks = (base) => {
+  clearKnowledgeTestResult();
+  const blocks = {
+    request: appendKnowledgeTestBlock(
+      "knowledge.test.request.title",
+      "",
+      "knowledge.test.request.empty",
+      { mono: true }
+    ),
+    output: null,
+    reasoning: null,
+  };
+  if (!isVectorBase(base)) {
+    blocks.output = appendKnowledgeTestBlock(
+      "knowledge.test.output.title",
+      "",
+      "knowledge.test.output.empty"
+    );
+    blocks.reasoning = appendKnowledgeTestBlock(
+      "knowledge.test.reasoning.title",
+      "",
+      "knowledge.test.reasoning.empty"
+    );
+  }
+  return blocks;
 };
 
 const appendKnowledgeTestResults = (hits, options = {}) => {
@@ -1521,10 +1625,12 @@ const openKnowledgeTestModal = () => {
 };
 
 const closeKnowledgeTestModal = () => {
+  abortKnowledgeTestRequest();
   if (!knowledgeTestModal) {
     return;
   }
   knowledgeTestModal.classList.remove("active");
+  setKnowledgeTestStatus("");
 };
 
 const runKnowledgeTest = async () => {
@@ -1546,48 +1652,129 @@ const runKnowledgeTest = async () => {
       icon.className = "fa-solid fa-spinner";
     }
   }
+  abortKnowledgeTestRequest();
+  const controller = new AbortController();
+  knowledgeTestAbortController = controller;
   setKnowledgeTestStatus(t("knowledge.test.running"));
-  if (knowledgeTestResult) {
-    knowledgeTestResult.textContent = t("common.loading");
-  }
+  const blocks = createKnowledgeTestBlocks(base);
   try {
     const wunderBase = getWunderBase();
-    const endpoint = `${wunderBase}/admin/knowledge/test`;
+    const endpoint = `${wunderBase}/admin/knowledge/test/stream`;
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ base: base.name, query }),
+      signal: controller.signal,
     });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => null);
-      const message =
-        payload?.detail?.message || payload?.message || String(response.status);
+    if (!response.ok || !response.body) {
+      const message = await resolveKnowledgeTestErrorMessage(response);
       throw new Error(message);
     }
-    const result = await response.json();
-    const hits = Array.isArray(result.hits) ? result.hits : [];
-    clearKnowledgeTestResult();
-    if (!isVectorBase(base)) {
-      appendKnowledgeTestBlock(
-        "knowledge.test.output.title",
-        result.text,
-        "knowledge.test.output.empty"
-      );
-      appendKnowledgeTestBlock(
-        "knowledge.test.reasoning.title",
-        result.reasoning,
-        "knowledge.test.reasoning.empty"
-      );
-      appendKnowledgeTestResults(hits, { showEmpty: true });
-    } else {
-      appendKnowledgeTestResults(hits, { showEmpty: true });
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let finalPayload = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        if (!part.trim()) {
+          continue;
+        }
+        const { eventType, dataText } = parseKnowledgeTestSseBlock(part);
+        let data = null;
+        try {
+          data = dataText ? JSON.parse(dataText) : null;
+        } catch {
+          data = { raw: dataText };
+        }
+        if (eventType === "request") {
+          setKnowledgeTestBlockText(
+            blocks.request,
+            formatKnowledgeTestRequestPayload(data)
+          );
+          continue;
+        }
+        if (eventType === "reasoning") {
+          appendKnowledgeTestBlockDelta(blocks.reasoning, String(data?.delta || ""));
+          continue;
+        }
+        if (eventType === "output") {
+          appendKnowledgeTestBlockDelta(blocks.output, String(data?.delta || ""));
+          continue;
+        }
+        if (eventType === "error") {
+          throw new Error(data?.message || data?.raw || "request_failed");
+        }
+        if (eventType === "complete") {
+          finalPayload = data || {};
+        }
+      }
     }
+
+    const trailing = decoder.decode();
+    if (trailing) {
+      buffer += trailing;
+    }
+    if (buffer.trim()) {
+      const { eventType, dataText } = parseKnowledgeTestSseBlock(buffer);
+      let data = null;
+      try {
+        data = dataText ? JSON.parse(dataText) : null;
+      } catch {
+        data = { raw: dataText };
+      }
+      if (eventType === "request") {
+        setKnowledgeTestBlockText(
+          blocks.request,
+          formatKnowledgeTestRequestPayload(data)
+        );
+      } else if (eventType === "reasoning") {
+        appendKnowledgeTestBlockDelta(blocks.reasoning, String(data?.delta || ""));
+      } else if (eventType === "output") {
+        appendKnowledgeTestBlockDelta(blocks.output, String(data?.delta || ""));
+      } else if (eventType === "error") {
+        throw new Error(data?.message || data?.raw || "request_failed");
+      } else if (eventType === "complete") {
+        finalPayload = data || {};
+      }
+    }
+
+    const result = finalPayload || {};
+    if (Object.prototype.hasOwnProperty.call(result, "request")) {
+      setKnowledgeTestBlockText(
+        blocks.request,
+        formatKnowledgeTestRequestPayload(result.request)
+      );
+    }
+    if (blocks.output) {
+      setKnowledgeTestBlockText(blocks.output, result.text);
+    }
+    if (blocks.reasoning) {
+      setKnowledgeTestBlockText(blocks.reasoning, result.reasoning);
+    }
+    appendKnowledgeTestResults(Array.isArray(result.hits) ? result.hits : [], {
+      showEmpty: true,
+    });
     setKnowledgeTestStatus(t("knowledge.test.done"));
   } catch (error) {
+    if (error?.name === "AbortError") {
+      setKnowledgeTestStatus("");
+      return;
+    }
     setKnowledgeTestStatus(t("knowledge.test.failed", { message: error.message }));
   } finally {
+    if (knowledgeTestAbortController === controller) {
+      knowledgeTestAbortController = null;
+    }
     if (knowledgeTestRunBtn) {
       knowledgeTestRunBtn.disabled = false;
       knowledgeTestRunBtn.classList.remove("is-loading");

@@ -1949,6 +1949,28 @@
       - `reason`：命中原因（可选）
 - 说明：字面知识库会调用大模型生成原始输出，并附带命中文档内容；向量知识库保持召回结果。
 
+### 4.1.30.7.1 `/wunder/admin/knowledge/test/stream`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `base`：知识库名称
+  - `query`：测试问题
+  - `top_k`：召回数量（可选，默认使用知识库配置）
+- 返回：`text/event-stream`
+  - `event: request`
+    - 字面知识库：完整 LLM 请求体，包含 `payload`、`base_url`、候选片段数量等调试信息
+    - 向量知识库：当前检索请求摘要，包含 `embedding_model`、`top_k` 等参数
+  - `event: reasoning`
+    - `delta`：模型思考增量，仅字面知识库返回
+  - `event: output`
+    - `delta`：模型正式输出增量，仅字面知识库返回
+  - `event: complete`
+    - 向量知识库：`base`、`query`、`embedding_model`、`top_k`、`hits`
+    - 字面知识库：`base`、`query`、`text`、`reasoning`、`hits`
+  - `event: error`
+    - `message`：错误信息
+- 说明：管理员侧“知识库测试”弹窗对字面知识库使用该接口流式展示完整请求体、思考过程与正式输出，便于定位检索慢或回答异常问题。
+
 ### 4.1.30.8 `/wunder/admin/knowledge/reindex`
 
 - 方法：`POST`
