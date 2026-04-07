@@ -1459,13 +1459,21 @@ const formatKnowledgeTestRequestPayload = (payload) => {
   if (payload == null) {
     return "";
   }
-  if (typeof payload === "string") {
-    return payload;
+  const displayPayload =
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    payload.payload &&
+    typeof payload.payload === "object"
+      ? payload.payload
+      : payload;
+  if (typeof displayPayload === "string") {
+    return displayPayload;
   }
   try {
-    return JSON.stringify(payload, null, 2);
+    return JSON.stringify(displayPayload, null, 2);
   } catch {
-    return String(payload);
+    return String(displayPayload);
   }
 };
 
