@@ -534,7 +534,7 @@ fn resolve_temp_dir() -> Result<PathBuf> {
         }
     }
     let current = std::env::current_dir().map_err(|err| anyhow!(err))?;
-    Ok(current.join("temp_dir"))
+    Ok(current.join("config").join("data").join("temp_dir"))
 }
 
 fn host_to_string(host: Host<&str>) -> String {

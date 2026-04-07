@@ -160,6 +160,8 @@ const props = defineProps({
   }
 });
 
+const emit = defineEmits(['loading-change']);
+
 const { t } = useI18n();
 
 const skills = ref([]);
@@ -178,6 +180,10 @@ const uploadInputRef = ref(null);
 
 let detailVersion = 0;
 let fileVersion = 0;
+
+const emitLoadingChange = (value) => {
+  emit('loading-change', value === true);
+};
 
 const normalizeSkillDisplayPath = (value) => {
   let normalized = String(value || '').trim();
@@ -340,6 +346,7 @@ const buildFileEntries = (entries) =>
 const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
   if (loading.value) return;
   loading.value = true;
+  emitLoadingChange(true);
   try {
     const { data } = await fetchUserSkills();
     const payload = data?.data || {};
@@ -364,6 +371,7 @@ const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
     showApiError(error, t('userTools.skills.loadFailed'));
   } finally {
     loading.value = false;
+    emitLoadingChange(false);
   }
 };
 

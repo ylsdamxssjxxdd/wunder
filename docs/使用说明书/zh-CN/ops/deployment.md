@@ -111,7 +111,7 @@ source_docs:
 - 只启动了 server，但没准备好 Postgres
 - 开启了 MCP 配置，但目标服务没通
 - 工作区没有持久化，导致产物丢失
-- 把长期业务数据放进了 `data/`
+- 把长期业务数据放进了 `config/data/` 运行时目录
 - 误把 desktop 本地模式当成 server 部署方式
 
 ## 延伸阅读

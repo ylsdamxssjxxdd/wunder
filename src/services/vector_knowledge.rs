@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use url::Url;
 use uuid::Uuid;
 
-const VECTOR_ROOT_DIR: &str = "vector_knowledge";
+const VECTOR_ROOT_DIR: &str = "config/data/vector_knowledge";
 const VECTOR_ROOT_DIR_ENV: &str = "WUNDER_VECTOR_KNOWLEDGE_ROOT";
 const VECTOR_SHARED_DIR: &str = "shared";
 const VECTOR_USERS_DIR: &str = "users";

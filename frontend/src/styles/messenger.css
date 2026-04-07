@@ -1716,6 +1716,10 @@ button.messenger-chat-header-model {
   overflow: auto;
 }
 
+.messenger-chat-settings-block--overlay-host {
+  position: relative;
+}
+
 .messenger-chat-settings-scroll {
   display: flex;
   flex-direction: column;

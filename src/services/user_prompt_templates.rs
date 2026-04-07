@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./config/data/prompt_templates";
-const DEFAULT_USER_PROMPT_ROOT: &str = "./data/user_prompt_templates";
+const DEFAULT_USER_PROMPT_ROOT: &str = "./config/data/user_prompt_templates";
 const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 const USER_ACTIVE_PACK_CACHE_MAX_ITEMS: usize = 512;
 

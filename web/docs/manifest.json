@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-05T07:08:03.281978+00:00",
+  "generated_at": "2026-04-07T00:51:31.051914+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -1059,7 +1059,7 @@
       "language": "zh-CN",
       "title": "Server 部署",
       "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你要部署 server 形态",
         "你需要多用户、组织治理和对外接入能力"
@@ -5698,7 +5698,7 @@
       "language": "zh-CN",
       "title": "运维概览",
       "summary": "Wunder 运维包含部署、存储、安全、渠道运行态与可观测；目标是让系统可持续稳定运行，而不只是「启动成功」。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你在部署或接手 Wunder 运行环境",
         "你要快速定位运维与治理入口"
@@ -5786,7 +5786,7 @@
       "language": "zh-CN",
       "title": "部署与运行",
       "summary": "部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-07",
       "read_when": [
         "你要部署 Wunder",
         "你要确认数据库、MCP、sandbox 和工作区怎么放"

@@ -5,7 +5,7 @@
     width="720px"
     append-to-body
   >
-    <div class="desktop-container-editor" v-loading="loading">
+    <div class="desktop-container-editor">
       <div class="desktop-container-current">
         <span class="desktop-container-entry-badge">
           {{ t('desktop.containers.id') }} #{{ selectedContainerId }}
@@ -34,6 +34,16 @@
           {{ t('desktop.containers.pathHint') }}
         </span>
       </label>
+
+      <HoneycombWaitingOverlay
+        :visible="loading"
+        :title="t('messenger.waiting.title')"
+        :target-name="t('desktop.containers.manageTitle', { id: selectedContainerId })"
+        :phase-label="t('messenger.waiting.phase.preparing')"
+        :summary-label="t('messenger.waiting.summary.desktopSettings')"
+        :progress="34"
+        :teleport-to-body="false"
+      />
     </div>
 
     <template #footer>
@@ -81,7 +91,7 @@
           {{ root }}
         </button>
       </div>
-      <div class="desktop-path-picker-list" v-loading="pathPickerLoading">
+      <div class="desktop-path-picker-list">
         <button
           v-for="item in pathPickerItems"
           :key="`desktop-path-item-${item.path}`"
@@ -95,6 +105,16 @@
         <div v-if="!pathPickerLoading && !pathPickerItems.length" class="desktop-path-picker-empty">
           {{ t('desktop.containers.pathPickerEmpty') }}
         </div>
+
+        <HoneycombWaitingOverlay
+          :visible="pathPickerLoading"
+          :title="t('messenger.waiting.title')"
+          :target-name="t('desktop.containers.pathPickerTitle')"
+          :phase-label="t('messenger.waiting.phase.loading')"
+          :summary-label="t('messenger.waiting.summary.desktopSettings')"
+          :progress="52"
+          :teleport-to-body="false"
+        />
       </div>
     </div>
   </el-dialog>
@@ -112,6 +132,7 @@ import {
   type DesktopContainerRoot,
   type DesktopDirectoryEntry
 } from '@/api/desktop';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 import { USER_CONTAINER_ID } from '@/views/messenger/model';
 
@@ -415,8 +436,10 @@ onMounted(() => {
 
 <style scoped>
 .desktop-container-editor {
+  position: relative;
   display: grid;
   gap: 12px;
+  min-height: 160px;
 }
 
 .desktop-container-current {
@@ -529,9 +552,11 @@ onMounted(() => {
 }
 
 .desktop-path-picker-list {
+  position: relative;
   border: 1px solid var(--portal-border);
   background: var(--portal-surface);
   border-radius: 12px;
+  min-height: 160px;
   max-height: 320px;
   overflow: auto;
   padding: 8px;

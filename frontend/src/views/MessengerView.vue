@@ -824,9 +824,18 @@
               </div>
               <div
                 v-else-if="settingsPanelMode === 'help-manual'"
-                class="messenger-chat-settings-block messenger-chat-settings-block--manual"
+                class="messenger-chat-settings-block messenger-chat-settings-block--manual messenger-chat-settings-block--overlay-host"
               >
-                <MessengerHelpManualPanel />
+                <MessengerHelpManualPanel @loading-change="handleHelpManualLoadingChange" />
+                <HoneycombWaitingOverlay
+                  :visible="showHelpManualWaitingOverlay"
+                  :title="t('messenger.waiting.title')"
+                  :target-name="t('messenger.settings.helpManual')"
+                  :phase-label="t('messenger.waiting.phase.loading')"
+                  :summary-label="t('messenger.waiting.summary.helpManual')"
+                  :progress="42"
+                  :teleport-to-body="false"
+                />
               </div>
               <div
                 v-else-if="
@@ -1946,6 +1955,56 @@ type SettingsPanelMode =
   | 'desktop-lan';
 
 const settingsPanelMode = ref<SettingsPanelMode>('general');
+
+function resolveRouteSettingsPanelMode(
+  routePath: string,
+  panelValue: unknown,
+  desktopEnabled: boolean
+): SettingsPanelMode {
+  const path = String(routePath || '').trim().toLowerCase();
+  const panelHint = String(panelValue || '').trim().toLowerCase();
+  if (path.includes('/profile')) {
+    return 'profile';
+  }
+  if (panelHint === 'profile') {
+    return 'profile';
+  }
+  if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
+    return 'prompts';
+  }
+  if (
+    panelHint === 'help-manual' ||
+    panelHint === 'manual' ||
+    panelHint === 'help' ||
+    panelHint === 'docs' ||
+    panelHint === 'docs-site'
+  ) {
+    return 'help-manual';
+  }
+  if (desktopEnabled && panelHint === 'desktop-models') {
+    return 'desktop-models';
+  }
+  if (desktopEnabled && panelHint === 'desktop-lan') {
+    return 'desktop-lan';
+  }
+  if (desktopEnabled && panelHint === 'desktop-remote') {
+    return 'desktop-remote';
+  }
+  return 'general';
+}
+
+function resolveRouteHelperWorkspaceEnabled(
+  sectionValue: unknown,
+  helperValue: unknown
+): boolean {
+  const sectionHint = String(sectionValue || '').trim().toLowerCase();
+  const helperHint = String(helperValue || '').trim().toLowerCase();
+  return (
+    sectionHint === 'groups' &&
+    (helperHint === '1' || helperHint === 'true' || helperHint === 'yes')
+  );
+}
+
 const rightDockCollapsed = ref(false);
 const rightDockEdgeHover = ref(false);
 const desktopInitialSectionPinned = ref(false);
@@ -1955,6 +2014,7 @@ const usernameSaving = ref(false);
 const appearanceHydrating = ref(false);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
+const helpManualLoading = ref(false);
 const toolsCatalogLoading = ref(false);
 const toolsCatalogLoaded = ref(false);
 const builtinTools = ref<ToolEntry[]>([]);
@@ -3775,6 +3835,30 @@ const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
 );
 const settingsPanelRenderKey = computed(() => ['settings', sessionHub.activeSection].join(':'));
+const routeSectionIntent = computed<MessengerSection>(() => {
+  if (desktopMode.value && desktopInitialSectionPinned.value) {
+    return sessionHub.activeSection;
+  }
+  return resolveSectionFromRoute(route.path, route.query.section);
+});
+const routeSettingsPanelModeIntent = computed<SettingsPanelMode>(() =>
+  resolveRouteSettingsPanelMode(route.path, route.query.panel, desktopMode.value)
+);
+const showHelpManualWaitingOverlay = computed(
+  () =>
+    sessionHub.activeSection === 'more' &&
+    settingsPanelMode.value === 'help-manual' &&
+    helpManualLoading.value
+);
+const suppressMessengerPageWaitingOverlay = computed(
+  () =>
+    (routeSectionIntent.value === 'agents' &&
+      agentSettingMode.value === 'agent' &&
+      !showAgentGridOverview.value) ||
+    (routeSectionIntent.value === 'more' &&
+      routeSettingsPanelModeIntent.value === 'help-manual') ||
+    showHelpManualWaitingOverlay.value
+);
 const showChatComposerFooter = computed(() => {
   const routeSection = resolveSectionFromRoute(route.path, route.query.section);
   if (routeSection !== 'messages') {
@@ -3797,6 +3881,10 @@ watch(
   },
   { immediate: true }
 );
+
+const handleHelpManualLoadingChange = (value: boolean) => {
+  helpManualLoading.value = value === true;
+};
 
 const filteredSharedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
@@ -3840,6 +3928,18 @@ watch(
       catalog: true,
       summary: true
     });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [sessionHub.activeSection, settingsPanelMode.value] as const,
+  ([section, panelMode]) => {
+    if (section === 'more' && panelMode === 'help-manual') {
+      helpManualLoading.value = true;
+      return;
+    }
+    helpManualLoading.value = false;
   },
   { immediate: true }
 );
@@ -4516,7 +4616,11 @@ const resolveMessengerPageWaitingSummary = (): string => {
 };
 
 const messengerPageWaitingState = computed<MessengerPageWaitingState | null>(() => {
-  if (workerCardImportOverlayVisible.value || isMessengerInteractionBlocked.value) {
+  if (
+    workerCardImportOverlayVisible.value ||
+    isMessengerInteractionBlocked.value ||
+    suppressMessengerPageWaitingOverlay.value
+  ) {
     return null;
   }
 
@@ -11665,54 +11769,39 @@ watch(
   }
 );
 
+const syncRouteDrivenMessengerViewState = () => {
+  settingsPanelMode.value = resolveRouteSettingsPanelMode(
+    route.path,
+    route.query.panel,
+    desktopMode.value
+  );
+  const sectionHint = String(route.query.section || '').trim().toLowerCase();
+  const helperWorkspaceEnabled = resolveRouteHelperWorkspaceEnabled(
+    route.query.section,
+    route.query.helper
+  );
+  helperAppsWorkspaceMode.value = helperWorkspaceEnabled;
+  if (helperWorkspaceEnabled) {
+    ensureHelperAppsSelection();
+    void loadHelperExternalApps();
+  }
+  if (desktopMode.value && !desktopInitialSectionPinned.value) {
+    desktopInitialSectionPinned.value = true;
+    sessionHub.setSection('messages');
+    return;
+  }
+  if (route.path.includes('/user-world') && sectionHint === 'groups') {
+    sessionHub.setSection('groups');
+    return;
+  }
+  sessionHub.setSection(resolveSectionFromRoute(route.path, route.query.section));
+};
+
+syncRouteDrivenMessengerViewState();
+
 watch(
-  () => [route.path, route.query.section, route.query.panel],
-  () => {
-    const panelHint = String(route.query.panel || '').trim().toLowerCase();
-    if (route.path.includes('/profile')) {
-      settingsPanelMode.value = 'profile';
-    } else if (panelHint === 'profile') {
-      settingsPanelMode.value = 'profile';
-    } else if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
-      settingsPanelMode.value = 'prompts';
-    } else if (
-      panelHint === 'help-manual' ||
-      panelHint === 'manual' ||
-      panelHint === 'help' ||
-      panelHint === 'docs' ||
-      panelHint === 'docs-site'
-    ) {
-      settingsPanelMode.value = 'help-manual';
-    } else if (desktopMode.value && panelHint === 'desktop-models') {
-      settingsPanelMode.value = 'desktop-models';
-    } else if (desktopMode.value && panelHint === 'desktop-lan') {
-      settingsPanelMode.value = 'desktop-lan';
-    } else if (desktopMode.value && panelHint === 'desktop-remote') {
-      settingsPanelMode.value = 'desktop-remote';
-    } else {
-      settingsPanelMode.value = 'general';
-    }
-    const sectionHint = String(route.query.section || '').trim().toLowerCase();
-    const helperHint = String(route.query.helper || '').trim().toLowerCase();
-    const helperWorkspaceEnabled =
-      sectionHint === 'groups' && (helperHint === '1' || helperHint === 'true' || helperHint === 'yes');
-    helperAppsWorkspaceMode.value = helperWorkspaceEnabled;
-    if (helperWorkspaceEnabled) {
-      ensureHelperAppsSelection();
-      loadHelperExternalApps();
-    }
-    if (desktopMode.value && !desktopInitialSectionPinned.value) {
-      desktopInitialSectionPinned.value = true;
-      sessionHub.setSection('messages');
-      return;
-    }
-    if (route.path.includes('/user-world') && sectionHint === 'groups') {
-      sessionHub.setSection('groups');
-      return;
-    }
-    sessionHub.setSection(resolveSectionFromRoute(route.path, route.query.section));
-  },
-  { immediate: true }
+  () => [route.path, route.query.section, route.query.panel, route.query.helper],
+  syncRouteDrivenMessengerViewState
 );
 
 watch(

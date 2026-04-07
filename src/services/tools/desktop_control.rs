@@ -847,7 +847,7 @@ fn resolve_temp_dir() -> Result<PathBuf> {
         }
     }
     let root = std::env::current_dir().map_err(|err| anyhow!(err))?;
-    Ok(root.join("temp_dir"))
+    Ok(root.join("config").join("data").join("temp_dir"))
 }
 
 fn sanitize_session_id(value: &str) -> String {

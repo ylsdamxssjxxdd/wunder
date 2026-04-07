@@ -14,7 +14,6 @@
 
 x-build-volumes: &build-volumes
   - ../../:/app
-  - ../../config/data:/app/data
   - ../../config/data/workspaces:/workspaces
   - ../../config/fonts:/usr/share/fonts/wunder:ro
 

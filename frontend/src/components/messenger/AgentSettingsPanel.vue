@@ -472,6 +472,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits<{
+  'panel-mounted': [];
   saved: [agentId: string];
   'delete-start': [agentId: string];
   deleted: [agentId: string];
@@ -539,7 +540,7 @@ const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
 const currentAgent = ref<Record<string, unknown> | null>(null);
-const agentLoading = ref(false);
+const agentLoading = ref(true);
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
@@ -992,11 +993,32 @@ type AgentSettingsWaitingState = {
   progress: number;
 };
 
+const selectedAgentWaitingTargetName = computed(() => {
+  if (isDefaultAgent.value) {
+    return t('messenger.defaultAgent');
+  }
+  const targetAgentId = normalizedAgentId.value;
+  const resolvedFromCurrent =
+    currentAgent.value && String(currentAgent.value.id || '').trim() === targetAgentId
+      ? String(currentAgent.value.name || '').trim()
+      : '';
+  if (resolvedFromCurrent) {
+    return resolvedFromCurrent;
+  }
+  const resolvedFromList = [...(Array.isArray(agentStore.agents) ? agentStore.agents : []), ...(Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : [])]
+    .find((item) => String(item?.id || '').trim() === targetAgentId);
+  return (
+    String((resolvedFromList as Record<string, unknown> | undefined)?.name || '').trim() ||
+    targetAgentId ||
+    t('messenger.section.agents')
+  );
+});
+
 const agentSettingsWaitingState = computed<AgentSettingsWaitingState | null>(() => {
   if (!canView.value) {
     return null;
   }
-  const targetName = String(form.name || normalizedAgentId.value || t('messenger.section.agents')).trim();
+  const targetName = selectedAgentWaitingTargetName.value;
   if (agentLoading.value) {
     return {
       title: t('messenger.waiting.title'),
@@ -1255,6 +1277,7 @@ defineExpose({
 });
 
 onMounted(() => {
+  emit('panel-mounted');
   panelMounted.value = true;
   stopUnsavedGuard = registerUnsavedChangesGuard('messenger-agent-settings', confirmDiscardChanges);
   stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {

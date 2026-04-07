@@ -44,7 +44,7 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     pub fn new(db_path: String) -> Self {
         let path = if db_path.trim().is_empty() {
-            PathBuf::from("./data/wunder.db")
+            PathBuf::from("./config/data/wunder.db")
         } else {
             PathBuf::from(db_path)
         };

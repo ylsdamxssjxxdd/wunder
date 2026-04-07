@@ -667,7 +667,7 @@ fn temp_dir_root() -> Result<PathBuf> {
         }
     }
     let root = std::env::current_dir()?;
-    Ok(root.join("temp_dir"))
+    Ok(root.join("config").join("data").join("temp_dir"))
 }
 
 fn percent_encode(value: &str) -> String {

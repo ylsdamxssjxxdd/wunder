@@ -527,7 +527,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['status']);
+const emit = defineEmits(['status', 'loading-change']);
 const { t } = useI18n();
 
 // doc2md 支持的扩展名列表（用于前端过滤）
@@ -787,6 +787,10 @@ const emitStatus = (message) => {
   emit('status', message || '');
 };
 
+const emitLoadingChange = (value) => {
+  emit('loading-change', value === true);
+};
+
 const normalizeKnowledgeConfig = (raw) => {
   const config = raw || {};
   return {
@@ -879,6 +883,7 @@ const restoreKnowledgeSnapshot = (snapshot) => {
 const loadConfig = async () => {
   if (loading.value) return;
   loading.value = true;
+  emitLoadingChange(true);
   try {
     const { data } = await fetchUserKnowledgeConfig();
     const payload = data?.data || {};
@@ -905,6 +910,7 @@ const loadConfig = async () => {
     showApiError(error, t('knowledge.refreshFailed', { message: error.message || '' }));
   } finally {
     loading.value = false;
+    emitLoadingChange(false);
   }
 };
 

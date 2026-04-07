@@ -14,7 +14,7 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；同时通过 `./config/data:/app/data` 兼容旧的 `/app/data/*` 写路径。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
+- docker compose 默认将运行态持久化统一落在仓库 `config/data/`：`./config/data/workspaces` 挂载到 `/workspaces`（用户工作区）、`./config/data/postgres` 挂载到 PostgreSQL 数据目录、`./config/data/weaviate` 挂载到 Weaviate 数据目录；服务内部的 SQLite fallback、用户提示词模板、`temp_dir`、`vector_knowledge`、吞吐报告与 monitor 历史默认路径也统一收口到 `config/data/`，避免在仓库根目录再生成 `data/`、`temp_dir/`、`vector_knowledge/`。主配置文件直接使用仓库 `config/wunder.yaml`（容器内默认 `/app/config/wunder.yaml`，可通过 `WUNDER_CONFIG_PATH` 改到其他单文件路径）；`WUNDER_USER_TOOLS_ROOT` / `WUNDER_VECTOR_KNOWLEDGE_ROOT` / `WUNDER_TEMP_DIR_ROOT` 默认也已对齐到 `/app/config/data/*`。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
 - `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；构建阶段直接调用 `vite/bin/vite.js`，并按真实文件标记校验 Linux 容器内的 `rollup`/`esbuild` 平台原生依赖，避免目录存在但实际为空壳时误判为可用；ARM compose 默认关闭 `FRONTEND_ALLOW_PREBUILT_DIST`，优先要求真实 ARM `node_modules` 与真实构建产物，只有显式设为 `1` 时才允许复用现有静态产物兜底。
 - `docker-compose-arm.yml` 的 `wunder-server` 与 `wunder-sandbox` 默认注入 `WUNDER_PREFER_PREBUILT_BIN=0`：ARM 环境默认按源码/产物时间关系正常判定是否需要重新构建；如需显式优先复用既有 ARM release 二进制，可在 `.env` 中设置 `WUNDER_PREFER_PREBUILT_BIN=1`。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
@@ -485,7 +485,7 @@
   - `user_id`：用户唯一标识
   - `knowledge.bases`：知识库列表（name/description/enabled/shared/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 返回：同 `GET`
-- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
+- 说明：`base_type` 为空默认字面知识库；`base_type=vector` 时必须指定 `embedding_model`，root 自动指向 `config/data/vector_knowledge/users/<user_id>/<base>` 作为逻辑标识，向量文档与切片元数据存储在数据库中。
 
 ### 4.1.2.9 `/wunder/user_tools/knowledge/files`
 
@@ -725,7 +725,7 @@
 - 方法：`GET`
 - 鉴权：无
 - 入参（query）：`filename` 文件路径（相对 `temp_dir/`，不支持 `..`）
-- 说明：默认从项目根目录 `temp_dir/` 目录读取文件并下载；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 说明：默认从项目根目录 `config/data/temp_dir/` 目录读取文件并下载；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回：文件流（`Content-Disposition: attachment`）
 
 ### 4.1.2.25 `/wunder/temp_dir/upload`
@@ -737,7 +737,7 @@
   - `file` 文件字段（支持多个同名字段）
   - `path` 目标子目录路径（相对 `temp_dir/`，可选）
   - `overwrite` 是否覆盖同名文件（可选，默认 true）
-- 说明：默认上传文件到项目根目录 `temp_dir/`，若设置 `path` 则自动创建目录；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 说明：默认上传文件到项目根目录 `config/data/temp_dir/`，若设置 `path` 则自动创建目录；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回（JSON）：
   - `ok`：是否成功
   - `files`：上传后的文件名列表
@@ -746,7 +746,7 @@
 
 - 方法：`GET`
 - 鉴权：无
-- 说明：列出临时目录文件（包含子目录，返回相对路径）；默认根目录为项目根 `temp_dir/`，可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定。
+- 说明：列出临时目录文件（包含子目录，返回相对路径）；默认根目录为项目根 `config/data/temp_dir/`，可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定。
 - 返回（JSON）：
   - `ok`：是否成功
   - `files`：文件列表（`name`/`size`/`updated_time`）
@@ -759,7 +759,7 @@
   - `all`：是否清空目录（true 表示清空）
   - `filename`：要删除的文件路径（相对 `temp_dir/`）
   - `filenames`：要删除的文件路径数组（相对 `temp_dir/`）
-- 说明：默认操作项目根目录 `temp_dir/`；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
+- 说明：默认操作项目根目录 `config/data/temp_dir/`；可通过环境变量 `WUNDER_TEMP_DIR_ROOT` 指定根目录。
 - 返回（JSON）：
   - `ok`：是否成功
   - `removed`：已删除文件名列表
@@ -1782,7 +1782,7 @@
   - `knowledge`：知识库配置（bases 数组，元素包含 name/description/root/enabled/base_type/embedding_model/chunk_size/chunk_overlap/top_k/score_threshold）
 - `POST` 入参：
   - `knowledge`：完整知识库配置，用于保存与下发
-- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
+- 说明：当 root 为空时，字面知识库会自动创建 `./config/knowledge/<知识库名称>` 目录；向量知识库 root 自动指向 `config/data/vector_knowledge/shared/<base>` 作为逻辑标识，文档与切片元数据存储在数据库中，并要求 `embedding_model`
 
 ### 4.1.27 `/wunder/admin/knowledge/files`
 
@@ -2103,7 +2103,7 @@
 - 入参（Query）：
   - `run_id`：压测任务 ID（可选；不传则优先返回运行中任务，否则返回最近一次结果）
 - 返回（JSON）：`ThroughputReport`（包含汇总快照与采样序列）
-- 说明：报告会持久化到 `data/throughput`，便于导出与回溯。
+- 说明：报告会持久化到 `config/data/throughput`，便于导出与回溯。
 
 #### ThroughputSnapshot
 

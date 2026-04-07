@@ -5,14 +5,20 @@
       :src="docsSiteSrc"
       title="wunder docs"
       referrerpolicy="no-referrer"
+      @load="handleFrameLoad"
+      @error="handleFrameLoad"
     ></iframe>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 
 import { resolveApiBase } from '@/config/runtime';
+
+const emit = defineEmits<{
+  'loading-change': [loading: boolean];
+}>();
 
 const docsSiteSrc = computed(() => {
   const fallback = '/docs/?embed=user';
@@ -30,6 +36,26 @@ const docsSiteSrc = computed(() => {
     return fallback;
   }
 });
+
+const emitLoadingChange = (loading: boolean) => {
+  emit('loading-change', loading === true);
+};
+
+const handleFrameLoad = () => {
+  emitLoadingChange(false);
+};
+
+onMounted(() => {
+  emitLoadingChange(true);
+});
+
+watch(
+  () => docsSiteSrc.value,
+  () => {
+    emitLoadingChange(true);
+  },
+  { immediate: true }
+);
 </script>
 
 <style scoped>

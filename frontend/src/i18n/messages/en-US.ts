@@ -2460,7 +2460,7 @@ export default {
     'You have unsaved agent settings. Press Ctrl/Cmd + S to save quickly.',
   'messenger.agentSettings.confirmDiscard':
     'You have unsaved changes in agent settings. Leave and discard them?',
-  'messenger.waiting.title': 'Preparing workspace',
+  'messenger.waiting.title': 'Building workspace',
   'messenger.waiting.phase.preparing': 'Preparing',
   'messenger.waiting.phase.loading': 'Loading',
   'messenger.waiting.phase.syncing': 'Syncing',
@@ -2470,6 +2470,7 @@ export default {
   'messenger.waiting.summary.tools': 'Loading your tools, skills, and knowledge catalog...',
   'messenger.waiting.summary.settings': 'Loading current settings and related local configuration...',
   'messenger.waiting.summary.helperApps': 'Connecting online helper apps and syncing available entries...',
+  'messenger.waiting.summary.helpManual': 'Loading the help manual and embedded docs site...',
   'messenger.waiting.summary.agentSettings':
     'Loading agent configuration, tool catalog, and available model options...',
   'messenger.waiting.summary.promptSettings':

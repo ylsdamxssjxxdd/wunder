@@ -125,7 +125,7 @@ cp .env.example .env
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | `WUNDER_PORT` | Server 端口 | 18000 |
-| `WUNDER_TEMP_DIR_ROOT` | 临时文件目录 | ./temp_dir |
+| `WUNDER_TEMP_DIR_ROOT` | 临时文件目录 | ./config/data/temp_dir |
 | `DATABASE_URL` | PostgreSQL 连接串 | postgres://... |
 
 ### 3. 启动服务
@@ -204,10 +204,10 @@ security:
 |----------|-----------|------|
 | 用户工作区 | `wunder_workspaces` | `/workspaces` |
 | PostgreSQL 数据 | `wunder_logs` | PostgreSQL 数据目录 |
-| 临时文件 | `./temp_dir` | 临时上传/下载 |
+| 临时文件 | `./config/data/temp_dir` | 临时上传/下载 |
 | 服务运行日志 | `./config/data/logs/server` | 仅 `wunder-server` 写本地 JSONL 日志，默认保留 14 天 |
 
-> **重要**：不要把长期业务数据放进 `data/` 目录，容易被清理或覆盖！
+> **重要**：不要把长期业务数据混放进 `config/data/` 运行时目录；长期业务文件请放工作区或外部存储。
 
 ### 服务日志
 

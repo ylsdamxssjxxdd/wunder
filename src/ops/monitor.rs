@@ -792,7 +792,7 @@ impl MonitorState {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .collect::<HashSet<_>>();
-        let history_dir = PathBuf::from("data/historys/monitor");
+        let history_dir = PathBuf::from("config/data/historys/monitor");
         let workspace_root = PathBuf::from(workspace_root);
         if let Err(err) = storage.ensure_initialized() {
             warn!("monitor storage initialization failed: {err}");

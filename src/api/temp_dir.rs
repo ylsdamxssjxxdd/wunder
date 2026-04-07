@@ -311,7 +311,7 @@ fn temp_dir_root() -> Result<PathBuf, Response> {
     }
     let root = std::env::current_dir()
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    Ok(root.join("temp_dir"))
+    Ok(root.join("config").join("data").join("temp_dir"))
 }
 
 fn ensure_temp_dir() -> Result<PathBuf, Response> {

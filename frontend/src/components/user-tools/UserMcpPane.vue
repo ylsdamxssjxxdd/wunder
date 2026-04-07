@@ -302,7 +302,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['status']);
+const emit = defineEmits(['status', 'loading-change']);
 const { t } = useI18n();
 
 const servers = ref([]);
@@ -382,6 +382,10 @@ const structPreview = computed(() => buildUserMcpStructPreview(activeServer.valu
 
 const emitStatus = (message) => {
   emit('status', message || '');
+};
+
+const emitLoadingChange = (value) => {
+  emit('loading-change', value === true);
 };
 
 const isPlainObject = (value) =>
@@ -521,6 +525,7 @@ const upsertUserMcpServer = (incoming) => {
 const loadServers = async () => {
   if (loading.value) return;
   loading.value = true;
+  emitLoadingChange(true);
   try {
     const { data } = await fetchUserMcpServers();
     const payload = data?.data || {};
@@ -534,6 +539,7 @@ const loadServers = async () => {
     showApiError(error, t('userTools.mcp.loadFailed'));
   } finally {
     loading.value = false;
+    emitLoadingChange(false);
   }
 };
 

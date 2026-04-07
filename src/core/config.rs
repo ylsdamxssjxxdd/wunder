@@ -2063,7 +2063,7 @@ user_agents:
             r#"
 storage:
   backend: auto
-  db_path: ./data/wunder.db
+  db_path: ./config/data/wunder.db
   postgres:
     dsn: postgresql://wunder:wunder@postgres:5432/wunder
     connect_timeout_s: 5
@@ -2091,7 +2091,7 @@ sandbox:
         let merged: Config = serde_yaml::from_value(base).expect("parse merged config");
 
         assert_eq!(merged.storage.backend, "auto");
-        assert_eq!(merged.storage.db_path, "./data/wunder.db");
+        assert_eq!(merged.storage.db_path, "./config/data/wunder.db");
         assert_eq!(
             merged.storage.postgres.dsn,
             "postgresql://wunder:wunder@postgres:5432/wunder"

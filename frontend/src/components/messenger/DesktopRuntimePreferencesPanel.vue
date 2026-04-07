@@ -1,7 +1,6 @@
 <template>
   <section
     v-if="desktopLocalMode"
-    v-loading="loading"
     class="messenger-settings-card desktop-runtime-preferences-panel"
   >
     <div class="desktop-runtime-preferences-head">
@@ -91,6 +90,16 @@
         </div>
       </div>
     </div>
+
+    <HoneycombWaitingOverlay
+      :visible="loading"
+      :title="t('messenger.waiting.title')"
+      :target-name="t('desktop.system.runtimeTitle')"
+      :phase-label="t('messenger.waiting.phase.preparing')"
+      :summary-label="t('messenger.waiting.summary.desktopSettings')"
+      :progress="32"
+      :teleport-to-body="false"
+    />
   </section>
 </template>
 
@@ -103,6 +112,7 @@ import {
   updateDesktopSettings,
   type DesktopSettingsData
 } from '@/api/desktop';
+import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 
 type WindowCloseBehavior = 'tray' | 'quit';
@@ -549,6 +559,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .desktop-runtime-preferences-panel {
+  position: relative;
   min-height: 0;
   display: grid;
   gap: 14px;
