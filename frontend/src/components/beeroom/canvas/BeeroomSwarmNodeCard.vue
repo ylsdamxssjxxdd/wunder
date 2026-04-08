@@ -183,7 +183,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .beeroom-node-card {
   --node-activity-glow: rgba(0, 0, 0, 0);
-  --node-activity-sheen: rgba(255, 255, 255, 0);
+  --node-activity-border: rgba(255, 255, 255, 0);
+  --node-activity-border-soft: rgba(255, 255, 255, 0);
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -205,9 +206,9 @@ onBeforeUnmount(() => {
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
   transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease,
-    transform 0.18s ease;
+    border-color 0.42s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s ease;
 }
 
 .beeroom-node-card::before {
@@ -225,17 +226,18 @@ onBeforeUnmount(() => {
 .beeroom-node-card::after {
   content: '';
   position: absolute;
-  inset: -18%;
-  background: radial-gradient(
-    circle at 50% 44%,
-    var(--node-activity-sheen) 0%,
-    rgba(255, 255, 255, 0.05) 18%,
-    rgba(255, 255, 255, 0.02) 36%,
-    transparent 72%
-  );
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid var(--node-activity-border);
+  box-shadow: inset 0 0 0 1px var(--node-activity-border-soft);
   opacity: 0;
-  transform: scale(0.96);
+  transform: scale(0.992);
   pointer-events: none;
+  transition:
+    opacity 0.56s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.56s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.72s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .beeroom-node-card:hover,
@@ -281,44 +283,35 @@ onBeforeUnmount(() => {
 .beeroom-node-card.is-queued,
 .beeroom-node-card.is-awaiting_idle {
   --node-activity-glow: rgba(248, 113, 113, 0.18);
-  --node-activity-sheen: rgba(248, 113, 113, 0.18);
+  --node-activity-border: rgba(248, 113, 113, 0.42);
+  --node-activity-border-soft: rgba(248, 113, 113, 0.12);
   box-shadow:
     0 0 0 1px rgba(248, 113, 113, 0.08),
     0 14px 28px rgba(127, 29, 29, 0.2),
-    0 0 24px var(--node-activity-glow);
+    0 0 22px var(--node-activity-glow);
 }
 
 .beeroom-node-card.is-mother.is-running,
 .beeroom-node-card.is-mother.is-queued,
 .beeroom-node-card.is-mother.is-awaiting_idle {
   --node-activity-glow: rgba(245, 158, 11, 0.18);
-  --node-activity-sheen: rgba(251, 191, 36, 0.22);
+  --node-activity-border: rgba(251, 191, 36, 0.44);
+  --node-activity-border-soft: rgba(251, 191, 36, 0.12);
 }
 
 .beeroom-node-card.is-subagent.is-emphasis-active.is-running,
 .beeroom-node-card.is-subagent.is-emphasis-active.is-queued,
 .beeroom-node-card.is-subagent.is-emphasis-active.is-awaiting_idle {
   --node-activity-glow: rgba(34, 211, 238, 0.18);
-  --node-activity-sheen: rgba(34, 211, 238, 0.2);
+  --node-activity-border: rgba(34, 211, 238, 0.4);
+  --node-activity-border-soft: rgba(34, 211, 238, 0.12);
 }
 
 .beeroom-node-card.is-running::after,
 .beeroom-node-card.is-queued::after,
 .beeroom-node-card.is-awaiting_idle::after {
-  opacity: 0.36;
-  animation: beeroom-node-activity-breathe 2.2s ease-in-out infinite;
-}
-
-.beeroom-node-card.is-running .beeroom-node-avatar,
-.beeroom-node-card.is-queued .beeroom-node-avatar,
-.beeroom-node-card.is-awaiting_idle .beeroom-node-avatar {
-  animation: beeroom-node-avatar-breathe 1.65s ease-in-out infinite;
-}
-
-.beeroom-node-card.is-running .beeroom-node-status-dot,
-.beeroom-node-card.is-queued .beeroom-node-status-dot,
-.beeroom-node-card.is-awaiting_idle .beeroom-node-status-dot {
-  animation: beeroom-node-status-pulse 1.02s ease-in-out infinite;
+  opacity: 0.72;
+  animation: beeroom-node-border-breathe 2.6s cubic-bezier(0.33, 0, 0.2, 1) infinite;
 }
 
 .beeroom-node-card:active {
@@ -718,59 +711,23 @@ onBeforeUnmount(() => {
   }
 }
 
-@keyframes beeroom-node-activity-breathe {
-  0% {
-    opacity: 0.18;
-    transform: scale(0.94);
+@keyframes beeroom-node-border-breathe {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: scale(0.992);
   }
 
   50% {
-    opacity: 0.46;
-    transform: scale(1.02);
-  }
-
-  100% {
-    opacity: 0.18;
-    transform: scale(0.94);
-  }
-}
-
-@keyframes beeroom-node-avatar-breathe {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-    filter: saturate(1) brightness(1);
-  }
-
-  50% {
-    transform: translateY(-1px) scale(1.04);
-    filter: saturate(1.08) brightness(1.04);
-  }
-}
-
-@keyframes beeroom-node-status-pulse {
-  0%,
-  100% {
+    opacity: 0.84;
     transform: scale(1);
-    opacity: 1;
-  }
-
-  45% {
-    transform: scale(1.32);
-    opacity: 0.82;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .beeroom-node-card.is-running::after,
   .beeroom-node-card.is-queued::after,
-  .beeroom-node-card.is-awaiting_idle::after,
-  .beeroom-node-card.is-running .beeroom-node-avatar,
-  .beeroom-node-card.is-queued .beeroom-node-avatar,
-  .beeroom-node-card.is-awaiting_idle .beeroom-node-avatar,
-  .beeroom-node-card.is-running .beeroom-node-status-dot,
-  .beeroom-node-card.is-queued .beeroom-node-status-dot,
-  .beeroom-node-card.is-awaiting_idle .beeroom-node-status-dot {
+  .beeroom-node-card.is-awaiting_idle::after {
     animation: none;
   }
 }

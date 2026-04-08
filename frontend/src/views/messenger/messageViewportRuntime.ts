@@ -1,5 +1,7 @@
 import { nextTick, type Ref } from 'vue';
 
+import { chatDebugLog, isChatDebugEnabled } from '../../utils/chatDebug';
+
 export type RenderableMessage = {
   key: string;
   message?: Record<string, unknown>;
@@ -58,6 +60,15 @@ export const createMessageViewportRuntime = (
   let scheduledViewportRefreshMeasureKeys = new Set<string>();
   let scheduledVirtualMeasureAll = false;
   let scheduledVirtualMeasureKeys = new Set<string>();
+  let messageResizeObserver: ResizeObserver | null = null;
+  const observedMessageNodes = new Map<string, HTMLElement>();
+
+  const logViewportDebug = (event: string, payload?: unknown) => {
+    if (!isChatDebugEnabled()) {
+      return;
+    }
+    chatDebugLog('messenger.viewport', event, payload);
+  };
 
   const applyMessageVirtualMetrics = (scrollTop: number, viewportHeight: number) => {
     if (options.messageVirtualViewportHeight.value !== viewportHeight) {
@@ -100,6 +111,106 @@ export const createMessageViewportRuntime = (
       ? keys.map((key) => String(key || '').trim()).filter(Boolean)
       : [];
 
+  const measureMessageNode = (
+    node: HTMLElement
+  ): { key: string; previous: number | null; next: number } | null => {
+    const key = String(node?.dataset?.virtualKey || '').trim();
+    if (!key) {
+      return null;
+    }
+    const offsetHeight = Math.round(node.offsetHeight || 0);
+    const height = Math.max(
+      1,
+      offsetHeight || Math.round(node.getBoundingClientRect().height)
+    );
+    const cached = options.messageVirtualHeightCache.get(key);
+    if (cached && Math.abs(cached - height) <= 1) {
+      return null;
+    }
+    options.messageVirtualHeightCache.set(key, height);
+    return {
+      key,
+      previous: typeof cached === 'number' ? cached : null,
+      next: height
+    };
+  };
+
+  const releaseObservedMessageNode = (key: string) => {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return;
+    }
+    const node = observedMessageNodes.get(normalizedKey);
+    if (!node) {
+      return;
+    }
+    if (messageResizeObserver) {
+      messageResizeObserver.unobserve(node);
+    }
+    observedMessageNodes.delete(normalizedKey);
+  };
+
+  const releaseObservedMessageNodes = () => {
+    if (messageResizeObserver) {
+      messageResizeObserver.disconnect();
+    }
+    observedMessageNodes.clear();
+  };
+
+  const syncVisibleMessageResizeObserverTargets = () => {
+    const container = options.messageListRef.value;
+    if (
+      !container ||
+      options.showChatSettingsView.value ||
+      !options.shouldVirtualizeMessages.value ||
+      typeof ResizeObserver === 'undefined'
+    ) {
+      releaseObservedMessageNodes();
+      return;
+    }
+    if (!messageResizeObserver) {
+      messageResizeObserver = new ResizeObserver((entries) => {
+        const changes = entries
+          .map((entry) => measureMessageNode(entry.target as HTMLElement))
+          .filter((change): change is { key: string; previous: number | null; next: number } => Boolean(change));
+        if (!changes.length) {
+          return;
+        }
+        options.messageVirtualLayoutVersion.value += 1;
+        syncMessageVirtualMetrics();
+        updateMessageScrollState();
+        logViewportDebug('row-resize', {
+          changeCount: changes.length,
+          changes
+        });
+      });
+    }
+    const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
+    const nextNodes = new Map<string, HTMLElement>();
+    nodes.forEach((node) => {
+      const key = String(node?.dataset?.virtualKey || '').trim();
+      if (!key) {
+        return;
+      }
+      nextNodes.set(key, node);
+      const previousNode = observedMessageNodes.get(key);
+      if (previousNode === node) {
+        return;
+      }
+      if (previousNode && messageResizeObserver) {
+        messageResizeObserver.unobserve(previousNode);
+      }
+      observedMessageNodes.set(key, node);
+      messageResizeObserver.observe(node);
+    });
+    Array.from(observedMessageNodes.keys()).forEach((key) => {
+      if (nextNodes.has(key)) {
+        return;
+      }
+      releaseObservedMessageNode(key);
+    });
+  };
+
   const markMeasureTargets = (
     nextKeys: string[] | undefined,
     mode: 'viewport' | 'virtual'
@@ -130,33 +241,32 @@ export const createMessageViewportRuntime = (
 
   const measureVisibleMessageHeights = (targetKeys?: string[]) => {
     const container = options.messageListRef.value;
+    syncVisibleMessageResizeObserverTargets();
     if (!container || options.showChatSettingsView.value || !options.shouldVirtualizeMessages.value) {
       return;
     }
     const normalizedTargetKeys = collectMeasureKeys(targetKeys);
     const targetKeySet = normalizedTargetKeys.length ? new Set(normalizedTargetKeys) : null;
     const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
-    let changed = false;
+    const changes: Array<{ key: string; previous: number | null; next: number }> = [];
     nodes.forEach((node) => {
       const key = String(node.dataset.virtualKey || '').trim();
       if (!key) return;
       if (targetKeySet && !targetKeySet.has(key)) {
         return;
       }
-      const offsetHeight = Math.round(node.offsetHeight || 0);
-      const height = Math.max(
-        1,
-        offsetHeight || Math.round(node.getBoundingClientRect().height)
-      );
-      const cached = options.messageVirtualHeightCache.get(key);
-      if (cached && Math.abs(cached - height) <= 1) {
-        return;
+      const change = measureMessageNode(node);
+      if (change) {
+        changes.push(change);
       }
-      options.messageVirtualHeightCache.set(key, height);
-      changed = true;
     });
-    if (changed) {
+    if (changes.length) {
       options.messageVirtualLayoutVersion.value += 1;
+      logViewportDebug('measure-visible', {
+        targetKeys: normalizedTargetKeys,
+        changeCount: changes.length,
+        changes
+      });
     }
   };
 
@@ -259,11 +369,15 @@ export const createMessageViewportRuntime = (
   };
 
   const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
+    logViewportDebug('workflow-layout-change', {
+      messageKey: String(messageKey || '').trim()
+    });
     scheduleMessageViewportRefresh({
       updateScrollState: true,
       measure: true,
       measureKeys: messageKey ? [messageKey] : undefined
     });
+    scheduleMessageVirtualMeasure(messageKey ? [messageKey] : undefined);
   };
 
   const scrollVirtualMessageToIndex = (
@@ -369,6 +483,8 @@ export const createMessageViewportRuntime = (
       window.cancelAnimationFrame(messageViewportRefreshFrame);
       messageViewportRefreshFrame = null;
     }
+    releaseObservedMessageNodes();
+    messageResizeObserver = null;
     scheduledViewportRefreshNeedsScrollState = false;
     scheduledViewportRefreshNeedsMeasure = false;
     scheduledViewportRefreshMeasureAll = false;

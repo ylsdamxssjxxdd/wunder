@@ -225,6 +225,75 @@ const resolveInsertIndexByTimestamp = (messages: ChatMessage[], markerTime: numb
   return messages.length;
 };
 
+const resolveStreamRound = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const normalized = Math.trunc(parsed);
+  return normalized > 0 ? normalized : null;
+};
+
+const resolveManualCompactionRound = (message: ChatMessage | null | undefined): number | null => {
+  const directRound = resolveStreamRound(message?.stream_round ?? message?.streamRound);
+  if (directRound !== null) {
+    return directRound;
+  }
+  const items = Array.isArray(message?.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = asObject(items[cursor]);
+    if (!item || !isManualCompactionWorkflowItem(item)) continue;
+    const detail = parseDetailObject(item.detail ?? item.data ?? item.payload);
+    const round = resolveStreamRound(detail?.user_round ?? detail?.userRound ?? detail?.round);
+    if (round !== null) {
+      return round;
+    }
+  }
+  return null;
+};
+
+const isRunningManualCompactionMarker = (message: ChatMessage | null | undefined): boolean =>
+  Boolean(
+    message &&
+      hasManualCompactionMarkerFlag(message) &&
+      isManualCompactionMessage(message) &&
+      isStreamingAssistantMessage(message)
+  );
+
+const isTerminalManualCompactionMarker = (message: ChatMessage | null | undefined): boolean =>
+  Boolean(
+    message &&
+      hasManualCompactionMarkerFlag(message) &&
+      isManualCompactionMessage(message) &&
+      !isStreamingAssistantMessage(message)
+  );
+
+const isManualCompactionConflict = (
+  remoteMessage: ChatMessage,
+  runningMarker: ChatMessage
+): boolean => {
+  if (!isTerminalManualCompactionMarker(remoteMessage)) return false;
+  if (!isRunningManualCompactionMarker(runningMarker)) return false;
+  const remoteCallRef = resolveWorkflowCallRef(remoteMessage);
+  const runningCallRef = resolveWorkflowCallRef(runningMarker);
+  if (remoteCallRef && runningCallRef && remoteCallRef === runningCallRef) {
+    return true;
+  }
+  const remoteRound = resolveManualCompactionRound(remoteMessage);
+  const runningRound = resolveManualCompactionRound(runningMarker);
+  const remoteTime = resolveTimestampMs(remoteMessage.created_at);
+  const runningTime = resolveTimestampMs(runningMarker.created_at);
+  if (remoteRound !== null && runningRound !== null && remoteRound === runningRound) {
+    if (remoteTime === null || runningTime === null) {
+      return true;
+    }
+    return Math.abs(remoteTime - runningTime) <= 10_000;
+  }
+  if (remoteTime !== null && runningTime !== null) {
+    return Math.abs(remoteTime - runningTime) <= 1_500;
+  }
+  return false;
+};
+
 export const mergeCompactionMarkersIntoMessages = (
   remoteMessages: ChatMessage[] | null | undefined,
   cachedMessages: ChatMessage[] | null | undefined
@@ -244,7 +313,20 @@ export const mergeCompactionMarkersIntoMessages = (
   if (!cachedMarkers.length) {
     return baseMessages;
   }
-  const result = [...baseMessages];
+  const runningManualMarkers = cachedMarkers
+    .map((entry) => entry.message)
+    .filter((message) => isRunningManualCompactionMarker(message));
+  const suppressed: string[] = [];
+  const result = [...baseMessages].filter((message) => {
+    if (!runningManualMarkers.length) return true;
+    if (!isCompactionMarkerAssistantMessage(message)) return true;
+    const conflict = runningManualMarkers.some((marker) =>
+      isManualCompactionConflict(message, marker)
+    );
+    if (!conflict) return true;
+    suppressed.push(resolveCompactionMarkerSignature(message));
+    return false;
+  });
   const existingSignatures = new Set(
     result
       .filter((message) => isCompactionMarkerAssistantMessage(message))
@@ -279,6 +361,7 @@ export const mergeCompactionMarkersIntoMessages = (
       cachedMarkerCount: cachedMarkers.length,
       remoteMessageCount: baseMessages.length,
       remoteMarkerCount: Array.from(existingSignatures).length - inserted.length,
+      suppressed,
       inserted,
       skipped,
       changed

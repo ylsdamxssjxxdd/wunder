@@ -91,6 +91,7 @@ import {
 } from './toolWorkflowStructuredView';
 import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { chatPerf } from '@/utils/chatPerf';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import {
   buildCompactionDisplay,
   resolveCompactionInstanceLabel,
@@ -229,6 +230,8 @@ const streamFollowState = new Map<string, boolean>();
 const workflowRef = ref<HTMLDetailsElement | null>(null);
 const workflowListRef = ref<HTMLElement | null>(null);
 const workflowFollow = ref(true);
+const workflowUserCollapsed = ref(false);
+const userCollapsedEntryKeys = ref<Set<string>>(new Set());
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
 const toolCallDebugHintRef = ref<HTMLElement | null>(null);
@@ -239,6 +242,8 @@ const toolCallDebugHint = ref<ToolCallDebugHintState>({
   top: 0
 });
 let workflowLayoutFrame: number | null = null;
+let workflowToggleProgrammatic = false;
+const programmaticEntryToggleKeys = new Set<string>();
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
 
@@ -378,6 +383,25 @@ const handleWorkflowScroll = (event: Event) => {
 const handleWorkflowToggle = (event: Event) => {
   const target = event.target;
   if (!(target instanceof HTMLDetailsElement)) return;
+  if (workflowToggleProgrammatic) {
+    workflowToggleProgrammatic = false;
+    if (isChatDebugEnabled()) {
+      chatDebugLog('messenger.workflow-shell', 'toggle', {
+        open: target.open,
+        programmatic: true
+      });
+    }
+    scheduleWorkflowLayoutChange();
+    return;
+  }
+  workflowUserCollapsed.value = !target.open;
+  if (isChatDebugEnabled()) {
+    chatDebugLog('messenger.workflow-shell', 'toggle', {
+      open: target.open,
+      programmatic: false,
+      workflowUserCollapsed: workflowUserCollapsed.value
+    });
+  }
   if (target.open) {
     workflowFollow.value = true;
     void nextTick(() => {
@@ -3139,6 +3163,19 @@ const buildEntries = (): ToolEntryView[] => {
     .map(buildEntryView);
 };
 
+const isLiveEntryStatus = (status: string): boolean =>
+  status === 'loading' || status === 'pending';
+
+const findLatestLiveEntry = (rows: ToolEntryView[]): ToolEntryView | null => {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const candidate = rows[index];
+    if (isLiveEntryStatus(candidate.status)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
 const entries = computed<ToolEntryView[]>(() => {
   if (!chatPerf.enabled()) {
     return buildEntries();
@@ -3157,10 +3194,31 @@ watch(
   (nextEntries) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
     pruneStreamTracking(validKeys);
+    const nextUserCollapsed = new Set<string>();
+    userCollapsedEntryKeys.value.forEach((key) => {
+      if (validKeys.has(key)) nextUserCollapsed.add(key);
+    });
+    userCollapsedEntryKeys.value = nextUserCollapsed;
     const nextExpanded = new Set<string>();
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
+    const latestLiveEntry = findLatestLiveEntry(nextEntries);
+    if (
+      latestLiveEntry
+      && !nextExpanded.has(latestLiveEntry.key)
+      && !nextUserCollapsed.has(latestLiveEntry.key)
+    ) {
+      nextExpanded.add(latestLiveEntry.key);
+      programmaticEntryToggleKeys.add(latestLiveEntry.key);
+      if (isChatDebugEnabled()) {
+        chatDebugLog('messenger.workflow-shell', 'auto-expand-entry', {
+          key: latestLiveEntry.key,
+          status: latestLiveEntry.status,
+          entryCount: nextEntries.length
+        });
+      }
+    }
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
       syncStreamAutoStick();
@@ -3176,10 +3234,27 @@ watch(
 const handleEntryToggle = (key: string, event: Event) => {
   const target = event.target as HTMLDetailsElement | null;
   if (!target) return;
+  const programmatic = programmaticEntryToggleKeys.has(key);
+  if (programmatic) {
+    programmaticEntryToggleKeys.delete(key);
+  } else {
+    const nextUserCollapsed = new Set(userCollapsedEntryKeys.value);
+    if (target.open) nextUserCollapsed.delete(key);
+    else nextUserCollapsed.add(key);
+    userCollapsedEntryKeys.value = nextUserCollapsed;
+  }
   const next = new Set(expandedKeys.value);
   if (target.open) next.add(key);
   else next.delete(key);
   expandedKeys.value = next;
+  if (isChatDebugEnabled()) {
+    chatDebugLog('messenger.workflow-shell', 'entry-toggle', {
+      key,
+      open: target.open,
+      programmatic,
+      expandedCount: next.size
+    });
+  }
   void nextTick(() => {
     if (shouldAutoScrollWorkflow()) {
       scrollWorkflowToBottom();
@@ -3191,6 +3266,85 @@ const handleEntryToggle = (key: string, event: Event) => {
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
 // Do not expose workflow shell during pure model streaming; show it only after the first tool run appears.
 const shouldRender = computed(() => props.visible && entries.value.length > 0);
+
+const buildWorkflowDebugSnapshot = () => {
+  const liveEntry = findLatestLiveEntry(entries.value);
+  return {
+    visible: Boolean(props.visible),
+    loading: Boolean(props.loading),
+    rawItemCount: Array.isArray(props.items) ? props.items.length : 0,
+    entryCount: entries.value.length,
+    shouldRender: shouldRender.value,
+    shellOpen: Boolean(workflowRef.value?.open),
+    workflowUserCollapsed: workflowUserCollapsed.value,
+    latestEntryKey: latestEntry.value?.key || '',
+    latestEntryStatus: latestEntry.value?.status || '',
+    latestLiveEntryKey: liveEntry?.key || '',
+    latestLiveEntryStatus: liveEntry?.status || '',
+    expandedCount: expandedKeys.value.size,
+    userCollapsedEntryCount: userCollapsedEntryKeys.value.size
+  };
+};
+
+const openWorkflowShell = (reason: string) => {
+  const element = workflowRef.value;
+  if (!element || element.open) return;
+  workflowToggleProgrammatic = true;
+  workflowUserCollapsed.value = false;
+  if (isChatDebugEnabled()) {
+    chatDebugLog('messenger.workflow-shell', 'auto-open', {
+      reason,
+      entryCount: entries.value.length,
+      loading: Boolean(props.loading)
+    });
+  }
+  element.open = true;
+  void nextTick(() => {
+    if (shouldAutoScrollWorkflow()) {
+      scrollWorkflowToBottom();
+    }
+    scheduleWorkflowLayoutChange();
+  });
+};
+
+watch(
+  () => {
+    if (!isChatDebugEnabled()) return 'disabled';
+    return [
+      Boolean(props.visible),
+      Boolean(props.loading),
+      Array.isArray(props.items) ? props.items.length : 0,
+      entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
+      shouldRender.value,
+      Boolean(workflowRef.value?.open),
+      expandedKeys.value.size,
+      workflowUserCollapsed.value,
+      userCollapsedEntryKeys.value.size
+    ].join('::');
+  },
+  () => {
+    if (!isChatDebugEnabled()) return;
+    chatDebugLog('messenger.workflow-shell', 'snapshot-change', buildWorkflowDebugSnapshot());
+  },
+  { immediate: true, flush: 'post' }
+);
+
+watch(
+  () => [
+    shouldRender.value,
+    Boolean(props.visible),
+    Boolean(props.loading),
+    entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
+    workflowUserCollapsed.value
+  ].join('::'),
+  () => {
+    if (!shouldRender.value || !props.visible || workflowUserCollapsed.value) return;
+    const liveEntry = findLatestLiveEntry(entries.value);
+    if (!props.loading && !liveEntry) return;
+    openWorkflowShell(liveEntry ? 'live-entry' : 'loading');
+  },
+  { immediate: true, flush: 'post' }
+);
 
 onBeforeUnmount(() => {
   hideToolCallDebugHint();

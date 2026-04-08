@@ -1,4 +1,5 @@
 import { getSessionEvents, getSessionSubagents } from '@/api/chat';
+import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import type { BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import { chatDebugLog } from '@/utils/chatDebug';
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
@@ -15,6 +16,9 @@ export type BeeroomMissionSubagentItem = {
   key: string;
   sessionId: string;
   runId: string;
+  runKind: string;
+  requestedBy: string;
+  spawnedBy: string;
   agentId: string;
   title: string;
   label: string;
@@ -70,12 +74,29 @@ const summarizeDebugSubagent = (item: BeeroomMissionSubagentItem) => ({
   key: item.key,
   runId: item.runId,
   sessionId: item.sessionId,
+  runKind: item.runKind,
+  requestedBy: item.requestedBy,
+  spawnedBy: item.spawnedBy,
   status: item.status,
   terminal: item.terminal,
   failed: item.failed,
   updatedTime: item.updatedTime,
   summary: clipDebugText(item.summary)
 });
+
+const summarizeProjectionDecision = (item: BeeroomMissionSubagentItem) => {
+  const decision = resolveBeeroomSwarmSubagentProjectionDecision(item);
+  return {
+    key: item.key,
+    sessionId: item.sessionId,
+    runId: item.runId,
+    runKind: item.runKind,
+    requestedBy: item.requestedBy,
+    projectable: decision.projectable,
+    reason: decision.reason,
+    status: item.status
+  };
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -181,6 +202,9 @@ export const normalizeBeeroomMissionSubagentItem = (
     key,
     sessionId,
     runId,
+    runKind: normalizeText(source.run_kind ?? source.runKind),
+    requestedBy: normalizeText(source.requested_by ?? source.requestedBy),
+    spawnedBy: normalizeText(source.spawned_by ?? source.spawnedBy),
     agentId: normalizeText(source.agent_id ?? source.agentId),
     title,
     label: normalizeText(source.label ?? source.spawn_label ?? source.spawnLabel),
@@ -213,6 +237,9 @@ const buildSubagentFingerprint = (item: BeeroomMissionSubagentItem) =>
     item.key,
     item.sessionId,
     item.runId,
+    item.runKind,
+    item.requestedBy,
+    item.spawnedBy,
     item.agentId,
     item.status,
     item.summary,
@@ -554,7 +581,11 @@ export const useBeeroomMissionSubagentPreview = (options: {
         taskStatus: task.status,
         force,
         count: normalized.length,
-        items: normalized.slice(0, 8).map((item) => summarizeDebugSubagent(item))
+        canvasProjectableCount: normalized.filter((item) =>
+          resolveBeeroomSwarmSubagentProjectionDecision(item).projectable
+        ).length,
+        items: normalized.slice(0, 8).map((item) => summarizeDebugSubagent(item)),
+        projectionDecisions: normalized.slice(0, 8).map((item) => summarizeProjectionDecision(item))
       });
     } catch (error) {
       if (disposed || controller.signal.aborted) return;

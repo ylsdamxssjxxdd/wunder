@@ -1621,6 +1621,7 @@ import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHos
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
+import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import {
   InquiryPanel,
   MessageCompactionDivider,
@@ -1628,7 +1629,6 @@ import {
   MessageKnowledgeCitation,
   MessageSubagentPanel,
   MessageThinking,
-  MessageToolWorkflow,
   PlanPanel,
   ToolApprovalComposer,
   WorkspacePanel
@@ -1725,7 +1725,7 @@ import {
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
-import { chatDebugLog } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import {
   invalidateAllUserToolsCaches,
   invalidateUserSkillsCache,
@@ -6422,6 +6422,53 @@ const agentRenderableMessages = computed<AgentRenderableMessage[]>(() =>
   }, [])
 );
 
+const buildWorkflowSurfaceDebugSnapshot = () => {
+  const renderable = agentRenderableMessages.value;
+  const tailAssistant =
+    renderable.length > 0 ? renderable[renderable.length - 1].message : null;
+  const workflowItems = Array.isArray(tailAssistant?.workflowItems)
+    ? (tailAssistant.workflowItems as unknown[])
+    : [];
+  return {
+    activeSessionId: chatStore.activeSessionId,
+    renderableCount: renderable.length,
+    tailRole: String(tailAssistant?.role || ''),
+    tailHasWorkflowOrThinking: tailAssistant ? hasWorkflowOrThinking(tailAssistant) : false,
+    tailWorkflowVisible: Boolean(tailAssistant?.workflowStreaming || workflowItems.length > 0),
+    tailWorkflowItemCount: workflowItems.length,
+    tailWorkflowStreaming: Boolean(tailAssistant?.workflowStreaming),
+    tailReasoningStreaming: Boolean(tailAssistant?.reasoningStreaming),
+    tailStreamIncomplete: Boolean(tailAssistant?.stream_incomplete),
+    tailContentLength: String(tailAssistant?.content || '').length,
+    tailReasoningLength: String(tailAssistant?.reasoning || '').length
+  };
+};
+
+watch(
+  () => {
+    if (!isChatDebugEnabled()) return 'disabled';
+    const snapshot = buildWorkflowSurfaceDebugSnapshot();
+    return [
+      snapshot.activeSessionId,
+      snapshot.renderableCount,
+      snapshot.tailRole,
+      snapshot.tailHasWorkflowOrThinking,
+      snapshot.tailWorkflowVisible,
+      snapshot.tailWorkflowItemCount,
+      snapshot.tailWorkflowStreaming,
+      snapshot.tailReasoningStreaming,
+      snapshot.tailStreamIncomplete,
+      snapshot.tailContentLength,
+      snapshot.tailReasoningLength
+    ].join('::');
+  },
+  () => {
+    if (!isChatDebugEnabled()) return;
+    chatDebugLog('messenger.workflow-surface', 'snapshot-change', buildWorkflowSurfaceDebugSnapshot());
+  },
+  { immediate: true }
+);
+
 const worldRenderableMessages = computed<WorldRenderableMessage[]>(() =>
   (Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : []).map((rawMessage, sourceIndex) => {
     const message = (rawMessage || {}) as Record<string, unknown>;
@@ -6439,6 +6486,40 @@ const latestAgentRenderableMessageKey = computed(() => {
   const latest = agentRenderableMessages.value[agentRenderableMessages.value.length - 1];
   return String(latest?.key || '').trim();
 });
+
+const buildLatestAssistantLayoutSignature = (message: Record<string, unknown> | undefined): string => {
+  if (!message || String(message.role || '') !== 'assistant') {
+    return 'non-assistant';
+  }
+  const workflowItems = Array.isArray(message.workflowItems)
+    ? (message.workflowItems as unknown[])
+    : [];
+  const workflowSignature = workflowItems
+    .map((item, index) => {
+      const record = (item || {}) as Record<string, unknown>;
+      return [
+        index,
+        String(record.id || record.toolCallId || record.eventType || '').trim(),
+        String(record.status || '').trim(),
+        String(record.title || record.toolName || '').length,
+        String(record.detail || '').length
+      ].join(':');
+    })
+    .join('|');
+  const subagents = Array.isArray(message.subagents) ? message.subagents : [];
+  return [
+    latestAgentRenderableMessageKey.value,
+    String(message.id || message.localId || '').trim(),
+    String(message.content || '').length,
+    String(message.reasoning || '').length,
+    Boolean(message.workflowStreaming),
+    Boolean(message.reasoningStreaming),
+    Boolean(message.stream_incomplete),
+    workflowItems.length,
+    workflowSignature,
+    subagents.length
+  ].join('::');
+};
 
 const latestWorldRenderableMessageKey = computed(() => {
   const latest = worldRenderableMessages.value[worldRenderableMessages.value.length - 1];
@@ -11566,6 +11647,13 @@ const scheduleMessageVirtualMeasure = (measureKeys?: string[]) => {
 
 const handleMessageWorkflowLayoutChange = (messageKey?: string) => {
   messageViewportRuntime?.handleWorkflowLayoutChange(messageKey);
+  if (
+    autoStickToBottom.value &&
+    messageKey &&
+    String(messageKey).trim() === latestAgentRenderableMessageKey.value
+  ) {
+    void scrollMessagesToBottom();
+  }
 };
 
 const updateMessageScrollState = () => {
@@ -11594,6 +11682,47 @@ const scrollVirtualMessageToIndex = (keys: string[], index: number, align: 'cent
 
 const scrollLatestAssistantToCenter = async () => {
   return messageViewportRuntime?.scrollLatestAssistantToCenter() ?? Promise.resolve();
+};
+
+const refreshLatestAssistantMessageLayout = (reason: string) => {
+  if (!isAgentConversationActive.value) {
+    return;
+  }
+  const latestMessage = chatStore.messages[chatStore.messages.length - 1] as
+    | Record<string, unknown>
+    | undefined;
+  if (!latestMessage || String(latestMessage.role || '') !== 'assistant') {
+    return;
+  }
+  const latestMessageKey = latestAgentRenderableMessageKey.value;
+  if (isChatDebugEnabled()) {
+    const workflowItems = Array.isArray(latestMessage.workflowItems)
+      ? (latestMessage.workflowItems as unknown[])
+      : [];
+    chatDebugLog('messenger.viewport', 'latest-assistant-layout-refresh', {
+      reason,
+      activeSessionId: chatStore.activeSessionId,
+      messageKey: latestMessageKey,
+      shouldVirtualize: shouldVirtualizeMessages.value,
+      autoStickToBottom: autoStickToBottom.value,
+      workflowItemCount: workflowItems.length,
+      workflowStreaming: Boolean(latestMessage.workflowStreaming),
+      reasoningStreaming: Boolean(latestMessage.reasoningStreaming),
+      streamIncomplete: Boolean(latestMessage.stream_incomplete),
+      contentLength: String(latestMessage.content || '').length,
+      reasoningLength: String(latestMessage.reasoning || '').length
+    });
+  }
+  void nextTick(() => {
+    scheduleMessageViewportRefresh({
+      updateScrollState: true,
+      measure: true,
+      measureKeys: latestMessageKey ? [latestMessageKey] : undefined
+    });
+    if (autoStickToBottom.value) {
+      void scrollMessagesToBottom();
+    }
+  });
 };
 
 messageViewportRuntime = createMessageViewportRuntime({
@@ -12308,15 +12437,21 @@ watch(
 );
 
 watch(
-  () => chatStore.messages[chatStore.messages.length - 1]?.content,
+  () => {
+    const latestMessage = chatStore.messages[chatStore.messages.length - 1] as
+      | Record<string, unknown>
+      | undefined;
+    return [
+      chatStore.activeSessionId,
+      latestAgentRenderableMessageKey.value,
+      buildLatestAssistantLayoutSignature(latestMessage)
+    ].join('::');
+  },
   () => {
     scheduleWorkspaceResourceHydration();
-    const latestMessageKey = latestAgentRenderableMessageKey.value;
-    scheduleMessageViewportRefresh({
-      measure: true,
-      measureKeys: latestMessageKey ? [latestMessageKey] : undefined
-    });
-  }
+    refreshLatestAssistantMessageLayout('latest-assistant-signature');
+  },
+  { flush: 'post' }
 );
 
 watch(

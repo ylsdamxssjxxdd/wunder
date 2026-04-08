@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
 import { getSession, getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasChatModel';
+import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
   type BeeroomMissionSubagentItem,
@@ -57,11 +58,29 @@ const summarizeDebugSubagents = (items: BeeroomMissionSubagentItem[]) =>
     key: item.key,
     runId: item.runId,
     sessionId: item.sessionId,
+    runKind: item.runKind,
+    requestedBy: item.requestedBy,
+    spawnedBy: item.spawnedBy,
     status: item.status,
     terminal: item.terminal,
     failed: item.failed,
     updatedTime: item.updatedTime
   }));
+
+const summarizeCanvasProjectionDecisions = (items: BeeroomMissionSubagentItem[]) =>
+  items.slice(0, 8).map((item) => {
+    const decision = resolveBeeroomSwarmSubagentProjectionDecision(item);
+    return {
+      key: item.key,
+      sessionId: item.sessionId,
+      runId: item.runId,
+      runKind: item.runKind,
+      requestedBy: item.requestedBy,
+      projectable: decision.projectable,
+      reason: decision.reason,
+      status: item.status
+    };
+  });
 
 const summarizeDebugError = (error: unknown) => {
   const source = error as { name?: unknown; message?: unknown } | null;
@@ -307,6 +326,9 @@ export const useBeeroomDispatchSessionPreview = (options: {
           if (activeDiff !== 0) return activeDiff;
           return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
         });
+      const canvasProjectableSubagents = subagents.filter((item) =>
+        resolveBeeroomSwarmSubagentProjectionDecision(item).projectable
+      );
       const resolvedAgentId = normalizeText(sessionDetail?.agent_id ?? '');
       const resolvedAgentName = normalizeText(sessionDetail?.agent_name ?? '');
       const targetAgentId = resolvedAgentId || requestedTargetAgentId;
@@ -363,10 +385,13 @@ export const useBeeroomDispatchSessionPreview = (options: {
         localStatus: options.runtimeStatus.value,
         eventCount: events.length,
         subagentCount: subagents.length,
+        canvasProjectableSubagentCount: canvasProjectableSubagents.length,
+        canvasFilteredSubagentCount: Math.max(0, subagents.length - canvasProjectableSubagents.length),
         updatedTime,
         shouldPoll,
         summary: clipText(summary, 120),
-        subagents: summarizeDebugSubagents(subagents)
+        subagents: summarizeDebugSubagents(subagents),
+        canvasProjectionDecisions: summarizeCanvasProjectionDecisions(subagents)
       });
       clearSyncTimer();
       if (shouldPoll) {

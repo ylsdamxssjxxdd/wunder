@@ -40,7 +40,9 @@
     "../../src/views/messenger/interactionBlocker.ts",
     "../../src/views/messenger/realtimePulse.ts",
     "../../src/components/chat/toolWorkflowActionViews.ts",
+    "../../src/components/chat/toolWorkflowRunModel.ts",
     "../../src/components/chat/toolWorkflowTypes.ts",
+    "../../src/views/messenger/messageViewportRuntime.ts",
     "../../src/components/beeroom/beeroomDispatchSessionPolicy.ts",
     "../../src/components/beeroom/canvas/beeroomSwarmSubagentProjection.ts",
     "./assistant-failure-notice-regression.test.ts",
@@ -63,6 +65,7 @@
     "./realtime-pulse-regression.test.ts",
     "./composer-approval-regression.test.ts",
     "./message-stats-regression.test.ts",
+    "./message-viewport-runtime-regression.test.ts",
     "./compaction-ui-regression.test.ts",
     "./tool-workflow-regression.test.ts",
     "./tool-workflow-command-regression.test.ts"

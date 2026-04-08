@@ -1620,6 +1620,13 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const snapshotManualCompactionMarker = normalizeFlag(
     snapshot.manual_compaction_marker ?? snapshot.manualCompactionMarker
   );
+  const snapshotPendingManualCompaction =
+    snapshotManualCompactionMarker &&
+    (
+      normalizeFlag(snapshot.stream_incomplete) ||
+      normalizeFlag(snapshot.workflowStreaming) ||
+      normalizeFlag(snapshot.reasoningStreaming)
+    );
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1659,7 +1666,13 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     if (hasWorkflowItems) {
       const targetHasItems =
         Array.isArray(target.workflowItems) && target.workflowItems.length > 0;
-      if (!targetHasItems || snapshot.workflowItems.length >= target.workflowItems.length) {
+      const shouldPreferSnapshotWorkflowItems =
+        snapshotPendingManualCompaction && isCompactionMarkerAssistantMessage(target);
+      if (
+        shouldPreferSnapshotWorkflowItems ||
+        !targetHasItems ||
+        snapshot.workflowItems.length >= target.workflowItems.length
+      ) {
         target.workflowItems = snapshot.workflowItems;
       }
     }
@@ -4300,10 +4313,43 @@ const shouldPreferCachedMessages = (cached, server) => {
   return cached.length > server.length;
 };
 
-const clearCompletedAssistantStreamingState = (messages) => {
+const MANUAL_COMPACTION_PENDING_MARKER_TTL_MS = 30_000;
+
+const isFreshPendingManualCompactionMarker = (message, now = Date.now()): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (!isCompactionMarkerAssistantMessage(message)) return false;
+  if (!normalizeFlag(message.manual_compaction_marker ?? message.manualCompactionMarker)) {
+    return false;
+  }
+  if (
+    !normalizeFlag(message.workflowStreaming) &&
+    !normalizeFlag(message.stream_incomplete) &&
+    !normalizeFlag(message.reasoningStreaming)
+  ) {
+    return false;
+  }
+  const createdAtMs = resolveTimestampMs(message.created_at);
+  if (createdAtMs === null) {
+    return true;
+  }
+  return Math.max(0, now - createdAtMs) <= MANUAL_COMPACTION_PENDING_MARKER_TTL_MS;
+};
+
+const clearCompletedAssistantStreamingState = (
+  messages,
+  options: { preservePendingManualCompaction?: boolean } = {}
+) => {
+  const preservePendingManualCompaction = options.preservePendingManualCompaction !== false;
+  const now = Date.now();
   if (!Array.isArray(messages)) return;
   messages.forEach((message) => {
     if (!message || message.role !== 'assistant') return;
+    if (
+      preservePendingManualCompaction &&
+      isFreshPendingManualCompactionMarker(message, now)
+    ) {
+      return;
+    }
     message.workflowStreaming = false;
     message.stream_incomplete = false;
     message.reasoningStreaming = false;
@@ -4330,8 +4376,6 @@ function buildRuntimeDebugSnapshot(runtime) {
         : null
   };
 }
-
-const MANUAL_COMPACTION_PENDING_MARKER_TTL_MS = 30_000;
 
 const readRuntimePendingManualCompaction = (runtime, sessionId = null) => {
   const pending = runtime?.pendingManualCompaction;
@@ -6063,6 +6107,47 @@ const resolveCompactionWorkflowRefFromMessage = (message): string => {
   return `compaction:manual:${Date.now()}`;
 };
 
+const buildPendingManualCompactionMarkerMessage = (
+  createdAt: number = Date.now(),
+  workflowRef = `compaction:manual:${createdAt}`
+) => ({
+  ...buildMessage('assistant', '', createdAt),
+  workflowItems: [
+    buildWorkflowItem(
+      t('chat.workflow.compactionRunning'),
+      buildDetail({
+        stage: 'compacting',
+        status: 'loading',
+        summary: t('chat.workflow.compactionRunning'),
+        trigger_mode: 'manual'
+      }),
+      'loading',
+      {
+        isTool: true,
+        eventType: 'compaction_progress',
+        toolName: '上下文压缩',
+        toolCallId: workflowRef
+      }
+    )
+  ],
+  workflowStreaming: true,
+  reasoningStreaming: false,
+  stream_incomplete: true,
+  manual_compaction_marker: true
+});
+
+const findRunningManualCompactionMarkerMessage = (messages) => {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    const message = messages[cursor];
+    if (!isCompactionMarkerAssistantMessage(message)) continue;
+    if (message?.manual_compaction_marker !== true && message?.manualCompactionMarker !== true) continue;
+    if (!normalizeFlag(message?.workflowStreaming) && !normalizeFlag(message?.stream_incomplete)) continue;
+    return message;
+  }
+  return null;
+};
+
 const finalizeManualCompactionAsCancelled = (message): void => {
   if (!message || message.role !== 'assistant') return;
   const cancelledDetail = buildDetail({
@@ -6088,6 +6173,51 @@ const finalizeManualCompactionAsCancelled = (message): void => {
         t('chat.toolWorkflow.compaction.title'),
         cancelledDetail,
         'completed',
+        {
+          isTool: true,
+          eventType: 'compaction',
+          toolName: '上下文压缩',
+          toolCallId: resolveCompactionWorkflowRefFromMessage(message)
+        }
+      )
+    );
+  }
+  message.workflowStreaming = false;
+  message.reasoningStreaming = false;
+  message.stream_incomplete = false;
+  message.resume_available = false;
+  message.content = '';
+};
+
+const finalizeManualCompactionAsRequestFailed = (message, error): void => {
+  if (!message || message.role !== 'assistant') return;
+  const detailText = String(
+    error?.response?.data?.detail || error?.message || t('common.requestFailed')
+  ).trim();
+  const failedDetail = buildDetail({
+    stage: 'context_overflow_recovery',
+    status: 'failed',
+    trigger_mode: 'manual',
+    error_code: String(error?.response?.data?.code || error?.code || 'MANUAL_COMPACTION_FAILED'),
+    error_message: detailText
+  });
+  if (!Array.isArray(message.workflowItems)) {
+    message.workflowItems = [];
+  }
+  if (message.workflowItems.length > 0) {
+    message.workflowItems[0].status = 'failed';
+    message.workflowItems[0].detail = failedDetail;
+    (message.workflowItems[0] as Record<string, unknown>).eventType = 'compaction';
+  }
+  const hasCompactionTerminal = message.workflowItems.some(
+    (item) => String(item?.eventType || '').trim().toLowerCase() === 'compaction'
+  );
+  if (!hasCompactionTerminal) {
+    message.workflowItems.push(
+      buildWorkflowItem(
+        t('chat.toolWorkflow.compaction.title'),
+        failedDetail,
+        'failed',
         {
           isTool: true,
           eventType: 'compaction',
@@ -10271,6 +10401,27 @@ export const useChatStore = defineStore('chat', {
         const runtimeForManual = ensureRuntime(targetId);
         const shouldWatchActiveSession = activeSessionIdForManual === targetId;
         const debugPayloadEnabled = isChatDebugEnabled();
+        const targetMessages =
+          shouldWatchActiveSession
+            ? this.messages
+            : getSessionMessages(targetId) || [];
+        const now = Date.now();
+        let compactionMessage = findRunningManualCompactionMarkerMessage(targetMessages);
+        if (!compactionMessage) {
+          compactionMessage = buildPendingManualCompactionMarkerMessage(now);
+          targetMessages.push(compactionMessage);
+          cacheSessionMessages(targetId, targetMessages);
+          touchSessionUpdatedAt(this, targetId, now);
+          if (shouldWatchActiveSession) {
+            notifySessionSnapshot(this, targetId, targetMessages, true);
+          }
+          chatDebugLog('chat.compaction.manual', 'local-marker-created', {
+            sessionId: targetId,
+            messageCount: targetMessages.length,
+            marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+          });
+        }
+        clearSessionEventsSnapshot(targetId);
         chatDebugLog('chat.compaction.manual', 'start', {
           sessionId: targetId,
           activeSessionId: activeSessionIdForManual,
@@ -10279,15 +10430,13 @@ export const useChatStore = defineStore('chat', {
           payload: cloneCompactionDebugPayload(payload, {}),
           runtime: buildRuntimeDebugSnapshot(runtimeForManual)
         });
-        if (runtimeForManual) {
-          runtimeForManual.stopRequested = false;
-          if (runtimeForManual.compactController) {
-            runtimeForManual.compactController.abort();
-          }
-          runtimeForManual.compactController = new AbortController();
-          if (shouldWatchActiveSession) {
-            markRuntimePendingManualCompaction(runtimeForManual, targetId);
-          }
+        runtimeForManual.stopRequested = false;
+        if (runtimeForManual.compactController) {
+          runtimeForManual.compactController.abort();
+        }
+        runtimeForManual.compactController = new AbortController();
+        if (shouldWatchActiveSession) {
+          markRuntimePendingManualCompaction(runtimeForManual, targetId);
         }
         const compactControllerForManual = runtimeForManual?.compactController || null;
         if (
@@ -10317,23 +10466,42 @@ export const useChatStore = defineStore('chat', {
           return data?.data?.message || data?.message || '';
         } catch (error) {
           if (isAbortRequestError(error)) {
-            clearRuntimePendingManualCompaction(runtimeForManual, targetId, 'request-cancelled');
-            chatDebugLog('chat.compaction.manual', 'request-cancelled', {
+            const abortReason = pageUnloading ? 'page-unload' : 'request-cancelled';
+            if (!pageUnloading) {
+              clearRuntimePendingManualCompaction(runtimeForManual, targetId, abortReason);
+              finalizeManualCompactionAsCancelled(compactionMessage);
+              cacheSessionMessages(targetId, targetMessages);
+              touchSessionUpdatedAt(this, targetId, Date.now());
+              if (shouldWatchActiveSession) {
+                notifySessionSnapshot(this, targetId, targetMessages, true);
+              }
+            }
+            chatDebugLog('chat.compaction.manual', abortReason, {
               sessionId: targetId,
+              marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage?.workflowItems),
               runtime: buildRuntimeDebugSnapshot(runtimeForManual)
             });
           } else {
             clearRuntimePendingManualCompaction(runtimeForManual, targetId, 'request-failed');
+            finalizeManualCompactionAsRequestFailed(compactionMessage, error);
+            cacheSessionMessages(targetId, targetMessages);
+            touchSessionUpdatedAt(this, targetId, Date.now());
+            if (shouldWatchActiveSession) {
+              notifySessionSnapshot(this, targetId, targetMessages, true);
+            }
             const detailText = String(
               error?.response?.data?.detail || error?.message || t('common.requestFailed')
             ).trim();
             chatDebugLog('chat.compaction.manual', 'request-failed', {
               sessionId: targetId,
               code: String(error?.response?.data?.code || error?.code || ''),
-              message: normalizeCompactionDebugText(detailText)
+              message: normalizeCompactionDebugText(detailText),
+              marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage?.workflowItems)
             });
           }
-          setSessionLoading(this, targetId, false);
+          if (!pageUnloading) {
+            setSessionLoading(this, targetId, false);
+          }
           throw error;
         } finally {
           if (

@@ -2,11 +2,42 @@ export type BeeroomProjectedSubagentLike = {
   key?: string;
   sessionId?: string;
   runId?: string;
+  runKind?: string;
+  requestedBy?: string;
   workflowItems?: unknown[];
 };
 
 export type BeeroomProjectedTaskLike = {
   task_id?: string | null;
+};
+
+const normalizeProjectedSubagentFlag = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+export type BeeroomSwarmSubagentProjectionDecision = {
+  projectable: boolean;
+  reason: string;
+};
+
+export const resolveBeeroomSwarmSubagentProjectionDecision = <T extends BeeroomProjectedSubagentLike>(
+  item: T
+): BeeroomSwarmSubagentProjectionDecision => {
+  const runKind = normalizeProjectedSubagentFlag(item.runKind);
+  const requestedBy = normalizeProjectedSubagentFlag(item.requestedBy);
+  if (runKind === 'swarm' || requestedBy === 'agent_swarm') {
+    return {
+      projectable: false,
+      reason: runKind === 'swarm' ? 'filtered:run_kind_swarm' : 'filtered:requested_by_agent_swarm'
+    };
+  }
+  return {
+    projectable: true,
+    reason: 'projectable'
+  };
+};
+
+export const shouldProjectBeeroomSwarmSubagent = <T extends BeeroomProjectedSubagentLike>(item: T) => {
+  return resolveBeeroomSwarmSubagentProjectionDecision(item).projectable;
 };
 
 export const mergeBeeroomProjectedSubagents = <T extends BeeroomProjectedSubagentLike>(
@@ -17,6 +48,9 @@ export const mergeBeeroomProjectedSubagents = <T extends BeeroomProjectedSubagen
   const order: string[] = [];
 
   const append = (item: T) => {
+    if (!shouldProjectBeeroomSwarmSubagent(item)) {
+      return;
+    }
     const identity = String(item.runId || item.sessionId || item.key).trim();
     if (!identity) return;
     const existing = merged.get(identity);

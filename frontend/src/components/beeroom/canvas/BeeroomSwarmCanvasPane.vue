@@ -205,6 +205,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
+import { chatDebugLog } from '@/utils/chatDebug';
 import {
   getBeeroomMissionCanvasState,
   mergeBeeroomMissionCanvasState,
@@ -214,6 +215,7 @@ import {
 import type { BeeroomMissionSubagentItem } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
 import type { BeeroomWorkflowItem, BeeroomTaskWorkflowPreview } from '@/components/beeroom/beeroomTaskWorkflow';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
+import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 
 import BeeroomSwarmNodeCard from './BeeroomSwarmNodeCard.vue';
 import {
@@ -626,6 +628,63 @@ const projectionSignature = computed(() =>
   ].join('||')
 );
 
+const logCanvasProjection = (event: string, payload?: unknown) => {
+  chatDebugLog('beeroom.canvas-projection', event, payload);
+};
+
+const summarizeInputSubagentForCanvas = (item: BeeroomMissionSubagentItem) => {
+  const decision = resolveBeeroomSwarmSubagentProjectionDecision(item);
+  return {
+    key: item.key,
+    sessionId: item.sessionId,
+    runId: item.runId,
+    runKind: item.runKind,
+    requestedBy: item.requestedBy,
+    projectable: decision.projectable,
+    reason: decision.reason,
+    status: item.status
+  };
+};
+
+const buildCanvasProjectionDebugSnapshot = () => {
+  const nodes = projection.value.nodes;
+  const edges = projection.value.edges;
+  const projectedSubagentNodes = nodes
+    .filter((node) => node.role === 'subagent')
+    .map((node) => ({
+      id: node.id,
+      parentId: node.parentId,
+      agentId: node.agentId,
+      status: node.status,
+      emphasis: node.emphasis
+    }));
+  const taskSubagentBuckets = Object.entries(props.subagentsByTask || {})
+    .slice(0, 8)
+    .map(([taskId, items]) => ({
+      taskId,
+      total: items.length,
+      projectable: items.filter((item) => resolveBeeroomSwarmSubagentProjectionDecision(item).projectable).length,
+      items: items.slice(0, 4).map((item) => summarizeInputSubagentForCanvas(item))
+    }));
+
+  return {
+    scopeKey: scopeKey.value,
+    motherNodeId: projection.value.motherNodeId,
+    selectedNodeId: selectedNodeId.value,
+    runtimeDispatchSessionId: String(props.dispatchPreview?.sessionId || '').trim(),
+    runtimeDispatchTargetAgentId: String(props.dispatchPreview?.targetAgentId || '').trim(),
+    runtimeDispatchSubagents: (Array.isArray(props.dispatchPreview?.subagents) ? props.dispatchPreview?.subagents : [])
+      .slice(0, 8)
+      .map((item) => summarizeInputSubagentForCanvas(item)),
+    nodeCount: nodes.length,
+    edgeCount: edges.length,
+    workerNodeCount: nodes.filter((node) => node.role === 'worker').length,
+    subagentNodeCount: projectedSubagentNodes.length,
+    projectedSubagentNodes,
+    taskSubagentBuckets
+  };
+};
+
 const syncNodeRevealState = () => {
   const currentNodes = projection.value.nodes;
   const currentIds = new Set(currentNodes.map((node) => node.id));
@@ -964,6 +1023,7 @@ watch(
 watch(
   projectionSignature,
   async () => {
+    logCanvasProjection('projection-change', buildCanvasProjectionDebugSnapshot());
     syncNodeRevealState();
     if (!projection.value.nodes.length) {
       selectedNodeId.value = '';

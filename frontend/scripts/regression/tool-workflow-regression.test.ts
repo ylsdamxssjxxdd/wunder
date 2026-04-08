@@ -6,6 +6,7 @@ import {
   buildStructuredToolResultView
 } from '../../src/components/chat/toolWorkflowStructuredView';
 import { formatWorkflowDetailForDisplay } from '../../src/components/chat/toolWorkflowDetailFormatter';
+import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
@@ -88,4 +89,54 @@ test('tool detail formatter converts JSONL into readable JSON array', () => {
 test('tool detail formatter keeps plain text when detail is not JSON', () => {
   const raw = 'tool result text';
   assert.equal(formatWorkflowDetailForDisplay(raw), raw);
+});
+
+test('tool workflow run model creates a live row from tool_call before final reply', () => {
+  const rows = buildWorkflowToolRuns([
+    {
+      id: 'call-1',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      status: 'loading',
+      detail: '{"command":"pwd"}'
+    }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.toolName, 'execute_command');
+  assert.equal(rows[0]?.callItem?.eventType, 'tool_call');
+  assert.equal(rows[0]?.resultItem, null);
+});
+
+test('tool workflow run model keeps mid-run output and final result on the same row', () => {
+  const rows = buildWorkflowToolRuns([
+    {
+      id: 'call-1',
+      eventType: 'tool_call',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      status: 'loading',
+      detail: '{"command":"pwd"}'
+    },
+    {
+      id: 'output-1',
+      eventType: 'tool_output_delta',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      status: 'loading',
+      detail: '/workspace'
+    },
+    {
+      id: 'result-1',
+      eventType: 'tool_result',
+      toolName: 'execute_command',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      detail: '{"stdout":"/workspace"}'
+    }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.callItem?.eventType, 'tool_call');
+  assert.equal(rows[0]?.outputItem?.eventType, 'tool_output_delta');
+  assert.equal(rows[0]?.resultItem?.eventType, 'tool_result');
 });
