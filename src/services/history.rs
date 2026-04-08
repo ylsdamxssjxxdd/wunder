@@ -922,6 +922,124 @@ mod tests {
     }
 
     #[test]
+    fn filter_history_items_applies_latest_retained_summary_without_reviving_old_turns() {
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "head question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "head answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "dropped question",
+                "timestamp": "2026-03-27T00:00:03Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "dropped answer",
+                "timestamp": "2026-03-27T00:00:04Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "old tail question",
+                "timestamp": "2026-03-27T00:00:05Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "old tail answer",
+                "timestamp": "2026-03-27T00:00:06Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "older tail question",
+                "timestamp": "2026-03-27T00:00:07Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "older tail answer",
+                "timestamp": "2026-03-27T00:00:08Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "summary-1",
+                "timestamp": "2026-03-27T00:00:09Z",
+                "meta": {
+                    "type": COMPACTION_META_TYPE,
+                    "compacted_until": "2026-03-27T00:00:08Z",
+                    "retained_head_until_index": 1,
+                    "retained_tail_from_index": 4
+                }
+            }),
+            json!({
+                "role": "user",
+                "content": "middle question",
+                "timestamp": "2026-03-27T00:00:10Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "middle answer",
+                "timestamp": "2026-03-27T00:00:11Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "latest tail question",
+                "timestamp": "2026-03-27T00:00:12Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "latest tail answer",
+                "timestamp": "2026-03-27T00:00:13Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "summary-2",
+                "timestamp": "2026-03-27T00:00:14Z",
+                "meta": {
+                    "type": COMPACTION_META_TYPE,
+                    "compacted_until": "2026-03-27T00:00:13Z",
+                    "retained_head_until_index": 1,
+                    "retained_tail_from_index": 6
+                }
+            }),
+            json!({
+                "role": "user",
+                "content": "current question",
+                "timestamp": "2026-03-27T00:00:15Z"
+            }),
+        ];
+
+        let filtered = filter_history_items(&history);
+        let kept_contents = filtered
+            .head_items
+            .iter()
+            .chain(filtered.tail_items.iter())
+            .map(|item| item["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(filtered.summary_index, 13);
+        assert_eq!(
+            kept_contents,
+            vec![
+                "head question".to_string(),
+                "head answer".to_string(),
+                "middle question".to_string(),
+                "middle answer".to_string(),
+                "latest tail question".to_string(),
+                "latest tail answer".to_string(),
+                "current question".to_string(),
+            ]
+        );
+        assert!(kept_contents
+            .iter()
+            .all(|content| !content.contains("dropped") && !content.contains("old tail")));
+    }
+
+    #[test]
     fn build_compaction_candidates_merge_retained_head_and_tail_without_summary() {
         let history = vec![
             json!({

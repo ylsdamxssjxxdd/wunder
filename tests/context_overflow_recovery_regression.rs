@@ -8,8 +8,10 @@ use axum::{
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
+use tokio::time::sleep;
 use tower::ServiceExt;
 use wunder_server::{
     build_desktop_router,
@@ -386,6 +388,89 @@ fn count_content_containing(items: &[Value], marker: &str) -> usize {
         .count()
 }
 
+fn first_message_index_containing(items: &[Value], marker: &str) -> Option<usize> {
+    items.iter().position(|item| {
+        item.get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains(marker))
+    })
+}
+
+fn first_replay_summary_index(items: &[Value]) -> Option<usize> {
+    items
+        .iter()
+        .position(HistoryManager::is_compaction_summary_item)
+}
+
+async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &str) -> Value {
+    let (status, accepted) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/compaction"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "manual compaction request failed: {accepted}"
+    );
+    let accepted_round = accepted["data"]["user_round"]
+        .as_i64()
+        .expect("manual compaction user round");
+
+    for _ in 0..120 {
+        let (status, payload) = send_json(
+            &context.app,
+            &context.token,
+            Method::GET,
+            &format!("/wunder/chat/sessions/{session_id}/events"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "load session events failed: {payload}"
+        );
+        let data = payload.get("data").cloned().unwrap_or(Value::Null);
+        let running = data
+            .get("running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let compaction_event = data
+            .get("rounds")
+            .and_then(Value::as_array)
+            .and_then(|rounds| {
+                rounds.iter().find_map(|round| {
+                    if round.get("user_round").and_then(Value::as_i64) != Some(accepted_round) {
+                        return None;
+                    }
+                    round
+                        .get("events")
+                        .and_then(Value::as_array)
+                        .and_then(|events| {
+                            events.iter().find_map(|event| {
+                                if event.get("event").and_then(Value::as_str) == Some("compaction")
+                                {
+                                    event.get("data").cloned()
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                })
+            });
+        if let Some(compaction_event) = compaction_event.filter(|_| !running) {
+            return compaction_event;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+
+    panic!("manual compaction did not finish in time for session {session_id}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mindie_context_overflow_recovers_and_session_keeps_running() {
     let context = build_test_context("mindie_context_recovery_user").await;
@@ -454,7 +539,7 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compaction_reset_modes_align_history_replay_shapes() {
-    const ROUNDS: usize = 3;
+    const ROUNDS: usize = 6;
     const REPEAT: usize = 560;
 
     for mode in ["zero", "current", "keep"] {
@@ -467,6 +552,7 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
         let session_id = create_test_session(&context, &format!("Compaction reset {mode}")).await;
 
         run_pressure_rounds(&context, &session_id, ROUNDS, REPEAT).await;
+        let compaction_event = trigger_manual_compaction_and_wait(&context, &session_id).await;
 
         let raw_history = context
             .state
@@ -484,18 +570,43 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
             Some(mode),
             "mode={mode} latest summary should record effective reset mode"
         );
+        let summary_meta = summary_item
+            .get("meta")
+            .and_then(Value::as_object)
+            .expect("summary meta");
+        let retained_head_until_index = summary_meta
+            .get("retained_head_until_index")
+            .and_then(Value::as_u64)
+            .expect("retained head index") as usize;
+        let retained_tail_from_index = summary_meta
+            .get("retained_tail_from_index")
+            .and_then(Value::as_u64)
+            .expect("retained tail index") as usize;
+        assert!(
+            retained_head_until_index < retained_tail_from_index,
+            "mode={mode} retained summary bounds should leave room for the compressed middle"
+        );
 
-        let latest_marker = format!("[mindie-overflow-regression] round={ROUNDS}");
-        let previous_marker = format!("[mindie-overflow-regression] round={}", ROUNDS - 1);
-        let raw_latest_count = count_content_containing(&raw_history, &latest_marker);
+        let head_markers = [
+            format!("[mindie-overflow-regression] round=1"),
+            format!("[mindie-overflow-regression] round=2"),
+        ];
+        let middle_markers = [
+            format!("[mindie-overflow-regression] round=3"),
+            format!("[mindie-overflow-regression] round=4"),
+        ];
+        let tail_markers = [
+            format!("[mindie-overflow-regression] round=5"),
+            format!("[mindie-overflow-regression] round=6"),
+        ];
         let replay_messages = HistoryManager.load_history_messages(
             context.state.workspace.as_ref(),
             &context.user_id,
             &session_id,
             0,
         );
-        let replay_latest_count = count_content_containing(&replay_messages, &latest_marker);
-        let replay_previous_count = count_content_containing(&replay_messages, &previous_marker);
+        let summary_index = first_replay_summary_index(&replay_messages)
+            .expect("expected replay summary message after compaction");
 
         assert_eq!(
             replay_messages
@@ -505,48 +616,67 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
             Some("user"),
             "mode={mode} replay should still begin with summary/tail user context"
         );
+        for marker in &head_markers {
+            let count = count_content_containing(&replay_messages, marker);
+            assert_eq!(
+                count, 1,
+                "mode={mode} expected head anchor {marker} exactly once in replay"
+            );
+            let index = first_message_index_containing(&replay_messages, marker)
+                .expect("head marker index");
+            assert!(
+                index < summary_index,
+                "mode={mode} expected head anchor {marker} before summary"
+            );
+        }
+        for marker in &tail_markers {
+            let count = count_content_containing(&replay_messages, marker);
+            assert_eq!(
+                count, 1,
+                "mode={mode} expected tail anchor {marker} exactly once in replay"
+            );
+            let index = first_message_index_containing(&replay_messages, marker)
+                .expect("tail marker index");
+            assert!(
+                index > summary_index,
+                "mode={mode} expected tail anchor {marker} after summary"
+            );
+        }
+        for marker in &middle_markers {
+            assert_eq!(
+                count_content_containing(&replay_messages, marker),
+                0,
+                "mode={mode} persisted replay should remain head->summary->tail and not retain middle marker {marker}"
+            );
+        }
 
         match mode {
             "zero" => {
                 assert_eq!(
-                    raw_latest_count, 0,
-                    "zero mode should not persist the current user message after compaction"
-                );
-                assert_eq!(
-                    replay_latest_count, 0,
-                    "zero mode replay should rely on summary instead of re-injecting the current question"
-                );
-                assert_eq!(
-                    replay_previous_count, 0,
-                    "zero mode should not keep previous user tail messages alive"
+                    compaction_event
+                        .get("recent_user_messages_retained")
+                        .and_then(Value::as_u64),
+                    Some(0),
+                    "zero mode should not keep a middle recent-user window in the rebuilt compaction context"
                 );
             }
             "current" => {
                 assert_eq!(
-                    raw_latest_count, 1,
-                    "current mode should persist the current user message exactly once"
-                );
-                assert_eq!(
-                    replay_latest_count, 1,
-                    "current mode replay should keep the current user message"
-                );
-                assert_eq!(
-                    replay_previous_count, 0,
-                    "current mode should not keep older user tail messages"
+                    compaction_event
+                        .get("recent_user_messages_retained")
+                        .and_then(Value::as_u64),
+                    Some(0),
+                    "current mode should not keep a middle recent-user window in the rebuilt compaction context"
                 );
             }
             "keep" => {
-                assert_eq!(
-                    raw_latest_count, 1,
-                    "keep mode should persist the current user message exactly once"
-                );
-                assert_eq!(
-                    replay_latest_count, 1,
-                    "keep mode replay should keep the current user message"
-                );
                 assert!(
-                    replay_previous_count >= 1,
-                    "keep mode should replay at least one previous user tail message"
+                    compaction_event
+                        .get("recent_user_messages_retained")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        >= 1,
+                    "keep mode should keep at least one middle recent-user message in the rebuilt compaction context"
                 );
             }
             _ => unreachable!("unexpected reset mode"),
