@@ -79,7 +79,7 @@ const createTranslator = () => {
   };
 };
 
-test('compaction display shows actual model output and injected summary', () => {
+test('compaction workflow card keeps focus on model output only', () => {
   const display = buildCompactionDisplay(
     {
       status: 'done',
@@ -95,11 +95,10 @@ test('compaction display shows actual model output and injected summary', () => 
     createTranslator()
   );
 
-  assert.equal(display.view.outputs.length, 2);
+  assert.equal(display.view.outputs.length, 1);
   assert.equal(display.view.outputs[0]?.title, 'Compaction model output');
   assert.match(display.view.outputs[0]?.body || '', /last three turns/);
-  assert.equal(display.view.outputs[1]?.title, 'Injected context summary');
-  assert.match(display.copyBody, /Injected context summary/);
+  assert.doesNotMatch(display.copyBody, /Injected context summary/);
   assert.equal(display.view.usageBar?.beforeRatio, 9210 / 16384);
   assert.equal(display.view.usageBar?.beforeBarRatio, 9210 / 16384);
 });

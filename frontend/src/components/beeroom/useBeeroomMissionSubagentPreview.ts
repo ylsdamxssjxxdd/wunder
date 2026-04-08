@@ -261,23 +261,25 @@ const buildTaskRequestKey = (task: BeeroomMissionTask): string =>
     normalizeText(task.error)
   ].join('|');
 
-const pickLatestMissionTasks = (mission: BeeroomMission | null | undefined): BeeroomMissionTask[] => {
+const pickMissionTasks = (mission: BeeroomMission | null | undefined): BeeroomMissionTask[] => {
   const source = Array.isArray(mission?.tasks) ? mission.tasks : [];
-  const latestByAgent = new Map<string, BeeroomMissionTask>();
+  const latestByTaskId = new Map<string, BeeroomMissionTask>();
 
   source.forEach((task) => {
-    const agentId = normalizeText(task.agent_id);
-    if (!agentId) return;
-    const current = latestByAgent.get(agentId);
+    const taskId = normalizeText(task.task_id);
+    if (!taskId) return;
+    const current = latestByTaskId.get(taskId);
     if (!current || compareBeeroomMissionTasksByDisplayPriority(task, current) < 0) {
-      latestByAgent.set(agentId, task);
+      latestByTaskId.set(taskId, task);
     }
   });
 
-  return Array.from(latestByAgent.values()).sort((left, right) => {
+  return Array.from(latestByTaskId.values()).sort((left, right) => {
     const timeDiff = resolveBeeroomTaskMoment(right) - resolveBeeroomTaskMoment(left);
     if (timeDiff !== 0) return timeDiff;
-    return normalizeText(left.agent_id).localeCompare(normalizeText(right.agent_id), 'zh-Hans-CN');
+    const priorityDiff = compareBeeroomMissionTasksByDisplayPriority(left, right);
+    if (priorityDiff !== 0) return priorityDiff;
+    return normalizeText(left.task_id).localeCompare(normalizeText(right.task_id), 'zh-Hans-CN');
   });
 };
 
@@ -292,7 +294,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
   const rawSubagentsByTask = ref<Record<string, BeeroomMissionSubagentItem[]>>({});
   const workflowItemsBySubagent = ref<Record<string, BeeroomWorkflowItem[]>>({});
 
-  const latestMissionTasks = computed(() => pickLatestMissionTasks(options.mission.value));
+  const missionTasks = computed(() => pickMissionTasks(options.mission.value));
   const filteredSubagentsByTask = computed<Record<string, BeeroomMissionSubagentItem[]>>(() => {
     const clearedAfter = Number(options.clearedAfter.value || 0);
     const next: Record<string, BeeroomMissionSubagentItem[]> = {};
@@ -579,7 +581,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
   const scheduleSync = () => {
     clearSyncTimer();
     if (!mounted || disposed || typeof window === 'undefined') return;
-    const hasActiveTask = latestMissionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status));
+    const hasActiveTask = missionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status));
     const hasActiveSubagent = Object.values(rawSubagentsByTask.value).some((items) =>
       items.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))
     );
@@ -593,7 +595,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
 
   const syncMissionSubagentState = async (force = false) => {
     if (disposed || !mounted) return;
-    const tasks = latestMissionTasks.value;
+    const tasks = missionTasks.value;
     const activeTaskIds = new Set(tasks.map((task) => normalizeText(task.task_id)).filter(Boolean));
     removeStaleTaskState(activeTaskIds);
     if (!tasks.length) {
@@ -606,7 +608,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
 
   watch(
     () =>
-      latestMissionTasks.value
+      missionTasks.value
         .map((task) => buildTaskRequestKey(task))
         .join('||'),
     () => {

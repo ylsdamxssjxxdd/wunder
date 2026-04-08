@@ -98,9 +98,14 @@ impl HistoryManager {
         let history = workspace
             .load_history(user_id, session_id, max_items)
             .unwrap_or_default();
-        let (filtered_items, summary_item, _, _) = filter_history_items(&history);
+        let filtered = filter_history_items(&history);
         let mut messages = Vec::new();
-        if let Some(summary_item) = summary_item {
+        for item in &filtered.head_items {
+            if let Some(message) = build_message_from_item(item, true) {
+                messages.push(message);
+            }
+        }
+        if let Some(summary_item) = filtered.summary_item {
             let summary_content = Self::format_compaction_summary(
                 summary_item
                     .get("content")
@@ -109,7 +114,7 @@ impl HistoryManager {
             );
             messages.push(json!({ "role": "user", "content": summary_content }));
         }
-        for item in filtered_items {
+        for item in filtered.tail_items {
             if let Some(message) = build_message_from_item(&item, true) {
                 messages.push(message);
             }
@@ -133,7 +138,7 @@ impl HistoryManager {
     }
 
     pub fn build_compaction_candidates(history: &[Value]) -> (Vec<Value>, Vec<Value>) {
-        let (filtered_items, _, _, _) = filter_history_items(history);
+        let filtered_items = filter_history_items(history).active_items();
         let mut items = Vec::new();
         let mut messages = Vec::new();
         for item in filtered_items {
@@ -492,52 +497,143 @@ fn has_tool_calls_payload(item: &Value) -> bool {
     extract_tool_calls_payload(item).is_some()
 }
 
-fn filter_history_items(history: &[Value]) -> (Vec<Value>, Option<Value>, Option<f64>, i64) {
-    let mut summary_index: i64 = -1;
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Debug, Default)]
+struct FilteredHistoryItems {
+    head_items: Vec<Value>,
+    tail_items: Vec<Value>,
+    summary_item: Option<Value>,
+    compacted_until_ts: Option<f64>,
+    summary_index: i64,
+}
+
+impl FilteredHistoryItems {
+    fn active_items(self) -> Vec<Value> {
+        let mut items = self.head_items;
+        items.extend(self.tail_items);
+        items
+    }
+}
+
+fn extract_retained_summary_index(item: Option<&Value>, key: &str) -> Option<usize> {
+    item?.get("meta")?.get(key).and_then(|value| match value {
+        Value::Number(num) => num.as_u64().and_then(|value| usize::try_from(value).ok()),
+        Value::String(text) => text.trim().parse::<usize>().ok(),
+        _ => None,
+    })
+}
+
+fn apply_legacy_summary_boundary(
+    active_items: Vec<Value>,
+    compacted_until_ts: Option<f64>,
+) -> Vec<Value> {
+    let Some(boundary) = compacted_until_ts else {
+        return Vec::new();
+    };
+    active_items
+        .into_iter()
+        .filter(|item| {
+            parse_timestamp(item.get("timestamp"))
+                .map(|item_ts| item_ts > boundary)
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn split_retained_summary_items(
+    active_items: &[Value],
+    summary_item: Option<&Value>,
+) -> Option<(usize, Vec<Value>)> {
+    let head_end = extract_retained_summary_index(summary_item, "retained_head_until_index");
+    let tail_start = extract_retained_summary_index(summary_item, "retained_tail_from_index");
+    if head_end.is_none() && tail_start.is_none() {
+        return None;
+    }
+
+    let mut next_items = Vec::new();
+    let mut head_len = 0usize;
+
+    if let Some(head_end) = head_end {
+        let keep = head_end.saturating_add(1).min(active_items.len());
+        next_items.extend(active_items.iter().take(keep).cloned());
+        head_len = next_items.len();
+    }
+
+    let mut effective_tail_start = tail_start
+        .unwrap_or(active_items.len())
+        .min(active_items.len());
+    if head_len > 0 {
+        effective_tail_start = effective_tail_start.max(head_len);
+    }
+    next_items.extend(active_items.iter().skip(effective_tail_start).cloned());
+    Some((head_len, next_items))
+}
+
+fn push_replay_item(filtered: &mut Vec<Value>, item: &Value, skip_next_assistant: &mut bool) {
+    let role = item.get("role").and_then(Value::as_str).unwrap_or("");
+    if role == "system" {
+        return;
+    }
+    if *skip_next_assistant {
+        if role == "assistant" {
+            *skip_next_assistant = false;
+            return;
+        }
+        *skip_next_assistant = false;
+    }
+    if role == "assistant" && is_tool_call_item(item) && !has_tool_calls_payload(item) {
+        *skip_next_assistant = true;
+    }
+    filtered.push(item.clone());
+}
+
+fn filter_history_items(history: &[Value]) -> FilteredHistoryItems {
+    let mut active_items = Vec::new();
     let mut summary_item: Option<Value> = None;
+    let mut compacted_until_ts = None;
+    let mut summary_index: i64 = -1;
+    let mut latest_head_len = 0usize;
+    let mut skip_next_assistant = false;
+
     for (index, item) in history.iter().enumerate() {
         if HistoryManager::is_compaction_summary_item(item) {
             summary_index = index as i64;
             summary_item = Some(item.clone());
-        }
-    }
-    let compacted_until_ts = extract_compacted_until_ts(summary_item.as_ref());
-    let mut filtered = Vec::new();
-    let mut skip_next_assistant = false;
-    for (index, item) in history.iter().enumerate() {
-        if HistoryManager::is_compaction_summary_item(item) {
-            continue;
-        }
-        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-        if role == "system" {
-            continue;
-        }
-        if let Some(boundary) = compacted_until_ts {
-            let item_ts = parse_timestamp(item.get("timestamp"));
-            if item_ts.is_none() && summary_index >= 0 && index as i64 <= summary_index {
-                continue;
-            }
-            if let Some(item_ts) = item_ts {
-                if item_ts <= boundary {
-                    continue;
-                }
-            }
-        } else if summary_index >= 0 && index as i64 <= summary_index {
-            continue;
-        }
-        if skip_next_assistant {
-            if role == "assistant" {
-                skip_next_assistant = false;
-                continue;
+            compacted_until_ts = extract_compacted_until_ts(Some(item));
+            if let Some((head_len, retained_items)) =
+                split_retained_summary_items(&active_items, Some(item))
+            {
+                active_items = retained_items;
+                latest_head_len = head_len.min(active_items.len());
+            } else {
+                active_items = apply_legacy_summary_boundary(active_items, compacted_until_ts);
+                latest_head_len = 0;
             }
             skip_next_assistant = false;
+            continue;
         }
-        if role == "assistant" && is_tool_call_item(item) && !has_tool_calls_payload(item) {
-            skip_next_assistant = true;
-        }
-        filtered.push(item.clone());
+        push_replay_item(&mut active_items, item, &mut skip_next_assistant);
     }
-    (filtered, summary_item, compacted_until_ts, summary_index)
+
+    if summary_item.is_none() {
+        return FilteredHistoryItems {
+            head_items: Vec::new(),
+            tail_items: active_items,
+            summary_item,
+            compacted_until_ts,
+            summary_index,
+        };
+    }
+
+    let head_len = latest_head_len.min(active_items.len());
+    let tail_items = active_items.split_off(head_len);
+    FilteredHistoryItems {
+        head_items: active_items,
+        tail_items,
+        summary_item,
+        compacted_until_ts,
+        summary_index,
+    }
 }
 
 fn extract_compacted_until_ts(item: Option<&Value>) -> Option<f64> {
@@ -552,7 +648,10 @@ fn extract_compacted_until_ts(item: Option<&Value>) -> Option<f64> {
 mod tests {
     use super::*;
     use crate::i18n;
+    use crate::storage::SqliteStorage;
     use serde_json::json;
+    use std::sync::Arc;
+    use tempfile::tempdir;
     use tokio::runtime::Builder;
 
     fn with_language<T>(language: &str, f: impl FnOnce() -> T) -> T {
@@ -614,13 +713,13 @@ mod tests {
             current_assistant.clone(),
         ];
 
-        let (filtered, summary_item, compacted_until_ts, summary_index) =
-            filter_history_items(&history);
+        let filtered = filter_history_items(&history);
 
-        assert_eq!(summary_item, Some(summary));
-        assert!(compacted_until_ts.is_some());
-        assert_eq!(summary_index, 2);
-        assert_eq!(filtered, vec![current_user, current_assistant]);
+        assert_eq!(filtered.summary_item, Some(summary));
+        assert!(filtered.compacted_until_ts.is_some());
+        assert_eq!(filtered.summary_index, 2);
+        assert!(filtered.head_items.is_empty());
+        assert_eq!(filtered.tail_items, vec![current_user, current_assistant]);
     }
 
     #[test]
@@ -639,14 +738,14 @@ mod tests {
             json!({ "role": "user", "content": "current question" }),
         ];
 
-        let (filtered, summary_item, compacted_until_ts, summary_index) =
-            filter_history_items(&history);
+        let filtered = filter_history_items(&history);
 
-        assert_eq!(summary_item, Some(summary));
-        assert_eq!(compacted_until_ts, None);
-        assert_eq!(summary_index, 2);
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0]["content"], json!("current question"));
+        assert_eq!(filtered.summary_item, Some(summary));
+        assert_eq!(filtered.compacted_until_ts, None);
+        assert_eq!(filtered.summary_index, 2);
+        assert!(filtered.head_items.is_empty());
+        assert_eq!(filtered.tail_items.len(), 1);
+        assert_eq!(filtered.tail_items[0]["content"], json!("current question"));
     }
 
     #[test]
@@ -692,11 +791,15 @@ mod tests {
             current_user.clone(),
         ];
 
-        let (filtered, _, compacted_until_ts, summary_index) = filter_history_items(&history);
+        let filtered = filter_history_items(&history);
 
-        assert_eq!(summary_index, 4);
-        assert!(compacted_until_ts.is_some());
-        assert_eq!(filtered, vec![tail_user, tail_assistant, current_user]);
+        assert_eq!(filtered.summary_index, 4);
+        assert!(filtered.compacted_until_ts.is_some());
+        assert!(filtered.head_items.is_empty());
+        assert_eq!(
+            filtered.tail_items,
+            vec![tail_user, tail_assistant, current_user]
+        );
     }
 
     #[test]
@@ -740,10 +843,243 @@ mod tests {
             current_user.clone(),
         ];
 
-        let (filtered, _, compacted_until_ts, summary_index) = filter_history_items(&history);
+        let filtered = filter_history_items(&history);
 
-        assert_eq!(summary_index, 4);
-        assert!(compacted_until_ts.is_some());
-        assert_eq!(filtered, vec![current_user]);
+        assert_eq!(filtered.summary_index, 4);
+        assert!(filtered.compacted_until_ts.is_some());
+        assert!(filtered.head_items.is_empty());
+        assert_eq!(filtered.tail_items, vec![current_user]);
+    }
+
+    #[test]
+    fn filter_history_items_retains_head_and_tail_anchors_around_summary() {
+        let summary = json!({
+            "role": "user",
+            "content": "summary",
+            "timestamp": "2026-03-27T00:00:07Z",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                "compacted_until": "2026-03-27T00:00:06Z",
+                "retained_head_until_index": 1,
+                "retained_tail_from_index": 4
+            }
+        });
+        let head_user = json!({
+            "role": "user",
+            "content": "head question",
+            "timestamp": "2026-03-27T00:00:01Z"
+        });
+        let head_assistant = json!({
+            "role": "assistant",
+            "content": "head answer",
+            "timestamp": "2026-03-27T00:00:02Z"
+        });
+        let middle_user = json!({
+            "role": "user",
+            "content": "middle question",
+            "timestamp": "2026-03-27T00:00:03Z"
+        });
+        let middle_assistant = json!({
+            "role": "assistant",
+            "content": "middle answer",
+            "timestamp": "2026-03-27T00:00:04Z"
+        });
+        let tail_user = json!({
+            "role": "user",
+            "content": "tail question",
+            "timestamp": "2026-03-27T00:00:05Z"
+        });
+        let tail_assistant = json!({
+            "role": "assistant",
+            "content": "tail answer",
+            "timestamp": "2026-03-27T00:00:06Z"
+        });
+        let current_user = json!({
+            "role": "user",
+            "content": "current question",
+            "timestamp": "2026-03-27T00:00:08Z"
+        });
+        let history = vec![
+            head_user.clone(),
+            head_assistant.clone(),
+            middle_user,
+            middle_assistant,
+            tail_user.clone(),
+            tail_assistant.clone(),
+            summary.clone(),
+            current_user.clone(),
+        ];
+
+        let filtered = filter_history_items(&history);
+
+        assert_eq!(filtered.summary_item, Some(summary));
+        assert_eq!(filtered.summary_index, 6);
+        assert_eq!(filtered.head_items, vec![head_user, head_assistant]);
+        assert_eq!(
+            filtered.tail_items,
+            vec![tail_user, tail_assistant, current_user]
+        );
+    }
+
+    #[test]
+    fn build_compaction_candidates_merge_retained_head_and_tail_without_summary() {
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "head question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "head answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "middle question",
+                "timestamp": "2026-03-27T00:00:03Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "middle answer",
+                "timestamp": "2026-03-27T00:00:04Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "tail question",
+                "timestamp": "2026-03-27T00:00:05Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "tail answer",
+                "timestamp": "2026-03-27T00:00:06Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "summary",
+                "timestamp": "2026-03-27T00:00:07Z",
+                "meta": {
+                    "type": COMPACTION_META_TYPE,
+                    "compacted_until": "2026-03-27T00:00:06Z",
+                    "retained_head_until_index": 1,
+                    "retained_tail_from_index": 4
+                }
+            }),
+            json!({
+                "role": "user",
+                "content": "current question",
+                "timestamp": "2026-03-27T00:00:08Z"
+            }),
+        ];
+
+        let (_, messages) = HistoryManager::build_compaction_candidates(&history);
+        let contents = messages
+            .iter()
+            .map(|item| item["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            contents,
+            vec![
+                "head question".to_string(),
+                "head answer".to_string(),
+                "tail question".to_string(),
+                "tail answer".to_string(),
+                "current question".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn load_history_messages_orders_retained_head_then_summary_then_tail() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("history-retained-head-tail.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let user_id = "history-test-user";
+        let session_id = "history-test-session";
+        let history = vec![
+            json!({
+                "role": "user",
+                "content": "head question",
+                "timestamp": "2026-03-27T00:00:01Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "head answer",
+                "timestamp": "2026-03-27T00:00:02Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "middle question",
+                "timestamp": "2026-03-27T00:00:03Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "middle answer",
+                "timestamp": "2026-03-27T00:00:04Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "tail question",
+                "timestamp": "2026-03-27T00:00:05Z"
+            }),
+            json!({
+                "role": "assistant",
+                "content": "tail answer",
+                "timestamp": "2026-03-27T00:00:06Z"
+            }),
+            json!({
+                "role": "user",
+                "content": "summary body",
+                "timestamp": "2026-03-27T00:00:07Z",
+                "meta": {
+                    "type": COMPACTION_META_TYPE,
+                    "compacted_until": "2026-03-27T00:00:06Z",
+                    "retained_head_until_index": 1,
+                    "retained_tail_from_index": 4
+                }
+            }),
+            json!({
+                "role": "user",
+                "content": "current question",
+                "timestamp": "2026-03-27T00:00:08Z"
+            }),
+        ];
+        for item in history {
+            let payload = json!({
+                "role": item.get("role").cloned().unwrap_or(Value::Null),
+                "content": item.get("content").cloned().unwrap_or(Value::Null),
+                "timestamp": item.get("timestamp").cloned().unwrap_or(Value::Null),
+                "meta": item.get("meta").cloned().unwrap_or(Value::Null),
+                "session_id": session_id,
+            });
+            workspace
+                .append_chat(user_id, &payload)
+                .expect("append history");
+        }
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime")
+            .block_on(workspace.clone().flush_writes_async());
+
+        let messages = HistoryManager.load_history_messages(&workspace, user_id, session_id, 0);
+        let contents = messages
+            .iter()
+            .map(|item| item["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(contents.len(), 6);
+        assert_eq!(contents[0], "head question");
+        assert_eq!(contents[1], "head answer");
+        assert!(contents[2].contains("summary body"));
+        assert_eq!(contents[3], "tail question");
+        assert_eq!(contents[4], "tail answer");
+        assert_eq!(contents[5], "current question");
     }
 }

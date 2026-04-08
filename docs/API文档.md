@@ -139,7 +139,8 @@
 - Codex 风格父子轮次语义：父智能体在成功派发子智能体后不必阻塞等待；父轮可以先发出 `turn_terminal` 并结束，本次对话在用户视角应视为“已结束”，子智能体继续在后台运行。
 - 当某个 `dispatch_id` 达到 `completion_mode` 收敛条件，或全部子任务完成后，系统会向父会话追加一条隐藏内部观察消息并自动唤醒父线程继续推理；该观察消息会参与轮次对齐，但在聊天历史里会标记 `hiddenInternal=true`，前端默认不渲染正文。
 - 新增会话级子智能体接口：
-  - `GET /wunder/chat/sessions/{session_id}/subagents`：返回当前父会话可见的子智能体运行项列表，支持 `limit`
+  - `GET /wunder/chat/sessions/{session_id}/subagents`：返回当前父会话可见的子智能体运行项列表，支持 `limit`、`dispatchId`、`parentTurnRef`、`parentUserRound`、`latestTurnOnly`
+    - `latestTurnOnly=true` 时，服务端会按子智能体元数据中的 `parent_turn_ref / parent_user_round / parent_model_round` 自动收敛到当前最新父轮次，便于前端只回放本轮派生的子智能体，而不混入历史轮次分支
   - `POST /wunder/chat/sessions/{session_id}/subagents/control`：支持 `action=interrupt|terminate|close`，并可通过 `sessionIds[]` 或 `dispatchId` 批量控制当前父会话下的子智能体
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
@@ -1001,7 +1002,8 @@
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
-  - 说明：`history_compaction_reset` 控制压缩后保留多少实时上下文：`zero` 仅保留压缩摘要继续推理；`current` 保留压缩摘要与当前用户问题；`keep` 额外保留最近用户消息窗口（最多约 20k token）。
+  - 说明：上下文压缩后会固定保留“最开始 2 轮用户轮次”和“最近 2 轮用户轮次”的原始对话锚点，用于让模型继续接续长期任务；这些锚点会做角色归一化、tool/observation 摘要化与 token 裁剪，避免前后保留段过长再次触发连续压缩。
+  - 说明：`history_compaction_reset` 控制的是压缩摘要之外的中间实时窗口：`zero` 不额外回放中间窗口，只保留摘要与前后锚点；`current` 额外保留当前用户问题；`keep` 额外保留前后锚点之间最近用户消息窗口（最多约 20k token），且不会重复回放已落入尾部锚点的轮次。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。

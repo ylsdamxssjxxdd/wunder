@@ -249,6 +249,32 @@ struct HistoryPageQuery {
 struct SessionSubagentQuery {
     #[serde(default)]
     limit: Option<i64>,
+    #[serde(default, rename = "dispatchId", alias = "dispatch_id")]
+    dispatch_id: Option<String>,
+    #[serde(
+        default,
+        rename = "parentTurnRef",
+        alias = "parent_turn_ref",
+        alias = "turn_ref",
+        alias = "turnRef"
+    )]
+    parent_turn_ref: Option<String>,
+    #[serde(
+        default,
+        rename = "parentUserRound",
+        alias = "parent_user_round",
+        alias = "user_round",
+        alias = "userRound"
+    )]
+    parent_user_round: Option<i64>,
+    #[serde(
+        default,
+        rename = "latestTurnOnly",
+        alias = "latest_turn_only",
+        alias = "latest_turn",
+        alias = "latestTurn"
+    )]
+    latest_turn_only: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -565,12 +591,18 @@ async fn list_session_subagents(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
-    let items = subagents::list_parent_subagents(
+    let items = subagents::list_parent_subagents_with_options(
         state.storage.as_ref(),
         Some(state.monitor.as_ref()),
         &resolved.user.user_id,
         &session_id,
-        query.limit,
+        subagents::ParentSubagentListOptions {
+            limit: query.limit,
+            dispatch_id: query.dispatch_id,
+            parent_turn_ref: query.parent_turn_ref,
+            parent_user_round: query.parent_user_round,
+            latest_turn_only: query.latest_turn_only.unwrap_or(false),
+        },
     )
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({

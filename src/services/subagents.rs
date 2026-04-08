@@ -48,6 +48,15 @@ pub struct ParentDispatchConfig {
     pub auto_wake: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ParentSubagentListOptions {
+    pub limit: Option<i64>,
+    pub dispatch_id: Option<String>,
+    pub parent_turn_ref: Option<String>,
+    pub parent_user_round: Option<i64>,
+    pub latest_turn_only: bool,
+}
+
 #[derive(Debug, Clone)]
 struct SubagentRuntimeItem {
     session: ChatSessionRecord,
@@ -83,6 +92,12 @@ struct CompletionProgress {
     completed_reason: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ParentTurnKey {
+    user_round: i64,
+    model_round: i64,
+}
+
 pub fn encode_parent_turn_ref(user_round: Option<i64>, model_round: Option<i64>) -> Option<String> {
     let user_round = user_round.unwrap_or(0);
     if user_round <= 0 {
@@ -110,6 +125,13 @@ pub fn decode_parent_turn_ref(value: Option<&str>) -> Option<ParentTurnRef> {
         user_round,
         model_round,
     })
+}
+
+fn normalize_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 pub fn build_hidden_user_meta() -> Value {
@@ -202,6 +224,25 @@ pub fn list_parent_subagents(
     parent_session_id: &str,
     limit: Option<i64>,
 ) -> Result<Vec<Value>> {
+    list_parent_subagents_with_options(
+        storage,
+        monitor,
+        user_id,
+        parent_session_id,
+        ParentSubagentListOptions {
+            limit,
+            ..ParentSubagentListOptions::default()
+        },
+    )
+}
+
+pub fn list_parent_subagents_with_options(
+    storage: &dyn StorageBackend,
+    monitor: Option<&MonitorState>,
+    user_id: &str,
+    parent_session_id: &str,
+    options: ParentSubagentListOptions,
+) -> Result<Vec<Value>> {
     let cleaned_user = user_id.trim();
     let cleaned_parent = parent_session_id.trim();
     if cleaned_user.is_empty() {
@@ -210,29 +251,113 @@ pub fn list_parent_subagents(
     if cleaned_parent.is_empty() {
         return Err(anyhow!("parent_session_id is required"));
     }
-    let safe_limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
-    let (sessions, _) = storage.list_chat_sessions_by_status(
-        cleaned_user,
-        None,
-        Some(cleaned_parent),
-        Some("all"),
-        0,
-        safe_limit,
-    )?;
-    let mut items = sessions
-        .into_iter()
-        .map(|session| build_runtime_item(storage, monitor, cleaned_user, session))
-        .collect::<Result<Vec<_>>>()?;
-    items.sort_by(|left, right| {
-        right
-            .updated_time
-            .partial_cmp(&left.updated_time)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    Ok(items
+    let safe_limit = options
+        .limit
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, MAX_LIST_LIMIT);
+    let dispatch_id = normalize_optional(options.dispatch_id.as_deref());
+    let mut items = if let Some(dispatch_id) = dispatch_id.as_deref() {
+        list_dispatch_runtime_items(storage, monitor, cleaned_user, cleaned_parent, dispatch_id)?
+    } else {
+        let (sessions, _) = storage.list_chat_sessions_by_status(
+            cleaned_user,
+            None,
+            Some(cleaned_parent),
+            Some("all"),
+            0,
+            safe_limit,
+        )?;
+        let mut items = sessions
+            .into_iter()
+            .map(|session| build_runtime_item(storage, monitor, cleaned_user, session))
+            .collect::<Result<Vec<_>>>()?;
+        items.sort_by(|left, right| {
+            right
+                .updated_time
+                .partial_cmp(&left.updated_time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        items
+    };
+    if items.len() > safe_limit as usize {
+        items.truncate(safe_limit as usize);
+    }
+    let requested_turn_ref = normalize_optional(options.parent_turn_ref.as_deref());
+    let requested_user_round = options.parent_user_round.filter(|value| *value > 0);
+    let mut payloads = items
         .into_iter()
         .map(runtime_item_payload)
-        .collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    if let Some(parent_turn_ref) = requested_turn_ref.as_deref() {
+        payloads.retain(|item| payload_matches_parent_turn_ref(item, parent_turn_ref));
+    } else if let Some(parent_user_round) = requested_user_round {
+        payloads.retain(|item| payload_parent_user_round(item) == Some(parent_user_round));
+    } else if options.latest_turn_only {
+        if let Some(latest_turn) = resolve_latest_parent_turn_key(&payloads) {
+            payloads.retain(|item| payload_parent_turn_key(item) == Some(latest_turn));
+        }
+    }
+    Ok(payloads)
+}
+
+fn payload_parent_turn_ref(payload: &Value) -> Option<String> {
+    normalize_optional(payload.get("parent_turn_ref").and_then(Value::as_str))
+}
+
+fn payload_parent_user_round(payload: &Value) -> Option<i64> {
+    payload
+        .get("parent_user_round")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            payload_parent_turn_ref(payload)
+                .as_deref()
+                .and_then(|value| decode_parent_turn_ref(Some(value)))
+                .map(|turn| turn.user_round)
+        })
+}
+
+fn payload_parent_turn_key(payload: &Value) -> Option<ParentTurnKey> {
+    let parent_user_round = payload_parent_user_round(payload)?;
+    let parent_model_round = payload
+        .get("parent_model_round")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .or_else(|| {
+            payload_parent_turn_ref(payload)
+                .as_deref()
+                .and_then(|value| decode_parent_turn_ref(Some(value)))
+                .and_then(|turn| turn.model_round)
+        })
+        .unwrap_or(0);
+    Some(ParentTurnKey {
+        user_round: parent_user_round,
+        model_round: parent_model_round,
+    })
+}
+
+fn payload_matches_parent_turn_ref(payload: &Value, parent_turn_ref: &str) -> bool {
+    let requested = normalize_optional(Some(parent_turn_ref));
+    if requested.is_none() {
+        return true;
+    }
+    let requested_ref = requested.as_deref().unwrap_or_default();
+    if payload_parent_turn_ref(payload).as_deref() == Some(requested_ref) {
+        return true;
+    }
+    let requested_turn = decode_parent_turn_ref(Some(requested_ref));
+    let payload_turn = payload_parent_turn_key(payload);
+    match (requested_turn, payload_turn) {
+        (Some(requested_turn), Some(payload_turn)) => {
+            requested_turn.user_round == payload_turn.user_round
+                && requested_turn.model_round.unwrap_or(0) == payload_turn.model_round
+        }
+        _ => false,
+    }
+}
+
+fn resolve_latest_parent_turn_key(items: &[Value]) -> Option<ParentTurnKey> {
+    items.iter().filter_map(payload_parent_turn_key).max()
 }
 
 pub fn control_parent_subagents(
@@ -1372,4 +1497,385 @@ fn unmark_wake_once(key: &str) {
     let registry = wake_once_registry();
     let mut guard = registry.lock().expect("wake registry poisoned");
     guard.remove(key);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        encode_parent_turn_ref, list_parent_subagents_with_options, ParentSubagentListOptions,
+    };
+    use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
+    use serde_json::{json, Value};
+    use tempfile::tempdir;
+
+    fn build_storage() -> (tempfile::TempDir, SqliteStorage) {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("subagents-tests.db");
+        (
+            dir,
+            SqliteStorage::new(db_path.to_string_lossy().to_string()),
+        )
+    }
+
+    fn upsert_parent_session(storage: &dyn StorageBackend, user_id: &str, session_id: &str) {
+        storage
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: session_id.to_string(),
+                user_id: user_id.to_string(),
+                title: "parent".to_string(),
+                status: "active".to_string(),
+                created_at: 1.0,
+                updated_at: 1.0,
+                last_message_at: 1.0,
+                agent_id: Some("mother-1".to_string()),
+                tool_overrides: Vec::new(),
+                parent_session_id: None,
+                parent_message_id: None,
+                spawn_label: None,
+                spawned_by: None,
+            })
+            .expect("upsert parent session");
+    }
+
+    fn upsert_child_session(
+        storage: &dyn StorageBackend,
+        user_id: &str,
+        parent_session_id: &str,
+        session_id: &str,
+        updated_at: f64,
+        parent_message_id: Option<String>,
+    ) {
+        storage
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: session_id.to_string(),
+                user_id: user_id.to_string(),
+                title: session_id.to_string(),
+                status: "active".to_string(),
+                created_at: updated_at,
+                updated_at,
+                last_message_at: updated_at,
+                agent_id: Some(format!("agent-{session_id}")),
+                tool_overrides: Vec::new(),
+                parent_session_id: Some(parent_session_id.to_string()),
+                parent_message_id,
+                spawn_label: Some(session_id.to_string()),
+                spawned_by: Some("subagent_control".to_string()),
+            })
+            .expect("upsert child session");
+    }
+
+    fn upsert_session_run(
+        storage: &dyn StorageBackend,
+        user_id: &str,
+        parent_session_id: &str,
+        session_id: &str,
+        run_id: &str,
+        updated_time: f64,
+        dispatch_id: Option<&str>,
+        metadata: Option<Value>,
+    ) {
+        storage
+            .upsert_session_run(&SessionRunRecord {
+                run_id: run_id.to_string(),
+                session_id: session_id.to_string(),
+                parent_session_id: Some(parent_session_id.to_string()),
+                user_id: user_id.to_string(),
+                dispatch_id: dispatch_id.map(ToString::to_string),
+                run_kind: Some("subagent".to_string()),
+                requested_by: Some("beeroom".to_string()),
+                agent_id: Some(format!("agent-{session_id}")),
+                model_name: None,
+                status: "completed".to_string(),
+                queued_time: updated_time,
+                started_time: updated_time,
+                finished_time: updated_time,
+                elapsed_s: 0.2,
+                result: Some(format!("result-{session_id}")),
+                error: None,
+                updated_time,
+                metadata,
+            })
+            .expect("upsert session run");
+    }
+
+    #[test]
+    fn list_parent_subagents_latest_turn_only_returns_only_latest_parent_turn() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+
+        let turn_1 = encode_parent_turn_ref(Some(1), Some(1)).expect("turn 1");
+        let turn_2_1 = encode_parent_turn_ref(Some(2), Some(1)).expect("turn 2-1");
+        let turn_2_2 = encode_parent_turn_ref(Some(2), Some(2)).expect("turn 2-2");
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_1",
+            11.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_1",
+            "run_child_1",
+            11.0,
+            Some("dispatch-a"),
+            Some(json!({
+                "parent_turn_ref": turn_1,
+                "parent_user_round": 1,
+                "parent_model_round": 1
+            })),
+        );
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_2",
+            12.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_2",
+            "run_child_2",
+            12.0,
+            Some("dispatch-b"),
+            Some(json!({
+                "parent_turn_ref": turn_2_1,
+                "parent_user_round": 2,
+                "parent_model_round": 1
+            })),
+        );
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_3",
+            13.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_3",
+            "run_child_3",
+            13.0,
+            Some("dispatch-c"),
+            Some(json!({
+                "parent_turn_ref": turn_2_2,
+                "parent_user_round": 2,
+                "parent_model_round": 2
+            })),
+        );
+
+        let items = list_parent_subagents_with_options(
+            &storage,
+            None,
+            user_id,
+            parent_session_id,
+            ParentSubagentListOptions {
+                latest_turn_only: true,
+                ..ParentSubagentListOptions::default()
+            },
+        )
+        .expect("list subagents");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["session_id"], json!("sess_child_3"));
+        assert_eq!(items[0]["parent_turn_ref"], json!(turn_2_2));
+    }
+
+    #[test]
+    fn list_parent_subagents_matches_parent_turn_ref_from_session_fallback() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+
+        let fallback_turn = encode_parent_turn_ref(Some(3), Some(1)).expect("fallback turn");
+        let other_turn = encode_parent_turn_ref(Some(3), Some(2)).expect("other turn");
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_fallback",
+            21.0,
+            Some(fallback_turn.clone()),
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_fallback",
+            "run_child_fallback",
+            21.0,
+            None,
+            None,
+        );
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_other",
+            22.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_other",
+            "run_child_other",
+            22.0,
+            None,
+            Some(json!({
+                "parent_turn_ref": other_turn,
+                "parent_user_round": 3,
+                "parent_model_round": 2
+            })),
+        );
+
+        let items = list_parent_subagents_with_options(
+            &storage,
+            None,
+            user_id,
+            parent_session_id,
+            ParentSubagentListOptions {
+                parent_turn_ref: Some(fallback_turn.clone()),
+                ..ParentSubagentListOptions::default()
+            },
+        )
+        .expect("list subagents by turn ref");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["session_id"], json!("sess_child_fallback"));
+        assert_eq!(items[0]["parent_turn_ref"], json!(fallback_turn));
+        assert_eq!(items[0]["parent_user_round"], json!(3));
+        assert_eq!(items[0]["parent_model_round"], json!(1));
+    }
+
+    #[test]
+    fn list_parent_subagents_filters_by_parent_user_round_and_dispatch_id() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_a",
+            31.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_a",
+            "run_child_a",
+            31.0,
+            Some("dispatch-keep"),
+            Some(json!({
+                "parent_turn_ref": encode_parent_turn_ref(Some(5), Some(1)),
+                "parent_user_round": 5,
+                "parent_model_round": 1
+            })),
+        );
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_b",
+            32.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_b",
+            "run_child_b",
+            32.0,
+            Some("dispatch-keep"),
+            Some(json!({
+                "parent_turn_ref": encode_parent_turn_ref(Some(5), Some(2)),
+                "parent_user_round": 5,
+                "parent_model_round": 2
+            })),
+        );
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_c",
+            33.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_child_c",
+            "run_child_c",
+            33.0,
+            Some("dispatch-drop"),
+            Some(json!({
+                "parent_turn_ref": encode_parent_turn_ref(Some(4), Some(1)),
+                "parent_user_round": 4,
+                "parent_model_round": 1
+            })),
+        );
+
+        let by_user_round = list_parent_subagents_with_options(
+            &storage,
+            None,
+            user_id,
+            parent_session_id,
+            ParentSubagentListOptions {
+                parent_user_round: Some(5),
+                ..ParentSubagentListOptions::default()
+            },
+        )
+        .expect("list by user round");
+        let mut user_round_ids = by_user_round
+            .iter()
+            .filter_map(|item| item.get("session_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        user_round_ids.sort();
+        assert_eq!(user_round_ids, vec!["sess_child_a", "sess_child_b"]);
+
+        let by_dispatch = list_parent_subagents_with_options(
+            &storage,
+            None,
+            user_id,
+            parent_session_id,
+            ParentSubagentListOptions {
+                dispatch_id: Some("dispatch-keep".to_string()),
+                ..ParentSubagentListOptions::default()
+            },
+        )
+        .expect("list by dispatch");
+        let mut dispatch_ids = by_dispatch
+            .iter()
+            .filter_map(|item| item.get("session_id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        dispatch_ids.sort();
+        assert_eq!(dispatch_ids, vec!["sess_child_a", "sess_child_b"]);
+    }
 }

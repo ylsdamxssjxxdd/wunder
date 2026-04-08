@@ -41,7 +41,11 @@
       </div>
     </div>
 
-    <div class="beeroom-node-workflow" :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]">
+    <div
+      ref="workflowContainerRef"
+      class="beeroom-node-workflow"
+      :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]"
+    >
       <div v-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
         <div
           v-for="line in visibleWorkflowLines"
@@ -62,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import type { SwarmProjectionNode } from './swarmCanvasModel';
 
@@ -95,7 +99,9 @@ const visibleWorkflowLines = computed(() =>
   (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : [])
 );
 
+const workflowContainerRef = ref<HTMLElement | null>(null);
 const workflowStepsRef = ref<HTMLElement | null>(null);
+let workflowResizeObserver: ResizeObserver | null = null;
 
 const workflowLineSignature = computed(() =>
   visibleWorkflowLines.value
@@ -108,27 +114,70 @@ const shouldFollowWorkflowTail = computed(
 );
 
 const scrollWorkflowToBottom = () => {
-  const element = workflowStepsRef.value;
+  const element = workflowContainerRef.value;
   if (!element) return;
   element.scrollTop = element.scrollHeight;
 };
 
+const releaseWorkflowResizeObserver = () => {
+  if (workflowResizeObserver) {
+    workflowResizeObserver.disconnect();
+    workflowResizeObserver = null;
+  }
+};
+
+const scheduleWorkflowTailFollow = async () => {
+  if (!shouldFollowWorkflowTail.value || !visibleWorkflowLines.value.length) return;
+  await nextTick();
+  if (typeof window !== 'undefined') {
+    window.requestAnimationFrame(scrollWorkflowToBottom);
+    return;
+  }
+  scrollWorkflowToBottom();
+};
+
+const attachWorkflowResizeObserver = () => {
+  releaseWorkflowResizeObserver();
+  const element = workflowStepsRef.value;
+  if (!element || typeof ResizeObserver === 'undefined') return;
+  workflowResizeObserver = new ResizeObserver(() => {
+    if (!shouldFollowWorkflowTail.value || !visibleWorkflowLines.value.length) return;
+    scrollWorkflowToBottom();
+  });
+  workflowResizeObserver.observe(element);
+};
+
 watch(
   [workflowLineSignature, shouldFollowWorkflowTail],
-  async ([, shouldFollow]) => {
-    if (!shouldFollow || !visibleWorkflowLines.value.length) return;
-    await nextTick();
-    if (typeof window !== 'undefined') {
-      window.requestAnimationFrame(scrollWorkflowToBottom);
-      return;
-    }
-    scrollWorkflowToBottom();
+  async () => {
+    await scheduleWorkflowTailFollow();
   },
   {
     flush: 'post',
     immediate: true
   }
 );
+
+watch(
+  workflowStepsRef,
+  async () => {
+    await nextTick();
+    attachWorkflowResizeObserver();
+    await scheduleWorkflowTailFollow();
+  },
+  {
+    flush: 'post',
+    immediate: true
+  }
+);
+
+onMounted(() => {
+  attachWorkflowResizeObserver();
+});
+
+onBeforeUnmount(() => {
+  releaseWorkflowResizeObserver();
+});
 </script>
 
 <style scoped>

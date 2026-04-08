@@ -14,6 +14,7 @@
           :agents="agents"
           :dispatch-preview="dispatchPreview"
           :subagents-by-task="subagentsByTask"
+          :mother-workflow-items="motherWorkflowItems"
           :workflow-items-by-task="workflowItemsByTask"
           :workflow-preview-by-task="workflowPreviewByTask"
           :fullscreen="canvasFullscreen"
@@ -103,6 +104,7 @@ const {
   dispatchCanStop,
   dispatchPreview,
   displayChatMessages,
+  motherWorkflowItems,
   subagentsByTask,
   workflowItemsByTask,
   workflowPreviewByTask,

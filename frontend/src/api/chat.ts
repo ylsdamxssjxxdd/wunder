@@ -104,7 +104,8 @@ const handleStreamError = (error: unknown): never => {
 export const createSession = (payload: unknown) => api.post('/chat/sessions', payload);
 export const fetchChatTransportProfile = () => api.get('/chat/transport');
 export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
-export const getSession = (id: string) => api.get(`/chat/sessions/${id}`);
+export const getSession = (id: string, options: { signal?: AbortSignal } = {}) =>
+  api.get(`/chat/sessions/${id}`, options);
 export const getSessionEvents = (id: string, options: { signal?: AbortSignal } = {}) =>
   api.get(`/chat/sessions/${id}/events`, options);
 export const getSessionCommandSessions = (id: string, options: { signal?: AbortSignal } = {}) =>

@@ -246,6 +246,7 @@ const props = defineProps<{
   agents: BeeroomMember[];
   dispatchPreview: BeeroomSwarmDispatchPreview | null;
   subagentsByTask: Record<string, BeeroomMissionSubagentItem[]>;
+  motherWorkflowItems: BeeroomWorkflowItem[];
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   fullscreen?: boolean;
@@ -320,6 +321,7 @@ const projection = computed(() =>
     nodePositionOverrides: nodePositionOverrides.value,
     dispatchPreview: props.dispatchPreview,
     subagentsByTask: props.subagentsByTask,
+    motherWorkflowItems: props.motherWorkflowItems,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     t
@@ -335,6 +337,7 @@ const baseProjection = computed(() =>
     nodePositionOverrides: {},
     dispatchPreview: props.dispatchPreview,
     subagentsByTask: props.subagentsByTask,
+    motherWorkflowItems: props.motherWorkflowItems,
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     t

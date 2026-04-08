@@ -100,15 +100,6 @@ export const getBeeroomMission = (groupId: ApiId, missionId: ApiId) =>
     timeout: 60000
   });
 
-export const listBeeroomChatMessages = (groupId: ApiId, params: QueryParams = {}) =>
-  api.get(`/beeroom/groups/${encodeURIComponent(groupId)}/chat/messages`, { params, timeout: 60000 });
-
-export const appendBeeroomChatMessage = (groupId: ApiId, payload: ApiPayload) =>
-  api.post(`/beeroom/groups/${encodeURIComponent(groupId)}/chat/messages`, payload, { timeout: 60000 });
-
-export const clearBeeroomChatMessages = (groupId: ApiId) =>
-  api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}/chat/messages`, { timeout: 60000 });
-
 export type StartBeeroomDemoRunRequest = {
   seed?: number;
   worker_count_mode?: 'random' | 'all' | string;

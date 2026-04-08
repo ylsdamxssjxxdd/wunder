@@ -608,9 +608,29 @@ impl Orchestrator {
         let (summary_text, fresh_memory_injected) =
             merge_compaction_summary_with_fresh_memory(&summary_text, &fresh_memory_block);
         let mut summary_text = summary_text;
+        let retained_source_edges =
+            build_retained_compaction_edges(&source_messages, message_budget, None);
+        let retained_history_edges =
+            build_retained_compaction_edges(&history_items, message_budget, current_question_index);
+        let recent_user_source_start = retained_source_edges
+            .head
+            .end_index
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0)
+            .min(source_messages.len());
+        let recent_user_source_end = retained_source_edges
+            .tail
+            .start_index
+            .unwrap_or(source_messages.len())
+            .min(source_messages.len());
+        let recent_user_source = if recent_user_source_start < recent_user_source_end {
+            &source_messages[recent_user_source_start..recent_user_source_end]
+        } else {
+            &source_messages[0..0]
+        };
         let recent_user_messages = if reset_mode.keep_recent_user_window() {
             collect_recent_user_messages_for_compaction(
-                &source_messages,
+                recent_user_source,
                 COMPACTION_RECENT_USER_WINDOW_TOKENS,
             )
         } else {
@@ -622,7 +642,9 @@ impl Orchestrator {
         if let Some(system_message) = replay_system_message.clone() {
             base_messages.push(system_message);
         }
+        base_messages.extend(retained_source_edges.head.messages.iter().cloned());
         base_messages.extend(recent_user_messages.iter().cloned());
+        base_messages.extend(retained_source_edges.tail.messages.iter().cloned());
         if let Some(current_user_message) = current_user_message.clone() {
             base_messages.push(current_user_message);
         } else if !question_text.is_empty() {
@@ -670,6 +692,12 @@ impl Orchestrator {
         if let Some(value) = compacted_until.clone() {
             meta.insert("compacted_until".to_string(), Value::String(value));
         }
+        if let Some(value) = retained_history_edges.head.end_index {
+            meta.insert("retained_head_until_index".to_string(), json!(value));
+        }
+        if let Some(value) = retained_history_edges.tail.start_index {
+            meta.insert("retained_tail_from_index".to_string(), json!(value));
+        }
         meta.insert(
             "reset_mode".to_string(),
             Value::String(reset_mode.as_str().to_string()),
@@ -706,8 +734,10 @@ impl Orchestrator {
         if let Some(system_message) = replay_system_message {
             rebuilt.push(system_message);
         }
-        rebuilt.extend(recent_user_messages);
+        rebuilt.extend(retained_source_edges.head.messages.clone());
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
+        rebuilt.extend(recent_user_messages);
+        rebuilt.extend(retained_source_edges.tail.messages.clone());
         if let Some(current_user_message) = current_user_message_for_history {
             rebuilt.push(current_user_message);
         } else if !question_text.is_empty() {
@@ -742,49 +772,169 @@ impl Orchestrator {
             emitter.emit("progress", guard_payload).await;
         }
 
-        let mut compaction_payload = json!({
-            "reason": if should_compact_by_history { "history" } else { "overflow" },
-            "trigger": compaction_trigger,
-            "status": if summary_fallback { "fallback" } else { "done" },
-            "summary_fallback": summary_fallback,
-            "summary_model_output": summary_model_output,
-            "summary_text": injected_summary_text,
-            "fresh_memory_injected": fresh_memory_injected,
-            "fresh_memory_count": fresh_memory_count,
-            "fresh_memory_total_count": fresh_memory_total_count,
-            "recent_user_messages_retained": recent_user_messages_retained,
-            "recent_user_tokens_retained": recent_user_tokens_retained,
-            "recent_user_window_token_limit": COMPACTION_RECENT_USER_WINDOW_TOKENS,
-            "summary_tokens": approx_token_count(&summary_text),
-            "total_tokens": total_tokens,
-            "total_tokens_after": rebuilt_request_tokens,
-            "history_usage": history_usage,
-            "context_tokens": history_usage,
-            "context_tokens_after": rebuilt_tokens,
-            "persisted_context_tokens": persisted_context_tokens,
-            "projected_request_tokens": projected_request_tokens,
-            "projected_request_tokens_after": rebuilt_request_tokens,
-            "request_overhead_tokens": request_overhead_tokens,
-            "history_threshold": history_threshold,
-            "limit": limit,
-            "presampling_limit": compaction_decision.presampling_limit,
-            "message_budget": message_budget,
-            "reset_mode": reset_mode.as_str(),
-            "configured_reset_mode": configured_reset_mode.as_str(),
-            "current_user_non_text_preserved": current_user_has_non_text,
-            "context_guard_applied": guard_stats.applied,
-            "context_guard_tokens_before": guard_stats.tokens_before,
-            "context_guard_tokens_after": guard_stats.tokens_after,
-            "context_guard_current_user_replay_trimmed": current_user_message_for_history_trimmed,
-            "context_guard_current_user_trimmed": guard_stats.current_user_trimmed,
-            "context_guard_current_user_tokens_before": guard_stats.current_user_tokens_before,
-            "context_guard_current_user_tokens_after": guard_stats.current_user_tokens_after,
-            "context_guard_summary_trimmed": guard_stats.summary_trimmed,
-            "context_guard_summary_tokens_before": guard_stats.summary_tokens_before,
-            "context_guard_summary_tokens_after": guard_stats.summary_tokens_after,
-            "context_guard_summary_removed": guard_stats.summary_removed,
-            "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
-        });
+        let mut compaction_payload_map = serde_json::Map::new();
+        compaction_payload_map.insert(
+            "reason".to_string(),
+            Value::String(
+                if should_compact_by_history {
+                    "history"
+                } else {
+                    "overflow"
+                }
+                .to_string(),
+            ),
+        );
+        compaction_payload_map.insert(
+            "trigger".to_string(),
+            Value::String(compaction_trigger.to_string()),
+        );
+        compaction_payload_map.insert(
+            "status".to_string(),
+            Value::String(if summary_fallback { "fallback" } else { "done" }.to_string()),
+        );
+        compaction_payload_map.insert("summary_fallback".to_string(), json!(summary_fallback));
+        compaction_payload_map.insert(
+            "summary_model_output".to_string(),
+            json!(summary_model_output),
+        );
+        compaction_payload_map.insert("summary_text".to_string(), json!(injected_summary_text));
+        compaction_payload_map.insert(
+            "fresh_memory_injected".to_string(),
+            json!(fresh_memory_injected),
+        );
+        compaction_payload_map.insert("fresh_memory_count".to_string(), json!(fresh_memory_count));
+        compaction_payload_map.insert(
+            "fresh_memory_total_count".to_string(),
+            json!(fresh_memory_total_count),
+        );
+        compaction_payload_map.insert(
+            "recent_user_messages_retained".to_string(),
+            json!(recent_user_messages_retained),
+        );
+        compaction_payload_map.insert(
+            "recent_user_tokens_retained".to_string(),
+            json!(recent_user_tokens_retained),
+        );
+        compaction_payload_map.insert(
+            "recent_user_window_token_limit".to_string(),
+            json!(COMPACTION_RECENT_USER_WINDOW_TOKENS),
+        );
+        compaction_payload_map.insert(
+            "retained_edge_turn_limit".to_string(),
+            json!(COMPACTION_RETAINED_EDGE_TURN_COUNT),
+        );
+        compaction_payload_map.insert(
+            "retained_head_turns".to_string(),
+            json!(retained_source_edges.head.turn_count),
+        );
+        compaction_payload_map.insert(
+            "retained_head_tokens".to_string(),
+            json!(retained_source_edges.head.tokens),
+        );
+        compaction_payload_map.insert(
+            "retained_tail_turns".to_string(),
+            json!(retained_source_edges.tail.turn_count),
+        );
+        compaction_payload_map.insert(
+            "retained_tail_tokens".to_string(),
+            json!(retained_source_edges.tail.tokens),
+        );
+        compaction_payload_map.insert(
+            "summary_tokens".to_string(),
+            json!(approx_token_count(&summary_text)),
+        );
+        compaction_payload_map.insert("total_tokens".to_string(), json!(total_tokens));
+        compaction_payload_map.insert(
+            "total_tokens_after".to_string(),
+            json!(rebuilt_request_tokens),
+        );
+        compaction_payload_map.insert("history_usage".to_string(), json!(history_usage));
+        compaction_payload_map.insert("context_tokens".to_string(), json!(history_usage));
+        compaction_payload_map.insert("context_tokens_after".to_string(), json!(rebuilt_tokens));
+        compaction_payload_map.insert(
+            "persisted_context_tokens".to_string(),
+            json!(persisted_context_tokens),
+        );
+        compaction_payload_map.insert(
+            "projected_request_tokens".to_string(),
+            json!(projected_request_tokens),
+        );
+        compaction_payload_map.insert(
+            "projected_request_tokens_after".to_string(),
+            json!(rebuilt_request_tokens),
+        );
+        compaction_payload_map.insert(
+            "request_overhead_tokens".to_string(),
+            json!(request_overhead_tokens),
+        );
+        compaction_payload_map.insert("history_threshold".to_string(), json!(history_threshold));
+        compaction_payload_map.insert("limit".to_string(), json!(limit));
+        compaction_payload_map.insert(
+            "presampling_limit".to_string(),
+            json!(compaction_decision.presampling_limit),
+        );
+        compaction_payload_map.insert("message_budget".to_string(), json!(message_budget));
+        compaction_payload_map.insert(
+            "reset_mode".to_string(),
+            Value::String(reset_mode.as_str().to_string()),
+        );
+        compaction_payload_map.insert(
+            "configured_reset_mode".to_string(),
+            Value::String(configured_reset_mode.as_str().to_string()),
+        );
+        compaction_payload_map.insert(
+            "current_user_non_text_preserved".to_string(),
+            json!(current_user_has_non_text),
+        );
+        compaction_payload_map.insert(
+            "context_guard_applied".to_string(),
+            json!(guard_stats.applied),
+        );
+        compaction_payload_map.insert(
+            "context_guard_tokens_before".to_string(),
+            json!(guard_stats.tokens_before),
+        );
+        compaction_payload_map.insert(
+            "context_guard_tokens_after".to_string(),
+            json!(guard_stats.tokens_after),
+        );
+        compaction_payload_map.insert(
+            "context_guard_current_user_replay_trimmed".to_string(),
+            json!(current_user_message_for_history_trimmed),
+        );
+        compaction_payload_map.insert(
+            "context_guard_current_user_trimmed".to_string(),
+            json!(guard_stats.current_user_trimmed),
+        );
+        compaction_payload_map.insert(
+            "context_guard_current_user_tokens_before".to_string(),
+            json!(guard_stats.current_user_tokens_before),
+        );
+        compaction_payload_map.insert(
+            "context_guard_current_user_tokens_after".to_string(),
+            json!(guard_stats.current_user_tokens_after),
+        );
+        compaction_payload_map.insert(
+            "context_guard_summary_trimmed".to_string(),
+            json!(guard_stats.summary_trimmed),
+        );
+        compaction_payload_map.insert(
+            "context_guard_summary_tokens_before".to_string(),
+            json!(guard_stats.summary_tokens_before),
+        );
+        compaction_payload_map.insert(
+            "context_guard_summary_tokens_after".to_string(),
+            json!(guard_stats.summary_tokens_after),
+        );
+        compaction_payload_map.insert(
+            "context_guard_summary_removed".to_string(),
+            json!(guard_stats.summary_removed),
+        );
+        compaction_payload_map.insert(
+            "context_guard_fallback_trim_applied".to_string(),
+            json!(guard_stats.fallback_trim_applied),
+        );
+        let mut compaction_payload = Value::Object(compaction_payload_map);
         if let Value::Object(ref mut map) = compaction_payload {
             if max_context > 0 {
                 map.insert("max_context".to_string(), json!(max_context));
@@ -2485,6 +2635,279 @@ fn message_has_non_text_content(message: &Value) -> bool {
     }
 }
 
+fn is_compaction_turn_start_message(message: &Value) -> bool {
+    let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+    if role != "user" {
+        return false;
+    }
+    let content = message.get("content").unwrap_or(&Value::Null);
+    if Orchestrator::is_observation_message(role, content) {
+        return false;
+    }
+    let content_text = extract_guard_content_text(content);
+    !content_text.is_empty() && !starts_with_compaction_prefix(&content_text)
+}
+
+fn collect_compaction_turn_ranges(
+    messages: &[Value],
+    excluded_turn_start_index: Option<usize>,
+) -> Vec<CompactionTurnRange> {
+    let mut turn_starts = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        if is_compaction_turn_start_message(message) {
+            turn_starts.push(index);
+        }
+    }
+    let mut ranges = Vec::new();
+    for (position, start) in turn_starts.iter().enumerate() {
+        let end = turn_starts
+            .get(position + 1)
+            .copied()
+            .unwrap_or(messages.len());
+        if Some(*start) == excluded_turn_start_index {
+            continue;
+        }
+        if *start < end {
+            ranges.push(CompactionTurnRange { start: *start, end });
+        }
+    }
+    ranges
+}
+
+fn select_compaction_edge_turn_ranges(
+    turn_ranges: &[CompactionTurnRange],
+    edge_turn_count: usize,
+) -> (Vec<CompactionTurnRange>, Vec<CompactionTurnRange>) {
+    if turn_ranges.is_empty() || edge_turn_count == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let head_count = turn_ranges.len().min(edge_turn_count);
+    let tail_start = turn_ranges
+        .len()
+        .saturating_sub(edge_turn_count)
+        .max(head_count);
+    (
+        turn_ranges[..head_count].to_vec(),
+        turn_ranges[tail_start..].to_vec(),
+    )
+}
+
+fn resolve_retained_edge_window_budgets(
+    message_budget: i64,
+    head_turn_count: usize,
+    tail_turn_count: usize,
+) -> (i64, i64) {
+    if message_budget <= 0 || (head_turn_count == 0 && tail_turn_count == 0) {
+        return (0, 0);
+    }
+    let max_total = message_budget.min(COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MAX);
+    if max_total <= 0 {
+        return (0, 0);
+    }
+    let desired_total = (message_budget / 3).max(1);
+    let total_budget = if max_total <= COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN {
+        max_total
+    } else {
+        desired_total
+            .max(COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN)
+            .min(max_total)
+    };
+    if head_turn_count == 0 {
+        return (
+            0,
+            total_budget.min(COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS),
+        );
+    }
+    if tail_turn_count == 0 {
+        return (
+            total_budget.min(COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS),
+            0,
+        );
+    }
+    let head_budget = (total_budget / 3)
+        .max(1)
+        .min(COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS);
+    let tail_budget = total_budget
+        .saturating_sub(head_budget)
+        .max(1)
+        .min(COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS);
+    (head_budget, tail_budget)
+}
+
+fn summarize_retained_edge_message_text(obj: &Map<String, Value>) -> String {
+    let role = obj
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let content = obj.get("content").unwrap_or(&Value::Null);
+    let mut text = if is_compaction_observation_message(role.as_str(), obj) {
+        summarize_compaction_observation(content)
+    } else {
+        extract_guard_content_text(content)
+    };
+    if role == "assistant" {
+        let tool_summary = summarize_compaction_tool_calls(
+            obj.get("tool_calls")
+                .or_else(|| obj.get("tool_call"))
+                .or_else(|| obj.get("function_call")),
+        );
+        if !tool_summary.is_empty() {
+            if text.is_empty() {
+                text = tool_summary;
+            } else if !text.contains(&tool_summary) {
+                text = format!("{text}\n{tool_summary}");
+            }
+        }
+    }
+    text.trim().to_string()
+}
+
+fn build_retained_edge_message(message: &Value, max_tokens: i64) -> Option<Value> {
+    if max_tokens <= 0 {
+        return None;
+    }
+    let obj = message.as_object()?;
+    let role = obj
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("user")
+        .trim()
+        .to_ascii_lowercase();
+    if role == "system" {
+        return None;
+    }
+    let mut content = summarize_retained_edge_message_text(obj);
+    if content.is_empty() {
+        return None;
+    }
+    let normalized_role = if role == "assistant" {
+        "assistant"
+    } else {
+        "user"
+    };
+    let mut candidate_map = serde_json::Map::new();
+    candidate_map.insert(
+        "role".to_string(),
+        Value::String(normalized_role.to_string()),
+    );
+    let mut target_tokens = max_tokens
+        .min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS)
+        .max(1);
+    for _ in 0..4 {
+        let trimmed = trim_text_to_tokens(&content, target_tokens, "...(truncated)");
+        candidate_map.insert("content".to_string(), Value::String(trimmed));
+        let candidate = Value::Object(candidate_map.clone());
+        let cost = estimate_message_tokens(&candidate);
+        if cost <= max_tokens {
+            return Some(candidate);
+        }
+        let overflow = cost - max_tokens;
+        let next_target = (target_tokens - overflow).max(1);
+        if next_target == target_tokens {
+            return Some(candidate);
+        }
+        target_tokens = next_target;
+        content = candidate
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+    }
+    Some(Value::Object(candidate_map))
+}
+
+fn build_retained_turn_messages(messages: &[Value], turn_budget: i64) -> Vec<Value> {
+    if messages.is_empty() || turn_budget <= 0 {
+        return Vec::new();
+    }
+    let mut selected = Vec::new();
+    let mut used_tokens = 0;
+    let first_message_budget = turn_budget
+        .min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS)
+        .max(1);
+    if let Some(first) = build_retained_edge_message(&messages[0], first_message_budget) {
+        used_tokens += estimate_message_tokens(&first);
+        selected.push(first);
+    }
+    if used_tokens >= turn_budget {
+        return selected;
+    }
+    let mut tail_selected_rev = Vec::new();
+    for message in messages.iter().skip(1).rev() {
+        if used_tokens >= turn_budget {
+            break;
+        }
+        let remaining = turn_budget.saturating_sub(used_tokens);
+        let per_message_budget = remaining.min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS).max(1);
+        let Some(candidate) = build_retained_edge_message(message, per_message_budget) else {
+            continue;
+        };
+        let candidate_tokens = estimate_message_tokens(&candidate);
+        if candidate_tokens > remaining {
+            continue;
+        }
+        tail_selected_rev.push(candidate);
+        used_tokens += candidate_tokens;
+    }
+    tail_selected_rev.reverse();
+    selected.extend(tail_selected_rev);
+    selected
+}
+
+fn build_retained_compaction_edge(
+    messages: &[Value],
+    turn_ranges: &[CompactionTurnRange],
+    total_budget: i64,
+) -> RetainedCompactionEdge {
+    if turn_ranges.is_empty() || total_budget <= 0 {
+        return RetainedCompactionEdge::default();
+    }
+    let mut retained_messages = Vec::new();
+    let mut remaining_budget = total_budget.max(0);
+    let total_turns = turn_ranges.len();
+    for (index, range) in turn_ranges.iter().enumerate() {
+        if remaining_budget <= 0 {
+            break;
+        }
+        let remaining_turns = (total_turns - index) as i64;
+        let turn_budget = (remaining_budget / remaining_turns).max(1);
+        let turn_messages =
+            build_retained_turn_messages(&messages[range.start..range.end], turn_budget);
+        let turn_tokens = estimate_messages_tokens(&turn_messages);
+        if turn_tokens <= 0 {
+            continue;
+        }
+        retained_messages.extend(turn_messages);
+        remaining_budget = remaining_budget.saturating_sub(turn_tokens);
+    }
+    let tokens = estimate_messages_tokens(&retained_messages);
+    RetainedCompactionEdge {
+        messages: retained_messages,
+        tokens,
+        turn_count: turn_ranges.len(),
+        start_index: turn_ranges.first().map(|range| range.start),
+        end_index: turn_ranges.last().map(|range| range.end.saturating_sub(1)),
+    }
+}
+
+fn build_retained_compaction_edges(
+    messages: &[Value],
+    message_budget: i64,
+    excluded_turn_start_index: Option<usize>,
+) -> RetainedCompactionEdges {
+    let turn_ranges = collect_compaction_turn_ranges(messages, excluded_turn_start_index);
+    let (head_ranges, tail_ranges) =
+        select_compaction_edge_turn_ranges(&turn_ranges, COMPACTION_RETAINED_EDGE_TURN_COUNT);
+    let (head_budget, tail_budget) =
+        resolve_retained_edge_window_budgets(message_budget, head_ranges.len(), tail_ranges.len());
+    RetainedCompactionEdges {
+        head: build_retained_compaction_edge(messages, &head_ranges, head_budget),
+        tail: build_retained_compaction_edge(messages, &tail_ranges, tail_budget),
+    }
+}
+
 fn mark_current_user_message_skip_persist(message: &mut Value) {
     let Some(map) = message.as_object_mut() else {
         return;
@@ -3165,6 +3588,95 @@ mod tests {
         assert_eq!(kept.len(), 1);
         let kept_tokens = estimate_message_tokens(&kept[0]);
         assert!(kept_tokens <= token_limit.max(1));
+    }
+
+    #[test]
+    fn test_build_retained_compaction_edges_keeps_first_and_last_turns_without_current_turn() {
+        let messages = vec![
+            json!({ "role": "user", "content": "turn 1 question" }),
+            json!({ "role": "assistant", "content": "turn 1 answer" }),
+            json!({ "role": "user", "content": "turn 2 question" }),
+            json!({ "role": "assistant", "content": "turn 2 answer" }),
+            json!({ "role": "user", "content": "turn 3 question" }),
+            json!({ "role": "assistant", "content": "turn 3 answer" }),
+            json!({ "role": "user", "content": "turn 4 question" }),
+            json!({ "role": "assistant", "content": "turn 4 answer" }),
+            json!({ "role": "user", "content": "turn 5 question" }),
+            json!({ "role": "assistant", "content": "turn 5 answer" }),
+        ];
+
+        let retained = build_retained_compaction_edges(&messages, 12_000, Some(8));
+        let head_contents = retained
+            .head
+            .messages
+            .iter()
+            .map(|item| item["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+        let tail_contents = retained
+            .tail
+            .messages
+            .iter()
+            .map(|item| item["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            head_contents,
+            vec![
+                "turn 1 question".to_string(),
+                "turn 1 answer".to_string(),
+                "turn 2 question".to_string(),
+                "turn 2 answer".to_string(),
+            ]
+        );
+        assert_eq!(
+            tail_contents,
+            vec![
+                "turn 3 question".to_string(),
+                "turn 3 answer".to_string(),
+                "turn 4 question".to_string(),
+                "turn 4 answer".to_string(),
+            ]
+        );
+        assert!(tail_contents
+            .iter()
+            .all(|content| !content.contains("turn 5")));
+    }
+
+    #[test]
+    fn test_build_retained_compaction_edges_trims_oversized_edge_messages_to_budget() {
+        let messages = vec![
+            json!({ "role": "user", "content": "A".repeat(12_000) }),
+            json!({ "role": "assistant", "content": "B".repeat(12_000) }),
+            json!({ "role": "user", "content": "middle question" }),
+            json!({ "role": "assistant", "content": "middle answer" }),
+            json!({ "role": "user", "content": "C".repeat(12_000) }),
+            json!({ "role": "assistant", "content": "D".repeat(12_000) }),
+            json!({ "role": "user", "content": "E".repeat(12_000) }),
+            json!({ "role": "assistant", "content": "F".repeat(12_000) }),
+        ];
+        let message_budget = 600;
+        let retained = build_retained_compaction_edges(&messages, message_budget, None);
+        let (head_budget, tail_budget) = resolve_retained_edge_window_budgets(message_budget, 2, 2);
+
+        assert!(retained.head.tokens <= head_budget);
+        assert!(retained.tail.tokens <= tail_budget);
+        assert!(retained
+            .head
+            .messages
+            .iter()
+            .chain(retained.tail.messages.iter())
+            .all(|item| estimate_message_tokens(item) <= COMPACTION_RETAINED_MESSAGE_MAX_TOKENS));
+        assert!(retained
+            .head
+            .messages
+            .iter()
+            .chain(retained.tail.messages.iter())
+            .any(|item| {
+                item["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("...(truncated)")
+            }));
     }
 
     #[test]

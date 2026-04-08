@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
 import { getSession, getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasChatModel';
+import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
   type BeeroomMissionSubagentItem,
   normalizeBeeroomMissionSubagentItem
@@ -276,16 +277,12 @@ export const useBeeroomDispatchSessionPreview = (options: {
     });
 
     try {
-      const sessionRequest =
-        !requestedTargetAgentId || !requestedTargetName
-          ? getSession(sessionId).catch(() => null)
-          : Promise.resolve(null);
       const [sessionResponse, eventsResponse, subagentsResponse] = await Promise.all([
-        sessionRequest,
+        getSession(sessionId, { signal: controller.signal }).catch(() => null),
         getSessionEvents(sessionId, { signal: controller.signal }),
         getSessionSubagents(
           sessionId,
-          { limit: SUBAGENT_LIST_LIMIT },
+          { limit: SUBAGENT_LIST_LIMIT, latest_turn_only: true },
           { signal: controller.signal }
         )
       ]);
@@ -310,9 +307,10 @@ export const useBeeroomDispatchSessionPreview = (options: {
           if (activeDiff !== 0) return activeDiff;
           return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
         });
-      const targetAgentId =
-        requestedTargetAgentId || normalizeText(sessionDetail?.agent_id ?? '');
-      const targetName = requestedTargetName || targetAgentId;
+      const resolvedAgentId = normalizeText(sessionDetail?.agent_id ?? '');
+      const resolvedAgentName = normalizeText(sessionDetail?.agent_name ?? '');
+      const targetAgentId = resolvedAgentId || requestedTargetAgentId;
+      const targetName = resolvedAgentName || requestedTargetName || targetAgentId;
 
       const summary = resolveSummaryFromEvents(events);
       const updatedTime = Math.max(
@@ -377,11 +375,21 @@ export const useBeeroomDispatchSessionPreview = (options: {
     } catch (error) {
       if ((error as { name?: string })?.name === 'CanceledError') return;
       if ((error as { name?: string })?.name === 'AbortError') return;
+      const status = Number((error as { response?: { status?: unknown } })?.response?.status || 0);
+      const preservePreview = shouldPreserveBeeroomDispatchPreviewOnSyncError({
+        status,
+        currentPreviewSessionId: String(rawPreview.value?.sessionId || '').trim(),
+        requestedSessionId: sessionId
+      });
       logDispatchPreview('sync-error', {
         sessionId,
-        error: summarizeDebugError(error)
+        error: summarizeDebugError(error),
+        status,
+        preservePreview
       });
-      rawPreview.value = null;
+      if (!preservePreview) {
+        rawPreview.value = null;
+      }
       clearSyncTimer();
     } finally {
       if (activeController === controller) {

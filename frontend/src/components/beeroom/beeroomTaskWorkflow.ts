@@ -50,6 +50,7 @@ const PREVIEW_STEP_LIMIT = 1;
 const PREVIEW_TITLE_LIMIT = 22;
 const PREVIEW_DETAIL_LIMIT = 42;
 const NODE_WORKFLOW_TOOL_LIMIT = 6;
+const NODE_WORKFLOW_EVENT_TITLE_LIMIT = 12;
 const NODE_WORKFLOW_DETAIL_LIMIT = 10;
 const MIN_WINDOW_PADDING_S = 2;
 const ACTIVE_WINDOW_FALLBACK_S = 30;
@@ -823,6 +824,36 @@ function resolveNodeWorkflowHoverText(item: BeeroomWorkflowItem): string {
   return resolveNodeWorkflowLineText(item);
 }
 
+function resolveNodeWorkflowEventLineParts(item: BeeroomWorkflowItem): { main: string; detail: string } {
+  const payload = parsePreviewDetailRecord(item.detail);
+  const argRecord = payload ? resolveWorkflowArgRecord(payload) : null;
+  const summary = payload
+    ? resolveGenericWorkflowDetail(payload, argRecord) ||
+      extractWorkflowScalar(
+        payload.summary ??
+          payload.result_summary ??
+          payload.message ??
+          payload.detail ??
+          payload.error ??
+          payload.content ??
+          payload.answer
+      )
+    : normalizeText(item.detail);
+  return {
+    main: truncateSingleLine(item.title || item.eventType || '事件', NODE_WORKFLOW_EVENT_TITLE_LIMIT),
+    detail: truncateMiddleSingleLine(summary, NODE_WORKFLOW_DETAIL_LIMIT)
+  };
+}
+
+function resolveNodeWorkflowEventHoverText(item: BeeroomWorkflowItem): string {
+  const title = normalizeText(item.title || item.eventType || '');
+  const detail = normalizeText(item.detail);
+  if (title && detail) {
+    return `${title}\n${detail}`;
+  }
+  return detail || title || resolveNodeWorkflowLineText(item);
+}
+
 const buildPreviewFromItems = (
   task: BeeroomMissionTask | null,
   items: BeeroomWorkflowItem[],
@@ -944,17 +975,28 @@ export const buildNodeWorkflowHtml = (
   `;
 };
 
-export const buildNodeWorkflowPreviewLines = (items: BeeroomWorkflowItem[]): BeeroomNodeWorkflowLine[] =>
-  items
-    .filter((item) => item.eventType === 'tool_call')
-    .slice()
-    .map((item, index) => {
-      const parts = resolveNodeWorkflowLineParts(item);
-      return {
-        key: `${item.id || 'tool'}:${index}`,
-        main: parts.main,
-        detail: parts.detail,
-        title: resolveNodeWorkflowHoverText(item)
-      } satisfies BeeroomNodeWorkflowLine;
-    });
+export const buildNodeWorkflowPreviewLines = (
+  items: BeeroomWorkflowItem[],
+  options: { includeEventFallback?: boolean } = {}
+): BeeroomNodeWorkflowLine[] => {
+  const toolItems = items.filter((item) => item.eventType === 'tool_call');
+  const fallbackItems = items.filter((item) => item.eventType !== 'llm_request');
+  const source =
+    toolItems.length > 0
+      ? toolItems
+      : options.includeEventFallback
+        ? (fallbackItems.length ? fallbackItems : items)
+        : [];
+
+  return source.slice().map((item, index) => {
+    const isToolLine = item.eventType === 'tool_call';
+    const parts = isToolLine ? resolveNodeWorkflowLineParts(item) : resolveNodeWorkflowEventLineParts(item);
+    return {
+      key: `${item.id || item.eventType || 'workflow'}:${index}`,
+      main: parts.main,
+      detail: parts.detail,
+      title: isToolLine ? resolveNodeWorkflowHoverText(item) : resolveNodeWorkflowEventHoverText(item)
+    } satisfies BeeroomNodeWorkflowLine;
+  });
+};
 
