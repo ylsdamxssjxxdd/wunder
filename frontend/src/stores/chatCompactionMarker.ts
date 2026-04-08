@@ -1,3 +1,5 @@
+import { chatDebugLog } from '@/utils/chatDebug';
+
 type ChatMessage = Record<string, any>;
 type WorkflowItem = Record<string, unknown>;
 
@@ -36,6 +38,15 @@ const hasTextContent = (value: unknown): boolean => String(value ?? '').trim().l
 const hasPlanSteps = (plan: unknown): boolean =>
   Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
   ((plan as { steps?: unknown[] } | null)?.steps?.length || 0) > 0;
+
+const pickString = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+};
 
 const isCompactionEventType = (value: unknown): boolean => {
   const text = normalizeText(value);
@@ -113,10 +124,54 @@ const resolveWorkflowShape = (message: ChatMessage): string => {
     .join(':');
 };
 
+const resolveCompactionIdentity = (message: ChatMessage): string => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = asObject(items[cursor]) as WorkflowItem | null;
+    if (!item || !isCompactionWorkflowItem(item)) continue;
+    const detail = parseDetailObject(item.detail ?? item.data ?? item.payload);
+    if (!detail) continue;
+    const before = String(
+      detail.projected_request_tokens ??
+        detail.total_tokens ??
+        detail.context_tokens ??
+        detail.context_guard_tokens_before ??
+        ''
+    ).trim();
+    const after = String(
+      detail.projected_request_tokens_after ??
+        detail.total_tokens_after ??
+        detail.context_tokens_after ??
+        detail.context_guard_tokens_after ??
+        detail.final_context_tokens ??
+        ''
+    ).trim();
+    const errorCode = normalizeText(detail.error_code ?? detail.errorCode);
+    const detailStatus = normalizeText(detail.status);
+    const summaryText = pickString(
+      detail.summary_text,
+      detail.summaryText,
+      detail.summary_model_output,
+      detail.summaryModelOutput,
+      detail.compaction_summary_text,
+      detail.compactionSummaryText
+    )
+      .replace(/\s+/g, ' ')
+      .slice(0, 120)
+      .toLowerCase();
+    return [detailStatus, before, after, errorCode, summaryText].join('|');
+  }
+  return '';
+};
+
 const resolveCompactionMarkerSignature = (message: ChatMessage): string => {
   const createdAt = String(message.created_at ?? '').trim();
-  const callRef = resolveWorkflowCallRef(message);
   const shape = resolveWorkflowShape(message);
+  const identity = resolveCompactionIdentity(message);
+  if (identity) {
+    return [shape, identity].join('|');
+  }
+  const callRef = resolveWorkflowCallRef(message);
   return [createdAt, callRef, shape].join('|');
 };
 
@@ -165,6 +220,8 @@ export const mergeCompactionMarkersIntoMessages = (
       .map((message) => resolveCompactionMarkerSignature(message))
   );
   let changed = false;
+  const inserted: string[] = [];
+  const skipped: string[] = [];
   const sortableMarkers = [...cachedMarkers].sort((left, right) => {
     if (left.time !== null && right.time !== null && left.time !== right.time) {
       return left.time - right.time;
@@ -175,12 +232,26 @@ export const mergeCompactionMarkersIntoMessages = (
   });
   sortableMarkers.forEach((entry) => {
     const signature = entry.signature;
-    if (existingSignatures.has(signature)) return;
+    if (existingSignatures.has(signature)) {
+      skipped.push(signature);
+      return;
+    }
     const insertIndex =
       entry.time === null ? result.length : resolveInsertIndexByTimestamp(result, entry.time);
     result.splice(insertIndex, 0, entry.message);
     existingSignatures.add(signature);
+    inserted.push(signature);
     changed = true;
   });
+  if (cachedMarkers.length > 0) {
+    chatDebugLog('chat.compaction.marker', 'merge', {
+      cachedMarkerCount: cachedMarkers.length,
+      remoteMessageCount: baseMessages.length,
+      remoteMarkerCount: Array.from(existingSignatures).length - inserted.length,
+      inserted,
+      skipped,
+      changed
+    });
+  }
   return changed ? result : baseMessages;
 };

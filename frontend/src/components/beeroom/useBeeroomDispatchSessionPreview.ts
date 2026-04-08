@@ -6,6 +6,7 @@ import {
   type BeeroomMissionSubagentItem,
   normalizeBeeroomMissionSubagentItem
 } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
+import { chatDebugLog } from '@/utils/chatDebug';
 
 export type BeeroomDispatchSessionPreview = {
   sessionId: string;
@@ -48,6 +49,24 @@ const clipText = (value: unknown, limit: number): string => {
   if (!text) return '';
   if (text.length <= limit) return text;
   return `${text.slice(0, Math.max(0, limit - 3))}...`;
+};
+
+const summarizeDebugSubagents = (items: BeeroomMissionSubagentItem[]) =>
+  items.slice(0, 8).map((item) => ({
+    key: item.key,
+    runId: item.runId,
+    sessionId: item.sessionId,
+    status: item.status,
+    terminal: item.terminal,
+    failed: item.failed,
+    updatedTime: item.updatedTime
+  }));
+
+const summarizeDebugError = (error: unknown) => {
+  const source = error as { name?: unknown; message?: unknown } | null;
+  const name = normalizeText(source?.name);
+  const message = normalizeText(source?.message);
+  return [name, message].filter(Boolean).join(': ') || normalizeText(error);
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
@@ -145,25 +164,7 @@ const resolveDispatchLabel = (events: SessionEventRecord[], summary: string): st
   return clipText(summary, 42);
 };
 
-const resolvePreviewStatus = (
-  localStatus: DispatchRuntimeStatus,
-  running: boolean,
-  events: SessionEventRecord[],
-  subagents: BeeroomMissionSubagentItem[]
-): string => {
-  if (localStatus === 'queued') return 'queued';
-  if (ACTIVE_LOCAL_RUNTIME_STATUSES.has(localStatus)) return 'running';
-  if (localStatus === 'completed') return 'completed';
-  if (localStatus === 'failed') return 'failed';
-  if (localStatus === 'stopped') return 'cancelled';
-  if (running) return 'running';
-  if (subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))) {
-    return 'running';
-  }
-  if (subagents.some((item) => item.failed)) {
-    return 'failed';
-  }
-
+const resolveTerminalPreviewStatusFromEvents = (events: SessionEventRecord[]): string => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const payload = resolveEventPayload(event);
@@ -174,6 +175,7 @@ const resolvePreviewStatus = (
     if (eventName === 'turn_terminal') {
       const status = normalizeText(payload.status).toLowerCase();
       if (status === 'completed') return 'completed';
+      if (status === 'cancelled' || status === 'stopped') return 'cancelled';
       if (status === 'rejected' || status === 'failed' || status === 'error') return 'failed';
       if (normalizeText(payload.stop_reason).toUpperCase() === 'USER_BUSY') return 'failed';
     }
@@ -181,6 +183,29 @@ const resolvePreviewStatus = (
       return 'completed';
     }
   }
+  return '';
+};
+
+const resolvePreviewStatus = (
+  localStatus: DispatchRuntimeStatus,
+  running: boolean,
+  events: SessionEventRecord[],
+  subagents: BeeroomMissionSubagentItem[]
+): string => {
+  if (running) return 'running';
+  if (subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))) {
+    return 'running';
+  }
+  if (subagents.some((item) => item.failed)) {
+    return 'failed';
+  }
+  const terminalStatus = resolveTerminalPreviewStatusFromEvents(events);
+  if (terminalStatus) return terminalStatus;
+  if (localStatus === 'queued') return 'queued';
+  if (ACTIVE_LOCAL_RUNTIME_STATUSES.has(localStatus)) return 'running';
+  if (localStatus === 'completed') return 'completed';
+  if (localStatus === 'failed') return 'failed';
+  if (localStatus === 'stopped') return 'cancelled';
 
   if (subagents.length > 0) {
     return 'completed';
@@ -196,6 +221,9 @@ export const useBeeroomDispatchSessionPreview = (options: {
   clearedAfter: Ref<number>;
 }) => {
   const rawPreview = ref<BeeroomDispatchSessionPreview | null>(null);
+  const logDispatchPreview = (event: string, payload?: unknown) => {
+    chatDebugLog('beeroom.dispatch-preview', event, payload);
+  };
 
   let syncTimer: number | null = null;
   let activeController: AbortController | null = null;
@@ -228,6 +256,9 @@ export const useBeeroomDispatchSessionPreview = (options: {
     const requestedTargetAgentId = normalizeText(options.targetAgentId.value);
     const requestedTargetName = normalizeText(options.targetName.value);
     if (!sessionId) {
+      logDispatchPreview('clear-empty-session', {
+        localStatus: options.runtimeStatus.value
+      });
       rawPreview.value = null;
       cancelActiveRequest();
       clearSyncTimer();
@@ -237,6 +268,12 @@ export const useBeeroomDispatchSessionPreview = (options: {
     cancelActiveRequest();
     const controller = new AbortController();
     activeController = controller;
+    logDispatchPreview('sync-start', {
+      sessionId,
+      requestedTargetAgentId,
+      requestedTargetName,
+      localStatus: options.runtimeStatus.value
+    });
 
     try {
       const sessionRequest =
@@ -285,21 +322,54 @@ export const useBeeroomDispatchSessionPreview = (options: {
           ? Math.floor(Date.now() / 1000)
           : 0
       );
+      const previewStatus = resolvePreviewStatus(options.runtimeStatus.value, running, events, subagents);
+      const localStatusBeforeOverride = options.runtimeStatus.value;
       rawPreview.value = {
         sessionId,
         targetAgentId,
         targetName,
-        status: resolvePreviewStatus(options.runtimeStatus.value, running, events, subagents),
+        status: previewStatus,
         summary,
         dispatchLabel: resolveDispatchLabel(events, summary),
         updatedTime,
         subagents
       };
+      if (!running && !subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))) {
+        if (previewStatus === 'completed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
+          options.runtimeStatus.value = 'completed';
+        } else if (previewStatus === 'failed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
+          options.runtimeStatus.value = 'failed';
+        } else if (previewStatus === 'cancelled' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
+          options.runtimeStatus.value = 'stopped';
+        }
+      }
+      if (localStatusBeforeOverride !== options.runtimeStatus.value) {
+        logDispatchPreview('terminal-override-local-status', {
+          sessionId,
+          from: localStatusBeforeOverride,
+          to: options.runtimeStatus.value,
+          previewStatus
+        });
+      }
 
       const shouldPoll =
         running ||
         ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value) ||
         subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status));
+      logDispatchPreview('sync-result', {
+        sessionId,
+        targetAgentId,
+        targetName,
+        running,
+        previewStatus,
+        localStatus: options.runtimeStatus.value,
+        eventCount: events.length,
+        subagentCount: subagents.length,
+        updatedTime,
+        shouldPoll,
+        summary: clipText(summary, 120),
+        subagents: summarizeDebugSubagents(subagents)
+      });
       clearSyncTimer();
       if (shouldPoll) {
         scheduleSync(1250);
@@ -307,6 +377,10 @@ export const useBeeroomDispatchSessionPreview = (options: {
     } catch (error) {
       if ((error as { name?: string })?.name === 'CanceledError') return;
       if ((error as { name?: string })?.name === 'AbortError') return;
+      logDispatchPreview('sync-error', {
+        sessionId,
+        error: summarizeDebugError(error)
+      });
       rawPreview.value = null;
       clearSyncTimer();
     } finally {

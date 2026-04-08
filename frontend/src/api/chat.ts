@@ -192,8 +192,12 @@ export const cancelMessageStream = (id: string) => api.post(`/chat/sessions/${id
 export const compactSession = (
   id: string,
   payload: unknown = {},
-  options: { signal?: AbortSignal } = {}
-) => api.post(`/chat/sessions/${id}/compaction`, payload, options);
+  options: { signal?: AbortSignal; timeout?: number } = {}
+) =>
+  api.post(`/chat/sessions/${id}/compaction`, payload, {
+    ...options,
+    timeout: options.timeout ?? 0
+  });
 
 export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket => {
   const token = resolveAccessToken();

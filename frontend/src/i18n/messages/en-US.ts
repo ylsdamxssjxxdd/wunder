@@ -1246,7 +1246,7 @@ export default {
   'messenger.messageStatus.requesting': 'Requesting',
   'messenger.messageStatus.running': 'Processing',
   'messenger.messageStatus.modelOutputting': 'Model outputting',
-  'messenger.messageStatus.toolRunning': 'Running tools',
+  'messenger.messageStatus.toolRunning': 'Using tools',
   'messenger.messageStatus.retrying': 'Retrying connection',
   'messenger.messageStatus.queued': 'Queued',
   'messenger.messageStatus.compacting': 'Compacting context',

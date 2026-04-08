@@ -38,7 +38,7 @@
         </div>
       </div>
 
-      <section ref="chatStreamRef" class="beeroom-canvas-chat-stream">
+      <section ref="chatStreamRef" class="beeroom-canvas-chat-stream" @scroll.passive="handleStreamScroll">
         <article
           v-for="message in messages"
           :key="message.key"
@@ -186,6 +186,7 @@
 import { nextTick, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
+import { chatDebugLog } from '@/utils/chatDebug';
 
 import type {
   ComposerTargetOption,
@@ -228,18 +229,89 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const chatStreamRef = ref<HTMLElement | null>(null);
+const CHAT_SCROLL_STICKY_THRESHOLD_PX = 36;
+const shouldStickToBottom = ref(true);
+const logChatPanel = (event: string, payload?: unknown) => {
+  chatDebugLog('beeroom.chat-panel', event, payload);
+};
+
+const resolveScrollSnapshot = (element: HTMLElement | null) => {
+  if (!element) {
+    return {
+      scrollTop: 0,
+      scrollHeight: 0,
+      clientHeight: 0,
+      remaining: 0
+    };
+  }
+  return {
+    scrollTop: Math.round(element.scrollTop || 0),
+    scrollHeight: Math.round(element.scrollHeight || 0),
+    clientHeight: Math.round(element.clientHeight || 0),
+    remaining: Math.round((element.scrollHeight || 0) - (element.clientHeight || 0) - (element.scrollTop || 0))
+  };
+};
+
+const isNearBottom = (element: HTMLElement | null) => {
+  if (!element) return true;
+  const remaining = (element.scrollHeight || 0) - (element.clientHeight || 0) - (element.scrollTop || 0);
+  return remaining <= CHAT_SCROLL_STICKY_THRESHOLD_PX;
+};
 
 const scrollChatToBottom = async () => {
   await nextTick();
   const element = chatStreamRef.value;
   if (!element) return;
   element.scrollTop = element.scrollHeight;
+  shouldStickToBottom.value = true;
+  logChatPanel('scroll-to-bottom', {
+    ...resolveScrollSnapshot(element),
+    messageCount: props.messages.length,
+    lastMessageKey: props.messages[props.messages.length - 1]?.key || ''
+  });
+};
+
+const handleStreamScroll = () => {
+  const previous = shouldStickToBottom.value;
+  const next = isNearBottom(chatStreamRef.value);
+  shouldStickToBottom.value = next;
+  if (previous !== next) {
+    logChatPanel('stickiness-changed', {
+      previous,
+      next,
+      ...resolveScrollSnapshot(chatStreamRef.value)
+    });
+  }
 };
 
 watch(
-  () => [props.messages.length, props.messages[props.messages.length - 1]?.key || '', props.collapsed] as const,
-  async ([, , collapsed]) => {
+  () =>
+    [
+      props.messages.length,
+      props.messages[props.messages.length - 1]?.key || '',
+      props.messages[props.messages.length - 1]?.body || '',
+      props.collapsed
+    ] as const,
+  async ([, , , collapsed], previous) => {
     if (collapsed) return;
+    const previousCollapsed = Array.isArray(previous) ? previous[3] : undefined;
+    const forceScroll = previousCollapsed === true;
+    if (!forceScroll && !shouldStickToBottom.value) {
+      logChatPanel('auto-scroll-suppressed', {
+        forceScroll,
+        shouldStickToBottom: shouldStickToBottom.value,
+        messageCount: props.messages.length,
+        lastMessageKey: props.messages[props.messages.length - 1]?.key || '',
+        ...resolveScrollSnapshot(chatStreamRef.value)
+      });
+      return;
+    }
+    logChatPanel('auto-scroll-run', {
+      forceScroll,
+      shouldStickToBottom: shouldStickToBottom.value,
+      messageCount: props.messages.length,
+      lastMessageKey: props.messages[props.messages.length - 1]?.key || ''
+    });
     await scrollChatToBottom();
   },
   { immediate: true }

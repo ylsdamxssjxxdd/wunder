@@ -10038,13 +10038,7 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
   chatStore.appendLocalMessage('user', rawText, { sessionId });
   try {
     await chatStore.compactSession(sessionId);
-  } catch (error) {
-    chatStore.appendLocalMessage(
-      'assistant',
-      t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) }),
-      { sessionId }
-    );
-  }
+  } catch {}
   await scrollMessagesToBottom();
 };
 

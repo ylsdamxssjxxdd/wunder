@@ -464,14 +464,14 @@ const surfaceGridPattern = computed(() => {
   };
 
   const buildHexagonPath = (centerX: number, centerY: number, side: number) => {
-    const halfWidth = (Math.sqrt(3) * side) / 2;
+    const halfHeight = (Math.sqrt(3) * side) / 2;
     const points = [
-      [centerX, centerY - side],
-      [centerX + halfWidth, centerY - side / 2],
-      [centerX + halfWidth, centerY + side / 2],
-      [centerX, centerY + side],
-      [centerX - halfWidth, centerY + side / 2],
-      [centerX - halfWidth, centerY - side / 2]
+      [centerX - side, centerY],
+      [centerX - side / 2, centerY - halfHeight],
+      [centerX + side / 2, centerY - halfHeight],
+      [centerX + side, centerY],
+      [centerX + side / 2, centerY + halfHeight],
+      [centerX - side / 2, centerY + halfHeight]
     ];
     return points
       .map(([x, y], index) => `${index === 0 ? 'M' : 'L'} ${formatUnit(x)} ${formatUnit(y)}`)
@@ -481,17 +481,17 @@ const surfaceGridPattern = computed(() => {
 
   // Repeat the honeycomb on a minimal tile so pan/zoom keep the pattern aligned with world space.
   const buildPatternLayer = (side: number, strokeWidth: number, suffix: string) => {
-    const tileWidth = formatUnit(Math.sqrt(3) * side);
-    const tileHeight = formatUnit(side * 3);
-    const topRowCenterY = -side / 2;
-    const middleRowCenterY = side;
-    const bottomRowCenterY = side * 2.5;
+    const tileWidth = formatUnit(side * 3);
+    const tileHeight = formatUnit(Math.sqrt(3) * side);
+    const leftColumnCenterX = 0;
+    const middleColumnCenterX = side * 1.5;
+    const rightColumnCenterX = side * 3;
     const path = [
-      buildHexagonPath(0, topRowCenterY, side),
-      buildHexagonPath(tileWidth, topRowCenterY, side),
-      buildHexagonPath(tileWidth / 2, middleRowCenterY, side),
-      buildHexagonPath(0, bottomRowCenterY, side),
-      buildHexagonPath(tileWidth, bottomRowCenterY, side)
+      buildHexagonPath(leftColumnCenterX, 0, side),
+      buildHexagonPath(leftColumnCenterX, tileHeight, side),
+      buildHexagonPath(middleColumnCenterX, tileHeight / 2, side),
+      buildHexagonPath(rightColumnCenterX, 0, side),
+      buildHexagonPath(rightColumnCenterX, tileHeight, side)
     ].join(' ');
     return {
       id: `${GRID_PATTERN_ID_BASE}-${suffix}`,

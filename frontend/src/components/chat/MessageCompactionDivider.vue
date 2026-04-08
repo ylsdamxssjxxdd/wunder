@@ -71,9 +71,32 @@ const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>
   return 'completed';
 });
 
+const hasCollapsedCompactionSummary = computed(() => {
+  const detail = snapshot.value?.detail;
+  if (!detail) return false;
+  const fallbackTrimApplied = Boolean(
+    detail.context_guard_fallback_trim_applied ?? detail.contextGuardFallbackTrimApplied
+  );
+  if (!fallbackTrimApplied) return false;
+  const summaryTokens = toOptionalInt(detail.summary_tokens, detail.summaryTokens);
+  if (summaryTokens !== null && summaryTokens <= 1) {
+    return true;
+  }
+  const injectedSummary = pickString(
+    detail.summary_text,
+    detail.summaryText,
+    detail.summary_context_text,
+    detail.summaryContextText,
+    detail.compaction_summary_text,
+    detail.compactionSummaryText
+  ).toLowerCase();
+  return injectedSummary === '...(' || injectedSummary === '...(truncated)' || injectedSummary === '...';
+});
+
 const transitionLabel = computed(() => {
   const detail = snapshot.value?.detail;
   if (!detail) return '';
+  if (hasCollapsedCompactionSummary.value) return '';
   const before = toOptionalInt(
     detail.projected_request_tokens,
     detail.total_tokens,

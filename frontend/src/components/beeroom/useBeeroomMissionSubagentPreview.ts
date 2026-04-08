@@ -1,5 +1,6 @@
 import { getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
+import { chatDebugLog } from '@/utils/chatDebug';
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import {
@@ -50,6 +51,31 @@ const SUBAGENT_POLL_INTERVAL_MS = 1400;
 const SUBAGENT_LIST_LIMIT = 64;
 
 const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
+
+const clipDebugText = (value: unknown, limit = 120) => {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3))}...`;
+};
+
+const summarizeDebugError = (error: unknown) => {
+  const source = error as { name?: unknown; message?: unknown } | null;
+  const name = String(source?.name || '').trim();
+  const message = String(source?.message || '').trim();
+  return [name, message].filter(Boolean).join(': ') || String(error || '').trim();
+};
+
+const summarizeDebugSubagent = (item: BeeroomMissionSubagentItem) => ({
+  key: item.key,
+  runId: item.runId,
+  sessionId: item.sessionId,
+  status: item.status,
+  terminal: item.terminal,
+  failed: item.failed,
+  updatedTime: item.updatedTime,
+  summary: clipDebugText(item.summary)
+});
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -260,6 +286,9 @@ export const useBeeroomMissionSubagentPreview = (options: {
   clearedAfter: Ref<number>;
   t: (key: string, params?: Record<string, unknown>) => string;
 }) => {
+  const logBeeroomSubagents = (event: string, payload?: unknown) => {
+    chatDebugLog('beeroom.subagents', event, payload);
+  };
   const rawSubagentsByTask = ref<Record<string, BeeroomMissionSubagentItem[]>>({});
   const workflowItemsBySubagent = ref<Record<string, BeeroomWorkflowItem[]>>({});
 
@@ -398,6 +427,10 @@ export const useBeeroomMissionSubagentPreview = (options: {
     if (!sessionId) {
       updateSubagentWorkflowItems(workflowKey, []);
       workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
+      logBeeroomSubagents('workflow-clear-empty-session', {
+        workflowKey,
+        requestKey
+      });
       return;
     }
 
@@ -422,10 +455,22 @@ export const useBeeroomMissionSubagentPreview = (options: {
       const workflowItems = buildSessionWorkflowItems(rounds, options.t).filter((workflowItem) => workflowItem.isTool);
       updateSubagentWorkflowItems(workflowKey, workflowItems);
       workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
-    } catch {
+      logBeeroomSubagents('workflow-fetch-result', {
+        workflowKey,
+        sessionId,
+        requestKey,
+        workflowCount: workflowItems.length
+      });
+    } catch (error) {
       if (disposed || controller.signal.aborted) return;
       updateSubagentWorkflowItems(workflowKey, []);
       workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
+      logBeeroomSubagents('workflow-fetch-error', {
+        workflowKey,
+        sessionId,
+        requestKey,
+        error: summarizeDebugError(error)
+      });
     } finally {
       if (workflowControllers.get(workflowKey) === controller) {
         workflowControllers.delete(workflowKey);
@@ -456,6 +501,11 @@ export const useBeeroomMissionSubagentPreview = (options: {
       updateTaskSubagents(taskId, []);
       pruneStaleWorkflowState();
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
+      logBeeroomSubagents('fetch-task-subagents:clear-empty-session', {
+        taskId,
+        requestKey,
+        taskStatus: task.status
+      });
       return;
     }
 
@@ -496,11 +546,26 @@ export const useBeeroomMissionSubagentPreview = (options: {
       pruneStaleWorkflowState();
       await Promise.allSettled(normalized.map((item) => fetchSubagentWorkflow(item, force)));
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
-    } catch {
+      logBeeroomSubagents('fetch-task-subagents:result', {
+        taskId,
+        sessionId,
+        taskStatus: task.status,
+        force,
+        count: normalized.length,
+        items: normalized.slice(0, 8).map((item) => summarizeDebugSubagent(item))
+      });
+    } catch (error) {
       if (disposed || controller.signal.aborted) return;
       updateTaskSubagents(taskId, []);
       pruneStaleWorkflowState();
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
+      logBeeroomSubagents('fetch-task-subagents:error', {
+        taskId,
+        sessionId,
+        taskStatus: task.status,
+        requestKey,
+        error: summarizeDebugError(error)
+      });
     } finally {
       if (activeControllers.get(taskId) === controller) {
         activeControllers.delete(taskId);

@@ -845,6 +845,12 @@ impl Orchestrator {
             .await;
         messages.extend(history_messages);
         let messages = context_manager.normalize_messages(messages);
+        let manual_user_round = messages
+            .iter()
+            .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            .count() as i64
+            + 1;
+        let manual_round_info = RoundInfo::user_only(manual_user_round.max(1));
         let storage = self.storage.clone();
         let session_id_for_offset = session_id.to_string();
         let start_event_id = match tokio::task::spawn_blocking(move || {
@@ -873,7 +879,7 @@ impl Orchestrator {
             start_event_id,
         );
         self.ensure_not_cancelled(session_id)?;
-        let messages = self
+        let messages = match self
             .maybe_compact_messages(
                 &config,
                 &llm_config,
@@ -881,7 +887,7 @@ impl Orchestrator {
                 agent_id,
                 session_id,
                 is_admin,
-                RoundInfo::default(),
+                manual_round_info,
                 messages,
                 &emitter,
                 "",
@@ -891,7 +897,31 @@ impl Orchestrator {
                 true,
                 false,
             )
-            .await?;
+            .await
+        {
+            Ok(messages) => messages,
+            Err(err) => {
+                let status = if err.code() == "CANCELLED" {
+                    "cancelled"
+                } else {
+                    "failed"
+                };
+                let mut compaction_payload = json!({
+                    "stage": "context_overflow_recovery",
+                    "reason": "manual",
+                    "trigger": "force",
+                    "status": status,
+                    "error_code": err.code(),
+                    "error_message": err.message(),
+                });
+                if let Value::Object(ref mut map) = compaction_payload {
+                    manual_round_info.insert_into(map);
+                }
+                emitter.emit("compaction", compaction_payload).await;
+                emitter.finish().await;
+                return Err(err);
+            }
+        };
         self.ensure_not_cancelled(session_id)?;
         let messages = context_manager.normalize_messages(messages);
         let context_tokens = context_manager.estimate_context_tokens(&messages);
@@ -903,7 +933,7 @@ impl Orchestrator {
             "message_count": messages.len(),
         });
         if let Value::Object(ref mut map) = context_payload {
-            RoundInfo::default().insert_into(map);
+            manual_round_info.insert_into(map);
         }
         emitter.emit("context_usage", context_payload).await;
         emitter.finish().await;

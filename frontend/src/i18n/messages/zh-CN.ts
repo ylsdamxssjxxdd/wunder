@@ -1230,7 +1230,7 @@ export default {
   'messenger.messageStatus.requesting': '请求中',
   'messenger.messageStatus.running': '处理中',
   'messenger.messageStatus.modelOutputting': '模型输出中',
-  'messenger.messageStatus.toolRunning': '工具执行中',
+  'messenger.messageStatus.toolRunning': '使用工具中',
   'messenger.messageStatus.retrying': '断线重试中',
   'messenger.messageStatus.queued': '排队中',
   'messenger.messageStatus.compacting': '上下文压缩中',

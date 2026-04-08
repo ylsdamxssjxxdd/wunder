@@ -2654,6 +2654,124 @@ const resolveWorkflowRoundTimestamp = (events) => {
   return undefined;
 };
 
+const trimCompactionDebugText = (value, max = 240) => {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+};
+
+const buildCompactionDebugSummary = (payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    const text = trimCompactionDebugText(payload, 160);
+    return text ? { value: text } : {};
+  }
+  const source = payload as Record<string, unknown>;
+  const summary: Record<string, unknown> = {};
+  const assign = (targetKey: string, ...keys: string[]) => {
+    for (const key of keys) {
+      const value = source[key];
+      if (value === undefined || value === null || value === '') continue;
+      summary[targetKey] = typeof value === 'string' ? trimCompactionDebugText(value) : value;
+      return;
+    }
+  };
+  assign('status', 'status');
+  assign('stage', 'stage');
+  assign('trigger', 'trigger');
+  assign('triggerMode', 'trigger_mode', 'triggerMode');
+  assign('reason', 'reason');
+  assign('workflowRef', 'toolCallId', 'tool_call_id');
+  assign('before', 'projected_request_tokens', 'total_tokens', 'context_tokens', 'context_guard_tokens_before');
+  assign(
+    'after',
+    'projected_request_tokens_after',
+    'total_tokens_after',
+    'context_tokens_after',
+    'context_guard_tokens_after',
+    'final_context_tokens'
+  );
+  assign('messageCount', 'message_count', 'messageCount');
+  assign('maxContext', 'max_context', 'maxContext', 'context_max_tokens', 'contextMaxTokens');
+  assign('summaryTokens', 'summary_tokens', 'summaryTokens');
+  assign('errorCode', 'error_code', 'errorCode');
+  assign('errorMessage', 'error_message', 'errorMessage', 'message');
+  assign('summaryText', 'summary_text', 'summaryText');
+  assign('summaryModelOutput', 'summary_model_output', 'summaryModelOutput');
+  return summary;
+};
+
+const summarizeCompactionRoundEvents = (events) => {
+  if (!Array.isArray(events) || events.length === 0) return null;
+  const eventTypes: string[] = [];
+  const progressStages: string[] = [];
+  let latestCompaction: Record<string, unknown> | null = null;
+  let latestContextUsage: Record<string, unknown> | null = null;
+  let hasCompactionSignal = false;
+  events.forEach((entry) => {
+    const eventType = String(entry?.event || '').trim();
+    if (!eventType) return;
+    if (!eventTypes.includes(eventType)) {
+      eventTypes.push(eventType);
+    }
+    const data =
+      entry?.data && typeof entry.data === 'object' && !Array.isArray(entry.data)
+        ? (entry.data as Record<string, unknown>)
+        : {};
+    if (eventType === 'compaction') {
+      hasCompactionSignal = true;
+      latestCompaction = data;
+      return;
+    }
+    if (eventType === 'context_usage') {
+      latestContextUsage = data;
+      return;
+    }
+    if (eventType !== 'progress') {
+      return;
+    }
+    const stage = String(data.stage || '').trim().toLowerCase();
+    if (!stage) return;
+    if (!progressStages.includes(stage)) {
+      progressStages.push(stage);
+    }
+    if (stage === 'compacting' || stage === 'context_guard' || stage === 'context_overflow_recovery') {
+      hasCompactionSignal = true;
+    }
+  });
+  if (!hasCompactionSignal) return null;
+  return {
+    eventTypes,
+    progressStages,
+    latestCompaction: buildCompactionDebugSummary(latestCompaction),
+    latestContextUsage: buildCompactionDebugSummary(latestContextUsage)
+  };
+};
+
+const summarizeCompactionWorkflowItemsForDebug = (items) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+  return items
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const detail = safeJsonParse(record.detail);
+      const detailSummary =
+        detail && typeof detail === 'object' && !Array.isArray(detail)
+          ? buildCompactionDebugSummary(detail)
+          : buildCompactionDebugSummary(record.detail);
+      return {
+        eventType: String(record.eventType || record.event || '').trim(),
+        status: String(record.status || '').trim(),
+        toolCallId: String(record.toolCallId || record.tool_call_id || '').trim(),
+        detail: detailSummary
+      };
+    })
+    .filter(Boolean);
+};
+
 const attachWorkflowEvents = (messages, rounds) => {
   if (!Array.isArray(messages) || !Array.isArray(rounds) || rounds.length === 0) {
     return messages;
@@ -2673,8 +2791,24 @@ const attachWorkflowEvents = (messages, rounds) => {
   if (!roundMap.size) {
     return sourceMessages;
   }
+  const orderedRounds = Array.from(roundMap.keys()).sort((left, right) => left - right);
+  const compactionRounds = orderedRounds
+    .map((roundNumber) => {
+      const summary = summarizeCompactionRoundEvents(roundMap.get(roundNumber));
+      if (!summary) return null;
+      return { round: roundNumber, ...summary };
+    })
+    .filter(Boolean);
+  if (compactionRounds.length > 0) {
+    chatDebugLog('chat.compaction.hydrate', 'attach-workflow-events', {
+      messageCount: sourceMessages.length,
+      roundCount: roundMap.size,
+      compactionRounds
+    });
+  }
   let currentRound = 0;
   let lastAssistantIndex = null;
+  const assignedRounds = new Set();
   const hydratedMessages = [];
   const pushMessage = (message) => {
     hydratedMessages.push(message);
@@ -2697,16 +2831,26 @@ const attachWorkflowEvents = (messages, rounds) => {
     };
     lastAssistantIndex = pushMessage(syntheticMessage);
   };
-  const assignRound = () => {
-    if (!Number.isFinite(currentRound) || currentRound <= 0 || lastAssistantIndex === null) {
+  const assignRound = (roundNumber = currentRound) => {
+    if (!Number.isFinite(roundNumber) || roundNumber <= 0 || lastAssistantIndex === null) {
       return;
     }
-    const events = roundMap.get(currentRound);
+    const events = roundMap.get(roundNumber);
     if (!events || events.length === 0) {
       return;
     }
     const target = hydratedMessages[lastAssistantIndex];
     target.workflow_events = normalizeWorkflowEvents(events, target);
+    assignedRounds.add(roundNumber);
+    const compactionSummary = summarizeCompactionRoundEvents(events);
+    if (compactionSummary) {
+      chatDebugLog('chat.compaction.hydrate', 'assign-round', {
+        round: roundNumber,
+        targetIndex: lastAssistantIndex,
+        createdAt: target?.created_at ?? null,
+        summary: compactionSummary
+      });
+    }
   };
   sourceMessages.forEach((message) => {
     if (message?.role === 'user') {
@@ -2724,6 +2868,33 @@ const attachWorkflowEvents = (messages, rounds) => {
   });
   ensureSyntheticAssistantForRound();
   assignRound();
+  orderedRounds.forEach((roundNumber) => {
+    if (assignedRounds.has(roundNumber)) {
+      return;
+    }
+    const events = roundMap.get(roundNumber);
+    if (!events || events.length === 0) {
+      return;
+    }
+    const syntheticMessage = {
+      ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+      workflowItems: [],
+      workflowStreaming: false,
+      stream_incomplete: false,
+      stream_round: roundNumber
+    };
+    syntheticMessage.workflow_events = normalizeWorkflowEvents(events, syntheticMessage);
+    pushMessage(syntheticMessage);
+    assignedRounds.add(roundNumber);
+    const compactionSummary = summarizeCompactionRoundEvents(events);
+    if (compactionSummary) {
+      chatDebugLog('chat.compaction.hydrate', 'append-synthetic-round', {
+        round: roundNumber,
+        createdAt: syntheticMessage.created_at,
+        summary: compactionSummary
+      });
+    }
+  });
   return hydratedMessages;
 };
 
@@ -7183,6 +7354,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             buildDetail(detailSource),
             workflowRef
           );
+          chatDebugLog('chat.compaction.event', 'progress', {
+            sessionId: options.sessionId ?? null,
+            round,
+            workflowRef,
+            terminalHint: compactionTerminalStatusHint,
+            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+          });
           break;
         }
         const showStage = stage && !['received', 'llm_call'].includes(stage);
@@ -7193,6 +7371,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'llm_request': {
+        const requestPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
+        if (requestPurpose === 'compaction_summary') {
+          chatDebugLog('chat.compaction.event', 'llm-request-compaction-summary', {
+            sessionId: options.sessionId ?? null,
+            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+          });
+          break;
+        }
         const requestHasPayload = data && typeof data === 'object' && 'payload' in data;
         const requestHasSummary = data && typeof data === 'object' && 'payload_summary' in data;
         const requestTitle =
@@ -7878,6 +8064,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'context_usage': {
         updateContextUsage(data ?? payload ?? {});
+        if (activeCompactionWorkflowRef || compactionProgressItemMap.size > 0) {
+          chatDebugLog('chat.compaction.event', 'context-usage', {
+            sessionId: options.sessionId ?? null,
+            activeWorkflowRef: activeCompactionWorkflowRef,
+            trackedWorkflowRefs: Array.from(compactionProgressItemMap.keys()),
+            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+          });
+        }
         break;
       }
       case 'compaction': {
@@ -7905,6 +8099,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           appendCompactionOutcomeNotice(workflowRef, data ?? payload ?? {}, compactionStatus);
           clearCompactionProgressRef(workflowRef);
         }
+        chatDebugLog('chat.compaction.event', 'final', {
+          sessionId: options.sessionId ?? null,
+          round,
+          workflowRef,
+          finalizedFromProgress: finalized,
+          status: compactionStatus,
+          payload: buildCompactionDebugSummary(data ?? payload ?? {})
+        });
         break;
       }
       case 'quota_usage': {
@@ -8135,6 +8337,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       default: {
+        if (eventType === 'llm_response') {
+          const responsePurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
+          if (responsePurpose === 'compaction_summary') {
+            chatDebugLog('chat.compaction.event', 'llm-response-compaction-summary', {
+              sessionId: options.sessionId ?? null,
+              payload: buildCompactionDebugSummary(data ?? payload ?? {})
+            });
+            break;
+          }
+        }
         const fallbackName = data?.name ?? payload?.name;
         const summary = fallbackName
           ? t('chat.workflow.eventWithName', { event: eventType, name: fallbackName })
@@ -8527,24 +8739,50 @@ export const useChatStore = defineStore('chat', {
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
       return sortSessionsByActivity(data?.data?.items || []);
     },
-    async preloadSessionDetail(sessionId) {
+    async preloadSessionDetail(sessionId, options: { force?: boolean; syncActive?: boolean } = {}) {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return null;
+      const force = options.force === true;
+      const syncActive = options.syncActive !== false;
       if (!hasKnownSessionInStore(this, targetId)) {
+        chatDebugLog('chat.store.preload', 'skip-unknown-session', {
+          sessionId: targetId,
+          force,
+          syncActive
+        });
         purgeUnavailableSession(this, targetId);
         return null;
       }
-      if (isSessionDetailWarm(targetId) && getSessionMessages(targetId)?.length) {
+      const cachedMessages = getSessionMessages(targetId) || [];
+      if (!force && isSessionDetailWarm(targetId) && cachedMessages.length) {
+        chatDebugLog('chat.store.preload', 'warm-hit', {
+          sessionId: targetId,
+          force,
+          syncActive,
+          messageCount: cachedMessages.length
+        });
         return this.sessions.find((session) => session.id === targetId) || null;
       }
       const inFlight = sessionDetailPrefetchInFlight.get(targetId);
       if (inFlight) {
+        chatDebugLog('chat.store.preload', 'reuse-inflight', {
+          sessionId: targetId,
+          force,
+          syncActive
+        });
         return inFlight;
       }
       const request = (async () => {
         let sessionRes = null;
         let eventsPayload = null;
         const knownEventFloor = resolveKnownSessionEventFloor(targetId);
+        chatDebugLog('chat.store.preload', 'fetch-start', {
+          sessionId: targetId,
+          force,
+          syncActive,
+          knownEventFloor,
+          activeSessionId: resolveSessionKey(this.activeSessionId)
+        });
         try {
           [sessionRes, eventsPayload] = await Promise.all([
             getSession(targetId),
@@ -8559,9 +8797,18 @@ export const useChatStore = defineStore('chat', {
           ]);
         } catch (error) {
           if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+            chatDebugLog('chat.store.preload', 'session-unavailable', {
+              sessionId: targetId
+            });
             purgeUnavailableSession(this, targetId);
             return null;
           }
+          chatDebugLog('chat.store.preload', 'fetch-error', {
+            sessionId: targetId,
+            error:
+              String((error as { name?: unknown; message?: unknown })?.message || '').trim() ||
+              String((error as { name?: unknown; message?: unknown })?.name || '').trim()
+          });
           throw error;
         }
         const payload = sessionRes?.data;
@@ -8610,12 +8857,27 @@ export const useChatStore = defineStore('chat', {
         applyHistoryMeta(targetId, sessionDetail, greetingMessages);
         applyMessageWindow(this, targetId, greetingMessages);
         cacheSessionMessages(targetId, greetingMessages);
+        const shouldSyncActiveMessages =
+          syncActive && resolveSessionKey(this.activeSessionId) === targetId && Array.isArray(this.messages);
+        if (shouldSyncActiveMessages) {
+          replaceMessageArrayKeepingReference(this.messages, greetingMessages);
+        }
         updateRuntimeLastEventId(
           runtime,
           Math.max(resolveMaterializedMessageEventId(greetingMessages), remoteLastEventId || 0)
         );
         writeSessionHydratedMessageVersion(targetId, hydratedVersion);
         markSessionDetailWarm(targetId);
+        chatDebugLog('chat.store.preload', 'fetch-complete', {
+          sessionId: targetId,
+          force,
+          syncActive,
+          remoteRunning,
+          remoteLastEventId,
+          messageCount: greetingMessages.length,
+          reusedHydratedMessages: canReuseHydratedMessages,
+          syncedActiveMessages: shouldSyncActiveMessages
+        });
         void this.refreshSessionSubagents(targetId).catch(() => null);
         return sessionDetail;
       })().finally(() => {
@@ -9073,6 +9335,16 @@ export const useChatStore = defineStore('chat', {
         filterSessionsByAgent(resolvedAgentIdText, this.sessions)
       );
       const rounds = eventsPayload?.rounds || [];
+      const compactionHydrationRounds = Array.isArray(rounds)
+        ? rounds
+            .map((round) => {
+              const roundNumber = Number(round?.user_round ?? round?.round);
+              const summary = summarizeCompactionRoundEvents(round?.events);
+              if (!summary) return null;
+              return { round: roundNumber, ...summary };
+            })
+            .filter(Boolean)
+        : [];
       const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
       const canReuseHydratedMessages =
         !remoteRunning &&
@@ -9092,6 +9364,16 @@ export const useChatStore = defineStore('chat', {
         messages = mergeSnapshotIntoMessages(messages, snapshot);
         messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
         messages = dedupeAssistantMessages(messages);
+      }
+      if (compactionHydrationRounds.length > 0) {
+        chatDebugLog('chat.compaction.hydrate', 'load-session-detail', {
+          sessionId: targetSessionId,
+          remoteRunning,
+          roundCount: rounds.length,
+          cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
+          hydratedMessageCount: Array.isArray(messages) ? messages.length : 0,
+          compactionRounds: compactionHydrationRounds
+        });
       }
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(finalCachedMessages);
@@ -9479,7 +9761,20 @@ export const useChatStore = defineStore('chat', {
       if (!targetId) {
         throw new Error(t('chat.command.compactMissingSession'));
       }
+      const activeSessionId = String(this.activeSessionId || '').trim();
+      const shouldResumeWatcher = activeSessionId === targetId;
+      if (shouldResumeWatcher) {
+        abortResumeStream(targetId);
+        clearSessionWatcher();
+      }
       const runtime = ensureRuntime(targetId);
+      chatDebugLog('chat.compaction.manual', 'start', {
+        sessionId: targetId,
+        activeSessionId,
+        shouldResumeWatcher,
+        payload: buildCompactionDebugSummary(payload),
+        runtime: buildRuntimeDebugSnapshot(runtime)
+      });
       if (runtime) {
         runtime.stopRequested = false;
         if (runtime.compactController) {
@@ -9488,7 +9783,6 @@ export const useChatStore = defineStore('chat', {
         runtime.compactController = new AbortController();
       }
       const compactController = runtime?.compactController || null;
-      const activeSessionId = String(this.activeSessionId || '').trim();
       const targetMessages =
         activeSessionId === targetId
           ? this.messages
@@ -9520,6 +9814,11 @@ export const useChatStore = defineStore('chat', {
         stream_incomplete: true
       };
       targetMessages.push(compactionMessage);
+      chatDebugLog('chat.compaction.manual', 'local-marker-created', {
+        sessionId: targetId,
+        workflowRef,
+        messageCount: targetMessages.length
+      });
       setSessionLoading(this, targetId, true);
       cacheSessionMessages(targetId, targetMessages);
       touchSessionUpdatedAt(this, targetId, now);
@@ -9556,12 +9855,24 @@ export const useChatStore = defineStore('chat', {
             }
           )
         );
+        compactionMessage.workflowItems.length = 1;
         compactionMessage.workflowStreaming = false;
         compactionMessage.reasoningStreaming = false;
         compactionMessage.stream_incomplete = false;
+        chatDebugLog('chat.compaction.manual', 'request-success', {
+          sessionId: targetId,
+          workflowRef,
+          result: buildCompactionDebugSummary(resultData),
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+        });
         return data?.data?.message || data?.message || '';
       } catch (error) {
         if (isAbortRequestError(error)) {
+          chatDebugLog('chat.compaction.manual', 'request-cancelled', {
+            sessionId: targetId,
+            workflowRef,
+            runtime: buildRuntimeDebugSnapshot(runtime)
+          });
           finalizeManualCompactionAsCancelled(compactionMessage);
           return '';
         }
@@ -9578,6 +9889,7 @@ export const useChatStore = defineStore('chat', {
         if (Array.isArray(compactionMessage.workflowItems) && compactionMessage.workflowItems.length > 0) {
           compactionMessage.workflowItems[0].status = 'failed';
           compactionMessage.workflowItems[0].detail = failedDetail;
+          (compactionMessage.workflowItems[0] as Record<string, unknown>).eventType = 'compaction';
         }
         compactionMessage.workflowItems.push(
           buildWorkflowItem(
@@ -9592,9 +9904,17 @@ export const useChatStore = defineStore('chat', {
             }
           )
         );
+        compactionMessage.workflowItems.length = 1;
         compactionMessage.workflowStreaming = false;
         compactionMessage.reasoningStreaming = false;
         compactionMessage.stream_incomplete = false;
+        chatDebugLog('chat.compaction.manual', 'request-failed', {
+          sessionId: targetId,
+          workflowRef,
+          code: String(error?.response?.data?.code || error?.code || ''),
+          message: trimCompactionDebugText(detailText),
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
+        });
         throw error;
       } finally {
         if (runtime && runtime.compactController === compactController) {
@@ -9604,6 +9924,16 @@ export const useChatStore = defineStore('chat', {
         cacheSessionMessages(targetId, targetMessages);
         touchSessionUpdatedAt(this, targetId, Date.now());
         notifySessionSnapshot(this, targetId, targetMessages, true);
+        if (shouldResumeWatcher && String(this.activeSessionId || '').trim() === targetId) {
+          startSessionWatcher(this, targetId);
+        }
+        chatDebugLog('chat.compaction.manual', 'finalize', {
+          sessionId: targetId,
+          workflowRef,
+          shouldResumeWatcher,
+          marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems),
+          runtime: buildRuntimeDebugSnapshot(runtime)
+        });
       }
     },
 

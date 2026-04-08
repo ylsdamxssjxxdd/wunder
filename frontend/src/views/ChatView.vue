@@ -2440,13 +2440,7 @@ const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
     try {
       await chatStore.compactSession(activeId);
       scheduleExternalSessionSync(false);
-    } catch (error) {
-      chatStore.appendLocalMessage(
-        'assistant',
-        t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) }),
-        { sessionId: activeId }
-      );
-    }
+    } catch {}
     await scrollMessagesToBottom();
   }
 };

@@ -40,6 +40,7 @@ import {
 } from '@/components/beeroom/beeroomRealtimeSyncGap';
 import { createBeeroomChatRealtimeRuntime } from '@/realtime/beeroomChatRealtimeRuntime';
 import { resolveChatRequestTextInputOverflow } from '@/utils/chatRequestInputLimit';
+import { chatDebugLog } from '@/utils/chatDebug';
 import { useChatStore } from '@/stores/chat';
 import { replaceMessageArrayKeepingReference } from '@/stores/chatMessageArraySync';
 import {
@@ -77,6 +78,20 @@ const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_error'
 ]);
 const DEMO_RUNTIME_EVENT_TYPES = new Set(['beeroom_demo_status']);
+
+const clipDebugText = (value: unknown, limit = 180) => {
+  const text = String(value || '').trim().replace(/\s+/g, ' ');
+  if (!text) return '';
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 3))}...`;
+};
+
+const summarizeDebugError = (error: unknown) => {
+  const source = error as { name?: unknown; message?: unknown } | null;
+  const name = String(source?.name || '').trim();
+  const message = String(source?.message || '').trim();
+  return [name, message].filter(Boolean).join(': ') || String(error || '').trim();
+};
 
 export const useBeeroomMissionCanvasRuntime = (options: {
   group: Ref<BeeroomGroup | null>;
@@ -134,6 +149,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const motherAgentId = computed(() =>
     resolveBeeroomMotherAgentId(options.mission.value, options.group.value, options.agents.value)
   );
+  const logBeeroomRuntime = (event: string, payload?: unknown) => {
+    chatDebugLog('beeroom.runtime', event, payload);
+  };
 
   const {
     workflowItemsByTask,
@@ -205,7 +223,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const resolveAgentNameById = (agentId: unknown) => {
     const normalized = String(agentId || '').trim();
-    if (!normalized) return '-';
+    if (!normalized) return '';
     if (normalized === DEFAULT_AGENT_KEY) {
       return options.t('messenger.defaultAgent');
     }
@@ -224,6 +242,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '');
+
+  const normalizeChatActorName = (value: unknown): string => {
+    const text = String(value || '').trim();
+    if (!text || text === '-' || text === '新会话') {
+      return '';
+    }
+    return text;
+  };
 
   const composerTargetOptions = computed<ComposerTargetOption[]>(() => {
     const seen = new Set<string>();
@@ -350,10 +376,13 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const resolveDispatchAssistantName = (sessionId: string) => {
-    const explicitName = String(dispatchTargetName.value || '').trim();
+    const explicitName = normalizeChatActorName(dispatchTargetName.value);
     if (explicitName) return explicitName;
     const agentId = resolveDispatchAssistantAgentId(sessionId);
-    if (agentId) return resolveAgentNameById(agentId);
+    if (agentId) {
+      const agentName = normalizeChatActorName(resolveAgentNameById(agentId));
+      if (agentName) return agentName;
+    }
     return options.t('messenger.defaultAgent');
   };
 
@@ -407,10 +436,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const activeSource =
       activeSessionId === targetId && Array.isArray(chatStore.messages) ? chatStore.messages : [];
     const cachedSource = chatStore.getCachedSessionMessages(targetId);
+    const preferCached =
+      activeSessionId === targetId && shouldPreferCachedDispatchMessages(activeSource, cachedSource);
     const source =
-      activeSessionId === targetId && !shouldPreferCachedDispatchMessages(activeSource, cachedSource)
-        ? activeSource
-        : cachedSource;
+      activeSessionId === targetId && !preferCached ? activeSource : cachedSource;
+    logBeeroomRuntime('read-dispatch-session-messages', {
+      sessionId: targetId,
+      activeSessionId,
+      activeCount: Array.isArray(activeSource) ? activeSource.length : 0,
+      cachedCount: Array.isArray(cachedSource) ? cachedSource.length : 0,
+      source: source === cachedSource ? 'cache' : 'active',
+      preferCached
+    });
     if (source === cachedSource) {
       syncActiveDispatchSourceFromCache(targetId, cachedSource);
     }
@@ -569,7 +606,16 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const cachedMessages = Array.isArray(cached?.manualMessages) ? cached.manualMessages : [];
     replaceManualChatMessages(cachedMessages);
     const cachedDispatch = cached?.dispatch;
-    if (!cachedDispatch) return;
+    if (!cachedDispatch) {
+      logBeeroomRuntime('restore-cached-chat-state', {
+        scopeKey,
+        manualCount: cachedMessages.length,
+        dispatchSessionId: '',
+        dispatchTargetAgentId: '',
+        runtimeStatus: 'idle'
+      });
+      return;
+    }
     dispatchSessionId.value = String(cachedDispatch.sessionId || '').trim();
     dispatchLastEventId.value = Math.max(0, Number(cachedDispatch.lastEventId || 0));
     dispatchTargetAgentId.value = String(cachedDispatch.targetAgentId || '').trim();
@@ -577,6 +623,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetTone.value =
       cachedDispatch.targetTone === 'mother' ? 'mother' : 'worker';
     dispatchRuntimeStatus.value = cachedDispatch.runtimeStatus || 'idle';
+    logBeeroomRuntime('restore-cached-chat-state', {
+      scopeKey,
+      manualCount: cachedMessages.length,
+      dispatchSessionId: dispatchSessionId.value,
+      dispatchLastEventId: dispatchLastEventId.value,
+      dispatchTargetAgentId: dispatchTargetAgentId.value,
+      dispatchTargetTone: dispatchTargetTone.value,
+      runtimeStatus: dispatchRuntimeStatus.value
+    });
   };
 
   const resolveLatestVisibleUserPreview = () => {
@@ -605,6 +660,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   ) => {
     const sessionId = String(dispatchSessionId.value || '').trim();
     if (!sessionId) {
+      logBeeroomRuntime('sync-dispatch-session-messages:no-session', {
+        clearWhenEmpty: loadOptions.clearWhenEmpty === true,
+        hydrate: loadOptions.hydrate !== false,
+        forceReplace: loadOptions.forceReplace === true
+      });
       if (loadOptions.clearWhenEmpty) {
         replaceManualChatMessages([]);
       }
@@ -637,16 +697,35 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     };
 
     ensureDispatchSessionKnown(sessionId, false);
+    logBeeroomRuntime('sync-dispatch-session-messages:start', {
+      sessionId,
+      hydrate: loadOptions.hydrate !== false,
+      clearWhenEmpty: loadOptions.clearWhenEmpty === true,
+      forceReplace: loadOptions.forceReplace === true
+    });
     const cached = applyFromCache();
+    logBeeroomRuntime('sync-dispatch-session-messages:cache', {
+      sessionId,
+      messageCount: cached.length
+    });
     if (loadOptions.hydrate === false) {
       return cached;
     }
     try {
-      await chatStore.preloadSessionDetail(sessionId);
-    } catch {
+      await chatStore.preloadSessionDetail(sessionId, { force: true, syncActive: true });
+    } catch (error) {
+      logBeeroomRuntime('sync-dispatch-session-messages:hydrate-error', {
+        sessionId,
+        error: summarizeDebugError(error)
+      });
       return cached;
     }
-    return applyFromCache();
+    const hydrated = applyFromCache();
+    logBeeroomRuntime('sync-dispatch-session-messages:hydrated', {
+      sessionId,
+      messageCount: hydrated.length
+    });
+    return hydrated;
   };
 
   const loadManualChatHistory = async () => {
@@ -664,11 +743,20 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       if (!sameManualChatMessages(manualChatMessages.value, next)) {
         replaceManualChatMessages(next);
       }
+      logBeeroomRuntime('load-manual-chat-history:cached-only', {
+        scopeKey: chatRuntimeScopeKey.value,
+        messageCount: next.length
+      });
       return;
     }
     if (!sameManualChatMessages(manualChatMessages.value, cachedMessages) && cachedMessages.length > 0) {
       replaceManualChatMessages(cachedMessages);
     }
+    logBeeroomRuntime('load-manual-chat-history:dispatch', {
+      scopeKey: chatRuntimeScopeKey.value,
+      sessionId: dispatchSessionId.value,
+      cachedCount: cachedMessages.length
+    });
     await syncDispatchSessionMessages({ hydrate: true });
   };
 
@@ -878,10 +966,57 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return activeSessionId || primarySessionId;
   };
 
+  const syncDispatchSessionToMessenger = async (sessionId: string, agentId: string) => {
+    const targetSessionId = String(sessionId || '').trim();
+    const targetAgentId = String(agentId || '').trim();
+    if (!targetSessionId) return;
+    const activeSessionId = String(chatStore.activeSessionId || '').trim();
+    const activeAgentId = activeSessionId ? resolveStoredSessionAgentId(activeSessionId) : '';
+    let syncPath = 'preload-background';
+    if (activeSessionId === targetSessionId) {
+      syncPath = 'preload-active';
+      logBeeroomRuntime('sync-dispatch-session-to-messenger', {
+        sessionId: targetSessionId,
+        agentId: targetAgentId,
+        activeSessionId,
+        activeAgentId,
+        syncPath
+      });
+      await chatStore.preloadSessionDetail(targetSessionId, { force: true, syncActive: true });
+      return;
+    }
+    if (targetAgentId && activeAgentId === targetAgentId) {
+      syncPath = 'load-switch-active-agent';
+      logBeeroomRuntime('sync-dispatch-session-to-messenger', {
+        sessionId: targetSessionId,
+        agentId: targetAgentId,
+        activeSessionId,
+        activeAgentId,
+        syncPath
+      });
+      await chatStore.loadSessionDetail(targetSessionId, { preserveWatcher: true });
+      return;
+    }
+    logBeeroomRuntime('sync-dispatch-session-to-messenger', {
+      sessionId: targetSessionId,
+      agentId: targetAgentId,
+      activeSessionId,
+      activeAgentId,
+      syncPath
+    });
+    await chatStore.preloadSessionDetail(targetSessionId, { force: true, syncActive: false });
+  };
+
   const reconcileMotherDispatchSession = async (
     syncOptions: { hydrate?: boolean; syncMessages?: boolean } = {}
   ) => {
-    if (composerSending.value) return;
+    if (composerSending.value) {
+      logBeeroomRuntime('reconcile-mother-dispatch-session:skip-sending', {
+        dispatchSessionId: dispatchSessionId.value,
+        targetAgentId: dispatchTargetAgentId.value
+      });
+      return;
+    }
     const cachedTargetAgentId = String(dispatchTargetAgentId.value || '').trim();
     const resolvedMotherAgentId = String(motherAgentId.value || cachedTargetAgentId || '').trim();
     const isMotherTarget =
@@ -890,7 +1025,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (!isMotherTarget || !resolvedMotherAgentId) return;
     const primarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
     const currentSessionId = String(dispatchSessionId.value || '').trim();
-    if (!primarySessionId || primarySessionId === currentSessionId) return;
+    if (!primarySessionId) {
+      logBeeroomRuntime('reconcile-mother-dispatch-session:no-primary', {
+        motherAgentId: resolvedMotherAgentId,
+        currentSessionId
+      });
+      return;
+    }
+    if (primarySessionId === currentSessionId) return;
+    logBeeroomRuntime('reconcile-mother-dispatch-session:switch', {
+      motherAgentId: resolvedMotherAgentId,
+      previousSessionId: currentSessionId,
+      nextSessionId: primarySessionId,
+      hydrate: syncOptions.hydrate !== false,
+      syncMessages: syncOptions.syncMessages !== false
+    });
     dispatchSessionId.value = primarySessionId;
     dispatchLastEventId.value = 0;
     dispatchRequestId.value = '';
@@ -899,6 +1048,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetName.value = resolveAgentNameById(resolvedMotherAgentId);
     dispatchTargetTone.value = 'mother';
     ensureDispatchSessionKnown(primarySessionId, false);
+    void syncDispatchSessionToMessenger(primarySessionId, resolvedMotherAgentId).catch(() => null);
     if (syncOptions.syncMessages === false) return;
     await syncDispatchSessionMessages({
       hydrate: syncOptions.hydrate !== false,
@@ -937,6 +1087,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     chatStore.syncSessionSummary(nextSession, {
       agentId: fallbackAgentId,
       remember: syncOptions.remember === true
+    });
+    logBeeroomRuntime('sync-dispatch-session-summary', {
+      sessionId: targetSessionId,
+      agentId: String(nextSession.agent_id || '').trim(),
+      remember: syncOptions.remember === true,
+      preview
     });
   };
 
@@ -983,17 +1139,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const buildSubagentRuntimeMessages = (item: BeeroomMissionSubagentItem): MissionChatMessage[] => {
     const messageTime = Number(item.updatedTime || 0);
     const childAgentId = String(item.agentId || '').trim();
-    const childName =
-      resolveAgentNameById(childAgentId) ||
-      String(item.label || item.title || item.sessionId || item.runId || 'subagent').trim() ||
-      'subagent';
+    const fallbackSubagentName = options.t('beeroom.canvas.legendSubagent');
+    const childNameFromAgent = normalizeChatActorName(resolveAgentNameById(childAgentId));
+    const childNameFromLabel = normalizeChatActorName(item.label);
+    const childNameFromTitle = normalizeChatActorName(item.title);
+    const childName = childNameFromAgent || childNameFromLabel || childNameFromTitle || fallbackSubagentName;
     const parentSessionId = String(item.controllerSessionId || item.parentSessionId || dispatchSessionId.value || '').trim();
     const parentAgentId = parentSessionId
       ? resolveStoredSessionAgentId(parentSessionId)
       : resolveDispatchAssistantAgentId(String(dispatchSessionId.value || '').trim());
-    const parentName = parentAgentId
-      ? resolveAgentNameById(parentAgentId)
-      : resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim());
+    const parentNameFromAgent = normalizeChatActorName(parentAgentId ? resolveAgentNameById(parentAgentId) : '');
+    const parentNameFromDispatch = resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim());
+    const parentName = parentNameFromAgent || parentNameFromDispatch;
     const parentTone = resolveChatToneByAgentId(parentAgentId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker');
     const childTone = resolveChatToneByAgentId(childAgentId, 'worker');
     const meta = String(item.dispatchLabel || '').trim();
@@ -1001,6 +1158,23 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const replyBody = String((item.failed ? item.errorMessage || item.assistantMessage : item.assistantMessage || item.errorMessage) || '').trim();
     const keyBase = String(item.runId || item.sessionId || item.key || '').trim();
     const messages: MissionChatMessage[] = [];
+
+    if (!childNameFromAgent && !childNameFromLabel && !childNameFromTitle) {
+      logBeeroomRuntime('build-subagent-runtime-messages:fallback-child-name', {
+        runId: item.runId,
+        sessionId: item.sessionId,
+        agentId: childAgentId,
+        fallbackName: fallbackSubagentName
+      });
+    }
+    if (!parentNameFromAgent && !parentNameFromDispatch) {
+      logBeeroomRuntime('build-subagent-runtime-messages:fallback-parent-name', {
+        runId: item.runId,
+        sessionId: item.sessionId,
+        parentSessionId,
+        parentAgentId
+      });
+    }
 
     if (requestBody) {
       messages.push({
@@ -1184,30 +1358,58 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       if (eventType === 'approval_request') {
         chatStore.enqueueApprovalRequest(dispatchRequestId.value, dispatchSessionId.value, data);
         dispatchRuntimeStatus.value = 'awaiting_approval';
+        logBeeroomRuntime('dispatch-stream:approval-request', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value,
+          approvalId: String(data?.approval_id || data?.approvalId || '').trim()
+        });
         return;
       }
       if (eventType === 'approval_result') {
         chatStore.resolveApprovalResult(data);
         const status = String(data?.status || payload?.status || '').trim().toLowerCase();
         dispatchRuntimeStatus.value = status === 'approved' ? 'running' : 'failed';
+        logBeeroomRuntime('dispatch-stream:approval-result', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value,
+          status
+        });
         return;
       }
       if (eventType === 'queued') {
         dispatchRuntimeStatus.value = 'queued';
+        logBeeroomRuntime('dispatch-stream:queued', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value
+        });
         return;
       }
       if (eventType === 'slow_client') {
         dispatchRuntimeStatus.value = 'stopped';
+        logBeeroomRuntime('dispatch-stream:slow-client', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value
+        });
         return;
       }
       if (eventType === 'error') {
         streamError = extractErrorText(payload) || options.t('common.requestFailed');
         dispatchRuntimeStatus.value = 'failed';
+        logBeeroomRuntime('dispatch-stream:error', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value,
+          error: streamError
+        });
         return;
       }
       if (eventType === 'final') {
         finalPayload = payload;
         dispatchRuntimeStatus.value = 'completed';
+        logBeeroomRuntime('dispatch-stream:final', {
+          sessionId: dispatchSessionId.value,
+          requestId: dispatchRequestId.value,
+          replyPreview: clipDebugText(extractReplyText(payload))
+        });
         return;
       }
       dispatchRuntimeStatus.value = 'running';
@@ -1233,6 +1435,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchRuntimeStatus.value = mode === 'resume' ? 'resuming' : 'running';
     const controller = new AbortController();
     dispatchStreamController = controller;
+    logBeeroomRuntime('start-dispatch-stream', {
+      mode,
+      sessionId,
+      afterEventId: Number(payload.afterEventId || 0),
+      contentPreview: clipDebugText(payload.content)
+    });
 
     const response =
       mode === 'resume'
@@ -1251,12 +1459,22 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
     if (!response.ok) {
       const errorText = String(await response.text()).trim();
+      logBeeroomRuntime('start-dispatch-stream:http-error', {
+        mode,
+        sessionId,
+        status: response.status,
+        error: clipDebugText(errorText)
+      });
       throw new Error(
         errorText || (mode === 'resume' ? options.t('chat.error.resumeFailed') : options.t('common.requestFailed'))
       );
     }
 
     streamOptions.onAccepted?.();
+    logBeeroomRuntime('start-dispatch-stream:accepted', {
+      mode,
+      sessionId
+    });
     return consumeDispatchStream(response);
   };
 
@@ -1292,6 +1510,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       previousSessionId,
       previousTargetAgentId
     );
+    logBeeroomRuntime('composer-send:start', {
+      targetAgentId: target.agentId,
+      targetRole: target.role,
+      previousSessionId,
+      previousTargetAgentId,
+      preferredSessionId,
+      bodyPreview: clipDebugText(visibleBody)
+    });
 
     composerError.value = '';
     composerText.value = '';
@@ -1310,6 +1536,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         throw new Error(options.t('common.requestFailed'));
       }
       const reuseCurrentSession = Boolean(preferredSessionId) && preferredSessionId === sessionId;
+      logBeeroomRuntime('composer-send:resolved-session', {
+        targetAgentId: target.agentId,
+        sessionId,
+        reuseCurrentSession,
+        targetTone
+      });
       dispatchSessionId.value = sessionId;
       dispatchRequestId.value = nextManualMessageKey('dispatch-request');
       dispatchLastEventId.value = 0;
@@ -1323,6 +1555,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         },
         { remember: false }
       );
+      void syncDispatchSessionToMessenger(sessionId, target.agentId).catch(() => null);
       await syncDispatchSessionMessages({
         hydrate: true,
         clearWhenEmpty: !reuseCurrentSession,
@@ -1346,15 +1579,29 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       if (assistantMessage) {
         appendManualChatMessage(assistantMessage);
       }
+      logBeeroomRuntime('composer-send:completed', {
+        sessionId,
+        targetAgentId: target.agentId,
+        replyPreview: clipDebugText(replyText)
+      });
     } catch (error: any) {
       if (error?.name === 'AbortError' || dispatchStopRequested) {
         dispatchRuntimeStatus.value = 'stopped';
+        logBeeroomRuntime('composer-send:aborted', {
+          sessionId: dispatchSessionId.value,
+          targetAgentId: dispatchTargetAgentId.value
+        });
         return;
       }
       const message = String(error?.message || '').trim() || options.t('common.requestFailed');
       dispatchRuntimeStatus.value = 'failed';
       composerError.value = message;
       ElMessage.error(message);
+      logBeeroomRuntime('composer-send:error', {
+        sessionId: dispatchSessionId.value,
+        targetAgentId: dispatchTargetAgentId.value,
+        error: clipDebugText(message)
+      });
     } finally {
       if (dispatchSessionId.value) {
         await syncDispatchSessionMessages({ hydrate: true });
@@ -1368,6 +1615,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (!dispatchCanStop.value) return;
     const sessionId = String(dispatchSessionId.value || '').trim();
     if (!sessionId) return;
+    logBeeroomRuntime('dispatch-stop:start', {
+      sessionId
+    });
     dispatchStopRequested = true;
     dispatchRuntimeStatus.value = 'stopped';
     if (dispatchStreamController) {
@@ -1381,6 +1631,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     } finally {
       composerSending.value = false;
       await syncDispatchSessionMessages({ hydrate: true });
+      logBeeroomRuntime('dispatch-stop:done', {
+        sessionId,
+        runtimeStatus: dispatchRuntimeStatus.value
+      });
     }
   };
 
@@ -1389,6 +1643,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const sessionId = String(dispatchSessionId.value || '').trim();
     if (!sessionId) return;
     composerError.value = '';
+    logBeeroomRuntime('dispatch-resume:start', {
+      sessionId,
+      afterEventId: dispatchLastEventId.value
+    });
     try {
       const finalPayload = await startDispatchStream('resume', sessionId, {
         afterEventId: dispatchLastEventId.value
@@ -1398,15 +1656,26 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       if (assistantMessage) {
         appendManualChatMessage(assistantMessage);
       }
+      logBeeroomRuntime('dispatch-resume:completed', {
+        sessionId,
+        replyPreview: clipDebugText(replyText)
+      });
     } catch (error: any) {
       if (error?.name === 'AbortError' || dispatchStopRequested) {
         dispatchRuntimeStatus.value = 'stopped';
+        logBeeroomRuntime('dispatch-resume:aborted', {
+          sessionId
+        });
         return;
       }
       const message = String(error?.message || '').trim() || options.t('chat.error.resumeFailed');
       dispatchRuntimeStatus.value = 'failed';
       composerError.value = message;
       ElMessage.error(message);
+      logBeeroomRuntime('dispatch-resume:error', {
+        sessionId,
+        error: clipDebugText(message)
+      });
     } finally {
       if (dispatchSessionId.value) {
         await syncDispatchSessionMessages({ hydrate: true });
@@ -1473,6 +1742,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     clearSyncRequiredHistoryReloadTimer();
     composerText.value = '';
     composerError.value = '';
+    logBeeroomRuntime('active-group-changed', {
+      groupId,
+      runtimeScopeKey,
+      previousDispatchSessionId: dispatchSessionId.value
+    });
     restoreCachedChatState(runtimeScopeKey);
     void loadManualChatHistory();
     stopChatRealtimeWatch();
@@ -1658,6 +1932,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const normalizedType = String(eventType || '').trim().toLowerCase();
     if (normalizedType === 'watching') return;
     if (normalizedType === 'sync_required') {
+      logBeeroomRuntime('chat-realtime:sync-required', {
+        groupId,
+        dispatchSessionId: dispatchSessionId.value
+      });
       scheduleSyncRequiredHistoryReload();
       return;
     }
@@ -1667,6 +1945,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       persistCachedChatState();
       mergeBeeroomMissionCanvasState(chatClearScopeKey.value, {
         chatClearedAfter: chatMessagesClearedAfter.value
+      });
+      logBeeroomRuntime('chat-realtime:chat-cleared', {
+        groupId,
+        clearedAfter: chatMessagesClearedAfter.value
       });
       return;
     }
@@ -1680,6 +1962,13 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       const forceImmediateReconcile = shouldForceImmediateTeamRealtimeReconcile({
         eventType: normalizedType,
         accepted
+      });
+      logBeeroomRuntime('chat-realtime:team-event', {
+        groupId,
+        eventType: normalizedType,
+        accepted,
+        forceWorkflowRefresh,
+        forceImmediateReconcile
       });
       void nextTick(() => syncMissionWorkflowState(forceWorkflowRefresh));
       scheduleTeamRealtimeReconcile(forceImmediateReconcile);
@@ -1695,12 +1984,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   }
 
   onMounted(() => {
+    logBeeroomRuntime('mounted', {
+      groupId: activeGroupId.value,
+      runtimeScopeKey: chatRuntimeScopeKey.value
+    });
     handleActiveGroupChanged(activeGroupId.value);
   });
 
   onBeforeUnmount(() => {
     // Preserve the last dispatch session snapshot so returning to swarms can replay
     // the mother/worker/subagent canvas from cached session references.
+    logBeeroomRuntime('before-unmount', {
+      groupId: activeGroupId.value,
+      dispatchSessionId: dispatchSessionId.value,
+      runtimeStatus: dispatchRuntimeStatus.value
+    });
     resetDispatchRuntime({ keepSession: true, keepRuntimeStatus: true });
     stopChatPolling();
     stopChatRealtimeWatch();

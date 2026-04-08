@@ -110,6 +110,19 @@ const normalizeWorkflowStatus = (value: unknown): string => String(value || '').
 
 const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
 
+const isToolWorkflowItem = (item: WorkflowItemLike): boolean => {
+  if (!item || typeof item !== 'object') return false;
+  if (item?.isTool) return true;
+  const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
+  if (!eventType) return false;
+  return (
+    eventType.startsWith('tool_') ||
+    eventType.startsWith('subagent_') ||
+    eventType.startsWith('team_') ||
+    eventType.startsWith('command_session_')
+  );
+};
+
 const findLastWorkflowItem = (
   items: WorkflowItemLike[],
   predicate: (item: WorkflowItemLike, index: number) => boolean
@@ -204,17 +217,10 @@ const resolveAssistantStatusEntry = (
     (item) => {
       const status = normalizeWorkflowStatus(item?.status);
       if (!ACTIVE_WORKFLOW_STATUSES.has(status)) return false;
-      if (item?.isTool) return true;
-      const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
-      if (!eventType) return false;
-      return (
-        eventType.startsWith('tool_') ||
-        eventType.startsWith('subagent_') ||
-        eventType.startsWith('team_') ||
-        eventType.startsWith('command_session_')
-      );
+      return isToolWorkflowItem(item);
     }
   );
+  const hasAnyToolActivity = workflowItems.some((item) => isToolWorkflowItem(item));
 
   if (message?.resume_available && !isAssistantStreaming(message)) {
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
@@ -232,6 +238,9 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
   }
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
+    return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
+  }
+  if (isAssistantStreaming(message) && hasAnyToolActivity) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
   }
   if (isAssistantStreaming(message)) {
