@@ -25,10 +25,6 @@
           :collapsed="chatCollapsed"
           :messages="displayChatMessages"
           :approvals="dispatchApprovals"
-          :dispatch-runtime-status="dispatchRuntimeStatus"
-          :dispatch-runtime-tone="dispatchRuntimeTone"
-          :dispatch-runtime-label="dispatchRuntimeLabel"
-          :dispatch-session-id="dispatchSessionId"
           :dispatch-can-stop="dispatchCanStop"
           :dispatch-can-resume="dispatchCanResume"
           :dispatch-approval-busy="dispatchApprovalBusy"
@@ -105,10 +101,6 @@ const {
   dispatchApprovalBusy,
   dispatchCanResume,
   dispatchCanStop,
-  dispatchRuntimeLabel,
-  dispatchRuntimeStatus,
-  dispatchRuntimeTone,
-  dispatchSessionId,
   dispatchPreview,
   displayChatMessages,
   subagentsByTask,

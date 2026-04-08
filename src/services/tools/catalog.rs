@@ -594,7 +594,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": t("tool.spec.subagent_control.args.action"),
+                        "description": format!("{} {}", t("tool.spec.subagent_control.args.action"), "Important: spawn already sends the first turn. Do not call send immediately after spawn unless you are deliberately continuing the same child conversation."),
                         "enum": ["list", "history", "send", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
@@ -619,9 +619,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["keep", "interrupt", "close"]
                     },
                     "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
-                    "message": {"type": "string", "description": "Message content. Use only with action=send."},
+                    "message": {"type": "string", "description": "Message content for a follow-up turn on an existing child session. Do not use action=send immediately after spawn unless you are continuing the same child conversation."},
                     "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
-                    "task": {"type": "string", "description": "Initial task or first prompt for the child session. action=spawn/batch_spawn dispatches this task immediately; do not repeat it with send unless continuing the conversation."},
+                    "task": {"type": "string", "description": "Initial task or first prompt for the child session. action=spawn/batch_spawn dispatches this task immediately and starts the first child turn; do not repeat the same content with send unless you intentionally want a follow-up turn."},
                     "tasks": {
                         "type": "array",
                         "description": "Batch child tasks.",

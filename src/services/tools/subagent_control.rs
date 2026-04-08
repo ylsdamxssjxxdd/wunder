@@ -418,10 +418,17 @@ fn resolve_single_child_session_target(
     let resolved_session_ids = dedupe_non_empty_strings(resolved_session_ids);
     match resolved_session_ids.as_slice() {
         [session_id] => Ok(session_id.clone()),
-        [] => Err(build_child_session_target_error(
-            action,
-            first_requested_session_id.as_deref(),
-        )),
+        [] => {
+            if let Some(session_id) =
+                find_single_direct_child_session_id(context, user_id, current_session_id)?
+            {
+                return Ok(session_id);
+            }
+            Err(build_child_session_target_error(
+                action,
+                first_requested_session_id.as_deref(),
+            ))
+        }
         _ => Err(anyhow!(
             "subagent_control {action} requires exactly one child session target; use the exact session_id returned by spawn or a single runId"
         )),
@@ -450,7 +457,12 @@ fn resolve_direct_child_session_id(
         }
         return Ok(Some(record.session_id));
     }
-    find_similar_child_session_id(context, user_id, current_session_id, requested_session_id)
+    let similar =
+        find_similar_child_session_id(context, user_id, current_session_id, requested_session_id)?;
+    if similar.is_some() {
+        return Ok(similar);
+    }
+    find_single_direct_child_session_id(context, user_id, current_session_id)
 }
 
 fn ensure_direct_child_session_id(
@@ -485,6 +497,31 @@ fn build_child_session_target_error(
         message.push_str(&format!(" (requested: {requested_session_id})"));
     }
     anyhow!(message)
+}
+
+fn find_single_direct_child_session_id(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    current_session_id: &str,
+) -> Result<Option<String>> {
+    let (sessions, _) = context.storage.list_chat_sessions(
+        user_id,
+        None,
+        Some(current_session_id),
+        0,
+        MAX_SESSION_LIST_ITEMS,
+    )?;
+    Ok(select_single_direct_child_session_id(
+        sessions.into_iter().map(|session| session.session_id).collect(),
+    ))
+}
+
+fn select_single_direct_child_session_id(session_ids: Vec<String>) -> Option<String> {
+    let session_ids = dedupe_non_empty_strings(session_ids);
+    match session_ids.as_slice() {
+        [session_id] => Some(session_id.clone()),
+        _ => None,
+    }
 }
 
 fn find_similar_child_session_id(
@@ -2340,6 +2377,28 @@ mod tests {
         assert!(!is_direct_child_session(Some("sess_other"), "sess_parent"));
         assert!(!is_direct_child_session(None, "sess_parent"));
         assert!(!is_direct_child_session(Some("sess_parent"), ""));
+    }
+
+    #[test]
+    fn select_single_direct_child_session_id_accepts_only_unique_session() {
+        assert_eq!(
+            select_single_direct_child_session_id(vec![" sess_child ".to_string()]),
+            Some("sess_child".to_string())
+        );
+        assert_eq!(
+            select_single_direct_child_session_id(vec![
+                "sess_child".to_string(),
+                " sess_child ".to_string()
+            ]),
+            Some("sess_child".to_string())
+        );
+        assert_eq!(
+            select_single_direct_child_session_id(vec![
+                "sess_child_1".to_string(),
+                "sess_child_2".to_string()
+            ]),
+            None
+        );
     }
 
     #[test]

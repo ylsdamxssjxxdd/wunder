@@ -12,17 +12,7 @@
 
     <template v-if="!collapsed">
       <div class="beeroom-canvas-chat-head">
-        <div>
-          <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
-          <div v-if="dispatchRuntimeStatus !== 'idle' || dispatchSessionId" class="beeroom-canvas-chat-runtime">
-            <span v-if="dispatchRuntimeStatus !== 'idle'" class="beeroom-canvas-runtime-chip" :class="`is-${dispatchRuntimeTone}`">
-              {{ dispatchRuntimeLabel }}
-            </span>
-            <span v-if="dispatchSessionId" class="beeroom-canvas-runtime-session">
-              #{{ shortIdentity(dispatchSessionId, 6, 4) }}
-            </span>
-          </div>
-        </div>
+        <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
         <div class="beeroom-canvas-chat-head-actions">
           <button class="beeroom-canvas-icon-btn" type="button" :title="t('common.clear')" @click="emit('clear')">
             <i class="fa-solid fa-broom" aria-hidden="true"></i>
@@ -200,7 +190,6 @@ import { useI18n } from '@/i18n';
 import type {
   ComposerTargetOption,
   DispatchApprovalItem,
-  DispatchRuntimeStatus,
   MissionChatMessage
 } from './beeroomCanvasChatModel';
 
@@ -208,10 +197,6 @@ const props = defineProps<{
   collapsed: boolean;
   messages: MissionChatMessage[];
   approvals: DispatchApprovalItem[];
-  dispatchRuntimeStatus: DispatchRuntimeStatus;
-  dispatchRuntimeTone: string;
-  dispatchRuntimeLabel: string;
-  dispatchSessionId: string;
   dispatchCanStop: boolean;
   dispatchCanResume: boolean;
   dispatchApprovalBusy: boolean;
@@ -243,13 +228,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const chatStreamRef = ref<HTMLElement | null>(null);
-
-const shortIdentity = (value: unknown, head = 8, tail = 6) => {
-  const text = String(value || '').trim();
-  if (!text) return '-';
-  if (text.length <= head + tail + 3) return text;
-  return `${text.slice(0, head)}...${text.slice(-tail)}`;
-};
 
 const scrollChatToBottom = async () => {
   await nextTick();
@@ -366,61 +344,12 @@ watch(
   letter-spacing: 0.02em;
 }
 
-.beeroom-canvas-chat-runtime,
 .beeroom-canvas-chat-time,
 .beeroom-canvas-chat-extra,
 .beeroom-canvas-chat-approval-meta,
 .beeroom-canvas-chat-compose-status {
   font-size: 11px;
   color: rgba(156, 163, 175, 0.92);
-}
-
-.beeroom-canvas-chat-runtime {
-  margin-top: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.beeroom-canvas-runtime-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  background: rgba(30, 41, 59, 0.48);
-  color: rgba(226, 232, 240, 0.92);
-  font-size: 11px;
-  line-height: 1;
-}
-
-.beeroom-canvas-runtime-chip.is-running {
-  border-color: rgba(239, 68, 68, 0.36);
-  background: rgba(127, 29, 29, 0.3);
-  color: rgba(254, 202, 202, 0.96);
-}
-
-.beeroom-canvas-runtime-chip.is-success {
-  border-color: rgba(34, 197, 94, 0.36);
-  background: rgba(21, 128, 61, 0.28);
-  color: rgba(187, 247, 208, 0.96);
-}
-
-.beeroom-canvas-runtime-chip.is-danger {
-  border-color: rgba(239, 68, 68, 0.4);
-  background: rgba(127, 29, 29, 0.3);
-  color: rgba(254, 202, 202, 0.96);
-}
-
-.beeroom-canvas-runtime-chip.is-warn {
-  border-color: rgba(245, 158, 11, 0.42);
-  background: rgba(146, 64, 14, 0.28);
-  color: rgba(254, 240, 138, 0.98);
-}
-
-.beeroom-canvas-runtime-session {
-  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 }
 
 .beeroom-canvas-icon-btn,

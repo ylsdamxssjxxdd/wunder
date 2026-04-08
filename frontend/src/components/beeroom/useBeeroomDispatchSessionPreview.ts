@@ -1,6 +1,6 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
-import { getSessionEvents, getSessionSubagents } from '@/api/chat';
+import { getSession, getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasChatModel';
 import {
   type BeeroomMissionSubagentItem,
@@ -225,9 +225,9 @@ export const useBeeroomDispatchSessionPreview = (options: {
 
   const syncDispatchSessionPreview = async () => {
     const sessionId = normalizeText(options.sessionId.value);
-    const targetAgentId = normalizeText(options.targetAgentId.value);
-    const targetName = normalizeText(options.targetName.value);
-    if (!sessionId || !targetAgentId) {
+    const requestedTargetAgentId = normalizeText(options.targetAgentId.value);
+    const requestedTargetName = normalizeText(options.targetName.value);
+    if (!sessionId) {
       rawPreview.value = null;
       cancelActiveRequest();
       clearSyncTimer();
@@ -239,7 +239,12 @@ export const useBeeroomDispatchSessionPreview = (options: {
     activeController = controller;
 
     try {
-      const [eventsResponse, subagentsResponse] = await Promise.all([
+      const sessionRequest =
+        !requestedTargetAgentId || !requestedTargetName
+          ? getSession(sessionId).catch(() => null)
+          : Promise.resolve(null);
+      const [sessionResponse, eventsResponse, subagentsResponse] = await Promise.all([
+        sessionRequest,
         getSessionEvents(sessionId, { signal: controller.signal }),
         getSessionSubagents(
           sessionId,
@@ -250,6 +255,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
       if (controller.signal.aborted) return;
 
       const eventsPayload = eventsResponse?.data?.data || {};
+      const sessionDetail = sessionResponse?.data?.data || null;
       const events = flattenRounds(eventsPayload.rounds);
       const running = eventsPayload.running === true;
       const subagents = (Array.isArray(subagentsResponse?.data?.data?.items)
@@ -267,6 +273,9 @@ export const useBeeroomDispatchSessionPreview = (options: {
           if (activeDiff !== 0) return activeDiff;
           return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
         });
+      const targetAgentId =
+        requestedTargetAgentId || normalizeText(sessionDetail?.agent_id ?? '');
+      const targetName = requestedTargetName || targetAgentId;
 
       const summary = resolveSummaryFromEvents(events);
       const updatedTime = Math.max(

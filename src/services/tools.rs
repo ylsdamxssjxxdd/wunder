@@ -102,7 +102,7 @@ use encoding_rs::GBK;
 use futures::stream::{self, StreamExt};
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use skill_call::render_skill_markdown_for_model;
 use std::collections::{HashMap, HashSet};
@@ -1158,9 +1158,13 @@ struct SessionSendArgs {
 }
 
 #[derive(Debug, Deserialize)]
-struct SessionSpawnArgs {
-    #[serde(alias = "message", alias = "prompt")]
-    task: String,
+struct RawSessionSpawnArgs {
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default, alias = "agentId", alias = "agent_id")]
@@ -1173,6 +1177,40 @@ struct SessionSpawnArgs {
     run_timeout_seconds: Option<f64>,
     #[serde(default)]
     cleanup: Option<String>,
+}
+
+#[derive(Debug)]
+struct SessionSpawnArgs {
+    task: String,
+    label: Option<String>,
+    agent_id: Option<String>,
+    agent_name: Option<String>,
+    model: Option<String>,
+    run_timeout_seconds: Option<f64>,
+    cleanup: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for SessionSpawnArgs {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawSessionSpawnArgs::deserialize(deserializer)?;
+        let task = raw
+            .task
+            .or(raw.message)
+            .or(raw.prompt)
+            .ok_or_else(|| serde::de::Error::missing_field("task"))?;
+        Ok(Self {
+            task,
+            label: raw.label,
+            agent_id: raw.agent_id,
+            agent_name: raw.agent_name,
+            model: raw.model,
+            run_timeout_seconds: raw.run_timeout_seconds,
+            cleanup: raw.cleanup,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -3556,7 +3594,14 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "session_id": child_session_id.clone(),
             "child_session_id": child_session_id.clone(),
             "task_started": true,
-            "next_step_hint": "spawn already dispatched the initial task to the child session; use send only for a follow-up turn"
+            "initial_turn_dispatched": true,
+            "follow_up_required": false,
+            "follow_up_condition": "Call send only after the child has already replied and you need another turn.",
+            "recommended_follow_up_target": {
+                "session_id": child_session_id.clone(),
+                "run_id": run_id.clone()
+            },
+            "next_step_hint": "spawn already dispatched the initial task to the child session; do not call send immediately. Use send only for a follow-up turn after the child reply."
         }));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
@@ -3606,6 +3651,8 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                     "session_id": child_session_id.clone(),
                     "child_session_id": child_session_id.clone(),
                     "task_started": true,
+                    "initial_turn_dispatched": true,
+                    "follow_up_required": false,
                     "reply": outcome.answer.unwrap_or_default(),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3616,6 +3663,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
                     "session_id": child_session_id.clone(),
                     "child_session_id": child_session_id.clone(),
                     "task_started": true,
+                    "initial_turn_dispatched": true,
                     "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
                     "elapsed_s": outcome.elapsed_s
                 }))
@@ -3627,6 +3675,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "session_id": child_session_id.clone(),
             "child_session_id": child_session_id.clone(),
             "task_started": true,
+            "initial_turn_dispatched": true,
             "error": err.to_string()
         })),
         Err(_) => Ok(json!({
@@ -3635,6 +3684,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "session_id": child_session_id.clone(),
             "child_session_id": child_session_id,
             "task_started": true,
+            "initial_turn_dispatched": true,
             "error": "timeout"
         })),
     }
@@ -8437,6 +8487,16 @@ mod tests {
         }))
         .expect("message alias should deserialize");
         assert_eq!(payload.task, "hello child");
+    }
+
+    #[test]
+    fn session_spawn_args_prefers_task_when_task_and_message_are_both_present() {
+        let payload: SessionSpawnArgs = serde_json::from_value(json!({
+            "task": "explicit task",
+            "message": "legacy alias"
+        }))
+        .expect("task and message should deserialize together");
+        assert_eq!(payload.task, "explicit task");
     }
 
     #[test]

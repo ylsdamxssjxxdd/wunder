@@ -995,6 +995,7 @@
   - `llm.default`：默认模型配置名称
 - `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
+  - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
@@ -1322,6 +1323,7 @@
   - `message`：提示信息
 - 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
 - 说明：压缩重建默认保留“最近用户消息窗口（最多 20k token，按 token 窗口而非固定轮次）+ 压缩摘要 + 当前用户消息”；`compaction` 事件会额外包含 `recent_user_messages_retained`、`recent_user_tokens_retained` 与 `recent_user_window_token_limit` 字段。
+- 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
 
 ### 4.1.11 `/wunder/admin/monitor/{session_id}`
 

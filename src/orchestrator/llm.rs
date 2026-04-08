@@ -12,6 +12,16 @@ struct ChatMessageRepairReport {
     repair: Option<Value>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LlmFailureKind {
+    Other,
+    ContextWindow,
+    Unavailable,
+}
+
+const LLM_UNAVAILABLE_MIN_RETRIES: u32 = 5;
+const LLM_UNAVAILABLE_RETRY_DELAYS_MS: [u64; 5] = [3_000, 6_000, 12_000, 20_000, 30_000];
+
 impl OutputTiming {
     fn mark_output(&mut self, now: Instant) {
         if self.first_output_at.is_none() {
@@ -401,7 +411,7 @@ impl Orchestrator {
         } else {
             self.resolve_llm_timeout_s(&effective_config)
         };
-        let max_attempts = effective_config.retry.unwrap_or(0).saturating_add(1).max(1);
+        let configured_attempts = effective_config.retry.unwrap_or(0).saturating_add(1).max(1);
         let mut attempt = 0u32;
         let mut last_err: anyhow::Error;
         loop {
@@ -534,39 +544,122 @@ impl Orchestrator {
                     return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }
                 Err(err) => {
+                    let failure_kind = classify_llm_failure(&err.to_string());
+                    let max_attempts = resolve_llm_max_attempts(configured_attempts, failure_kind);
+                    let should_retry = attempt < max_attempts;
+                    let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
+                    if emit_events && should_retry {
+                        let mut retry_payload = json!({
+                            "attempt": attempt,
+                            "max_attempts": max_attempts,
+                            "delay_s": retry_delay.as_secs_f64(),
+                            "retry_reason": llm_retry_reason(failure_kind),
+                            "stream": will_stream,
+                            "will_retry": true,
+                            "error": err.to_string(),
+                        });
+                        if let Value::Object(ref mut map) = retry_payload {
+                            round_info.insert_into(map);
+                        }
+                        emitter.emit("llm_stream_retry", retry_payload).await;
+                    }
                     last_err = err;
+                    if !should_retry {
+                        break;
+                    }
+                    if !retry_delay.is_zero() {
+                        self.sleep_or_cancel(session_id, retry_delay).await?;
+                    }
                 }
-            }
-
-            if attempt >= max_attempts {
-                break;
-            }
-            if emit_events && will_stream {
-                let delay_s = (attempt as f64).min(3.0);
-                let mut retry_payload = json!({
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                    "delay_s": delay_s,
-                    "will_retry": true,
-                });
-                if let Value::Object(ref mut map) = retry_payload {
-                    round_info.insert_into(map);
-                }
-                emitter.emit("llm_stream_retry", retry_payload).await;
-                self.sleep_or_cancel(session_id, Duration::from_secs_f64(delay_s))
-                    .await?;
             }
         }
 
         let detail = last_err.to_string();
+        let failure_kind = classify_llm_failure(&detail);
+        let message_key = if matches!(failure_kind, LlmFailureKind::Unavailable) {
+            "error.llm_unavailable"
+        } else {
+            "error.llm_call_failed"
+        };
         let message = i18n::t_with_params(
-            "error.llm_call_failed",
+            message_key,
             &HashMap::from([("detail".to_string(), detail)]),
         );
-        if is_context_window_error_text(&message) {
-            return Err(OrchestratorError::context_window_exceeded(message));
+        match failure_kind {
+            LlmFailureKind::ContextWindow => {
+                Err(OrchestratorError::context_window_exceeded(message))
+            }
+            LlmFailureKind::Unavailable => Err(OrchestratorError::llm_unavailable(message)),
+            LlmFailureKind::Other => Err(OrchestratorError::internal(message)),
         }
-        Err(OrchestratorError::internal(message))
+    }
+}
+
+fn classify_llm_failure(message: &str) -> LlmFailureKind {
+    if is_context_window_error_text(message) {
+        return LlmFailureKind::ContextWindow;
+    }
+    if is_llm_unavailable_error_text(message) {
+        return LlmFailureKind::Unavailable;
+    }
+    LlmFailureKind::Other
+}
+
+fn is_llm_unavailable_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "error sending request",
+        "error trying to connect",
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "connection closed",
+        "server disconnected",
+        "broken pipe",
+        "failed to connect",
+        "timed out",
+        "timeout",
+        "dns error",
+        "temporarily unavailable",
+        "service unavailable",
+        "unavailable_error",
+        "loading model",
+        "503",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn resolve_llm_max_attempts(configured_attempts: u32, failure_kind: LlmFailureKind) -> u32 {
+    let configured_attempts = configured_attempts.max(1);
+    if matches!(failure_kind, LlmFailureKind::Unavailable) {
+        configured_attempts.max(LLM_UNAVAILABLE_MIN_RETRIES.saturating_add(1))
+    } else {
+        configured_attempts
+    }
+}
+
+fn resolve_llm_retry_delay(attempt: u32, failure_kind: LlmFailureKind) -> Duration {
+    if matches!(failure_kind, LlmFailureKind::Unavailable) {
+        let index = attempt.saturating_sub(1) as usize;
+        let delay_ms = LLM_UNAVAILABLE_RETRY_DELAYS_MS
+            .get(index)
+            .copied()
+            .unwrap_or(*LLM_UNAVAILABLE_RETRY_DELAYS_MS.last().unwrap_or(&30_000));
+        Duration::from_millis(delay_ms)
+    } else {
+        Duration::from_secs_f64((attempt as f64).min(3.0))
+    }
+}
+
+fn llm_retry_reason(failure_kind: LlmFailureKind) -> &'static str {
+    match failure_kind {
+        LlmFailureKind::ContextWindow => "context_window",
+        LlmFailureKind::Unavailable => "llm_unavailable",
+        LlmFailureKind::Other => "provider_error",
     }
 }
 
@@ -683,7 +776,11 @@ fn parse_context_limit_number(raw: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_context_window_limit_hint, is_context_window_error_text};
+    use super::{
+        classify_llm_failure, extract_context_window_limit_hint, is_context_window_error_text,
+        is_llm_unavailable_error_text, llm_retry_reason, resolve_llm_max_attempts,
+        resolve_llm_retry_delay, LlmFailureKind, LLM_UNAVAILABLE_MIN_RETRIES,
+    };
 
     #[test]
     fn detects_context_window_error_from_common_phrases() {
@@ -755,5 +852,37 @@ mod tests {
             Some(32768)
         );
         assert_eq!(extract_context_window_limit_hint("network timeout"), None);
+    }
+
+    #[test]
+    fn detects_llm_unavailable_transport_errors() {
+        assert!(is_llm_unavailable_error_text(
+            "error sending request for url (http://127.0.0.1:8001/v1/chat/completions)"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 503 {\"error\":{\"message\":\"Loading model\"}}"
+        ));
+        assert!(matches!(
+            classify_llm_failure("connection refused"),
+            LlmFailureKind::Unavailable
+        ));
+    }
+
+    #[test]
+    fn llm_unavailable_retries_use_floor_and_long_backoff() {
+        let attempts = resolve_llm_max_attempts(1, LlmFailureKind::Unavailable);
+        assert_eq!(attempts, LLM_UNAVAILABLE_MIN_RETRIES + 1);
+        assert_eq!(
+            resolve_llm_retry_delay(1, LlmFailureKind::Unavailable).as_secs(),
+            3
+        );
+        assert_eq!(
+            resolve_llm_retry_delay(5, LlmFailureKind::Unavailable).as_secs(),
+            30
+        );
+        assert_eq!(
+            llm_retry_reason(LlmFailureKind::Unavailable),
+            "llm_unavailable"
+        );
     }
 }

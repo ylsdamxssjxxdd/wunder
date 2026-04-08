@@ -9,6 +9,8 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 use tracing::warn;
 
 pub const AUTO_WAKE_CONFIG_KEY: &str = "_subagent_auto_wake";
@@ -22,6 +24,8 @@ const PARENT_TURN_REF_PREFIX: &str = "subagent_turn:";
 const DEFAULT_LIST_LIMIT: i64 = 200;
 const MAX_LIST_LIMIT: i64 = 500;
 const AUTO_WAKE_OBSERVATION_MAX_CHARS: usize = 240;
+const AUTO_WAKE_PARENT_UNLOCK_POLL_MS: u64 = 250;
+const AUTO_WAKE_PARENT_UNLOCK_MAX_WAIT_MS: u64 = 15_000;
 
 #[derive(Debug, Clone)]
 pub struct ParentTurnRef {
@@ -608,6 +612,7 @@ fn schedule_parent_auto_wake(
         }
     };
     tokio::spawn(async move {
+        wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
         if let Err(err) = run_parent_auto_wake(orchestrator, request).await {
             warn!(
                 "run parent auto wake failed: parent_session_id={}, error={err}",
@@ -616,6 +621,60 @@ fn schedule_parent_auto_wake(
             unmark_wake_once(&wake_key);
         }
     });
+}
+
+async fn wait_parent_session_unlock(
+    storage: Arc<dyn StorageBackend>,
+    user_id: &str,
+    parent_session_id: &str,
+) {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_parent_session_id = parent_session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_parent_session_id.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_millis(AUTO_WAKE_PARENT_UNLOCK_MAX_WAIT_MS);
+    loop {
+        match parent_session_has_active_lock(
+            storage.as_ref(),
+            cleaned_user_id,
+            cleaned_parent_session_id,
+        ) {
+            Ok(false) => return,
+            Ok(true) => {
+                if Instant::now() >= deadline {
+                    return;
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "list parent session locks failed before auto wake: parent_session_id={}, error={err}",
+                    cleaned_parent_session_id
+                );
+                return;
+            }
+        }
+        sleep(Duration::from_millis(AUTO_WAKE_PARENT_UNLOCK_POLL_MS)).await;
+    }
+}
+
+fn parent_session_has_active_lock(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    parent_session_id: &str,
+) -> Result<bool> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_parent_session_id = parent_session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_parent_session_id.is_empty() {
+        return Ok(false);
+    }
+    let now = now_ts();
+    Ok(storage
+        .list_session_locks_by_user(cleaned_user_id)?
+        .into_iter()
+        .any(|lock| {
+            lock.session_id.trim() == cleaned_parent_session_id && lock.expires_at > now
+        }))
 }
 
 fn build_parent_auto_wake_request(

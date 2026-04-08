@@ -6,6 +6,9 @@ const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
     "compaction_skip_persist_current_user";
 const COMPACTION_SUMMARY_REASONING_EFFORT: &str = "none";
+const COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS: i64 = 256;
+const COMPACTION_SUMMARY_TOOL_CALL_MAX_TOKENS: i64 = 96;
+const COMPACTION_SUMMARY_MAX_TOOL_NAMES: usize = 4;
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -112,34 +115,7 @@ impl Orchestrator {
         messages: Vec<Value>,
         max_tokens: i64,
     ) -> Vec<Value> {
-        if messages.is_empty() {
-            return messages;
-        }
-        let mut trimmed = Vec::with_capacity(messages.len());
-        for message in messages {
-            let Some(obj) = message.as_object() else {
-                trimmed.push(message);
-                continue;
-            };
-            let role = obj.get("role").and_then(Value::as_str).unwrap_or("");
-            let content = obj.get("content").cloned().unwrap_or(Value::Null);
-            let mut new_message = obj.clone();
-            if let Value::String(text) = &content {
-                let target = max_tokens.max(1);
-                if approx_token_count(text) > target {
-                    new_message.insert(
-                        "content".to_string(),
-                        Value::String(trim_text_to_tokens(text, target, "...(truncated)")),
-                    );
-                }
-            }
-            if role == "assistant" {
-                new_message.remove("reasoning_content");
-                new_message.remove("reasoning");
-            }
-            trimmed.push(Value::Object(new_message));
-        }
-        trimmed
+        prepare_compaction_summary_messages(messages, max_tokens)
     }
 
     pub(super) fn locate_current_user_index(messages: &[Value]) -> Option<usize> {
@@ -464,9 +440,9 @@ impl Orchestrator {
 
         let summary_limit =
             HistoryManager::get_auto_compact_limit(&summary_config).unwrap_or(limit);
+        let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+        summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
         if estimate_messages_tokens(&summary_input) > summary_limit {
-            let per_message_limit = summary_limit.clamp(1, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-            summary_input = self.prepare_summary_messages(summary_input, per_message_limit);
             summary_input = self.shrink_messages_to_limit(summary_input, summary_limit);
         }
         if estimate_messages_tokens(&summary_input) > summary_limit {
@@ -512,6 +488,10 @@ impl Orchestrator {
         emitter.emit("llm_request", request_payload).await;
 
         let mut summary_fallback = false;
+        let mut summary_fallback_reason: Option<&'static str> = None;
+        let mut summary_failure_code: Option<String> = None;
+        let mut summary_failure_message: Option<String> = None;
+        let mut summary_failure_retryable: Option<bool> = None;
         let summary_text = match self
             .call_llm(
                 llm_config,
@@ -536,12 +516,20 @@ impl Orchestrator {
                     return Err(err);
                 }
                 summary_fallback = true;
+                summary_fallback_reason = Some("llm_request_failed");
+                summary_failure_code = Some(err.code().to_string());
+                summary_failure_message =
+                    Some(err.message().trim().chars().take(512).collect::<String>());
+                summary_failure_retryable = Some(err.retryable());
                 i18n::t("compaction.summary_fallback")
             }
         };
         let mut summary_text = HistoryManager::format_compaction_summary(&summary_text);
         if is_empty_compaction_summary(&summary_text) {
             summary_fallback = true;
+            if summary_fallback_reason.is_none() {
+                summary_fallback_reason = Some("empty_summary");
+            }
             let fallback_content = if user_content.trim().is_empty() {
                 i18n::t("compaction.summary_fallback")
             } else {
@@ -732,6 +720,27 @@ impl Orchestrator {
             "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
         });
         if let Value::Object(ref mut map) = compaction_payload {
+            if let Some(reason) = summary_fallback_reason {
+                map.insert(
+                    "summary_fallback_reason".to_string(),
+                    Value::String(reason.to_string()),
+                );
+            }
+            if let Some(code) = summary_failure_code {
+                map.insert("summary_failure_code".to_string(), Value::String(code));
+            }
+            if let Some(message) = summary_failure_message {
+                map.insert(
+                    "summary_failure_message".to_string(),
+                    Value::String(message),
+                );
+            }
+            if let Some(retryable) = summary_failure_retryable {
+                map.insert(
+                    "summary_failure_retryable".to_string(),
+                    Value::Bool(retryable),
+                );
+            }
             compaction_round.insert_into(map);
         }
         emitter.emit("compaction", compaction_payload).await;
@@ -1227,37 +1236,7 @@ impl Orchestrator {
     }
 
     pub(super) fn extract_memory_summary_text(&self, content: &Value) -> String {
-        match content {
-            Value::Null => String::new(),
-            Value::String(text) => strip_tool_calls(text).trim().to_string(),
-            Value::Array(parts) => {
-                let mut segments: Vec<String> = Vec::new();
-                for part in parts {
-                    let Some(obj) = part.as_object() else {
-                        continue;
-                    };
-                    let part_type = obj
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim()
-                        .to_lowercase();
-                    if part_type == "text" {
-                        let text = obj.get("text").and_then(Value::as_str).unwrap_or("");
-                        let cleaned = strip_tool_calls(text).trim().to_string();
-                        if !cleaned.is_empty() {
-                            segments.push(cleaned);
-                        }
-                        continue;
-                    }
-                    if part_type == "image_url" || obj.contains_key("image_url") {
-                        segments.push(i18n::t("memory.summary.image_placeholder"));
-                    }
-                }
-                segments.join("\n").trim().to_string()
-            }
-            other => strip_tool_calls(&other.to_string()).trim().to_string(),
-        }
+        extract_memory_summary_text_value(content)
     }
 
     pub(super) fn is_observation_message(role: &str, content: &Value) -> bool {
@@ -1679,6 +1658,10 @@ fn trim_message_to_fit_tokens(message: &Value, max_tokens: i64) -> Option<Value>
 }
 
 fn extract_guard_content_text(content: &Value) -> String {
+    extract_memory_summary_text_value(content)
+}
+
+fn extract_memory_summary_text_value(content: &Value) -> String {
     match content {
         Value::Null => String::new(),
         Value::String(text) => strip_tool_calls(text).trim().to_string(),
@@ -1712,6 +1695,245 @@ fn extract_guard_content_text(content: &Value) -> String {
             segments.join("\n").trim().to_string()
         }
         other => strip_tool_calls(&other.to_string()).trim().to_string(),
+    }
+}
+
+fn prepare_compaction_summary_messages(messages: Vec<Value>, max_tokens: i64) -> Vec<Value> {
+    if messages.is_empty() {
+        return messages;
+    }
+    let target = max_tokens.max(1);
+    let mut prepared = Vec::with_capacity(messages.len());
+    let mut merged_system_blocks: Vec<String> = Vec::new();
+    for message in messages {
+        let Some(obj) = message.as_object() else {
+            continue;
+        };
+        let role = obj
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if role.is_empty() {
+            continue;
+        }
+        let Some(mut content) = extract_compaction_summary_message_text(role.as_str(), obj) else {
+            continue;
+        };
+        let per_message_target = if is_compaction_observation_message(role.as_str(), obj) {
+            target.min(COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS)
+        } else if role == "assistant" && has_compaction_summary_tool_calls(obj) {
+            target.min(COMPACTION_SUMMARY_TOOL_CALL_MAX_TOKENS)
+        } else {
+            target
+        };
+        if approx_token_count(&content) > per_message_target {
+            content = trim_text_to_tokens(&content, per_message_target, "...(truncated)");
+        }
+        let normalized_role = normalize_compaction_summary_role(role.as_str());
+        if normalized_role == "system" {
+            merged_system_blocks.push(content);
+            continue;
+        }
+        prepared.push(json!({
+            "role": normalized_role,
+            "content": content,
+        }));
+    }
+    if !merged_system_blocks.is_empty() {
+        let merged = merged_system_blocks.join("\n\n");
+        let merged = if approx_token_count(&merged) > target {
+            trim_text_to_tokens(&merged, target, "...(truncated)")
+        } else {
+            merged
+        };
+        prepared.insert(0, json!({ "role": "system", "content": merged }));
+    }
+    prepared
+}
+
+fn normalize_compaction_summary_role(role: &str) -> &'static str {
+    match role {
+        "system" => "system",
+        "assistant" => "assistant",
+        _ => "user",
+    }
+}
+
+fn extract_compaction_summary_message_text(role: &str, obj: &Map<String, Value>) -> Option<String> {
+    let content = obj.get("content").unwrap_or(&Value::Null);
+    let text = if is_compaction_observation_message(role, obj) {
+        summarize_compaction_observation(content)
+    } else {
+        extract_memory_summary_text_value(content)
+    };
+    if !text.is_empty() {
+        return Some(text);
+    }
+    if role == "assistant" {
+        let tool_summary = summarize_compaction_tool_calls(
+            obj.get("tool_calls")
+                .or_else(|| obj.get("tool_call"))
+                .or_else(|| obj.get("function_call")),
+        );
+        if !tool_summary.is_empty() {
+            return Some(tool_summary);
+        }
+    }
+    None
+}
+
+fn is_compaction_observation_message(role: &str, obj: &Map<String, Value>) -> bool {
+    let content = obj.get("content").unwrap_or(&Value::Null);
+    Orchestrator::is_observation_message(role, content)
+}
+
+fn has_compaction_summary_tool_calls(obj: &Map<String, Value>) -> bool {
+    obj.get("tool_calls")
+        .or_else(|| obj.get("tool_call"))
+        .or_else(|| obj.get("function_call"))
+        .is_some()
+}
+
+fn summarize_compaction_observation(content: &Value) -> String {
+    let Some(raw) = content.as_str() else {
+        return extract_memory_summary_text_value(content);
+    };
+    let payload_text = raw.trim_start_matches(OBSERVATION_PREFIX).trim();
+    if payload_text.is_empty() {
+        return String::new();
+    }
+    let Ok(payload) = serde_json::from_str::<Value>(payload_text) else {
+        return strip_tool_calls(payload_text).trim().to_string();
+    };
+    let Some(map) = payload.as_object() else {
+        return extract_memory_summary_text_value(&payload);
+    };
+    let tool_name = map
+        .get("tool")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown");
+    let status = match map.get("ok").and_then(Value::as_bool) {
+        Some(true) => "success",
+        Some(false) => "failed",
+        None => "recorded",
+    };
+    let mut headline = format!("Tool observation ({tool_name}): {status}");
+    if let Some(code) = map
+        .get("error_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        headline.push_str(&format!(" [{code}]"));
+    }
+    let detail = extract_compaction_observation_detail(map);
+    if detail.is_empty() {
+        headline
+    } else {
+        format!("{headline}\n{detail}")
+    }
+}
+
+fn extract_compaction_observation_detail(map: &Map<String, Value>) -> String {
+    for key in ["error", "message", "summary", "preview"] {
+        if let Some(value) = map.get(key) {
+            if let Some(text) = extract_compaction_observation_text_candidate(value) {
+                return text;
+            }
+        }
+    }
+    map.get("data")
+        .and_then(extract_compaction_observation_text_candidate)
+        .unwrap_or_default()
+}
+
+fn extract_compaction_observation_text_candidate(value: &Value) -> Option<String> {
+    match value {
+        Value::Null => None,
+        Value::String(_) | Value::Array(_) => {
+            let text = extract_memory_summary_text_value(value);
+            let cleaned = text.trim();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned.to_string())
+            }
+        }
+        Value::Object(map) => {
+            for key in [
+                "failure_summary",
+                "error_detail_head",
+                "summary",
+                "preview",
+                "result",
+                "message",
+                "stderr",
+                "stdout",
+                "content",
+                "text",
+                "structured_content",
+            ] {
+                if let Some(text) = map
+                    .get(key)
+                    .and_then(extract_compaction_observation_text_candidate)
+                {
+                    return Some(text);
+                }
+            }
+            None
+        }
+        other => {
+            let text = strip_tool_calls(&other.to_string()).trim().to_string();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+    }
+}
+
+fn summarize_compaction_tool_calls(tool_calls: Option<&Value>) -> String {
+    let Some(tool_calls) = tool_calls else {
+        return String::new();
+    };
+    let mut tool_names = collect_compaction_tool_call_names(tool_calls);
+    tool_names.dedup();
+    if tool_names.is_empty() {
+        return "Assistant issued tool call(s).".to_string();
+    }
+    let hidden = tool_names
+        .len()
+        .saturating_sub(COMPACTION_SUMMARY_MAX_TOOL_NAMES);
+    tool_names.truncate(COMPACTION_SUMMARY_MAX_TOOL_NAMES);
+    let mut summary = format!("Assistant issued tool call(s): {}", tool_names.join(", "));
+    if hidden > 0 {
+        summary.push_str(&format!(" (+{hidden} more)"));
+    }
+    summary
+}
+
+fn collect_compaction_tool_call_names(tool_calls: &Value) -> Vec<String> {
+    match tool_calls {
+        Value::Array(items) => items
+            .iter()
+            .flat_map(collect_compaction_tool_call_names)
+            .collect(),
+        Value::Object(map) => map
+            .get("function")
+            .and_then(Value::as_object)
+            .and_then(|function| function.get("name"))
+            .or_else(|| map.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+        _ => Vec::new(),
     }
 }
 
@@ -2388,6 +2610,67 @@ mod tests {
             Some(COMPACTION_SUMMARY_MAX_OUTPUT as u32)
         );
         assert_eq!(payload["reasoning"]["effort"], "none");
+    }
+
+    #[test]
+    fn test_prepare_compaction_summary_messages_compacts_observation_payload() {
+        let preview = "X".repeat(12_000);
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "read_file",
+                    "ok": true,
+                    "data": {
+                        "preview": preview,
+                        "original_chars": 12000,
+                    }
+                }))
+            }),
+        ];
+        let prepared = prepare_compaction_summary_messages(messages, 2048);
+        assert_eq!(prepared.len(), 2);
+        assert_eq!(
+            prepared[0].get("role").and_then(Value::as_str),
+            Some("system")
+        );
+        let observation = prepared[1]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(observation.contains("Tool observation (read_file): success"));
+        assert!(!observation.contains(OBSERVATION_PREFIX));
+        assert!(approx_token_count(observation) <= COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS);
+    }
+
+    #[test]
+    fn test_prepare_compaction_summary_messages_merges_system_and_flattens_tool_calls() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "system", "content": "artifact index" }),
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    { "function": { "name": "search_content" } },
+                    { "function": { "name": "read_file" } }
+                ]
+            }),
+        ];
+        let prepared = prepare_compaction_summary_messages(messages, 2048);
+        assert_eq!(prepared.len(), 2);
+        assert_eq!(
+            prepared[0].get("content").and_then(Value::as_str),
+            Some("system prompt\n\nartifact index")
+        );
+        let assistant = prepared[1]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(assistant.contains("search_content"));
+        assert!(assistant.contains("read_file"));
+        assert!(prepared[1].get("tool_calls").is_none());
     }
 
     #[test]
