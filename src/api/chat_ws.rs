@@ -49,6 +49,8 @@ struct WsStartPayload {
     content: String,
     #[serde(default)]
     stream: Option<bool>,
+    #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    debug_payload: bool,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
     #[serde(default)]
@@ -345,6 +347,7 @@ async fn handle_ws(
                             ChatRequestOverrides {
                                 tool_call_mode: payload.tool_call_mode,
                                 approval_mode: payload.approval_mode,
+                                debug_payload: payload.debug_payload,
                             },
                         )
                         .await

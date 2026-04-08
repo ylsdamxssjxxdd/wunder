@@ -6585,22 +6585,29 @@ const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean =>
   )
     .trim()
     .toLowerCase();
-  return panelStatus !== 'pending';
-};
-
-const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
-  if (String(message?.role || '') !== 'assistant') return false;
+  if (panelStatus === 'pending') return false;
+  const isStreaming = Boolean(
+    message?.workflowStreaming ||
+      message?.reasoningStreaming ||
+      message?.stream_incomplete
+  );
+  if (!isStreaming) return true;
   const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
-  if (!snapshot) return false;
-  const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
-  if (detailStatus === 'skipped') return false;
-  if (!isCompactionRunningFromWorkflowItems(message?.workflowItems)) return true;
   const triggerMode = String(
-    snapshot.detail?.trigger_mode ?? snapshot.detail?.triggerMode ?? ''
+    snapshot?.detail?.trigger_mode ?? snapshot?.detail?.triggerMode ?? ''
   )
     .trim()
     .toLowerCase();
   return triggerMode === 'manual';
+};
+
+const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
+  if (!isCompactionMarkerMessage(message)) return false;
+  const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
+  if (!snapshot) return false;
+  const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
+  if (detailStatus === 'skipped') return false;
+  return true;
 };
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {

@@ -500,6 +500,7 @@ impl Orchestrator {
                         request_overhead_tokens,
                         force_compaction_on_entry,
                         true,
+                        None,
                     )
                     .await?;
                 if force_compaction_on_entry {
@@ -666,6 +667,7 @@ impl Orchestrator {
                                     request_overhead_tokens,
                                     true,
                                     true,
+                                    None,
                                 )
                                 .await?;
                             let _ = self
@@ -2357,7 +2359,7 @@ impl Orchestrator {
         }
     }
 
-    async fn finish_active_turn(
+    pub(super) async fn finish_active_turn(
         &self,
         session_id: &str,
         turn_id: &str,
@@ -2407,7 +2409,7 @@ impl Orchestrator {
         .await;
     }
 
-    async fn emit_thread_runtime_update(
+    pub(super) async fn emit_thread_runtime_update(
         &self,
         emitter: &EventEmitter,
         round_info: RoundInfo,
@@ -3125,7 +3127,7 @@ async fn emit_approval_resolved_event(
     emitter.emit("approval_resolved", payload).await;
 }
 
-fn turn_terminal_status_for_error(err: &OrchestratorError) -> &'static str {
+pub(super) fn turn_terminal_status_for_error(err: &OrchestratorError) -> &'static str {
     match err.code() {
         "CANCELLED" => "cancelled",
         "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "INVALID_REQUEST" => "rejected",
@@ -3133,7 +3135,7 @@ fn turn_terminal_status_for_error(err: &OrchestratorError) -> &'static str {
     }
 }
 
-async fn emit_turn_terminal_event(
+pub(super) async fn emit_turn_terminal_event(
     emitter: &EventEmitter,
     round_info: RoundInfo,
     event: TurnTerminalEvent<'_>,
@@ -3185,13 +3187,13 @@ struct ApprovalResolvedEvent<'a> {
     resolved_by: Option<&'a str>,
 }
 
-struct TurnTerminalEvent<'a> {
-    status: &'a str,
-    stop_reason: Option<&'a str>,
-    round_usage: Option<&'a TokenUsage>,
-    error: Option<&'a OrchestratorError>,
-    waiting_for_user_input: bool,
-    stop_meta: Option<&'a Value>,
+pub(super) struct TurnTerminalEvent<'a> {
+    pub(super) status: &'a str,
+    pub(super) stop_reason: Option<&'a str>,
+    pub(super) round_usage: Option<&'a TokenUsage>,
+    pub(super) error: Option<&'a OrchestratorError>,
+    pub(super) waiting_for_user_input: bool,
+    pub(super) stop_meta: Option<&'a Value>,
 }
 
 fn extract_control_summary(args: &Value) -> Option<String> {

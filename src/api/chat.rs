@@ -169,6 +169,8 @@ struct SendMessageRequest {
     content: String,
     #[serde(default)]
     stream: Option<bool>,
+    #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    debug_payload: bool,
     #[serde(default)]
     attachments: Option<Vec<ChatAttachment>>,
     #[serde(default)]
@@ -186,6 +188,7 @@ struct SendMessageRequest {
 pub(crate) struct ChatRequestOverrides {
     pub(crate) tool_call_mode: Option<String>,
     pub(crate) approval_mode: Option<String>,
+    pub(crate) debug_payload: bool,
 }
 
 async fn chat_transport(
@@ -272,6 +275,8 @@ struct SessionTitleUpdateRequest {
 struct SessionCompactionRequest {
     #[serde(default)]
     model_name: Option<String>,
+    #[serde(default, alias = "debugPayload", alias = "debug_payload")]
+    debug_payload: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1219,6 +1224,7 @@ async fn send_message(
         ChatRequestOverrides {
             tool_call_mode: payload.tool_call_mode,
             approval_mode: payload.approval_mode,
+            debug_payload: payload.debug_payload,
         },
     )
     .await?;
@@ -1478,7 +1484,7 @@ pub(crate) async fn build_chat_request(
         tool_names,
         skip_tool_calls: false,
         stream,
-        debug_payload: false,
+        debug_payload: request_overrides.debug_payload,
         session_id: Some(session_id),
         agent_id: record.agent_id.clone(),
         model_name: selected_model_name,
@@ -2020,23 +2026,48 @@ async fn compact_session(
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
-
-    let compaction_result = state
-        .kernel
-        .orchestrator
-        .force_compact_session(
-            &resolved.user.user_id,
-            &session_id,
-            UserStore::is_admin(&resolved.user),
-            payload.model_name.as_deref(),
-            agent_id.as_deref(),
-            agent_prompt.as_deref(),
-        )
-        .await
-        .map_err(|err| map_orchestrator_error(Error::new(err)))?;
-
+    let user_id = resolved.user.user_id.clone();
+    let is_admin = UserStore::is_admin(&resolved.user);
+    let manual_user_round = state.monitor.register(
+        &session_id,
+        &user_id,
+        agent_id.as_deref().unwrap_or(""),
+        "",
+        is_admin,
+        payload.debug_payload,
+    );
+    let orchestrator = state.kernel.orchestrator.clone();
+    let session_id_for_task = session_id.clone();
+    let user_id_for_task = user_id.clone();
+    let model_name = payload.model_name.clone();
+    let agent_id_for_task = agent_id.clone();
+    let agent_prompt_for_task = agent_prompt.clone();
+    let debug_payload = payload.debug_payload;
+    tokio::spawn(async move {
+        let result = orchestrator
+            .force_compact_session(
+                &user_id_for_task,
+                &session_id_for_task,
+                is_admin,
+                model_name.as_deref(),
+                agent_id_for_task.as_deref(),
+                agent_prompt_for_task.as_deref(),
+                Some(manual_user_round),
+                debug_payload,
+                true,
+            )
+            .await;
+        if let Err(err) = result {
+            warn!("manual compaction turn failed for session {session_id_for_task}: {err}");
+        }
+    });
     Ok(Json(json!({
-        "data": compaction_result
+        "data": {
+            "accepted": true,
+            "running": true,
+            "user_round": manual_user_round,
+            "session_id": session_id,
+        }
     })))
 }
 

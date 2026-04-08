@@ -47,7 +47,7 @@ import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
-import { chatDebugLog } from '@/utils/chatDebug';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
@@ -90,6 +90,7 @@ type SnapshotAssistantMessage = {
   stream_round?: number;
   waiting_updated_at_ms?: number | null;
   waiting_first_output_at_ms?: number | null;
+  waiting_phase_first_output_at_ms?: number | null;
   workflowItems?: unknown[];
   plan?: unknown;
   questionPanel?: unknown;
@@ -1009,8 +1010,17 @@ const touchAssistantWaitingActivity = (message, value = Date.now()) => {
   return millis;
 };
 
+const resetAssistantWaitingOutputPhase = (message, value = Date.now()) => {
+  const millis = touchAssistantWaitingActivity(message, value) ?? Date.now();
+  message.waiting_phase_first_output_at_ms = null;
+  return millis;
+};
+
 const markAssistantWaitingOutputVisible = (message, value = Date.now()) => {
   const millis = touchAssistantWaitingActivity(message, value) ?? Date.now();
+  if (!Number.isFinite(Number(message?.waiting_phase_first_output_at_ms))) {
+    message.waiting_phase_first_output_at_ms = millis;
+  }
   if (!Number.isFinite(Number(message?.waiting_first_output_at_ms))) {
     message.waiting_first_output_at_ms = millis;
   }
@@ -1416,6 +1426,12 @@ const normalizeSnapshotMessage = (message) => {
     if (waitingFirstOutputAtMs !== null) {
       base.waiting_first_output_at_ms = waitingFirstOutputAtMs;
     }
+    const waitingPhaseFirstOutputAtMs = normalizeInteractionTimestamp(
+      message.waiting_phase_first_output_at_ms ?? message.waitingPhaseFirstOutputAtMs
+    );
+    if (waitingPhaseFirstOutputAtMs !== null) {
+      base.waiting_phase_first_output_at_ms = waitingPhaseFirstOutputAtMs;
+    }
     if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
       base.workflowItems = message.workflowItems;
     }
@@ -1594,6 +1610,9 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const snapshotSubagents = normalizeMessageSubagents(snapshot.subagents);
   const snapshotWaitingUpdatedAtMs = normalizeInteractionTimestamp(snapshot.waiting_updated_at_ms);
   const snapshotWaitingFirstOutputAtMs = normalizeInteractionTimestamp(snapshot.waiting_first_output_at_ms);
+  const snapshotWaitingPhaseFirstOutputAtMs = normalizeInteractionTimestamp(
+    snapshot.waiting_phase_first_output_at_ms
+  );
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1607,6 +1626,7 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       snapshot.slow_client ||
       snapshotWaitingUpdatedAtMs !== null ||
       snapshotWaitingFirstOutputAtMs !== null ||
+      snapshotWaitingPhaseFirstOutputAtMs !== null ||
       hasWorkflowItems ||
       hasSnapshotPlan ||
       snapshotRound !== null ||
@@ -1686,6 +1706,13 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       )
     ) {
       target.waiting_first_output_at_ms = snapshotWaitingFirstOutputAtMs;
+    }
+    if (
+      snapshotWaitingPhaseFirstOutputAtMs !== null &&
+      snapshotWaitingPhaseFirstOutputAtMs >=
+        (normalizeInteractionTimestamp(target.waiting_phase_first_output_at_ms) ?? 0)
+    ) {
+      target.waiting_phase_first_output_at_ms = snapshotWaitingPhaseFirstOutputAtMs;
     }
   }
   if (snapshotStats) {
@@ -7219,7 +7246,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const ensureOutputItem = () => {
     if (!outputItemId) {
-      const item = buildWorkflowItem('模型输出', '', 'loading');
+      const item = buildWorkflowItem('模型输出', '', 'loading', {
+        eventType: 'llm_output',
+        isModelOutput: true
+      });
       outputItemId = item.id;
       assistantMessage.workflowItems.push(item);
     }
@@ -7371,6 +7401,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'llm_request': {
+        resetAssistantWaitingOutputPhase(assistantMessage, payload?.timestamp ?? data?.timestamp);
+        chatDebugLog('chat.llm.request', 'event', {
+          sessionId: options.sessionId ?? null,
+          round: resolveRound(payload, data),
+          purpose: String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase(),
+          payloadOmitted: Boolean((data ?? payload ?? {})?.payload_omitted),
+          request: data ?? payload ?? {}
+        });
         const requestPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
         if (requestPurpose === 'compaction_summary') {
           chatDebugLog('chat.compaction.event', 'llm-request-compaction-summary', {
@@ -7603,6 +7641,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'tool_result': {
+        resetAssistantWaitingOutputPhase(assistantMessage, payload?.timestamp ?? data?.timestamp);
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name;
         const toolCallId = extractToolCallRef(payload, data);
         const result = data?.result ?? payload?.result ?? data?.output ?? payload?.output ?? data ?? payload;
@@ -8406,6 +8445,9 @@ const hydrateMessage = (message, workflowState) => {
     ),
     waiting_first_output_at_ms: normalizeInteractionTimestamp(
       message?.waiting_first_output_at_ms ?? message?.waitingFirstOutputAtMs
+    ),
+    waiting_phase_first_output_at_ms: normalizeInteractionTimestamp(
+      message?.waiting_phase_first_output_at_ms ?? message?.waitingPhaseFirstOutputAtMs
     ),
     hiddenInternal: normalizeHiddenInternalMessage(message?.hiddenInternal),
     subagents: normalizeMessageSubagents(message?.subagents),
@@ -9405,17 +9447,41 @@ export const useChatStore = defineStore('chat', {
         hasResumeController: Boolean(runtime?.resumeController)
       });
       const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
+      chatDebugLog('chat.store.detail', 'foreground-sync-decision', {
+        sessionId: targetSessionId,
+        preserveWatcher,
+        hydrateForegroundMessages,
+        remoteRunning,
+        activeSessionKey,
+        hasPendingAssistantAfterHydration,
+        cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
+        nextMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+        compactionRoundCount: compactionHydrationRounds.length,
+        runtime: buildRuntimeDebugSnapshot(runtime)
+      });
       if (preserveWatcher && !hydrateForegroundMessages) {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
           (activeSessionKey === targetSessionId ? this.messages : null);
         if (Array.isArray(watchedMessages)) {
+          chatDebugLog('chat.store.detail', 'foreground-sync-keep-live', {
+            sessionId: targetSessionId,
+            watchedMessageCount: watchedMessages.length,
+            hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+            compactionRoundCount: compactionHydrationRounds.length
+          });
           nextMessages = watchedMessages;
         }
       } else if (preserveWatcher) {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
           (activeSessionKey === targetSessionId ? this.messages : null);
+        chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
+          sessionId: targetSessionId,
+          watchedMessageCount: Array.isArray(watchedMessages) ? watchedMessages.length : 0,
+          hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
+          compactionRoundCount: compactionHydrationRounds.length
+        });
         nextMessages = replaceMessageArrayKeepingReference(watchedMessages, nextMessages);
       }
       cacheSessionMessages(targetSessionId, nextMessages);
@@ -9761,6 +9827,84 @@ export const useChatStore = defineStore('chat', {
       if (!targetId) {
         throw new Error(t('chat.command.compactMissingSession'));
       }
+      {
+        const activeSessionIdForManual = String(this.activeSessionId || '').trim();
+        const runtimeForManual = ensureRuntime(targetId);
+        const shouldWatchActiveSession = activeSessionIdForManual === targetId;
+        const debugPayloadEnabled = isChatDebugEnabled();
+        chatDebugLog('chat.compaction.manual', 'start', {
+          sessionId: targetId,
+          activeSessionId: activeSessionIdForManual,
+          shouldWatchActiveSession,
+          debugPayloadEnabled,
+          payload: buildCompactionDebugSummary(payload),
+          runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+        });
+        if (runtimeForManual) {
+          runtimeForManual.stopRequested = false;
+          if (runtimeForManual.compactController) {
+            runtimeForManual.compactController.abort();
+          }
+          runtimeForManual.compactController = new AbortController();
+        }
+        const compactControllerForManual = runtimeForManual?.compactController || null;
+        if (
+          shouldWatchActiveSession &&
+          !runtimeForManual?.watchController &&
+          !runtimeForManual?.sendController &&
+          !runtimeForManual?.resumeController
+        ) {
+          startSessionWatcher(this, targetId);
+        }
+        setSessionLoading(this, targetId, true);
+        try {
+          const requestPayload = {
+            ...(payload && typeof payload === 'object' ? payload : {}),
+            ...(debugPayloadEnabled ? { debug_payload: true } : {})
+          };
+          const { data } = await compactSessionApi(targetId, requestPayload, {
+            signal: compactControllerForManual?.signal
+          });
+          chatDebugLog('chat.compaction.manual', 'accepted', {
+            sessionId: targetId,
+            response:
+              data?.data && typeof data.data === 'object'
+                ? data.data
+                : data ?? null
+          });
+          return data?.data?.message || data?.message || '';
+        } catch (error) {
+          if (isAbortRequestError(error)) {
+            chatDebugLog('chat.compaction.manual', 'request-cancelled', {
+              sessionId: targetId,
+              runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+            });
+          } else {
+            const detailText = String(
+              error?.response?.data?.detail || error?.message || t('common.requestFailed')
+            ).trim();
+            chatDebugLog('chat.compaction.manual', 'request-failed', {
+              sessionId: targetId,
+              code: String(error?.response?.data?.code || error?.code || ''),
+              message: trimCompactionDebugText(detailText)
+            });
+          }
+          setSessionLoading(this, targetId, false);
+          throw error;
+        } finally {
+          if (
+            runtimeForManual &&
+            runtimeForManual.compactController === compactControllerForManual
+          ) {
+            runtimeForManual.compactController = null;
+          }
+          chatDebugLog('chat.compaction.manual', 'finalize', {
+            sessionId: targetId,
+            shouldWatchActiveSession,
+            runtime: buildRuntimeDebugSnapshot(runtimeForManual)
+          });
+        }
+      }
       const activeSessionId = String(this.activeSessionId || '').trim();
       const shouldResumeWatcher = activeSessionId === targetId;
       if (shouldResumeWatcher) {
@@ -10007,6 +10151,7 @@ export const useChatStore = defineStore('chat', {
         stream_incomplete: true,
         waiting_updated_at_ms: requestStartMs,
         waiting_first_output_at_ms: null,
+        waiting_phase_first_output_at_ms: null,
         stream_event_id: 0,
         stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
       };
@@ -10105,13 +10250,22 @@ export const useChatStore = defineStore('chat', {
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
         const approvalMode = normalizeApprovalMode(options.approvalMode ?? options.approval_mode);
+        const debugPayloadEnabled = isChatDebugEnabled();
         const payload = {
           content,
           stream: true,
+          ...(debugPayloadEnabled ? { debug_payload: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
           ...(approvalMode ? { approval_mode: approvalMode } : {})
         };
+        chatDebugLog('chat.llm.request', 'submit-start', {
+          sessionId,
+          transportHint: runtime?.sendRequestId ? 'ws-or-sse' : 'sse',
+          debugPayloadEnabled,
+          approvalMode: approvalMode || null,
+          attachmentCount: attachments.length
+        });
         const onEvent = (eventType, dataText, eventId) => {
           markRuntimeSendStreamActivity(runtime);
           const payload = safeJsonParse(dataText);
@@ -10443,7 +10597,7 @@ export const useChatStore = defineStore('chat', {
       message.slow_client = false;
       message.workflowStreaming = true;
       message.stream_incomplete = true;
-      message.waiting_updated_at_ms = Date.now();
+      resetAssistantWaitingOutputPhase(message);
       const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;
       cacheSessionMessages(sessionId, sessionMessagesRef);
       notifySessionSnapshot(this, sessionId, sessionMessagesRef);

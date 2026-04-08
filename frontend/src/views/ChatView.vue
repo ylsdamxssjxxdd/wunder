@@ -259,21 +259,25 @@
                 { 'message-compaction-marker': isCompactionMarkerMessage(message) }
               ]"
             >
-              <button
-                v-if="!isCompactionMarkerMessage(message)"
-                class="avatar"
-                :class="[
-                  message.role === 'user' ? 'user-avatar' : 'ai-avatar',
-                  { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
-                ]"
-                type="button"
-                :title="resolveMessageAvatarActionLabel(message)"
-                :aria-label="resolveMessageAvatarActionLabel(message)"
-                :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
-                @click="handleMessageAvatarClick(message)"
-              >
-                {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
-              </button>
+              <div v-if="!isCompactionMarkerMessage(message)" class="message-side">
+                <button
+                  class="avatar"
+                  :class="[
+                    message.role === 'user' ? 'user-avatar' : 'ai-avatar',
+                    { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
+                  ]"
+                  type="button"
+                  :title="resolveMessageAvatarActionLabel(message)"
+                  :aria-label="resolveMessageAvatarActionLabel(message)"
+                  :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
+                  @click="handleMessageAvatarClick(message)"
+                >
+                  {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
+                </button>
+                <div v-if="message.role === 'user'" class="message-side-meta">
+                  <span class="message-side-time">{{ formatTime(message.created_at) }}</span>
+                </div>
+              </div>
               <div class="message-content">
                 <template v-if="isCompactionMarkerMessage(message)">
                   <MessageCompactionDivider
@@ -287,8 +291,8 @@
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                   :is-streaming="isAssistantStreaming(message)"
                 />
-                <div class="message-header">
-                  <div class="message-header-left">
+                <div class="message-header" :class="{ 'message-header-user': message.role === 'user' }">
+                  <div v-if="message.role === 'assistant'" class="message-header-left">
                     <div class="message-role">
                       <span
                         v-if="message.role === 'assistant'"
@@ -311,33 +315,27 @@
                       :streaming="message.reasoningStreaming"
                     />
                   </div>
-                  <div v-if="message.role === 'assistant'" class="message-actions">
-                    <div class="message-time">{{ formatTime(message.created_at) }}</div>
-                    <button
-                      v-if="shouldShowResumeButton(message)"
-                      class="message-copy-btn message-resume-btn"
-                      type="button"
-                      :title="t('chat.message.resume')"
-                      :aria-label="t('chat.message.resume')"
-                      @click="handleResumeMessage(message)"
-                    >
-                      <i class="fa-solid fa-rotate" aria-hidden="true"></i>
-                      <span>{{ t('chat.message.resume') }}</span>
-                    </button>
-                    <MessageFeedbackActions :message="message" />
-                    <button
-                      class="message-copy-btn"
-                      type="button"
-                      :title="t('chat.message.copy')"
-                      :aria-label="t('chat.message.copy')"
-                      @click="handleCopyMessage(message)"
-                    >
-                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
-                      <span>{{ t('chat.message.copy') }}</span>
-                    </button>
-                  </div>
-                  <div v-else class="message-actions">
-                    <div class="message-time">{{ formatTime(message.created_at) }}</div>
+                  <div
+                    class="message-actions"
+                    :class="{ 'message-actions-user': message.role === 'user' }"
+                  >
+                    <div v-if="message.role === 'assistant'" class="message-time">
+                      {{ formatTime(message.created_at) }}
+                    </div>
+                    <template v-if="message.role === 'assistant'">
+                      <button
+                        v-if="shouldShowResumeButton(message)"
+                        class="message-copy-btn message-resume-btn"
+                        type="button"
+                        :title="t('chat.message.resume')"
+                        :aria-label="t('chat.message.resume')"
+                        @click="handleResumeMessage(message)"
+                      >
+                        <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+                        <span>{{ t('chat.message.resume') }}</span>
+                      </button>
+                      <MessageFeedbackActions :message="message" />
+                    </template>
                     <button
                       class="message-copy-btn"
                       type="button"
@@ -1640,22 +1638,24 @@ const isCompactionMarkerMessage = (message): boolean => {
   if (String(message.reasoning || '').trim()) return false;
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
-  return panelStatus !== 'pending';
-};
-
-const shouldShowCompactionDivider = (message): boolean => {
-  if (!message || message.role !== 'assistant') return false;
+  if (panelStatus === 'pending') return false;
+  if (!isAssistantStreaming(message)) return true;
   const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
-  if (!snapshot) return false;
-  const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
-  if (detailStatus === 'skipped') return false;
-  if (!isCompactionRunningFromWorkflowItems(message.workflowItems)) return true;
   const triggerMode = String(
-    snapshot.detail?.trigger_mode ?? snapshot.detail?.triggerMode ?? ''
+    snapshot?.detail?.trigger_mode ?? snapshot?.detail?.triggerMode ?? ''
   )
     .trim()
     .toLowerCase();
   return triggerMode === 'manual';
+};
+
+const shouldShowCompactionDivider = (message): boolean => {
+  if (!isCompactionMarkerMessage(message)) return false;
+  const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
+  if (!snapshot) return false;
+  const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
+  if (detailStatus === 'skipped') return false;
+  return true;
 };
 
 // Assistant replies render through Markdown so tables and rich text stay readable.

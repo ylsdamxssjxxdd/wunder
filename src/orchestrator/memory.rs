@@ -1,4 +1,8 @@
 use super::*;
+use super::execute::{
+    emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent,
+};
+use super::thread_runtime::ThreadRuntimeStatus;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
 const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
@@ -56,6 +60,21 @@ impl CompactionResetMode {
     fn skip_persist_current_user(self) -> bool {
         matches!(self, Self::Zero)
     }
+}
+
+fn insert_compaction_trigger_mode(
+    payload: &mut serde_json::Map<String, Value>,
+    trigger_mode: Option<&str>,
+) {
+    let Some(trigger_mode) = trigger_mode
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    payload
+        .entry("trigger_mode".to_string())
+        .or_insert_with(|| Value::String(trigger_mode.to_string()));
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -147,6 +166,7 @@ impl Orchestrator {
         request_overhead_tokens: i64,
         force: bool,
         exclude_current_user: bool,
+        trigger_mode: Option<&str>,
     ) -> Result<Vec<Value>, OrchestratorError> {
         let request_overhead_tokens = request_overhead_tokens.max(0);
         let persisted_context_tokens = persisted_context_tokens.max(0);
@@ -218,6 +238,7 @@ impl Orchestrator {
             "presampling_limit": compaction_decision.presampling_limit,
         });
         if let Value::Object(ref mut map) = compacting_payload {
+            insert_compaction_trigger_mode(map, trigger_mode);
             compaction_round.insert_into(map);
         }
         emitter.emit("progress", compacting_payload).await;
@@ -346,6 +367,7 @@ impl Orchestrator {
                     "fallback_trim_applied": guard_stats.fallback_trim_applied,
                 });
                 if let Value::Object(ref mut map) = guard_payload {
+                    insert_compaction_trigger_mode(map, trigger_mode);
                     compaction_round.insert_into(map);
                 }
                 emitter.emit("progress", guard_payload).await;
@@ -377,6 +399,7 @@ impl Orchestrator {
                 "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
             });
             if let Value::Object(ref mut map) = compaction_payload {
+                insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
             emitter.emit("compaction", compaction_payload).await;
@@ -483,6 +506,7 @@ impl Orchestrator {
             })
         };
         if let Value::Object(ref mut map) = request_payload {
+            insert_compaction_trigger_mode(map, trigger_mode);
             compaction_round.insert_into(map);
         }
         emitter.emit("llm_request", request_payload).await;
@@ -675,6 +699,7 @@ impl Orchestrator {
                 "fallback_trim_applied": guard_stats.fallback_trim_applied,
             });
             if let Value::Object(ref mut map) = guard_payload {
+                insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
             emitter.emit("progress", guard_payload).await;
@@ -724,6 +749,7 @@ impl Orchestrator {
             "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
         });
         if let Value::Object(ref mut map) = compaction_payload {
+            insert_compaction_trigger_mode(map, trigger_mode);
             if let Some(reason) = summary_fallback_reason {
                 map.insert(
                     "summary_fallback_reason".to_string(),
@@ -787,10 +813,74 @@ impl Orchestrator {
         model_name: Option<&str>,
         agent_id: Option<&str>,
         agent_prompt: Option<&str>,
+        manual_user_round_override: Option<i64>,
+        debug_payload: bool,
+        manage_runtime_turn: bool,
     ) -> Result<Value, OrchestratorError> {
+        let storage = self.storage.clone();
+        let session_id_for_offset = session_id.to_string();
+        let start_event_id = match tokio::task::spawn_blocking(move || {
+            storage.get_max_stream_event_id(&session_id_for_offset)
+        })
+        .await
+        {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                warn!("failed to load stream event offset for session {session_id}: {err}");
+                0
+            }
+            Err(err) => {
+                warn!("failed to load stream event offset for session {session_id}: {err}");
+                0
+            }
+        };
+        let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
+        let emitter = EventEmitter::new(
+            session_id.to_string(),
+            user_id.to_string(),
+            Some(queue_tx),
+            Some(self.storage.clone()),
+            self.monitor.clone(),
+            is_admin,
+            start_event_id,
+        );
+        let lifecycle_round_info =
+            RoundInfo::user_only(manual_user_round_override.unwrap_or(1).max(1));
+        let active_turn_id = if manage_runtime_turn {
+            let active_turn = self.active_turns.begin_turn(session_id);
+            let turn_id = active_turn.turn_id.clone();
+            self.emit_thread_runtime_update(
+                &emitter,
+                lifecycle_round_info,
+                self.thread_runtime.begin_turn(session_id, &turn_id),
+            )
+            .await;
+            Some(turn_id)
+        } else {
+            None
+        };
+
         let config = self.resolve_config(None).await;
-        let log_payload = is_debug_log_level(&config.observability.log_level);
-        let (_llm_name, llm_config) = self.resolve_llm_config(&config, model_name)?;
+        let log_payload = is_debug_log_level(&config.observability.log_level) || debug_payload;
+        let (_llm_name, llm_config) = match self.resolve_llm_config(&config, model_name) {
+            Ok(value) => value,
+            Err(err) => {
+                if manage_runtime_turn {
+                    self.emit_manual_compaction_failure(&emitter, lifecycle_round_info, &err)
+                        .await;
+                    self.finish_manual_compaction_turn(
+                        session_id,
+                        active_turn_id.as_deref(),
+                        &emitter,
+                        lifecycle_round_info,
+                        Err(&err),
+                    )
+                    .await;
+                    emitter.finish().await;
+                }
+                return Err(err);
+            }
+        };
         let skills_snapshot = self.skills.read().await.clone();
         let user_tool_bindings =
             self.user_tool_manager
@@ -845,40 +935,32 @@ impl Orchestrator {
             .await;
         messages.extend(history_messages);
         let messages = context_manager.normalize_messages(messages);
-        let manual_user_round = messages
-            .iter()
-            .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
-            .count() as i64
-            + 1;
+        let manual_user_round = manual_user_round_override.unwrap_or_else(|| {
+            messages
+                .iter()
+                .filter(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+                .count() as i64
+                + 1
+        });
         let manual_round_info = RoundInfo::user_only(manual_user_round.max(1));
-        let storage = self.storage.clone();
-        let session_id_for_offset = session_id.to_string();
-        let start_event_id = match tokio::task::spawn_blocking(move || {
-            storage.get_max_stream_event_id(&session_id_for_offset)
-        })
-        .await
-        {
-            Ok(Ok(value)) => value,
-            Ok(Err(err)) => {
-                warn!("failed to load stream event offset for session {session_id}: {err}");
-                0
+
+        if let Err(err) = self.ensure_not_cancelled(session_id) {
+            if manage_runtime_turn {
+                self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
+                    .await;
+                self.finish_manual_compaction_turn(
+                    session_id,
+                    active_turn_id.as_deref(),
+                    &emitter,
+                    manual_round_info,
+                    Err(&err),
+                )
+                .await;
+                emitter.finish().await;
             }
-            Err(err) => {
-                warn!("failed to load stream event offset for session {session_id}: {err}");
-                0
-            }
-        };
-        let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
-        let emitter = EventEmitter::new(
-            session_id.to_string(),
-            user_id.to_string(),
-            Some(queue_tx),
-            Some(self.storage.clone()),
-            self.monitor.clone(),
-            is_admin,
-            start_event_id,
-        );
-        self.ensure_not_cancelled(session_id)?;
+            return Err(err);
+        }
+
         let messages = match self
             .maybe_compact_messages(
                 &config,
@@ -896,33 +978,44 @@ impl Orchestrator {
                 0,
                 true,
                 false,
+                Some("manual"),
             )
             .await
         {
             Ok(messages) => messages,
             Err(err) => {
-                let status = if err.code() == "CANCELLED" {
-                    "cancelled"
-                } else {
-                    "failed"
-                };
-                let mut compaction_payload = json!({
-                    "stage": "context_overflow_recovery",
-                    "reason": "manual",
-                    "trigger": "force",
-                    "status": status,
-                    "error_code": err.code(),
-                    "error_message": err.message(),
-                });
-                if let Value::Object(ref mut map) = compaction_payload {
-                    manual_round_info.insert_into(map);
+                self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
+                    .await;
+                if manage_runtime_turn {
+                    self.finish_manual_compaction_turn(
+                        session_id,
+                        active_turn_id.as_deref(),
+                        &emitter,
+                        manual_round_info,
+                        Err(&err),
+                    )
+                    .await;
                 }
-                emitter.emit("compaction", compaction_payload).await;
                 emitter.finish().await;
                 return Err(err);
             }
         };
-        self.ensure_not_cancelled(session_id)?;
+        if let Err(err) = self.ensure_not_cancelled(session_id) {
+            self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
+                .await;
+            if manage_runtime_turn {
+                self.finish_manual_compaction_turn(
+                    session_id,
+                    active_turn_id.as_deref(),
+                    &emitter,
+                    manual_round_info,
+                    Err(&err),
+                )
+                .await;
+            }
+            emitter.finish().await;
+            return Err(err);
+        }
         let messages = context_manager.normalize_messages(messages);
         let context_tokens = context_manager.estimate_context_tokens(&messages);
         self.workspace
@@ -933,9 +1026,20 @@ impl Orchestrator {
             "message_count": messages.len(),
         });
         if let Value::Object(ref mut map) = context_payload {
+            insert_compaction_trigger_mode(map, Some("manual"));
             manual_round_info.insert_into(map);
         }
         emitter.emit("context_usage", context_payload).await;
+        if manage_runtime_turn {
+            self.finish_manual_compaction_turn(
+                session_id,
+                active_turn_id.as_deref(),
+                &emitter,
+                manual_round_info,
+                Ok(()),
+            )
+            .await;
+        }
         emitter.finish().await;
 
         let mut compaction_payload: Option<Value> = None;
@@ -974,6 +1078,89 @@ impl Orchestrator {
         }
 
         Ok(response_payload)
+    }
+
+    async fn emit_manual_compaction_failure(
+        &self,
+        emitter: &EventEmitter,
+        round_info: RoundInfo,
+        err: &OrchestratorError,
+    ) {
+        let status = if err.code() == "CANCELLED" {
+            "cancelled"
+        } else {
+            "failed"
+        };
+        let mut compaction_payload = json!({
+            "stage": "context_overflow_recovery",
+            "reason": "manual",
+            "trigger": "force",
+            "trigger_mode": "manual",
+            "status": status,
+            "error_code": err.code(),
+            "error_message": err.message(),
+        });
+        if let Value::Object(ref mut map) = compaction_payload {
+            round_info.insert_into(map);
+        }
+        emitter.emit("compaction", compaction_payload).await;
+    }
+
+    async fn finish_manual_compaction_turn(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+        emitter: &EventEmitter,
+        round_info: RoundInfo,
+        outcome: Result<(), &OrchestratorError>,
+    ) {
+        match outcome {
+            Ok(()) => {
+                emit_turn_terminal_event(
+                    emitter,
+                    round_info,
+                    TurnTerminalEvent {
+                        status: "completed",
+                        stop_reason: Some("manual_compaction"),
+                        round_usage: None,
+                        error: None,
+                        waiting_for_user_input: false,
+                        stop_meta: None,
+                    },
+                )
+                .await;
+            }
+            Err(err) => {
+                emit_turn_terminal_event(
+                    emitter,
+                    round_info,
+                    TurnTerminalEvent {
+                        status: turn_terminal_status_for_error(err),
+                        stop_reason: None,
+                        round_usage: None,
+                        error: Some(err),
+                        waiting_for_user_input: false,
+                        stop_meta: None,
+                    },
+                )
+                .await;
+            }
+        }
+        if let Some(active_turn_id) = turn_id {
+            self.finish_active_turn(
+                session_id,
+                active_turn_id,
+                emitter,
+                round_info,
+                ThreadRuntimeStatus::Idle,
+            )
+            .await;
+        }
+        match outcome {
+            Ok(()) => self.monitor.mark_finished(session_id),
+            Err(err) if err.code() == "CANCELLED" => self.monitor.mark_cancelled(session_id),
+            Err(err) => self.monitor.mark_error(session_id, err.message()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

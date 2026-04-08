@@ -2424,9 +2424,29 @@
 ### 聊天消息提交补充
 
 - `POST /wunder/chat/sessions/{session_id}/messages`
+- 请求体新增可选字段 `debug_payload`（兼容 `debugPayload`），仅用于调试模式下把本轮实际下发给模型的请求结构体透出到前端调试日志，不影响正常对话行为。
 - 现支持“仅附件、无正文”的提交方式：
   - 只要 `attachments[]` 中存在非空 `content` 或 `public_path`，即可不传文本正文。
   - 这同样适用于图片、文档、音频转写结果以及视频拆帧结果。
+
+### 手动上下文压缩
+
+- `POST /wunder/chat/sessions/{session_id}/compaction`
+- 鉴权：与聊天域保持一致（用户侧 Bearer Token）
+- 请求体：
+  - `model_name?`：可选，指定用于压缩摘要的模型。
+  - `debug_payload?`：可选，兼容 `debugPayload`，开启后会把压缩摘要阶段的模型请求结构体写入调试事件。
+- 行为：
+  - 接口命中后立即返回 accepted，不再阻塞等待压缩完成。
+  - 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。
+  - 刷新页面后，前端应通过会话事件与 runtime 快照恢复“压缩中/已完成/失败”状态，而不是依赖本地临时气泡。
+- 返回：
+  - `data.accepted`：固定为 `true`
+  - `data.running`：固定为 `true`
+  - `data.user_round`：本次手动压缩对应的用户轮次
+  - `data.session_id`：当前会话 ID
+- 说明：
+  - 手动压缩事件会额外带上 `trigger_mode=manual`，用于与智能体内部自动压缩区分，便于前端只对手动压缩渲染分割线。
 
 - 工具结果现在采用“双通道”：
   - 前端事件通道（`tool_result` SSE）保留结构化结果用于渲染与工作流关联：`tool/ok/data/tool_call_id`，并保留 `meta` 与失败关键信息（`error/error_code/retryable`）；仍会裁剪 `trace_id/user_round/model_round` 等轮次追踪噪声。

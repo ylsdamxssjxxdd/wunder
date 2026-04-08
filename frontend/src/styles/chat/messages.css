@@ -119,6 +119,10 @@
   align-items: flex-start;
 }
 
+.chat-shell .from-user {
+  flex-direction: row-reverse;
+}
+
 .chat-shell .message.message-compaction-marker {
   display: block;
   margin: 16px 0 18px;
@@ -130,6 +134,14 @@
   background: transparent;
   box-shadow: none;
   gap: 0;
+}
+
+.chat-shell .message-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .chat-shell .avatar {
@@ -163,6 +175,21 @@
 .chat-shell .avatar:focus-visible {
   outline: 2px solid rgba(var(--chat-primary-rgb), 0.4);
   outline-offset: 2px;
+}
+
+.chat-shell .message-side-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 34px;
+  color: var(--chat-muted);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.chat-shell .message-side-time {
+  font-variant-numeric: tabular-nums;
 }
 
 .chat-shell .ai-avatar {
@@ -273,6 +300,10 @@
   flex: 1 1 auto;
 }
 
+.chat-shell .message-header-user {
+  justify-content: flex-end;
+}
+
 .chat-shell .message-meta {
   display: flex;
   align-items: center;
@@ -285,6 +316,10 @@
   gap: 6px;
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.chat-shell .message-actions-user {
+  margin-left: 0;
 }
 
 .chat-shell .message-time {

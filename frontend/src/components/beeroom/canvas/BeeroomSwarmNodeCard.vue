@@ -176,17 +176,16 @@ watch(
 .beeroom-node-card::after {
   content: '';
   position: absolute;
-  inset: -36% -18%;
-  background: linear-gradient(
-    115deg,
-    transparent 0 34%,
-    rgba(255, 255, 255, 0.02) 42%,
-    var(--node-activity-sheen) 50%,
-    rgba(255, 255, 255, 0.02) 58%,
-    transparent 68% 100%
+  inset: -18%;
+  background: radial-gradient(
+    circle at 50% 44%,
+    var(--node-activity-sheen) 0%,
+    rgba(255, 255, 255, 0.05) 18%,
+    rgba(255, 255, 255, 0.02) 36%,
+    transparent 72%
   );
   opacity: 0;
-  transform: translate3d(-54%, 0, 0) rotate(8deg);
+  transform: scale(0.96);
   pointer-events: none;
 }
 
@@ -257,8 +256,8 @@ watch(
 .beeroom-node-card.is-running::after,
 .beeroom-node-card.is-queued::after,
 .beeroom-node-card.is-awaiting_idle::after {
-  opacity: 0.92;
-  animation: beeroom-node-activity-sheen 1.9s linear infinite;
+  opacity: 0.36;
+  animation: beeroom-node-activity-breathe 2.2s ease-in-out infinite;
 }
 
 .beeroom-node-card.is-running .beeroom-node-avatar,
@@ -670,13 +669,20 @@ watch(
   }
 }
 
-@keyframes beeroom-node-activity-sheen {
+@keyframes beeroom-node-activity-breathe {
   0% {
-    transform: translate3d(-54%, 0, 0) rotate(8deg);
+    opacity: 0.18;
+    transform: scale(0.94);
+  }
+
+  50% {
+    opacity: 0.46;
+    transform: scale(1.02);
   }
 
   100% {
-    transform: translate3d(54%, 0, 0) rotate(8deg);
+    opacity: 0.18;
+    transform: scale(0.94);
   }
 }
 

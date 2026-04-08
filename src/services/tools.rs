@@ -74,6 +74,7 @@ use crate::llm::embed_texts;
 use crate::lsp::LspDiagnostic;
 use crate::mcp;
 use crate::monitor::MonitorState;
+use crate::orchestrator_constants::DEFAULT_TOOL_TIMEOUT_S;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -83,7 +84,7 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
-    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom,
+    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom, resolve_agent_main_session,
     resolve_swarm_hive_id as resolve_swarm_hive_scope,
 };
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
@@ -112,8 +113,9 @@ use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use swarm_realtime::{
-    emit_swarm_run_started, emit_swarm_run_terminal, emit_swarm_task_dispatched,
-    emit_swarm_task_updated, sync_swarm_run_summary,
+    apply_session_run_to_swarm_task, emit_swarm_run_started, emit_swarm_run_terminal,
+    emit_swarm_task_dispatched, emit_swarm_task_updated, reconcile_swarm_task_from_session_run,
+    sync_swarm_run_summary,
 };
 use swarm_tool_hint::resolve_swarm_agent_record;
 use tokio::io::AsyncReadExt;
@@ -161,6 +163,7 @@ const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
 const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
 const SWARM_TASK_RESULT_MAX_CHARS: usize = 2000;
+const SWARM_TOOL_TIMEOUT_HEADROOM_S: f64 = 5.0;
 const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 
 fn compact_cron_tool_result(value: Value) -> Value {
@@ -1155,6 +1158,8 @@ struct SessionSendArgs {
         alias = "announce_emit_parent_events"
     )]
     announce_emit_parent_events: Option<bool>,
+    #[serde(default, rename = "teamTaskId", alias = "team_task_id")]
+    team_task_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1226,6 +1231,7 @@ struct SessionRunMeta {
     dispatch_id: Option<String>,
     run_kind: Option<String>,
     requested_by: Option<String>,
+    team_task_id: Option<String>,
     metadata: Option<Value>,
 }
 
@@ -1349,7 +1355,7 @@ fn build_prepared_child_run_metadata(
         "depth": depth,
         "role": subagent_role_for_scope(control_scope),
         "control_scope": control_scope,
-        "auto_wake": true,
+        "auto_wake": false,
         "emit_parent_events": true,
     })
 }
@@ -1614,6 +1620,7 @@ async fn dispatch_swarm_batch_task(
         SessionRunMeta {
             run_kind: Some("swarm".to_string()),
             requested_by: Some("agent_swarm".to_string()),
+            team_task_id: Some(task.team_task_id.clone()),
             ..SessionRunMeta::default()
         },
         announce,
@@ -1782,6 +1789,35 @@ fn build_swarm_wait_monitoring_payload(run_ids: &[String]) -> Value {
             }
         ]
     })
+}
+
+fn builtin_tool_timeout_budget_s(config: &Config) -> f64 {
+    let sandbox_timeout = if sandbox::sandbox_enabled(config) {
+        config.sandbox.timeout_s as f64
+    } else {
+        0.0
+    };
+    if sandbox_timeout > 0.0 {
+        sandbox_timeout.max(DEFAULT_TOOL_TIMEOUT_S)
+    } else {
+        DEFAULT_TOOL_TIMEOUT_S
+    }
+}
+
+fn clamp_swarm_wait_timeout_to_tool_budget(context: &ToolContext<'_>, wait_seconds: f64) -> f64 {
+    if wait_seconds <= 0.0 {
+        return 0.0;
+    }
+    let effective_budget_s =
+        (builtin_tool_timeout_budget_s(context.config) - SWARM_TOOL_TIMEOUT_HEADROOM_S).max(1.0);
+    wait_seconds.min(effective_budget_s)
+}
+
+fn is_swarm_task_terminal_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "success" | "error" | "failed" | "timeout" | "cancelled"
+    )
 }
 
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2015,24 +2051,30 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             requested_agent_name.as_deref(),
         )?
         .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
-        let dispatch_preview = build_swarm_dispatch_message(
-            context.storage.as_ref(),
-            context.monitor.as_deref(),
-            user_id,
-            &swarm_hive_id,
-            current_agent_id.as_deref(),
-            context.session_id,
-            None,
-            None,
-            &message,
-        )?;
-        let prepared = prepare_swarm_child_session(
-            context,
-            &dispatch_preview,
-            payload.label.clone(),
-            &target_agent.agent_id,
-        )?;
-        (target_agent, prepared.child_session_id, true)
+        if let Some(main_session) =
+            resolve_agent_main_session(context.storage.as_ref(), user_id, &target_agent.agent_id)?
+        {
+            (target_agent, main_session.session_id, false)
+        } else {
+            let dispatch_preview = build_swarm_dispatch_message(
+                context.storage.as_ref(),
+                context.monitor.as_deref(),
+                user_id,
+                &swarm_hive_id,
+                current_agent_id.as_deref(),
+                context.session_id,
+                None,
+                None,
+                &message,
+            )?;
+            let prepared = prepare_swarm_child_session(
+                context,
+                &dispatch_preview,
+                payload.label.clone(),
+                &target_agent.agent_id,
+            )?;
+            (target_agent, prepared.child_session_id, true)
+        }
     };
     let target_agent_id = target_agent.agent_id.clone();
 
@@ -2052,7 +2094,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         &run_record,
         &target_agent_id,
         Some(target_session_id.clone()),
-        Some(target_session_id.clone()),
+        created_session.then_some(target_session_id.clone()),
         0,
     );
     let dispatch_message = build_swarm_dispatch_message(
@@ -2069,10 +2111,13 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
-    let wait_timeout_seconds = payload
-        .timeout_seconds
-        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-        .max(0.0);
+    let wait_timeout_seconds = clamp_swarm_wait_timeout_to_tool_budget(
+        context,
+        payload
+            .timeout_seconds
+            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+            .max(0.0),
+    );
     let mut send_args = json!({
         "session_id": target_session_id,
         "message": dispatch_message,
@@ -2082,7 +2127,30 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     send_args["announceParentSessionId"] = json!(context.session_id);
     send_args["announcePersistHistory"] = json!(false);
     send_args["announceEmitParentEvents"] = json!(true);
-    let result = sessions_send(context, &send_args).await?;
+    send_args["teamTaskId"] = json!(task_record.task_id);
+    let result = match sessions_send(context, &send_args).await {
+        Ok(value) => value,
+        Err(err) => {
+            task_record.status = "error".to_string();
+            task_record.error = Some(truncate_text(
+                err.to_string().as_str(),
+                SWARM_TASK_RESULT_MAX_CHARS,
+            ));
+            task_record.updated_time = now_ts();
+            task_record.finished_time = Some(task_record.updated_time);
+            context.storage.upsert_team_task(&task_record)?;
+            emit_swarm_task_updated(context, &run_record, &task_record);
+            let (terminal, failed) = sync_swarm_run_summary(
+                context,
+                &mut run_record,
+                std::slice::from_ref(&task_record),
+            )?;
+            if terminal {
+                emit_swarm_run_terminal(context, &run_record, failed);
+            }
+            return Err(err);
+        }
+    };
     let status = result
         .get("status")
         .and_then(Value::as_str)
@@ -2098,45 +2166,56 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if let Some(run_id) = run_id.as_deref() {
         task_record.session_run_id = Some(run_id.to_string());
     }
-    task_record.status = match status.as_str() {
-        "ok" => "success".to_string(),
-        "timeout" => "timeout".to_string(),
-        "error" => "error".to_string(),
-        "" => "queued".to_string(),
-        _ => "queued".to_string(),
-    };
     let reply = result
         .get("reply")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    if let Some(reply) = reply.as_deref() {
-        task_record.result_summary = Some(truncate_text(reply, SWARM_TASK_RESULT_MAX_CHARS));
-    }
     let error_text = result
         .get("error")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    if let Some(error) = error_text.as_deref() {
-        task_record.error = Some(truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
-    }
-    task_record.elapsed_s = result
+    let elapsed_s = result
         .get("elapsed_s")
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite() && *value >= 0.0);
-    task_record.updated_time = now_ts();
-    if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
+    let should_sync_progress = matches!(status.as_str(), "" | "accepted" | "timeout");
+    if let Some(run_id) = run_id.as_deref() {
+        if should_sync_progress {
+            if let Some(session_run) = context.storage.get_session_run(run_id)? {
+                if !is_swarm_task_terminal_status(&session_run.status) {
+                    apply_session_run_to_swarm_task(&mut task_record, &session_run);
+                }
+            }
+            task_record.updated_time = task_record.updated_time.max(now_ts());
+            context.storage.upsert_team_task(&task_record)?;
+            emit_swarm_task_updated(context, &run_record, &task_record);
+            let (terminal, failed) = sync_swarm_run_summary(
+                context,
+                &mut run_record,
+                std::slice::from_ref(&task_record),
+            )?;
+            if terminal {
+                emit_swarm_run_terminal(context, &run_record, failed);
+            }
+        }
+    } else if status == "error" {
+        task_record.status = "error".to_string();
+        task_record.error = error_text
+            .as_deref()
+            .map(|error| truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
+        task_record.updated_time = now_ts();
         task_record.finished_time = Some(task_record.updated_time);
-    }
-    context.storage.upsert_team_task(&task_record)?;
-    emit_swarm_task_updated(context, &run_record, &task_record);
-    let (terminal, failed) =
-        sync_swarm_run_summary(context, &mut run_record, std::slice::from_ref(&task_record))?;
-    if terminal {
-        emit_swarm_run_terminal(context, &run_record, failed);
+        context.storage.upsert_team_task(&task_record)?;
+        emit_swarm_task_updated(context, &run_record, &task_record);
+        let (terminal, failed) =
+            sync_swarm_run_summary(context, &mut run_record, std::slice::from_ref(&task_record))?;
+        if terminal {
+            emit_swarm_run_terminal(context, &run_record, failed);
+        }
     }
     let mut response = json!({
         "action": "send",
@@ -2144,7 +2223,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         "run_id": run_id,
         "team_run_id": run_record.team_run_id,
         "task_id": task_record.task_id,
-        "elapsed_s": task_record.elapsed_s,
+        "elapsed_s": elapsed_s,
         "target_agent_id": target_agent_id,
         "target_agent_name": target_agent.name,
         "target_session_id": target_session_id,
@@ -2332,7 +2411,14 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             .ok_or_else(|| {
                 anyhow!("agent_swarm send requires agent_id/agent_name or session_id")
             })?;
-            (agent_record, None)
+            (
+                agent_record.clone(),
+                resolve_agent_main_session(
+                    context.storage.as_ref(),
+                    user_id,
+                    &agent_record.agent_id,
+                )?,
+            )
         };
         let mut task_record =
             create_swarm_team_task_record(&run_record, &agent_record.agent_id, None, None, 0);
@@ -2390,7 +2476,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 )
             };
         task_record.target_session_id = Some(session_id.clone());
-        task_record.spawned_session_id = Some(session_id.clone());
+        task_record.spawned_session_id = created_session.then_some(session_id.clone());
         context.storage.upsert_team_task(&task_record)?;
         emit_swarm_task_dispatched(context, &run_record, &task_record);
         task_records_by_index.insert(index, task_record.clone());
@@ -2435,6 +2521,11 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 if let Some(task_record) = task_records_by_index.get_mut(&index) {
                     if !run_id.is_empty() {
                         task_record.session_run_id = Some(run_id.clone());
+                        if let Some(session_run) = context.storage.get_session_run(&run_id)? {
+                            if !is_swarm_task_terminal_status(&session_run.status) {
+                                apply_session_run_to_swarm_task(task_record, &session_run);
+                            }
+                        }
                     }
                     let status = result
                         .get("status")
@@ -2442,33 +2533,19 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         .map(str::trim)
                         .unwrap_or("accepted")
                         .to_ascii_lowercase();
-                    task_record.status = match status.as_str() {
-                        "ok" => "success".to_string(),
-                        "timeout" => "timeout".to_string(),
-                        "error" => "error".to_string(),
-                        _ => "queued".to_string(),
-                    };
-                    if let Some(reply) = result
-                        .get("reply")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        task_record.result_summary =
-                            Some(truncate_text(reply, SWARM_TASK_RESULT_MAX_CHARS));
+                    if status == "error" && run_id.is_empty() {
+                        task_record.status = "error".to_string();
+                        task_record.error = result
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
+                        task_record.elapsed_s = result
+                            .get("elapsed_s")
+                            .and_then(Value::as_f64)
+                            .filter(|value| value.is_finite() && *value >= 0.0);
                     }
-                    if let Some(error) = result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                    {
-                        task_record.error = Some(truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
-                    }
-                    task_record.elapsed_s = result
-                        .get("elapsed_s")
-                        .and_then(Value::as_f64)
-                        .filter(|value| value.is_finite() && *value >= 0.0);
                     task_record.updated_time = now_ts();
                     if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
                         task_record.finished_time = Some(task_record.updated_time);
@@ -2564,10 +2641,13 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         "items": items,
     });
 
-    let wait_seconds = payload
-        .wait_seconds
-        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-        .max(0.0);
+    let wait_seconds = clamp_swarm_wait_timeout_to_tool_budget(
+        context,
+        payload
+            .wait_seconds
+            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+            .max(0.0),
+    );
     if wait_seconds > 0.0 {
         let poll_interval_seconds = payload
             .poll_interval_seconds
@@ -2688,10 +2768,13 @@ async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if run_ids.is_empty() {
         return Err(anyhow!("agent_swarm wait requires runIds"));
     }
-    let wait_seconds = payload
-        .wait_seconds
-        .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-        .max(0.0);
+    let wait_seconds = clamp_swarm_wait_timeout_to_tool_budget(
+        context,
+        payload
+            .wait_seconds
+            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
+            .max(0.0),
+    );
     let poll_interval_seconds = payload
         .poll_interval_seconds
         .unwrap_or(SWARM_WAIT_DEFAULT_POLL_S);
@@ -3305,6 +3388,7 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     };
     let announce_parent_session_id = normalize_optional_string(payload.announce_parent_session_id);
     let announce_label = normalize_optional_string(payload.label);
+    let swarm_team_task_id = normalize_optional_string(payload.team_task_id);
     let announce = announce_parent_session_id
         .filter(|parent_session_id| parent_session_id != &session_id)
         .map(|parent_session_id| AnnounceConfig {
@@ -3323,6 +3407,11 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         });
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
+    let (run_kind, requested_by) = if swarm_team_task_id.is_some() {
+        ("swarm".to_string(), "agent_swarm".to_string())
+    } else {
+        ("subagent".to_string(), "subagent_control".to_string())
+    };
     let receiver = spawn_session_run(
         context,
         request,
@@ -3331,8 +3420,9 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         record.agent_id.clone(),
         model_name,
         SessionRunMeta {
-            run_kind: Some("subagent".to_string()),
-            requested_by: Some("subagent_control".to_string()),
+            run_kind: Some(run_kind),
+            requested_by: Some(requested_by),
+            team_task_id: swarm_team_task_id,
             ..SessionRunMeta::default()
         },
         announce,
@@ -3345,8 +3435,16 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     if timeout_seconds <= 0.0 {
         return Ok(json!({
             "status": "accepted",
-            "run_id": run_id,
-            "session_id": session_id
+            "run_id": run_id.clone(),
+            "session_id": session_id.clone(),
+            "reply_pending": true,
+            "follow_up_required": true,
+            "follow_up_condition": "The child session has accepted the message, but the reply is still pending.",
+            "recommended_follow_up_target": {
+                "session_id": session_id,
+                "run_id": run_id
+            },
+            "next_step_hint": "send only queued the next child turn. Do not report the child reply or mark the task complete until wait/status/history confirms the child has finished this run."
         }));
     }
     let outcome = timeout(Duration::from_secs_f64(timeout_seconds), receiver).await;
@@ -3526,7 +3624,8 @@ fn prepare_child_session(
             parent_user_round: context.user_round,
             parent_model_round: context.model_round,
             emit_parent_events: true,
-            auto_wake: true,
+            // Single child sessions should not reopen the parent thread automatically.
+            auto_wake: false,
             persist_history_message: false,
         },
         run_metadata,
@@ -3595,13 +3694,15 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
             "child_session_id": child_session_id.clone(),
             "task_started": true,
             "initial_turn_dispatched": true,
-            "follow_up_required": false,
-            "follow_up_condition": "Call send only after the child has already replied and you need another turn.",
+            "child_reply_pending": true,
+            "reply_pending": true,
+            "follow_up_required": true,
+            "follow_up_condition": "The child session has accepted the initial task, but its first reply is still pending. Check status/wait/history before reporting completion or sending another turn.",
             "recommended_follow_up_target": {
                 "session_id": child_session_id.clone(),
                 "run_id": run_id.clone()
             },
-            "next_step_hint": "spawn already dispatched the initial task to the child session; do not call send immediately. Use send only for a follow-up turn after the child reply."
+            "next_step_hint": "spawn already dispatched the initial task to the child session. Do not report the child reply yet, and do not call send immediately. Use status/wait/history to confirm the first child reply before continuing."
         }));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
@@ -3768,6 +3869,9 @@ async fn spawn_session_run(
             json!(user_message_preview),
         );
     }
+    if let Some(team_task_id) = run_meta.team_task_id.as_deref() {
+        insert_run_metadata_field(&mut run_metadata, "team_task_id", json!(team_task_id));
+    }
     let now = now_ts();
     let record = SessionRunRecord {
         run_id: run_id.clone(),
@@ -3800,6 +3904,8 @@ async fn spawn_session_run(
     let storage = context.storage.clone();
     let workspace = context.workspace.clone();
     let monitor = context.monitor.clone();
+    let beeroom_realtime = context.beeroom_realtime.clone();
+    let swarm_team_task_id = run_meta.team_task_id.clone();
     let (tx, rx) = oneshot::channel::<SessionRunOutcome>();
     let announce_for_start = announce.clone();
     tokio::spawn(async move {
@@ -3907,6 +4013,21 @@ async fn spawn_session_run(
                 let _ = storage_for_finish.upsert_session_run(&finished_for_write);
             })
             .await;
+        }
+        if let Some(team_task_id) = swarm_team_task_id.as_deref() {
+            if let Err(err) = reconcile_swarm_task_from_session_run(
+                storage.as_ref(),
+                monitor.as_ref().map(Arc::clone),
+                beeroom_realtime.as_ref().map(Arc::clone),
+                team_task_id,
+                &finished_record,
+            ) {
+                warn!(
+                    task_id = team_task_id,
+                    run_id = %finished_record.run_id,
+                    "failed to reconcile swarm task from session run: {err}"
+                );
+            }
         }
 
         if let Some(announce) = announce {
@@ -9036,6 +9157,73 @@ PATCH"#;
         }))
         .expect("parse snake args");
         assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
+    }
+
+    #[test]
+    fn clamp_swarm_wait_timeout_to_tool_budget_reserves_headroom() {
+        let mut config = Config::default();
+        config.sandbox.mode = "sandbox".to_string();
+        config.sandbox.timeout_s = 300;
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-timeout-clamp.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let monitor = Arc::new(MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            SandboxConfig::default(),
+            workspace_root.to_string_lossy().to_string(),
+        ));
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_timeout",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_parent"),
+            user_round: None,
+            model_round: None,
+            is_admin: false,
+            storage,
+            orchestrator: None,
+            monitor: Some(monitor),
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        assert_eq!(
+            clamp_swarm_wait_timeout_to_tool_budget(&context, 60.0),
+            60.0
+        );
+        assert_eq!(
+            clamp_swarm_wait_timeout_to_tool_budget(&context, 300.0),
+            295.0
+        );
     }
 
     #[test]

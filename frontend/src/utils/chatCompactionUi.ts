@@ -487,14 +487,6 @@ export const buildCompactionDisplay = (
       tone: usedFallback ? 'warning' : 'default'
     });
   }
-  if (injectedSummary && injectedSummary !== modelOutput) {
-    outputs.push({
-      key: 'injected-summary',
-      title: t('chat.toolWorkflow.compaction.output.injectedTitle'),
-      body: injectedSummary,
-      tone: 'default'
-    });
-  }
   const outputEmpty = isRunning
     ? t('chat.toolWorkflow.compaction.output.pending')
     : normalizedStatus === 'guard_only'

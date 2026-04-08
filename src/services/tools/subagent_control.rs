@@ -512,7 +512,10 @@ fn find_single_direct_child_session_id(
         MAX_SESSION_LIST_ITEMS,
     )?;
     Ok(select_single_direct_child_session_id(
-        sessions.into_iter().map(|session| session.session_id).collect(),
+        sessions
+            .into_iter()
+            .map(|session| session.session_id)
+            .collect(),
     ))
 }
 
@@ -706,6 +709,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                 announce.emit_parent_events = true;
                 announce.auto_wake = true;
                 announce.persist_history_message = false;
+                super::insert_run_metadata_field(&mut run_metadata, "auto_wake", json!(true));
                 super::insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("batch"));
                 super::insert_run_metadata_field(
                     &mut run_metadata,
@@ -762,6 +766,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                         dispatch_id: Some(dispatch_id.clone()),
                         run_kind: Some("subagent".to_string()),
                         requested_by: Some("subagent_control".to_string()),
+                        team_task_id: None,
                         metadata: Some(run_metadata),
                     },
                     Some(announce),

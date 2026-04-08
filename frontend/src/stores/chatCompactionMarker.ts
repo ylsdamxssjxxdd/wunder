@@ -35,6 +35,30 @@ const resolveTimestampMs = (value: unknown): number | null => {
 
 const hasTextContent = (value: unknown): boolean => String(value ?? '').trim().length > 0;
 
+const isStreamingAssistantMessage = (message: ChatMessage | null | undefined): boolean =>
+  Boolean(
+    message?.workflowStreaming ||
+      message?.reasoningStreaming ||
+      message?.stream_incomplete
+  );
+
+const isManualCompactionWorkflowItem = (value: unknown): boolean => {
+  const item = asObject(value);
+  if (!item) return false;
+  const detail = parseDetailObject(item.detail ?? item.data ?? item.payload);
+  const triggerMode = normalizeText(detail?.trigger_mode ?? detail?.triggerMode);
+  if (triggerMode === 'manual') {
+    return true;
+  }
+  const workflowRef = normalizeText(item.toolCallId ?? item.tool_call_id ?? item.callId ?? item.call_id);
+  return workflowRef.startsWith('compaction:manual:');
+};
+
+const isManualCompactionMessage = (message: ChatMessage | null | undefined): boolean => {
+  const items = Array.isArray(message?.workflowItems) ? message.workflowItems : [];
+  return items.some((item) => isManualCompactionWorkflowItem(item));
+};
+
 const hasPlanSteps = (plan: unknown): boolean =>
   Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
   ((plan as { steps?: unknown[] } | null)?.steps?.length || 0) > 0;
@@ -94,7 +118,9 @@ export const isCompactionMarkerAssistantMessage = (message: ChatMessage | null |
   if (hasTextContent(message.content) || hasTextContent(message.reasoning)) return false;
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = normalizeText((message.questionPanel as Record<string, unknown> | null)?.status);
-  return panelStatus !== 'pending';
+  if (panelStatus === 'pending') return false;
+  if (!isStreamingAssistantMessage(message)) return true;
+  return isManualCompactionMessage(message);
 };
 
 const resolveWorkflowCallRef = (message: ChatMessage): string => {

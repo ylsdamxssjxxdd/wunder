@@ -90,18 +90,20 @@ const isAssistantStreaming = (message: Record<string, any>): boolean =>
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
   Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
 
-const hasAssistantWaitingForFirstOutput = (message: Record<string, any>): boolean => {
+const hasAssistantWaitingForCurrentOutput = (message: Record<string, any>): boolean => {
   const waitingUpdatedAtMs = Number(
     message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs ?? message?.stats?.interaction_start_ms
   );
   const waitingFirstOutputAtMs = Number(
-    message?.waiting_first_output_at_ms ?? message?.waitingFirstOutputAtMs
+    message?.waiting_phase_first_output_at_ms ??
+      message?.waitingPhaseFirstOutputAtMs ??
+      message?.waiting_first_output_at_ms ??
+      message?.waitingFirstOutputAtMs
   );
   return (
     Number.isFinite(waitingUpdatedAtMs) &&
     waitingUpdatedAtMs > 0 &&
-    (!Number.isFinite(waitingFirstOutputAtMs) || waitingFirstOutputAtMs <= 0) &&
-    !hasAssistantVisibleOutput(message)
+    (!Number.isFinite(waitingFirstOutputAtMs) || waitingFirstOutputAtMs <= 0)
   );
 };
 
@@ -121,6 +123,12 @@ const isToolWorkflowItem = (item: WorkflowItemLike): boolean => {
     eventType.startsWith('team_') ||
     eventType.startsWith('command_session_')
   );
+};
+
+const isModelOutputWorkflowItem = (item: WorkflowItemLike): boolean => {
+  if (!item || typeof item !== 'object') return false;
+  if (item?.isModelOutput) return true;
+  return normalizeWorkflowEventType(item?.eventType ?? item?.event) === 'llm_output';
 };
 
 const findLastWorkflowItem = (
@@ -220,8 +228,14 @@ const resolveAssistantStatusEntry = (
       return isToolWorkflowItem(item);
     }
   );
-  const hasAnyToolActivity = workflowItems.some((item) => isToolWorkflowItem(item));
-
+  const latestActiveModelOutput = findLastWorkflowItem(
+    workflowItems,
+    (item) => {
+      const status = normalizeWorkflowStatus(item?.status);
+      if (!ACTIVE_WORKFLOW_STATUSES.has(status)) return false;
+      return isModelOutputWorkflowItem(item);
+    }
+  );
   if (message?.resume_available && !isAssistantStreaming(message)) {
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
   }
@@ -240,14 +254,17 @@ const resolveAssistantStatusEntry = (
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
   }
-  if (isAssistantStreaming(message) && hasAnyToolActivity) {
-    return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
-  }
   if (isAssistantStreaming(message)) {
+    if (hasAssistantWaitingForCurrentOutput(message)) {
+      return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
+    }
+    if (latestActiveModelOutput.index >= 0 || message?.reasoningStreaming) {
+      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
+    }
     if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
       return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
     }
-    if (latestRequest.index >= 0 || hasAssistantWaitingForFirstOutput(message)) {
+    if (latestRequest.index >= 0) {
       return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
     }
     return buildStatusEntry(t('messenger.messageStatus.running'), 'running', true);

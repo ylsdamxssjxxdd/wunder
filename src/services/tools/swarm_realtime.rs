@@ -1,11 +1,14 @@
 use super::context::ToolContext;
+use crate::monitor::MonitorState;
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::swarm::events::{
     TEAM_ERROR, TEAM_FINISH, TEAM_START, TEAM_TASK_DISPATCH, TEAM_TASK_RESULT, TEAM_TASK_UPDATE,
 };
-use crate::storage::{TeamRunRecord, TeamTaskRecord};
+use crate::storage::{SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord};
 use anyhow::Result;
 use chrono::Utc;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 
@@ -57,51 +60,76 @@ pub(crate) fn emit_swarm_task_updated(
         context,
         run,
         TEAM_TASK_UPDATE,
-        json!({
-            "team_run_id": task.team_run_id,
-            "task_id": task.task_id,
-            "hive_id": task.hive_id,
-            "agent_id": task.agent_id,
-            "session_run_id": task.session_run_id,
-            "status": task.status,
-            "retry_count": task.retry_count,
-            "started_time": task.started_time,
-            "finished_time": task.finished_time,
-            "elapsed_s": task.elapsed_s,
-            "result_summary": task.result_summary,
-            "error": task.error,
-            "updated_time": task.updated_time,
-        }),
+        swarm_task_state_payload(task),
     );
 
-    if !is_terminal_task_status(&task.status) {
-        return;
+    if is_terminal_task_status(&task.status) {
+        emit_swarm_team_event(
+            context,
+            run,
+            TEAM_TASK_RESULT,
+            swarm_task_state_payload(task),
+        );
     }
-
-    emit_swarm_team_event(
-        context,
-        run,
-        TEAM_TASK_RESULT,
-        json!({
-            "team_run_id": task.team_run_id,
-            "task_id": task.task_id,
-            "hive_id": task.hive_id,
-            "agent_id": task.agent_id,
-            "session_run_id": task.session_run_id,
-            "status": task.status,
-            "retry_count": task.retry_count,
-            "started_time": task.started_time,
-            "finished_time": task.finished_time,
-            "elapsed_s": task.elapsed_s,
-            "result_summary": task.result_summary,
-            "error": task.error,
-            "updated_time": task.updated_time,
-        }),
-    );
 }
 
-pub(crate) fn sync_swarm_run_summary(
-    context: &ToolContext<'_>,
+pub(crate) fn apply_session_run_to_swarm_task(
+    task: &mut TeamTaskRecord,
+    session_run: &SessionRunRecord,
+) {
+    if let Some(run_id) = normalize_optional(Some(session_run.run_id.as_str())) {
+        task.session_run_id = Some(run_id);
+    }
+    task.status = normalize_status(&session_run.status);
+    if session_run.started_time > 0.0 {
+        task.started_time = Some(session_run.started_time);
+    }
+    if session_run.finished_time > 0.0 {
+        task.finished_time = Some(session_run.finished_time);
+    }
+    if session_run.elapsed_s > 0.0 {
+        task.elapsed_s = Some(session_run.elapsed_s);
+    }
+    if let Some(result) = normalize_optional(session_run.result.as_deref()) {
+        task.result_summary = Some(result);
+    }
+    if let Some(error) = normalize_optional(session_run.error.as_deref()) {
+        task.error = Some(error);
+    }
+    task.updated_time = task.updated_time.max(session_run.updated_time);
+}
+
+pub(crate) fn reconcile_swarm_task_from_session_run(
+    storage: &dyn StorageBackend,
+    monitor: Option<Arc<MonitorState>>,
+    beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
+    task_id: &str,
+    session_run: &SessionRunRecord,
+) -> Result<()> {
+    let cleaned_task_id = task_id.trim();
+    if cleaned_task_id.is_empty() {
+        return Ok(());
+    }
+    let Some(mut task) = storage.get_team_task(cleaned_task_id)? else {
+        return Ok(());
+    };
+    let Some(mut run) = storage.get_team_run(&task.team_run_id)? else {
+        return Ok(());
+    };
+    apply_session_run_to_swarm_task(&mut task, session_run);
+    storage.upsert_team_task(&task)?;
+    emit_swarm_task_updated_background(monitor.clone(), beeroom_realtime.clone(), &run, &task);
+
+    let tasks = storage.list_team_tasks(&run.team_run_id)?;
+    let (terminal, failed) = sync_swarm_run_summary_storage(storage, &mut run, &tasks)?;
+    if terminal {
+        emit_swarm_run_terminal_background(monitor, beeroom_realtime, &run, failed);
+    }
+    Ok(())
+}
+
+pub(crate) fn sync_swarm_run_summary_storage(
+    storage: &dyn StorageBackend,
     run: &mut TeamRunRecord,
     tasks: &[TeamTaskRecord],
 ) -> Result<(bool, bool)> {
@@ -189,8 +217,16 @@ pub(crate) fn sync_swarm_run_summary(
         }
     }
 
-    context.storage.upsert_team_run(run)?;
+    storage.upsert_team_run(run)?;
     Ok((terminal, failed))
+}
+
+pub(crate) fn sync_swarm_run_summary(
+    context: &ToolContext<'_>,
+    run: &mut TeamRunRecord,
+    tasks: &[TeamTaskRecord],
+) -> Result<(bool, bool)> {
+    sync_swarm_run_summary_storage(context.storage.as_ref(), run, tasks)
 }
 
 pub(crate) fn emit_swarm_run_terminal(
@@ -199,42 +235,9 @@ pub(crate) fn emit_swarm_run_terminal(
     failed: bool,
 ) {
     if failed {
-        emit_swarm_team_event(
-            context,
-            run,
-            TEAM_ERROR,
-            json!({
-                "team_run_id": run.team_run_id,
-                "hive_id": run.hive_id,
-                "status": run.status,
-                "task_total": run.task_total,
-                "task_success": run.task_success,
-                "task_failed": run.task_failed,
-                "summary": run.summary,
-                "error": run.error,
-                "updated_time": run.updated_time,
-            }),
-        );
+        emit_swarm_team_event(context, run, TEAM_ERROR, swarm_run_error_payload(run));
     }
-    emit_swarm_team_event(
-        context,
-        run,
-        TEAM_FINISH,
-        json!({
-            "team_run_id": run.team_run_id,
-            "hive_id": run.hive_id,
-            "status": run.status,
-            "task_total": run.task_total,
-            "task_success": run.task_success,
-            "task_failed": run.task_failed,
-            "started_time": run.started_time,
-            "finished_time": run.finished_time,
-            "elapsed_s": run.elapsed_s,
-            "summary": run.summary,
-            "error": run.error,
-            "updated_time": run.updated_time,
-        }),
-    );
+    emit_swarm_team_event(context, run, TEAM_FINISH, swarm_run_finish_payload(run));
 }
 
 pub(crate) fn emit_swarm_team_event(
@@ -248,17 +251,7 @@ pub(crate) fn emit_swarm_team_event(
         return;
     }
 
-    let mut normalized_payload = payload;
-    if let Value::Object(ref mut map) = normalized_payload {
-        map.entry("team_run_id".to_string())
-            .or_insert_with(|| Value::String(run.team_run_id.clone()));
-        map.entry("hive_id".to_string())
-            .or_insert_with(|| Value::String(run.hive_id.clone()));
-        map.entry("status".to_string())
-            .or_insert_with(|| Value::String(run.status.clone()));
-        map.entry("updated_time".to_string())
-            .or_insert_with(|| json!(run.updated_time));
-    }
+    let normalized_payload = normalize_swarm_team_event_payload(run, payload);
 
     let streamed = if let Some(emitter) = context
         .event_emitter
@@ -275,31 +268,186 @@ pub(crate) fn emit_swarm_team_event(
     // records them into monitor detail. Avoid writing the same swarm event into
     // monitor twice when streaming is enabled.
     if !streamed {
-        let session_id = run.parent_session_id.trim();
-        if !session_id.is_empty() {
-            if let Some(monitor) = context.monitor.as_ref() {
-                monitor.record_event(session_id, cleaned_event, &normalized_payload);
-            }
-        }
+        record_swarm_team_event_to_monitor(
+            context.monitor.as_ref(),
+            run,
+            cleaned_event,
+            &normalized_payload,
+        );
     }
+    publish_swarm_team_event_realtime(
+        context.beeroom_realtime.as_ref().cloned(),
+        run,
+        cleaned_event,
+        normalized_payload,
+    );
+}
 
+fn emit_swarm_task_updated_background(
+    monitor: Option<Arc<MonitorState>>,
+    beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
+    run: &TeamRunRecord,
+    task: &TeamTaskRecord,
+) {
+    emit_swarm_team_event_background(
+        monitor.clone(),
+        beeroom_realtime.clone(),
+        run,
+        TEAM_TASK_UPDATE,
+        swarm_task_state_payload(task),
+    );
+
+    if is_terminal_task_status(&task.status) {
+        emit_swarm_team_event_background(
+            monitor,
+            beeroom_realtime,
+            run,
+            TEAM_TASK_RESULT,
+            swarm_task_state_payload(task),
+        );
+    }
+}
+
+fn emit_swarm_run_terminal_background(
+    monitor: Option<Arc<MonitorState>>,
+    beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
+    run: &TeamRunRecord,
+    failed: bool,
+) {
+    if failed {
+        emit_swarm_team_event_background(
+            monitor.clone(),
+            beeroom_realtime.clone(),
+            run,
+            TEAM_ERROR,
+            swarm_run_error_payload(run),
+        );
+    }
+    emit_swarm_team_event_background(
+        monitor,
+        beeroom_realtime,
+        run,
+        TEAM_FINISH,
+        swarm_run_finish_payload(run),
+    );
+}
+
+fn emit_swarm_team_event_background(
+    monitor: Option<Arc<MonitorState>>,
+    beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
+    run: &TeamRunRecord,
+    event_type: &str,
+    payload: Value,
+) {
+    let cleaned_event = event_type.trim();
+    if cleaned_event.is_empty() {
+        return;
+    }
+    let normalized_payload = normalize_swarm_team_event_payload(run, payload);
+    record_swarm_team_event_to_monitor(monitor.as_ref(), run, cleaned_event, &normalized_payload);
+    publish_swarm_team_event_realtime(beeroom_realtime, run, cleaned_event, normalized_payload);
+}
+
+fn normalize_swarm_team_event_payload(run: &TeamRunRecord, mut payload: Value) -> Value {
+    if let Value::Object(ref mut map) = payload {
+        map.entry("team_run_id".to_string())
+            .or_insert_with(|| Value::String(run.team_run_id.clone()));
+        map.entry("hive_id".to_string())
+            .or_insert_with(|| Value::String(run.hive_id.clone()));
+        map.entry("status".to_string())
+            .or_insert_with(|| Value::String(run.status.clone()));
+        map.entry("updated_time".to_string())
+            .or_insert_with(|| json!(run.updated_time));
+    }
+    payload
+}
+
+fn record_swarm_team_event_to_monitor(
+    monitor: Option<&Arc<MonitorState>>,
+    run: &TeamRunRecord,
+    event_type: &str,
+    payload: &Value,
+) {
+    let session_id = run.parent_session_id.trim();
+    if session_id.is_empty() {
+        return;
+    }
+    if let Some(monitor) = monitor {
+        monitor.record_event(session_id, event_type, payload);
+    }
+}
+
+fn publish_swarm_team_event_realtime(
+    beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
+    run: &TeamRunRecord,
+    event_name: &str,
+    payload: Value,
+) {
     let cleaned_user = run.user_id.trim();
     let cleaned_hive = run.hive_id.trim();
     if cleaned_user.is_empty() || cleaned_hive.is_empty() {
         return;
     }
-
-    let Some(realtime) = context.beeroom_realtime.as_ref().cloned() else {
+    let Some(realtime) = beeroom_realtime else {
         return;
     };
     let user_id = cleaned_user.to_string();
     let hive_id = cleaned_hive.to_string();
-    let event_name = cleaned_event.to_string();
+    let event_name = event_name.to_string();
     tokio::spawn(async move {
         realtime
-            .publish_group_event(&user_id, &hive_id, &event_name, normalized_payload)
+            .publish_group_event(&user_id, &hive_id, &event_name, payload)
             .await;
     });
+}
+
+fn swarm_task_state_payload(task: &TeamTaskRecord) -> Value {
+    json!({
+        "team_run_id": task.team_run_id,
+        "task_id": task.task_id,
+        "hive_id": task.hive_id,
+        "agent_id": task.agent_id,
+        "session_run_id": task.session_run_id,
+        "status": task.status,
+        "retry_count": task.retry_count,
+        "started_time": task.started_time,
+        "finished_time": task.finished_time,
+        "elapsed_s": task.elapsed_s,
+        "result_summary": task.result_summary,
+        "error": task.error,
+        "updated_time": task.updated_time,
+    })
+}
+
+fn swarm_run_error_payload(run: &TeamRunRecord) -> Value {
+    json!({
+        "team_run_id": run.team_run_id,
+        "hive_id": run.hive_id,
+        "status": run.status,
+        "task_total": run.task_total,
+        "task_success": run.task_success,
+        "task_failed": run.task_failed,
+        "summary": run.summary,
+        "error": run.error,
+        "updated_time": run.updated_time,
+    })
+}
+
+fn swarm_run_finish_payload(run: &TeamRunRecord) -> Value {
+    json!({
+        "team_run_id": run.team_run_id,
+        "hive_id": run.hive_id,
+        "status": run.status,
+        "task_total": run.task_total,
+        "task_success": run.task_success,
+        "task_failed": run.task_failed,
+        "started_time": run.started_time,
+        "finished_time": run.finished_time,
+        "elapsed_s": run.elapsed_s,
+        "summary": run.summary,
+        "error": run.error,
+        "updated_time": run.updated_time,
+    })
 }
 
 fn normalize_status(value: &str) -> String {
@@ -371,7 +519,9 @@ fn now_ts() -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_tool_managed_summary, emit_swarm_run_started};
+    use super::{
+        build_tool_managed_summary, emit_swarm_run_started, reconcile_swarm_task_from_session_run,
+    };
     use crate::a2a_store::A2aStore;
     use crate::config::{Config, ObservabilityConfig, SandboxConfig};
     use crate::lsp::LspManager;
@@ -379,7 +529,9 @@ mod tests {
     use crate::services::swarm::events::TEAM_START;
     use crate::services::tools::context::{ToolContext, ToolEventEmitter};
     use crate::skills::SkillRegistry;
-    use crate::storage::{SqliteStorage, StorageBackend, TeamRunRecord, TeamTaskRecord};
+    use crate::storage::{
+        SessionRunRecord, SqliteStorage, StorageBackend, TeamRunRecord, TeamTaskRecord,
+    };
     use crate::workspace::WorkspaceManager;
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -655,5 +807,83 @@ mod tests {
         assert_eq!(team_start.len(), 1);
         assert!(team_start[0]["data"].get("user_round").is_none());
         assert!(team_start[0]["data"].get("model_round").is_none());
+    }
+
+    #[tokio::test]
+    async fn reconcile_swarm_task_from_session_run_updates_task_and_run_terminal_state() {
+        let harness = TestHarness::new();
+        let session_id = "sess_swarm_reconcile";
+        let user_id = "user_reconcile";
+        harness
+            .monitor
+            .register(session_id, user_id, "agent_parent", "", false, false);
+
+        let run = harness.make_run(user_id, session_id);
+        harness
+            .storage
+            .upsert_team_run(&run)
+            .expect("upsert team run");
+        let task = make_task("task_done", "agent_worker", "queued", 0, 10.0, None, None);
+        harness
+            .storage
+            .upsert_team_task(&task)
+            .expect("upsert team task");
+
+        let session_run = SessionRunRecord {
+            run_id: "run_worker".to_string(),
+            session_id: "sess_worker".to_string(),
+            parent_session_id: Some(session_id.to_string()),
+            user_id: user_id.to_string(),
+            dispatch_id: None,
+            run_kind: Some("swarm".to_string()),
+            requested_by: Some("agent_swarm".to_string()),
+            agent_id: Some("agent_worker".to_string()),
+            model_name: None,
+            status: "success".to_string(),
+            queued_time: 100.0,
+            started_time: 101.0,
+            finished_time: 111.0,
+            elapsed_s: 10.0,
+            result: Some("done".to_string()),
+            error: None,
+            updated_time: 111.0,
+            metadata: None,
+        };
+
+        reconcile_swarm_task_from_session_run(
+            harness.storage.as_ref(),
+            Some(harness.monitor.clone()),
+            None,
+            &task.task_id,
+            &session_run,
+        )
+        .expect("reconcile swarm task");
+
+        let updated_task = harness
+            .storage
+            .get_team_task(&task.task_id)
+            .expect("load task")
+            .expect("task exists");
+        assert_eq!(updated_task.status, "success");
+        assert_eq!(updated_task.session_run_id.as_deref(), Some("run_worker"));
+        assert_eq!(updated_task.result_summary.as_deref(), Some("done"));
+
+        let updated_run = harness
+            .storage
+            .get_team_run(&run.team_run_id)
+            .expect("load team run")
+            .expect("team run exists");
+        assert_eq!(updated_run.status, "completed");
+        assert_eq!(updated_run.task_success, 1);
+        assert_eq!(updated_run.task_failed, 0);
+        assert_eq!(updated_run.finished_time, Some(111.0));
+
+        let detail = harness
+            .monitor
+            .get_detail(session_id)
+            .expect("detail should exist");
+        assert_eq!(team_events(&detail, "team_task_update").len(), 1);
+        assert_eq!(team_events(&detail, "team_task_result").len(), 1);
+        assert_eq!(team_events(&detail, "team_finish").len(), 1);
     }
 }
