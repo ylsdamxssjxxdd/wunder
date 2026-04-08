@@ -74,7 +74,6 @@ use crate::llm::embed_texts;
 use crate::lsp::LspDiagnostic;
 use crate::mcp;
 use crate::monitor::MonitorState;
-use crate::orchestrator_constants::DEFAULT_TOOL_TIMEOUT_S;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -84,7 +83,7 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
-    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom, resolve_agent_main_session,
+    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom,
     resolve_swarm_hive_id as resolve_swarm_hive_scope,
 };
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
@@ -163,7 +162,6 @@ const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
 const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
 const SWARM_TASK_RESULT_MAX_CHARS: usize = 2000;
-const SWARM_TOOL_TIMEOUT_HEADROOM_S: f64 = 5.0;
 const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 
 fn compact_cron_tool_result(value: Value) -> Value {
@@ -1158,6 +1156,8 @@ struct SessionSendArgs {
         alias = "announce_emit_parent_events"
     )]
     announce_emit_parent_events: Option<bool>,
+    #[serde(default, rename = "waitForever", alias = "wait_forever")]
+    wait_forever: Option<bool>,
     #[serde(default, rename = "teamTaskId", alias = "team_task_id")]
     team_task_id: Option<String>,
 }
@@ -1233,6 +1233,13 @@ struct SessionRunMeta {
     requested_by: Option<String>,
     team_task_id: Option<String>,
     metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SwarmWaitMode {
+    Immediate,
+    Finite(f64),
+    Infinite,
 }
 
 #[derive(Debug, Clone)]
@@ -1318,6 +1325,51 @@ fn child_session_depth(
         cursor = Some(next_parent.to_string());
     }
     depth + 1
+}
+
+fn should_auto_wake_parent_after_child_run(wait_forever: bool, timeout_seconds: f64) -> bool {
+    !wait_forever && timeout_seconds <= 0.0
+}
+
+fn sync_announce_auto_wake(
+    announce: &mut AnnounceConfig,
+    run_metadata: Option<&mut Value>,
+    auto_wake: bool,
+) {
+    announce.auto_wake = auto_wake;
+    if let Some(metadata) = run_metadata {
+        insert_run_metadata_field(metadata, "auto_wake", json!(auto_wake));
+    }
+}
+
+fn build_parent_follow_up_announce(
+    parent_session_id: Option<String>,
+    child_session_id: &str,
+    label: Option<String>,
+    emit_parent_events: bool,
+    persist_history_message: bool,
+    auto_wake: bool,
+    parent_turn_ref: Option<String>,
+    parent_user_round: Option<i64>,
+    parent_model_round: Option<i64>,
+) -> Option<AnnounceConfig> {
+    let child_session_id = child_session_id.trim();
+    let parent_session_id = normalize_optional_string(parent_session_id)
+        .filter(|parent_session_id| parent_session_id != child_session_id)?;
+    Some(AnnounceConfig {
+        parent_session_id,
+        label,
+        dispatch_id: None,
+        strategy: None,
+        completion_mode: None,
+        remaining_action: None,
+        parent_turn_ref,
+        parent_user_round,
+        parent_model_round,
+        emit_parent_events,
+        auto_wake,
+        persist_history_message,
+    })
 }
 
 fn subagent_control_scope(tool_names: &[String]) -> &'static str {
@@ -1791,26 +1843,24 @@ fn build_swarm_wait_monitoring_payload(run_ids: &[String]) -> Value {
     })
 }
 
-fn builtin_tool_timeout_budget_s(config: &Config) -> f64 {
-    let sandbox_timeout = if sandbox::sandbox_enabled(config) {
-        config.sandbox.timeout_s as f64
-    } else {
-        0.0
-    };
-    if sandbox_timeout > 0.0 {
-        sandbox_timeout.max(DEFAULT_TOOL_TIMEOUT_S)
-    } else {
-        DEFAULT_TOOL_TIMEOUT_S
+fn resolve_swarm_wait_mode(
+    requested_timeout_s: Option<f64>,
+    default_timeout_s: u64,
+) -> SwarmWaitMode {
+    match requested_timeout_s {
+        Some(timeout_s) if timeout_s > 0.0 => SwarmWaitMode::Finite(timeout_s),
+        Some(_) => SwarmWaitMode::Immediate,
+        None if default_timeout_s > 0 => SwarmWaitMode::Finite(default_timeout_s as f64),
+        None => SwarmWaitMode::Infinite,
     }
 }
 
-fn clamp_swarm_wait_timeout_to_tool_budget(context: &ToolContext<'_>, wait_seconds: f64) -> f64 {
-    if wait_seconds <= 0.0 {
-        return 0.0;
+fn swarm_wait_seconds_value(wait_mode: SwarmWaitMode) -> Option<f64> {
+    match wait_mode {
+        SwarmWaitMode::Immediate => Some(0.0),
+        SwarmWaitMode::Finite(timeout_s) => Some(timeout_s),
+        SwarmWaitMode::Infinite => None,
     }
-    let effective_budget_s =
-        (builtin_tool_timeout_budget_s(context.config) - SWARM_TOOL_TIMEOUT_HEADROOM_S).max(1.0);
-    wait_seconds.min(effective_budget_s)
 }
 
 fn is_swarm_task_terminal_status(status: &str) -> bool {
@@ -2051,30 +2101,26 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             requested_agent_name.as_deref(),
         )?
         .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
-        if let Some(main_session) =
-            resolve_agent_main_session(context.storage.as_ref(), user_id, &target_agent.agent_id)?
-        {
-            (target_agent, main_session.session_id, false)
-        } else {
-            let dispatch_preview = build_swarm_dispatch_message(
-                context.storage.as_ref(),
-                context.monitor.as_deref(),
-                user_id,
-                &swarm_hive_id,
-                current_agent_id.as_deref(),
-                context.session_id,
-                None,
-                None,
-                &message,
-            )?;
-            let prepared = prepare_swarm_child_session(
-                context,
-                &dispatch_preview,
-                payload.label.clone(),
-                &target_agent.agent_id,
-            )?;
-            (target_agent, prepared.child_session_id, true)
-        }
+        // Swarm-dispatched workers must start from a clean thread unless the caller
+        // explicitly pins the run to an existing session_key.
+        let dispatch_preview = build_swarm_dispatch_message(
+            context.storage.as_ref(),
+            context.monitor.as_deref(),
+            user_id,
+            &swarm_hive_id,
+            current_agent_id.as_deref(),
+            context.session_id,
+            None,
+            None,
+            &message,
+        )?;
+        let prepared = prepare_swarm_child_session(
+            context,
+            &dispatch_preview,
+            payload.label.clone(),
+            &target_agent.agent_id,
+        )?;
+        (target_agent, prepared.child_session_id, true)
     };
     let target_agent_id = target_agent.agent_id.clone();
 
@@ -2111,23 +2157,30 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
-    let wait_timeout_seconds = clamp_swarm_wait_timeout_to_tool_budget(
-        context,
-        payload
-            .timeout_seconds
-            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-            .max(0.0),
+    let wait_mode = resolve_swarm_wait_mode(
+        payload.timeout_seconds,
+        context.config.tools.swarm.default_timeout_s,
     );
     let mut send_args = json!({
         "session_id": target_session_id,
         "message": dispatch_message,
     });
-    send_args["timeoutSeconds"] = json!(wait_timeout_seconds);
     // Notify the parent session (queen bee) so the frontend sub-agent panel refreshes
     send_args["announceParentSessionId"] = json!(context.session_id);
     send_args["announcePersistHistory"] = json!(false);
     send_args["announceEmitParentEvents"] = json!(true);
     send_args["teamTaskId"] = json!(task_record.task_id);
+    match wait_mode {
+        SwarmWaitMode::Immediate => {
+            send_args["timeoutSeconds"] = json!(0.0);
+        }
+        SwarmWaitMode::Finite(timeout_s) => {
+            send_args["timeoutSeconds"] = json!(timeout_s);
+        }
+        SwarmWaitMode::Infinite => {
+            send_args["waitForever"] = json!(true);
+        }
+    }
     let result = match sessions_send(context, &send_args).await {
         Ok(value) => value,
         Err(err) => {
@@ -2236,7 +2289,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             "ok" => "工蜂已完成并返回结果。".to_string(),
             "timeout" => format!(
                 "等待工蜂结果超时（{} 秒），工蜂可能仍在执行。",
-                wait_timeout_seconds
+                swarm_wait_seconds_value(wait_mode).unwrap_or_default()
             ),
             "error" => "工蜂执行失败，请查看 error 字段。".to_string(),
             _ => "任务已派发，可稍后继续调用 wait 监视进度。".to_string(),
@@ -2411,14 +2464,9 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             .ok_or_else(|| {
                 anyhow!("agent_swarm send requires agent_id/agent_name or session_id")
             })?;
-            (
-                agent_record.clone(),
-                resolve_agent_main_session(
-                    context.storage.as_ref(),
-                    user_id,
-                    &agent_record.agent_id,
-                )?,
-            )
+            // Swarm batch dispatch also forces a fresh worker thread when the caller
+            // does not explicitly target an existing session_key.
+            (agent_record, None)
         };
         let mut task_record =
             create_swarm_team_task_record(&run_record, &agent_record.agent_id, None, None, 0);
@@ -2641,20 +2689,22 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         "items": items,
     });
 
-    let wait_seconds = clamp_swarm_wait_timeout_to_tool_budget(
-        context,
-        payload
-            .wait_seconds
-            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-            .max(0.0),
+    let wait_mode = resolve_swarm_wait_mode(
+        payload.wait_seconds,
+        context.config.tools.swarm.default_timeout_s,
     );
-    if wait_seconds > 0.0 {
+    if !matches!(wait_mode, SwarmWaitMode::Immediate) {
         let poll_interval_seconds = payload
             .poll_interval_seconds
             .unwrap_or(SWARM_WAIT_DEFAULT_POLL_S);
-        let wait_result =
-            wait_for_swarm_runs(context, &run_ids, wait_seconds, poll_interval_seconds, true)
-                .await?;
+        let wait_result = wait_for_swarm_runs(
+            context,
+            &run_ids,
+            swarm_wait_seconds_value(wait_mode),
+            poll_interval_seconds,
+            true,
+        )
+        .await?;
         if let Some(wait_items) = wait_result.get("items").and_then(Value::as_array) {
             let mut snapshots_by_run_id: HashMap<String, &Value> = HashMap::new();
             for item in wait_items {
@@ -2768,23 +2818,27 @@ async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if run_ids.is_empty() {
         return Err(anyhow!("agent_swarm wait requires runIds"));
     }
-    let wait_seconds = clamp_swarm_wait_timeout_to_tool_budget(
-        context,
-        payload
-            .wait_seconds
-            .unwrap_or(context.config.tools.swarm.default_timeout_s as f64)
-            .max(0.0),
+    let wait_mode = resolve_swarm_wait_mode(
+        payload.wait_seconds,
+        context.config.tools.swarm.default_timeout_s,
     );
     let poll_interval_seconds = payload
         .poll_interval_seconds
         .unwrap_or(SWARM_WAIT_DEFAULT_POLL_S);
-    wait_for_swarm_runs(context, &run_ids, wait_seconds, poll_interval_seconds, true).await
+    wait_for_swarm_runs(
+        context,
+        &run_ids,
+        swarm_wait_seconds_value(wait_mode),
+        poll_interval_seconds,
+        true,
+    )
+    .await
 }
 
 async fn wait_for_swarm_runs(
     context: &ToolContext<'_>,
     run_ids: &[String],
-    wait_seconds: f64,
+    wait_seconds: Option<f64>,
     poll_interval_seconds: f64,
     emit_progress: bool,
 ) -> Result<Value> {
@@ -2820,9 +2874,12 @@ async fn wait_for_swarm_runs(
             .count();
         let elapsed_s = started_at.elapsed().as_secs_f64();
         let all_finished = done_total >= total;
-        let timed_out = wait_seconds > 0.0 && elapsed_s >= wait_seconds && !all_finished;
+        let timed_out = wait_seconds
+            .filter(|value| *value > 0.0)
+            .is_some_and(|value| elapsed_s >= value && !all_finished);
+        let immediate_snapshot = wait_seconds.is_some_and(|value| value <= 0.0);
 
-        if all_finished || timed_out || wait_seconds <= 0.0 {
+        if all_finished || timed_out || immediate_snapshot {
             let status = if all_finished {
                 if failed_total == 0 {
                     "ok"
@@ -2842,6 +2899,7 @@ async fn wait_for_swarm_runs(
                 "action": "wait",
                 "status": status,
                 "wait_seconds": wait_seconds,
+                "wait_forever": wait_seconds.is_none(),
                 "elapsed_s": elapsed_s,
                 "all_finished": all_finished,
                 "total": total,
@@ -2857,7 +2915,7 @@ async fn wait_for_swarm_runs(
                 let message = if timed_out {
                     format!(
                         "等待蜂群结果超时（{} 秒），工蜂可能仍在执行。",
-                        wait_seconds
+                        wait_seconds.unwrap_or_default()
                     )
                 } else if all_finished {
                     if failed_total == 0 {
@@ -3368,6 +3426,9 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     let _ = context
         .storage
         .touch_chat_session(user_id, &session_id, now, now);
+    let wait_forever = payload.wait_forever.unwrap_or(false);
+    let timeout_seconds = payload.timeout_seconds.unwrap_or(0.0).max(0.0);
+    let auto_wake = should_auto_wake_parent_after_child_run(wait_forever, timeout_seconds);
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: message,
@@ -3386,25 +3447,19 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         is_admin: context.is_admin,
         approval_tx: None,
     };
-    let announce_parent_session_id = normalize_optional_string(payload.announce_parent_session_id);
     let announce_label = normalize_optional_string(payload.label);
     let swarm_team_task_id = normalize_optional_string(payload.team_task_id);
-    let announce = announce_parent_session_id
-        .filter(|parent_session_id| parent_session_id != &session_id)
-        .map(|parent_session_id| AnnounceConfig {
-            parent_session_id,
-            label: announce_label,
-            dispatch_id: None,
-            strategy: None,
-            completion_mode: None,
-            remaining_action: None,
-            parent_turn_ref: None,
-            parent_user_round: None,
-            parent_model_round: None,
-            emit_parent_events: payload.announce_emit_parent_events.unwrap_or(false),
-            auto_wake: false,
-            persist_history_message: payload.announce_persist_history.unwrap_or(true),
-        });
+    let announce = build_parent_follow_up_announce(
+        payload.announce_parent_session_id,
+        &session_id,
+        announce_label,
+        payload.announce_emit_parent_events.unwrap_or(false),
+        payload.announce_persist_history.unwrap_or(true),
+        auto_wake,
+        subagents::encode_parent_turn_ref(context.user_round, context.model_round),
+        context.user_round,
+        context.model_round,
+    );
 
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let (run_kind, requested_by) = if swarm_team_task_id.is_some() {
@@ -3431,7 +3486,32 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
     )
     .await?;
 
-    let timeout_seconds = payload.timeout_seconds.unwrap_or(0.0).max(0.0);
+    if wait_forever {
+        return match receiver.await {
+            Ok(outcome) => {
+                if outcome.status == "success" {
+                    Ok(json!({
+                        "status": "ok",
+                        "run_id": run_id,
+                        "reply": outcome.answer.unwrap_or_default(),
+                        "elapsed_s": outcome.elapsed_s
+                    }))
+                } else {
+                    Ok(json!({
+                        "status": outcome.status,
+                        "run_id": run_id,
+                        "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
+                        "elapsed_s": outcome.elapsed_s
+                    }))
+                }
+            }
+            Err(err) => Ok(json!({
+                "status": "error",
+                "run_id": run_id,
+                "error": err.to_string()
+            })),
+        };
+    }
     if timeout_seconds <= 0.0 {
         return Ok(json!({
             "status": "accepted",
@@ -3624,7 +3704,8 @@ fn prepare_child_session(
             parent_user_round: context.user_round,
             parent_model_round: context.model_round,
             emit_parent_events: true,
-            // Single child sessions should not reopen the parent thread automatically.
+            // Background child runs wake the parent once they settle.
+            // Waiting parent turns collect the result inline and disable auto_wake later.
             auto_wake: false,
             persist_history_message: false,
         },
@@ -3650,12 +3731,17 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         child_agent_id,
         model_name,
         request,
-        announce,
+        mut announce,
         mut run_metadata,
     } = prepared;
     let run_id = format!("run_{}", Uuid::new_v4().simple());
     let cleanup = parse_cleanup_mode(payload.cleanup.as_deref());
     let wait_seconds = payload.run_timeout_seconds.unwrap_or(0.0).max(0.0);
+    sync_announce_auto_wake(
+        &mut announce,
+        Some(&mut run_metadata),
+        should_auto_wake_parent_after_child_run(false, wait_seconds),
+    );
     insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("single"));
     insert_run_metadata_field(
         &mut run_metadata,
@@ -8499,8 +8585,13 @@ fn is_a2a_task_finished(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{ChatSessionRecord, SqliteStorage, UserAgentRecord};
+    use crate::a2a_store::A2aStore;
+    use crate::lsp::LspManager;
+    use crate::storage::{AgentThreadRecord, ChatSessionRecord, SqliteStorage, UserAgentRecord};
+    use crate::workspace::WorkspaceManager;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn sample_chat_session_record(agent_id: &str) -> ChatSessionRecord {
@@ -8534,6 +8625,32 @@ mod tests {
             tool_names: vec!["技能创建器".to_string()],
             declared_tool_names: vec!["read_file".to_string()],
             declared_skill_names: vec!["政策知识库检索技能".to_string()],
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "auto_edit".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 1.0,
+            preset_binding: None,
+        }
+    }
+
+    fn sample_parent_agent_record() -> UserAgentRecord {
+        UserAgentRecord {
+            agent_id: "agent_parent".to_string(),
+            user_id: "alice".to_string(),
+            hive_id: "hive_policy".to_string(),
+            name: "母蜂".to_string(),
+            description: String::new(),
+            system_prompt: "coordinate workers".to_string(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: vec!["智能体蜂群".to_string()],
+            declared_tool_names: vec!["agent_swarm".to_string()],
+            declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
             approval_mode: "auto_edit".to_string(),
@@ -9142,60 +9259,71 @@ PATCH"#;
         );
     }
 
-    #[test]
-    fn agent_swarm_batch_send_args_accept_team_run_id_aliases() {
-        let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
-            "tasks": [{ "agentId": "worker_a", "message": "hello" }],
-            "teamRunId": "team_demo_camel",
-        }))
-        .expect("parse camel args");
-        assert_eq!(camel.team_run_id.as_deref(), Some("team_demo_camel"));
-
-        let snake: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
-            "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
-            "team_run_id": "team_demo_snake",
-        }))
-        .expect("parse snake args");
-        assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
-    }
-
-    #[test]
-    fn clamp_swarm_wait_timeout_to_tool_budget_reserves_headroom() {
-        let mut config = Config::default();
-        config.sandbox.mode = "sandbox".to_string();
-        config.sandbox.timeout_s = 300;
+    #[tokio::test]
+    async fn prepare_swarm_child_session_creates_fresh_main_thread_even_when_worker_has_existing_main_session(
+    ) {
         let dir = tempdir().expect("tempdir");
-        let db_path = dir.path().join("swarm-timeout-clamp.db");
+        let db_path = dir.path().join("swarm-fresh-main-thread.db");
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let worker_agent = sample_agent_record();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let mut old_worker_session = sample_chat_session_record(&worker_agent.agent_id);
+        old_worker_session.session_id = "sess_worker_existing".to_string();
+        storage_backend
+            .upsert_chat_session(&old_worker_session)
+            .expect("upsert existing worker session");
+        storage_backend
+            .upsert_agent_thread(&AgentThreadRecord {
+                thread_id: "thread_existing_worker".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: worker_agent.agent_id.clone(),
+                session_id: old_worker_session.session_id.clone(),
+                status: "idle".to_string(),
+                created_at: 1.0,
+                updated_at: 1.0,
+            })
+            .expect("bind existing worker main thread");
+
         let workspace_root = dir.path().join("workspace");
         let workspace = Arc::new(WorkspaceManager::new(
             workspace_root.to_string_lossy().as_ref(),
-            storage.clone(),
+            storage_backend.clone(),
             0,
             &HashMap::new(),
         ));
         let lsp_manager = LspManager::new(workspace.clone());
-        let monitor = Arc::new(MonitorState::new(
-            storage.clone(),
-            ObservabilityConfig::default(),
-            SandboxConfig::default(),
-            workspace_root.to_string_lossy().to_string(),
-        ));
+        let config = Config::default();
         let a2a_store = A2aStore::default();
         let skills = SkillRegistry::default();
         let http = reqwest::Client::new();
         let context = ToolContext {
             user_id: "alice",
-            session_id: "sess_timeout",
+            session_id: "sess_parent",
             workspace_id: "workspace-test",
             agent_id: Some("agent_parent"),
-            user_round: None,
-            model_round: None,
+            user_round: Some(1),
+            model_round: Some(1),
             is_admin: false,
-            storage,
+            storage: storage_backend.clone(),
             orchestrator: None,
-            monitor: Some(monitor),
+            monitor: None,
             beeroom_realtime: None,
             workspace,
             lsp_manager,
@@ -9216,14 +9344,145 @@ PATCH"#;
             http: &http,
         };
 
+        let prepared = prepare_swarm_child_session(
+            &context,
+            "clean worker context",
+            Some("政策副手".to_string()),
+            &worker_agent.agent_id,
+        )
+        .expect("prepare fresh swarm child session");
+
+        assert_ne!(prepared.child_session_id, old_worker_session.session_id);
         assert_eq!(
-            clamp_swarm_wait_timeout_to_tool_budget(&context, 60.0),
-            60.0
+            storage_backend
+                .get_agent_thread("alice", &worker_agent.agent_id)
+                .expect("get worker thread")
+                .expect("worker thread")
+                .session_id,
+            prepared.child_session_id
         );
         assert_eq!(
-            clamp_swarm_wait_timeout_to_tool_budget(&context, 300.0),
-            295.0
+            storage_backend
+                .get_chat_session("alice", &prepared.child_session_id)
+                .expect("load child session")
+                .expect("child session")
+                .parent_session_id
+                .as_deref(),
+            Some("sess_parent")
         );
+    }
+
+    #[test]
+    fn agent_swarm_batch_send_args_accept_team_run_id_aliases() {
+        let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{ "agentId": "worker_a", "message": "hello" }],
+            "teamRunId": "team_demo_camel",
+        }))
+        .expect("parse camel args");
+        assert_eq!(camel.team_run_id.as_deref(), Some("team_demo_camel"));
+
+        let snake: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
+            "team_run_id": "team_demo_snake",
+        }))
+        .expect("parse snake args");
+        assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
+    }
+
+    #[test]
+    fn resolve_swarm_wait_mode_defaults_to_infinite_when_config_is_zero() {
+        assert!(matches!(
+            resolve_swarm_wait_mode(None, 0),
+            SwarmWaitMode::Infinite
+        ));
+        assert!(matches!(
+            resolve_swarm_wait_mode(Some(0.0), 0),
+            SwarmWaitMode::Immediate
+        ));
+        assert!(matches!(
+            resolve_swarm_wait_mode(Some(12.0), 0),
+            SwarmWaitMode::Finite(timeout) if (timeout - 12.0).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            resolve_swarm_wait_mode(None, 30),
+            SwarmWaitMode::Finite(timeout) if (timeout - 30.0).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn background_child_runs_enable_parent_auto_wake() {
+        assert!(should_auto_wake_parent_after_child_run(false, 0.0));
+        assert!(!should_auto_wake_parent_after_child_run(false, 5.0));
+        assert!(!should_auto_wake_parent_after_child_run(true, 0.0));
+    }
+
+    #[test]
+    fn sync_announce_auto_wake_updates_run_metadata() {
+        let mut announce = AnnounceConfig {
+            parent_session_id: "sess_parent".to_string(),
+            label: None,
+            dispatch_id: None,
+            strategy: None,
+            completion_mode: None,
+            remaining_action: None,
+            parent_turn_ref: None,
+            parent_user_round: None,
+            parent_model_round: None,
+            emit_parent_events: true,
+            auto_wake: false,
+            persist_history_message: false,
+        };
+        let mut run_metadata = json!({});
+
+        sync_announce_auto_wake(&mut announce, Some(&mut run_metadata), true);
+
+        assert!(announce.auto_wake);
+        assert_eq!(
+            run_metadata.get("auto_wake").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn build_parent_follow_up_announce_keeps_turn_context_for_auto_wake() {
+        let announce = build_parent_follow_up_announce(
+            Some("sess_parent".to_string()),
+            "sess_child",
+            Some("worker".to_string()),
+            true,
+            false,
+            true,
+            Some("subagent_turn:3:2".to_string()),
+            Some(3),
+            Some(2),
+        )
+        .expect("announce");
+
+        assert_eq!(announce.parent_session_id, "sess_parent");
+        assert_eq!(
+            announce.parent_turn_ref.as_deref(),
+            Some("subagent_turn:3:2")
+        );
+        assert_eq!(announce.parent_user_round, Some(3));
+        assert_eq!(announce.parent_model_round, Some(2));
+        assert!(announce.auto_wake);
+        assert!(!announce.persist_history_message);
+    }
+
+    #[test]
+    fn build_parent_follow_up_announce_rejects_same_session() {
+        assert!(build_parent_follow_up_announce(
+            Some("sess_same".to_string()),
+            "sess_same",
+            None,
+            true,
+            false,
+            true,
+            None,
+            None,
+            None,
+        )
+        .is_none());
     }
 
     #[test]

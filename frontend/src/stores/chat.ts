@@ -101,6 +101,7 @@ type SnapshotAssistantMessage = {
   attachments?: unknown[];
   subagents?: unknown[];
   hiddenInternal?: boolean;
+  manual_compaction_marker?: boolean;
   realtime_protected?: boolean;
 };
 
@@ -1392,6 +1393,9 @@ const normalizeSnapshotMessage = (message) => {
   if (normalizeHiddenInternalMessage(message.hiddenInternal)) {
     base.hiddenInternal = true;
   }
+  if (normalizeFlag(message.manual_compaction_marker ?? message.manualCompactionMarker)) {
+    base.manual_compaction_marker = true;
+  }
   if (message.realtime_protected === true) {
     base.realtime_protected = true;
   }
@@ -1613,6 +1617,9 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const snapshotWaitingPhaseFirstOutputAtMs = normalizeInteractionTimestamp(
     snapshot.waiting_phase_first_output_at_ms
   );
+  const snapshotManualCompactionMarker = normalizeFlag(
+    snapshot.manual_compaction_marker ?? snapshot.manualCompactionMarker
+  );
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1633,7 +1640,8 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       snapshotEventId !== null ||
       snapshot.questionPanel ||
       snapshotFeedback ||
-      snapshotSubagents.length > 0
+      snapshotSubagents.length > 0 ||
+      snapshotManualCompactionMarker
   );
   if (!shouldMergeContent && !shouldMergeFlags && !snapshotStats) {
     return false;
@@ -1687,6 +1695,9 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     }
     if (snapshotSubagents.length > 0) {
       target.subagents = snapshotSubagents;
+    }
+    if (snapshotManualCompactionMarker) {
+      target.manual_compaction_marker = true;
     }
     if (
       snapshotWaitingUpdatedAtMs !== null &&
@@ -2681,15 +2692,32 @@ const resolveWorkflowRoundTimestamp = (events) => {
   return undefined;
 };
 
-const trimCompactionDebugText = (value, max = 240) => {
+// Preserve full debug payloads so exported diagnostics match the real runtime data.
+const normalizeCompactionDebugText = (value) => {
   const text = String(value ?? '').trim();
   if (!text) return '';
-  return text.length > max ? `${text.slice(0, max)}...` : text;
+  return text;
+};
+
+const cloneCompactionDebugPayload = (value, fallback = null) => {
+  if (value === undefined) return fallback;
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch {
+      // Fall back to JSON cloning for debug export compatibility.
+    }
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value ?? fallback;
+  }
 };
 
 const buildCompactionDebugSummary = (payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    const text = trimCompactionDebugText(payload, 160);
+    const text = normalizeCompactionDebugText(payload);
     return text ? { value: text } : {};
   }
   const source = payload as Record<string, unknown>;
@@ -2698,7 +2726,7 @@ const buildCompactionDebugSummary = (payload) => {
     for (const key of keys) {
       const value = source[key];
       if (value === undefined || value === null || value === '') continue;
-      summary[targetKey] = typeof value === 'string' ? trimCompactionDebugText(value) : value;
+      summary[targetKey] = typeof value === 'string' ? normalizeCompactionDebugText(value) : value;
       return;
     }
   };
@@ -2769,10 +2797,53 @@ const summarizeCompactionRoundEvents = (events) => {
   return {
     eventTypes,
     progressStages,
-    latestCompaction: buildCompactionDebugSummary(latestCompaction),
-    latestContextUsage: buildCompactionDebugSummary(latestContextUsage)
+    latestCompaction: cloneCompactionDebugPayload(latestCompaction, {}),
+    latestContextUsage: cloneCompactionDebugPayload(latestContextUsage, {})
   };
 };
+
+const isManualCompactionRoundSummary = (summary): boolean => {
+  if (!summary || typeof summary !== 'object') return false;
+  const latestCompaction =
+    summary.latestCompaction && typeof summary.latestCompaction === 'object'
+      ? (summary.latestCompaction as Record<string, unknown>)
+      : null;
+  const latestContextUsage =
+    summary.latestContextUsage && typeof summary.latestContextUsage === 'object'
+      ? (summary.latestContextUsage as Record<string, unknown>)
+      : null;
+  const triggerMode = String(
+    latestCompaction?.triggerMode ??
+      latestCompaction?.trigger_mode ??
+      latestContextUsage?.triggerMode ??
+      latestContextUsage?.trigger_mode ??
+      ''
+  )
+    .trim()
+    .toLowerCase();
+  return triggerMode === 'manual';
+};
+
+const isManualCompactionRoundEvents = (events): boolean =>
+  isManualCompactionRoundSummary(summarizeCompactionRoundEvents(events));
+
+const hasVisibleAssistantBody = (message): boolean => {
+  if (!message || typeof message !== 'object') return false;
+  if (String(message.content || '').trim()) return true;
+  if (String(message.reasoning || '').trim()) return true;
+  if (hasPlanSteps(message.plan)) return true;
+  const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
+  return panelStatus === 'pending';
+};
+
+const buildManualCompactionMarkerMessage = (roundNumber, events) => ({
+  ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+  workflowItems: [],
+  workflowStreaming: false,
+  stream_incomplete: false,
+  stream_round: roundNumber,
+  manual_compaction_marker: true
+});
 
 const summarizeCompactionWorkflowItemsForDebug = (items) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -2849,13 +2920,15 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
-    const syntheticMessage = {
-      ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
-      workflowItems: [],
-      workflowStreaming: false,
-      stream_incomplete: false,
-      stream_round: currentRound
-    };
+    const syntheticMessage = isManualCompactionRoundEvents(events)
+      ? buildManualCompactionMarkerMessage(currentRound, events)
+      : {
+          ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+          workflowItems: [],
+          workflowStreaming: false,
+          stream_incomplete: false,
+          stream_round: currentRound
+        };
     lastAssistantIndex = pushMessage(syntheticMessage);
   };
   const assignRound = (roundNumber = currentRound) => {
@@ -2866,7 +2939,21 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
+    const manualCompactionRound = isManualCompactionRoundEvents(events);
+    if (
+      manualCompactionRound &&
+      (
+        lastAssistantIndex === null ||
+        hasVisibleAssistantBody(hydratedMessages[lastAssistantIndex]) ||
+        hydratedMessages[lastAssistantIndex]?.manual_compaction_marker !== true
+      )
+    ) {
+      lastAssistantIndex = pushMessage(buildManualCompactionMarkerMessage(roundNumber, events));
+    }
     const target = hydratedMessages[lastAssistantIndex];
+    if (manualCompactionRound && target && typeof target === 'object') {
+      target.manual_compaction_marker = true;
+    }
     target.workflow_events = normalizeWorkflowEvents(events, target);
     assignedRounds.add(roundNumber);
     const compactionSummary = summarizeCompactionRoundEvents(events);
@@ -2903,13 +2990,15 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
-    const syntheticMessage = {
-      ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
-      workflowItems: [],
-      workflowStreaming: false,
-      stream_incomplete: false,
-      stream_round: roundNumber
-    };
+    const syntheticMessage = isManualCompactionRoundEvents(events)
+      ? buildManualCompactionMarkerMessage(roundNumber, events)
+      : {
+          ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+          workflowItems: [],
+          workflowStreaming: false,
+          stream_incomplete: false,
+          stream_round: roundNumber
+        };
     syntheticMessage.workflow_events = normalizeWorkflowEvents(events, syntheticMessage);
     pushMessage(syntheticMessage);
     assignedRounds.add(roundNumber);
@@ -3868,6 +3957,7 @@ const ensureRuntime = (sessionId) => {
       slowClientResumeAfterEventId: 0,
       streamLifecycle: 'idle',
       stopRequested: false,
+      pendingManualCompaction: null,
       lastEventId: 0,
       remoteLastEventId: 0,
       threadStatus: 'not_loaded',
@@ -4221,6 +4311,9 @@ const clearCompletedAssistantStreamingState = (messages) => {
 };
 
 function buildRuntimeDebugSnapshot(runtime) {
+  const pendingManualCompactionStartedAt = Number(
+    runtime?.pendingManualCompaction?.startedAt ?? 0
+  );
   return {
     threadStatus: normalizeThreadRuntimeStatus(runtime?.threadStatus),
     loaded: Boolean(runtime?.loaded),
@@ -4229,9 +4322,271 @@ function buildRuntimeDebugSnapshot(runtime) {
     hasSendController: Boolean(runtime?.sendController),
     hasResumeController: Boolean(runtime?.resumeController),
     sendAborted: runtime?.sendController?.signal?.aborted === true,
-    resumeAborted: runtime?.resumeController?.signal?.aborted === true
+    resumeAborted: runtime?.resumeController?.signal?.aborted === true,
+    pendingManualCompaction: Boolean(runtime?.pendingManualCompaction),
+    pendingManualCompactionAgeMs:
+      Number.isFinite(pendingManualCompactionStartedAt) && pendingManualCompactionStartedAt > 0
+        ? Math.max(0, Date.now() - pendingManualCompactionStartedAt)
+        : null
   };
 }
+
+const MANUAL_COMPACTION_PENDING_MARKER_TTL_MS = 30_000;
+
+const readRuntimePendingManualCompaction = (runtime, sessionId = null) => {
+  const pending = runtime?.pendingManualCompaction;
+  if (!pending || typeof pending !== 'object') {
+    return null;
+  }
+  const startedAt = Number((pending as Record<string, unknown>).startedAt ?? 0);
+  if (
+    Number.isFinite(startedAt) &&
+    startedAt > 0 &&
+    Date.now() - startedAt > MANUAL_COMPACTION_PENDING_MARKER_TTL_MS
+  ) {
+    runtime.pendingManualCompaction = null;
+    chatDebugLog('chat.compaction.manual', 'pending-marker-cleared', {
+      sessionId,
+      reason: 'stale',
+      pendingAgeMs: Math.max(0, Date.now() - startedAt)
+    });
+    return null;
+  }
+  return pending as Record<string, unknown>;
+};
+
+const markRuntimePendingManualCompaction = (runtime, sessionId = null) => {
+  if (!runtime) return;
+  runtime.pendingManualCompaction = {
+    startedAt: Date.now()
+  };
+  chatDebugLog('chat.compaction.manual', 'pending-marker-set', {
+    sessionId,
+    runtime: buildRuntimeDebugSnapshot(runtime)
+  });
+};
+
+const clearRuntimePendingManualCompaction = (runtime, sessionId = null, reason = 'clear') => {
+  const pending = readRuntimePendingManualCompaction(runtime, sessionId);
+  if (!pending) return false;
+  const startedAt = Number(pending.startedAt ?? 0);
+  runtime.pendingManualCompaction = null;
+  chatDebugLog('chat.compaction.manual', 'pending-marker-cleared', {
+    sessionId,
+    reason,
+    pendingAgeMs:
+      Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, Date.now() - startedAt) : null
+  });
+  return true;
+};
+
+const claimRuntimePendingManualCompaction = (runtime, sessionId = null, roundNumber = null) => {
+  const pending = readRuntimePendingManualCompaction(runtime, sessionId);
+  if (!pending) return false;
+  const startedAt = Number(pending.startedAt ?? 0);
+  runtime.pendingManualCompaction = null;
+  chatDebugLog('chat.compaction.manual', 'pending-marker-claimed', {
+    sessionId,
+    round: normalizeStreamRound(roundNumber),
+    pendingAgeMs:
+      Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, Date.now() - startedAt) : null
+  });
+  return true;
+};
+
+const summarizeWorkflowItemsForDebug = (items) => {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+  return items.slice(-3).map((item) => ({
+    eventType: String(item?.eventType || item?.event || '').trim().toLowerCase() || null,
+    status: String(item?.status || '').trim().toLowerCase() || null,
+    toolName: String(item?.toolName || item?.tool || item?.name || '').trim() || null,
+    toolCallId: String(item?.toolCallId || item?.tool_call_id || '').trim() || null
+  }));
+};
+
+const summarizeAssistantMessageForDebug = (message) => {
+  if (!message || message.role !== 'assistant') {
+    return null;
+  }
+  return {
+    createdAt: String(message.created_at || '').trim() || null,
+    streamEventId: normalizeStreamEventId(message.stream_event_id),
+    streamRound: normalizeStreamRound(message.stream_round),
+    streamIncomplete: normalizeFlag(message.stream_incomplete),
+    workflowStreaming: normalizeFlag(message.workflowStreaming),
+    reasoningStreaming: normalizeFlag(message.reasoningStreaming),
+    contentLength: String(message.content || '').length,
+    reasoningLength: String(message.reasoning || '').length,
+    workflowItemCount: Array.isArray(message.workflowItems) ? message.workflowItems.length : 0,
+    workflowTail: summarizeWorkflowItemsForDebug(message.workflowItems),
+    questionPanelStatus: String(message?.questionPanel?.status || '').trim() || null,
+    manualCompactionMarker: normalizeFlag(
+      message?.manual_compaction_marker ?? message?.manualCompactionMarker
+    )
+  };
+};
+
+const summarizeMessagesForDebug = (messages) => {
+  if (!Array.isArray(messages)) {
+    return {
+      messageCount: 0,
+      assistantCount: 0,
+      pendingAssistant: null,
+      tailAssistant: null
+    };
+  }
+  const assistants = messages.filter((message) => message?.role === 'assistant' && !message?.isGreeting);
+  return {
+    messageCount: messages.length,
+    assistantCount: assistants.length,
+    pendingAssistant: summarizeAssistantMessageForDebug(findPendingAssistantMessage(messages)),
+    tailAssistant: summarizeAssistantMessageForDebug(assistants[assistants.length - 1] || null)
+  };
+};
+
+const isForegroundRealtimeAssistant = (message) =>
+  Boolean(
+    message &&
+      message.role === 'assistant' &&
+      !message.isGreeting &&
+      (
+        normalizeFlag(message.stream_incomplete) ||
+        normalizeFlag(message.workflowStreaming) ||
+        normalizeFlag(message.reasoningStreaming)
+      )
+  );
+
+const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages) => {
+  if (!Array.isArray(hydratedMessages)) {
+    return {
+      messages: Array.isArray(liveMessages) ? liveMessages : [],
+      debug: {
+        matchedLiveAssistantCount: 0,
+        appendedLivePending: false,
+        pendingAssistantPreserved: false
+      }
+    };
+  }
+  if (!Array.isArray(liveMessages) || liveMessages.length === 0) {
+    return {
+      messages: hydratedMessages,
+      debug: {
+        matchedLiveAssistantCount: 0,
+        appendedLivePending: false,
+        pendingAssistantPreserved: false
+      }
+    };
+  }
+  const liveAssistants = liveMessages.filter(
+    (message) => message?.role === 'assistant' && !message?.isGreeting
+  );
+  if (liveAssistants.length === 0) {
+    return {
+      messages: hydratedMessages,
+      debug: {
+        matchedLiveAssistantCount: 0,
+        appendedLivePending: false,
+        pendingAssistantPreserved: false
+      }
+    };
+  }
+  const matchedLiveAssistants = new Set();
+  let cursor = liveAssistants.length - 1;
+  const mergedMessages = hydratedMessages.map((message) => {
+    if (!message || message.role !== 'assistant' || message.isGreeting) {
+      return message;
+    }
+    const matchIndex = findSnapshotAssistantIndex(message, liveAssistants, cursor);
+    if (matchIndex < 0) {
+      return message;
+    }
+    const liveTarget = liveAssistants[matchIndex];
+    matchedLiveAssistants.add(liveTarget);
+    mergeSnapshotAssistant(liveTarget, message);
+    cursor = matchIndex - 1;
+    return liveTarget;
+  });
+  const livePendingAssistant = findPendingAssistantMessage(liveMessages);
+  let appendedLivePending = false;
+  if (
+    isForegroundRealtimeAssistant(livePendingAssistant) &&
+    !matchedLiveAssistants.has(livePendingAssistant)
+  ) {
+    mergedMessages.push(livePendingAssistant);
+    appendedLivePending = true;
+  }
+  return {
+    messages: mergedMessages,
+    debug: {
+      matchedLiveAssistantCount: matchedLiveAssistants.size,
+      liveAssistantCount: liveAssistants.length,
+      appendedLivePending,
+      pendingAssistantPreserved: Boolean(
+        livePendingAssistant && mergedMessages.includes(livePendingAssistant)
+      ),
+      livePendingAssistant: summarizeAssistantMessageForDebug(livePendingAssistant),
+      liveMessages: summarizeMessagesForDebug(liveMessages),
+      hydratedMessages: summarizeMessagesForDebug(hydratedMessages),
+      mergedMessages: summarizeMessagesForDebug(mergedMessages)
+    }
+  };
+};
+
+const captureRealtimeWorkflowMutationBaseline = (message, messages) => ({
+  messageIndex: Array.isArray(messages) ? messages.indexOf(message) : -1,
+  workflowItemCount: Array.isArray(message?.workflowItems) ? message.workflowItems.length : 0,
+  summary: summarizeAssistantMessageForDebug(message)
+});
+
+const logRealtimeWorkflowMutation = ({
+  phase,
+  sessionId,
+  eventType,
+  eventId,
+  roundNumber,
+  userRoundNumber,
+  message,
+  messages,
+  before
+}) => {
+  if (!isChatDebugEnabled()) {
+    return;
+  }
+  const normalizedEventType = normalizeStreamEventType(eventType);
+  const afterMessageIndex = Array.isArray(messages) ? messages.indexOf(message) : -1;
+  const afterWorkflowItemCount = Array.isArray(message?.workflowItems) ? message.workflowItems.length : 0;
+  const detached = before.messageIndex >= 0 && afterMessageIndex < 0;
+  const workflowChanged = before.workflowItemCount !== afterWorkflowItemCount;
+  const shouldLog =
+    detached ||
+    workflowChanged ||
+    normalizedEventType === 'tool_call' ||
+    normalizedEventType === 'tool_result' ||
+    normalizedEventType === 'tool_output_delta' ||
+    normalizedEventType === 'approval_request' ||
+    normalizedEventType === 'llm_output';
+  if (!shouldLog) {
+    return;
+  }
+  chatDebugLog('chat.store.runtime', 'realtime-workflow-mutation', {
+    phase,
+    sessionId,
+    eventType: normalizedEventType,
+    eventId: normalizeStreamEventId(eventId),
+    roundNumber: normalizeStreamRound(roundNumber),
+    userRoundNumber: normalizeStreamRound(userRoundNumber),
+    messageIndexBefore: before.messageIndex,
+    messageIndexAfter: afterMessageIndex,
+    messageDetached: detached,
+    workflowItemCountBefore: before.workflowItemCount,
+    workflowItemCountAfter: afterWorkflowItemCount,
+    before: before.summary,
+    after: summarizeAssistantMessageForDebug(message),
+    pendingAssistant: summarizeAssistantMessageForDebug(findPendingAssistantMessage(messages))
+  });
+};
 
 const setSessionLoading = (store, sessionId, value) => {
   const key = resolveSessionKey(sessionId);
@@ -4860,6 +5215,21 @@ const startSessionWatcher = (store, sessionId) => {
       Number.isFinite(pendingCreatedAtMs) &&
       eventTimestampMs > Number(pendingCreatedAtMs) + 1500 &&
       (pendingHasContent || pendingHasWorkflow);
+    const markPendingManualCompactionCandidate = (message) => {
+      if (!message || typeof message !== 'object') return false;
+      if (String(message.content || '').trim()) return false;
+      if (String(message.reasoning || '').trim()) return false;
+      if (Array.isArray(message.workflowItems) && message.workflowItems.length > 0) return false;
+      if (!claimRuntimePendingManualCompaction(runtime, key, normalizedRound)) return false;
+      message.manual_compaction_marker = true;
+      chatDebugLog('chat.compaction.manual', 'watch-marker-applied', {
+        sessionId: key,
+        round: normalizedRound,
+        reused: true,
+        createdAt: message.created_at ?? null
+      });
+      return true;
+    };
     const reusablePending =
       pendingCandidate && !pendingNeedsReset && !pendingRoundMismatch && !pendingLooksStale
         ? pendingCandidate
@@ -4881,6 +5251,7 @@ const startSessionWatcher = (store, sessionId) => {
         if (!candidate.created_at && Number.isFinite(eventTimestampMs)) {
           candidate.created_at = new Date(eventTimestampMs).toISOString();
         }
+        markPendingManualCompactionCandidate(candidate);
         candidate.workflowStreaming = true;
         candidate.stream_incomplete = true;
         return alreadyTracked;
@@ -4909,6 +5280,7 @@ const startSessionWatcher = (store, sessionId) => {
         if (!candidate.created_at && Number.isFinite(eventTimestampMs)) {
           candidate.created_at = new Date(eventTimestampMs).toISOString();
         }
+        markPendingManualCompactionCandidate(candidate);
         candidate.workflowStreaming = true;
         candidate.stream_incomplete = true;
         const processor = createWorkflowProcessor(
@@ -4939,6 +5311,15 @@ const startSessionWatcher = (store, sessionId) => {
       stream_event_id: lastEventId || 0,
       stream_round: normalizedRound
     };
+    if (claimRuntimePendingManualCompaction(runtime, key, normalizedRound)) {
+      assistantMessage.manual_compaction_marker = true;
+      chatDebugLog('chat.compaction.manual', 'watch-marker-applied', {
+        sessionId: key,
+        round: normalizedRound,
+        reused: false,
+        createdAt: assistantMessage.created_at ?? null
+      });
+    }
     sessionMessagesRef.push(assistantMessage);
     notifySessionSnapshot(store, key, sessionMessagesRef, true);
     const processor = createWorkflowProcessor(
@@ -4981,6 +5362,11 @@ const startSessionWatcher = (store, sessionId) => {
 
   const finalizeAll = (aborted) => {
     Array.from(roundStates.keys()).forEach((round) => finalizeRound(round, aborted));
+    clearRuntimePendingManualCompaction(
+      runtime,
+      key,
+      aborted ? 'watch-aborted' : 'watch-finalized'
+    );
   };
 
   const resolveWatchRoundNumber = (
@@ -5457,6 +5843,10 @@ const startSessionWatcher = (store, sessionId) => {
     state.message.workflowStreaming = true;
     state.message.stream_incomplete = true;
     assignStreamEventId(state.message, eventId);
+    const mutationBaseline = captureRealtimeWorkflowMutationBaseline(
+      state.message,
+      sessionMessagesRef
+    );
     if (perfEnabled) {
       const start = performance.now();
       state.processor.handleEvent(normalizedEventType || eventType, dataText);
@@ -5467,6 +5857,17 @@ const startSessionWatcher = (store, sessionId) => {
     } else {
       state.processor.handleEvent(normalizedEventType || eventType, dataText);
     }
+    logRealtimeWorkflowMutation({
+      phase: 'watch',
+      sessionId: key,
+      eventType: normalizedEventType || eventType,
+      eventId,
+      roundNumber,
+      userRoundNumber,
+      message: state.message,
+      messages: sessionMessagesRef,
+      before: mutationBaseline
+    });
     if (isWatchTerminalEventType(normalizedEventType) || llmOutputTerminal) {
       const finalized =
         tryFinalizeWatchRound(roundNumber) ||
@@ -5986,6 +6387,27 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const isToolFailureGuardStopReason = (value) => {
     const normalized = normalizeStopReason(value);
     return normalized === 'tool_failure_guard' || normalized === 'tool-failure-guard';
+  };
+
+  const isManualCompactionDetail = (value): boolean => {
+    if (!value || typeof value !== 'object') return false;
+    const detail = value as Record<string, unknown>;
+    const triggerMode = String(detail.trigger_mode ?? detail.triggerMode ?? '').trim().toLowerCase();
+    return triggerMode === 'manual';
+  };
+
+  const shouldKeepManualCompactionMarkerLayout = (): boolean => {
+    if (String(assistantMessage.content || '').trim()) return false;
+    if (String(resolveReasoningOutput() || '').trim()) return false;
+    if (hasPlanSteps(assistantMessage.plan)) return false;
+    const panelStatus = String(assistantMessage?.questionPanel?.status || '').trim().toLowerCase();
+    return panelStatus !== 'pending';
+  };
+
+  const markManualCompactionMarker = (detailSource): void => {
+    if (!isManualCompactionDetail(detailSource)) return;
+    if (!shouldKeepManualCompactionMarkerLayout()) return;
+    assistantMessage.manual_compaction_marker = true;
   };
 
   const parseOptionalPositiveCount = (value) => {
@@ -7368,6 +7790,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           || normalizedStage === 'context_overflow_recovery'
           || normalizedStage === 'context_guard'
         ) {
+          markManualCompactionMarker(detailSource);
           if (finalizeWithNow) {
             assistantMessage.workflowStreaming = true;
             assistantMessage.stream_incomplete = true;
@@ -7389,7 +7812,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             round,
             workflowRef,
             terminalHint: compactionTerminalStatusHint,
-            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+            payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
           });
           break;
         }
@@ -7413,7 +7836,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (requestPurpose === 'compaction_summary') {
           chatDebugLog('chat.compaction.event', 'llm-request-compaction-summary', {
             sessionId: options.sessionId ?? null,
-            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+            payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
           });
           break;
         }
@@ -8037,6 +8460,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const resolvedHasContent =
           typeof resolvedContent === 'string' && resolvedContent !== '';
         const hasReasoning = reasoningText !== '' || inlineReasoning !== '';
+        if (resolvedHasContent || hasReasoning) {
+          assistantMessage.manual_compaction_marker = false;
+        }
         if (
           !resolvedHasContent &&
           !hasReasoning &&
@@ -8108,12 +8534,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             sessionId: options.sessionId ?? null,
             activeWorkflowRef: activeCompactionWorkflowRef,
             trackedWorkflowRefs: Array.from(compactionProgressItemMap.keys()),
-            payload: buildCompactionDebugSummary(data ?? payload ?? {})
+            payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
           });
         }
         break;
       }
       case 'compaction': {
+        markManualCompactionMarker(data ?? payload ?? {});
         const round = resolveRound(payload, data);
         const workflowRef = resolveStandaloneCompactionWorkflowRef(round);
         const normalizedCompactionStatus = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
@@ -8144,7 +8571,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           workflowRef,
           finalizedFromProgress: finalized,
           status: compactionStatus,
-          payload: buildCompactionDebugSummary(data ?? payload ?? {})
+          payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
         });
         break;
       }
@@ -8263,11 +8690,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           });
         }
         if (terminalFailed && !assistantMessage.content) {
-          const terminalDetail = pickText(
-            terminalPayload?.message ?? terminalPayload?.error,
-            t('chat.error.retry')
-          );
-          assistantMessage.content = terminalDetail;
+          if (!assistantMessage.manual_compaction_marker) {
+            const terminalDetail = pickText(
+              terminalPayload?.message ?? terminalPayload?.error,
+              t('chat.error.retry')
+            );
+            assistantMessage.content = terminalDetail;
+          }
         }
         break;
       }
@@ -8288,12 +8717,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           });
         }
         finalizeLingeringCompactionProgressItems(errorPayload, 'failed');
-        assistantMessage.workflowItems.push(
-          buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed', {
-            eventType: 'error'
-          })
-        );
-        if (!assistantMessage.content) {
+        if (!assistantMessage.manual_compaction_marker) {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed', {
+              eventType: 'error'
+            })
+          );
+        }
+        if (!assistantMessage.content && !assistantMessage.manual_compaction_marker) {
           assistantMessage.content = pickText(detail, t('chat.error.retry'));
         }
         break;
@@ -8381,7 +8812,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           if (responsePurpose === 'compaction_summary') {
             chatDebugLog('chat.compaction.event', 'llm-response-compaction-summary', {
               sessionId: options.sessionId ?? null,
-              payload: buildCompactionDebugSummary(data ?? payload ?? {})
+              payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
             });
             break;
           }
@@ -8450,6 +8881,9 @@ const hydrateMessage = (message, workflowState) => {
       message?.waiting_phase_first_output_at_ms ?? message?.waitingPhaseFirstOutputAtMs
     ),
     hiddenInternal: normalizeHiddenInternalMessage(message?.hiddenInternal),
+    manual_compaction_marker: normalizeFlag(
+      message?.manual_compaction_marker ?? message?.manualCompactionMarker
+    ),
     subagents: normalizeMessageSubagents(message?.subagents),
     feedback: normalizeMessageFeedback(message?.feedback),
     stats: normalizeMessageStats(message.stats) || buildMessageStats()
@@ -9476,13 +9910,18 @@ export const useChatStore = defineStore('chat', {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
           (activeSessionKey === targetSessionId ? this.messages : null);
+        const foregroundMerge = mergeForegroundHydratedMessagesWithLive(
+          watchedMessages,
+          nextMessages
+        );
         chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
           sessionId: targetSessionId,
           watchedMessageCount: Array.isArray(watchedMessages) ? watchedMessages.length : 0,
           hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
-          compactionRoundCount: compactionHydrationRounds.length
+          compactionRoundCount: compactionHydrationRounds.length,
+          merge: foregroundMerge.debug
         });
-        nextMessages = replaceMessageArrayKeepingReference(watchedMessages, nextMessages);
+        nextMessages = replaceMessageArrayKeepingReference(watchedMessages, foregroundMerge.messages);
       }
       cacheSessionMessages(targetSessionId, nextMessages);
       updateRuntimeLastEventId(
@@ -9837,7 +10276,7 @@ export const useChatStore = defineStore('chat', {
           activeSessionId: activeSessionIdForManual,
           shouldWatchActiveSession,
           debugPayloadEnabled,
-          payload: buildCompactionDebugSummary(payload),
+          payload: cloneCompactionDebugPayload(payload, {}),
           runtime: buildRuntimeDebugSnapshot(runtimeForManual)
         });
         if (runtimeForManual) {
@@ -9846,6 +10285,9 @@ export const useChatStore = defineStore('chat', {
             runtimeForManual.compactController.abort();
           }
           runtimeForManual.compactController = new AbortController();
+          if (shouldWatchActiveSession) {
+            markRuntimePendingManualCompaction(runtimeForManual, targetId);
+          }
         }
         const compactControllerForManual = runtimeForManual?.compactController || null;
         if (
@@ -9875,18 +10317,20 @@ export const useChatStore = defineStore('chat', {
           return data?.data?.message || data?.message || '';
         } catch (error) {
           if (isAbortRequestError(error)) {
+            clearRuntimePendingManualCompaction(runtimeForManual, targetId, 'request-cancelled');
             chatDebugLog('chat.compaction.manual', 'request-cancelled', {
               sessionId: targetId,
               runtime: buildRuntimeDebugSnapshot(runtimeForManual)
             });
           } else {
+            clearRuntimePendingManualCompaction(runtimeForManual, targetId, 'request-failed');
             const detailText = String(
               error?.response?.data?.detail || error?.message || t('common.requestFailed')
             ).trim();
             chatDebugLog('chat.compaction.manual', 'request-failed', {
               sessionId: targetId,
               code: String(error?.response?.data?.code || error?.code || ''),
-              message: trimCompactionDebugText(detailText)
+              message: normalizeCompactionDebugText(detailText)
             });
           }
           setSessionLoading(this, targetId, false);
@@ -9905,6 +10349,8 @@ export const useChatStore = defineStore('chat', {
           });
         }
       }
+      return '';
+      /*
       const activeSessionId = String(this.activeSessionId || '').trim();
       const shouldResumeWatcher = activeSessionId === targetId;
       if (shouldResumeWatcher) {
@@ -9916,7 +10362,7 @@ export const useChatStore = defineStore('chat', {
         sessionId: targetId,
         activeSessionId,
         shouldResumeWatcher,
-        payload: buildCompactionDebugSummary(payload),
+        payload: cloneCompactionDebugPayload(payload, {}),
         runtime: buildRuntimeDebugSnapshot(runtime)
       });
       if (runtime) {
@@ -10006,7 +10452,7 @@ export const useChatStore = defineStore('chat', {
         chatDebugLog('chat.compaction.manual', 'request-success', {
           sessionId: targetId,
           workflowRef,
-          result: buildCompactionDebugSummary(resultData),
+          result: cloneCompactionDebugPayload(resultData, {}),
           marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
         });
         return data?.data?.message || data?.message || '';
@@ -10056,7 +10502,7 @@ export const useChatStore = defineStore('chat', {
           sessionId: targetId,
           workflowRef,
           code: String(error?.response?.data?.code || error?.code || ''),
-          message: trimCompactionDebugText(detailText),
+          message: normalizeCompactionDebugText(detailText),
           marker: summarizeCompactionWorkflowItemsForDebug(compactionMessage.workflowItems)
         });
         throw error;
@@ -10079,6 +10525,7 @@ export const useChatStore = defineStore('chat', {
           runtime: buildRuntimeDebugSnapshot(runtime)
         });
       }
+      */
     },
 
     async sendMessage(content: string, options: SendMessageOptions = {}) {
@@ -10350,6 +10797,10 @@ export const useChatStore = defineStore('chat', {
           }
           assignStreamEventId(assistantMessage, eventId);
           updateRuntimeLastEventId(runtime, eventId);
+          const mutationBaseline = captureRealtimeWorkflowMutationBaseline(
+            assistantMessage,
+            sessionMessagesRef
+          );
           if (perfEnabled) {
             const start = performance.now();
             processor.handleEvent(normalizedEventType || eventType, dataText);
@@ -10360,6 +10811,17 @@ export const useChatStore = defineStore('chat', {
           } else {
             processor.handleEvent(normalizedEventType || eventType, dataText);
           }
+          logRealtimeWorkflowMutation({
+            phase: 'send',
+            sessionId,
+            eventType: normalizedEventType || eventType,
+            eventId,
+            roundNumber: assistantMessage.stream_round,
+            userRoundNumber: payload?.user_round ?? approvalPayload?.user_round,
+            message: assistantMessage,
+            messages: sessionMessagesRef,
+            before: mutationBaseline
+          });
         };
         const streamWithSse = async () => {
           const response = await sendMessageStream(sessionId, payload, {
@@ -10764,6 +11226,10 @@ export const useChatStore = defineStore('chat', {
               normalizeStreamEventId(message.stream_event_id) || 0
             );
           }
+          const mutationBaseline = captureRealtimeWorkflowMutationBaseline(
+            message,
+            sessionMessagesRef
+          );
           if (perfEnabled) {
             const start = performance.now();
             processor.handleEvent(normalizedEventType || eventType, dataText);
@@ -10774,6 +11240,17 @@ export const useChatStore = defineStore('chat', {
           } else {
             processor.handleEvent(normalizedEventType || eventType, dataText);
           }
+          logRealtimeWorkflowMutation({
+            phase: 'resume',
+            sessionId,
+            eventType: normalizedEventType || eventType,
+            eventId,
+            roundNumber: message.stream_round,
+            userRoundNumber: payload?.user_round ?? approvalPayload?.user_round,
+            message,
+            messages: sessionMessagesRef,
+            before: mutationBaseline
+          });
         };
         const streamWithSse = async () => {
           const response = await resumeMessageStream(sessionId, {

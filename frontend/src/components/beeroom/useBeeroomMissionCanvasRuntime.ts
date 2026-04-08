@@ -64,6 +64,12 @@ type DispatchSessionTarget = {
   sessionSummary: Record<string, unknown> | null;
 };
 
+type DispatchSessionAssistantIdentity = {
+  agentId: string;
+  name: string;
+  tone: MissionChatMessage['tone'];
+};
+
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
 const CHAT_HEALTH_POLL_INTERVAL_MS = 30_000;
 const TEAM_REALTIME_REFRESH_THROTTLE_MS = 360;
@@ -118,6 +124,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const dispatchRespondingApprovalId = ref('');
   const chatRealtimeCursor = ref(0);
   const chatMessagesClearedAfter = ref(0);
+  const sessionAssistantIdentityBySession = ref<Record<string, DispatchSessionAssistantIdentity>>({});
 
   let manualMessageSerial = 0;
   let chatAuthDenied = false;
@@ -357,12 +364,52 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return match && typeof match === 'object' ? (match as Record<string, unknown>) : null;
   };
 
+  const rememberSessionAssistantIdentity = (
+    sessionId: string,
+    identity: Partial<DispatchSessionAssistantIdentity> | null | undefined
+  ) => {
+    const targetId = String(sessionId || '').trim();
+    if (!targetId || !identity) return;
+    const nextAgentId = String(identity.agentId || '').trim();
+    const nextName = normalizeChatActorName(identity.name);
+    const nextTone = identity.tone === 'mother' ? 'mother' : 'worker';
+    if (!nextAgentId && !nextName) return;
+    const current = sessionAssistantIdentityBySession.value[targetId];
+    if (
+      current?.agentId === nextAgentId &&
+      current?.name === nextName &&
+      current?.tone === nextTone
+    ) {
+      return;
+    }
+    sessionAssistantIdentityBySession.value = {
+      ...sessionAssistantIdentityBySession.value,
+      [targetId]: {
+        agentId: nextAgentId,
+        name: nextName,
+        tone: nextTone
+      }
+    };
+  };
+
+  const resolveSessionAssistantIdentity = (sessionId: string): DispatchSessionAssistantIdentity | null => {
+    const targetId = String(sessionId || '').trim();
+    if (!targetId) return null;
+    return sessionAssistantIdentityBySession.value[targetId] || null;
+  };
+
   const resolveStoredSessionAgentId = (sessionId: string) => {
     const summary = resolveDispatchSessionSummary(sessionId);
     const summaryAgentId = String(summary?.agent_id || '').trim();
     if (summaryAgentId) return summaryAgentId;
+    const requestedAgentId = String(summary?.beeroom_requested_agent_id || '').trim();
+    if (requestedAgentId) return requestedAgentId;
     if (summary?.is_default === true) {
       return DEFAULT_AGENT_KEY;
+    }
+    const identity = resolveSessionAssistantIdentity(sessionId);
+    if (identity?.agentId) {
+      return identity.agentId;
     }
     return '';
   };
@@ -370,20 +417,47 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const resolveDispatchAssistantAgentId = (sessionId: string) => {
     const stored = resolveStoredSessionAgentId(sessionId);
     if (stored) return stored;
+    if (String(sessionId || '').trim() !== String(dispatchSessionId.value || '').trim()) {
+      return '';
+    }
     const explicit = String(dispatchTargetAgentId.value || '').trim();
     if (explicit) return explicit;
     return '';
   };
 
   const resolveDispatchAssistantName = (sessionId: string) => {
-    const explicitName = normalizeChatActorName(dispatchTargetName.value);
-    if (explicitName) return explicitName;
+    const summary = resolveDispatchSessionSummary(sessionId);
+    const requestedName = normalizeChatActorName(summary?.beeroom_target_name);
+    if (requestedName) return requestedName;
+    const identity = resolveSessionAssistantIdentity(sessionId);
+    if (identity?.name) return identity.name;
+    if (String(sessionId || '').trim() === String(dispatchSessionId.value || '').trim()) {
+      const explicitName = normalizeChatActorName(dispatchTargetName.value);
+      if (explicitName) return explicitName;
+    }
     const agentId = resolveDispatchAssistantAgentId(sessionId);
     if (agentId) {
       const agentName = normalizeChatActorName(resolveAgentNameById(agentId));
       if (agentName) return agentName;
     }
     return options.t('messenger.defaultAgent');
+  };
+
+  const resolveDispatchAssistantTone = (
+    sessionId: string,
+    fallback: MissionChatMessage['tone'] = 'worker'
+  ): MissionChatMessage['tone'] => {
+    const identity = resolveSessionAssistantIdentity(sessionId);
+    if (identity?.tone === 'mother') return 'mother';
+    if (identity?.tone === 'worker') return 'worker';
+    if (String(sessionId || '').trim() === String(dispatchSessionId.value || '').trim()) {
+      return dispatchTargetTone.value === 'mother' ? 'mother' : 'worker';
+    }
+    const agentId = resolveDispatchAssistantAgentId(sessionId);
+    if (agentId && agentId === String(motherAgentId.value || '').trim()) {
+      return 'mother';
+    }
+    return fallback;
   };
 
   const mapSessionChatMessage = (
@@ -425,7 +499,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       meta: '',
       time,
       timeLabel: formatDateTime(time),
-      tone: role === 'assistant' ? (dispatchTargetTone.value === 'mother' ? 'mother' : 'worker') : 'user'
+      tone: role === 'assistant' ? resolveDispatchAssistantTone(sessionId) : 'user'
     };
   };
 
@@ -623,6 +697,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetTone.value =
       cachedDispatch.targetTone === 'mother' ? 'mother' : 'worker';
     dispatchRuntimeStatus.value = cachedDispatch.runtimeStatus || 'idle';
+    rememberSessionAssistantIdentity(dispatchSessionId.value, {
+      agentId: dispatchTargetAgentId.value,
+      name: dispatchTargetName.value,
+      tone: dispatchTargetTone.value
+    });
     logBeeroomRuntime('restore-cached-chat-state', {
       scopeKey,
       manualCount: cachedMessages.length,
@@ -648,6 +727,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       {
         sessionId: targetId,
         agentId: dispatchTargetAgentId.value,
+        agentName: dispatchTargetName.value,
+        targetTone: dispatchTargetTone.value,
         sessionSummary: resolveDispatchSessionSummary(targetId),
         userPreview: resolveLatestVisibleUserPreview()
       },
@@ -732,6 +813,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     await reconcileMotherDispatchSession({ hydrate: false, syncMessages: false });
     const cachedState = readCachedChatState();
     const cachedMessages = Array.isArray(cachedState?.manualMessages) ? cachedState.manualMessages : [];
+    const cachedDispatchSessionId = String(cachedState?.dispatch?.sessionId || '').trim();
+    const currentDispatchSessionId = String(dispatchSessionId.value || '').trim();
+    const cachedSessionMatchesCurrent =
+      !currentDispatchSessionId || !cachedDispatchSessionId || cachedDispatchSessionId === currentDispatchSessionId;
     if (!String(dispatchSessionId.value || '').trim()) {
       const next = [...cachedMessages]
         .filter(
@@ -749,13 +834,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       });
       return;
     }
-    if (!sameManualChatMessages(manualChatMessages.value, cachedMessages) && cachedMessages.length > 0) {
+    if (
+      !sameManualChatMessages(manualChatMessages.value, cachedMessages) &&
+      cachedMessages.length > 0 &&
+      cachedSessionMatchesCurrent
+    ) {
       replaceManualChatMessages(cachedMessages);
+    } else if (!cachedSessionMatchesCurrent && hasAnySessionScopedMessage(manualChatMessages.value)) {
+      replaceManualChatMessages([]);
     }
     logBeeroomRuntime('load-manual-chat-history:dispatch', {
       scopeKey: chatRuntimeScopeKey.value,
       sessionId: dispatchSessionId.value,
-      cachedCount: cachedMessages.length
+      cachedCount: cachedMessages.length,
+      cachedDispatchSessionId,
+      cachedSessionMatchesCurrent
     });
     await syncDispatchSessionMessages({ hydrate: true });
   };
@@ -1047,8 +1140,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetAgentId.value = resolvedMotherAgentId;
     dispatchTargetName.value = resolveAgentNameById(resolvedMotherAgentId);
     dispatchTargetTone.value = 'mother';
+    rememberSessionAssistantIdentity(primarySessionId, {
+      agentId: resolvedMotherAgentId,
+      name: dispatchTargetName.value,
+      tone: 'mother'
+    });
     ensureDispatchSessionKnown(primarySessionId, false);
     void syncDispatchSessionToMessenger(primarySessionId, resolvedMotherAgentId).catch(() => null);
+    if (
+      currentSessionId &&
+      currentSessionId !== primarySessionId &&
+      hasSessionScopedMessageFor(manualChatMessages.value, currentSessionId) &&
+      !hasSessionScopedMessageFor(manualChatMessages.value, primarySessionId)
+    ) {
+      replaceManualChatMessages([]);
+    }
     if (syncOptions.syncMessages === false) return;
     await syncDispatchSessionMessages({
       hydrate: syncOptions.hydrate !== false,
@@ -1060,6 +1166,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const syncDispatchSessionToChatStore = (payload: {
     sessionId: string;
     agentId: string;
+    agentName?: string;
+    targetTone?: MissionChatMessage['tone'];
     sessionSummary: Record<string, unknown> | null;
     userPreview: string;
   }, syncOptions: { remember?: boolean } = {}) => {
@@ -1067,13 +1175,20 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (!targetSessionId) return;
     const nowIso = new Date().toISOString();
     const preview = clipMessageBody(payload.userPreview, 120);
+    const requestedAgentId = String(payload.agentId || '').trim();
+    const requestedAgentName =
+      normalizeChatActorName(payload.agentName) || normalizeChatActorName(resolveAgentNameById(requestedAgentId));
     const fallbackAgentId = normalizeDispatchAgentId(payload.agentId);
     const summary = payload.sessionSummary || null;
     const summaryAgentId = String(summary?.agent_id || '').trim();
+    const isDefaultSession = requestedAgentId === DEFAULT_AGENT_KEY || summary?.is_default === true;
     const nextSession: Record<string, unknown> = {
       ...(summary || {}),
       id: targetSessionId,
       agent_id: summaryAgentId || fallbackAgentId,
+      beeroom_requested_agent_id: requestedAgentId,
+      beeroom_target_name: requestedAgentName,
+      is_default: isDefaultSession,
       updated_at: nowIso,
       last_message_at: nowIso
     };
@@ -1084,13 +1199,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (!String(nextSession.title || '').trim()) {
       nextSession.title = preview || options.t('chat.newSession');
     }
+    rememberSessionAssistantIdentity(targetSessionId, {
+      agentId: requestedAgentId || (isDefaultSession ? DEFAULT_AGENT_KEY : ''),
+      name: requestedAgentName,
+      tone: payload.targetTone === 'mother' ? 'mother' : 'worker'
+    });
     chatStore.syncSessionSummary(nextSession, {
       agentId: fallbackAgentId,
       remember: syncOptions.remember === true
     });
     logBeeroomRuntime('sync-dispatch-session-summary', {
       sessionId: targetSessionId,
-      agentId: String(nextSession.agent_id || '').trim(),
+      agentId: String(nextSession.beeroom_requested_agent_id || nextSession.agent_id || '').trim(),
       remember: syncOptions.remember === true,
       preview
     });
@@ -1121,7 +1241,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       meta: '',
       time: createdAt,
       timeLabel: formatDateTime(createdAt),
-      tone: role === 'assistant' ? (dispatchTargetTone.value === 'mother' ? 'mother' : 'worker') : 'user'
+      tone:
+        role === 'assistant'
+          ? resolveDispatchAssistantTone(String(dispatchSessionId.value || '').trim())
+          : 'user'
     };
   };
 
@@ -1149,9 +1272,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       ? resolveStoredSessionAgentId(parentSessionId)
       : resolveDispatchAssistantAgentId(String(dispatchSessionId.value || '').trim());
     const parentNameFromAgent = normalizeChatActorName(parentAgentId ? resolveAgentNameById(parentAgentId) : '');
+    const parentNameFromSession = parentSessionId ? resolveDispatchAssistantName(parentSessionId) : '';
     const parentNameFromDispatch = resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim());
-    const parentName = parentNameFromAgent || parentNameFromDispatch;
-    const parentTone = resolveChatToneByAgentId(parentAgentId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker');
+    const parentName = parentNameFromAgent || parentNameFromSession || parentNameFromDispatch;
+    const parentTone = parentSessionId
+      ? resolveDispatchAssistantTone(parentSessionId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker')
+      : resolveChatToneByAgentId(parentAgentId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker');
     const childTone = resolveChatToneByAgentId(childAgentId, 'worker');
     const meta = String(item.dispatchLabel || '').trim();
     const requestBody = String(item.userMessage || '').trim();
@@ -1550,6 +1676,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         {
           sessionId,
           agentId: target.agentId,
+          agentName: targetName,
+          targetTone,
           sessionSummary: dispatchSession.sessionSummary,
           userPreview: visibleBody
         },

@@ -11,7 +11,7 @@ export type MessageStatsEntry = {
   live?: boolean;
 };
 
-type TranslateFn = (key: string) => string;
+type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type WorkflowItemLike = Record<string, any>;
 
 const formatDuration = (seconds: unknown): string => {
@@ -38,9 +38,28 @@ const formatSpeed = (value: unknown): string => {
   return `${parsed.toFixed(2)} token/s`;
 };
 
+const formatCompactElapsed = (milliseconds: number): string => {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '';
+  const totalSeconds = Math.max(1, Math.round(milliseconds / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+  return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
+};
+
 const normalizeSpeed = (speed: number): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
   return speed;
+};
+
+const parsePositiveInteger = (value: unknown): number | null => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
 const normalizeDurationSeconds = (value: unknown): number | null => {
@@ -129,6 +148,40 @@ const isModelOutputWorkflowItem = (item: WorkflowItemLike): boolean => {
   if (!item || typeof item !== 'object') return false;
   if (item?.isModelOutput) return true;
   return normalizeWorkflowEventType(item?.eventType ?? item?.event) === 'llm_output';
+};
+
+const buildRetryStatusValue = (
+  message: Record<string, any>,
+  retryItem: WorkflowItemLike | null,
+  t: TranslateFn
+): string => {
+  const parts = [t('messenger.messageStatus.retrying')];
+  const attempt = parsePositiveInteger(retryItem?.attempt);
+  const maxAttempts = parsePositiveInteger(retryItem?.maxAttempts);
+  if (attempt && maxAttempts) {
+    parts.push(t('messenger.messageStatus.retryAttemptCompact', { attempt, maxAttempts }));
+  } else if (attempt) {
+    parts.push(t('messenger.messageStatus.retryAttemptCompactSingle', { attempt }));
+  }
+  const retryDelaySeconds = Number(retryItem?.delayS);
+  const retryDelayLabel =
+    Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0
+      ? formatCompactElapsed(retryDelaySeconds * 1000)
+      : '';
+  if (retryDelayLabel) {
+    parts.push(t('messenger.messageStatus.retryDelayCompact', { delay: retryDelayLabel }));
+    return parts.join(' · ');
+  }
+  const retryStartedAtMs = Number(
+    message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs ?? message?.stats?.interaction_start_ms
+  );
+  if (Number.isFinite(retryStartedAtMs) && retryStartedAtMs > 0) {
+    const elapsedLabel = formatCompactElapsed(Date.now() - retryStartedAtMs);
+    if (elapsedLabel) {
+      parts.push(t('messenger.messageStatus.retryElapsedCompact', { time: elapsedLabel }));
+    }
+  }
+  return parts.join(' · ');
 };
 
 const findLastWorkflowItem = (
@@ -240,10 +293,10 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
   }
   if (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) {
-    return buildStatusEntry(t('messenger.messageStatus.retrying'), 'warning', true);
+    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t), 'warning', true);
   }
   if (message?.slow_client && !hasAssistantVisibleOutput(message)) {
-    return buildStatusEntry(t('messenger.messageStatus.retrying'), 'warning', true);
+    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t), 'warning', true);
   }
   if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.queued'), 'muted', true);

@@ -166,7 +166,7 @@ async fn create_team_run(
         .to_string();
     let timeout_s = payload
         .timeout_s
-        .map(|value| value.max(1.0))
+        .map(|value| value.max(0.0))
         .unwrap_or(swarm_config.default_timeout_s as f64);
     let merge_policy = payload
         .merge_policy

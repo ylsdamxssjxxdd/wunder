@@ -696,6 +696,13 @@ impl Orchestrator {
                                 "request_overhead_tokens": request_overhead_tokens,
                             });
                             if let Value::Object(ref mut map) = compaction_payload {
+                                if let Some(max_context) = compaction_llm_config
+                                    .max_context
+                                    .map(i64::from)
+                                    .filter(|value| *value > 0)
+                                {
+                                    map.insert("max_context".to_string(), json!(max_context));
+                                }
                                 round_info.insert_into(map);
                             }
                             emitter.emit("compaction", compaction_payload).await;

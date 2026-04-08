@@ -59,6 +59,12 @@
             />
             <span v-else>{{ avatarLabel(message.senderName) }}</span>
           </button>
+          <div
+            v-else-if="message.tone !== 'user' && message.senderName"
+            class="beeroom-canvas-chat-avatar is-agent-shell"
+          >
+            <span>{{ avatarLabel(message.senderName) }}</span>
+          </div>
           <div v-else class="beeroom-canvas-chat-avatar" :class="message.tone === 'user' ? 'is-user' : 'is-system'">
             <i class="fa-solid" :class="message.tone === 'user' ? 'fa-user' : 'fa-wave-square'" aria-hidden="true"></i>
           </div>
@@ -285,13 +291,12 @@ const handleStreamScroll = () => {
 };
 
 watch(
-  () =>
-    [
-      props.messages.length,
-      props.messages[props.messages.length - 1]?.key || '',
-      props.messages[props.messages.length - 1]?.body || '',
-      props.collapsed
-    ] as const,
+  [
+    () => props.messages.length,
+    () => props.messages[props.messages.length - 1]?.key || '',
+    () => props.messages[props.messages.length - 1]?.body || '',
+    () => props.collapsed
+  ],
   async ([, , , collapsed], previous) => {
     if (collapsed) return;
     const previousCollapsed = Array.isArray(previous) ? previous[3] : undefined;
@@ -497,6 +502,12 @@ watch(
   cursor: default;
   background: rgba(127, 29, 29, 0.52);
   color: #fee2e2;
+}
+
+.beeroom-canvas-chat-avatar.is-agent-shell {
+  cursor: default;
+  background: linear-gradient(180deg, rgba(38, 40, 54, 0.94), rgba(23, 25, 34, 0.92));
+  color: #e5e7eb;
 }
 
 .beeroom-canvas-chat-avatar-img {

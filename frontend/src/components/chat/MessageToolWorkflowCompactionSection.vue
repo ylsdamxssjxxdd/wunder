@@ -1,10 +1,5 @@
 <template>
   <div v-if="view" class="tool-workflow-compaction">
-    <div class="tool-workflow-compaction-overview">
-      <div class="tool-workflow-compaction-headline">{{ view.headline }}</div>
-      <div class="tool-workflow-compaction-description">{{ view.description }}</div>
-    </div>
-
     <div v-if="view.usageBar" :class="['tool-workflow-compaction-usage', `is-${view.usageBar.tone}`]">
       <div class="tool-workflow-compaction-usage-track">
         <span
@@ -71,26 +66,6 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.tool-workflow-compaction-overview {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--workflow-term-border);
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.12), rgba(15, 23, 42, 0.16));
-}
-
-.tool-workflow-compaction-headline {
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.tool-workflow-compaction-description {
-  margin-top: 4px;
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 .tool-workflow-compaction-usage {

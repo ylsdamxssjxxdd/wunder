@@ -259,30 +259,30 @@
                 { 'message-compaction-marker': isCompactionMarkerMessage(message) }
               ]"
             >
-              <div v-if="!isCompactionMarkerMessage(message)" class="message-side">
-                <button
-                  class="avatar"
-                  :class="[
-                    message.role === 'user' ? 'user-avatar' : 'ai-avatar',
-                    { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
-                  ]"
-                  type="button"
-                  :title="resolveMessageAvatarActionLabel(message)"
-                  :aria-label="resolveMessageAvatarActionLabel(message)"
-                  :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
-                  @click="handleMessageAvatarClick(message)"
-                >
-                  {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
-                </button>
-                <div v-if="message.role === 'user'" class="message-side-meta">
-                  <span class="message-side-time">{{ formatTime(message.created_at) }}</span>
-                </div>
-              </div>
+              <button
+                v-if="!isCompactionMarkerMessage(message)"
+                class="avatar"
+                :class="[
+                  message.role === 'user' ? 'user-avatar' : 'ai-avatar',
+                  { 'ai-avatar-working': message.role === 'assistant' && isAssistantStreaming(message) }
+                ]"
+                type="button"
+                :title="resolveMessageAvatarActionLabel(message)"
+                :aria-label="resolveMessageAvatarActionLabel(message)"
+                :aria-busy="message.role === 'assistant' && isAssistantStreaming(message) ? 'true' : 'false'"
+                @click="handleMessageAvatarClick(message)"
+              >
+                {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
+              </button>
               <div class="message-content">
                 <template v-if="isCompactionMarkerMessage(message)">
                   <MessageCompactionDivider
                     :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                     :is-streaming="isAssistantStreaming(message)"
+                    :manual-marker="
+                      message.manual_compaction_marker === true
+                        || message.manualCompactionMarker === true
+                    "
                   />
                 </template>
                 <template v-else>
@@ -291,8 +291,8 @@
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                   :is-streaming="isAssistantStreaming(message)"
                 />
-                <div class="message-header" :class="{ 'message-header-user': message.role === 'user' }">
-                  <div v-if="message.role === 'assistant'" class="message-header-left">
+                <div class="message-header">
+                  <div class="message-header-left">
                     <div class="message-role">
                       <span
                         v-if="message.role === 'assistant'"
@@ -315,13 +315,8 @@
                       :streaming="message.reasoningStreaming"
                     />
                   </div>
-                  <div
-                    class="message-actions"
-                    :class="{ 'message-actions-user': message.role === 'user' }"
-                  >
-                    <div v-if="message.role === 'assistant'" class="message-time">
-                      {{ formatTime(message.created_at) }}
-                    </div>
+                  <div v-if="message.role === 'assistant'" class="message-actions">
+                    <div class="message-time">{{ formatTime(message.created_at) }}</div>
                     <template v-if="message.role === 'assistant'">
                       <button
                         v-if="shouldShowResumeButton(message)"
@@ -336,6 +331,19 @@
                       </button>
                       <MessageFeedbackActions :message="message" />
                     </template>
+                    <button
+                      class="message-copy-btn"
+                      type="button"
+                      :title="t('chat.message.copy')"
+                      :aria-label="t('chat.message.copy')"
+                      @click="handleCopyMessage(message)"
+                    >
+                      <i class="fa-solid fa-copy message-copy-icon" aria-hidden="true"></i>
+                      <span>{{ t('chat.message.copy') }}</span>
+                    </button>
+                  </div>
+                  <div v-else class="message-actions">
+                    <div class="message-time">{{ formatTime(message.created_at) }}</div>
                     <button
                       class="message-copy-btn"
                       type="button"
@@ -1633,12 +1641,15 @@ const isAssistantStreaming = (message) => {
 
 const isCompactionMarkerMessage = (message): boolean => {
   if (!message || message.role !== 'assistant') return false;
-  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
   if (String(message.content || '').trim()) return false;
   if (String(message.reasoning || '').trim()) return false;
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
   if (panelStatus === 'pending') return false;
+  if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+    return true;
+  }
+  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
   if (!isAssistantStreaming(message)) return true;
   const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
   const triggerMode = String(
@@ -1651,6 +1662,12 @@ const isCompactionMarkerMessage = (message): boolean => {
 
 const shouldShowCompactionDivider = (message): boolean => {
   if (!isCompactionMarkerMessage(message)) return false;
+  if (
+    (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) &&
+    isAssistantStreaming(message)
+  ) {
+    return true;
+  }
   const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
   if (!snapshot) return false;
   const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();

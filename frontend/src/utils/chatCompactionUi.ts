@@ -252,6 +252,24 @@ const resolveUsageRatio = (value: number | null, limit: number | null): number |
   return Math.max(0, ratio);
 };
 
+const resolveUsageCapacity = (detailObject: UnknownObject | null): number | null => {
+  const contextUsage =
+    detailObject?.context_usage && typeof detailObject.context_usage === 'object'
+      ? (detailObject.context_usage as UnknownObject)
+      : null;
+  return toOptionalInt(
+    detailObject?.max_context,
+    detailObject?.maxContext,
+    detailObject?.context_max_tokens,
+    detailObject?.contextMaxTokens,
+    contextUsage?.max_context,
+    contextUsage?.maxContext,
+    contextUsage?.context_max_tokens,
+    contextUsage?.contextMaxTokens,
+    detailObject?.limit
+  );
+};
+
 const clampUsageBarRatio = (value: number | null): number | null => {
   if (value === null) return null;
   return Math.max(0, Math.min(value, 1));
@@ -354,7 +372,7 @@ export const buildCompactionDisplay = (
     toOptionalInt(detailObject?.request_overhead_tokens),
     toOptionalInt(detailObject?.limit)
   );
-  const limit = toOptionalInt(detailObject?.limit);
+  const usageCapacity = resolveUsageCapacity(detailObject);
   const persistedBaseline = formatTokenCount(toOptionalInt(detailObject?.persisted_context_tokens));
   const resetMode = pickString(detailObject?.reset_mode, detailObject?.resetMode);
   const errorCode = pickString(detailObject?.error_code, detailObject?.code);
@@ -495,8 +513,8 @@ export const buildCompactionDisplay = (
         ? t('chat.toolWorkflow.compaction.output.emptySkipped')
         : t('chat.toolWorkflow.compaction.output.empty');
 
-  const beforeRatio = resolveUsageRatio(projectedBefore, limit);
-  const afterRatio = resolveUsageRatio(projectedAfter, limit);
+  const beforeRatio = resolveUsageRatio(projectedBefore, usageCapacity);
+  const afterRatio = resolveUsageRatio(projectedAfter, usageCapacity);
   const beforeBarRatio = clampUsageBarRatio(beforeRatio);
   const afterBarRatio = clampUsageBarRatio(afterRatio);
   const usageBar: CompactionUsageBarView | null =

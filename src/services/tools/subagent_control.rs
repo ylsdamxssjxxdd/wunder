@@ -650,6 +650,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let dispatch_label = normalize_optional_string(payload.dispatch_label.clone())
         .or_else(|| normalize_optional_string(payload.label.clone()));
     let task_total = tasks.len() as i64;
+    let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
     emit_dispatch_start(
         context,
         &dispatch_id,
@@ -707,9 +708,12 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
                     context.model_round,
                 );
                 announce.emit_parent_events = true;
-                announce.auto_wake = true;
+                super::sync_announce_auto_wake(
+                    &mut announce,
+                    Some(&mut run_metadata),
+                    super::should_auto_wake_parent_after_child_run(false, wait_seconds),
+                );
                 announce.persist_history_message = false;
-                super::insert_run_metadata_field(&mut run_metadata, "auto_wake", json!(true));
                 super::insert_run_metadata_field(&mut run_metadata, "spawn_mode", json!("batch"));
                 super::insert_run_metadata_field(
                     &mut run_metadata,
@@ -852,7 +856,6 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         return Ok(result);
     }
 
-    let wait_seconds = payload.wait_seconds.unwrap_or(0.0).max(0.0);
     if wait_seconds <= 0.0 {
         let result = decorate_dispatch_result(
             json!({

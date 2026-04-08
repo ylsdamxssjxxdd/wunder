@@ -1,11 +1,15 @@
-use super::*;
-use super::execute::{
-    emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent,
-};
+use super::execute::{emit_turn_terminal_event, turn_terminal_status_for_error, TurnTerminalEvent};
 use super::thread_runtime::ThreadRuntimeStatus;
+use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
 const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
+const COMPACTION_RETAINED_EDGE_TURN_COUNT: usize = 2;
+const COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN: i64 = 512;
+const COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MAX: i64 = 12_000;
+const COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS: i64 = 3_072;
+const COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS: i64 = 6_144;
+const COMPACTION_RETAINED_MESSAGE_MAX_TOKENS: i64 = 1_024;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
     "compaction_skip_persist_current_user";
@@ -27,6 +31,27 @@ struct RebuiltContextGuardStats {
     summary_tokens_after: i64,
     summary_removed: bool,
     fallback_trim_applied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompactionTurnRange {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RetainedCompactionEdge {
+    messages: Vec<Value>,
+    tokens: i64,
+    turn_count: usize,
+    start_index: Option<usize>,
+    end_index: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RetainedCompactionEdges {
+    head: RetainedCompactionEdge,
+    tail: RetainedCompactionEdge,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
@@ -238,6 +263,9 @@ impl Orchestrator {
             "presampling_limit": compaction_decision.presampling_limit,
         });
         if let Value::Object(ref mut map) = compacting_payload {
+            if max_context > 0 {
+                map.insert("max_context".to_string(), json!(max_context));
+            }
             insert_compaction_trigger_mode(map, trigger_mode);
             compaction_round.insert_into(map);
         }
@@ -367,6 +395,9 @@ impl Orchestrator {
                     "fallback_trim_applied": guard_stats.fallback_trim_applied,
                 });
                 if let Value::Object(ref mut map) = guard_payload {
+                    if max_context > 0 {
+                        map.insert("max_context".to_string(), json!(max_context));
+                    }
                     insert_compaction_trigger_mode(map, trigger_mode);
                     compaction_round.insert_into(map);
                 }
@@ -399,6 +430,9 @@ impl Orchestrator {
                 "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
             });
             if let Value::Object(ref mut map) = compaction_payload {
+                if max_context > 0 {
+                    map.insert("max_context".to_string(), json!(max_context));
+                }
                 insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
@@ -699,6 +733,9 @@ impl Orchestrator {
                 "fallback_trim_applied": guard_stats.fallback_trim_applied,
             });
             if let Value::Object(ref mut map) = guard_payload {
+                if max_context > 0 {
+                    map.insert("max_context".to_string(), json!(max_context));
+                }
                 insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
@@ -749,6 +786,9 @@ impl Orchestrator {
             "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
         });
         if let Value::Object(ref mut map) = compaction_payload {
+            if max_context > 0 {
+                map.insert("max_context".to_string(), json!(max_context));
+            }
             insert_compaction_trigger_mode(map, trigger_mode);
             if let Some(reason) = summary_fallback_reason {
                 map.insert(
@@ -1069,8 +1109,12 @@ impl Orchestrator {
             response_payload.as_object_mut(),
             final_context_payload.as_ref().and_then(Value::as_object),
         ) {
-            if let Some(context_tokens) = context_obj.get("context_tokens").and_then(Value::as_i64) {
+            if let Some(context_tokens) = context_obj.get("context_tokens").and_then(Value::as_i64)
+            {
                 response_obj.insert("final_context_tokens".to_string(), json!(context_tokens));
+            }
+            if let Some(max_context) = context_obj.get("max_context").and_then(Value::as_i64) {
+                response_obj.insert("max_context".to_string(), json!(max_context));
             }
             if let Some(message_count) = context_obj.get("message_count").and_then(Value::as_i64) {
                 response_obj.insert("message_count".to_string(), json!(message_count));

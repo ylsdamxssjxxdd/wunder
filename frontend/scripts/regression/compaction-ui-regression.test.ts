@@ -88,6 +88,7 @@ test('compaction display shows actual model output and injected summary', () => 
       summary_text: 'Injected summary with memory block.',
       projected_request_tokens: 9210,
       projected_request_tokens_after: 4120,
+      max_context: 16384,
       limit: 16384
     },
     'completed',
@@ -123,6 +124,26 @@ test('compaction usage percent keeps real overflow ratio while bar width stays c
     {
       status: 'done',
       reason: 'history',
+      projected_request_tokens: 37356,
+      projected_request_tokens_after: 18200,
+      max_context: 40192,
+      limit: 36172
+    },
+    'completed',
+    createTranslator()
+  );
+
+  assert.equal(display.view.usageBar?.beforeRatio, 37356 / 40192);
+  assert.equal(display.view.usageBar?.beforeBarRatio, 37356 / 40192);
+  assert.match(display.view.usageBar?.beforeLabel || '', /93%/);
+  assert.equal(display.view.usageBar?.afterBarRatio, 18200 / 40192);
+});
+
+test('compaction usage falls back to compaction limit when model max context is missing', () => {
+  const display = buildCompactionDisplay(
+    {
+      status: 'done',
+      reason: 'history',
       projected_request_tokens: 44620,
       projected_request_tokens_after: 18200,
       limit: 40192
@@ -134,7 +155,6 @@ test('compaction usage percent keeps real overflow ratio while bar width stays c
   assert.equal(display.view.usageBar?.beforeRatio, 44620 / 40192);
   assert.equal(display.view.usageBar?.beforeBarRatio, 1);
   assert.match(display.view.usageBar?.beforeLabel || '', /111%/);
-  assert.equal(display.view.usageBar?.afterBarRatio, 18200 / 40192);
 });
 
 test('compaction instance label distinguishes auto and manual runs', () => {

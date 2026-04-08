@@ -784,7 +784,7 @@ fn default_agent_swarm_max_parallel_tasks_per_team() -> usize {
 }
 
 fn default_agent_swarm_default_timeout_s() -> u64 {
-    300
+    0
 }
 
 fn default_agent_swarm_max_retry() -> u32 {

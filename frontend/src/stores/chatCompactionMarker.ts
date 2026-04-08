@@ -42,6 +42,9 @@ const isStreamingAssistantMessage = (message: ChatMessage | null | undefined): b
       message?.stream_incomplete
   );
 
+const hasManualCompactionMarkerFlag = (message: ChatMessage | null | undefined): boolean =>
+  Boolean(message?.manual_compaction_marker === true || message?.manualCompactionMarker === true);
+
 const isManualCompactionWorkflowItem = (value: unknown): boolean => {
   const item = asObject(value);
   if (!item) return false;
@@ -95,6 +98,7 @@ const isCompactionToolName = (value: unknown): boolean => {
 const isCompactionWorkflowItem = (value: unknown): boolean => {
   const item = asObject(value);
   if (!item) return false;
+  if (normalizeText(item.eventType ?? item.event) === 'compaction_notice') return true;
   if (isCompactionEventType(item.eventType ?? item.event)) return true;
   return isCompactionToolName(item.toolName ?? item.tool ?? item.name);
 };
@@ -114,11 +118,12 @@ const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
 
 export const isCompactionMarkerAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
   if (!message || message.role !== 'assistant') return false;
-  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
   if (hasTextContent(message.content) || hasTextContent(message.reasoning)) return false;
   if (hasPlanSteps(message.plan)) return false;
   const panelStatus = normalizeText((message.questionPanel as Record<string, unknown> | null)?.status);
   if (panelStatus === 'pending') return false;
+  if (hasManualCompactionMarkerFlag(message)) return true;
+  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
   if (!isStreamingAssistantMessage(message)) return true;
   return isManualCompactionMessage(message);
 };

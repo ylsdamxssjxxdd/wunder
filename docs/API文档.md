@@ -228,8 +228,9 @@
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send`/`batch_send` 在未显式传入 `sessionKey` 时默认新建线程，避免工蜂沿用旧上下文；仅在显式指定 `sessionKey` 时复用已有线程。
+- `智能体蜂群` 的 `send`/`batch_send` 在未显式传入 `sessionKey` 时会强制为目标工蜂新建线程，并将其绑定为该工蜂新的主线程，以保持工蜂上下文干净；仅在显式提供 `sessionKey` 时才复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
+- `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
 - `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）。
 - `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。

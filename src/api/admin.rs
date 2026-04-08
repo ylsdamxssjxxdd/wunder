@@ -3948,9 +3948,7 @@ async fn admin_monitor_compaction(
         )
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(
-        json!({ "ok": true, "data": compaction_result }),
-    ))
+    Ok(Json(json!({ "ok": true, "data": compaction_result })))
 }
 
 async fn admin_monitor_delete(

@@ -672,9 +672,7 @@ fn parent_session_has_active_lock(
     Ok(storage
         .list_session_locks_by_user(cleaned_user_id)?
         .into_iter()
-        .any(|lock| {
-            lock.session_id.trim() == cleaned_parent_session_id && lock.expires_at > now
-        }))
+        .any(|lock| lock.session_id.trim() == cleaned_parent_session_id && lock.expires_at > now))
 }
 
 fn build_parent_auto_wake_request(

@@ -918,38 +918,40 @@
               }"
               :data-virtual-key="item.key"
             >
-              <button
-                v-if="!isCompactionMarkerMessage(item.message) && item.message.role === 'user'"
-                class="messenger-message-avatar messenger-message-avatar--mine-profile messenger-message-avatar--clickable"
-                :style="currentUserAvatarStyle"
-                type="button"
-                :title="t('user.profile.enter')"
-                :aria-label="t('user.profile.enter')"
-                @click="openProfilePage"
-              >
-                <img
-                  v-if="currentUserAvatarImageUrl"
-                  class="messenger-settings-profile-avatar-image"
-                  :src="currentUserAvatarImageUrl"
-                  alt=""
+              <div v-if="!isCompactionMarkerMessage(item.message)" class="messenger-message-side">
+                <button
+                  v-if="item.message.role === 'user'"
+                  class="messenger-message-avatar messenger-message-avatar--mine-profile messenger-message-avatar--clickable"
+                  :style="currentUserAvatarStyle"
+                  type="button"
+                  :title="t('user.profile.enter')"
+                  :aria-label="t('user.profile.enter')"
+                  @click="openProfilePage"
+                >
+                  <img
+                    v-if="currentUserAvatarImageUrl"
+                    class="messenger-settings-profile-avatar-image"
+                    :src="currentUserAvatarImageUrl"
+                    alt=""
+                  />
+                  <span v-else>{{ avatarLabel(currentUsername) }}</span>
+                </button>
+                <AgentAvatar
+                  v-else
+                  class="messenger-message-avatar--clickable"
+                  size="sm"
+                  :state="resolveMessageAgentAvatarState(item.message)"
+                  :icon="activeAgentIcon"
+                  :name="activeAgentName"
+                  :title="activeAgentName"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="t('chat.features.agentSettings')"
+                  @click="openActiveAgentSettings"
+                  @keydown.enter.prevent="openActiveAgentSettings()"
+                  @keydown.space.prevent="openActiveAgentSettings()"
                 />
-                <span v-else>{{ avatarLabel(currentUsername) }}</span>
-              </button>
-              <AgentAvatar
-                v-else-if="!isCompactionMarkerMessage(item.message)"
-                class="messenger-message-avatar--clickable"
-                size="sm"
-                :state="resolveMessageAgentAvatarState(item.message)"
-                :icon="activeAgentIcon"
-                :name="activeAgentName"
-                :title="activeAgentName"
-                role="button"
-                tabindex="0"
-                :aria-label="t('chat.features.agentSettings')"
-                @click="openActiveAgentSettings"
-                @keydown.enter.prevent="openActiveAgentSettings()"
-                @keydown.space.prevent="openActiveAgentSettings()"
-              />
+              </div>
               <div class="messenger-message-main">
                 <template v-if="isCompactionMarkerMessage(item.message)">
                   <MessageCompactionDivider
@@ -960,6 +962,10 @@
                           item.message.reasoningStreaming ||
                           item.message.stream_incomplete
                       )
+                    "
+                    :manual-marker="
+                      item.message.manual_compaction_marker === true
+                        || item.message.manualCompactionMarker === true
                     "
                   />
                 </template>
@@ -1203,34 +1209,36 @@
               :class="{ mine: isOwnMessage(item.message) }"
               :data-virtual-key="item.key"
             >
-              <button
-                class="messenger-message-avatar"
-                :class="{
-                  'messenger-message-avatar--mine-profile': isOwnMessage(item.message),
-                  'messenger-message-avatar--clickable': true
-                }"
-                :style="isOwnMessage(item.message) ? currentUserAvatarStyle : undefined"
-                type="button"
-                :title="t('user.profile.enter')"
-                :aria-label="t('user.profile.enter')"
-                @click="openProfilePage"
-              >
-                <template v-if="isOwnMessage(item.message)">
-                  <img
-                    v-if="currentUserAvatarImageUrl"
-                    class="messenger-settings-profile-avatar-image"
-                    :src="currentUserAvatarImageUrl"
-                    alt=""
-                  />
-                  <span v-else>{{ avatarLabel(currentUsername) }}</span>
-                </template>
-                <template v-else>
-                  {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
-                </template>
-              </button>
+              <div class="messenger-message-side">
+                <button
+                  class="messenger-message-avatar"
+                  :class="{
+                    'messenger-message-avatar--mine-profile': isOwnMessage(item.message),
+                    'messenger-message-avatar--clickable': true
+                  }"
+                  :style="isOwnMessage(item.message) ? currentUserAvatarStyle : undefined"
+                  type="button"
+                  :title="t('user.profile.enter')"
+                  :aria-label="t('user.profile.enter')"
+                  @click="openProfilePage"
+                >
+                  <template v-if="isOwnMessage(item.message)">
+                    <img
+                      v-if="currentUserAvatarImageUrl"
+                      class="messenger-settings-profile-avatar-image"
+                      :src="currentUserAvatarImageUrl"
+                      alt=""
+                    />
+                    <span v-else>{{ avatarLabel(currentUsername) }}</span>
+                  </template>
+                  <template v-else>
+                    {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
+                  </template>
+                </button>
+              </div>
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
-                  <span>{{ resolveWorldMessageSender(item.message) }}</span>
+                  <span>{{ isOwnMessage(item.message) ? t('chat.message.user') : resolveWorldMessageSender(item.message) }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
                 </div>
                 <div
@@ -6576,7 +6584,6 @@ const isHiddenInternalMessage = (message: Record<string, unknown>): boolean =>
 
 const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
   if (String(message?.role || '') !== 'assistant') return false;
-  if (!isCompactionOnlyWorkflowItems(message?.workflowItems)) return false;
   if (hasMessageContent(message?.content)) return false;
   if (hasMessageContent(message?.reasoning)) return false;
   if (hasPlanSteps(message?.plan)) return false;
@@ -6586,6 +6593,10 @@ const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean =>
     .trim()
     .toLowerCase();
   if (panelStatus === 'pending') return false;
+  if (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) {
+    return true;
+  }
+  if (!isCompactionOnlyWorkflowItems(message?.workflowItems)) return false;
   const isStreaming = Boolean(
     message?.workflowStreaming ||
       message?.reasoningStreaming ||
@@ -6603,6 +6614,16 @@ const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean =>
 
 const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
   if (!isCompactionMarkerMessage(message)) return false;
+  if (
+    (message?.manual_compaction_marker === true || message?.manualCompactionMarker === true) &&
+    Boolean(
+      message?.workflowStreaming ||
+        message?.reasoningStreaming ||
+        message?.stream_incomplete
+    )
+  ) {
+    return true;
+  }
   const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
   if (!snapshot) return false;
   const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();

@@ -1426,7 +1426,7 @@ struct TeamRunOptions {
 
 impl TeamRunOptions {
     fn from_record(record: &TeamRunRecord, default_timeout_s: f64) -> Self {
-        let mut timeout_s = default_timeout_s.max(1.0);
+        let mut timeout_s = default_timeout_s.max(0.0);
         let mut merge_policy = "collect".to_string();
 
         if let Some(summary) = record.summary.as_deref() {
@@ -1438,7 +1438,7 @@ impl TeamRunOptions {
                 let value = raw_value.trim();
                 if key == "timeout_s" {
                     if let Ok(parsed) = value.parse::<f64>() {
-                        timeout_s = parsed.max(1.0);
+                        timeout_s = parsed.max(0.0);
                     }
                     continue;
                 }

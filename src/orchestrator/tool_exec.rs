@@ -834,6 +834,41 @@ impl Orchestrator {
         tool_name: &str,
         args: &Value,
     ) -> Option<Duration> {
+        let canonical_tool_name = crate::tools::resolve_tool_name(tool_name);
+        if canonical_tool_name == "agent_swarm" {
+            let action = args
+                .get("action")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(
+                action.as_str(),
+                "send"
+                    | "agent_send"
+                    | "agents_send"
+                    | "swarm_send"
+                    | "batch_send"
+                    | "swarm_batch_send"
+                    | "agents_batch_send"
+                    | "batch"
+                    | "fanout"
+                    | "dispatch"
+                    | "wait"
+                    | "join"
+                    | "collect"
+                    | "swarm_wait"
+            ) {
+                let explicit_timeout = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
+                return if explicit_timeout <= 0.0 {
+                    None
+                } else {
+                    Some(Duration::from_secs_f64(
+                        explicit_timeout.max(MIN_TOOL_TIMEOUT_S),
+                    ))
+                };
+            }
+        }
         let mut timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(0.0);
         if tool_name == "a2a等待" {
             let wait_s = parse_timeout_secs(args.get("wait_s")).unwrap_or(0.0);

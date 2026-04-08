@@ -22,11 +22,13 @@ import {
 type Props = {
   items?: unknown[];
   isStreaming?: boolean;
+  manualMarker?: boolean;
 };
 
 const props = withDefaults(defineProps<Props>(), {
   items: () => [],
-  isStreaming: false
+  isStreaming: false,
+  manualMarker: false
 });
 
 const { t } = useI18n();
@@ -63,7 +65,9 @@ const formatTokenCount = (value: number | null): string =>
 const snapshot = computed(() => resolveLatestCompactionSnapshot(props.items));
 
 const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>(() => {
-  if (!snapshot.value) return null;
+  if (!snapshot.value) {
+    return props.manualMarker && props.isStreaming ? 'running' : null;
+  }
   const running = isCompactionRunningFromWorkflowItems(props.items);
   if (snapshot.value.status === 'cancelled') return 'cancelled';
   if (snapshot.value.status === 'failed') return 'failed';
