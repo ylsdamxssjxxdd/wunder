@@ -899,13 +899,7 @@
           </div>
 
           <template v-else-if="isAgentConversationActive">
-            <div
-              v-if="messageVirtualTopSpacerHeight > 0"
-              class="messenger-message-virtual-spacer"
-              :style="{ height: `${messageVirtualTopSpacerHeight}px` }"
-              aria-hidden="true"
-            ></div>
-            <template v-for="item in visibleAgentMessages" :key="item.key">
+            <template v-for="item in agentRenderableMessages" :key="item.key">
             <div
               v-if="
                 !isHiddenInternalMessage(item.message)
@@ -916,7 +910,6 @@
                 mine: item.message.role === 'user',
                 'messenger-message--compaction': isCompactionMarkerMessage(item.message)
               }"
-              :data-virtual-key="item.key"
             >
               <div v-if="!isCompactionMarkerMessage(item.message)" class="messenger-message-side">
                 <button
@@ -1186,28 +1179,15 @@
               </div>
             </div>
             </template>
-            <div
-              v-if="messageVirtualBottomSpacerHeight > 0"
-              class="messenger-message-virtual-spacer"
-              :style="{ height: `${messageVirtualBottomSpacerHeight}px` }"
-              aria-hidden="true"
-            ></div>
           </template>
 
           <template v-else-if="isWorldConversationActive">
             <div
-              v-if="messageVirtualTopSpacerHeight > 0"
-              class="messenger-message-virtual-spacer"
-              :style="{ height: `${messageVirtualTopSpacerHeight}px` }"
-              aria-hidden="true"
-            ></div>
-            <div
-              v-for="item in visibleWorldMessages"
+              v-for="item in worldRenderableMessages"
               :key="item.key"
               class="messenger-message"
               :id="item.domId"
               :class="{ mine: isOwnMessage(item.message) }"
-              :data-virtual-key="item.key"
             >
               <div class="messenger-message-side">
                 <button
@@ -1304,12 +1284,6 @@
                 </div>
               </div>
             </div>
-            <div
-              v-if="messageVirtualBottomSpacerHeight > 0"
-              class="messenger-message-virtual-spacer"
-              :style="{ height: `${messageVirtualBottomSpacerHeight}px` }"
-              aria-hidden="true"
-            ></div>
           </template>
           <div v-else class="messenger-chat-empty">
             {{ t('messenger.empty.selectConversation') }}
@@ -2214,10 +2188,7 @@ const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const CONTACT_VIRTUAL_ITEM_HEIGHT = 60;
 const CONTACT_VIRTUAL_OVERSCAN = 8;
-const MESSAGE_VIRTUAL_THRESHOLD = 180;
-const MESSAGE_VIRTUAL_OVERSCAN = 8;
 const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
-const MESSAGE_VIRTUAL_GAP = 12;
 const AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30_000;
 const SERVER_DEFAULT_MODEL_CACHE_MS = 30_000;
 const AGENT_META_REQUEST_CACHE_MS = 1_500;
@@ -6399,14 +6370,6 @@ type WorldRenderableMessage = {
   message: Record<string, unknown>;
 };
 
-type MessageVirtualWindow = {
-  start: number;
-  end: number;
-  topSpacer: number;
-  bottomSpacer: number;
-  total: number;
-};
-
 const agentRenderableMessages = computed<AgentRenderableMessage[]>(() =>
   chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
     const message = (rawMessage || {}) as Record<string, unknown>;
@@ -6526,21 +6489,9 @@ const latestWorldRenderableMessageKey = computed(() => {
   return String(latest?.key || '').trim();
 });
 
-const activeVirtualMessageKeys = computed<string[]>(() => {
-  if (isAgentConversationActive.value) {
-    return agentRenderableMessages.value.map((item) => item.key);
-  }
-  if (isWorldConversationActive.value) {
-    return worldRenderableMessages.value.map((item) => item.key);
-  }
-  return [];
-});
-
 const shouldVirtualizeMessages = computed(
-  () =>
-    !showChatSettingsView.value &&
-    (isAgentConversationActive.value || isWorldConversationActive.value) &&
-    activeVirtualMessageKeys.value.length > MESSAGE_VIRTUAL_THRESHOLD
+  // Messenger message virtualization is disabled because it repeatedly delayed live workflow rendering.
+  () => false
 );
 
 const resolveVirtualMessageHeight = (key: string): number => {
@@ -6551,111 +6502,7 @@ const resolveVirtualMessageHeight = (key: string): number => {
   return messageVirtualHeightCache.get(normalized) || MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
 };
 
-const estimateVirtualOffsetTop = (keys: string[], index: number): number => {
-  const safeIndex = Math.max(0, Math.min(keys.length, Math.trunc(index)));
-  let offset = 0;
-  for (let cursor = 0; cursor < safeIndex; cursor += 1) {
-    offset += resolveVirtualMessageHeight(keys[cursor]);
-    if (cursor < keys.length - 1) {
-      offset += MESSAGE_VIRTUAL_GAP;
-    }
-  }
-  return offset;
-};
-
-const estimateVirtualTotalHeight = (keys: string[]): number => {
-  if (!keys.length) {
-    return 0;
-  }
-  let total = 0;
-  for (let cursor = 0; cursor < keys.length; cursor += 1) {
-    total += resolveVirtualMessageHeight(keys[cursor]);
-    if (cursor < keys.length - 1) {
-      total += MESSAGE_VIRTUAL_GAP;
-    }
-  }
-  return total;
-};
-
-const messageVirtualWindow = computed<MessageVirtualWindow>(() => {
-  // Depend on measured height cache revisions.
-  void messageVirtualLayoutVersion.value;
-  const keys = activeVirtualMessageKeys.value;
-  const total = keys.length;
-  if (!total) {
-    return { start: 0, end: 0, topSpacer: 0, bottomSpacer: 0, total: 0 };
-  }
-  if (!shouldVirtualizeMessages.value) {
-    return { start: 0, end: total, topSpacer: 0, bottomSpacer: 0, total };
-  }
-
-  const viewportHeight =
-    messageVirtualViewportHeight.value ||
-    messageListRef.value?.clientHeight ||
-    MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 6;
-  const scrollTop = Math.max(0, messageVirtualScrollTop.value);
-
-  let start = 0;
-  let cursorTop = 0;
-  while (start < total) {
-    const height = resolveVirtualMessageHeight(keys[start]);
-    const itemBottom = cursorTop + height;
-    if (itemBottom >= scrollTop) {
-      break;
-    }
-    cursorTop = itemBottom + MESSAGE_VIRTUAL_GAP;
-    start += 1;
-  }
-
-  const overscanStart = Math.max(0, start - MESSAGE_VIRTUAL_OVERSCAN);
-  let end = overscanStart;
-  let covered = 0;
-  const targetCoverage =
-    viewportHeight + MESSAGE_VIRTUAL_OVERSCAN * MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 2;
-  while (end < total && (covered < targetCoverage || end === overscanStart)) {
-    covered += resolveVirtualMessageHeight(keys[end]) + MESSAGE_VIRTUAL_GAP;
-    end += 1;
-  }
-
-  const offsetBeforeStart = estimateVirtualOffsetTop(keys, overscanStart);
-  const topSpacer = overscanStart > 0
-    ? Math.max(0, offsetBeforeStart - MESSAGE_VIRTUAL_GAP)
-    : 0;
-  const offsetBeforeEnd = estimateVirtualOffsetTop(keys, end);
-  const totalHeight = estimateVirtualTotalHeight(keys);
-  const bottomSpacer = Math.max(0, totalHeight - offsetBeforeEnd);
-  return {
-    start: overscanStart,
-    end,
-    topSpacer,
-    bottomSpacer,
-    total
-  };
-});
-
-const visibleAgentMessages = computed<AgentRenderableMessage[]>(() => {
-  const items = agentRenderableMessages.value;
-  if (!isAgentConversationActive.value || !shouldVirtualizeMessages.value) {
-    return items;
-  }
-  return items.slice(messageVirtualWindow.value.start, messageVirtualWindow.value.end);
-});
-
-const visibleWorldMessages = computed<WorldRenderableMessage[]>(() => {
-  const items = worldRenderableMessages.value;
-  if (!isWorldConversationActive.value || !shouldVirtualizeMessages.value) {
-    return items;
-  }
-  return items.slice(messageVirtualWindow.value.start, messageVirtualWindow.value.end);
-});
-
-const messageVirtualTopSpacerHeight = computed(() =>
-  shouldVirtualizeMessages.value ? messageVirtualWindow.value.topSpacer : 0
-);
-
-const messageVirtualBottomSpacerHeight = computed(() =>
-  shouldVirtualizeMessages.value ? messageVirtualWindow.value.bottomSpacer : 0
-);
+const estimateVirtualOffsetTop = (_keys: string[], _index: number): number => 0;
 
 const isGreetingMessage = (message: Record<string, unknown>): boolean =>
   String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
