@@ -61,6 +61,7 @@
     "./messenger-interaction-blocker-regression.test.ts",
     "./beeroom-realtime-regression.test.ts",
     "./beeroom-dispatch-session-regression.test.ts",
+    "./beeroom-mission-chat-ordering-regression.test.ts",
     "./beeroom-swarm-canvas-regression.test.ts",
     "./realtime-pulse-regression.test.ts",
     "./composer-approval-regression.test.ts",

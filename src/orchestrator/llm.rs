@@ -544,7 +544,7 @@ impl Orchestrator {
                     return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }
                 Err(err) => {
-                    let failure_kind = classify_llm_failure(&err.to_string());
+                    let failure_kind = classify_llm_error(&err);
                     let max_attempts = resolve_llm_max_attempts(configured_attempts, failure_kind);
                     let should_retry = attempt < max_attempts;
                     let retry_delay = resolve_llm_retry_delay(attempt, failure_kind);
@@ -575,7 +575,7 @@ impl Orchestrator {
         }
 
         let detail = last_err.to_string();
-        let failure_kind = classify_llm_failure(&detail);
+        let failure_kind = classify_llm_error(&last_err);
         let message_key = if matches!(failure_kind, LlmFailureKind::Unavailable) {
             "error.llm_unavailable"
         } else {
@@ -605,6 +605,25 @@ fn classify_llm_failure(message: &str) -> LlmFailureKind {
     LlmFailureKind::Other
 }
 
+fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
+    let message = error.to_string();
+    if is_context_window_error_text(&message) {
+        return LlmFailureKind::ContextWindow;
+    }
+    if is_llm_request_transport_error(error) || is_llm_unavailable_error_text(&message) {
+        return LlmFailureKind::Unavailable;
+    }
+    LlmFailureKind::Other
+}
+
+fn is_llm_request_transport_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source.downcast_ref::<reqwest::Error>().is_some_and(|err| {
+            err.is_timeout() || err.is_connect() || err.is_request() || err.is_body() || err.is_decode()
+        })
+    })
+}
+
 fn is_llm_unavailable_error_text(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -623,11 +642,27 @@ fn is_llm_unavailable_error_text(message: &str) -> bool {
         "timed out",
         "timeout",
         "dns error",
+        "too many requests",
+        "rate limit",
+        "bad gateway",
+        "gateway timeout",
+        "internal server error",
         "temporarily unavailable",
         "service unavailable",
         "unavailable_error",
+        "error decoding response body",
+        "read llm response body",
+        "read body failed",
+        "error reading a body from connection",
+        "unexpected eof",
+        "unexpected end of file",
+        "end of file before message length reached",
         "loading model",
+        "429",
+        "500 internal server error",
+        "502 bad gateway",
         "503",
+        "504 gateway timeout",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -862,8 +897,29 @@ mod tests {
         assert!(is_llm_unavailable_error_text(
             "LLM stream request failed: 503 {\"error\":{\"message\":\"Loading model\"}}"
         ));
+        assert!(is_llm_unavailable_error_text(
+            "error decoding response body"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 200 OK (read body failed: error decoding response body)"
+        ));
+        assert!(is_llm_unavailable_error_text("read llm response body"));
+        assert!(is_llm_unavailable_error_text(
+            "LLM request failed: 429 Too Many Requests"
+        ));
+        assert!(is_llm_unavailable_error_text(
+            "LLM stream request failed: 500 Internal Server Error"
+        ));
         assert!(matches!(
             classify_llm_failure("connection refused"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("error decoding response body"),
+            LlmFailureKind::Unavailable
+        ));
+        assert!(matches!(
+            classify_llm_failure("LLM request failed: 500 Internal Server Error"),
             LlmFailureKind::Unavailable
         ));
     }

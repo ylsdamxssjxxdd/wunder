@@ -134,6 +134,55 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn payload_string_field(payload: &Value, key: &str) -> Option<String> {
+    normalize_optional(payload.get(key).and_then(Value::as_str))
+}
+
+fn payload_parent_session_id(payload: &Value) -> Option<String> {
+    payload_string_field(payload, "parent_session_id")
+}
+
+fn payload_run_id(payload: &Value) -> Option<String> {
+    payload_string_field(payload, "run_id")
+}
+
+fn payload_dispatch_id(payload: &Value) -> Option<String> {
+    payload_string_field(payload, "dispatch_id")
+}
+
+pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
+    if !result
+        .get("completion_reached")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let selected_items = result
+        .get("selected_items")
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty());
+    let items = result
+        .get("items")
+        .and_then(Value::as_array)
+        .filter(|entries| !entries.is_empty());
+    let source = selected_items.or(items);
+    let Some(source) = source else {
+        return;
+    };
+    let Some(parent_session_id) = source.iter().find_map(payload_parent_session_id) else {
+        return;
+    };
+    let dispatch_id = normalize_optional(result.get("dispatch_id").and_then(Value::as_str))
+        .or_else(|| source.iter().find_map(payload_dispatch_id));
+    mark_auto_wake_consumed(&parent_session_id, dispatch_id.as_deref(), None);
+    for item in source {
+        if let Some(run_id) = payload_run_id(item) {
+            mark_auto_wake_consumed(&parent_session_id, None, Some(&run_id));
+        }
+    }
+}
+
 pub fn build_hidden_user_meta() -> Value {
     json!({
         "type": HIDDEN_HISTORY_META_TYPE,
@@ -710,6 +759,18 @@ fn schedule_parent_auto_wake(
     if user_id.is_empty() || parent_session_id.is_empty() {
         return;
     }
+    let auto_wake_dispatch_id = dispatch
+        .dispatch_id
+        .clone()
+        .or_else(|| payload_dispatch_id(&payload));
+    let auto_wake_run_id = payload_run_id(&payload);
+    if is_auto_wake_consumed(
+        &parent_session_id,
+        auto_wake_dispatch_id.as_deref(),
+        auto_wake_run_id.as_deref(),
+    ) {
+        return;
+    }
     let wake_key = dispatch_guard_key(
         &parent_session_id,
         dispatch.dispatch_id.as_deref(),
@@ -738,6 +799,13 @@ fn schedule_parent_auto_wake(
     };
     tokio::spawn(async move {
         wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
+        if is_auto_wake_consumed(
+            &parent_session_id,
+            auto_wake_dispatch_id.as_deref(),
+            auto_wake_run_id.as_deref(),
+        ) {
+            return;
+        }
         if let Err(err) = run_parent_auto_wake(orchestrator, request).await {
             warn!(
                 "run parent auto wake failed: parent_session_id={}, error={err}",
@@ -1481,6 +1549,63 @@ fn wake_once_registry() -> &'static Mutex<HashSet<String>> {
     REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn auto_wake_consumed_registry() -> &'static Mutex<HashSet<String>> {
+    static REGISTRY: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn auto_wake_consumed_key(
+    parent_session_id: &str,
+    discriminator: &str,
+    value: &str,
+) -> Option<String> {
+    let parent_session_id = parent_session_id.trim();
+    let discriminator = discriminator.trim();
+    let value = value.trim();
+    if parent_session_id.is_empty() || discriminator.is_empty() || value.is_empty() {
+        return None;
+    }
+    Some(format!("{parent_session_id}::{discriminator}::{value}"))
+}
+
+fn mark_auto_wake_consumed(
+    parent_session_id: &str,
+    dispatch_id: Option<&str>,
+    run_id: Option<&str>,
+) {
+    let registry = auto_wake_consumed_registry();
+    let mut guard = registry
+        .lock()
+        .expect("auto wake consumed registry poisoned");
+    if let Some(key) =
+        dispatch_id.and_then(|value| auto_wake_consumed_key(parent_session_id, "dispatch", value))
+    {
+        guard.insert(key);
+    }
+    if let Some(key) =
+        run_id.and_then(|value| auto_wake_consumed_key(parent_session_id, "run", value))
+    {
+        guard.insert(key);
+    }
+}
+
+fn is_auto_wake_consumed(
+    parent_session_id: &str,
+    dispatch_id: Option<&str>,
+    run_id: Option<&str>,
+) -> bool {
+    let registry = auto_wake_consumed_registry();
+    let guard = registry
+        .lock()
+        .expect("auto wake consumed registry poisoned");
+    dispatch_id
+        .and_then(|value| auto_wake_consumed_key(parent_session_id, "dispatch", value))
+        .is_some_and(|key| guard.contains(&key))
+        || run_id
+            .and_then(|value| auto_wake_consumed_key(parent_session_id, "run", value))
+            .is_some_and(|key| guard.contains(&key))
+}
+
 fn mark_dispatch_once(key: &str) -> bool {
     let registry = dispatch_once_registry();
     let mut guard = registry.lock().expect("dispatch registry poisoned");
@@ -1502,7 +1627,8 @@ fn unmark_wake_once(key: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_parent_turn_ref, list_parent_subagents_with_options, ParentSubagentListOptions,
+        encode_parent_turn_ref, is_auto_wake_consumed, list_parent_subagents_with_options,
+        suppress_auto_wake_from_wait_result, ParentSubagentListOptions,
     };
     use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
     use serde_json::{json, Value};
@@ -1877,5 +2003,54 @@ mod tests {
             .collect::<Vec<_>>();
         dispatch_ids.sort();
         assert_eq!(dispatch_ids, vec!["sess_child_a", "sess_child_b"]);
+    }
+
+    #[test]
+    fn wait_result_suppresses_single_run_auto_wake_after_completion() {
+        let parent_session_id = "sess_parent_wait_single";
+        let run_id = "run_wait_single";
+        suppress_auto_wake_from_wait_result(&json!({
+            "completion_reached": true,
+            "dispatch_id": Value::Null,
+            "selected_items": [
+                {
+                    "parent_session_id": parent_session_id,
+                    "run_id": run_id,
+                }
+            ]
+        }));
+        assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
+        assert!(!is_auto_wake_consumed(
+            parent_session_id,
+            None,
+            Some("run_wait_single_other")
+        ));
+    }
+
+    #[test]
+    fn wait_result_suppresses_dispatch_auto_wake_after_completion() {
+        let parent_session_id = "sess_parent_wait_dispatch";
+        let dispatch_id = "dispatch_wait_consumed";
+        suppress_auto_wake_from_wait_result(&json!({
+            "completion_reached": true,
+            "dispatch_id": dispatch_id,
+            "selected_items": [
+                {
+                    "parent_session_id": parent_session_id,
+                    "run_id": "run_wait_dispatch_a",
+                    "dispatch_id": dispatch_id,
+                }
+            ]
+        }));
+        assert!(is_auto_wake_consumed(
+            parent_session_id,
+            Some(dispatch_id),
+            None
+        ));
+        assert!(!is_auto_wake_consumed(
+            parent_session_id,
+            Some("dispatch_wait_consumed_other"),
+            None
+        ));
     }
 }

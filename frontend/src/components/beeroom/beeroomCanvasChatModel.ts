@@ -8,7 +8,21 @@ export type MissionChatMessage = {
   time: number;
   timeLabel: string;
   tone: 'mother' | 'worker' | 'system' | 'user';
+  sortOrder?: number;
 };
+
+export const BEEROOM_SUBAGENT_REQUEST_SORT_ORDER = -20;
+export const BEEROOM_SUBAGENT_REPLY_SORT_ORDER = -10;
+
+const normalizeSortOrder = (value: unknown): number => {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) ? normalized : 0;
+};
+
+export const compareMissionChatMessages = (left: MissionChatMessage, right: MissionChatMessage) =>
+  left.time - right.time ||
+  normalizeSortOrder(left.sortOrder) - normalizeSortOrder(right.sortOrder) ||
+  left.key.localeCompare(right.key);
 
 export type ComposerTargetOption = {
   agentId: string;

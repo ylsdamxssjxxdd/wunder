@@ -72,6 +72,11 @@ const normalizeTime = (value: unknown): number => {
   return time;
 };
 
+const normalizeSortOrder = (value: unknown): number => {
+  const normalized = Number(value || 0);
+  return Number.isFinite(normalized) ? normalized : 0;
+};
+
 const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage[] =>
   (Array.isArray(messages) ? messages : [])
     .map((message) => {
@@ -88,7 +93,8 @@ const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage
         meta: String(message?.meta || '').trim(),
         time,
         timeLabel: String(message?.timeLabel || '').trim(),
-        tone: normalizeTone(message?.tone)
+        tone: normalizeTone(message?.tone),
+        sortOrder: normalizeSortOrder(message?.sortOrder)
       } satisfies MissionChatMessage;
     })
     .filter((message: MissionChatMessage | null): message is MissionChatMessage => Boolean(message))

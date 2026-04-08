@@ -9,7 +9,10 @@ import {
   sendMessageStream
 } from '@/api/chat';
 import {
+  BEEROOM_SUBAGENT_REPLY_SORT_ORDER,
+  BEEROOM_SUBAGENT_REQUEST_SORT_ORDER,
   ComposerTargetOption,
+  compareMissionChatMessages,
   DispatchApprovalItem,
   DispatchRuntimeStatus,
   MissionChatMessage
@@ -444,6 +447,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const requestedName = normalizeChatActorName(summary?.beeroom_target_name);
     if (requestedName) return requestedName;
     const agentId = resolveDispatchAssistantAgentId(sessionId);
+    if (agentId === DEFAULT_AGENT_KEY) {
+      return options.t('messenger.defaultAgent');
+    }
     if (agentId) {
       const agentName = normalizeChatActorName(resolveAgentNameById(agentId));
       if (agentName) return agentName;
@@ -554,7 +560,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         ? current.map((item, index) => (index === existingIndex ? message : item))
         : [...current, message];
     manualChatMessages.value = merged
-      .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+      .sort(compareMissionChatMessages)
       .slice(-MANUAL_CHAT_HISTORY_LIMIT);
     persistCachedChatState();
   };
@@ -565,7 +571,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         (message) =>
           !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
       )
-      .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+      .sort(compareMissionChatMessages)
       .slice(-MANUAL_CHAT_HISTORY_LIMIT);
     persistCachedChatState();
   };
@@ -585,7 +591,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         leftItem.senderAgentId !== rightItem.senderAgentId ||
         leftItem.mention !== rightItem.mention ||
         leftItem.body !== rightItem.body ||
-        leftItem.meta !== rightItem.meta
+        leftItem.meta !== rightItem.meta ||
+        Number(leftItem.sortOrder || 0) !== Number(rightItem.sortOrder || 0)
       ) {
         return false;
       }
@@ -831,7 +838,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           (message) =>
             !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
         )
-        .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+        .sort(compareMissionChatMessages)
         .slice(-MANUAL_CHAT_HISTORY_LIMIT);
       if (!sameManualChatMessages(manualChatMessages.value, next)) {
         replaceManualChatMessages(next);
@@ -1322,7 +1329,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         meta,
         time: messageTime,
         timeLabel: formatDateTime(messageTime),
-        tone: parentTone
+        tone: parentTone,
+        sortOrder: BEEROOM_SUBAGENT_REQUEST_SORT_ORDER
       });
     }
 
@@ -1336,7 +1344,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         meta,
         time: messageTime,
         timeLabel: formatDateTime(messageTime),
-        tone: childTone
+        tone: childTone,
+        sortOrder: BEEROOM_SUBAGENT_REPLY_SORT_ORDER
       });
     }
 
@@ -1845,7 +1854,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const displayChatMessages = computed(() =>
     [...manualChatMessages.value, ...derivedSubagentChatMessages.value]
-      .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+      .sort(compareMissionChatMessages)
       .filter(
         (message) =>
           !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value

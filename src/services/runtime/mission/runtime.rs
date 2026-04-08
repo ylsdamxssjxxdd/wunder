@@ -2,6 +2,7 @@ use crate::config_store::ConfigStore;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
+use crate::orchestrator_constants::truncate_tool_result_text;
 use crate::schemas::WunderRequest;
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
@@ -32,7 +33,6 @@ use crate::services::swarm::events::{
 const RUNNER_CHANNEL_CAPACITY: usize = 128;
 const RUNNER_POLL_INTERVAL_MS: u64 = 600;
 const RUNNER_SCAN_BATCH: i64 = 256;
-const TEAM_TASK_RESULT_MAX_CHARS: usize = 1500;
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 const TEAM_QUESTION_MAX_CHARS: usize = 4000;
 const TEAM_HISTORY_LOOKBACK: i64 = 80;
@@ -562,10 +562,8 @@ impl MissionRuntime {
                 .unwrap_or(final_elapsed_s),
         );
         task.updated_time = finished;
-        task.result_summary = final_answer
-            .as_deref()
-            .map(|value| truncate_text(value, TEAM_TASK_RESULT_MAX_CHARS));
-        task.error = final_error.clone();
+        task.result_summary = final_answer.as_deref().map(truncate_tool_result_text);
+        task.error = final_error.as_deref().map(truncate_tool_result_text);
         self.user_store.upsert_team_task(&task)?;
         self.emit_task_result_event(&run, &task, &session_id, created_session);
         Ok(())
@@ -645,7 +643,7 @@ impl MissionRuntime {
         let elapsed_s = (finished - started).max(0.0);
         let (status, answer, error, outcome) = match run_result {
             Ok(response_answer) => {
-                let answer = truncate_text(&response_answer, TEAM_TASK_RESULT_MAX_CHARS);
+                let answer = truncate_tool_result_text(&response_answer);
                 (
                     TEAM_RUN_STATUS_SUCCESS.to_string(),
                     Some(answer.clone()),
@@ -674,10 +672,11 @@ impl MissionRuntime {
                         SessionExecutionOutcome::Timeout { elapsed_s },
                     )
                 } else {
+                    let truncated_message = truncate_tool_result_text(&message);
                     (
                         TEAM_TASK_STATUS_FAILED.to_string(),
                         None,
-                        Some(message.clone()),
+                        Some(truncated_message),
                         SessionExecutionOutcome::Error { message, elapsed_s },
                     )
                 }
@@ -771,7 +770,7 @@ impl MissionRuntime {
         if cleaned.is_empty() {
             task.error = Some("runner_error".to_string());
         } else {
-            task.error = Some(truncate_text(cleaned, TEAM_TASK_RESULT_MAX_CHARS));
+            task.error = Some(truncate_tool_result_text(cleaned));
         }
         self.user_store.upsert_team_task(&task)?;
         self.emit_task_update_event(run, &task);
@@ -821,7 +820,7 @@ impl MissionRuntime {
             task.finished_time = Some(now);
             task.elapsed_s = Some((now - started).max(0.0));
             task.updated_time = now;
-            task.error = Some(truncate_text(error, TEAM_TASK_RESULT_MAX_CHARS));
+            task.error = Some(truncate_tool_result_text(error));
             self.user_store.upsert_team_task(&task)?;
             self.emit_task_update_event(run, &task);
         }
@@ -937,7 +936,7 @@ impl MissionRuntime {
                     .filter(|value| !value.is_empty())
                     .map(|value| format!("{value}; {detail}"))
                     .unwrap_or(detail);
-                Some(truncate_text(&message, TEAM_TASK_RESULT_MAX_CHARS))
+                Some(truncate_tool_result_text(&message))
             }
         };
         run.updated_time = now;

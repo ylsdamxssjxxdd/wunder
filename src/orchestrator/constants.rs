@@ -43,3 +43,75 @@ pub const TOOL_RESULT_ARRAY_TAIL_ITEMS: usize = 16;
 pub const TOOL_RESULT_PAGINATED_MAX_ARRAY_ITEMS: usize = 500;
 pub const TOOL_RESULT_PAGINATED_ARRAY_HEAD_ITEMS: usize = 180;
 pub const TOOL_RESULT_PAGINATED_ARRAY_TAIL_ITEMS: usize = 60;
+
+pub fn truncate_tool_result_text(value: &str) -> String {
+    truncate_tool_result_text_with_budget(value, TOOL_RESULT_MAX_CHARS)
+}
+
+pub fn truncate_tool_result_text_with_budget(value: &str, budget_chars: usize) -> String {
+    let value_len = value.chars().count();
+    if value_len <= budget_chars {
+        return value.to_string();
+    }
+    let marker_chars = TOOL_RESULT_TRUNCATION_MARKER.chars().count();
+    if budget_chars <= marker_chars {
+        return TOOL_RESULT_TRUNCATION_MARKER
+            .chars()
+            .take(budget_chars)
+            .collect();
+    }
+    let visible_chars = budget_chars.saturating_sub(marker_chars);
+    let head_chars = visible_chars / 2;
+    let tail_chars = visible_chars.saturating_sub(head_chars);
+    truncate_tool_result_head_tail(value, head_chars, tail_chars, TOOL_RESULT_TRUNCATION_MARKER)
+}
+
+fn truncate_tool_result_head_tail(
+    value: &str,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+) -> String {
+    let value_len = value.chars().count();
+    if value_len <= head_chars + tail_chars {
+        return value.to_string();
+    }
+    let head_chars = head_chars.min(value_len);
+    let tail_chars = tail_chars.min(value_len.saturating_sub(head_chars));
+    let mut output = String::new();
+    output.extend(value.chars().take(head_chars));
+    output.push_str(marker);
+    if tail_chars > 0 {
+        output.extend(value.chars().skip(value_len - tail_chars).take(tail_chars));
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        truncate_tool_result_text, truncate_tool_result_text_with_budget, TOOL_RESULT_HEAD_CHARS,
+        TOOL_RESULT_TAIL_CHARS, TOOL_RESULT_TRUNCATION_MARKER,
+    };
+
+    #[test]
+    fn truncate_tool_result_text_keeps_head_and_tail() {
+        let input = format!(
+            "{}{}",
+            "a".repeat(TOOL_RESULT_HEAD_CHARS + 8),
+            "z".repeat(32)
+        );
+        let output = truncate_tool_result_text(&input);
+
+        assert!(output.starts_with(&"a".repeat(TOOL_RESULT_HEAD_CHARS)));
+        assert!(output.contains(TOOL_RESULT_TRUNCATION_MARKER));
+        assert!(output.ends_with(&"z".repeat(TOOL_RESULT_TAIL_CHARS.min(32))));
+    }
+
+    #[test]
+    fn truncate_tool_result_text_with_small_budget_returns_marker_prefix() {
+        let output = truncate_tool_result_text_with_budget("abcdefghijklmnopqrstuvwxyz", 5);
+
+        assert_eq!(output, "...(t".to_string());
+    }
+}

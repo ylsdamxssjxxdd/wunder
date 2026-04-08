@@ -951,6 +951,7 @@ async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     )
     .await?;
     apply_remaining_settlement(context, &mut result, remaining_action);
+    crate::services::subagents::suppress_auto_wake_from_wait_result(&result);
     if result.get("dispatch_id").and_then(Value::as_str).is_some() {
         emit_control_event(context, "subagent_dispatch_finish", &result);
     } else {

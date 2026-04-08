@@ -3,9 +3,7 @@ use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, snapshot_team_run,
 };
 use crate::state::AppState;
-use crate::storage::{
-    normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID,
-};
+use crate::storage::{normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -566,4 +564,3 @@ struct ListMissionsQuery {
     #[serde(default)]
     limit: Option<i64>,
 }
-

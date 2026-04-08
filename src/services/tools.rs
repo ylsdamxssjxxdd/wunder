@@ -74,6 +74,7 @@ use crate::llm::embed_texts;
 use crate::lsp::LspDiagnostic;
 use crate::mcp;
 use crate::monitor::MonitorState;
+use crate::orchestrator_constants::truncate_tool_result_text;
 use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
@@ -152,7 +153,6 @@ const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
 const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
 const MAX_USER_WORLD_LIST_LIMIT: i64 = 500;
 const USER_WORLD_FILE_STAGING_DIR: &str = "user_world_uploads";
-const SESSION_RESULT_MAX_CHARS: usize = 2000;
 const LOCAL_PTC_TIMEOUT_S: u64 = 60;
 const LOCAL_PTC_DIR_NAME: &str = "ptc_temp";
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
@@ -161,7 +161,6 @@ const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
 const SWARM_WAIT_DEFAULT_POLL_S: f64 = 1.0;
 const SWARM_WAIT_MIN_POLL_S: f64 = 0.2;
 const SWARM_WAIT_MAX_POLL_S: f64 = 5.0;
-const SWARM_TASK_RESULT_MAX_CHARS: usize = 2000;
 const SUBAGENT_MESSAGE_PREVIEW_MAX_CHARS: usize = 240;
 
 fn compact_cron_tool_result(value: Value) -> Value {
@@ -2185,10 +2184,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         Ok(value) => value,
         Err(err) => {
             task_record.status = "error".to_string();
-            task_record.error = Some(truncate_text(
-                err.to_string().as_str(),
-                SWARM_TASK_RESULT_MAX_CHARS,
-            ));
+            task_record.error = Some(truncate_tool_result_text(&err.to_string()));
             task_record.updated_time = now_ts();
             task_record.finished_time = Some(task_record.updated_time);
             context.storage.upsert_team_task(&task_record)?;
@@ -2257,9 +2253,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         }
     } else if status == "error" {
         task_record.status = "error".to_string();
-        task_record.error = error_text
-            .as_deref()
-            .map(|error| truncate_text(error, SWARM_TASK_RESULT_MAX_CHARS));
+        task_record.error = error_text.as_deref().map(truncate_tool_result_text);
         task_record.updated_time = now_ts();
         task_record.finished_time = Some(task_record.updated_time);
         context.storage.upsert_team_task(&task_record)?;
@@ -2588,7 +2582,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                             .and_then(Value::as_str)
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
-                            .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
+                            .map(truncate_tool_result_text);
                         task_record.elapsed_s = result
                             .get("elapsed_s")
                             .and_then(Value::as_f64)
@@ -2628,9 +2622,10 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 indexed_items.push((index, item));
             }
             Err(err) => {
+                let error_text = truncate_tool_result_text(&err.to_string());
                 if let Some(task_record) = task_records_by_index.get_mut(&index) {
                     task_record.status = "error".to_string();
-                    task_record.error = Some(err.to_string());
+                    task_record.error = Some(error_text.clone());
                     task_record.updated_time = now_ts();
                     task_record.finished_time = Some(task_record.updated_time);
                     context.storage.upsert_team_task(task_record)?;
@@ -2645,7 +2640,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                             .get(&index)
                             .map(|item| json!(item.task_id))
                             .unwrap_or(Value::Null),
-                        "error": err.to_string(),
+                        "error": error_text,
                     }),
                 ));
             }
@@ -2761,13 +2756,13 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
+                    .map(truncate_tool_result_text);
                 task_record.error = snapshot
                     .get("error")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(|value| truncate_text(value, SWARM_TASK_RESULT_MAX_CHARS));
+                    .map(truncate_tool_result_text);
                 task_record.updated_time = snapshot
                     .get("updated_time")
                     .and_then(Value::as_f64)
@@ -4069,17 +4064,19 @@ async fn spawn_session_run(
         let elapsed = (finished - started).max(0.0);
         let (status, answer, error) = match run_result {
             Ok(response) => {
-                let answer = truncate_text(
-                    response.answer.as_deref().unwrap_or_default(),
-                    SESSION_RESULT_MAX_CHARS,
-                );
+                let answer =
+                    truncate_tool_result_text(response.answer.as_deref().unwrap_or_default());
                 ("success".to_string(), Some(answer), None)
             }
             Err(err) => {
                 if timeout_triggered {
                     ("timeout".to_string(), None, Some("timeout".to_string()))
                 } else {
-                    ("error".to_string(), None, Some(err.to_string()))
+                    (
+                        "error".to_string(),
+                        None,
+                        Some(truncate_tool_result_text(&err.to_string())),
+                    )
                 }
             }
         };

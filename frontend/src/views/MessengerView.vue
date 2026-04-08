@@ -988,6 +988,7 @@
                 </div>
                 <div v-if="item.message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
                   <MessageToolWorkflow
+                    :key="buildMessageWorkflowRenderKey(item.message, item.key)"
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :visible="
@@ -6481,6 +6482,26 @@ const buildLatestAssistantLayoutSignature = (message: Record<string, unknown> | 
     workflowItems.length,
     workflowSignature,
     subagents.length
+  ].join('::');
+};
+
+const buildMessageWorkflowRenderKey = (
+  message: Record<string, unknown>,
+  baseKey: string
+): string => {
+  const workflowItems = Array.isArray(message?.workflowItems)
+    ? (message.workflowItems as Array<Record<string, unknown>>)
+    : [];
+  const tail = workflowItems.length > 0 ? workflowItems[workflowItems.length - 1] : null;
+  return [
+    String(baseKey || '').trim(),
+    workflowItems.length,
+    String(tail?.id || tail?.toolCallId || tail?.eventType || '').trim(),
+    String(tail?.status || '').trim(),
+    String(tail?.detail || '').length,
+    Boolean(message?.workflowStreaming),
+    Boolean(message?.reasoningStreaming),
+    Boolean(message?.stream_incomplete)
   ].join('::');
 };
 
