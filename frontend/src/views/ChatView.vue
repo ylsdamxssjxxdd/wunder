@@ -252,7 +252,7 @@
               :key="resolveMessageKey(message, index)"
             >
             <div
-              v-if="!isHiddenInternalMessage(message)"
+              v-if="!isHiddenInternalMessage(message) && (!isCompactionMarkerMessage(message) || shouldShowCompactionDivider(message))"
               :class="[
                 'message',
                 message.role === 'user' ? 'from-user' : 'from-ai',
@@ -1645,11 +1645,17 @@ const isCompactionMarkerMessage = (message): boolean => {
 
 const shouldShowCompactionDivider = (message): boolean => {
   if (!message || message.role !== 'assistant') return false;
-  if (isCompactionMarkerMessage(message)) return true;
   const snapshot = resolveLatestCompactionSnapshot(message.workflowItems);
   if (!snapshot) return false;
   const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
-  return detailStatus !== 'skipped';
+  if (detailStatus === 'skipped') return false;
+  if (!isCompactionRunningFromWorkflowItems(message.workflowItems)) return true;
+  const triggerMode = String(
+    snapshot.detail?.trigger_mode ?? snapshot.detail?.triggerMode ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  return triggerMode === 'manual';
 };
 
 // Assistant replies render through Markdown so tables and rich text stay readable.
@@ -2500,7 +2506,7 @@ const handleComposerSend = async ({ content, attachments }) => {
   } catch (error) {
     pendingAssistantCenter = false;
     pendingAssistantCenterCount = 0;
-    throw error;
+    showApiError(error, t('chat.error.requestFailed'));
   } finally {
     inquirySelection.value = [];
   }

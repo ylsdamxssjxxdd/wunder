@@ -93,6 +93,7 @@ import { formatWorkflowDetailForDisplay } from './toolWorkflowDetailFormatter';
 import { chatPerf } from '@/utils/chatPerf';
 import {
   buildCompactionDisplay,
+  resolveCompactionInstanceLabel,
   type CompactionDisplay
 } from '@/utils/chatCompactionUi';
 import { resolveAbilityVisual } from '@/utils/abilityVisuals';
@@ -1727,6 +1728,7 @@ const isWebFetchTool = (toolName: string): boolean => {
 };
 
 const resolveToolIconClass = (toolName: string): string => {
+  if (isCompactionTool(toolName)) return 'fa-compress';
   return resolveAbilityVisual({
     name: toolName,
     kind: 'tool',
@@ -2928,8 +2930,7 @@ const buildToolResultSection = (
   const rawOutputDetail = resolveRawWorkflowDetail(entry.outputItem);
   const rawCallDetail = resolveRawWorkflowDetail(entry.callItem);
   if (compactionDisplay) {
-    const rawCompactionDetail = rawResultDetail || rawOutputDetail || rawCallDetail;
-    const detailBody = rawCompactionDetail || compactionDisplay.resultBody;
+    const detailBody = compactionDisplay.copyBody || compactionDisplay.resultBody;
     return {
       key: sectionKey,
       title: sectionTitle,
@@ -3013,6 +3014,20 @@ const buildErrorText = (
   return hint;
 };
 
+const resolveEntryWorkflowRef = (entry: RawEntry): string => {
+  const candidates = [
+    entry.resultItem?.toolCallId,
+    entry.outputItem?.toolCallId,
+    entry.callItem?.toolCallId,
+    entry.key
+  ];
+  for (const candidate of candidates) {
+    const normalized = String(candidate || '').trim();
+    if (normalized) return normalized;
+  }
+  return '';
+};
+
 const resolveEntryStatus = (
   entry: RawEntry,
   commandSession: CommandSessionRuntimeEntry | null
@@ -3050,9 +3065,21 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const compactionDisplay = isCompactionTool(entry.toolName)
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
+  const compactionInstanceLabel = compactionDisplay
+    ? resolveCompactionInstanceLabel(resolveEntryWorkflowRef(entry), t)
+    : '';
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem, commandSession) : '';
-  const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
-  const summary = splitEntrySummary(summaryTitle, toolDisplay);
+  const summaryTitle = compactionDisplay
+    ? [compactionInstanceLabel, compactionDisplay.summaryTitle].filter(Boolean).join(' · ')
+    : composeEntryTitle(entry, toolDisplay, command, pathHints);
+  const summary = compactionDisplay
+    ? {
+        toolLabel: toolDisplay,
+        summaryBrief: truncateSingleLine(
+          [compactionInstanceLabel, compactionDisplay.resultSummary].filter(Boolean).join(' · ')
+        )
+      }
+    : splitEntrySummary(summaryTitle, toolDisplay);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];

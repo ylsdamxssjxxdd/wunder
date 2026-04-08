@@ -465,6 +465,54 @@ const buildSubagentSummaryLines = (
   return lines.slice(0, 3);
 };
 
+const buildSubagentWorkflowLines = (
+  item: BeeroomMissionSubagentItem,
+  visualState: SubagentVisualState,
+  t: TranslationFn
+): BeeroomNodeWorkflowLine[] => {
+  const workflowLines = buildNodeWorkflowPreviewLines(
+    Array.isArray(item.workflowItems) ? item.workflowItems : []
+  );
+  return workflowLines.length > 0 ? workflowLines : buildSubagentSummaryLines(item, visualState, t);
+};
+
+const resolveSubagentIdentityKey = (item: BeeroomMissionSubagentItem): string =>
+  String(item.sessionId || item.runId || item.key).trim();
+
+const mergeSubagentItems = (
+  taskSubagents: BeeroomMissionSubagentItem[],
+  runtimeSubagents: BeeroomMissionSubagentItem[]
+): BeeroomMissionSubagentItem[] => {
+  const merged = new Map<string, BeeroomMissionSubagentItem>();
+  const order: string[] = [];
+
+  const append = (item: BeeroomMissionSubagentItem) => {
+    const identity = resolveSubagentIdentityKey(item);
+    if (!identity) return;
+    const existing = merged.get(identity);
+    if (!existing) {
+      merged.set(identity, item);
+      order.push(identity);
+      return;
+    }
+    merged.set(identity, {
+      ...existing,
+      ...item,
+      workflowItems:
+        Array.isArray(item.workflowItems) && item.workflowItems.length > 0
+          ? item.workflowItems
+          : existing.workflowItems
+    });
+  };
+
+  taskSubagents.forEach(append);
+  runtimeSubagents.forEach(append);
+
+  return order
+    .map((identity) => merged.get(identity))
+    .filter((item): item is BeeroomMissionSubagentItem => Boolean(item));
+};
+
 const resolveSubagentVisualState = (item: BeeroomMissionSubagentItem, t: TranslationFn): SubagentVisualState => {
   const normalizedStatus = String(item.status || '').trim().toLowerCase();
   if (SUBAGENT_ACTIVE_STATUSES.has(normalizedStatus)) {
@@ -874,7 +922,7 @@ export const buildBeeroomSwarmProjection = (options: {
           ? options.subagentsByTask[taskId]
           : []
         : [];
-    const subagents = runtimeSubagents.length > 0 ? runtimeSubagents : taskSubagents;
+    const subagents = mergeSubagentItems(taskSubagents, runtimeSubagents);
     if (!subagents.length) return;
     subagents.forEach((item, subagentIndex) => {
       const nodeId = `subagent:${item.sessionId || item.runId || item.key}`;
@@ -892,7 +940,7 @@ export const buildBeeroomSwarmProjection = (options: {
       const position =
         options.nodePositionOverrides[nodeId] ||
         resolveSubagentBranchPosition(workerNode, motherNode, subagentIndex, subagents.length, workerIndex + 1);
-      const workflowLines = buildSubagentSummaryLines(item, visualState, options.t);
+      const workflowLines = buildSubagentWorkflowLines(item, visualState, options.t);
       const meta: CanvasNodeMeta = {
         id: nodeId,
         agent_id: item.agentId,

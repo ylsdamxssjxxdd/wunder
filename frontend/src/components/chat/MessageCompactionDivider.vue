@@ -1,15 +1,14 @@
 <template>
-  <transition name="compaction-divider-fade">
-    <div
-      v-if="status"
-      :class="['message-compaction-divider', `is-${status}`]"
-      role="separator"
-      :aria-live="status === 'running' ? 'polite' : 'off'"
-    >
-      <span class="message-compaction-divider-track" aria-hidden="true"></span>
-      <span class="message-compaction-divider-label">{{ label }}</span>
-    </div>
-  </transition>
+  <div
+    v-if="status"
+    :class="['message-compaction-divider', `is-${status}`]"
+    role="separator"
+    :aria-live="status === 'running' ? 'polite' : 'off'"
+    :title="tooltipText || undefined"
+  >
+    <span class="message-compaction-divider-track" aria-hidden="true"></span>
+    <span class="message-compaction-divider-label">{{ label }}</span>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -31,37 +30,115 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const { t } = useI18n();
+const numberFormatter = new Intl.NumberFormat('en-US');
+
+const pickString = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return '';
+};
+
+const toOptionalInt = (...values: unknown[]): number | null => {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.round(value);
+    }
+    if (typeof value === 'string') {
+      const normalized = Number(value.trim());
+      if (Number.isFinite(normalized)) {
+        return Math.round(normalized);
+      }
+    }
+  }
+  return null;
+};
+
+const formatTokenCount = (value: number | null): string =>
+  value === null ? '' : `${numberFormatter.format(value)}`;
+
+const snapshot = computed(() => resolveLatestCompactionSnapshot(props.items));
 
 const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>(() => {
-  const snapshot = resolveLatestCompactionSnapshot(props.items);
-  if (!snapshot) return null;
+  if (!snapshot.value) return null;
   const running = isCompactionRunningFromWorkflowItems(props.items);
-  if (snapshot.status === 'cancelled') return 'cancelled';
-  if (snapshot.status === 'failed') return 'failed';
+  if (snapshot.value.status === 'cancelled') return 'cancelled';
+  if (snapshot.value.status === 'failed') return 'failed';
   if (running) return 'running';
   return 'completed';
+});
+
+const transitionLabel = computed(() => {
+  const detail = snapshot.value?.detail;
+  if (!detail) return '';
+  const before = toOptionalInt(
+    detail.projected_request_tokens,
+    detail.total_tokens,
+    detail.context_tokens,
+    detail.context_guard_tokens_before
+  );
+  const after = toOptionalInt(
+    detail.projected_request_tokens_after,
+    detail.total_tokens_after,
+    detail.context_tokens_after,
+    detail.context_guard_tokens_after,
+    detail.final_context_tokens
+  );
+  if (before === null || after === null) return '';
+  return `${formatTokenCount(before)} -> ${formatTokenCount(after)}`;
 });
 
 const label = computed(() => {
   if (status.value === 'running') return t('chat.compactionDivider.running');
   if (status.value === 'cancelled') return t('chat.compactionDivider.cancelled');
   if (status.value === 'failed') return t('chat.compactionDivider.failed');
+  if (transitionLabel.value) {
+    return `${t('chat.compactionDivider.completed')} ${transitionLabel.value}`;
+  }
   return t('chat.compactionDivider.completed');
+});
+
+const tooltipText = computed(() => {
+  const detail = snapshot.value?.detail;
+  if (!detail) return '';
+  const blocks: string[] = [];
+  if (transitionLabel.value) {
+    blocks.push(`${t('chat.compactionDivider.completed')} ${transitionLabel.value}`);
+  } else if (status.value === 'completed') {
+    blocks.push(t('chat.compactionDivider.completed'));
+  }
+  const modelOutput = pickString(
+    detail.summary_model_output,
+    detail.summaryModelOutput,
+    detail.compaction_model_output,
+    detail.compactionModelOutput
+  );
+  const injectedSummary = pickString(
+    detail.summary_text,
+    detail.summaryText,
+    detail.summary_context_text,
+    detail.summaryContextText,
+    detail.compaction_summary_text,
+    detail.compactionSummaryText
+  );
+  if (modelOutput) {
+    if (blocks.length > 0) blocks.push('');
+    blocks.push(`${t('chat.toolWorkflow.compaction.output.modelTitle')}:`);
+    blocks.push(modelOutput);
+  }
+  if (injectedSummary && injectedSummary !== modelOutput) {
+    if (blocks.length > 0) blocks.push('');
+    blocks.push(`${t('chat.toolWorkflow.compaction.output.injectedTitle')}:`);
+    blocks.push(injectedSummary);
+  }
+  return blocks.join('\n').trim();
 });
 </script>
 
 <style scoped>
-.compaction-divider-fade-enter-active,
-.compaction-divider-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.compaction-divider-fade-enter-from,
-.compaction-divider-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-
 .message-compaction-divider {
   width: 100%;
   margin: 18px 0 20px;

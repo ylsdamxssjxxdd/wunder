@@ -1,11 +1,13 @@
-import { getSessionSubagents } from '@/api/chat';
+import { getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 
 import {
+  buildSessionWorkflowItems,
   compareBeeroomMissionTasksByDisplayPriority,
   isBeeroomTaskStatusActive,
-  resolveBeeroomTaskMoment
+  resolveBeeroomTaskMoment,
+  type BeeroomWorkflowItem
 } from './beeroomTaskWorkflow';
 
 export type BeeroomMissionSubagentItem = {
@@ -17,6 +19,9 @@ export type BeeroomMissionSubagentItem = {
   label: string;
   status: string;
   summary: string;
+  userMessage: string;
+  assistantMessage: string;
+  errorMessage: string;
   updatedTime: number;
   terminal: boolean;
   failed: boolean;
@@ -28,9 +33,15 @@ export type BeeroomMissionSubagentItem = {
   dispatchLabel: string;
   controllerSessionId: string;
   parentSessionId: string;
+  workflowItems: BeeroomWorkflowItem[];
 };
 
 type TaskSubagentFetchMeta = {
+  requestKey: string;
+  fetchedAt: number;
+};
+
+type SessionWorkflowFetchMeta = {
   requestKey: string;
   fetchedAt: number;
 };
@@ -76,6 +87,25 @@ const normalizeSubagentStatus = (value: unknown): string => {
   return normalized || 'running';
 };
 
+const resolveSubagentWorkflowKey = (
+  item: Pick<BeeroomMissionSubagentItem, 'sessionId' | 'runId' | 'key'>
+): string => normalizeText(item.sessionId || item.runId || item.key);
+
+const buildWorkflowItemsFingerprint = (items: BeeroomWorkflowItem[]): string =>
+  items
+    .map((item) =>
+      [
+        item.id,
+        item.title,
+        item.detail,
+        item.status,
+        item.eventType,
+        item.toolName,
+        item.toolCallId
+      ].join(':')
+    )
+    .join('||');
+
 export const normalizeBeeroomMissionSubagentItem = (
   value: unknown
 ): BeeroomMissionSubagentItem | null => {
@@ -87,13 +117,29 @@ export const normalizeBeeroomMissionSubagentItem = (
   if (!key) return null;
   const status = normalizeSubagentStatus(source.status);
   const detail = asRecord(source.detail) || asRecord(source.metadata) || {};
+  const userMessage = normalizeText(
+    source.user_message ??
+      source.userMessage ??
+      detail.user_message ??
+      detail.userMessage
+  );
+  const assistantMessage = normalizeText(
+    source.assistant_message ??
+      source.assistantMessage ??
+      detail.assistant_message ??
+      detail.assistantMessage
+  );
+  const errorMessage = normalizeText(
+    source.error_message ??
+      source.errorMessage ??
+      detail.error_message ??
+      detail.errorMessage ??
+      source.error
+  );
   const summary = normalizeText(
     source.summary ??
-      source.assistant_message ??
-      source.assistantMessage ??
-      source.error_message ??
-      source.errorMessage ??
-      source.error
+      assistantMessage ??
+      errorMessage
   );
   const title = normalizeText(source.title) || normalizeText(source.label) || sessionId || runId || 'subagent';
   const updatedTime = normalizeSubagentUpdatedTime(
@@ -114,6 +160,9 @@ export const normalizeBeeroomMissionSubagentItem = (
     label: normalizeText(source.label ?? source.spawn_label ?? source.spawnLabel),
     status,
     summary,
+    userMessage,
+    assistantMessage,
+    errorMessage,
     updatedTime,
     terminal: Boolean(source.terminal),
     failed: Boolean(source.failed),
@@ -128,7 +177,8 @@ export const normalizeBeeroomMissionSubagentItem = (
     controllerSessionId: normalizeText(
       source.controller_session_id ?? source.controllerSessionId ?? detail.controller_session_id
     ),
-    parentSessionId: normalizeText(source.parent_session_id ?? source.parentSessionId)
+    parentSessionId: normalizeText(source.parent_session_id ?? source.parentSessionId),
+    workflowItems: []
   };
 };
 
@@ -140,6 +190,9 @@ const buildSubagentFingerprint = (item: BeeroomMissionSubagentItem) =>
     item.agentId,
     item.status,
     item.summary,
+    item.userMessage,
+    item.assistantMessage,
+    item.errorMessage,
     item.updatedTime,
     item.terminal,
     item.failed,
@@ -205,18 +258,26 @@ const pickLatestMissionTasks = (mission: BeeroomMission | null | undefined): Bee
 export const useBeeroomMissionSubagentPreview = (options: {
   mission: Ref<BeeroomMission | null>;
   clearedAfter: Ref<number>;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }) => {
   const rawSubagentsByTask = ref<Record<string, BeeroomMissionSubagentItem[]>>({});
+  const workflowItemsBySubagent = ref<Record<string, BeeroomWorkflowItem[]>>({});
 
   const latestMissionTasks = computed(() => pickLatestMissionTasks(options.mission.value));
   const filteredSubagentsByTask = computed<Record<string, BeeroomMissionSubagentItem[]>>(() => {
     const clearedAfter = Number(options.clearedAfter.value || 0);
-    if (!clearedAfter) {
-      return rawSubagentsByTask.value;
-    }
     const next: Record<string, BeeroomMissionSubagentItem[]> = {};
     Object.entries(rawSubagentsByTask.value).forEach(([taskId, items]) => {
-      const filtered = items.filter((item) => Number(item.updatedTime || 0) > clearedAfter);
+      const filtered = items
+        .filter((item) => !clearedAfter || Number(item.updatedTime || 0) > clearedAfter)
+        .map((item) => {
+          const workflowKey = resolveSubagentWorkflowKey(item);
+          const workflowItems = workflowKey ? workflowItemsBySubagent.value[workflowKey] || [] : [];
+          return {
+            ...item,
+            workflowItems
+          } satisfies BeeroomMissionSubagentItem;
+        });
       if (filtered.length > 0) {
         next[taskId] = filtered;
       }
@@ -228,8 +289,11 @@ export const useBeeroomMissionSubagentPreview = (options: {
   let disposed = false;
   let syncTimer: number | null = null;
   const fetchMeta = new Map<string, TaskSubagentFetchMeta>();
+  const workflowFetchMeta = new Map<string, SessionWorkflowFetchMeta>();
   const activeControllers = new Map<string, AbortController>();
+  const workflowControllers = new Map<string, AbortController>();
   const inFlightRequestKeys = new Map<string, string>();
+  const workflowInFlightRequestKeys = new Map<string, string>();
 
   const clearSyncTimer = () => {
     if (syncTimer !== null && typeof window !== 'undefined') {
@@ -249,6 +313,42 @@ export const useBeeroomMissionSubagentPreview = (options: {
     };
   };
 
+  const updateSubagentWorkflowItems = (workflowKey: string, items: BeeroomWorkflowItem[]) => {
+    const current = workflowItemsBySubagent.value[workflowKey] || [];
+    if (buildWorkflowItemsFingerprint(current) === buildWorkflowItemsFingerprint(items)) {
+      return;
+    }
+    workflowItemsBySubagent.value = {
+      ...workflowItemsBySubagent.value,
+      [workflowKey]: items
+    };
+  };
+
+  const pruneStaleWorkflowState = () => {
+    const activeWorkflowKeys = new Set(
+      Object.values(rawSubagentsByTask.value)
+        .flatMap((items) => items.map((item) => resolveSubagentWorkflowKey(item)))
+        .filter(Boolean)
+    );
+    const nextWorkflowItems = { ...workflowItemsBySubagent.value };
+    let changed = false;
+    Object.keys(nextWorkflowItems).forEach((workflowKey) => {
+      if (activeWorkflowKeys.has(workflowKey)) return;
+      delete nextWorkflowItems[workflowKey];
+      workflowFetchMeta.delete(workflowKey);
+      const controller = workflowControllers.get(workflowKey);
+      if (controller) {
+        controller.abort();
+        workflowControllers.delete(workflowKey);
+      }
+      workflowInFlightRequestKeys.delete(workflowKey);
+      changed = true;
+    });
+    if (changed) {
+      workflowItemsBySubagent.value = nextWorkflowItems;
+    }
+  };
+
   const removeStaleTaskState = (taskIds: Set<string>) => {
     const next = { ...rawSubagentsByTask.value };
     let changed = false;
@@ -266,6 +366,73 @@ export const useBeeroomMissionSubagentPreview = (options: {
     });
     if (changed) {
       rawSubagentsByTask.value = next;
+    }
+    pruneStaleWorkflowState();
+  };
+
+  const fetchSubagentWorkflow = async (item: BeeroomMissionSubagentItem, force = false) => {
+    const workflowKey = resolveSubagentWorkflowKey(item);
+    if (!workflowKey) return;
+    const sessionId = normalizeText(item.sessionId);
+    const requestKey = [
+      workflowKey,
+      sessionId,
+      item.runId,
+      item.status,
+      item.updatedTime,
+      item.terminal,
+      item.failed,
+      item.summary
+    ].join('|');
+    const previous = workflowFetchMeta.get(workflowKey);
+    const isActiveSubagent = ACTIVE_SUBAGENT_STATUSES.has(item.status);
+
+    if (
+      !force &&
+      previous?.requestKey === requestKey &&
+      (!isActiveSubagent || Date.now() - previous.fetchedAt < SUBAGENT_POLL_INTERVAL_MS - 120)
+    ) {
+      return;
+    }
+
+    if (!sessionId) {
+      updateSubagentWorkflowItems(workflowKey, []);
+      workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
+      return;
+    }
+
+    if (workflowInFlightRequestKeys.get(workflowKey) === requestKey) {
+      return;
+    }
+
+    const previousController = workflowControllers.get(workflowKey);
+    if (previousController) {
+      previousController.abort();
+      workflowControllers.delete(workflowKey);
+    }
+
+    const controller = new AbortController();
+    workflowControllers.set(workflowKey, controller);
+    workflowInFlightRequestKeys.set(workflowKey, requestKey);
+
+    try {
+      const response = await getSessionEvents(sessionId, { signal: controller.signal });
+      if (disposed || !mounted || controller.signal.aborted) return;
+      const rounds = Array.isArray(response?.data?.data?.rounds) ? response.data.data.rounds : [];
+      const workflowItems = buildSessionWorkflowItems(rounds, options.t).filter((workflowItem) => workflowItem.isTool);
+      updateSubagentWorkflowItems(workflowKey, workflowItems);
+      workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
+    } catch {
+      if (disposed || controller.signal.aborted) return;
+      updateSubagentWorkflowItems(workflowKey, []);
+      workflowFetchMeta.set(workflowKey, { requestKey, fetchedAt: Date.now() });
+    } finally {
+      if (workflowControllers.get(workflowKey) === controller) {
+        workflowControllers.delete(workflowKey);
+      }
+      if (workflowInFlightRequestKeys.get(workflowKey) === requestKey) {
+        workflowInFlightRequestKeys.delete(workflowKey);
+      }
     }
   };
 
@@ -287,6 +454,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
 
     if (!sessionId) {
       updateTaskSubagents(taskId, []);
+      pruneStaleWorkflowState();
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
       return;
     }
@@ -325,10 +493,13 @@ export const useBeeroomMissionSubagentPreview = (options: {
           return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
         });
       updateTaskSubagents(taskId, normalized);
+      pruneStaleWorkflowState();
+      await Promise.allSettled(normalized.map((item) => fetchSubagentWorkflow(item, force)));
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
     } catch {
       if (disposed || controller.signal.aborted) return;
       updateTaskSubagents(taskId, []);
+      pruneStaleWorkflowState();
       fetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
     } finally {
       if (activeControllers.get(taskId) === controller) {
@@ -343,7 +514,11 @@ export const useBeeroomMissionSubagentPreview = (options: {
   const scheduleSync = () => {
     clearSyncTimer();
     if (!mounted || disposed || typeof window === 'undefined') return;
-    if (!latestMissionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status))) return;
+    const hasActiveTask = latestMissionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status));
+    const hasActiveSubagent = Object.values(rawSubagentsByTask.value).some((items) =>
+      items.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))
+    );
+    if (!hasActiveTask && !hasActiveSubagent) return;
     syncTimer = window.setTimeout(() => {
       syncTimer = null;
       if (disposed || !mounted) return;
@@ -357,6 +532,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
     const activeTaskIds = new Set(tasks.map((task) => normalizeText(task.task_id)).filter(Boolean));
     removeStaleTaskState(activeTaskIds);
     if (!tasks.length) {
+      clearSyncTimer();
       return;
     }
     await Promise.all(tasks.map((task) => fetchTaskSubagents(task, force)));
@@ -385,8 +561,12 @@ export const useBeeroomMissionSubagentPreview = (options: {
     clearSyncTimer();
     activeControllers.forEach((controller) => controller.abort());
     activeControllers.clear();
+    workflowControllers.forEach((controller) => controller.abort());
+    workflowControllers.clear();
     inFlightRequestKeys.clear();
+    workflowInFlightRequestKeys.clear();
     fetchMeta.clear();
+    workflowFetchMeta.clear();
   });
 
   return {

@@ -2,7 +2,7 @@
 
 > One-liner: Xinjian is an agent system that executes tasks, not just chats. You provide the goal; it plans, calls tools, and delivers results.
 
-The primary entry is **wunder-desktop** (download and use), while the same core also powers `wunder-server` and `wunder-cli`.
+The frontend is a warm hive, the backend is a massive starship.
 
 ## What This README Solves
 

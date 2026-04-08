@@ -29,10 +29,10 @@ export type CompactionDetailView = {
 export type CompactionUsageBarView = {
   beforeRatio: number | null;
   afterRatio: number | null;
+  beforeBarRatio: number | null;
+  afterBarRatio: number | null;
   beforeLabel: string;
   afterLabel: string;
-  limitLabel: string;
-  hint: string;
   tone: 'info' | 'success' | 'warning' | 'danger';
 };
 
@@ -42,12 +42,21 @@ export type CompactionFailureView = {
   suggestions: string[];
 };
 
+export type CompactionOutputView = {
+  key: string;
+  title: string;
+  body: string;
+  tone: 'default' | 'warning';
+};
+
 export type CompactionView = {
   headline: string;
   description: string;
   stages: CompactionStageView[];
   metrics: CompactionMetricView[];
   details: CompactionDetailView[];
+  outputs: CompactionOutputView[];
+  outputEmpty: string;
   usageBar: CompactionUsageBarView | null;
   failure: CompactionFailureView | null;
 };
@@ -58,6 +67,7 @@ export type CompactionDisplay = {
   summaryNoteTone: 'info' | 'success' | 'warning';
   resultSummary: string;
   resultBody: string;
+  copyBody: string;
   view: CompactionView;
 };
 
@@ -149,6 +159,35 @@ const resolveReasonLabel = (reason: string, t: TranslateFn): string => {
   return reason || t('chat.toolWorkflow.compaction.reason.default');
 };
 
+export const resolveCompactionInstanceLabel = (
+  workflowRef: unknown,
+  t: TranslateFn
+): string => {
+  const normalized = pickString(workflowRef).toLowerCase();
+  if (!normalized.startsWith('compaction:')) return '';
+  const parts = normalized.split(':').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 3) return '';
+  const workflowTitle = t('chat.toolWorkflow.title');
+  const isChineseUi = /智能体循环|鍟嗚兘浣撳惊鐜?/u.test(workflowTitle);
+  const resolveLabel = (key: string, fallback: string, params?: Record<string, unknown>) => {
+    const translated = t(key, params);
+    return translated === key ? fallback : translated;
+  };
+  if (parts[1] === 'manual') {
+    return resolveLabel(
+      'chat.toolWorkflow.compaction.instanceManual',
+      isChineseUi ? '手动触发压缩' : 'Manual compaction'
+    );
+  }
+  const index = Number.parseInt(parts[parts.length - 1] || '', 10);
+  if (!Number.isFinite(index) || index <= 0) return '';
+  return resolveLabel(
+    'chat.toolWorkflow.compaction.instanceAuto',
+    isChineseUi ? `第 ${index} 次压缩` : `Compaction #${index}`,
+    { index }
+  );
+};
+
 const buildRequestBudgetLine = (
   messageBudget: number | null,
   requestOverheadTokens: number | null,
@@ -206,11 +245,16 @@ const resolveRunningSummary = (stage: string, t: TranslateFn): string => {
 const resolveStageDetail = (fallback: string, value: string, t: TranslateFn): string =>
   value.trim() || fallback || t('chat.toolWorkflow.compaction.stage.pending');
 
-const clampRatio = (value: number | null, limit: number | null): number | null => {
+const resolveUsageRatio = (value: number | null, limit: number | null): number | null => {
   if (value === null || limit === null || limit <= 0) return null;
   const ratio = value / limit;
   if (!Number.isFinite(ratio)) return null;
-  return Math.max(0, Math.min(ratio, 1));
+  return Math.max(0, ratio);
+};
+
+const clampUsageBarRatio = (value: number | null): number | null => {
+  if (value === null) return null;
+  return Math.max(0, Math.min(value, 1));
 };
 
 const formatPercent = (value: number | null): string => {
@@ -326,6 +370,20 @@ export const buildCompactionDisplay = (
   const overflowFailureSummary = hasOverflowFailure
     ? t('chat.toolWorkflow.compaction.summaryFailedOverflow')
     : '';
+  const modelOutput = pickString(
+    detailObject?.summary_model_output,
+    detailObject?.summaryModelOutput,
+    detailObject?.compaction_model_output,
+    detailObject?.compactionModelOutput
+  );
+  const injectedSummary = pickString(
+    detailObject?.summary_text,
+    detailObject?.summaryText,
+    detailObject?.summary_context_text,
+    detailObject?.summaryContextText,
+    detailObject?.compaction_summary_text,
+    detailObject?.compactionSummaryText
+  );
 
   const resultLine =
     normalizedStatus === 'failed'
@@ -418,14 +476,45 @@ export const buildCompactionDisplay = (
   appendLine(lines, t('chat.toolWorkflow.compaction.detail.errorMessage'), errorMessage);
   appendLine(lines, t('chat.toolWorkflow.compaction.detail.result'), resultLine);
 
-  const beforeRatio = clampRatio(projectedBefore, limit);
-  const afterRatio = clampRatio(projectedAfter, limit);
+  const outputs: CompactionOutputView[] = [];
+  if (modelOutput) {
+    outputs.push({
+      key: 'model-output',
+      title: usedFallback
+        ? t('chat.toolWorkflow.compaction.output.fallbackTitle')
+        : t('chat.toolWorkflow.compaction.output.modelTitle'),
+      body: modelOutput,
+      tone: usedFallback ? 'warning' : 'default'
+    });
+  }
+  if (injectedSummary && injectedSummary !== modelOutput) {
+    outputs.push({
+      key: 'injected-summary',
+      title: t('chat.toolWorkflow.compaction.output.injectedTitle'),
+      body: injectedSummary,
+      tone: 'default'
+    });
+  }
+  const outputEmpty = isRunning
+    ? t('chat.toolWorkflow.compaction.output.pending')
+    : normalizedStatus === 'guard_only'
+      ? t('chat.toolWorkflow.compaction.output.emptyGuardOnly')
+      : normalizedStatus === 'skipped'
+        ? t('chat.toolWorkflow.compaction.output.emptySkipped')
+        : t('chat.toolWorkflow.compaction.output.empty');
+
+  const beforeRatio = resolveUsageRatio(projectedBefore, limit);
+  const afterRatio = resolveUsageRatio(projectedAfter, limit);
+  const beforeBarRatio = clampUsageBarRatio(beforeRatio);
+  const afterBarRatio = clampUsageBarRatio(afterRatio);
   const usageBar: CompactionUsageBarView | null =
     beforeRatio === null && afterRatio === null
       ? null
       : {
           beforeRatio,
           afterRatio,
+          beforeBarRatio,
+          afterBarRatio,
           beforeLabel: projectedBefore !== null
             ? t('chat.toolWorkflow.compaction.usage.before', {
                 tokens: formatTokenCount(projectedBefore),
@@ -438,14 +527,6 @@ export const buildCompactionDisplay = (
                 percent: formatPercent(afterRatio)
               })
             : '',
-          limitLabel: limit !== null ? t('chat.toolWorkflow.compaction.usage.limit', { tokens: formatTokenCount(limit) }) : '',
-          hint: hasOverflowFailure
-            ? t('chat.toolWorkflow.compaction.usage.hintFailed')
-            : isRunning
-              ? t('chat.toolWorkflow.compaction.usage.hintRunning')
-              : afterRatio !== null && beforeRatio !== null && afterRatio < beforeRatio
-                ? t('chat.toolWorkflow.compaction.usage.hintReduced')
-                : t('chat.toolWorkflow.compaction.usage.hintStable'),
           tone: hasOverflowFailure
             ? 'danger'
             : afterRatio !== null && afterRatio >= 0.9
@@ -570,18 +651,31 @@ export const buildCompactionDisplay = (
     }
   ];
 
+  const copyBlocks = [...lines];
+  outputs.forEach((output) => {
+    if (copyBlocks.length > 0) {
+      copyBlocks.push('');
+    }
+    copyBlocks.push(`${output.title}:`);
+    copyBlocks.push(output.body);
+  });
+  const copyBody = copyBlocks.join('\n').trim();
+
   return {
     summaryTitle,
     summaryNote: note,
     summaryNoteTone: noteTone,
     resultSummary,
     resultBody: lines.join('\n'),
+    copyBody,
     view: {
       headline: summaryTitle,
       description: resultSummary,
       stages,
       metrics,
       details,
+      outputs,
+      outputEmpty,
       usageBar,
       failure
     }

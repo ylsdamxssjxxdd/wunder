@@ -97,6 +97,7 @@ const isCompactionWorkflowItem = (item: unknown): boolean => {
   const record = asObject(item);
   if (!record) return false;
   const eventType = String(record.eventType || record.event || '').trim().toLowerCase();
+  if (eventType === 'compaction_notice') return true;
   if (isCompactionEventType(eventType)) return true;
   return isCompactionToolName(record.toolName || record.tool || record.name);
 };

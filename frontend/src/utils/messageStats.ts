@@ -1,11 +1,18 @@
 import { normalizeChatDurationSeconds } from './chatTiming';
+import { resolveAssistantFailureNotice } from './assistantFailureNotice';
+import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 
 export type MessageStatsEntry = {
+  key: string;
   label: string;
   value: string;
+  kind?: 'status' | 'metric';
+  tone?: 'running' | 'warning' | 'success' | 'error' | 'muted';
+  live?: boolean;
 };
 
 type TranslateFn = (key: string) => string;
+type WorkflowItemLike = Record<string, any>;
 
 const formatDuration = (seconds: unknown): string => {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '-';
@@ -80,15 +87,179 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
 const isAssistantStreaming = (message: Record<string, any>): boolean =>
   Boolean(message?.stream_incomplete || message?.workflowStreaming || message?.reasoningStreaming);
 
+const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
+  Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
+
+const hasAssistantWaitingForFirstOutput = (message: Record<string, any>): boolean => {
+  const waitingUpdatedAtMs = Number(
+    message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs ?? message?.stats?.interaction_start_ms
+  );
+  const waitingFirstOutputAtMs = Number(
+    message?.waiting_first_output_at_ms ?? message?.waitingFirstOutputAtMs
+  );
+  return (
+    Number.isFinite(waitingUpdatedAtMs) &&
+    waitingUpdatedAtMs > 0 &&
+    (!Number.isFinite(waitingFirstOutputAtMs) || waitingFirstOutputAtMs <= 0) &&
+    !hasAssistantVisibleOutput(message)
+  );
+};
+
+const normalizeWorkflowEventType = (value: unknown): string => String(value || '').trim().toLowerCase();
+const normalizeWorkflowStatus = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+const ACTIVE_WORKFLOW_STATUSES = new Set(['loading', 'pending', 'running', 'streaming']);
+
+const findLastWorkflowItem = (
+  items: WorkflowItemLike[],
+  predicate: (item: WorkflowItemLike, index: number) => boolean
+): { item: WorkflowItemLike | null; index: number } => {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (!item || typeof item !== 'object') continue;
+    if (predicate(item, index)) {
+      return { item, index };
+    }
+  }
+  return { item: null, index: -1 };
+};
+
+const hasPendingQuestionPanel = (message: Record<string, any>): boolean => {
+  const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
+  return (
+    panelStatus === 'pending' ||
+    Boolean(message?.pendingQuestion) ||
+    Boolean(message?.pending_question) ||
+    Boolean(message?.awaiting_confirmation) ||
+    Boolean(message?.requires_confirmation)
+  );
+};
+
+const hasAssistantActivitySignals = (message: Record<string, any> | null | undefined): boolean => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
+  return Boolean(
+    hasPendingQuestionPanel(message) ||
+      isAssistantStreaming(message) ||
+      message?.resume_available ||
+      message?.slow_client ||
+      (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
+      (message?.stats && typeof message.stats === 'object')
+  );
+};
+
+const buildStatusEntry = (
+  value: string,
+  tone: NonNullable<MessageStatsEntry['tone']>,
+  live = false
+): MessageStatsEntry => ({
+  key: 'status',
+  label: '',
+  value,
+  kind: 'status',
+  tone,
+  live
+});
+
+const resolveAssistantStatusEntry = (
+  message: Record<string, any>,
+  t: TranslateFn
+): MessageStatsEntry | null => {
+  if (!hasAssistantActivitySignals(message)) return null;
+
+  if (resolveAssistantFailureNotice(message, t)) {
+    return buildStatusEntry(t('messenger.messageStatus.error'), 'error');
+  }
+
+  if (hasPendingQuestionPanel(message)) {
+    return buildStatusEntry(t('messenger.messageStatus.waitingInput'), 'warning', true);
+  }
+
+  const workflowItems = Array.isArray(message?.workflowItems)
+    ? (message.workflowItems as WorkflowItemLike[])
+    : [];
+  const latestRetry = findLastWorkflowItem(
+    workflowItems,
+    (item) => normalizeWorkflowEventType(item?.eventType ?? item?.event) === 'llm_stream_retry'
+  );
+  const latestQueue = findLastWorkflowItem(
+    workflowItems,
+    (item) => {
+      const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
+      return eventType === 'queued' || eventType === 'queue_enter' || eventType === 'queue_start';
+    }
+  );
+  const latestRequest = findLastWorkflowItem(
+    workflowItems,
+    (item) => normalizeWorkflowEventType(item?.eventType ?? item?.event) === 'llm_request'
+  );
+  const latestOutput = findLastWorkflowItem(
+    workflowItems,
+    (item) => {
+      const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
+      return eventType === 'llm_output' || eventType === 'llm_output_delta';
+    }
+  );
+  const latestActiveTool = findLastWorkflowItem(
+    workflowItems,
+    (item) => {
+      const status = normalizeWorkflowStatus(item?.status);
+      if (!ACTIVE_WORKFLOW_STATUSES.has(status)) return false;
+      if (item?.isTool) return true;
+      const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
+      if (!eventType) return false;
+      return (
+        eventType.startsWith('tool_') ||
+        eventType.startsWith('subagent_') ||
+        eventType.startsWith('team_') ||
+        eventType.startsWith('command_session_')
+      );
+    }
+  );
+
+  if (message?.resume_available && !isAssistantStreaming(message)) {
+    return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
+  }
+  if (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) {
+    return buildStatusEntry(t('messenger.messageStatus.retrying'), 'warning', true);
+  }
+  if (message?.slow_client && !hasAssistantVisibleOutput(message)) {
+    return buildStatusEntry(t('messenger.messageStatus.retrying'), 'warning', true);
+  }
+  if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
+    return buildStatusEntry(t('messenger.messageStatus.queued'), 'muted', true);
+  }
+  if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
+    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
+  }
+  if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
+    return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
+  }
+  if (isAssistantStreaming(message)) {
+    if (hasAssistantVisibleOutput(message) || latestOutput.index >= 0) {
+      return buildStatusEntry(t('messenger.messageStatus.modelOutputting'), 'running', true);
+    }
+    if (latestRequest.index >= 0 || hasAssistantWaitingForFirstOutput(message)) {
+      return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
+    }
+    return buildStatusEntry(t('messenger.messageStatus.running'), 'running', true);
+  }
+
+  return buildStatusEntry(t('messenger.messageStatus.done'), 'success');
+};
+
 export const buildAssistantMessageStatsEntries = (
   message: Record<string, any> | null | undefined,
   t: TranslateFn
 ): MessageStatsEntry[] => {
-  if (!message || message.role !== 'assistant' || message.isGreeting || isAssistantStreaming(message)) {
+  if (!message || message.role !== 'assistant' || message.isGreeting) {
     return [];
   }
+  const statusEntry = resolveAssistantStatusEntry(message, t);
   const stats = (message.stats || null) as Record<string, any> | null;
-  if (!stats) return [];
+  if (!stats) return statusEntry ? [statusEntry] : [];
+  if (isAssistantStreaming(message)) {
+    return statusEntry ? [statusEntry] : [];
+  }
   const durationSeconds = resolveDurationSeconds(stats);
   const speed = resolveTokenSpeed(stats);
   const usageInputTokens = Number(
@@ -142,12 +313,22 @@ export const buildAssistantMessageStatsEntries = (
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
   if (!hasUsage && !hasDuration && !hasToolCalls && !hasSpeed) {
-    return [];
+    return statusEntry ? [statusEntry] : [];
   }
-  return [
-    { label: t('chat.stats.duration'), value: formatDuration(durationSeconds) },
-    { label: t('chat.stats.speed'), value: formatSpeed(speed) },
-    { label: t('chat.stats.contextTokens'), value: formatCount(contextTokens) },
-    { label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls) }
-  ];
+  const entries: MessageStatsEntry[] = [];
+  if (statusEntry) {
+    entries.push(statusEntry);
+  }
+  entries.push(
+    { key: 'duration', label: t('chat.stats.duration'), value: formatDuration(durationSeconds), kind: 'metric' },
+    { key: 'speed', label: t('chat.stats.speed'), value: formatSpeed(speed), kind: 'metric' },
+    {
+      key: 'contextTokens',
+      label: t('chat.stats.contextTokens'),
+      value: formatCount(contextTokens),
+      kind: 'metric'
+    },
+    { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' }
+  );
+  return entries;
 };

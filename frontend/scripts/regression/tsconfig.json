@@ -20,6 +20,7 @@
   "include": [
     "../../src/utils/messageMarkdown.ts",
     "../../src/utils/chatTiming.ts",
+    "../../src/utils/chatCompactionUi.ts",
     "../../src/utils/chatCompactionWorkflow.ts",
     "../../src/utils/chatSessionRuntime.ts",
     "../../src/utils/messageStats.ts",
@@ -58,6 +59,7 @@
     "./realtime-pulse-regression.test.ts",
     "./composer-approval-regression.test.ts",
     "./message-stats-regression.test.ts",
+    "./compaction-ui-regression.test.ts",
     "./tool-workflow-regression.test.ts",
     "./tool-workflow-command-regression.test.ts"
   ]

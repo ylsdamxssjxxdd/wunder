@@ -6,62 +6,40 @@
     </div>
 
     <div v-if="view.usageBar" :class="['tool-workflow-compaction-usage', `is-${view.usageBar.tone}`]">
-      <div class="tool-workflow-compaction-usage-head">
-        <span class="tool-workflow-compaction-usage-limit">{{ view.usageBar.limitLabel }}</span>
-        <span class="tool-workflow-compaction-usage-hint">{{ view.usageBar.hint }}</span>
-      </div>
       <div class="tool-workflow-compaction-usage-track">
         <span
-          v-if="view.usageBar.beforeRatio !== null"
+          v-if="view.usageBar.beforeBarRatio !== null"
           class="tool-workflow-compaction-usage-fill is-before"
-          :style="{ width: `${Math.max(view.usageBar.beforeRatio * 100, 6)}%` }"
+          :style="{ width: `${Math.max(view.usageBar.beforeBarRatio * 100, 6)}%` }"
         ></span>
         <span
-          v-if="view.usageBar.afterRatio !== null"
+          v-if="view.usageBar.afterBarRatio !== null"
           class="tool-workflow-compaction-usage-fill is-after"
-          :style="{ width: `${Math.max(view.usageBar.afterRatio * 100, 6)}%` }"
+          :style="{ width: `${Math.max(view.usageBar.afterBarRatio * 100, 6)}%` }"
         ></span>
       </div>
       <div class="tool-workflow-compaction-usage-legend">
-        <span v-if="view.usageBar.beforeLabel" class="tool-workflow-compaction-usage-label is-before">
-          {{ view.usageBar.beforeLabel }}
-        </span>
         <span v-if="view.usageBar.afterLabel" class="tool-workflow-compaction-usage-label is-after">
           {{ view.usageBar.afterLabel }}
         </span>
+        <span v-if="view.usageBar.beforeLabel" class="tool-workflow-compaction-usage-label is-before">
+          {{ view.usageBar.beforeLabel }}
+        </span>
       </div>
     </div>
 
-    <div class="tool-workflow-compaction-stages">
-      <div
-        v-for="stage in view.stages"
-        :key="stage.key"
-        :class="['tool-workflow-compaction-stage', `is-${stage.state}`]"
+    <div v-if="view.outputs.length" class="tool-workflow-compaction-outputs">
+      <section
+        v-for="output in view.outputs"
+        :key="output.key"
+        :class="['tool-workflow-compaction-output', `is-${output.tone}`]"
       >
-        <span class="tool-workflow-compaction-stage-dot" aria-hidden="true"></span>
-        <div class="tool-workflow-compaction-stage-copy">
-          <div class="tool-workflow-compaction-stage-label">{{ stage.label }}</div>
-          <div class="tool-workflow-compaction-stage-detail">{{ stage.detail }}</div>
-        </div>
-      </div>
+        <div class="tool-workflow-compaction-output-title">{{ output.title }}</div>
+        <pre class="tool-workflow-compaction-output-body">{{ output.body }}</pre>
+      </section>
     </div>
-
-    <div v-if="view.metrics.length" class="tool-workflow-compaction-metrics">
-      <div
-        v-for="metric in view.metrics"
-        :key="metric.key"
-        :class="['tool-workflow-compaction-metric', `is-${metric.tone}`]"
-      >
-        <span class="tool-workflow-compaction-metric-label">{{ metric.label }}</span>
-        <span class="tool-workflow-compaction-metric-value">{{ metric.value }}</span>
-      </div>
-    </div>
-
-    <div v-if="view.details.length" class="tool-workflow-compaction-details">
-      <div v-for="detail in view.details" :key="detail.key" class="tool-workflow-compaction-detail-row">
-        <span class="tool-workflow-compaction-detail-label">{{ detail.label }}</span>
-        <span class="tool-workflow-compaction-detail-value">{{ detail.value }}</span>
-      </div>
+    <div v-else-if="view.outputEmpty" class="tool-workflow-compaction-output-empty">
+      {{ view.outputEmpty }}
     </div>
 
     <div v-if="view.failure" class="tool-workflow-compaction-failure">
@@ -77,8 +55,6 @@
         </span>
       </div>
     </div>
-
-    <pre v-if="body.trim()" class="tool-workflow-compaction-extra">{{ body }}</pre>
   </div>
 </template>
 
@@ -87,7 +63,6 @@ import type { CompactionView } from '@/utils/chatCompactionUi';
 
 defineProps<{
   view: CompactionView | null | undefined;
-  body?: string;
 }>();
 </script>
 
@@ -141,7 +116,6 @@ defineProps<{
   background: rgba(127, 29, 29, 0.2);
 }
 
-.tool-workflow-compaction-usage-head,
 .tool-workflow-compaction-usage-legend {
   display: flex;
   align-items: center;
@@ -149,20 +123,9 @@ defineProps<{
   gap: 10px;
 }
 
-.tool-workflow-compaction-usage-limit,
-.tool-workflow-compaction-usage-hint,
 .tool-workflow-compaction-usage-label {
   font-size: 10px;
   line-height: 1.4;
-}
-
-.tool-workflow-compaction-usage-limit {
-  color: var(--workflow-term-muted);
-  font-weight: 700;
-}
-
-.tool-workflow-compaction-usage-hint {
-  color: var(--workflow-term-text);
 }
 
 .tool-workflow-compaction-usage-track {
@@ -194,146 +157,49 @@ defineProps<{
   color: var(--workflow-term-muted);
 }
 
-.tool-workflow-compaction-usage-label.is-before {
-  color: #fecaca;
-}
-
 .tool-workflow-compaction-usage-label.is-after {
   color: #bfdbfe;
+}
+
+.tool-workflow-compaction-usage-label.is-before {
+  color: #fecaca;
   text-align: right;
 }
 
-.tool-workflow-compaction-stages {
+.tool-workflow-compaction-outputs {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.tool-workflow-compaction-stage {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 9px 10px;
+.tool-workflow-compaction-output,
+.tool-workflow-compaction-output-empty {
+  padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--workflow-term-border);
   background: rgba(15, 23, 42, 0.16);
 }
 
-.tool-workflow-compaction-stage-dot {
-  width: 8px;
-  height: 8px;
-  margin-top: 5px;
-  border-radius: 999px;
-  flex: 0 0 auto;
-  background: rgba(148, 163, 184, 0.72);
-  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.12);
+.tool-workflow-compaction-output.is-warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(120, 53, 15, 0.16);
 }
 
-.tool-workflow-compaction-stage.is-done .tool-workflow-compaction-stage-dot {
-  background: rgba(34, 197, 94, 0.96);
-  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18);
-}
-
-.tool-workflow-compaction-stage.is-active .tool-workflow-compaction-stage-dot {
-  background: rgba(59, 130, 246, 0.98);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
-}
-
-.tool-workflow-compaction-stage.is-warning .tool-workflow-compaction-stage-dot {
-  background: rgba(245, 158, 11, 0.96);
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18);
-}
-
-.tool-workflow-compaction-stage-copy {
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.tool-workflow-compaction-stage-label {
+.tool-workflow-compaction-output-title {
   color: var(--workflow-term-text);
   font-size: 11px;
   font-weight: 700;
 }
 
-.tool-workflow-compaction-stage-detail {
-  margin-top: 2px;
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-  line-height: 1.45;
+.tool-workflow-compaction-output-body,
+.tool-workflow-compaction-output-empty {
+  margin: 8px 0 0;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.tool-workflow-compaction-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 8px;
-}
-
-.tool-workflow-compaction-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: var(--workflow-term-bg-soft);
-}
-
-.tool-workflow-compaction-metric.is-success {
-  border-color: rgba(134, 239, 172, 0.34);
-  background: rgba(22, 163, 74, 0.12);
-}
-
-.tool-workflow-compaction-metric.is-warning {
-  border-color: rgba(252, 211, 77, 0.34);
-  background: rgba(217, 119, 6, 0.12);
-}
-
-.tool-workflow-compaction-metric-label {
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 11px;
   color: var(--workflow-term-muted);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.tool-workflow-compaction-metric-value {
-  color: var(--workflow-term-text);
-  font-size: 11px;
   line-height: 1.45;
-  word-break: break-word;
-}
-
-.tool-workflow-compaction-details {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.tool-workflow-compaction-detail-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.tool-workflow-compaction-detail-label {
-  flex: 0 0 auto;
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-}
-
-.tool-workflow-compaction-detail-value {
-  min-width: 0;
-  color: var(--workflow-term-text);
-  font-size: 11px;
-  text-align: right;
-  line-height: 1.45;
-  word-break: break-word;
 }
 
 .tool-workflow-compaction-failure {
@@ -373,16 +239,4 @@ defineProps<{
   font-weight: 700;
 }
 
-.tool-workflow-compaction-extra {
-  margin: 0;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(248, 113, 113, 0.24);
-  background: rgba(127, 29, 29, 0.22);
-  color: #fecaca;
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 </style>

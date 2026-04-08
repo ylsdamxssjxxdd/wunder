@@ -3932,7 +3932,7 @@ async fn admin_monitor_compaction(
         .flatten()
         .map(|user| UserStore::is_admin(&user))
         .unwrap_or(false);
-    state
+    let compaction_result = state
         .kernel
         .orchestrator
         .force_compact_session(
@@ -3946,7 +3946,7 @@ async fn admin_monitor_compaction(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.updated") }),
+        json!({ "ok": true, "data": compaction_result }),
     ))
 }
 

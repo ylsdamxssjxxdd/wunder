@@ -2021,7 +2021,7 @@ async fn compact_session(
         .map(|record| record.system_prompt.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    state
+    let compaction_result = state
         .kernel
         .orchestrator
         .force_compact_session(
@@ -2036,10 +2036,7 @@ async fn compact_session(
         .map_err(|err| map_orchestrator_error(Error::new(err)))?;
 
     Ok(Json(json!({
-        "data": {
-            "ok": true,
-            "message": i18n::t("message.updated"),
-        }
+        "data": compaction_result
     })))
 }
 

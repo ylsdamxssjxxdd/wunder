@@ -27,6 +27,10 @@ import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import {
+  buildChatRequestTextInputOverflowError,
+  resolveChatRequestTextInputOverflow
+} from '@/utils/chatRequestInputLimit';
+import {
   hasRunningAssistantMessage,
   isSessionBusyFromSignals,
   isThreadRuntimeWaiting,
@@ -109,6 +113,10 @@ type GreetingMessageOptions = {
   greeting?: unknown;
   createdAt?: unknown;
   sessionCreatedAt?: unknown;
+};
+
+type CreateSessionOptions = {
+  preserveCurrentMessages?: boolean;
 };
 
 type SessionEventsSnapshotCacheEntry = {
@@ -4384,6 +4392,47 @@ const ensurePendingAssistantMessage = (store, sessionId, messages, baseEventId) 
   return placeholder;
 };
 
+const isDraftSessionBootstrapMessage = (message) =>
+  Boolean(message && typeof message === 'object' && message.draft_session_bootstrap === true);
+
+const clearDraftSessionBootstrapMessages = (messages) => {
+  if (!Array.isArray(messages)) return;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (!isDraftSessionBootstrapMessage(messages[index])) continue;
+    messages.splice(index, 1);
+  }
+};
+
+const clearDraftSessionBootstrapMarkers = (messages) => {
+  if (!Array.isArray(messages)) return;
+  messages.forEach((message) => {
+    if (!isDraftSessionBootstrapMessage(message)) return;
+    delete message.draft_session_bootstrap;
+  });
+};
+
+const markAssistantMessageRequestFailed = (assistantMessage, detail) => {
+  if (!assistantMessage || assistantMessage.role !== 'assistant') return;
+  const normalizedDetail = parseErrorText(detail) || t('chat.workflow.requestFailedDetail');
+  if (!Array.isArray(assistantMessage.workflowItems)) {
+    assistantMessage.workflowItems = [];
+  }
+  assistantMessage.workflowItems.push(
+    buildWorkflowItem(
+      t('chat.workflow.requestFailed'),
+      normalizedDetail,
+      'failed',
+      { eventType: 'request_failed' }
+    )
+  );
+  assistantMessage.workflowStreaming = false;
+  assistantMessage.reasoningStreaming = false;
+  assistantMessage.stream_incomplete = false;
+  if (!assistantMessage.content) {
+    assistantMessage.content = normalizedDetail;
+  }
+};
+
 const resolveLastAssistantTimestampMs = (messages) => {
   if (!Array.isArray(messages)) return null;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -6473,8 +6522,63 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: '上下文压缩',
       toolCallId: workflowRef
     });
+    appendCompactionOutcomeNotice(workflowRef, mergedDetail, status);
     clearCompactionProgressRef(workflowRef);
     return true;
+  };
+
+  const resolveCompactionOutcomeNotice = (detailPayload, status) => {
+    const normalizedStatus = String(status || detailPayload?.status || '').trim().toLowerCase();
+    if (normalizedStatus === 'failed' || normalizedStatus === 'error') {
+      return null;
+    }
+    const currentInputTrimmed = Boolean(
+      detailPayload?.context_guard_current_user_trimmed ?? detailPayload?.current_user_trimmed
+    );
+    if (currentInputTrimmed) {
+      return {
+        kind: 'current_input_trimmed',
+        title: t('chat.toolWorkflow.compaction.noticeInputTrimmedTitle'),
+        detail: t('chat.toolWorkflow.compaction.noticeInputTrimmedDetail')
+      };
+    }
+    const historyCompressed = Boolean(
+      detailPayload?.context_guard_summary_removed
+      ?? detailPayload?.context_guard_summary_trimmed
+      ?? detailPayload?.summary_removed
+      ?? detailPayload?.summary_trimmed
+    );
+    if (historyCompressed) {
+      return {
+        kind: 'history_compacted',
+        title: t('chat.toolWorkflow.compaction.noticeHistoryCompactedTitle'),
+        detail: t('chat.toolWorkflow.compaction.noticeHistoryCompactedDetail')
+      };
+    }
+    return null;
+  };
+
+  const appendCompactionOutcomeNotice = (workflowRef, detailPayload, status) => {
+    const notice = resolveCompactionOutcomeNotice(detailPayload, status);
+    if (!notice) return;
+    const existing = assistantMessage.workflowItems.some((item) => {
+      const eventType = String(item?.eventType || '').trim().toLowerCase();
+      return (
+        eventType === 'compaction_notice'
+        && String(item?.toolCallId || '') === String(workflowRef || '')
+        && String(item?.noticeKind || '') === notice.kind
+      );
+    });
+    if (existing) {
+      return;
+    }
+    assistantMessage.workflowItems.push(
+      buildWorkflowItem(notice.title, notice.detail, 'completed', {
+        eventType: 'compaction_notice',
+        toolCallId: workflowRef || undefined,
+        noticeKind: notice.kind
+      })
+    );
   };
 
   const isPendingCompactionStatus = (value) => {
@@ -6543,6 +6647,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         isTool: true,
         eventType: 'compaction'
       });
+      appendCompactionOutcomeNotice(activeCompactionWorkflowRef, mergedDetail, status);
       finalized = true;
     });
     compactionProgressItemMap.clear();
@@ -6552,7 +6657,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const isCompactionWorkflowEventItem = (item) => {
     const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
-    return eventType === 'compaction' || eventType === 'compaction_progress';
+    return eventType === 'compaction' || eventType === 'compaction_progress' || eventType === 'compaction_notice';
   };
 
   const shouldKeepCompactionMarkerLayout = () => {
@@ -6585,16 +6690,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return 'completed';
   };
 
-  const resolveCompactionWorkflowRef = (round) => {
+  const allocateCompactionWorkflowRef = (round) => {
+    compactionAnonymousRefSeq += 1;
     if (Number.isFinite(round)) {
-      return `compaction:${round}`;
+      return `compaction:${round}:${compactionAnonymousRefSeq}`;
     }
+    return `compaction:auto:${compactionAnonymousRefSeq}`;
+  };
+
+  const resolveActiveCompactionWorkflowRef = (round) => {
     if (!activeCompactionWorkflowRef) {
-      compactionAnonymousRefSeq += 1;
-      activeCompactionWorkflowRef = `compaction:auto:${compactionAnonymousRefSeq}`;
+      activeCompactionWorkflowRef = allocateCompactionWorkflowRef(round);
     }
     return activeCompactionWorkflowRef;
   };
+
+  const resolveStandaloneCompactionWorkflowRef = (round) =>
+    activeCompactionWorkflowRef || allocateCompactionWorkflowRef(round);
 
   const ensureCompactionProgressItem = (title, detail, workflowRef) => {
     if (!workflowRef) return null;
@@ -7065,7 +7177,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           }
           summary = resolveCompactionProgressTitle(stage, summary, t) ?? summary;
           const round = resolveRound(payload, data);
-          const workflowRef = resolveCompactionWorkflowRef(round);
+          const workflowRef = resolveActiveCompactionWorkflowRef(round);
           ensureCompactionProgressItem(
             pickText(summary) || t('chat.workflow.progressUpdate'),
             buildDetail(detailSource),
@@ -7770,9 +7882,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'compaction': {
         const round = resolveRound(payload, data);
-        const workflowRef = Number.isFinite(round)
-          ? resolveCompactionWorkflowRef(round)
-          : activeCompactionWorkflowRef;
+        const workflowRef = resolveStandaloneCompactionWorkflowRef(round);
         const normalizedCompactionStatus = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
         const compactionStatus =
           normalizedCompactionStatus === 'failed' || normalizedCompactionStatus === 'error'
@@ -7792,6 +7902,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             toolCallId: workflowRef || undefined
           })
           );
+          appendCompactionOutcomeNotice(workflowRef, data ?? payload ?? {}, compactionStatus);
           clearCompactionProgressRef(workflowRef);
         }
         break;
@@ -8766,7 +8877,7 @@ export const useChatStore = defineStore('chat', {
       }
       this.draftToolOverrides = [...overrides];
     },
-    async createSession(payload: Record<string, unknown> = {}) {
+    async createSession(payload: Record<string, unknown> = {}, options: CreateSessionOptions = {}) {
       abortResumeStream(this.activeSessionId);
       clearSessionWatcher();
       const { data } = await createSession(payload);
@@ -8778,10 +8889,12 @@ export const useChatStore = defineStore('chat', {
       writeSessionListCache(session.agent_id, filterSessionsByAgent(session.agent_id, this.sessions));
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
-      this.messages = ensureGreetingMessage([], {
+      const baseMessages = options.preserveCurrentMessages === true ? this.messages : [];
+      this.messages = ensureGreetingMessage(baseMessages, {
         createdAt: session.created_at,
         greeting: this.greetingOverride
       });
+      clearDraftSessionBootstrapMarkers(this.messages);
       cacheSessionMessages(session.id, this.messages);
       touchSessionUpdatedAt(this, session.id, session.updated_at || session.created_at);
       getSessionWorkflowState(session.id, { reset: true });
@@ -9514,26 +9627,25 @@ export const useChatStore = defineStore('chat', {
         }
       }
       clearTrailingPendingAssistantMessages(this.messages);
+      if (!this.activeSessionId) {
+        clearDraftSessionBootstrapMessages(this.messages);
+      }
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;
       const initialRuntime = ensureRuntime(initialSessionId);
       if (initialRuntime) {
         initialRuntime.stopRequested = false;
       }
-      if (!this.activeSessionId) {
-        const payload = this.draftAgentId ? { agent_id: this.draftAgentId } : {};
-        const session = await this.createSession(payload);
-        if (Array.isArray(this.draftToolOverrides)) {
-          try {
-            await this.updateSessionTools(session.id, this.draftToolOverrides);
-          } catch (error) {
-            // ignore draft tool override failures
-          }
-        }
-        this.draftToolOverrides = null;
-      }
       const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+      const inputOverflow = resolveChatRequestTextInputOverflow(content, attachments, ({ actualChars, maxChars }) =>
+        t('chat.error.userInputTooLong', { actualChars, maxChars })
+      );
+      if (inputOverflow) {
+        throw buildChatRequestTextInputOverflowError(inputOverflow);
+      }
+      const bootstrappingDraftSession = !this.activeSessionId;
       const userMessage = buildMessage('user', content) as ReturnType<typeof buildMessage> & {
+        draft_session_bootstrap?: boolean;
         attachments?: Array<{
           type?: unknown;
           name?: unknown;
@@ -9542,6 +9654,9 @@ export const useChatStore = defineStore('chat', {
           public_path?: unknown;
         }>;
       };
+      if (bootstrappingDraftSession) {
+        userMessage.draft_session_bootstrap = true;
+      }
       if (attachments.length > 0) {
         userMessage.attachments = attachments.map((item) => ({
           type: (item as { type?: unknown })?.type,
@@ -9551,12 +9666,66 @@ export const useChatStore = defineStore('chat', {
           public_path: (item as { public_path?: unknown })?.public_path
         }));
       }
-      this.messages.push(userMessage);
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
       const suppressQueuedNotice = options.suppressQueuedNotice === true;
+      const nextLocalStreamRound = (resolveMaxStreamRound(this.messages) || 0) + 1;
+      const assistantMessageRaw = {
+        ...buildMessage('assistant', ''),
+        ...(bootstrappingDraftSession ? { draft_session_bootstrap: true } : {}),
+        workflowItems: [],
+        workflowStreaming: true,
+        stream_incomplete: true,
+        waiting_updated_at_ms: requestStartMs,
+        waiting_first_output_at_ms: null,
+        stream_event_id: 0,
+        stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
+      };
+      if (assistantMessageRaw.stats) {
+        assistantMessageRaw.stats.interaction_start_ms = requestStartMs;
+      }
+      if (bootstrappingDraftSession) {
+        this.messages.push(userMessage);
+        this.messages.push(assistantMessageRaw);
+        this.scheduleSnapshot(true);
+      }
+      try {
+        if (!this.activeSessionId) {
+          const payload = this.draftAgentId ? { agent_id: this.draftAgentId } : {};
+          const session = await this.createSession(payload, {
+            preserveCurrentMessages: bootstrappingDraftSession
+          });
+          if (Array.isArray(this.draftToolOverrides)) {
+            try {
+              await this.updateSessionTools(session.id, this.draftToolOverrides);
+            } catch (error) {
+              // ignore draft tool override failures
+            }
+          }
+          this.draftToolOverrides = null;
+        }
+      } catch (error) {
+        if (bootstrappingDraftSession) {
+          markAssistantMessageRequestFailed(
+            assistantMessageRaw,
+            error?.message || t('chat.workflow.requestFailedDetail')
+          );
+          this.dismissPendingInquiryPanel();
+          this.scheduleSnapshot(true);
+        }
+        throw error;
+      }
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
-      cacheSessionMessages(sessionId, this.messages);
+      if (!bootstrappingDraftSession) {
+        this.messages.push(userMessage);
+      }
+      const sessionMessagesRef = this.messages;
+      if (!bootstrappingDraftSession) {
+        sessionMessagesRef.push(assistantMessageRaw);
+      }
+      clearDraftSessionBootstrapMarkers(sessionMessagesRef);
+      const assistantMessage = assistantMessageRaw;
+      cacheSessionMessages(sessionId, sessionMessagesRef);
       touchSessionUpdatedAt(this, sessionId, userMessage.created_at);
 
       const activeSession = this.sessions.find((item) => item.id === sessionId);
@@ -9571,23 +9740,6 @@ export const useChatStore = defineStore('chat', {
         }
       }
 
-      const nextLocalStreamRound = (resolveMaxStreamRound(this.messages) || 0) + 1;
-      const assistantMessageRaw = {
-        ...buildMessage('assistant', ''),
-        workflowItems: [],
-        workflowStreaming: true,
-        stream_incomplete: true,
-        waiting_updated_at_ms: requestStartMs,
-        waiting_first_output_at_ms: null,
-        stream_event_id: 0,
-        stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
-      };
-      if (assistantMessageRaw.stats) {
-        assistantMessageRaw.stats.interaction_start_ms = requestStartMs;
-      }
-      this.messages.push(assistantMessageRaw);
-      const assistantMessage = this.messages[this.messages.length - 1];
-      const sessionMessagesRef = this.messages;
       notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
 
       setSessionLoading(this, sessionId, true);

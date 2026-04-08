@@ -42,7 +42,7 @@
     </div>
 
     <div class="beeroom-node-workflow" :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]">
-      <div v-if="visibleWorkflowLines.length" class="beeroom-node-workflow-steps">
+      <div v-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
         <div
           v-for="line in visibleWorkflowLines"
           :key="line.key"
@@ -62,7 +62,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import type { SwarmProjectionNode } from './swarmCanvasModel';
 
@@ -94,10 +94,47 @@ const cardStyle = computed(() => ({
 const visibleWorkflowLines = computed(() =>
   (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : [])
 );
+
+const workflowStepsRef = ref<HTMLElement | null>(null);
+
+const workflowLineSignature = computed(() =>
+  visibleWorkflowLines.value
+    .map((line) => `${line.key}:${line.main}:${line.detail}:${line.title}`)
+    .join('||')
+);
+
+const shouldFollowWorkflowTail = computed(
+  () => props.node.workflowTone === 'loading' || props.node.workflowTone === 'pending'
+);
+
+const scrollWorkflowToBottom = () => {
+  const element = workflowStepsRef.value;
+  if (!element) return;
+  element.scrollTop = element.scrollHeight;
+};
+
+watch(
+  [workflowLineSignature, shouldFollowWorkflowTail],
+  async ([, shouldFollow]) => {
+    if (!shouldFollow || !visibleWorkflowLines.value.length) return;
+    await nextTick();
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(scrollWorkflowToBottom);
+      return;
+    }
+    scrollWorkflowToBottom();
+  },
+  {
+    flush: 'post',
+    immediate: true
+  }
+);
 </script>
 
 <style scoped>
 .beeroom-node-card {
+  --node-activity-glow: rgba(0, 0, 0, 0);
+  --node-activity-sheen: rgba(255, 255, 255, 0);
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -137,7 +174,20 @@ const visibleWorkflowLines = computed(() =>
 }
 
 .beeroom-node-card::after {
-  display: none;
+  content: '';
+  position: absolute;
+  inset: -36% -18%;
+  background: linear-gradient(
+    115deg,
+    transparent 0 34%,
+    rgba(255, 255, 255, 0.02) 42%,
+    var(--node-activity-sheen) 50%,
+    rgba(255, 255, 255, 0.02) 58%,
+    transparent 68% 100%
+  );
+  opacity: 0;
+  transform: translate3d(-54%, 0, 0) rotate(8deg);
+  pointer-events: none;
 }
 
 .beeroom-node-card:hover,
@@ -177,6 +227,50 @@ const visibleWorkflowLines = computed(() =>
   border-color: rgba(100, 116, 139, 0.24);
   background: linear-gradient(180deg, rgba(18, 24, 34, 0.94), rgba(12, 16, 24, 0.96));
   box-shadow: 0 8px 16px rgba(2, 6, 23, 0.1);
+}
+
+.beeroom-node-card.is-running,
+.beeroom-node-card.is-queued,
+.beeroom-node-card.is-awaiting_idle {
+  --node-activity-glow: rgba(248, 113, 113, 0.18);
+  --node-activity-sheen: rgba(248, 113, 113, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(248, 113, 113, 0.08),
+    0 14px 28px rgba(127, 29, 29, 0.2),
+    0 0 24px var(--node-activity-glow);
+}
+
+.beeroom-node-card.is-mother.is-running,
+.beeroom-node-card.is-mother.is-queued,
+.beeroom-node-card.is-mother.is-awaiting_idle {
+  --node-activity-glow: rgba(245, 158, 11, 0.18);
+  --node-activity-sheen: rgba(251, 191, 36, 0.22);
+}
+
+.beeroom-node-card.is-subagent.is-emphasis-active.is-running,
+.beeroom-node-card.is-subagent.is-emphasis-active.is-queued,
+.beeroom-node-card.is-subagent.is-emphasis-active.is-awaiting_idle {
+  --node-activity-glow: rgba(34, 211, 238, 0.18);
+  --node-activity-sheen: rgba(34, 211, 238, 0.2);
+}
+
+.beeroom-node-card.is-running::after,
+.beeroom-node-card.is-queued::after,
+.beeroom-node-card.is-awaiting_idle::after {
+  opacity: 0.92;
+  animation: beeroom-node-activity-sheen 1.9s linear infinite;
+}
+
+.beeroom-node-card.is-running .beeroom-node-avatar,
+.beeroom-node-card.is-queued .beeroom-node-avatar,
+.beeroom-node-card.is-awaiting_idle .beeroom-node-avatar {
+  animation: beeroom-node-avatar-breathe 1.65s ease-in-out infinite;
+}
+
+.beeroom-node-card.is-running .beeroom-node-status-dot,
+.beeroom-node-card.is-queued .beeroom-node-status-dot,
+.beeroom-node-card.is-awaiting_idle .beeroom-node-status-dot {
+  animation: beeroom-node-status-pulse 1.02s ease-in-out infinite;
 }
 
 .beeroom-node-card:active {
@@ -573,6 +667,56 @@ const visibleWorkflowLines = computed(() =>
   100% {
     opacity: 1;
     transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes beeroom-node-activity-sheen {
+  0% {
+    transform: translate3d(-54%, 0, 0) rotate(8deg);
+  }
+
+  100% {
+    transform: translate3d(54%, 0, 0) rotate(8deg);
+  }
+}
+
+@keyframes beeroom-node-avatar-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    filter: saturate(1) brightness(1);
+  }
+
+  50% {
+    transform: translateY(-1px) scale(1.04);
+    filter: saturate(1.08) brightness(1.04);
+  }
+}
+
+@keyframes beeroom-node-status-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  45% {
+    transform: scale(1.32);
+    opacity: 0.82;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beeroom-node-card.is-running::after,
+  .beeroom-node-card.is-queued::after,
+  .beeroom-node-card.is-awaiting_idle::after,
+  .beeroom-node-card.is-running .beeroom-node-avatar,
+  .beeroom-node-card.is-queued .beeroom-node-avatar,
+  .beeroom-node-card.is-awaiting_idle .beeroom-node-avatar,
+  .beeroom-node-card.is-running .beeroom-node-status-dot,
+  .beeroom-node-card.is-queued .beeroom-node-status-dot,
+  .beeroom-node-card.is-awaiting_idle .beeroom-node-status-dot {
+    animation: none;
   }
 }
 

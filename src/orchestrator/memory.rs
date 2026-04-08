@@ -492,7 +492,7 @@ impl Orchestrator {
         let mut summary_failure_code: Option<String> = None;
         let mut summary_failure_message: Option<String> = None;
         let mut summary_failure_retryable: Option<bool> = None;
-        let summary_text = match self
+        let mut summary_model_output = match self
             .call_llm(
                 llm_config,
                 &summary_input,
@@ -524,7 +524,7 @@ impl Orchestrator {
                 i18n::t("compaction.summary_fallback")
             }
         };
-        let mut summary_text = HistoryManager::format_compaction_summary(&summary_text);
+        let mut summary_text = HistoryManager::format_compaction_summary(&summary_model_output);
         if is_empty_compaction_summary(&summary_text) {
             summary_fallback = true;
             if summary_fallback_reason.is_none() {
@@ -535,6 +535,7 @@ impl Orchestrator {
             } else {
                 user_content.clone()
             };
+            summary_model_output = fallback_content.clone();
             summary_text = HistoryManager::format_compaction_summary(&fallback_content);
         }
         let (fresh_memory_block, fresh_memory_count, fresh_memory_total_count) = self
@@ -589,8 +590,9 @@ impl Orchestrator {
             }
             summary_text = trimmed;
         }
+        let injected_summary_text = summary_text.clone();
         let mut response_payload = json!({
-            "content": summary_text,
+            "content": summary_text.clone(),
             "reasoning": "",
             "purpose": "compaction_summary",
         });
@@ -683,6 +685,8 @@ impl Orchestrator {
             "trigger": compaction_trigger,
             "status": if summary_fallback { "fallback" } else { "done" },
             "summary_fallback": summary_fallback,
+            "summary_model_output": summary_model_output,
+            "summary_text": injected_summary_text,
             "fresh_memory_injected": fresh_memory_injected,
             "fresh_memory_count": fresh_memory_count,
             "fresh_memory_total_count": fresh_memory_total_count,
@@ -783,7 +787,7 @@ impl Orchestrator {
         model_name: Option<&str>,
         agent_id: Option<&str>,
         agent_prompt: Option<&str>,
-    ) -> Result<(), OrchestratorError> {
+    ) -> Result<Value, OrchestratorError> {
         let config = self.resolve_config(None).await;
         let log_payload = is_debug_log_level(&config.observability.log_level);
         let (_llm_name, llm_config) = self.resolve_llm_config(&config, model_name)?;
@@ -841,14 +845,32 @@ impl Orchestrator {
             .await;
         messages.extend(history_messages);
         let messages = context_manager.normalize_messages(messages);
+        let storage = self.storage.clone();
+        let session_id_for_offset = session_id.to_string();
+        let start_event_id = match tokio::task::spawn_blocking(move || {
+            storage.get_max_stream_event_id(&session_id_for_offset)
+        })
+        .await
+        {
+            Ok(Ok(value)) => value,
+            Ok(Err(err)) => {
+                warn!("failed to load stream event offset for session {session_id}: {err}");
+                0
+            }
+            Err(err) => {
+                warn!("failed to load stream event offset for session {session_id}: {err}");
+                0
+            }
+        };
+        let (queue_tx, mut queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let emitter = EventEmitter::new(
             session_id.to_string(),
             user_id.to_string(),
-            None,
-            None,
+            Some(queue_tx),
+            Some(self.storage.clone()),
             self.monitor.clone(),
             is_admin,
-            0,
+            start_event_id,
         );
         self.ensure_not_cancelled(session_id)?;
         let messages = self
@@ -884,7 +906,44 @@ impl Orchestrator {
             RoundInfo::default().insert_into(map);
         }
         emitter.emit("context_usage", context_payload).await;
-        Ok(())
+        emitter.finish().await;
+
+        let mut compaction_payload: Option<Value> = None;
+        let mut final_context_payload: Option<Value> = None;
+        while let Ok(signal) = queue_rx.try_recv() {
+            let StreamSignal::Event(event) = signal else {
+                continue;
+            };
+            let payload = event
+                .data
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| event.data.clone());
+            match event.event.as_str() {
+                "compaction" => compaction_payload = Some(payload),
+                "context_usage" => final_context_payload = Some(payload),
+                _ => {}
+            }
+        }
+
+        let mut response_payload = compaction_payload.unwrap_or_else(|| {
+            json!({
+                "status": "done",
+            })
+        });
+        if let (Some(response_obj), Some(context_obj)) = (
+            response_payload.as_object_mut(),
+            final_context_payload.as_ref().and_then(Value::as_object),
+        ) {
+            if let Some(context_tokens) = context_obj.get("context_tokens").and_then(Value::as_i64) {
+                response_obj.insert("final_context_tokens".to_string(), json!(context_tokens));
+            }
+            if let Some(message_count) = context_obj.get("message_count").and_then(Value::as_i64) {
+                response_obj.insert("message_count".to_string(), json!(message_count));
+            }
+        }
+
+        Ok(response_payload)
     }
 
     #[allow(clippy::too_many_arguments)]

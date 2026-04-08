@@ -46,7 +46,6 @@
       <MessageToolWorkflowCompactionSection
         v-else-if="section.kind === 'compaction' && section.compactionView"
         :view="section.compactionView"
-        :body="section.body"
       />
 
       <MessageToolWorkflowStructuredSection

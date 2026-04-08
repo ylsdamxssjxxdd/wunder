@@ -906,6 +906,14 @@ export const buildTaskWorkflowRuntime = (
   };
 };
 
+export const buildSessionWorkflowItems = (
+  rounds: SessionRound[] | null | undefined,
+  t: TranslationFn
+): BeeroomWorkflowItem[] =>
+  flattenWorkflowEvents(Array.isArray(rounds) ? rounds : [])
+    .map((event, index) => mapSessionEventToWorkflowItem(event, index, t))
+    .filter((item): item is BeeroomWorkflowItem => Boolean(item));
+
 export const buildNodeWorkflowHtml = (
   items: BeeroomWorkflowItem[],
   title: string,
@@ -915,7 +923,6 @@ export const buildNodeWorkflowHtml = (
   const lines = toolItems.length
     ? toolItems
         .slice()
-        .reverse()
         .map((item) => {
           const parts = resolveNodeWorkflowLineParts(item);
           return `
@@ -941,7 +948,6 @@ export const buildNodeWorkflowPreviewLines = (items: BeeroomWorkflowItem[]): Bee
   items
     .filter((item) => item.eventType === 'tool_call')
     .slice()
-    .reverse()
     .map((item, index) => {
       const parts = resolveNodeWorkflowLineParts(item);
       return {

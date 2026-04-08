@@ -907,7 +907,10 @@
             ></div>
             <template v-for="item in visibleAgentMessages" :key="item.key">
             <div
-              v-if="!isHiddenInternalMessage(item.message)"
+              v-if="
+                !isHiddenInternalMessage(item.message)
+                  && (!isCompactionMarkerMessage(item.message) || shouldShowCompactionDivider(item.message))
+              "
               class="messenger-message"
               :class="{
                 mine: item.message.role === 'user',
@@ -1131,11 +1134,22 @@
                   <div v-if="shouldShowMessageStats(item.message)" class="messenger-message-stats">
                     <span
                       v-for="entry in buildMessageStatsEntries(item.message)"
-                      :key="entry.label"
-                      class="messenger-message-stat"
+                      :key="entry.key"
+                      :class="[
+                        'messenger-message-stat',
+                        entry.kind === 'status' ? 'is-status' : 'is-metric',
+                        entry.tone ? `is-${entry.tone}` : '',
+                        entry.live ? 'is-live' : ''
+                      ]"
                     >
-                      <span class="messenger-message-stat-label">{{ entry.label }}:</span>
-                      <span class="messenger-message-stat-value">{{ entry.value }}</span>
+                      <template v-if="entry.kind === 'status'">
+                        <span class="messenger-message-stat-dot" aria-hidden="true"></span>
+                        <span class="messenger-message-stat-value">{{ entry.value }}</span>
+                      </template>
+                      <template v-else>
+                        <span class="messenger-message-stat-label">{{ entry.label }}:</span>
+                        <span class="messenger-message-stat-value">{{ entry.value }}</span>
+                      </template>
                     </span>
                   </div>
                   <button
@@ -6576,11 +6590,17 @@ const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean =>
 
 const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean => {
   if (String(message?.role || '') !== 'assistant') return false;
-  if (isCompactionMarkerMessage(message)) return true;
   const snapshot = resolveLatestCompactionSnapshot(message?.workflowItems);
   if (!snapshot) return false;
   const detailStatus = String(snapshot.detail?.status || '').trim().toLowerCase();
-  return detailStatus !== 'skipped';
+  if (detailStatus === 'skipped') return false;
+  if (!isCompactionRunningFromWorkflowItems(message?.workflowItems)) return true;
+  const triggerMode = String(
+    snapshot.detail?.trigger_mode ?? snapshot.detail?.triggerMode ?? ''
+  )
+    .trim()
+    .toLowerCase();
+  return triggerMode === 'manual';
 };
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
