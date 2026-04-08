@@ -80,8 +80,12 @@ type SnapshotAssistantMessage = {
   reasoningStreaming?: boolean;
   workflowStreaming?: boolean;
   stream_incomplete?: boolean;
+  slow_client?: boolean;
+  resume_available?: boolean;
   stream_event_id?: number;
   stream_round?: number;
+  waiting_updated_at_ms?: number | null;
+  waiting_first_output_at_ms?: number | null;
   workflowItems?: unknown[];
   plan?: unknown;
   questionPanel?: unknown;
@@ -990,6 +994,21 @@ const buildMessage = (role, content, createdAt = undefined, extra = undefined) =
   ...(extra && typeof extra === 'object' ? extra : {})
 });
 
+const touchAssistantWaitingActivity = (message, value = Date.now()) => {
+  if (!message || message.role !== 'assistant') return null;
+  const millis = normalizeInteractionTimestamp(value) ?? Date.now();
+  message.waiting_updated_at_ms = millis;
+  return millis;
+};
+
+const markAssistantWaitingOutputVisible = (message, value = Date.now()) => {
+  const millis = touchAssistantWaitingActivity(message, value) ?? Date.now();
+  if (!Number.isFinite(Number(message?.waiting_first_output_at_ms))) {
+    message.waiting_first_output_at_ms = millis;
+  }
+  return millis;
+};
+
 const normalizeHiddenInternalMessage = (value) => Boolean(value);
 
 const resolveGreetingContent = (override) => {
@@ -1367,9 +1386,27 @@ const normalizeSnapshotMessage = (message) => {
     base.reasoningStreaming = normalizeFlag(message.reasoningStreaming);
     base.workflowStreaming = normalizeFlag(message.workflowStreaming);
     base.stream_incomplete = normalizeFlag(message.stream_incomplete);
+    if (normalizeFlag(message.slow_client)) {
+      base.slow_client = true;
+    }
+    if (normalizeFlag(message.resume_available)) {
+      base.resume_available = true;
+    }
     const streamRound = normalizeStreamRound(message.stream_round);
     if (streamRound !== null) {
       base.stream_round = streamRound;
+    }
+    const waitingUpdatedAtMs = normalizeInteractionTimestamp(
+      message.waiting_updated_at_ms ?? message.waitingUpdatedAtMs
+    );
+    if (waitingUpdatedAtMs !== null) {
+      base.waiting_updated_at_ms = waitingUpdatedAtMs;
+    }
+    const waitingFirstOutputAtMs = normalizeInteractionTimestamp(
+      message.waiting_first_output_at_ms ?? message.waitingFirstOutputAtMs
+    );
+    if (waitingFirstOutputAtMs !== null) {
+      base.waiting_first_output_at_ms = waitingFirstOutputAtMs;
     }
     if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
       base.workflowItems = message.workflowItems;
@@ -1547,6 +1584,8 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const snapshotFeedback = normalizeMessageFeedback(snapshot.feedback);
   const snapshotStats = normalizeMessageStats(snapshot.stats);
   const snapshotSubagents = normalizeMessageSubagents(snapshot.subagents);
+  const snapshotWaitingUpdatedAtMs = normalizeInteractionTimestamp(snapshot.waiting_updated_at_ms);
+  const snapshotWaitingFirstOutputAtMs = normalizeInteractionTimestamp(snapshot.waiting_first_output_at_ms);
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1556,6 +1595,10 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     snapshot.stream_incomplete ||
       snapshot.workflowStreaming ||
       snapshot.reasoningStreaming ||
+      snapshot.resume_available ||
+      snapshot.slow_client ||
+      snapshotWaitingUpdatedAtMs !== null ||
+      snapshotWaitingFirstOutputAtMs !== null ||
       hasWorkflowItems ||
       hasSnapshotPlan ||
       snapshotRound !== null ||
@@ -1590,6 +1633,12 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     target.stream_incomplete =
       normalizeFlag(snapshot.stream_incomplete) ||
       normalizeFlag(target.stream_incomplete);
+    target.resume_available =
+      normalizeFlag(snapshot.resume_available) ||
+      normalizeFlag(target.resume_available);
+    target.slow_client =
+      normalizeFlag(snapshot.slow_client) ||
+      normalizeFlag(target.slow_client);
     if (snapshotRound !== null && (targetRound === null || snapshotRound > targetRound)) {
       target.stream_round = snapshotRound;
     }
@@ -1610,6 +1659,25 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     }
     if (snapshotSubagents.length > 0) {
       target.subagents = snapshotSubagents;
+    }
+    if (
+      snapshotWaitingUpdatedAtMs !== null &&
+      snapshotWaitingUpdatedAtMs >= (normalizeInteractionTimestamp(target.waiting_updated_at_ms) ?? 0)
+    ) {
+      target.waiting_updated_at_ms = snapshotWaitingUpdatedAtMs;
+    }
+    if (
+      snapshotWaitingFirstOutputAtMs !== null &&
+      (
+        normalizeInteractionTimestamp(target.waiting_first_output_at_ms) === null ||
+        snapshotWaitingFirstOutputAtMs <=
+          (
+            normalizeInteractionTimestamp(target.waiting_first_output_at_ms)
+            ?? snapshotWaitingFirstOutputAtMs
+          )
+      )
+    ) {
+      target.waiting_first_output_at_ms = snapshotWaitingFirstOutputAtMs;
     }
   }
   if (snapshotStats) {
@@ -6772,6 +6840,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
     syncReasoningToMessage();
     if (hasContentDelta || hasReasoningDelta) {
+      markAssistantWaitingOutputVisible(assistantMessage);
       const outputId = ensureOutputItem();
       updateWorkflowItem(assistantMessage.workflowItems, outputId, {
         detail: buildOutputDetail()
@@ -6898,6 +6967,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (eventType === 'heartbeat' || eventType === 'ping') {
       return;
     }
+    touchAssistantWaitingActivity(assistantMessage, payload?.timestamp ?? data?.timestamp);
 
     // 基于事件类型生成工作流条目并更新回复内容
       switch (eventType) {
@@ -7011,10 +7081,39 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'llm_request': {
-        const hasPayload = data && typeof data === 'object' && 'payload' in data;
-        const hasSummary = data && typeof data === 'object' && 'payload_summary' in data;
-        const title = hasSummary && !hasPayload ? '模型请求摘要' : '模型请求体';
-        assistantMessage.workflowItems.push(buildWorkflowItem(title, buildDetail(data)));
+        const requestHasPayload = data && typeof data === 'object' && 'payload' in data;
+        const requestHasSummary = data && typeof data === 'object' && 'payload_summary' in data;
+        const requestTitle =
+          requestHasSummary && !requestHasPayload
+            ? t('chat.workflow.modelRequestSummary')
+            : t('chat.workflow.modelRequest');
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(requestTitle, buildDetail(data), 'completed', { eventType: 'llm_request' })
+        );
+        break;
+      }
+      case 'llm_stream_retry': {
+        const attempt = parseOptionalCount(data?.attempt ?? payload?.attempt);
+        const maxAttempts = parseOptionalCount(data?.max_attempts ?? payload?.max_attempts);
+        const retryReason = String(data?.retry_reason ?? payload?.retry_reason ?? '').trim();
+        const retryError = String(data?.error ?? payload?.error ?? '').trim();
+        const retryDelayRaw = Number(data?.delay_s ?? payload?.delay_s);
+        const retryDelay = Number.isFinite(retryDelayRaw) && retryDelayRaw > 0 ? retryDelayRaw : null;
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.workflow.modelRetry'),
+            buildDetail(data ?? payload),
+            'pending',
+            {
+              eventType: 'llm_stream_retry',
+              attempt,
+              maxAttempts,
+              retryReason,
+              error: retryError,
+              delayS: retryDelay
+            }
+          )
+        );
         break;
       }
       case 'knowledge_request': {
@@ -7483,7 +7582,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           buildWorkflowItem(
             t('chat.workflow.slowClient'),
             t('chat.workflow.slowClientDetail', { capacity }),
-            'failed'
+            'failed',
+            { eventType: 'slow_client' }
           )
         );
         break;
@@ -7617,6 +7717,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             outputContent = resolvedContent;
             assistantMessage.content = resolvedContent;
           }
+          if (resolvedHasContent || hasReasoning) {
+            markAssistantWaitingOutputVisible(assistantMessage);
+          }
           outputState.streaming = false;
           outputState.reasoningStreaming = false;
         }
@@ -7719,6 +7822,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           const normalizedAnswer = normalizeAssistantOutput(answerText, '');
           assistantMessage.content = normalizedAnswer.content;
           outputContent = normalizedAnswer.content;
+          if (normalizedAnswer.content || normalizedAnswer.inlineReasoning) {
+            markAssistantWaitingOutputVisible(assistantMessage);
+          }
           if (normalizedAnswer.inlineReasoning) {
             outputReasoningFallback = normalizedAnswer.inlineReasoning;
           }
@@ -7968,8 +8074,16 @@ const hydrateMessage = (message, workflowState) => {
     workflowItems: [],
     workflowStreaming: normalizeFlag(message?.workflowStreaming),
     stream_incomplete: normalizeFlag(message?.stream_incomplete),
+    resume_available: normalizeFlag(message?.resume_available),
+    slow_client: normalizeFlag(message?.slow_client),
     reasoning: normalizedOutput.reasoning,
     reasoningStreaming: normalizeFlag(message?.reasoningStreaming),
+    waiting_updated_at_ms: normalizeInteractionTimestamp(
+      message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs
+    ),
+    waiting_first_output_at_ms: normalizeInteractionTimestamp(
+      message?.waiting_first_output_at_ms ?? message?.waitingFirstOutputAtMs
+    ),
     hiddenInternal: normalizeHiddenInternalMessage(message?.hiddenInternal),
     subagents: normalizeMessageSubagents(message?.subagents),
     feedback: normalizeMessageFeedback(message?.feedback),
@@ -9463,6 +9577,8 @@ export const useChatStore = defineStore('chat', {
         workflowItems: [],
         workflowStreaming: true,
         stream_incomplete: true,
+        waiting_updated_at_ms: requestStartMs,
+        waiting_first_output_at_ms: null,
         stream_event_id: 0,
         stream_round: nextLocalStreamRound > 0 ? nextLocalStreamRound : null
       };
@@ -9554,7 +9670,9 @@ export const useChatStore = defineStore('chat', {
               queued = true;
               if (!suppressQueuedNotice) {
                 assistantMessage.workflowItems.push(
-                  buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending')
+                  buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending', {
+                    eventType: 'queued'
+                  })
                 );
                 notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
               }
@@ -9843,6 +9961,7 @@ export const useChatStore = defineStore('chat', {
       message.slow_client = false;
       message.workflowStreaming = true;
       message.stream_incomplete = true;
+      message.waiting_updated_at_ms = Date.now();
       const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;
       cacheSessionMessages(sessionId, sessionMessagesRef);
       notifySessionSnapshot(this, sessionId, sessionMessagesRef);

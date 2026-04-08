@@ -356,6 +356,14 @@
                   :loading="Boolean(message.workflowStreaming)"
                   :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
                 />
+                <MessageWaitingNotice
+                  v-if="message.role === 'assistant'"
+                  :message="message"
+                  :can-stop="canStopWaitingMessage(message)"
+                  :can-resume="shouldShowResumeButton(message)"
+                  @stop="handleStopWaitingMessage(message)"
+                  @resume="handleResumeMessage(message)"
+                />
                 <MessageSubagentPanel
                   v-if="message.role === 'assistant'"
                   :session-id="chatStore.activeSessionId"
@@ -745,6 +753,7 @@ import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider
 import MessageFeedbackActions from '@/components/chat/MessageFeedbackActions.vue';
 import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
 import MessageSubagentPanel from '@/components/chat/MessageSubagentPanel.vue';
+import MessageWaitingNotice from '@/components/chat/MessageWaitingNotice.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
@@ -2590,7 +2599,7 @@ const handleCopyMessage = async (message) => {
 const shouldShowResumeButton = (message) => {
   if (!message || message.role !== 'assistant') return false;
   if (message.workflowStreaming) return false;
-  return Boolean(message.slow_client || message.resume_available);
+  return Boolean(message.slow_client || message.resume_available || message.stream_incomplete);
 };
 
 const handleResumeMessage = async (message) => {
@@ -2600,6 +2609,19 @@ const handleResumeMessage = async (message) => {
   message.resume_available = false;
   message.slow_client = false;
   await chatStore.resumeStream(sessionId, message, { force: true });
+};
+
+const canStopWaitingMessage = (message) => {
+  if (!message || message.role !== 'assistant') return false;
+  if (!isAssistantStreaming(message)) return false;
+  if (String(message.content || '').trim()) return false;
+  if (String(message.reasoning || '').trim()) return false;
+  return true;
+};
+
+const handleStopWaitingMessage = async (message) => {
+  if (!canStopWaitingMessage(message)) return;
+  await chatStore.stopStream();
 };
 
 const handleMessageClick = async (event) => {

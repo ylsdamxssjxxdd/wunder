@@ -397,6 +397,13 @@ const buildDispatchPreviewLines = (
 const resolveAgentAvatarImage = (icon: unknown): string =>
   resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(icon));
 
+const DEFAULT_SWARM_SUBAGENT_AVATAR_ICON = 'avatar-048';
+
+const resolveSubagentAvatarImage = (icon: unknown): string => {
+  const normalizedIcon = typeof icon === 'string' ? icon.trim() : '';
+  return resolveAgentAvatarImage(normalizedIcon || DEFAULT_SWARM_SUBAGENT_AVATAR_ICON);
+};
+
 const buildWorkflowSnapshot = (
   task: BeeroomMissionTask | null,
   itemsByTask: Record<string, BeeroomWorkflowItem[]>,
@@ -915,7 +922,7 @@ export const buildBeeroomSwarmProjection = (options: {
         selected: nodeId === String(options.selectedNodeId || '').trim(),
         accentColor: visualState.accentColor,
         avatarInitial: resolveAgentAvatarInitial(name),
-        avatarImageUrl: resolveAgentAvatarImage(memberMap.get(item.agentId)?.icon),
+        avatarImageUrl: resolveSubagentAvatarImage(memberMap.get(item.agentId)?.icon),
         x: position.x,
         y: position.y,
         width: SUBAGENT_NODE_WIDTH,

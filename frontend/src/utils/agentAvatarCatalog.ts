@@ -40,8 +40,8 @@ export const AGENT_AVATAR_COLORS = [
   '#64748b'
 ] as const;
 
-export const DEFAULT_AGENT_AVATAR_IMAGE_KEY = AGENT_AVATAR_IMAGE_MAP.has('avatar-000')
-  ? 'avatar-000'
+export const DEFAULT_AGENT_AVATAR_IMAGE_KEY = AGENT_AVATAR_IMAGE_MAP.has('avatar-046')
+  ? 'avatar-046'
   : AGENT_AVATAR_IMAGE_KEYS[0] || 'initial';
 
 export const resolveAgentAvatarImageByKey = (key: unknown): string =>

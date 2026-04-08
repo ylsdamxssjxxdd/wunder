@@ -6,7 +6,26 @@
       @wheel.prevent="handleViewportWheel"
       @pointerdown="handleViewportPointerDown"
     >
-      <div class="beeroom-canvas-grid" :style="surfaceGridStyle" aria-hidden="true"></div>
+      <svg class="beeroom-canvas-grid" aria-hidden="true" focusable="false">
+        <defs>
+          <pattern
+            :id="surfaceGridPattern.id"
+            patternUnits="userSpaceOnUse"
+            patternContentUnits="userSpaceOnUse"
+            :x="surfaceGridPattern.offsetX"
+            :y="surfaceGridPattern.offsetY"
+            :width="surfaceGridPattern.tileWidth"
+            :height="surfaceGridPattern.tileHeight"
+          >
+            <path
+              class="beeroom-canvas-grid-path is-major"
+              :d="surfaceGridPattern.path"
+              :stroke-width="surfaceGridPattern.strokeWidth"
+            />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" :fill="`url(#${surfaceGridPattern.id})`" />
+      </svg>
       <div class="beeroom-swarm-world" :style="worldStyle">
         <svg
           class="beeroom-swarm-edge-layer"
@@ -219,6 +238,7 @@ const MINIMAP_WIDTH = 132;
 const MINIMAP_HEIGHT = 80;
 const WORLD_DRAG_BUFFER = 720;
 const MINIMAP_REFERENCE_BUFFER = 720;
+const GRID_PATTERN_ID_BASE = `beeroom-swarm-grid-${Math.random().toString(36).slice(2, 10)}`;
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -432,40 +452,60 @@ const worldStyle = computed(() => {
   };
 });
 
-const surfaceGridStyle = computed(() => {
+const surfaceGridPattern = computed(() => {
   const scale = clampSwarmScale(viewportState.value.scale);
   const dpr = typeof window !== 'undefined' ? Math.max(1, Number(window.devicePixelRatio || 1)) : 1;
   const snapToDevicePixel = (value: number) => Math.round(value * dpr) / dpr;
-  const minorStep = Math.max(20, snapToDevicePixel(32 * scale));
-  const majorStep = minorStep * 5;
-  const minorStroke = 1 / dpr;
-  const majorStroke = 1 / dpr;
+  const formatUnit = (value: number) => Number(value.toFixed(3));
   const normalizeOffset = (value: number, size: number) => {
     const remainder = value % size;
     const normalized = remainder < 0 ? remainder + size : remainder;
-    return snapToDevicePixel(normalized);
+    return formatUnit(snapToDevicePixel(normalized));
   };
-  const formatPixel = (value: number) => `${Number(value.toFixed(3))}px`;
-  return {
-    backgroundImage: [
-      `linear-gradient(rgba(148, 163, 184, 0.12) ${formatPixel(minorStroke)}, transparent ${formatPixel(minorStroke)})`,
-      `linear-gradient(90deg, rgba(148, 163, 184, 0.12) ${formatPixel(minorStroke)}, transparent ${formatPixel(minorStroke)})`,
-      `linear-gradient(rgba(148, 163, 184, 0.24) ${formatPixel(majorStroke)}, transparent ${formatPixel(majorStroke)})`,
-      `linear-gradient(90deg, rgba(148, 163, 184, 0.24) ${formatPixel(majorStroke)}, transparent ${formatPixel(majorStroke)})`
-    ].join(', '),
-    backgroundSize: [
-      `${formatPixel(minorStep)} ${formatPixel(minorStep)}`,
-      `${formatPixel(minorStep)} ${formatPixel(minorStep)}`,
-      `${formatPixel(majorStep)} ${formatPixel(majorStep)}`,
-      `${formatPixel(majorStep)} ${formatPixel(majorStep)}`
-    ].join(', '),
-    backgroundPosition: [
-      `0 ${formatPixel(normalizeOffset(viewportState.value.offsetY, minorStep))}`,
-      `${formatPixel(normalizeOffset(viewportState.value.offsetX, minorStep))} 0`,
-      `0 ${formatPixel(normalizeOffset(viewportState.value.offsetY, majorStep))}`,
-      `${formatPixel(normalizeOffset(viewportState.value.offsetX, majorStep))} 0`
-    ].join(', ')
+
+  const buildHexagonPath = (centerX: number, centerY: number, side: number) => {
+    const halfWidth = (Math.sqrt(3) * side) / 2;
+    const points = [
+      [centerX, centerY - side],
+      [centerX + halfWidth, centerY - side / 2],
+      [centerX + halfWidth, centerY + side / 2],
+      [centerX, centerY + side],
+      [centerX - halfWidth, centerY + side / 2],
+      [centerX - halfWidth, centerY - side / 2]
+    ];
+    return points
+      .map(([x, y], index) => `${index === 0 ? 'M' : 'L'} ${formatUnit(x)} ${formatUnit(y)}`)
+      .join(' ')
+      .concat(' Z');
   };
+
+  // Repeat the honeycomb on a minimal tile so pan/zoom keep the pattern aligned with world space.
+  const buildPatternLayer = (side: number, strokeWidth: number, suffix: string) => {
+    const tileWidth = formatUnit(Math.sqrt(3) * side);
+    const tileHeight = formatUnit(side * 3);
+    const topRowCenterY = -side / 2;
+    const middleRowCenterY = side;
+    const bottomRowCenterY = side * 2.5;
+    const path = [
+      buildHexagonPath(0, topRowCenterY, side),
+      buildHexagonPath(tileWidth, topRowCenterY, side),
+      buildHexagonPath(tileWidth / 2, middleRowCenterY, side),
+      buildHexagonPath(0, bottomRowCenterY, side),
+      buildHexagonPath(tileWidth, bottomRowCenterY, side)
+    ].join(' ');
+    return {
+      id: `${GRID_PATTERN_ID_BASE}-${suffix}`,
+      tileWidth,
+      tileHeight,
+      offsetX: normalizeOffset(viewportState.value.offsetX, tileWidth),
+      offsetY: normalizeOffset(viewportState.value.offsetY, tileHeight),
+      strokeWidth: formatUnit(strokeWidth),
+      path
+    };
+  };
+
+  const majorSide = Math.max(54, snapToDevicePixel(54 * scale));
+  return buildPatternLayer(majorSide, 1 / dpr, 'major');
 });
 
 const workflowEmptyLabel = computed(() => t('chat.toolWorkflow.empty'));
@@ -1036,7 +1076,20 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   z-index: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
+}
+
+.beeroom-canvas-grid-path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.beeroom-canvas-grid-path.is-major {
+  stroke: rgba(253, 224, 71, 0.16);
 }
 
 .beeroom-swarm-edge-layer {

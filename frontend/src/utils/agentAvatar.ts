@@ -1,4 +1,4 @@
-import defaultAgentAvatarImage from '@/assets/agent-avatars/avatar-000.jpg';
+import defaultAgentAvatarImage from '@/assets/agent-avatars/avatar-046.jpg';
 import {
   AGENT_AVATAR_IMAGE_MAP,
   AGENT_AVATAR_OPTION_KEYS,

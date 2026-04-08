@@ -2091,7 +2091,7 @@ async fn build_default_agent_config(
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
-        icon: None,
+        icon: Some("avatar-046".to_string()),
         sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
         created_at: now,
         updated_at: now,

@@ -326,14 +326,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const resolveDispatchAssistantAgentId = (sessionId: string) => {
-    const explicit = String(dispatchTargetAgentId.value || '').trim();
-    if (explicit) return explicit;
     const summary = resolveDispatchSessionSummary(sessionId);
     const summaryAgentId = String(summary?.agent_id || '').trim();
     if (summaryAgentId) return summaryAgentId;
     if (summary?.is_default === true) {
       return DEFAULT_AGENT_KEY;
     }
+    const explicit = String(dispatchTargetAgentId.value || '').trim();
+    if (explicit) return explicit;
     return '';
   };
 
@@ -376,7 +376,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       senderName:
         role === 'assistant' ? resolveDispatchAssistantName(sessionId) : options.t('chat.message.user'),
       senderAgentId: role === 'assistant' ? resolveDispatchAssistantAgentId(sessionId) : '',
-      mention: '',
+      mention:
+        role === 'assistant'
+          ? options.t('chat.message.user')
+          : resolveDispatchAssistantName(sessionId),
       body,
       meta: '',
       time,
@@ -716,7 +719,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         role === 'assistant'
           ? resolveDispatchAssistantAgentId(String(dispatchSessionId.value || '').trim())
           : '',
-      mention: '',
+      mention:
+        role === 'assistant'
+          ? options.t('chat.message.user')
+          : resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim()),
       body: text,
       meta: '',
       time: createdAt,
@@ -725,7 +731,24 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     };
   };
 
-  const ensureDispatchSession = async (agentId: string): Promise<DispatchSessionTarget> => {
+  const ensureDispatchSession = async (
+    agentId: string,
+    sessionOptions: { preferredSessionId?: string } = {}
+  ): Promise<DispatchSessionTarget> => {
+    const preferredSessionId = String(sessionOptions.preferredSessionId || '').trim();
+    if (preferredSessionId) {
+      const preferredSummary = resolveDispatchSessionSummary(preferredSessionId);
+      const preferredStatus = String(preferredSummary?.status || '').trim().toLowerCase();
+      if (preferredStatus !== 'archived') {
+        return {
+          sessionId: preferredSessionId,
+          sessionSummary:
+            preferredSummary && typeof preferredSummary === 'object'
+              ? (preferredSummary as Record<string, unknown>)
+              : null
+        };
+      }
+    }
     const apiAgentId = agentId === DEFAULT_AGENT_KEY ? '' : agentId;
     const { data } = await listSessions({ agent_id: apiAgentId });
     const source = Array.isArray(data?.data?.items) ? data.data.items : [];
@@ -739,7 +762,20 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         const rightTime = toSessionTimestampMs(right?.updated_at ?? right?.last_message_at ?? right?.created_at);
         return rightTime - leftTime;
       });
-    const primary = matched.find((item) => item?.is_main === true) || matched[0];
+    if (preferredSessionId) {
+      const preferred = matched.find((item) => String(item?.id || '').trim() === preferredSessionId);
+      if (preferred?.id) {
+        return {
+          sessionId: String(preferred.id),
+          sessionSummary: preferred && typeof preferred === 'object' ? (preferred as Record<string, unknown>) : null
+        };
+      }
+    }
+    const resolvedSessionId = String(chatStore.resolveInitialSessionId(agentId, matched) || '').trim();
+    const primary =
+      matched.find((item) => String(item?.id || '').trim() === resolvedSessionId) ||
+      matched.find((item) => item?.is_main === true) ||
+      matched[0];
     if (primary?.id) {
       return {
         sessionId: String(primary.id),
@@ -907,6 +943,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const now = Math.floor(Date.now() / 1000);
     const visibleBody = String(body || content).trim();
     const targetTone = target.role === 'mother' ? 'mother' : 'worker';
+    const previousSessionId = String(dispatchSessionId.value || '').trim();
+    const previousTargetAgentId = String(dispatchTargetAgentId.value || '').trim();
+    const preferredSessionId =
+      previousSessionId && previousTargetAgentId === target.agentId ? previousSessionId : '';
 
     composerError.value = '';
     composerText.value = '';
@@ -916,22 +956,31 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const localUserMessage = buildVisibleChatMessage('user', visibleBody, now);
     let localUserAccepted = false;
     try {
-      const dispatchSession = await ensureDispatchSession(target.agentId);
+      const dispatchSession = await ensureDispatchSession(target.agentId, {
+        preferredSessionId
+      });
       const sessionId = String(dispatchSession.sessionId || '').trim();
       if (!sessionId) {
         throw new Error(options.t('common.requestFailed'));
       }
+      const reuseCurrentSession = Boolean(preferredSessionId) && preferredSessionId === sessionId;
       dispatchSessionId.value = sessionId;
       dispatchRequestId.value = nextManualMessageKey('dispatch-request');
       dispatchLastEventId.value = 0;
       dispatchRuntimeStatus.value = 'queued';
-      syncDispatchSessionToChatStore({
-        sessionId,
-        agentId: target.agentId,
-        sessionSummary: dispatchSession.sessionSummary,
-        userPreview: visibleBody
-      }, { remember: true });
-      await syncDispatchSessionMessages({ hydrate: true, clearWhenEmpty: true });
+      syncDispatchSessionToChatStore(
+        {
+          sessionId,
+          agentId: target.agentId,
+          sessionSummary: dispatchSession.sessionSummary,
+          userPreview: visibleBody
+        },
+        { remember: false }
+      );
+      await syncDispatchSessionMessages({
+        hydrate: true,
+        clearWhenEmpty: !reuseCurrentSession
+      });
       const finalPayload = await startDispatchStream(
         'send',
         sessionId,
