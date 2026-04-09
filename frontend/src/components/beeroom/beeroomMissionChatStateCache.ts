@@ -88,6 +88,7 @@ const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage
         key,
         senderName: String(message?.senderName || '').trim() || 'Wunder',
         senderAgentId: String(message?.senderAgentId || '').trim(),
+        avatarImageUrl: String(message?.avatarImageUrl || '').trim(),
         mention: String(message?.mention || '').trim(),
         body,
         meta: String(message?.meta || '').trim(),

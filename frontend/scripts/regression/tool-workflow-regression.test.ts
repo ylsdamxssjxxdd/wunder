@@ -6,7 +6,10 @@ import {
   buildStructuredToolResultView
 } from '../../src/components/chat/toolWorkflowStructuredView';
 import { formatWorkflowDetailForDisplay } from '../../src/components/chat/toolWorkflowDetailFormatter';
-import { buildWorkflowToolRuns } from '../../src/components/chat/toolWorkflowRunModel';
+import {
+  buildWorkflowToolRuns,
+  resolveWorkflowPendingPlaceholder
+} from '../../src/components/chat/toolWorkflowRunModel';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
@@ -139,4 +142,56 @@ test('tool workflow run model keeps mid-run output and final result on the same 
   assert.equal(rows[0]?.callItem?.eventType, 'tool_call');
   assert.equal(rows[0]?.outputItem?.eventType, 'tool_output_delta');
   assert.equal(rows[0]?.resultItem?.eventType, 'tool_result');
+});
+
+test('tool workflow run model accepts mixed legacy workflow field names during live updates', () => {
+  const rows = buildWorkflowToolRuns([
+    {
+      item_id: 'call-legacy',
+      event: 'tool_call',
+      tool: 'execute_command',
+      tool_call_id: 'tool-legacy',
+      command_session_id: 'cmd-legacy',
+      status: 'loading',
+      detail: '{"command":"pwd"}'
+    },
+    {
+      itemId: 'output-legacy',
+      event_type: 'tool_output_delta',
+      tool_name: 'execute_command',
+      call_id: 'tool-legacy',
+      status: 'loading',
+      detail: '/workspace'
+    },
+    {
+      id: 'result-legacy',
+      event: 'tool_result',
+      name: 'execute_command',
+      tool_call_id: 'tool-legacy',
+      status: 'completed',
+      detail: '{"stdout":"/workspace"}'
+    }
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.toolName, 'execute_command');
+  assert.equal(rows[0]?.callItem?.event, 'tool_call');
+  assert.equal(rows[0]?.outputItem?.event_type, 'tool_output_delta');
+  assert.equal(rows[0]?.resultItem?.event, 'tool_result');
+});
+
+test('workflow pending placeholder detects command session activity before tool rows are formed', () => {
+  const items = [
+    {
+      event: 'command_session_start',
+      tool: 'execute_command',
+      command_session_id: 'cmd-1',
+      status: 'loading'
+    }
+  ];
+  assert.equal(buildWorkflowToolRuns(items).length, 0);
+  assert.deepEqual(resolveWorkflowPendingPlaceholder(items), {
+    kind: 'tool',
+    toolName: 'execute_command',
+    eventType: 'command_session_start'
+  });
 });

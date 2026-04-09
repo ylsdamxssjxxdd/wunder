@@ -10,11 +10,23 @@
         <span v-if="latestEntry" class="tool-workflow-latest">
           {{ latestEntry.summaryTitle }}
         </span>
+        <span v-else-if="pendingPlaceholderSummary" class="tool-workflow-latest">
+          {{ pendingPlaceholderSummary }}
+        </span>
         <span v-else class="tool-workflow-spacer" />
       </summary>
 
       <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
-        <div v-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
+        <div v-if="entries.length === 0 && pendingPlaceholder" class="tool-workflow-placeholder">
+          <div class="tool-workflow-placeholder-head">
+            <span class="tool-workflow-placeholder-lamp" aria-hidden="true"></span>
+            <div class="tool-workflow-placeholder-copy">
+              <div class="tool-workflow-placeholder-title">{{ pendingPlaceholderTitle }}</div>
+              <div class="tool-workflow-placeholder-detail">{{ pendingPlaceholderDetail }}</div>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
 
         <details
           v-for="entry in entries"
@@ -83,6 +95,7 @@ import {
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import {
   buildWorkflowToolRuns,
+  resolveWorkflowPendingPlaceholder,
   type RawToolRun as RawEntry,
   type WorkflowItem
 } from './toolWorkflowRunModel';
@@ -3264,8 +3277,57 @@ const handleEntryToggle = (key: string, event: Event) => {
 };
 
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
-// Do not expose workflow shell during pure model streaming; show it only after the first tool run appears.
-const shouldRender = computed(() => props.visible && entries.value.length > 0);
+const pendingPlaceholder = computed(() =>
+  props.visible && props.loading && entries.value.length === 0
+    ? resolveWorkflowPendingPlaceholder(props.items)
+    : null
+);
+const pendingPlaceholderTitle = computed(() => {
+  const placeholder = pendingPlaceholder.value;
+  if (!placeholder) return '';
+  if (placeholder.kind === 'compaction') {
+    return t('chat.toolWorkflow.pendingCompaction');
+  }
+  const toolName = String(placeholder.toolName || '').trim();
+  return toolName
+    ? t('chat.workflow.toolCall', { tool: toolName })
+    : t('chat.toolWorkflow.pendingTool');
+});
+const pendingPlaceholderSummary = computed(() => pendingPlaceholderTitle.value);
+const pendingPlaceholderDetail = computed(() => {
+  const placeholder = pendingPlaceholder.value;
+  if (!placeholder) return '';
+  return placeholder.kind === 'compaction'
+    ? t('chat.toolWorkflow.pendingCompactionDetail')
+    : t('chat.toolWorkflow.pendingToolDetail');
+});
+const shouldRender = computed(() => props.visible && (entries.value.length > 0 || Boolean(pendingPlaceholder.value)));
+
+const buildUnparsedWorkflowItemSamples = () => {
+  if (!Array.isArray(props.items) || props.items.length === 0) {
+    return [];
+  }
+  const startIndex = Math.max(0, props.items.length - 3);
+  return props.items.slice(startIndex).map((item, offset) => {
+    const source = asObject(item) || {};
+    return {
+      index: startIndex + offset,
+      keys: Object.keys(source).sort(),
+      eventType: pickString(source.eventType, source.event, source.event_type) || null,
+      toolName: pickString(source.toolName, source.tool, source.tool_name, source.name) || null,
+      toolCallId: pickString(source.toolCallId, source.tool_call_id, source.callId, source.call_id) || null,
+      commandSessionId: pickString(source.commandSessionId, source.command_session_id) || null,
+      status: pickString(source.status) || null,
+      title: pickString(source.title) || null,
+      isTool:
+        typeof source.isTool === 'boolean'
+          ? source.isTool
+          : typeof source.is_tool === 'boolean'
+            ? source.is_tool
+            : null
+    };
+  });
+};
 
 const buildWorkflowDebugSnapshot = () => {
   const liveEntry = findLatestLiveEntry(entries.value);
@@ -3275,6 +3337,8 @@ const buildWorkflowDebugSnapshot = () => {
     rawItemCount: Array.isArray(props.items) ? props.items.length : 0,
     entryCount: entries.value.length,
     shouldRender: shouldRender.value,
+    pendingPlaceholderKind: pendingPlaceholder.value?.kind || '',
+    pendingPlaceholderToolName: pendingPlaceholder.value?.toolName || '',
     shellOpen: Boolean(workflowRef.value?.open),
     workflowUserCollapsed: workflowUserCollapsed.value,
     latestEntryKey: latestEntry.value?.key || '',
@@ -3285,6 +3349,39 @@ const buildWorkflowDebugSnapshot = () => {
     userCollapsedEntryCount: userCollapsedEntryKeys.value.size
   };
 };
+
+watch(
+  () => {
+    if (!isChatDebugEnabled()) return 'disabled';
+    if (!Array.isArray(props.items) || props.items.length === 0 || entries.value.length > 0) return 'idle';
+    return props.items
+      .slice(-3)
+      .map((item) => {
+        const source = asObject(item) || {};
+        return [
+          pickString(source.eventType, source.event, source.event_type),
+          pickString(source.toolName, source.tool, source.tool_name, source.name),
+          pickString(source.toolCallId, source.tool_call_id, source.callId, source.call_id),
+          pickString(source.commandSessionId, source.command_session_id),
+          pickString(source.status),
+          pickString(source.title)
+        ].join('|');
+      })
+      .join('::');
+  },
+  () => {
+    if (!isChatDebugEnabled()) return;
+    const rawItemCount = Array.isArray(props.items) ? props.items.length : 0;
+    if (rawItemCount === 0 || entries.value.length > 0) return;
+    chatDebugLog('messenger.workflow-shell', 'unparsed-items', {
+      visible: Boolean(props.visible),
+      loading: Boolean(props.loading),
+      rawItemCount,
+      samples: buildUnparsedWorkflowItemSamples()
+    });
+  },
+  { immediate: true, flush: 'post' }
+);
 
 const openWorkflowShell = (reason: string) => {
   const element = workflowRef.value;
@@ -3315,6 +3412,8 @@ watch(
       Boolean(props.loading),
       Array.isArray(props.items) ? props.items.length : 0,
       entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
+      pendingPlaceholder.value?.kind || '',
+      pendingPlaceholder.value?.toolName || '',
       shouldRender.value,
       Boolean(workflowRef.value?.open),
       expandedKeys.value.size,
@@ -3335,13 +3434,14 @@ watch(
     Boolean(props.visible),
     Boolean(props.loading),
     entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
+    pendingPlaceholder.value?.kind || '',
     workflowUserCollapsed.value
   ].join('::'),
   () => {
     if (!shouldRender.value || !props.visible || workflowUserCollapsed.value) return;
     const liveEntry = findLatestLiveEntry(entries.value);
-    if (!props.loading && !liveEntry) return;
-    openWorkflowShell(liveEntry ? 'live-entry' : 'loading');
+    if (!props.loading && !liveEntry && !pendingPlaceholder.value) return;
+    openWorkflowShell(liveEntry ? 'live-entry' : pendingPlaceholder.value ? 'pending-placeholder' : 'loading');
   },
   { immediate: true, flush: 'post' }
 );
@@ -3747,6 +3847,50 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   border: 1px dashed var(--workflow-term-border-strong);
   background: var(--workflow-term-bg-soft);
+}
+
+.tool-workflow-placeholder {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px dashed var(--workflow-term-border-strong);
+  background: var(--workflow-term-bg-soft);
+}
+
+.tool-workflow-placeholder-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tool-workflow-placeholder-lamp {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: rgba(59, 130, 246, 0.98);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  animation: tool-workflow-status-pulse 1.3s ease-in-out infinite;
+}
+
+.tool-workflow-placeholder-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool-workflow-placeholder-title {
+  color: var(--workflow-term-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.tool-workflow-placeholder-detail {
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .tool-workflow-entry {

@@ -184,7 +184,7 @@
           </div>
         </div>
       </section>
-      <DesktopRuntimeSettingsPanel v-if="desktopLocalMode" :desktop-local-mode="desktopLocalMode" />
+      <DesktopRuntimeSettingsPanel :desktop-local-mode="desktopLocalMode" />
     </template>
 
     <el-dialog

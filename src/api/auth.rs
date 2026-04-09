@@ -2,6 +2,7 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::org_units;
 use crate::services::external as external_service;
+use crate::services::work_state_reset::reset_user_work_state;
 use crate::services::user_access::filter_user_agents_by_access;
 use crate::state::AppState;
 use crate::storage::{OrgUnitRecord, UserAccountRecord, UserAgentRecord};
@@ -45,6 +46,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/auth/me/preferences",
             get(me_preferences).patch(update_me_preferences),
         )
+        .route("/wunder/auth/me/reset_work_state", post(reset_my_work_state))
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
 
@@ -762,6 +764,17 @@ async fn update_me(
     }
     let profile = build_user_profile_value(&state, &record)?;
     Ok(Json(json!({ "data": profile })))
+}
+
+async fn reset_my_work_state(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let summary = reset_user_work_state(&state, &resolved.user.user_id, "auth_reset_work_state")
+        .await
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    Ok(Json(json!({ "data": summary })))
 }
 
 async fn me_preferences(

@@ -72,7 +72,8 @@ type DesktopWindowBridge = {
 const { t } = useI18n();
 const windowMaximized = ref(false);
 const titleText = 'Wunder Desktop';
-const logoSrc = ref('/desktop-icon.png');
+const defaultLogoSrc = new URL('../../../../images/beeroom.png', import.meta.url).href;
+const logoSrc = ref(defaultLogoSrc);
 const runtimeMode = ref<'local' | 'hybrid'>('local');
 const runtimeModeText = computed(() =>
   runtimeMode.value === 'hybrid'

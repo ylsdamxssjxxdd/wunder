@@ -215,7 +215,10 @@ import {
 import type { BeeroomMissionSubagentItem } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
 import type { BeeroomWorkflowItem, BeeroomTaskWorkflowPreview } from '@/components/beeroom/beeroomTaskWorkflow';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
-import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import {
+  buildBeeroomSwarmSubagentProjectionContext,
+  resolveBeeroomSwarmSubagentProjectionDecision
+} from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 
 import BeeroomSwarmNodeCard from './BeeroomSwarmNodeCard.vue';
 import {
@@ -330,6 +333,9 @@ const projection = computed(() =>
     resolveAgentAvatarImageByAgentId: props.resolveAgentAvatarImageByAgentId,
     t
   })
+);
+const swarmTaskProjectionContext = computed(() =>
+  buildBeeroomSwarmSubagentProjectionContext(Array.isArray(props.mission?.tasks) ? props.mission.tasks : [])
 );
 
 const baseProjection = computed(() =>
@@ -636,7 +642,7 @@ const logCanvasProjection = (event: string, payload?: unknown) => {
 };
 
 const summarizeInputSubagentForCanvas = (item: BeeroomMissionSubagentItem) => {
-  const decision = resolveBeeroomSwarmSubagentProjectionDecision(item);
+  const decision = resolveBeeroomSwarmSubagentProjectionDecision(item, swarmTaskProjectionContext.value);
   return {
     key: item.key,
     sessionId: item.sessionId,
@@ -666,7 +672,9 @@ const buildCanvasProjectionDebugSnapshot = () => {
     .map(([taskId, items]) => ({
       taskId,
       total: items.length,
-      projectable: items.filter((item) => resolveBeeroomSwarmSubagentProjectionDecision(item).projectable).length,
+      projectable: items.filter((item) =>
+        resolveBeeroomSwarmSubagentProjectionDecision(item, swarmTaskProjectionContext.value).projectable
+      ).length,
       items: items.slice(0, 4).map((item) => summarizeInputSubagentForCanvas(item))
     }));
 

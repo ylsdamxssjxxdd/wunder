@@ -1,13 +1,25 @@
 export type WorkflowItem = {
   id?: string | number;
+  itemId?: string | number;
+  item_id?: string | number;
   title?: string;
   detail?: string;
   status?: string;
   isTool?: boolean;
+  is_tool?: boolean;
   eventType?: string;
+  event?: string;
+  event_type?: string;
   toolName?: string;
+  tool?: string;
+  tool_name?: string;
+  name?: string;
   toolCallId?: string | number;
+  tool_call_id?: string | number;
+  callId?: string | number;
+  call_id?: string | number;
   commandSessionId?: string | number;
+  command_session_id?: string | number;
 };
 
 export type RawToolRun = {
@@ -19,17 +31,46 @@ export type RawToolRun = {
 };
 
 type ToolEventKind = 'call' | 'output' | 'result';
+export type WorkflowPendingPlaceholder = {
+  kind: 'tool' | 'compaction';
+  toolName: string;
+  eventType: string;
+};
+
+const COMMAND_SESSION_EVENT_TYPES = new Set([
+  'command_session_start',
+  'command_session_status',
+  'command_session_exit',
+  'command_session_summary',
+  'command_session_delta'
+]);
 
 const normalizeWorkflowRef = (value: unknown): string => String(value || '').trim();
+const normalizeWorkflowText = (value: unknown): string => String(value || '').trim();
+
+const resolveWorkflowItemId = (item: WorkflowItem): string =>
+  normalizeWorkflowRef(item.id ?? item.itemId ?? item.item_id);
+
+const resolveWorkflowToolCallRef = (item: WorkflowItem): string =>
+  normalizeWorkflowRef(item.toolCallId ?? item.tool_call_id ?? item.callId ?? item.call_id);
+
+const resolveWorkflowCommandSessionRef = (item: WorkflowItem): string =>
+  normalizeWorkflowRef(item.commandSessionId ?? item.command_session_id);
+
+const resolveWorkflowLinkRef = (item: WorkflowItem): string =>
+  resolveWorkflowToolCallRef(item) || resolveWorkflowCommandSessionRef(item);
+
+const resolveWorkflowEventType = (item: WorkflowItem): string =>
+  normalizeWorkflowText(item.eventType ?? item.event ?? item.event_type).toLowerCase();
 
 export const resolveWorkflowToolName = (item: WorkflowItem): string => {
-  const direct = String(item.toolName || '').trim();
+  const direct = normalizeWorkflowText(item.toolName ?? item.tool ?? item.tool_name ?? item.name);
   if (direct) return direct;
-  const rawTitle = String(item.title || '').trim();
+  const rawTitle = normalizeWorkflowText(item.title);
   return rawTitle
-    .replace(/^调用工具[:：]?\s*/i, '')
-    .replace(/^工具结果[:：]?\s*/i, '')
-    .replace(/^工具输出[:：]?\s*/i, '')
+    .replace(/^调用工具[:：]\s*/i, '')
+    .replace(/^工具结果[:：]\s*/i, '')
+    .replace(/^工具输出[:：]\s*/i, '')
     .replace(/^Tool\s+call:\s*/i, '')
     .replace(/^Tool\s+result:\s*/i, '')
     .replace(/^Tool\s+output:\s*/i, '')
@@ -37,17 +78,56 @@ export const resolveWorkflowToolName = (item: WorkflowItem): string => {
 };
 
 export const resolveWorkflowToolEventKind = (item: WorkflowItem): ToolEventKind | null => {
-  const eventType = String(item.eventType || '').trim().toLowerCase();
+  const eventType = resolveWorkflowEventType(item);
   if (eventType === 'tool_call') return 'call';
   if (eventType === 'tool_output_delta' || eventType === 'compaction_progress') return 'output';
   if (eventType === 'tool_result' || eventType === 'compaction') return 'result';
 
-  const title = String(item.title || '').trim();
-  if (/^调用工具[:：]?/i.test(title) || /^Tool\s+call:/i.test(title)) return 'call';
-  if (/^工具输出[:：]?/i.test(title) || /^Tool\s+output:/i.test(title) || title === '工具输出') return 'output';
-  if (/^工具结果[:：]?/i.test(title) || /^Tool\s+result:/i.test(title)) return 'result';
+  const title = normalizeWorkflowText(item.title);
+  if (/^调用工具[:：]/i.test(title) || /^Tool\s+call:/i.test(title)) return 'call';
+  if (/^工具输出[:：]/i.test(title) || /^Tool\s+output:/i.test(title) || title === '工具输出') return 'output';
+  if (/^工具结果[:：]/i.test(title) || /^Tool\s+result:/i.test(title)) return 'result';
 
-  return item.isTool ? 'result' : null;
+  return item.isTool || item.is_tool ? 'result' : null;
+};
+
+export const resolveWorkflowPendingPlaceholder = (
+  items: WorkflowItem[]
+): WorkflowPendingPlaceholder | null => {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    const eventType = resolveWorkflowEventType(item);
+    const toolName = resolveWorkflowToolName(item);
+    const kindFromToolEvent = resolveWorkflowToolEventKind(item);
+    if (eventType === 'compaction' || eventType === 'compaction_progress') {
+      return { kind: 'compaction', toolName: toolName || '上下文压缩', eventType };
+    }
+    if (kindFromToolEvent) {
+      return {
+        kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
+        toolName,
+        eventType
+      };
+    }
+    if (COMMAND_SESSION_EVENT_TYPES.has(eventType)) {
+      return { kind: 'tool', toolName, eventType };
+    }
+    if (eventType.startsWith('tool_') || eventType.startsWith('subagent_') || eventType.startsWith('team_')) {
+      return {
+        kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
+        toolName,
+        eventType
+      };
+    }
+    if (item.isTool || item.is_tool) {
+      return {
+        kind: toolName.trim() === '上下文压缩' ? 'compaction' : 'tool',
+        toolName,
+        eventType
+      };
+    }
+  }
+  return null;
 };
 
 const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
@@ -63,10 +143,10 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
     const key = [
       kind,
       resolveWorkflowToolName(item).trim().toLowerCase(),
-      normalizeWorkflowRef(item.toolCallId),
-      String(item.status || '').trim().toLowerCase(),
-      String(item.title || '').trim(),
-      String(item.detail || '').trim()
+      resolveWorkflowLinkRef(item),
+      normalizeWorkflowText(item.status).toLowerCase(),
+      normalizeWorkflowText(item.title),
+      normalizeWorkflowText(item.detail)
     ].join('::');
     if (key && key === lastKey) {
       return;
@@ -151,8 +231,8 @@ export const buildWorkflowToolRuns = (items: WorkflowItem[]): RawToolRun[] => {
 
     const toolName = resolveWorkflowToolName(item);
     const toolKey = toolName.trim().toLowerCase() || '__unknown__';
-    const itemId = normalizeWorkflowRef(item.id) || `tool-entry-${index}`;
-    const toolCallId = normalizeWorkflowRef(item.toolCallId);
+    const itemId = resolveWorkflowItemId(item) || `tool-entry-${index}`;
+    const toolCallId = resolveWorkflowLinkRef(item);
 
     if (kind === 'call') {
       const existingIndex =

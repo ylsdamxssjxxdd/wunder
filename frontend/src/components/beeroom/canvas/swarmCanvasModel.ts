@@ -11,7 +11,10 @@ import {
   resolveBeeroomTaskMoment
 } from '@/components/beeroom/beeroomTaskWorkflow';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
-import { resolveProjectedWorkerSubagents } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import {
+  buildBeeroomSwarmSubagentProjectionContext,
+  resolveProjectedWorkerSubagents
+} from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import type { BeeroomCanvasPositionOverride } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import { normalizeBeeroomActorName } from '@/components/beeroom/beeroomActorIdentity';
 import type { BeeroomMissionSubagentItem } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
@@ -764,6 +767,7 @@ export const buildBeeroomSwarmProjection = (options: {
   const slots = buildHoneycombSlots(orderedAgentIds.length);
   const latestTaskByAgent = new Map<string, BeeroomMissionTask | null>();
   const nodeMetaMap = new Map<string, CanvasNodeMeta>();
+  const swarmTaskProjectionContext = buildBeeroomSwarmSubagentProjectionContext(tasks);
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
@@ -947,7 +951,8 @@ export const buildBeeroomSwarmProjection = (options: {
       runtimeTargetNodeId: String(runtimeTargetNode?.id || '').trim(),
       runtimeSubagents: Array.isArray(runtimeDispatch?.subagents) ? runtimeDispatch.subagents : [],
       tasks: agentTasks,
-      subagentsByTask: options.subagentsByTask
+      subagentsByTask: options.subagentsByTask,
+      swarmTaskProjectionContext
     });
     if (!subagents.length) return;
     subagents.forEach((item, subagentIndex) => {

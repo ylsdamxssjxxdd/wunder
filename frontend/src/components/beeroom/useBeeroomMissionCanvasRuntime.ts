@@ -30,6 +30,7 @@ import {
   resolveBeeroomMotherAgentId,
   resolveBeeroomSwarmScopeKey
 } from '@/components/beeroom/canvas/swarmCanvasModel';
+import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import { resolvePreferredBeeroomDispatchSessionId } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import { useBeeroomDispatchSessionPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
@@ -336,15 +337,32 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     agentAvatarImageMap.value.get(String(agentId || '').trim()) || '';
 
   const resolveMessageAvatarImage = (message: MissionChatMessage): string => {
+    const explicitAvatarImageUrl = String(message?.avatarImageUrl || '').trim();
+    if (explicitAvatarImageUrl) {
+      return explicitAvatarImageUrl;
+    }
     if (message?.tone === 'user') {
       return currentUserAvatarImageUrl.value;
     }
     const senderAgentId = String(message?.senderAgentId || '').trim();
     if (senderAgentId) {
-      return resolveAgentAvatarImageByAgentId(senderAgentId);
+      const directAvatarImageUrl = resolveAgentAvatarImageByAgentId(senderAgentId);
+      if (directAvatarImageUrl) {
+        return directAvatarImageUrl;
+      }
     }
     if (isBeeroomDefaultAgentLike(message?.senderName)) {
       return resolveAgentAvatarImageByAgentId(DEFAULT_AGENT_KEY) || DEFAULT_AGENT_AVATAR_IMAGE;
+    }
+    if (String(message?.key || '').startsWith('subagent:') && String(message?.key || '').endsWith(':reply')) {
+      return resolveBeeroomProjectedSubagentAvatarImage({
+        agentId: senderAgentId,
+        name: message?.senderName,
+        explicitAvatarImageUrl: '',
+        resolveAgentAvatarImageByAgentId,
+        defaultAgentAvatarImageUrl: DEFAULT_AGENT_AVATAR_IMAGE,
+        fallbackAvatarImageUrl: resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig('avatar-048'))
+      });
     }
     return '';
   };
@@ -701,6 +719,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         leftItem.tone !== rightItem.tone ||
         leftItem.senderName !== rightItem.senderName ||
         leftItem.senderAgentId !== rightItem.senderAgentId ||
+        String(leftItem.avatarImageUrl || '').trim() !== String(rightItem.avatarImageUrl || '').trim() ||
         leftItem.mention !== rightItem.mention ||
         leftItem.body !== rightItem.body ||
         leftItem.meta !== rightItem.meta ||
@@ -782,6 +801,29 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
     return false;
   };
+
+  const resolveSessionScopedAssistantMessages = (messages: MissionChatMessage[], sessionId: string) => {
+    const prefix = `session:${String(sessionId || '').trim()}:`;
+    return messages.filter(
+      (message) => message?.tone !== 'user' && String(message?.key || '').startsWith(prefix)
+    );
+  };
+
+  const buildSessionAssistantSignature = (messages: MissionChatMessage[], sessionId: string) => {
+    const assistants = resolveSessionScopedAssistantMessages(messages, sessionId);
+    const last = assistants[assistants.length - 1] || null;
+    return [
+      assistants.length,
+      Number(last?.time || 0),
+      String(last?.key || '').trim(),
+      String(last?.body || '').trim()
+    ].join('|');
+  };
+
+  const waitForBeeroomHydrationDelay = (delayMs: number) =>
+    new Promise<void>((resolve) => {
+      window.setTimeout(resolve, Math.max(0, Math.floor(delayMs)));
+    });
 
   const readCachedChatState = (scopeKey = chatRuntimeScopeKey.value) => getBeeroomMissionChatState(scopeKey);
 
@@ -934,6 +976,57 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       messageCount: hydrated.length
     });
     return hydrated;
+  };
+
+  const hydrateTerminalDispatchSessionMessages = async (options: {
+    sessionId: string;
+    expectedReplyText?: string;
+    baselineAssistantSignature?: string;
+  }) => {
+    const targetSessionId = String(options.sessionId || '').trim();
+    if (!targetSessionId) return [];
+    const expectedReplyText = String(options.expectedReplyText || '').trim();
+    const baselineAssistantSignature = String(options.baselineAssistantSignature || '').trim();
+    const attemptDelaysMs = [0, 180, 520, 1100];
+    let latestMessages: MissionChatMessage[] = [];
+    for (let attemptIndex = 0; attemptIndex < attemptDelaysMs.length; attemptIndex += 1) {
+      if (attemptDelaysMs[attemptIndex] > 0) {
+        await waitForBeeroomHydrationDelay(attemptDelaysMs[attemptIndex]);
+      }
+      if (String(dispatchSessionId.value || '').trim() !== targetSessionId) {
+        logBeeroomRuntime('hydrate-terminal-dispatch-session:session-switched', {
+          targetSessionId,
+          currentSessionId: dispatchSessionId.value,
+          attemptIndex
+        });
+        return latestMessages;
+      }
+      latestMessages = await syncDispatchSessionMessages({
+        hydrate: true,
+        forceReplace: true
+      });
+      const assistantSignature = buildSessionAssistantSignature(latestMessages, targetSessionId);
+      const hasExpectedReply =
+        !!expectedReplyText &&
+        resolveSessionScopedAssistantMessages(latestMessages, targetSessionId).some(
+          (message) => String(message?.body || '').trim() === expectedReplyText
+        );
+      logBeeroomRuntime('hydrate-terminal-dispatch-session:attempt', {
+        sessionId: targetSessionId,
+        attemptIndex,
+        messageCount: latestMessages.length,
+        expectedReplyMatched: hasExpectedReply,
+        baselineAssistantSignature,
+        assistantSignature
+      });
+      if (hasExpectedReply) {
+        return latestMessages;
+      }
+      if (assistantSignature && assistantSignature !== baselineAssistantSignature) {
+        return latestMessages;
+      }
+    }
+    return latestMessages;
   };
 
   const loadManualChatHistory = async () => {
@@ -1362,6 +1455,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         role === 'assistant'
           ? resolveDispatchAssistantAgentId(String(dispatchSessionId.value || '').trim())
           : '',
+      avatarImageUrl:
+        role === 'assistant'
+          ? resolveAgentAvatarImageByAgentId(resolveDispatchAssistantAgentId(String(dispatchSessionId.value || '').trim()))
+          : currentUserAvatarImageUrl.value,
       mention:
         role === 'assistant'
           ? options.t('chat.message.user')
@@ -1408,6 +1505,17 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       ? resolveDispatchAssistantTone(parentSessionId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker')
       : resolveChatToneByAgentId(parentAgentId, dispatchTargetTone.value === 'mother' ? 'mother' : 'worker');
     const childTone = resolveChatToneByAgentId(childAgentId, 'worker');
+    const childAvatarImageUrl = resolveBeeroomProjectedSubagentAvatarImage({
+      agentId: childAgentId,
+      name: childName,
+      explicitAvatarImageUrl: resolveAgentAvatarImageByAgentId(childAgentId),
+      resolveAgentAvatarImageByAgentId,
+      defaultAgentAvatarImageUrl: DEFAULT_AGENT_AVATAR_IMAGE,
+      fallbackAvatarImageUrl: resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig('avatar-048'))
+    });
+    const parentAvatarImageUrl =
+      resolveAgentAvatarImageByAgentId(parentAgentId) ||
+      (isBeeroomDefaultAgentLike(parentName) ? DEFAULT_AGENT_AVATAR_IMAGE : '');
     const meta = String(item.dispatchLabel || '').trim();
     const requestBody = String(item.userMessage || '').trim();
     const replyBody = String((item.failed ? item.errorMessage || item.assistantMessage : item.assistantMessage || item.errorMessage) || '').trim();
@@ -1436,6 +1544,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         key: `subagent:${keyBase}:request`,
         senderName: parentName || resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim()),
         senderAgentId: parentAgentId,
+        avatarImageUrl: parentAvatarImageUrl,
         mention: childName,
         body: requestBody,
         meta,
@@ -1451,6 +1560,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         key: `subagent:${keyBase}:reply`,
         senderName: childName,
         senderAgentId: childAgentId,
+        avatarImageUrl: childAvatarImageUrl,
         mention: parentName || resolveDispatchAssistantName(String(dispatchSessionId.value || '').trim()),
         body: replyBody,
         meta,
@@ -1783,6 +1893,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetTone.value = targetTone;
     const localUserMessage = buildVisibleChatMessage('user', visibleBody, now);
     let localUserAccepted = false;
+    let terminalReplyText = '';
+    let reachedTerminalReply = false;
+    let baselineAssistantSignature = '';
     try {
       const dispatchSession = await ensureDispatchSession(target.agentId, {
         preferredSessionId,
@@ -1820,6 +1933,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         clearWhenEmpty: !reuseCurrentSession,
         forceReplace: !reuseCurrentSession
       });
+      baselineAssistantSignature = buildSessionAssistantSignature(
+        readDispatchSessionMessages(sessionId),
+        sessionId
+      );
       const finalPayload = await startDispatchStream(
         'send',
         sessionId,
@@ -1834,6 +1951,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         }
       );
       const replyText = extractReplyText(finalPayload);
+      terminalReplyText = replyText;
+      reachedTerminalReply = true;
       const assistantMessage = buildVisibleChatMessage('assistant', replyText);
       if (assistantMessage) {
         appendManualChatMessage(assistantMessage);
@@ -1863,7 +1982,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       });
     } finally {
       if (dispatchSessionId.value) {
-        await syncDispatchSessionMessages({ hydrate: true });
+        if (reachedTerminalReply) {
+          await hydrateTerminalDispatchSessionMessages({
+            sessionId: String(dispatchSessionId.value || '').trim(),
+            expectedReplyText: terminalReplyText,
+            baselineAssistantSignature
+          });
+        } else {
+          await syncDispatchSessionMessages({ hydrate: true });
+        }
       }
       dispatchStreamController = null;
       composerSending.value = false;
@@ -1906,11 +2033,19 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       sessionId,
       afterEventId: dispatchLastEventId.value
     });
+    let terminalReplyText = '';
+    let reachedTerminalReply = false;
+    const baselineAssistantSignature = buildSessionAssistantSignature(
+      readDispatchSessionMessages(sessionId),
+      sessionId
+    );
     try {
       const finalPayload = await startDispatchStream('resume', sessionId, {
         afterEventId: dispatchLastEventId.value
       });
       const replyText = extractReplyText(finalPayload);
+      terminalReplyText = replyText;
+      reachedTerminalReply = true;
       const assistantMessage = buildVisibleChatMessage('assistant', replyText);
       if (assistantMessage) {
         appendManualChatMessage(assistantMessage);
@@ -1937,7 +2072,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       });
     } finally {
       if (dispatchSessionId.value) {
-        await syncDispatchSessionMessages({ hydrate: true });
+        if (reachedTerminalReply) {
+          await hydrateTerminalDispatchSessionMessages({
+            sessionId: String(dispatchSessionId.value || '').trim(),
+            expectedReplyText: terminalReplyText,
+            baselineAssistantSignature
+          });
+        } else {
+          await syncDispatchSessionMessages({ hydrate: true });
+        }
       }
       dispatchStreamController = null;
       composerSending.value = false;
@@ -1972,6 +2115,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           message.tone === 'user'
             ? String(message.senderName || '').trim()
             : normalizeChatActorName(message.senderName) || String(message.senderName || '').trim(),
+        avatarImageUrl: String(message.avatarImageUrl || '').trim(),
         mention: normalizeChatActorName(message.mention) || String(message.mention || '').trim()
       }))
       .sort(compareMissionChatMessages)

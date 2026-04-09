@@ -49,4 +49,5 @@ pub mod vector_knowledge;
 pub mod worker_card_files;
 pub mod worker_card_protocol;
 pub mod worker_card_settings;
+pub mod work_state_reset;
 pub mod workspace;

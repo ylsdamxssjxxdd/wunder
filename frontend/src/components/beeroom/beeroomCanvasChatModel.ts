@@ -2,6 +2,7 @@ export type MissionChatMessage = {
   key: string;
   senderName: string;
   senderAgentId: string;
+  avatarImageUrl?: string;
   mention: string;
   body: string;
   meta: string;

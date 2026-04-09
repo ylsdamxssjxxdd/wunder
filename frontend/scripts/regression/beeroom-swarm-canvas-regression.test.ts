@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { normalizeBeeroomActorName } from '../../src/components/beeroom/beeroomActorIdentity';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '../../src/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import {
+  buildBeeroomSwarmSubagentProjectionContext,
   resolveProjectedWorkerSubagents,
   resolveBeeroomSwarmSubagentProjectionDecision,
   shouldProjectBeeroomSwarmSubagent,
@@ -42,6 +43,9 @@ type TestSubagent = BeeroomProjectedSubagentLike & {
 type TestTask = BeeroomProjectedTaskLike & {
   task_id: string;
   agent_id: string;
+  target_session_id?: string;
+  spawned_session_id?: string;
+  session_run_id?: string;
   status?: string;
   updated_time?: number;
 };
@@ -125,6 +129,52 @@ test('canvas projection rejects swarm worker sessions from the generic subagent 
     ),
     true
   );
+});
+
+test('canvas projection rejects swarm worker shadow sessions by task identity before run metadata arrives', () => {
+  const projectionContext = buildBeeroomSwarmSubagentProjectionContext([
+    {
+      task_id: 'task-1',
+      agent_id: 'worker-1',
+      target_session_id: 'sess_worker_shadow',
+      spawned_session_id: 'sess_worker_shadow',
+      session_run_id: 'run_worker_shadow'
+    }
+  ]);
+  const workerShadowDecision = resolveBeeroomSwarmSubagentProjectionDecision(
+    buildSubagent({
+      sessionId: 'sess_worker_shadow',
+      runId: '',
+      runKind: '',
+      requestedBy: ''
+    }),
+    projectionContext
+  );
+  assert.equal(workerShadowDecision.projectable, false);
+  assert.equal(workerShadowDecision.reason, 'filtered:task_session_shadow');
+  assert.equal(
+    shouldProjectBeeroomSwarmSubagent(
+      buildSubagent({
+        sessionId: 'sess_worker_shadow',
+        runId: '',
+        runKind: '',
+        requestedBy: ''
+      }),
+      projectionContext
+    ),
+    false
+  );
+  const realChildDecision = resolveBeeroomSwarmSubagentProjectionDecision(
+    buildSubagent({
+      sessionId: 'sess_real_child',
+      runId: '',
+      runKind: '',
+      requestedBy: ''
+    }),
+    projectionContext
+  );
+  assert.equal(realChildDecision.projectable, true);
+  assert.equal(realChildDecision.reason, 'projectable');
 });
 
 test('runtime dispatch subagents stay projected even when mission already has worker tasks', () => {
@@ -257,6 +307,50 @@ test('mother runtime projection ignores swarm worker sessions while keeping real
   assert.deepEqual(
     subagents.map((item) => item.sessionId),
     ['sess_real_subagent']
+  );
+});
+
+test('worker runtime projection filters worker shadow sessions without hiding real child sessions', () => {
+  const tasks: TestTask[] = [
+    {
+      task_id: 'task-worker-runtime',
+      agent_id: 'worker-1',
+      target_session_id: 'sess_worker_shadow',
+      spawned_session_id: 'sess_worker_shadow',
+      session_run_id: 'run_worker_shadow',
+      status: 'running',
+      updated_time: 20
+    }
+  ];
+  const subagents = resolveProjectedWorkerSubagents({
+    workerRole: 'worker',
+    workerNodeId: 'agent:worker-1',
+    runtimeTargetNodeId: 'agent:worker-1',
+    runtimeSubagents: [
+      buildSubagent({
+        key: 'worker-shadow',
+        sessionId: 'sess_worker_shadow',
+        runId: '',
+        runKind: '',
+        requestedBy: '',
+        agentId: 'worker-1'
+      }),
+      buildSubagent({
+        key: 'real-child',
+        sessionId: 'sess_real_child',
+        runId: '',
+        runKind: '',
+        requestedBy: '',
+        agentId: 'subagent-1'
+      })
+    ],
+    tasks,
+    subagentsByTask: {}
+  });
+
+  assert.deepEqual(
+    subagents.map((item) => item.sessionId),
+    ['sess_real_child']
   );
 });
 
