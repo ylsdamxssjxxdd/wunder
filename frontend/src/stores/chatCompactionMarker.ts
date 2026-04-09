@@ -1,4 +1,4 @@
-import { chatDebugLog } from '@/utils/chatDebug';
+import { chatDebugLog } from '../utils/chatDebug';
 
 type ChatMessage = Record<string, any>;
 type WorkflowItem = Record<string, unknown>;
@@ -313,20 +313,11 @@ export const mergeCompactionMarkersIntoMessages = (
   if (!cachedMarkers.length) {
     return baseMessages;
   }
-  const runningManualMarkers = cachedMarkers
-    .map((entry) => entry.message)
-    .filter((message) => isRunningManualCompactionMarker(message));
+  const remoteTerminalManualMarkers = baseMessages.filter((message) =>
+    isTerminalManualCompactionMarker(message)
+  );
   const suppressed: string[] = [];
-  const result = [...baseMessages].filter((message) => {
-    if (!runningManualMarkers.length) return true;
-    if (!isCompactionMarkerAssistantMessage(message)) return true;
-    const conflict = runningManualMarkers.some((marker) =>
-      isManualCompactionConflict(message, marker)
-    );
-    if (!conflict) return true;
-    suppressed.push(resolveCompactionMarkerSignature(message));
-    return false;
-  });
+  const result = [...baseMessages];
   const existingSignatures = new Set(
     result
       .filter((message) => isCompactionMarkerAssistantMessage(message))
@@ -345,6 +336,15 @@ export const mergeCompactionMarkersIntoMessages = (
   });
   sortableMarkers.forEach((entry) => {
     const signature = entry.signature;
+    const conflictsWithRemoteTerminal =
+      isRunningManualCompactionMarker(entry.message)
+      && remoteTerminalManualMarkers.some((message) =>
+        isManualCompactionConflict(message, entry.message)
+      );
+    if (conflictsWithRemoteTerminal) {
+      suppressed.push(signature);
+      return;
+    }
     if (existingSignatures.has(signature)) {
       skipped.push(signature);
       return;

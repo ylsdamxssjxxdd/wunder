@@ -57,6 +57,7 @@
     "./chat-watchdog-reconcile-regression.test.ts",
     "./chat-timing-regression.test.ts",
     "./chat-pending-regression.test.ts",
+    "./chat-compaction-marker-regression.test.ts",
     "./messenger-chat-refresh-recovery-regression.test.ts",
     "./messenger-interaction-blocker-regression.test.ts",
     "./beeroom-realtime-regression.test.ts",

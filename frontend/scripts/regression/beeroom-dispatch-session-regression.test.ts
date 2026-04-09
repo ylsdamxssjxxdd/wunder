@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  resolveNextBeeroomMotherDispatchSessionId,
   resolvePreferredBeeroomDispatchSessionId,
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
@@ -13,21 +14,36 @@ test('mother dispatch keeps following current primary session instead of stale p
     previousSessionId: 'sess-old',
     previousTargetAgentId: 'mother-1',
     activeSessionId: 'sess-active',
-    primarySessionId: 'sess-main'
+    primarySessionId: 'sess-main',
+    hasExplicitPrimarySession: true
   });
   assert.equal(sessionId, 'sess-main');
 });
 
-test('mother dispatch falls back to active session when primary session is temporarily unavailable', () => {
+test('mother dispatch keeps the bound session when explicit main thread is temporarily unavailable', () => {
   const sessionId = resolvePreferredBeeroomDispatchSessionId({
     targetRole: 'mother',
     targetAgentId: 'mother-1',
     previousSessionId: 'sess-old',
     previousTargetAgentId: 'mother-1',
     activeSessionId: 'sess-active',
-    primarySessionId: ''
+    primarySessionId: '',
+    hasExplicitPrimarySession: false
   });
-  assert.equal(sessionId, 'sess-active');
+  assert.equal(sessionId, 'sess-old');
+});
+
+test('mother dispatch stays on the bound session while explicit main thread is still unknown', () => {
+  const sessionId = resolvePreferredBeeroomDispatchSessionId({
+    targetRole: 'mother',
+    targetAgentId: 'mother-1',
+    previousSessionId: 'sess-current',
+    previousTargetAgentId: 'mother-1',
+    activeSessionId: 'sess-active',
+    primarySessionId: 'sess-main-candidate',
+    hasExplicitPrimarySession: false
+  });
+  assert.equal(sessionId, 'sess-current');
 });
 
 test('worker dispatch only reuses previous session when it belongs to the same worker target', () => {
@@ -87,5 +103,28 @@ test('dispatch preview is preserved only for transient sync errors on the same s
       requestedSessionId: 'sess_new'
     }),
     false
+  );
+});
+
+test('mother reconcile keeps the current mother session until an explicit main thread exists', () => {
+  assert.equal(
+    resolveNextBeeroomMotherDispatchSessionId({
+      motherAgentId: 'mother-1',
+      currentSessionId: 'sess-current',
+      currentSessionAgentId: 'mother-1',
+      explicitPrimarySessionId: '',
+      fallbackPrimarySessionId: 'sess-main-candidate'
+    }),
+    'sess-current'
+  );
+  assert.equal(
+    resolveNextBeeroomMotherDispatchSessionId({
+      motherAgentId: 'mother-1',
+      currentSessionId: 'sess-current',
+      currentSessionAgentId: 'mother-1',
+      explicitPrimarySessionId: 'sess-main',
+      fallbackPrimarySessionId: 'sess-main-candidate'
+    }),
+    'sess-main'
   );
 });

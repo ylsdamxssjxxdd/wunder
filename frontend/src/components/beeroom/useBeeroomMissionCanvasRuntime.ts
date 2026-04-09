@@ -11,6 +11,7 @@ import {
 import {
   BEEROOM_SUBAGENT_REPLY_SORT_ORDER,
   BEEROOM_SUBAGENT_REQUEST_SORT_ORDER,
+  collapseMissionChatAssistantTurns,
   ComposerTargetOption,
   compareMissionChatMessages,
   DispatchApprovalItem,
@@ -31,7 +32,10 @@ import {
   resolveBeeroomSwarmScopeKey
 } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
-import { resolvePreferredBeeroomDispatchSessionId } from '@/components/beeroom/beeroomDispatchSessionPolicy';
+import {
+  resolveNextBeeroomMotherDispatchSessionId,
+  resolvePreferredBeeroomDispatchSessionId
+} from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import { useBeeroomDispatchSessionPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
 import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
@@ -669,9 +673,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (source === cachedSource) {
       syncActiveDispatchSourceFromCache(targetId, cachedSource);
     }
-    return (Array.isArray(source) ? source : [])
+    const mapped = (Array.isArray(source) ? source : [])
       .map((message, index) => mapSessionChatMessage(message, index, targetId))
       .filter((message: MissionChatMessage | null): message is MissionChatMessage => Boolean(message));
+    const collapsed = collapseMissionChatAssistantTurns(mapped);
+    if (collapsed.length !== mapped.length) {
+      logBeeroomRuntime('read-dispatch-session-messages:collapse-assistant-turns', {
+        sessionId: targetId,
+        sourceCount: mapped.length,
+        visibleCount: collapsed.length
+      });
+    }
+    return collapsed;
   };
 
   const nextManualMessageKey = (prefix: string) => {
@@ -1263,6 +1276,20 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return resolveValidDispatchSessionId(primarySessionId, primarySummary);
   };
 
+  const resolveExplicitMainDispatchSessionId = (
+    agentId: string,
+    sourceSessions: Record<string, any>[] | null = null
+  ) => {
+    const normalizedAgentId = String(agentId || '').trim();
+    if (!normalizedAgentId) return '';
+    const sessions = Array.isArray(sourceSessions) ? sourceSessions : chatStore.getCachedSessions(normalizedAgentId);
+    const mainSession = Array.isArray(sessions)
+      ? sessions.find((item) => item?.is_main === true) || null
+      : null;
+    if (!mainSession?.id) return '';
+    return resolveValidDispatchSessionId(String(mainSession.id), mainSession as Record<string, unknown>);
+  };
+
   const resolvePreferredDispatchSessionId = (
     target: ComposerTargetOption,
     previousSessionId: string,
@@ -1270,13 +1297,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   ) => {
     const activeSessionId = resolveActiveDispatchSessionId(target.agentId);
     const primarySessionId = resolvePrimaryDispatchSessionId(target.agentId);
+    const explicitPrimarySessionId = resolveExplicitMainDispatchSessionId(target.agentId);
     return resolvePreferredBeeroomDispatchSessionId({
       targetRole: target.role,
       targetAgentId: target.agentId,
       previousSessionId,
       previousTargetAgentId,
       activeSessionId,
-      primarySessionId
+      primarySessionId,
+      hasExplicitPrimarySession: Boolean(explicitPrimarySessionId)
     });
   };
 
@@ -1337,42 +1366,55 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       dispatchTargetTone.value === 'mother' ||
       (resolvedMotherAgentId && cachedTargetAgentId === resolvedMotherAgentId);
     if (!isMotherTarget || !resolvedMotherAgentId) return;
-    const primarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
     const currentSessionId = String(dispatchSessionId.value || '').trim();
-    if (!primarySessionId) {
+    const currentValidSessionId = resolveValidDispatchSessionId(currentSessionId);
+    const explicitPrimarySessionId = resolveExplicitMainDispatchSessionId(resolvedMotherAgentId);
+    const fallbackPrimarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
+    const nextSessionId = resolveNextBeeroomMotherDispatchSessionId({
+      motherAgentId: resolvedMotherAgentId,
+      currentSessionId: currentValidSessionId,
+      currentSessionAgentId: currentValidSessionId ? resolveStoredSessionAgentId(currentValidSessionId) : '',
+      explicitPrimarySessionId,
+      fallbackPrimarySessionId
+    });
+    if (!nextSessionId) {
       logBeeroomRuntime('reconcile-mother-dispatch-session:no-primary', {
         motherAgentId: resolvedMotherAgentId,
-        currentSessionId
+        currentSessionId,
+        explicitPrimarySessionId,
+        fallbackPrimarySessionId
       });
       return;
     }
-    if (primarySessionId === currentSessionId) return;
+    if (nextSessionId === currentSessionId) return;
     logBeeroomRuntime('reconcile-mother-dispatch-session:switch', {
       motherAgentId: resolvedMotherAgentId,
       previousSessionId: currentSessionId,
-      nextSessionId: primarySessionId,
+      nextSessionId,
+      explicitPrimarySessionId,
+      fallbackPrimarySessionId,
       hydrate: syncOptions.hydrate !== false,
       syncMessages: syncOptions.syncMessages !== false
     });
-    dispatchSessionId.value = primarySessionId;
+    dispatchSessionId.value = nextSessionId;
     dispatchLastEventId.value = 0;
     dispatchRequestId.value = '';
     dispatchRuntimeStatus.value = 'idle';
     dispatchTargetAgentId.value = resolvedMotherAgentId;
     dispatchTargetName.value = resolveAgentNameById(resolvedMotherAgentId);
     dispatchTargetTone.value = 'mother';
-    rememberSessionAssistantIdentity(primarySessionId, {
+    rememberSessionAssistantIdentity(nextSessionId, {
       agentId: resolvedMotherAgentId,
       name: dispatchTargetName.value,
       tone: 'mother'
     });
-    ensureDispatchSessionKnown(primarySessionId, false);
-    void syncDispatchSessionToMessenger(primarySessionId, resolvedMotherAgentId).catch(() => null);
+    ensureDispatchSessionKnown(nextSessionId, false);
+    void syncDispatchSessionToMessenger(nextSessionId, resolvedMotherAgentId).catch(() => null);
     if (
       currentSessionId &&
-      currentSessionId !== primarySessionId &&
+      currentSessionId !== nextSessionId &&
       hasSessionScopedMessageFor(manualChatMessages.value, currentSessionId) &&
-      !hasSessionScopedMessageFor(manualChatMessages.value, primarySessionId)
+      !hasSessionScopedMessageFor(manualChatMessages.value, nextSessionId)
     ) {
       replaceManualChatMessages([]);
     }
@@ -1596,7 +1638,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   ): Promise<DispatchSessionTarget> => {
     const preferredSessionId = String(sessionOptions.preferredSessionId || '').trim();
     const preferPrimarySession = sessionOptions.preferPrimarySession === true;
-    if (preferredSessionId && !preferPrimarySession) {
+    if (preferredSessionId) {
       const preferredSummary = resolveDispatchSessionSummary(preferredSessionId);
       if (resolveValidDispatchSessionId(preferredSessionId, preferredSummary)) {
         return {
@@ -2291,22 +2333,16 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       dispatchTargetTone.value === 'mother' ||
       (resolvedMotherAgentId && cachedTargetAgentId === resolvedMotherAgentId);
     if (!isMotherTarget || !resolvedMotherAgentId) return '';
-    const sessionSignature = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
-      .filter((session) => {
-        const sessionAgentId = String(session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '')).trim();
-        return sessionAgentId === resolvedMotherAgentId;
-      })
-      .map((session) =>
-        [
-          String(session?.id || '').trim(),
-          session?.is_main === true ? '1' : '0',
-          String(session?.updated_at ?? session?.last_message_at ?? session?.created_at ?? '').trim()
-        ].join(':')
-      )
-      .join('|');
-    return [resolvedMotherAgentId, cachedTargetAgentId, String(dispatchSessionId.value || '').trim(), sessionSignature].join(
-      '|'
-    );
+    const explicitPrimarySessionId = resolveExplicitMainDispatchSessionId(resolvedMotherAgentId);
+    const fallbackPrimarySessionId = resolvePrimaryDispatchSessionId(resolvedMotherAgentId);
+    return [
+      resolvedMotherAgentId,
+      cachedTargetAgentId,
+      dispatchTargetTone.value,
+      String(dispatchSessionId.value || '').trim(),
+      explicitPrimarySessionId,
+      fallbackPrimarySessionId
+    ].join('|');
   });
 
   watch(

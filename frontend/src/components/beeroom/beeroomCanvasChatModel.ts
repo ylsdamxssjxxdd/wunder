@@ -25,6 +25,30 @@ export const compareMissionChatMessages = (left: MissionChatMessage, right: Miss
   normalizeSortOrder(left.sortOrder) - normalizeSortOrder(right.sortOrder) ||
   left.key.localeCompare(right.key);
 
+export const collapseMissionChatAssistantTurns = (messages: MissionChatMessage[]): MissionChatMessage[] => {
+  const ordered = [...messages].sort(compareMissionChatMessages);
+  const collapsed: MissionChatMessage[] = [];
+  let trailingAssistant: MissionChatMessage | null = null;
+
+  const flushTrailingAssistant = () => {
+    if (!trailingAssistant) return;
+    collapsed.push(trailingAssistant);
+    trailingAssistant = null;
+  };
+
+  ordered.forEach((message) => {
+    if (message.tone === 'user') {
+      flushTrailingAssistant();
+      collapsed.push(message);
+      return;
+    }
+    trailingAssistant = message;
+  });
+
+  flushTrailingAssistant();
+  return collapsed;
+};
+
 export type ComposerTargetOption = {
   agentId: string;
   label: string;

@@ -1626,12 +1626,12 @@ impl WorkspaceManager {
                 workspace_root.display()
             ));
         }
-        let removed = if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID
-        {
-            clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
-        } else {
-            clear_dir_contents(&workspace_root)
-        };
+        let removed =
+            if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID {
+                clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
+            } else {
+                clear_dir_contents(&workspace_root)
+            };
         self.clear_workspace_cache(&safe_id);
         self.mark_tree_dirty(&safe_id);
         Ok(removed)
@@ -2327,7 +2327,10 @@ mod tests {
         )
         .expect("write tooling config");
         fs::write(
-            private_root.join("chat_media").join("derived").join("clip.txt"),
+            private_root
+                .join("chat_media")
+                .join("derived")
+                .join("clip.txt"),
             "temp",
         )
         .expect("write transient file");
@@ -2338,8 +2341,16 @@ mod tests {
             .expect("clear work state");
 
         assert_eq!(removed, 2);
-        assert!(private_root.join("skills").join("demo").join("SKILL.md").exists());
-        assert!(private_root.join("knowledge").join("demo").join("note.txt").exists());
+        assert!(private_root
+            .join("skills")
+            .join("demo")
+            .join("SKILL.md")
+            .exists());
+        assert!(private_root
+            .join("knowledge")
+            .join("demo")
+            .join("note.txt")
+            .exists());
         assert!(private_root.join("global").join("tooling.json").exists());
         assert!(!private_root.join("chat_media").exists());
         assert!(!private_root.join("scratch.txt").exists());

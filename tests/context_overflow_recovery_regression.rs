@@ -354,6 +354,34 @@ async fn send_json(
     (status, payload)
 }
 
+async fn load_session_events(context: &TestContext, session_id: &str) -> Value {
+    let (status, payload) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        &format!("/wunder/chat/sessions/{session_id}/events"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "load session events failed: {payload}"
+    );
+    payload.get("data").cloned().unwrap_or(Value::Null)
+}
+
+fn find_session_round<'a>(events_data: &'a Value, user_round: i64) -> Option<&'a Value> {
+    events_data
+        .get("rounds")
+        .and_then(Value::as_array)
+        .and_then(|rounds| {
+            rounds
+                .iter()
+                .find(|round| round.get("user_round").and_then(Value::as_i64) == Some(user_round))
+        })
+}
+
 fn build_pressure_question(round: usize, repeat: usize) -> String {
     let payload = "context-pressure-payload ".repeat(repeat);
     format!(
@@ -427,29 +455,14 @@ fn latest_compaction_summary_item_with_trigger<'a>(
     })
 }
 
-fn count_content_containing(items: &[Value], marker: &str) -> usize {
-    items
-        .iter()
-        .filter(|item| {
-            item.get("content")
-                .and_then(Value::as_str)
-                .is_some_and(|content| content.contains(marker))
-        })
-        .count()
-}
-
-fn first_message_index_containing(items: &[Value], marker: &str) -> Option<usize> {
-    items.iter().position(|item| {
-        item.get("content")
-            .and_then(Value::as_str)
-            .is_some_and(|content| content.contains(marker))
-    })
-}
-
-fn first_replay_summary_index(items: &[Value]) -> Option<usize> {
-    items
-        .iter()
-        .position(HistoryManager::is_compaction_summary_item)
+fn latest_replacement_history_snapshot(history: &[Value]) -> Vec<Value> {
+    latest_compaction_summary_item(history)
+        .and_then(|item| item.get("meta"))
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("replacement_history"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn summary_body(content: &str) -> &str {
@@ -472,54 +485,89 @@ fn latest_success_request_messages(context: &TestContext) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn assert_request_preserves_anchor_shape(
-    request_messages: &[Value],
-    head_markers: &[String],
-    middle_markers: &[String],
-    tail_markers: &[String],
-    label: &str,
-) {
-    let summary_index = first_replay_summary_index(request_messages)
-        .expect("expected replay summary message in request payload");
-
-    for marker in head_markers {
-        let count = count_content_containing(request_messages, marker);
-        assert_eq!(
-            count, 1,
-            "{label} expected head anchor {marker} exactly once in request"
-        );
-        let index =
-            first_message_index_containing(request_messages, marker).expect("head marker index");
-        assert!(
-            index < summary_index,
-            "{label} expected head anchor {marker} before summary"
-        );
+fn canonicalize_message_for_comparison(message: &Value) -> Value {
+    let mut normalized = serde_json::Map::new();
+    if let Some(role) = message.get("role").and_then(Value::as_str) {
+        normalized.insert("role".to_string(), Value::String(role.to_string()));
     }
-
-    for marker in tail_markers {
-        let count = count_content_containing(request_messages, marker);
-        assert_eq!(
-            count, 1,
-            "{label} expected tail anchor {marker} exactly once in request"
-        );
-        let index =
-            first_message_index_containing(request_messages, marker).expect("tail marker index");
-        assert!(
-            index > summary_index,
-            "{label} expected tail anchor {marker} after summary"
-        );
+    normalized.insert(
+        "content".to_string(),
+        message
+            .get("content")
+            .cloned()
+            .unwrap_or(Value::String(String::new())),
+    );
+    if let Some(reasoning) = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .cloned()
+    {
+        normalized.insert("reasoning_content".to_string(), reasoning);
     }
-
-    for marker in middle_markers {
-        assert_eq!(
-            count_content_containing(request_messages, marker),
-            0,
-            "{label} request should not retain middle marker {marker}"
-        );
+    if let Some(tool_calls) = message
+        .get("tool_calls")
+        .or_else(|| message.get("tool_call"))
+        .or_else(|| message.get("function_call"))
+        .cloned()
+    {
+        normalized.insert("tool_calls".to_string(), tool_calls);
     }
+    if let Some(tool_call_id) = message
+        .get("tool_call_id")
+        .or_else(|| message.get("toolCallId"))
+        .or_else(|| message.get("call_id"))
+        .or_else(|| message.get("callId"))
+        .cloned()
+    {
+        normalized.insert("tool_call_id".to_string(), tool_call_id);
+    }
+    Value::Object(normalized)
 }
 
-async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &str) -> Value {
+fn assert_request_uses_replacement_history(
+    request_messages: &[Value],
+    replacement_history: &[Value],
+    current_user_marker: &str,
+) {
+    assert!(
+        request_messages.len() >= 2,
+        "expected request to include at least system and current user"
+    );
+    assert_eq!(
+        request_messages
+            .first()
+            .and_then(|item| item.get("role"))
+            .and_then(Value::as_str),
+        Some("system"),
+        "expected request to keep system message before replacement_history"
+    );
+    let current_user = request_messages.last().expect("request current user");
+    assert!(
+        current_user
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains(current_user_marker)),
+        "expected request to keep current user after replacement_history"
+    );
+    let base = &request_messages[1..request_messages.len().saturating_sub(1)];
+    let expected = replacement_history
+        .iter()
+        .map(canonicalize_message_for_comparison)
+        .collect::<Vec<_>>();
+    let actual = base
+        .iter()
+        .map(canonicalize_message_for_comparison)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual, expected,
+        "next request should be rebuilt directly from committed replacement_history"
+    );
+}
+
+async fn trigger_manual_compaction_and_wait(
+    context: &TestContext,
+    session_id: &str,
+) -> (i64, Value) {
     let (status, accepted) = send_json(
         &context.app,
         &context.token,
@@ -538,20 +586,7 @@ async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &
         .expect("manual compaction user round");
 
     for _ in 0..120 {
-        let (status, payload) = send_json(
-            &context.app,
-            &context.token,
-            Method::GET,
-            &format!("/wunder/chat/sessions/{session_id}/events"),
-            None,
-        )
-        .await;
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "load session events failed: {payload}"
-        );
-        let data = payload.get("data").cloned().unwrap_or(Value::Null);
+        let data = load_session_events(context, session_id).await;
         let running = data
             .get("running")
             .and_then(Value::as_bool)
@@ -580,7 +615,7 @@ async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &
                 })
             });
         if let Some(compaction_event) = compaction_event.filter(|_| !running) {
-            return compaction_event;
+            return (accepted_round, compaction_event);
         }
         sleep(Duration::from_millis(100)).await;
     }
@@ -683,11 +718,33 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
     run_pressure_rounds(&context, &session_id, 6, 420).await;
     trigger_manual_compaction_and_wait(&context, &session_id).await;
 
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history after compaction");
+    let replacement_history = latest_replacement_history_snapshot(&raw_history);
+    assert!(
+        !replacement_history.is_empty(),
+        "manual compaction should commit replacement_history snapshot"
+    );
+
     let replay_messages = HistoryManager.load_history_messages(
         context.state.workspace.as_ref(),
         &context.user_id,
         &session_id,
         0,
+    );
+    assert_eq!(
+        replay_messages
+            .iter()
+            .map(canonicalize_message_for_comparison)
+            .collect::<Vec<_>>(),
+        replacement_history
+            .iter()
+            .map(canonicalize_message_for_comparison)
+            .collect::<Vec<_>>(),
+        "persisted replay should be rebuilt from committed replacement_history"
     );
     let replay_summary = replay_messages
         .iter()
@@ -711,6 +768,11 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
     assert_eq!(status, StatusCode::OK, "follow-up round failed: {payload}");
 
     let request_messages = latest_success_request_messages(&context);
+    assert_request_uses_replacement_history(
+        &request_messages,
+        &replacement_history,
+        "[mindie-overflow-regression] round=7",
+    );
     let request_summary = request_messages
         .iter()
         .find(|item| HistoryManager::is_compaction_summary_item(item))
@@ -730,26 +792,6 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         !summary_body(&replay_summary).starts_with("...("),
         "replay summary should not be a broken placeholder: {replay_summary}"
     );
-
-    let head_markers = [
-        format!("[mindie-overflow-regression] round=1"),
-        format!("[mindie-overflow-regression] round=2"),
-    ];
-    let middle_markers = [
-        format!("[mindie-overflow-regression] round=3"),
-        format!("[mindie-overflow-regression] round=4"),
-    ];
-    let tail_markers = [
-        format!("[mindie-overflow-regression] round=5"),
-        format!("[mindie-overflow-regression] round=6"),
-    ];
-    assert_request_preserves_anchor_shape(
-        &request_messages,
-        &head_markers,
-        &middle_markers,
-        &tail_markers,
-        "manual compaction follow-up",
-    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -767,7 +809,7 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
         let session_id = create_test_session(&context, &format!("Compaction reset {mode}")).await;
 
         run_pressure_rounds(&context, &session_id, ROUNDS, REPEAT).await;
-        let compaction_event = trigger_manual_compaction_and_wait(&context, &session_id).await;
+        let (_, compaction_event) = trigger_manual_compaction_and_wait(&context, &session_id).await;
 
         let raw_history = context
             .state
@@ -786,85 +828,28 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
             Some(mode),
             "mode={mode} latest summary should record effective reset mode"
         );
-        let summary_meta = summary_item
-            .get("meta")
-            .and_then(Value::as_object)
-            .expect("summary meta");
-        let retained_head_until_index = summary_meta
-            .get("retained_head_until_index")
-            .and_then(Value::as_u64)
-            .expect("retained head index") as usize;
-        let retained_tail_from_index = summary_meta
-            .get("retained_tail_from_index")
-            .and_then(Value::as_u64)
-            .expect("retained tail index") as usize;
+        let replacement_history = latest_replacement_history_snapshot(&raw_history);
         assert!(
-            retained_head_until_index < retained_tail_from_index,
-            "mode={mode} retained summary bounds should leave room for the compressed middle"
+            !replacement_history.is_empty(),
+            "mode={mode} manual compaction should commit replacement_history snapshot"
         );
-
-        let head_markers = [
-            format!("[mindie-overflow-regression] round=1"),
-            format!("[mindie-overflow-regression] round=2"),
-        ];
-        let middle_markers = [
-            format!("[mindie-overflow-regression] round=3"),
-            format!("[mindie-overflow-regression] round=4"),
-        ];
-        let tail_markers = [
-            format!("[mindie-overflow-regression] round=5"),
-            format!("[mindie-overflow-regression] round=6"),
-        ];
         let replay_messages = HistoryManager.load_history_messages(
             context.state.workspace.as_ref(),
             &context.user_id,
             &session_id,
             0,
         );
-        let summary_index = first_replay_summary_index(&replay_messages)
-            .expect("expected replay summary message after compaction");
-
         assert_eq!(
             replay_messages
-                .first()
-                .and_then(|item| item.get("role"))
-                .and_then(Value::as_str),
-            Some("user"),
-            "mode={mode} replay should still begin with summary/tail user context"
+                .iter()
+                .map(canonicalize_message_for_comparison)
+                .collect::<Vec<_>>(),
+            replacement_history
+                .iter()
+                .map(canonicalize_message_for_comparison)
+                .collect::<Vec<_>>(),
+            "mode={mode} persisted replay should be rebuilt directly from committed replacement_history"
         );
-        for marker in &head_markers {
-            let count = count_content_containing(&replay_messages, marker);
-            assert_eq!(
-                count, 1,
-                "mode={mode} expected head anchor {marker} exactly once in replay"
-            );
-            let index = first_message_index_containing(&replay_messages, marker)
-                .expect("head marker index");
-            assert!(
-                index < summary_index,
-                "mode={mode} expected head anchor {marker} before summary"
-            );
-        }
-        for marker in &tail_markers {
-            let count = count_content_containing(&replay_messages, marker);
-            assert_eq!(
-                count, 1,
-                "mode={mode} expected tail anchor {marker} exactly once in replay"
-            );
-            let index = first_message_index_containing(&replay_messages, marker)
-                .expect("tail marker index");
-            assert!(
-                index > summary_index,
-                "mode={mode} expected tail anchor {marker} after summary"
-            );
-        }
-        for marker in &middle_markers {
-            assert_eq!(
-                count_content_containing(&replay_messages, marker),
-                0,
-                "mode={mode} persisted replay should remain head->summary->tail and not retain middle marker {marker}"
-            );
-        }
 
         match mode {
             "zero" => {
@@ -898,6 +883,129 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
             _ => unreachable!("unexpected reset mode"),
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_meta() {
+    let context = build_test_context_with_compaction_and_mock_limit(
+        "mindie_compaction_id_alignment",
+        32_768,
+        Some("keep"),
+        12_000,
+    )
+    .await;
+    let session_id = create_test_session(&context, "Compaction id alignment").await;
+
+    run_pressure_rounds(&context, &session_id, 6, 420).await;
+    let (accepted_round, compaction_event) =
+        trigger_manual_compaction_and_wait(&context, &session_id).await;
+    let compaction_id = compaction_event
+        .get("compaction_id")
+        .and_then(Value::as_str)
+        .expect("manual compaction should emit compaction_id")
+        .to_string();
+    assert!(
+        compaction_id.starts_with("cmp_manual_"),
+        "unexpected compaction_id format: {compaction_id}"
+    );
+
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history");
+    let summary_item = latest_compaction_summary_item_with_trigger(&raw_history, "manual")
+        .or_else(|| latest_compaction_summary_item(&raw_history))
+        .expect("expected persisted manual compaction summary");
+    assert_eq!(
+        summary_item
+            .get("meta")
+            .and_then(Value::as_object)
+            .and_then(|meta| meta.get("compaction_id"))
+            .and_then(Value::as_str),
+        Some(compaction_id.as_str()),
+        "persisted summary meta should keep the committed compaction_id"
+    );
+
+    let events_data = load_session_events(&context, &session_id).await;
+    let round = find_session_round(&events_data, accepted_round).expect("manual compaction round");
+    let events = round
+        .get("events")
+        .and_then(Value::as_array)
+        .expect("manual compaction round events");
+
+    let mut saw_compacting_progress = false;
+    let mut saw_summary_request = false;
+    let mut saw_summary_response = false;
+    let mut saw_final_compaction = false;
+
+    for event in events {
+        let event_type = event.get("event").and_then(Value::as_str).unwrap_or("");
+        let data = event.get("data").unwrap_or(event);
+        let event_compaction_id = data.get("compaction_id").and_then(Value::as_str);
+
+        match event_type {
+            "progress" => {
+                let stage = data.get("stage").and_then(Value::as_str).unwrap_or("");
+                if stage == "compacting" || stage == "context_guard" {
+                    assert_eq!(
+                        event_compaction_id,
+                        Some(compaction_id.as_str()),
+                        "manual compaction progress should keep one compaction_id"
+                    );
+                    if stage == "compacting" {
+                        saw_compacting_progress = true;
+                    }
+                }
+            }
+            "llm_request" => {
+                if data.get("purpose").and_then(Value::as_str) == Some("compaction_summary") {
+                    assert_eq!(
+                        event_compaction_id,
+                        Some(compaction_id.as_str()),
+                        "compaction summary request should keep one compaction_id"
+                    );
+                    saw_summary_request = true;
+                }
+            }
+            "llm_response" => {
+                if data.get("purpose").and_then(Value::as_str) == Some("compaction_summary") {
+                    assert_eq!(
+                        event_compaction_id,
+                        Some(compaction_id.as_str()),
+                        "compaction summary response should keep one compaction_id"
+                    );
+                    saw_summary_response = true;
+                }
+            }
+            "compaction" => {
+                assert_eq!(
+                    event_compaction_id,
+                    Some(compaction_id.as_str()),
+                    "manual compaction final event should keep one compaction_id"
+                );
+                saw_final_compaction = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        saw_compacting_progress,
+        "manual compaction round should include compacting progress event"
+    );
+    assert!(
+        saw_summary_request,
+        "manual compaction round should include compaction summary request event"
+    );
+    assert!(
+        saw_summary_response,
+        "manual compaction round should include compaction summary response event"
+    );
+    assert!(
+        saw_final_compaction,
+        "manual compaction round should include final compaction event"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

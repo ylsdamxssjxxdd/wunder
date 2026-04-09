@@ -3,7 +3,7 @@ use crate::config::LlmModelConfig;
 use crate::i18n;
 use crate::orchestrator_constants::{
     ARTIFACT_INDEX_MAX_ITEMS, COMPACTION_META_TYPE, COMPACTION_OUTPUT_RESERVE, COMPACTION_RATIO,
-    COMPACTION_SAFETY_MARGIN, OBSERVATION_PREFIX,
+    COMPACTION_REPLACEMENT_HISTORY_META_KEY, COMPACTION_SAFETY_MARGIN, OBSERVATION_PREFIX,
 };
 use crate::prompting::read_prompt_template;
 use crate::workspace::WorkspaceManager;
@@ -98,23 +98,8 @@ impl HistoryManager {
         let history = workspace
             .load_history(user_id, session_id, max_items)
             .unwrap_or_default();
-        let filtered = filter_history_items(&history);
         let mut messages = Vec::new();
-        for item in &filtered.head_items {
-            if let Some(message) = build_message_from_item(item, true) {
-                messages.push(message);
-            }
-        }
-        if let Some(summary_item) = filtered.summary_item {
-            let summary_content = Self::format_compaction_summary(
-                summary_item
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
-            );
-            messages.push(json!({ "role": "user", "content": summary_content }));
-        }
-        for item in filtered.tail_items {
+        for item in materialize_history_items(&history) {
             if let Some(message) = build_message_from_item(&item, true) {
                 messages.push(message);
             }
@@ -138,12 +123,11 @@ impl HistoryManager {
     }
 
     pub fn build_compaction_candidates(history: &[Value]) -> (Vec<Value>, Vec<Value>) {
-        let filtered_items = filter_history_items(history).active_items();
         let mut items = Vec::new();
         let mut messages = Vec::new();
-        for item in filtered_items {
+        for item in materialize_history_items(history) {
             if let Some(message) = build_message_from_item(&item, true) {
-                items.push(item);
+                items.push(item.clone());
                 messages.push(message);
             }
         }
@@ -508,6 +492,7 @@ struct FilteredHistoryItems {
 }
 
 impl FilteredHistoryItems {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn active_items(self) -> Vec<Value> {
         let mut items = self.head_items;
         items.extend(self.tail_items);
@@ -569,6 +554,70 @@ fn split_retained_summary_items(
     Some((head_len, next_items))
 }
 
+fn build_formatted_compaction_summary_message(summary_item: &Value) -> Value {
+    json!({
+        "role": "user",
+        "content": HistoryManager::format_compaction_summary(
+            summary_item
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        )
+    })
+}
+
+fn normalize_replacement_history_item(item: &Value) -> Option<Value> {
+    let role = item.get("role").and_then(Value::as_str)?.trim();
+    if role.is_empty() || role == "system" {
+        return None;
+    }
+    let content = item
+        .get("content")
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
+    let mut normalized = serde_json::Map::new();
+    normalized.insert("role".to_string(), Value::String(role.to_string()));
+    normalized.insert("content".to_string(), content);
+    if let Some(reasoning) = item
+        .get("reasoning_content")
+        .or_else(|| item.get("reasoning"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        normalized.insert(
+            "reasoning_content".to_string(),
+            Value::String(reasoning.to_string()),
+        );
+    }
+    if let Some(tool_calls) = extract_tool_calls_payload(item) {
+        normalized.insert("tool_calls".to_string(), tool_calls);
+    }
+    if let Some(tool_call_id) = extract_tool_call_id(item) {
+        normalized.insert("tool_call_id".to_string(), Value::String(tool_call_id));
+    }
+    if let Some(meta) = item.get("meta").cloned().filter(|value| !value.is_null()) {
+        normalized.insert("meta".to_string(), meta);
+    }
+    Some(Value::Object(normalized))
+}
+
+fn extract_compaction_replacement_history(summary_item: Option<&Value>) -> Option<Vec<Value>> {
+    let items = summary_item?
+        .get("meta")?
+        .get(COMPACTION_REPLACEMENT_HISTORY_META_KEY)?
+        .as_array()?;
+    let normalized = items
+        .iter()
+        .filter_map(normalize_replacement_history_item)
+        .collect::<Vec<_>>();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
 fn push_replay_item(filtered: &mut Vec<Value>, item: &Value, skip_next_assistant: &mut bool) {
     let role = item.get("role").and_then(Value::as_str).unwrap_or("");
     if role == "system" {
@@ -587,6 +636,39 @@ fn push_replay_item(filtered: &mut Vec<Value>, item: &Value, skip_next_assistant
     filtered.push(item.clone());
 }
 
+fn materialize_history_items(history: &[Value]) -> Vec<Value> {
+    let mut active_items = Vec::new();
+    let mut skip_next_assistant = false;
+
+    for item in history {
+        if HistoryManager::is_compaction_summary_item(item) {
+            if let Some(replacement_history) = extract_compaction_replacement_history(Some(item)) {
+                active_items = replacement_history;
+                skip_next_assistant = false;
+                continue;
+            }
+            let summary_message = build_formatted_compaction_summary_message(item);
+            let compacted_until_ts = extract_compacted_until_ts(Some(item));
+            if let Some((head_len, retained_items)) =
+                split_retained_summary_items(&active_items, Some(item))
+            {
+                active_items = retained_items;
+                let insert_index = head_len.min(active_items.len());
+                active_items.insert(insert_index, summary_message);
+            } else {
+                active_items = apply_legacy_summary_boundary(active_items, compacted_until_ts);
+                active_items.insert(0, summary_message);
+            }
+            skip_next_assistant = false;
+            continue;
+        }
+        push_replay_item(&mut active_items, item, &mut skip_next_assistant);
+    }
+
+    active_items
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 fn filter_history_items(history: &[Value]) -> FilteredHistoryItems {
     let mut active_items = Vec::new();
     let mut summary_item: Option<Value> = None;
@@ -800,6 +882,84 @@ mod tests {
             filtered.tail_items,
             vec![tail_user, tail_assistant, current_user]
         );
+    }
+
+    #[test]
+    fn materialize_history_items_prefers_committed_replacement_history_snapshot() {
+        let summary_prefix = with_language("en-US", || i18n::t("history.compaction_prefix"));
+        let summary = json!({
+            "role": "system",
+            "content": "summary",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                COMPACTION_REPLACEMENT_HISTORY_META_KEY: [
+                    { "role": "user", "content": "snapshot question" },
+                    { "role": "assistant", "content": "snapshot answer" },
+                    { "role": "user", "content": format!("{summary_prefix}\nsnapshot summary") }
+                ]
+            }
+        });
+        let history = vec![
+            json!({ "role": "user", "content": "old question" }),
+            json!({ "role": "assistant", "content": "old answer" }),
+            summary,
+            json!({ "role": "user", "content": "future question" }),
+        ];
+
+        let materialized = materialize_history_items(&history);
+
+        assert_eq!(materialized.len(), 4);
+        assert_eq!(materialized[0]["content"], json!("snapshot question"));
+        assert_eq!(materialized[1]["content"], json!("snapshot answer"));
+        assert_eq!(
+            materialized[2]["content"],
+            json!(format!("{summary_prefix}\nsnapshot summary"))
+        );
+        assert_eq!(materialized[3]["content"], json!("future question"));
+    }
+
+    #[test]
+    fn materialize_history_items_prefers_latest_replacement_history_snapshot() {
+        let summary_prefix = with_language("en-US", || i18n::t("history.compaction_prefix"));
+        let first_summary = json!({
+            "role": "system",
+            "content": "summary-1",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                COMPACTION_REPLACEMENT_HISTORY_META_KEY: [
+                    { "role": "user", "content": "snapshot one" },
+                    { "role": "user", "content": format!("{summary_prefix}\nsummary one") }
+                ]
+            }
+        });
+        let second_summary = json!({
+            "role": "system",
+            "content": "summary-2",
+            "meta": {
+                "type": COMPACTION_META_TYPE,
+                COMPACTION_REPLACEMENT_HISTORY_META_KEY: [
+                    { "role": "assistant", "content": "snapshot two" },
+                    { "role": "user", "content": format!("{summary_prefix}\nsummary two") }
+                ]
+            }
+        });
+        let history = vec![
+            json!({ "role": "user", "content": "old question" }),
+            first_summary,
+            json!({ "role": "user", "content": "middle question" }),
+            second_summary,
+            json!({ "role": "assistant", "content": "future answer" }),
+        ];
+
+        let materialized = materialize_history_items(&history);
+
+        assert_eq!(materialized.len(), 3);
+        assert_eq!(materialized[0]["content"], json!("snapshot two"));
+        assert_eq!(
+            materialized[1]["content"],
+            json!(format!("{summary_prefix}\nsummary two"))
+        );
+        assert_eq!(materialized[2]["content"], json!("future answer"));
     }
 
     #[test]

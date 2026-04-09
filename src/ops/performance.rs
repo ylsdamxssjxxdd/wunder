@@ -14,6 +14,7 @@ use chrono::Local;
 use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -35,6 +36,8 @@ pub struct PerformanceMetricSample {
     pub key: String,
     pub avg_ms: Option<f64>,
     pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -64,7 +67,21 @@ struct PerformanceContext {
 struct MetricSummary {
     avg_ms: Option<f64>,
     ok: bool,
+    details: Option<Value>,
     error: Option<String>,
+}
+
+#[derive(Default)]
+struct StepDurations {
+    total_ms: f64,
+    steps: BTreeMap<String, f64>,
+}
+
+impl StepDurations {
+    fn add_step(&mut self, name: &str, elapsed_ms: f64) {
+        self.total_ms += elapsed_ms;
+        *self.steps.entry(name.to_string()).or_insert(0.0) += elapsed_ms;
+    }
 }
 
 pub async fn run_sample(
@@ -149,6 +166,7 @@ fn build_metric(key: &str, summary: MetricSummary) -> PerformanceMetricSample {
         key: key.to_string(),
         avg_ms: summary.avg_ms,
         ok: summary.ok,
+        details: summary.details,
         error: summary.error,
     }
 }
@@ -182,7 +200,47 @@ fn merge_summaries(first: MetricSummary, second: MetricSummary) -> MetricSummary
     } else {
         first.error.or(second.error)
     };
-    MetricSummary { avg_ms, ok, error }
+    let details = merge_metric_details(first.details, second.details);
+    MetricSummary {
+        avg_ms,
+        ok,
+        details,
+        error,
+    }
+}
+
+fn merge_metric_details(first: Option<Value>, second: Option<Value>) -> Option<Value> {
+    let mut sums = BTreeMap::new();
+    let mut count = 0usize;
+    for details in [first, second] {
+        let Some(Value::Object(map)) = details else {
+            continue;
+        };
+        count += 1;
+        for (key, value) in map {
+            if let Some(number) = value.as_f64() {
+                *sums.entry(key).or_insert(0.0) += number;
+            }
+        }
+    }
+    if count == 0 || sums.is_empty() {
+        None
+    } else {
+        Some(Value::Object(
+            sums.into_iter()
+                .map(|(key, value)| (key, json!(value / count as f64)))
+                .collect(),
+        ))
+    }
+}
+
+fn step_details_value(steps: &StepDurations) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("total_ms".to_string(), json!(steps.total_ms));
+    for (key, value) in &steps.steps {
+        map.insert(key.clone(), json!(value));
+    }
+    Value::Object(map)
 }
 
 fn build_perf_user_record(user_id: &str) -> UserAccountRecord {
@@ -224,7 +282,7 @@ async fn measure_prompt_build(concurrency: usize, context: &PerformanceContext) 
                 None,
             )
             .await;
-        Ok(started.elapsed().as_secs_f64() * 1000.0)
+        Ok((started.elapsed().as_secs_f64() * 1000.0, None))
     })
     .await
 }
@@ -243,7 +301,7 @@ async fn measure_tool_access(concurrency: usize, context: &PerformanceContext) -
             let allowed = compute_allowed_tool_names(&user, &user_context);
             let mut names = allowed.into_iter().collect::<Vec<_>>();
             names.sort();
-            Ok(started.elapsed().as_secs_f64() * 1000.0)
+            Ok((started.elapsed().as_secs_f64() * 1000.0, None))
         }
     })
     .await
@@ -257,6 +315,7 @@ async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -
             return MetricSummary {
                 avg_ms: None,
                 ok: false,
+                details: None,
                 error: Some(err.to_string()),
             }
         }
@@ -272,6 +331,9 @@ async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -
         async move {
             let doc_name = format!("perf_doc_{}", index);
             let started = Instant::now();
+            let mut steps = StepDurations::default();
+
+            let step_started = Instant::now();
             let meta = vector_knowledge::prepare_document(
                 &base,
                 None,
@@ -284,6 +346,12 @@ async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -
             )
             .await
             .map_err(|err| err.to_string())?;
+            steps.add_step(
+                "prepare_document",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+
+            let step_started = Instant::now();
             let content = vector_knowledge::read_vector_document_content(
                 storage.as_ref(),
                 None,
@@ -293,8 +361,21 @@ async fn measure_vector_flow(concurrency: usize, context: &PerformanceContext) -
             )
             .await
             .map_err(|err| err.to_string())?;
+            steps.add_step(
+                "read_document_content",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+
+            let step_started = Instant::now();
             let _ = vector_knowledge::build_chunk_previews(&content, &meta).await;
-            Ok(started.elapsed().as_secs_f64() * 1000.0)
+            steps.add_step(
+                "build_chunk_previews",
+                step_started.elapsed().as_secs_f64() * 1000.0,
+            );
+            Ok((
+                started.elapsed().as_secs_f64() * 1000.0,
+                Some(step_details_value(&steps)),
+            ))
         }
     })
     .await
@@ -310,24 +391,32 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
 
         let content = format!("performance sample {}\nneedle\n", context.run_id);
         let started = Instant::now();
+        let mut steps = StepDurations::default();
+        let step_started = Instant::now();
         run_tool(
             &tool_context,
             "列出文件",
             json!({ "path": dir.clone(), "max_depth": 1 }),
         )
         .await?;
+        steps.add_step("list_files", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
         run_tool(
             &tool_context,
             "写入文件",
             json!({ "path": file_path.clone(), "content": content }),
         )
         .await?;
+        steps.add_step("write_file", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
         run_tool(
             &tool_context,
             "读取文件",
             json!({ "files": [{ "path": file_path.clone() }] }),
         )
         .await?;
+        steps.add_step("read_file", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
         run_tool(
             &tool_context,
             "搜索内容",
@@ -340,6 +429,8 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
             }),
         )
         .await?;
+        steps.add_step("search_content", step_started.elapsed().as_secs_f64() * 1000.0);
+        let step_started = Instant::now();
         run_tool(
             &tool_context,
             "应用补丁",
@@ -350,7 +441,11 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
             }),
         )
         .await?;
-        Ok(started.elapsed().as_secs_f64() * 1000.0)
+        steps.add_step("apply_patch", step_started.elapsed().as_secs_f64() * 1000.0);
+        Ok((
+            started.elapsed().as_secs_f64() * 1000.0,
+            Some(step_details_value(&steps)),
+        ))
     })
     .await
 }
@@ -373,7 +468,7 @@ async fn measure_command_exec(
                 json!({ "content": command, "timeout_s": COMMAND_TIMEOUT_S }),
             )
             .await?;
-            Ok(started.elapsed().as_secs_f64() * 1000.0)
+            Ok((started.elapsed().as_secs_f64() * 1000.0, None))
         }
     })
     .await
@@ -404,7 +499,7 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
             .await
             .map_err(|err| err.to_string())?
             .map_err(|err| err.to_string())?;
-        Ok(started.elapsed().as_secs_f64() * 1000.0)
+        Ok((started.elapsed().as_secs_f64() * 1000.0, None))
     })
     .await
 }
@@ -412,7 +507,7 @@ async fn measure_log_write(concurrency: usize, context: &PerformanceContext) -> 
 async fn run_concurrent<F, Fut>(concurrency: usize, op: F) -> MetricSummary
 where
     F: Fn(usize) -> Fut,
-    Fut: std::future::Future<Output = Result<f64, String>>,
+    Fut: std::future::Future<Output = Result<(f64, Option<Value>), String>>,
 {
     let mut tasks = Vec::with_capacity(concurrency);
     for index in 0..concurrency {
@@ -420,10 +515,22 @@ where
     }
     let results = join_all(tasks).await;
     let mut durations = Vec::new();
+    let mut detail_sums: BTreeMap<String, f64> = BTreeMap::new();
+    let mut detail_count = 0usize;
     let mut error = None;
     for result in results {
         match result {
-            Ok(value) => durations.push(value),
+            Ok((value, detail)) => {
+                durations.push(value);
+                if let Some(Value::Object(map)) = detail {
+                    detail_count += 1;
+                    for (key, value) in map {
+                        if let Some(number) = value.as_f64() {
+                            *detail_sums.entry(key).or_insert(0.0) += number;
+                        }
+                    }
+                }
+            }
             Err(message) => {
                 if error.is_none() {
                     error = Some(message);
@@ -439,6 +546,16 @@ where
     MetricSummary {
         avg_ms,
         ok: error.is_none(),
+        details: if detail_count == 0 || detail_sums.is_empty() {
+            None
+        } else {
+            Some(Value::Object(
+                detail_sums
+                    .into_iter()
+                    .map(|(key, value)| (key, json!(value / detail_count as f64)))
+                    .collect(),
+            ))
+        },
         error,
     }
 }

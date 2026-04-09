@@ -7,24 +7,50 @@ export const resolvePreferredBeeroomDispatchSessionId = (options: {
   previousTargetAgentId: string;
   activeSessionId: string;
   primarySessionId: string;
+  hasExplicitPrimarySession?: boolean;
 }) => {
   const targetAgentId = String(options.targetAgentId || '').trim();
   const previousSessionId = String(options.previousSessionId || '').trim();
   const previousTargetAgentId = String(options.previousTargetAgentId || '').trim();
   const activeSessionId = String(options.activeSessionId || '').trim();
   const primarySessionId = String(options.primarySessionId || '').trim();
+  const hasExplicitPrimarySession = options.hasExplicitPrimarySession === true;
   if (!targetAgentId) return '';
   if (options.targetRole === 'mother') {
-    return (
-      primarySessionId ||
-      activeSessionId ||
-      (previousTargetAgentId === targetAgentId ? previousSessionId : '')
-    );
+    if (hasExplicitPrimarySession && primarySessionId) {
+      return primarySessionId;
+    }
+    if (previousSessionId && previousTargetAgentId === targetAgentId) {
+      return previousSessionId;
+    }
+    return activeSessionId || primarySessionId;
   }
   if (previousSessionId && previousTargetAgentId === targetAgentId) {
     return previousSessionId;
   }
   return activeSessionId || primarySessionId;
+};
+
+export const resolveNextBeeroomMotherDispatchSessionId = (options: {
+  motherAgentId: string;
+  currentSessionId: string;
+  currentSessionAgentId: string;
+  explicitPrimarySessionId: string;
+  fallbackPrimarySessionId: string;
+}) => {
+  const motherAgentId = String(options.motherAgentId || '').trim();
+  const currentSessionId = String(options.currentSessionId || '').trim();
+  const currentSessionAgentId = String(options.currentSessionAgentId || '').trim();
+  const explicitPrimarySessionId = String(options.explicitPrimarySessionId || '').trim();
+  const fallbackPrimarySessionId = String(options.fallbackPrimarySessionId || '').trim();
+  if (!motherAgentId) return '';
+  if (explicitPrimarySessionId) {
+    return explicitPrimarySessionId;
+  }
+  if (currentSessionId && currentSessionAgentId === motherAgentId) {
+    return currentSessionId;
+  }
+  return fallbackPrimarySessionId;
 };
 
 export const shouldPreserveBeeroomDispatchPreviewOnSyncError = (options: {

@@ -234,15 +234,19 @@ const resolveMessageIndex = (message: MessageLike, allMessages: MessageLike[]): 
   const createdAt = String(message?.created_at || '');
   const streamEventId = String(message?.stream_event_id || '');
   const streamRound = String(message?.stream_round || '');
-  return allMessages.findIndex((item) => {
-    if (!item || typeof item !== 'object') return false;
-    return (
+  for (let index = allMessages.length - 1; index >= 0; index -= 1) {
+    const item = allMessages[index];
+    if (!item || typeof item !== 'object') continue;
+    if (
       String(item?.role || '') === role &&
       String(item?.created_at || '') === createdAt &&
       String(item?.stream_event_id || '') === streamEventId &&
       String(item?.stream_round || '') === streamRound
-    );
-  });
+    ) {
+      return index;
+    }
+  }
+  return -1;
 };
 
 const hasConversationCompactionRunning = (
@@ -436,7 +440,8 @@ export const buildAssistantMessageStatsEntries = (
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls && !hasSpeed) {
+  const hasQuota = Number.isFinite(Number(stats?.quotaConsumed)) && Number(stats.quotaConsumed) > 0;
+  if (!hasUsage && !hasDuration && !hasToolCalls && !hasSpeed && !hasQuota) {
     return statusEntry ? [statusEntry] : [];
   }
   const entries: MessageStatsEntry[] = [];
@@ -452,7 +457,8 @@ export const buildAssistantMessageStatsEntries = (
       value: formatCount(contextTokens),
       kind: 'metric'
     },
-    { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' }
+    { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' },
+    { key: 'quota', label: t('chat.stats.quota'), value: formatCount(stats?.quotaConsumed), kind: 'metric' }
   );
   return entries;
 };

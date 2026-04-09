@@ -1,6 +1,7 @@
 // 调度常量：统一历史压缩、SSE 与会话锁的关键参数。
 pub const OBSERVATION_PREFIX: &str = "tool_response: ";
 pub const COMPACTION_META_TYPE: &str = "compaction_summary";
+pub const COMPACTION_REPLACEMENT_HISTORY_META_KEY: &str = "replacement_history";
 pub const COMPACTION_RATIO: f64 = 0.9;
 pub const COMPACTION_HISTORY_RATIO: f64 = 0.9;
 pub const COMPACTION_OUTPUT_RESERVE: i64 = 1024;

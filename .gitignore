@@ -74,3 +74,6 @@ target_codex_check
 target_codex_b3
 config/preset_worker_cards
 .wunder_perf_probe*
+.sync_probe*
+.replace_probe*
+.rename_only_probe*

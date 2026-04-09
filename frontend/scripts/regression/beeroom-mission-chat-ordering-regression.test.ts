@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   BEEROOM_SUBAGENT_REPLY_SORT_ORDER,
   BEEROOM_SUBAGENT_REQUEST_SORT_ORDER,
+  collapseMissionChatAssistantTurns,
   compareMissionChatMessages,
   type MissionChatMessage
 } from '../../src/components/beeroom/beeroomCanvasChatModel';
@@ -53,5 +54,50 @@ test('subagent request stays before child reply and final assistant even when ti
   assert.deepEqual(
     messages.map((message) => message.key),
     ['subagent-request', 'subagent-reply', 'assistant-final']
+  );
+});
+
+test('dispatch chat keeps only the final assistant reply for each user turn', () => {
+  const messages = collapseMissionChatAssistantTurns([
+    buildMessage({
+      key: 'user-1',
+      senderName: '用户',
+      body: '第一问',
+      time: 10,
+      tone: 'user'
+    }),
+    buildMessage({
+      key: 'assistant-1-mid',
+      senderName: '默认智能体',
+      body: '中间回复',
+      time: 11,
+      tone: 'mother'
+    }),
+    buildMessage({
+      key: 'assistant-1-final',
+      senderName: '默认智能体',
+      body: '最终回复',
+      time: 12,
+      tone: 'mother'
+    }),
+    buildMessage({
+      key: 'user-2',
+      senderName: '用户',
+      body: '第二问',
+      time: 20,
+      tone: 'user'
+    }),
+    buildMessage({
+      key: 'assistant-2-final',
+      senderName: '默认智能体',
+      body: '第二次最终回复',
+      time: 21,
+      tone: 'mother'
+    })
+  ]);
+
+  assert.deepEqual(
+    messages.map((message) => message.key),
+    ['user-1', 'assistant-1-final', 'user-2', 'assistant-2-final']
   );
 });

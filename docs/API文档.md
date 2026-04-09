@@ -1328,6 +1328,7 @@
   - `message`：提示信息
 - 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
 - 说明：压缩重建默认保留“最近用户消息窗口（最多 20k token，按 token 窗口而非固定轮次）+ 压缩摘要 + 当前用户消息”；`compaction` 事件会额外包含 `recent_user_messages_retained`、`recent_user_tokens_retained` 与 `recent_user_window_token_limit` 字段。
+- 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count` 与 `replacement_history_tokens`，用于核对已提交的压缩基线。
 - 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
 
 ### 4.1.11 `/wunder/admin/monitor/{session_id}`
@@ -2443,7 +2444,8 @@
   - `debug_payload?`：可选，兼容 `debugPayload`，开启后会把压缩摘要阶段的模型请求结构体写入调试事件。
 - 行为：
   - 接口命中后立即返回 accepted，不再阻塞等待压缩完成。
-  - 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。
+- 后端会将这次手动压缩登记为一个真实的独立运行轮次，并持续写入 `thread_status`、`progress`、`compaction`、`context_usage`、`turn_terminal` 等事件。
+- 压缩摘要消息的 `meta` 现在会额外持久化 `compaction_id` 与 `replacement_history`；后续普通请求与会话回放都会优先基于这份已提交的 `replacement_history`，而不是再次临时重建一套近似上下文。
   - 刷新页面后，前端应通过会话事件与 runtime 快照恢复“压缩中/已完成/失败”状态，而不是依赖本地临时气泡。
 - 返回：
   - `data.accepted`：固定为 `true`

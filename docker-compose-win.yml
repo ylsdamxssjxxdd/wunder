@@ -52,6 +52,7 @@ services:
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - WUNDER_LOG_COLOR=${WUNDER_LOG_COLOR:-always}
+      - WUNDER_ATOMIC_WRITE_MODE=${WUNDER_ATOMIC_WRITE_MODE:-relaxed}
       - FONTCONFIG_FILE=/app/config/fonts.conf
       - XDG_CACHE_HOME=/workspaces/.cache
       - MATPLOTLIBRC=/app/config/matplotlibrc
@@ -92,6 +93,7 @@ services:
       - NODE_PATH=${NODE_PATH:-/usr/lib/node_modules:/usr/local/lib/node_modules}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
+      - WUNDER_ATOMIC_WRITE_MODE=${WUNDER_ATOMIC_WRITE_MODE:-relaxed}
       - WUNDER_SERVER_MODE=sandbox
       - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
       - WUNDER_WEAVIATE_URL=${WUNDER_WEAVIATE_URL:-http://wunder-weaviate:8080}

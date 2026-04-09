@@ -17,7 +17,7 @@
       </summary>
 
       <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
-        <div v-if="entries.length === 0 && pendingPlaceholder" class="tool-workflow-placeholder">
+        <div v-if="displayEntries.length === 0 && pendingPlaceholder" class="tool-workflow-placeholder">
           <div class="tool-workflow-placeholder-head">
             <span class="tool-workflow-placeholder-lamp" aria-hidden="true"></span>
             <div class="tool-workflow-placeholder-copy">
@@ -26,10 +26,10 @@
             </div>
           </div>
         </div>
-        <div v-else-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
+        <div v-else-if="displayEntries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
 
         <details
-          v-for="entry in entries"
+          v-for="entry in displayEntries"
           :key="entry.key"
           class="tool-workflow-entry"
           :open="expandedKeys.has(entry.key)"
@@ -3219,22 +3219,6 @@ watch(
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
-    const latestLiveEntry = findLatestLiveEntry(nextEntries);
-    if (
-      latestLiveEntry
-      && !nextExpanded.has(latestLiveEntry.key)
-      && !nextUserCollapsed.has(latestLiveEntry.key)
-    ) {
-      nextExpanded.add(latestLiveEntry.key);
-      programmaticEntryToggleKeys.add(latestLiveEntry.key);
-      if (isChatDebugEnabled()) {
-        chatDebugLog('messenger.workflow-shell', 'auto-expand-entry', {
-          key: latestLiveEntry.key,
-          status: latestLiveEntry.status,
-          entryCount: nextEntries.length
-        });
-      }
-    }
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
       syncStreamAutoStick();
@@ -3279,7 +3263,9 @@ const handleEntryToggle = (key: string, event: Event) => {
   });
 };
 
-const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
+const latestEntry = computed(() =>
+  displayEntries.value.length > 0 ? displayEntries.value[displayEntries.value.length - 1] : null
+);
 const pendingPlaceholder = computed(() =>
   (void props.renderVersion, props.visible && props.loading && entries.value.length === 0)
     ? resolveWorkflowPendingPlaceholder(props.items)
@@ -3304,7 +3290,13 @@ const pendingPlaceholderDetail = computed(() => {
     ? t('chat.toolWorkflow.pendingCompactionDetail')
     : t('chat.toolWorkflow.pendingToolDetail');
 });
-const shouldRender = computed(() => props.visible && (entries.value.length > 0 || Boolean(pendingPlaceholder.value)));
+const pendingEntry = computed<ToolEntryView | null>(() =>
+  entries.value.length === 0 ? buildPendingEntryView(pendingPlaceholder.value) : null
+);
+const displayEntries = computed<ToolEntryView[]>(() =>
+  entries.value.length > 0 ? entries.value : pendingEntry.value ? [pendingEntry.value] : []
+);
+const shouldRender = computed(() => props.visible && displayEntries.value.length > 0);
 
 const buildUnparsedWorkflowItemSamples = () => {
   if (!Array.isArray(props.items) || props.items.length === 0) {
@@ -3354,6 +3346,37 @@ const buildWorkflowDebugSnapshot = () => {
   };
 };
 
+const buildPendingEntryView = (
+  placeholder: { kind: 'tool' | 'compaction'; toolName: string; eventType: string } | null
+): ToolEntryView | null => {
+  if (!placeholder) return null;
+  const toolName = String(placeholder.toolName || '').trim();
+  const isCompaction = placeholder.kind === 'compaction';
+  const summaryTitle = isCompaction
+    ? t('chat.toolWorkflow.pendingCompaction')
+    : toolName
+      ? t('chat.workflow.toolCall', { tool: toolName })
+      : t('chat.toolWorkflow.pendingTool');
+  return {
+    key: `pending:${placeholder.kind}:${toolName || placeholder.eventType || 'unknown'}`,
+    toolLabel: isCompaction ? t('chat.toolWorkflow.pendingCompaction') : toolName || t('chat.toolWorkflow.pendingTool'),
+    summaryBrief: summaryTitle,
+    summaryTitle,
+    toolCallRawTitle: summaryTitle,
+    toolIconClass: resolveToolIconClass(toolName),
+    isCompaction,
+    status: 'loading',
+    durationLabel: '',
+    sections: [
+      buildEmptySection(
+        'pending-detail',
+        t('chat.toolWorkflow.detailTitle'),
+        isCompaction ? t('chat.toolWorkflow.pendingCompactionDetail') : t('chat.toolWorkflow.pendingToolDetail')
+      )
+    ]
+  };
+};
+
 watch(
   () => {
     if (!isChatDebugEnabled()) return 'disabled';
@@ -3387,27 +3410,6 @@ watch(
   { immediate: true, flush: 'post' }
 );
 
-const openWorkflowShell = (reason: string) => {
-  const element = workflowRef.value;
-  if (!element || element.open) return;
-  workflowToggleProgrammatic = true;
-  workflowUserCollapsed.value = false;
-  if (isChatDebugEnabled()) {
-    chatDebugLog('messenger.workflow-shell', 'auto-open', {
-      reason,
-      entryCount: entries.value.length,
-      loading: Boolean(props.loading)
-    });
-  }
-  element.open = true;
-  void nextTick(() => {
-    if (shouldAutoScrollWorkflow()) {
-      scrollWorkflowToBottom();
-    }
-    scheduleWorkflowLayoutChange();
-  });
-};
-
 watch(
   () => {
     if (!isChatDebugEnabled()) return 'disabled';
@@ -3415,7 +3417,7 @@ watch(
       Boolean(props.visible),
       Boolean(props.loading),
       Array.isArray(props.items) ? props.items.length : 0,
-      entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
+      displayEntries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
       pendingPlaceholder.value?.kind || '',
       pendingPlaceholder.value?.toolName || '',
       shouldRender.value,
@@ -3428,24 +3430,6 @@ watch(
   () => {
     if (!isChatDebugEnabled()) return;
     chatDebugLog('messenger.workflow-shell', 'snapshot-change', buildWorkflowDebugSnapshot());
-  },
-  { immediate: true, flush: 'post' }
-);
-
-watch(
-  () => [
-    shouldRender.value,
-    Boolean(props.visible),
-    Boolean(props.loading),
-    entries.value.map((entry) => `${entry.key}:${entry.status}`).join('|'),
-    pendingPlaceholder.value?.kind || '',
-    workflowUserCollapsed.value
-  ].join('::'),
-  () => {
-    if (!shouldRender.value || !props.visible || workflowUserCollapsed.value) return;
-    const liveEntry = findLatestLiveEntry(entries.value);
-    if (!props.loading && !liveEntry && !pendingPlaceholder.value) return;
-    openWorkflowShell(liveEntry ? 'live-entry' : pendingPlaceholder.value ? 'pending-placeholder' : 'loading');
   },
   { immediate: true, flush: 'post' }
 );

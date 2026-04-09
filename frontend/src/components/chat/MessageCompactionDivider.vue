@@ -115,7 +115,7 @@ const transitionLabel = computed(() => {
     detail.final_context_tokens
   );
   if (before === null || after === null) return '';
-  return `${formatTokenCount(before)} -> ${formatTokenCount(after)}`;
+  return `${formatTokenCount(before)} -> ${formatTokenCount(after)} tokens`;
 });
 
 const label = computed(() => {

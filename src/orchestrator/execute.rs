@@ -483,7 +483,7 @@ impl Orchestrator {
                         adaptive_recovery_limit_hint,
                     ),
                 );
-                messages = self
+                let compaction_result = self
                     .maybe_compact_messages(
                         &config,
                         &compaction_llm_config,
@@ -503,6 +503,7 @@ impl Orchestrator {
                         super::memory::CompactionRunMode::AutoLoop,
                     )
                     .await?;
+                messages = compaction_result.messages;
                 if force_compaction_on_entry {
                     let _ = self
                         .workspace
@@ -650,7 +651,7 @@ impl Orchestrator {
                                     adaptive_recovery_limit_hint,
                                 ),
                             );
-                            messages = self
+                            let compaction_result = self
                                 .maybe_compact_messages(
                                     &config,
                                     &compaction_llm_config,
@@ -670,6 +671,9 @@ impl Orchestrator {
                                     super::memory::CompactionRunMode::OverflowRecovery,
                                 )
                                 .await?;
+                            let overflow_recovery_compaction_id =
+                                compaction_result.compaction_id.clone();
+                            messages = compaction_result.messages;
                             let _ = self
                                 .workspace
                                 .delete_session_context_overflow_async(&user_id, &session_id)
@@ -703,6 +707,10 @@ impl Orchestrator {
                                 {
                                     map.insert("max_context".to_string(), json!(max_context));
                                 }
+                                super::memory::insert_compaction_id(
+                                    map,
+                                    overflow_recovery_compaction_id.as_deref(),
+                                );
                                 round_info.insert_into(map);
                             }
                             emitter.emit("compaction", compaction_payload).await;

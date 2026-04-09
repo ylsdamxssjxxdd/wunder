@@ -13,6 +13,7 @@ const COMPACTION_RETAINED_MESSAGE_MAX_TOKENS: i64 = 1_024;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
     "compaction_skip_persist_current_user";
+const COMPACTION_INFLIGHT_CURRENT_USER_META_KEY: &str = "compaction_inflight_current_user";
 const COMPACTION_SUMMARY_REASONING_EFFORT: &str = "none";
 const COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS: i64 = 256;
 const COMPACTION_SUMMARY_TOOL_CALL_MAX_TOKENS: i64 = 96;
@@ -154,10 +155,55 @@ fn insert_compaction_trigger_mode(
         .or_insert_with(|| Value::String(trigger_mode.to_string()));
 }
 
+pub(super) fn insert_compaction_id(
+    payload: &mut serde_json::Map<String, Value>,
+    compaction_id: Option<&str>,
+) {
+    let Some(compaction_id) = compaction_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    payload
+        .entry("compaction_id".to_string())
+        .or_insert_with(|| Value::String(compaction_id.to_string()));
+}
+
+fn new_compaction_id(run_mode: CompactionRunMode) -> String {
+    format!(
+        "cmp_{}_{}",
+        run_mode.trigger_mode(),
+        Uuid::new_v4().simple()
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct CompactionBoundarySelection {
     boundary_index: Option<usize>,
     boundary_ts_override: Option<f64>,
+}
+
+#[derive(Debug)]
+pub(super) struct CompactionResult {
+    pub(super) messages: Vec<Value>,
+    pub(super) compaction_id: Option<String>,
+}
+
+impl CompactionResult {
+    fn unchanged(messages: Vec<Value>) -> Self {
+        Self {
+            messages,
+            compaction_id: None,
+        }
+    }
+
+    fn compacted(messages: Vec<Value>, compaction_id: String) -> Self {
+        Self {
+            messages,
+            compaction_id: Some(compaction_id),
+        }
+    }
 }
 
 impl Orchestrator {
@@ -247,7 +293,7 @@ impl Orchestrator {
         force: bool,
         exclude_current_user: bool,
         run_mode: CompactionRunMode,
-    ) -> Result<Vec<Value>, OrchestratorError> {
+    ) -> Result<CompactionResult, OrchestratorError> {
         let compaction_profile = CompactionExecutionProfile::new(run_mode);
         let trigger_mode = Some(compaction_profile.trigger_mode());
         let request_overhead_tokens = request_overhead_tokens.max(0);
@@ -260,7 +306,7 @@ impl Orchestrator {
         );
         let Some(limit) = resolve_compaction_limit(llm_config, projected_request_tokens, force)
         else {
-            return Ok(messages);
+            return Ok(CompactionResult::unchanged(messages));
         };
         let message_budget = resolve_message_budget(limit, request_overhead_tokens);
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
@@ -298,8 +344,10 @@ impl Orchestrator {
         let total_tokens = projected_request_tokens;
         let history_usage = context_tokens;
         if !should_compact {
-            return Ok(messages);
+            return Ok(CompactionResult::unchanged(messages));
         }
+        let compaction_id = new_compaction_id(compaction_profile.run_mode);
+        let compaction_id_ref = Some(compaction_id.as_str());
 
         let configured_reset_mode =
             CompactionResetMode::from_config(llm_config.history_compaction_reset.as_deref());
@@ -323,6 +371,7 @@ impl Orchestrator {
             if max_context > 0 {
                 map.insert("max_context".to_string(), json!(max_context));
             }
+            insert_compaction_id(map, compaction_id_ref);
             insert_compaction_trigger_mode(map, trigger_mode);
             compaction_round.insert_into(map);
         }
@@ -456,6 +505,7 @@ impl Orchestrator {
                     if max_context > 0 {
                         map.insert("max_context".to_string(), json!(max_context));
                     }
+                    insert_compaction_id(map, compaction_id_ref);
                     insert_compaction_trigger_mode(map, trigger_mode);
                     compaction_round.insert_into(map);
                 }
@@ -491,15 +541,19 @@ impl Orchestrator {
                 if max_context > 0 {
                     map.insert("max_context".to_string(), json!(max_context));
                 }
+                insert_compaction_id(map, compaction_id_ref);
                 insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
             emitter.emit("compaction", compaction_payload).await;
-            return Ok(if guard_stats.applied {
-                guarded_messages
-            } else {
-                messages
-            });
+            return Ok(CompactionResult::compacted(
+                if guard_stats.applied {
+                    guarded_messages
+                } else {
+                    messages
+                },
+                compaction_id,
+            ));
         }
 
         let compaction_prompt = HistoryManager::load_compaction_prompt();
@@ -598,6 +652,7 @@ impl Orchestrator {
             })
         };
         if let Value::Object(ref mut map) = request_payload {
+            insert_compaction_id(map, compaction_id_ref);
             insert_compaction_trigger_mode(map, trigger_mode);
             compaction_round.insert_into(map);
         }
@@ -733,6 +788,7 @@ impl Orchestrator {
                 if max_context > 0 {
                     map.insert("max_context".to_string(), json!(max_context));
                 }
+                insert_compaction_id(map, compaction_id_ref);
                 if let Some(reason) = summary_fallback_reason {
                     map.insert(
                         "summary_fallback_reason".to_string(),
@@ -758,11 +814,14 @@ impl Orchestrator {
                 compaction_round.insert_into(map);
             }
             emitter.emit("compaction", compaction_payload).await;
-            return Ok(if guard_stats.applied {
-                guarded_messages
-            } else {
-                messages
-            });
+            return Ok(CompactionResult::compacted(
+                if guard_stats.applied {
+                    guarded_messages
+                } else {
+                    messages
+                },
+                compaction_id,
+            ));
         };
         let retained_history_edges = build_retained_compaction_edges(
             &history_items,
@@ -837,14 +896,71 @@ impl Orchestrator {
             "purpose": "compaction_summary",
         });
         if let Value::Object(ref mut map) = response_payload {
+            insert_compaction_id(map, compaction_id_ref);
             compaction_round.insert_into(map);
         }
         emitter.emit("llm_response", response_payload).await;
+
+        let mut current_user_message_for_history_trimmed = false;
+        let current_user_message_for_request = current_user_message.as_ref().map(|message| {
+            let mut candidate =
+                if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
+                    current_user_message_for_history_trimmed = true;
+                    trimmed
+                } else {
+                    message.clone()
+                };
+            mark_current_user_message_inflight(&mut candidate);
+            if reset_mode.skip_persist_current_user() {
+                mark_current_user_message_skip_persist(&mut candidate);
+            }
+            candidate
+        });
+
+        let mut rebuilt = Vec::new();
+        if let Some(system_message) = replay_system_message {
+            rebuilt.push(system_message);
+        }
+        rebuilt.extend(retained_source_edges.head.messages.clone());
+        rebuilt.push(json!({ "role": "user", "content": summary_text }));
+        rebuilt.extend(recent_user_messages);
+        rebuilt.extend(retained_source_edges.tail.messages.clone());
+        if let Some(current_user_message) = current_user_message_for_request {
+            rebuilt.push(current_user_message);
+        } else if !question_text.is_empty() {
+            let mut current_user_placeholder = json!({ "role": "user", "content": question_text });
+            mark_current_user_message_inflight(&mut current_user_placeholder);
+            if reset_mode.skip_persist_current_user() {
+                mark_current_user_message_skip_persist(&mut current_user_placeholder);
+            }
+            rebuilt.push(current_user_placeholder);
+        }
+        let mut rebuilt = self.shrink_messages_to_limit(rebuilt, message_budget);
+        let guard_stats = apply_rebuilt_context_guard(
+            &mut rebuilt,
+            message_budget,
+            compaction_profile.prefer_preserving_summary,
+        );
+        let committed_replacement_history =
+            build_committed_replacement_history_from_rebuilt(&rebuilt);
+        clear_compaction_inflight_markers(&mut rebuilt);
+        let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
+        let rebuilt_request_tokens = rebuilt_tokens.saturating_add(request_overhead_tokens);
+        let committed_replacement_history_tokens =
+            estimate_messages_tokens(&committed_replacement_history);
 
         let mut meta = serde_json::Map::new();
         meta.insert(
             "type".to_string(),
             Value::String(COMPACTION_META_TYPE.to_string()),
+        );
+        meta.insert(
+            "compaction_id".to_string(),
+            Value::String(compaction_id.clone()),
+        );
+        meta.insert(
+            COMPACTION_REPLACEMENT_HISTORY_META_KEY.to_string(),
+            Value::Array(committed_replacement_history.clone()),
         );
         if let Some(value) = compacted_until_ts {
             meta.insert("compacted_until_ts".to_string(), json!(value));
@@ -879,43 +995,6 @@ impl Orchestrator {
             None,
         );
 
-        let mut current_user_message_for_history_trimmed = false;
-        let current_user_message_for_history = current_user_message.as_ref().map(|message| {
-            let mut candidate =
-                if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
-                    current_user_message_for_history_trimmed = true;
-                    trimmed
-                } else {
-                    message.clone()
-                };
-            if reset_mode.skip_persist_current_user() {
-                mark_current_user_message_skip_persist(&mut candidate);
-            }
-            candidate
-        });
-
-        let mut rebuilt = Vec::new();
-        if let Some(system_message) = replay_system_message {
-            rebuilt.push(system_message);
-        }
-        rebuilt.extend(retained_source_edges.head.messages.clone());
-        rebuilt.push(json!({ "role": "user", "content": summary_text }));
-        rebuilt.extend(recent_user_messages);
-        rebuilt.extend(retained_source_edges.tail.messages.clone());
-        if let Some(current_user_message) = current_user_message_for_history {
-            rebuilt.push(current_user_message);
-        } else if !question_text.is_empty() {
-            rebuilt.push(json!({ "role": "user", "content": question_text }));
-        }
-        let mut rebuilt = self.shrink_messages_to_limit(rebuilt, message_budget);
-        let guard_stats = apply_rebuilt_context_guard(
-            &mut rebuilt,
-            message_budget,
-            compaction_profile.prefer_preserving_summary,
-        );
-        let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
-        let rebuilt_request_tokens = rebuilt_tokens.saturating_add(request_overhead_tokens);
-
         if guard_stats.applied {
             let mut guard_payload = json!({
                 "stage": "context_guard",
@@ -934,6 +1013,7 @@ impl Orchestrator {
                 if max_context > 0 {
                     map.insert("max_context".to_string(), json!(max_context));
                 }
+                insert_compaction_id(map, compaction_id_ref);
                 insert_compaction_trigger_mode(map, trigger_mode);
                 compaction_round.insert_into(map);
             }
@@ -1022,6 +1102,14 @@ impl Orchestrator {
         compaction_payload_map.insert(
             "summary_tokens".to_string(),
             json!(approx_token_count(&summary_text)),
+        );
+        compaction_payload_map.insert(
+            "replacement_history_message_count".to_string(),
+            json!(committed_replacement_history.len()),
+        );
+        compaction_payload_map.insert(
+            "replacement_history_tokens".to_string(),
+            json!(committed_replacement_history_tokens),
         );
         compaction_payload_map.insert("summary_chars".to_string(), json!(summary_chars));
         compaction_payload_map.insert(
@@ -1132,6 +1220,7 @@ impl Orchestrator {
             if max_context > 0 {
                 map.insert("max_context".to_string(), json!(max_context));
             }
+            insert_compaction_id(map, compaction_id_ref);
             insert_compaction_trigger_mode(map, trigger_mode);
             if let Some(reason) = summary_fallback_reason {
                 map.insert(
@@ -1158,7 +1247,7 @@ impl Orchestrator {
         }
         emitter.emit("compaction", compaction_payload).await;
 
-        Ok(rebuilt)
+        Ok(CompactionResult::compacted(rebuilt, compaction_id))
     }
 
     async fn build_fresh_memory_block_for_compaction(
@@ -1365,7 +1454,7 @@ impl Orchestrator {
             )
             .await
         {
-            Ok(messages) => messages,
+            Ok(result) => result.messages,
             Err(err) => {
                 self.emit_manual_compaction_failure(&emitter, manual_round_info, &err)
                     .await;
@@ -3549,6 +3638,66 @@ fn mark_current_user_message_skip_persist(message: &mut Value) {
     );
 }
 
+fn mark_current_user_message_inflight(message: &mut Value) {
+    let Some(map) = message.as_object_mut() else {
+        return;
+    };
+    let meta = map
+        .entry("meta".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let Some(meta_obj) = meta.as_object_mut() else {
+        return;
+    };
+    meta_obj.insert(
+        COMPACTION_INFLIGHT_CURRENT_USER_META_KEY.to_string(),
+        Value::Bool(true),
+    );
+}
+
+fn is_compaction_inflight_current_user_message(message: &Value) -> bool {
+    message
+        .get("meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get(COMPACTION_INFLIGHT_CURRENT_USER_META_KEY))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn clear_compaction_inflight_current_user_marker(message: &mut Value) {
+    let Some(map) = message.as_object_mut() else {
+        return;
+    };
+    let Some(meta_obj) = map.get_mut("meta").and_then(Value::as_object_mut) else {
+        return;
+    };
+    meta_obj.remove(COMPACTION_INFLIGHT_CURRENT_USER_META_KEY);
+    if meta_obj.is_empty() {
+        map.remove("meta");
+    }
+}
+
+fn build_committed_replacement_history_from_rebuilt(messages: &[Value]) -> Vec<Value> {
+    messages
+        .iter()
+        .filter_map(|message| {
+            if message.get("role").and_then(Value::as_str) == Some("system")
+                || is_compaction_inflight_current_user_message(message)
+            {
+                return None;
+            }
+            let mut cloned = message.clone();
+            clear_compaction_inflight_current_user_marker(&mut cloned);
+            Some(cloned)
+        })
+        .collect()
+}
+
+fn clear_compaction_inflight_markers(messages: &mut [Value]) {
+    for message in messages {
+        clear_compaction_inflight_current_user_marker(message);
+    }
+}
+
 fn locate_matching_history_user_index(
     history_items: &[Value],
     question_candidates: &[String],
@@ -4519,6 +4668,30 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(true)
         );
+    }
+
+    #[test]
+    fn test_build_committed_replacement_history_from_rebuilt_strips_system_and_inflight_user() {
+        let mut inflight_user = json!({ "role": "user", "content": "current question" });
+        mark_current_user_message_inflight(&mut inflight_user);
+        let rebuilt = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "assistant", "content": "tail answer" }),
+            json!({
+                "role": "user",
+                "content": format!("{}\nsummary", i18n::t("history.compaction_prefix"))
+            }),
+            inflight_user,
+        ];
+
+        let committed = build_committed_replacement_history_from_rebuilt(&rebuilt);
+
+        assert_eq!(committed.len(), 2);
+        assert_eq!(committed[0]["role"], json!("assistant"));
+        assert_eq!(committed[1]["role"], json!("user"));
+        assert!(committed
+            .iter()
+            .all(|item| !is_compaction_inflight_current_user_message(item)));
     }
 
     #[test]
