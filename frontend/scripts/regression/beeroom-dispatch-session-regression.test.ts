@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   resolveNextBeeroomMotherDispatchSessionId,
   resolvePreferredBeeroomDispatchSessionId,
+  shouldFinishBeeroomTerminalHydration,
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
 
@@ -126,5 +127,35 @@ test('mother reconcile keeps the current mother session until an explicit main t
       fallbackPrimarySessionId: 'sess-main-candidate'
     }),
     'sess-main'
+  );
+});
+
+test('terminal beeroom hydration waits for the expected final reply instead of any assistant signature drift', () => {
+  assert.equal(
+    shouldFinishBeeroomTerminalHydration({
+      expectedReplyText: '最终回复',
+      expectedReplyMatched: false,
+      baselineAssistantSignature: '1|10|k1|中间回复',
+      assistantSignature: '2|12|k2|中间回复'
+    }),
+    false
+  );
+  assert.equal(
+    shouldFinishBeeroomTerminalHydration({
+      expectedReplyText: '最终回复',
+      expectedReplyMatched: true,
+      baselineAssistantSignature: '1|10|k1|中间回复',
+      assistantSignature: '3|15|k3|最终回复'
+    }),
+    true
+  );
+  assert.equal(
+    shouldFinishBeeroomTerminalHydration({
+      expectedReplyText: '',
+      expectedReplyMatched: false,
+      baselineAssistantSignature: '1|10|k1|旧回复',
+      assistantSignature: '2|12|k2|新回复'
+    }),
+    true
   );
 });

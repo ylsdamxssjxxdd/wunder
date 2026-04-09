@@ -529,8 +529,9 @@ const buildSubagentWorkflowLines = (
   visualState: SubagentVisualState,
   t: TranslationFn
 ): BeeroomNodeWorkflowLine[] => {
+  // Subagent workflow items are hydrated lazily and remain structurally compatible here.
   const workflowLines = buildNodeWorkflowPreviewLines(
-    Array.isArray(item.workflowItems) ? item.workflowItems : []
+    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[]
   );
   return workflowLines.length > 0 ? workflowLines : buildSubagentSummaryLines(item, visualState, t);
 };

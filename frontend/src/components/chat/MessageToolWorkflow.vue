@@ -3,6 +3,7 @@
     <details
       ref="workflowRef"
       class="message-tool-workflow"
+      :open="workflowOpen"
       @toggle="handleWorkflowToggle"
     >
       <summary>
@@ -31,6 +32,7 @@
         <details
           v-for="entry in displayEntries"
           :key="entry.key"
+          :ref="(el) => bindEntryDetailRef(entry.key, el)"
           class="tool-workflow-entry"
           :open="expandedKeys.has(entry.key)"
           @toggle="handleEntryToggle(entry.key, $event)"
@@ -245,10 +247,11 @@ const streamFollowState = new Map<string, boolean>();
 const workflowRef = ref<HTMLDetailsElement | null>(null);
 const workflowListRef = ref<HTMLElement | null>(null);
 const workflowFollow = ref(true);
-const workflowUserCollapsed = ref(false);
+const workflowUserCollapsed = ref(true);
 const userCollapsedEntryKeys = ref<Set<string>>(new Set());
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
+const entryDetailRefMap = new Map<string, HTMLDetailsElement>();
 const toolCallDebugHintRef = ref<HTMLElement | null>(null);
 const toolCallDebugHint = ref<ToolCallDebugHintState>({
   visible: false,
@@ -268,6 +271,7 @@ const isNearBottom = (element: HTMLElement, threshold = 20): boolean =>
 const terminalAutoStickMode = computed<TerminalAutoStickMode>(() =>
   normalizeTerminalAutoStickMode(props.terminalAutoStick)
 );
+const workflowOpen = computed(() => !workflowUserCollapsed.value);
 
 const shouldAutoStickStream = (key: string): boolean => {
   const mode = terminalAutoStickMode.value;
@@ -303,6 +307,39 @@ const scheduleWorkflowLayoutChange = () => {
   workflowLayoutFrame = window.requestAnimationFrame(() => {
     workflowLayoutFrame = null;
     emit('layout-change');
+  });
+};
+
+const bindEntryDetailRef = (key: string, element: Element | ComponentPublicInstance | null) => {
+  if (!(element instanceof HTMLDetailsElement)) {
+    entryDetailRefMap.delete(key);
+    return;
+  }
+  entryDetailRefMap.set(key, element);
+};
+
+const syncWorkflowOpenState = () => {
+  const element = workflowRef.value;
+  if (!element) return;
+  const expectedOpen = workflowOpen.value;
+  if (element.open === expectedOpen) return;
+  workflowToggleProgrammatic = true;
+  element.open = expectedOpen;
+};
+
+const syncEntryOpenStates = (validKeys?: Set<string>) => {
+  if (validKeys) {
+    Array.from(entryDetailRefMap.keys()).forEach((key) => {
+      if (!validKeys.has(key)) {
+        entryDetailRefMap.delete(key);
+      }
+    });
+  }
+  entryDetailRefMap.forEach((element, key) => {
+    const expectedOpen = expandedKeys.value.has(key);
+    if (element.open === expectedOpen) return;
+    programmaticEntryToggleKeys.add(key);
+    element.open = expectedOpen;
   });
 };
 
@@ -3221,6 +3258,8 @@ watch(
     });
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
+      syncWorkflowOpenState();
+      syncEntryOpenStates(validKeys);
       syncStreamAutoStick();
       if (shouldAutoScrollWorkflow()) {
         scrollWorkflowToBottom();
@@ -3229,6 +3268,28 @@ watch(
     });
   },
   { immediate: true }
+);
+
+watch(
+  workflowOpen,
+  () => {
+    void nextTick(() => {
+      syncWorkflowOpenState();
+      scheduleWorkflowLayoutChange();
+    });
+  },
+  { immediate: true, flush: 'post' }
+);
+
+watch(
+  () => Array.from(expandedKeys.value).sort().join('::'),
+  () => {
+    void nextTick(() => {
+      syncEntryOpenStates();
+      scheduleWorkflowLayoutChange();
+    });
+  },
+  { immediate: true, flush: 'post' }
 );
 
 const handleEntryToggle = (key: string, event: Event) => {
@@ -3436,6 +3497,7 @@ watch(
 
 onBeforeUnmount(() => {
   hideToolCallDebugHint();
+  entryDetailRefMap.clear();
   if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {
     window.cancelAnimationFrame(workflowLayoutFrame);
     workflowLayoutFrame = null;

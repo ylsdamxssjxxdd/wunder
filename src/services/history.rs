@@ -500,7 +500,9 @@ impl FilteredHistoryItems {
     }
 }
 
-fn extract_retained_summary_index(item: Option<&Value>, key: &str) -> Option<usize> {
+// Legacy compatibility: older compaction summaries may only record retained
+// head/tail indexes instead of a committed replacement_history snapshot.
+fn extract_legacy_retained_summary_index(item: Option<&Value>, key: &str) -> Option<usize> {
     item?.get("meta")?.get(key).and_then(|value| match value {
         Value::Number(num) => num.as_u64().and_then(|value| usize::try_from(value).ok()),
         Value::String(text) => text.trim().parse::<usize>().ok(),
@@ -525,12 +527,14 @@ fn apply_legacy_summary_boundary(
         .collect()
 }
 
-fn split_retained_summary_items(
+fn split_legacy_retained_summary_items(
     active_items: &[Value],
     summary_item: Option<&Value>,
 ) -> Option<(usize, Vec<Value>)> {
-    let head_end = extract_retained_summary_index(summary_item, "retained_head_until_index");
-    let tail_start = extract_retained_summary_index(summary_item, "retained_tail_from_index");
+    let head_end =
+        extract_legacy_retained_summary_index(summary_item, "retained_head_until_index");
+    let tail_start =
+        extract_legacy_retained_summary_index(summary_item, "retained_tail_from_index");
     if head_end.is_none() && tail_start.is_none() {
         return None;
     }
@@ -650,7 +654,7 @@ fn materialize_history_items(history: &[Value]) -> Vec<Value> {
             let summary_message = build_formatted_compaction_summary_message(item);
             let compacted_until_ts = extract_compacted_until_ts(Some(item));
             if let Some((head_len, retained_items)) =
-                split_retained_summary_items(&active_items, Some(item))
+                split_legacy_retained_summary_items(&active_items, Some(item))
             {
                 active_items = retained_items;
                 let insert_index = head_len.min(active_items.len());
@@ -683,7 +687,7 @@ fn filter_history_items(history: &[Value]) -> FilteredHistoryItems {
             summary_item = Some(item.clone());
             compacted_until_ts = extract_compacted_until_ts(Some(item));
             if let Some((head_len, retained_items)) =
-                split_retained_summary_items(&active_items, Some(item))
+                split_legacy_retained_summary_items(&active_items, Some(item))
             {
                 active_items = retained_items;
                 latest_head_len = head_len.min(active_items.len());
@@ -1012,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_history_items_retains_head_and_tail_anchors_around_summary() {
+    fn filter_history_items_retains_legacy_head_and_tail_anchors_around_summary() {
         let summary = json!({
             "role": "user",
             "content": "summary",
@@ -1200,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn build_compaction_candidates_merge_retained_head_and_tail_without_summary() {
+    fn build_compaction_candidates_merge_legacy_retained_head_and_tail_without_summary() {
         let history = vec![
             json!({
                 "role": "user",
@@ -1260,6 +1264,7 @@ mod tests {
             vec![
                 "head question".to_string(),
                 "head answer".to_string(),
+                HistoryManager::format_compaction_summary("summary"),
                 "tail question".to_string(),
                 "tail answer".to_string(),
                 "current question".to_string(),
@@ -1268,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn load_history_messages_orders_retained_head_then_summary_then_tail() {
+    fn load_history_messages_orders_legacy_retained_head_then_summary_then_tail() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("history-retained-head-tail.db");
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));

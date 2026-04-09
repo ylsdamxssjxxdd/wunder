@@ -283,6 +283,7 @@
                       message.manual_compaction_marker === true
                         || message.manualCompactionMarker === true
                     "
+                    :session-busy="activeSessionBusy"
                   />
                 </template>
                 <template v-else>
@@ -290,6 +291,7 @@
                   v-if="message.role === 'assistant' && shouldShowCompactionDivider(message)"
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                   :is-streaming="isAssistantStreaming(message)"
+                  :session-busy="activeSessionBusy"
                 />
                 <div class="message-header">
                   <div class="message-header-left">
@@ -3154,10 +3156,27 @@ const openHistoryDialog = async () => {
   }
 };
 
+const messageStatsNowTick = ref(Date.now());
+let messageStatsTimer: number | null = null;
+
 const buildMessageStatsEntries = (message) =>
-  buildAssistantMessageStatsEntries(message, t, chatStore.messages);
+  (void messageStatsNowTick.value, buildAssistantMessageStatsEntries(message, t, chatStore.messages, messageStatsNowTick.value));
 
 const shouldShowMessageStats = (message) => buildMessageStatsEntries(message).length > 0;
+
+onMounted(() => {
+  if (typeof window === 'undefined' || messageStatsTimer !== null) return;
+  messageStatsTimer = window.setInterval(() => {
+    messageStatsNowTick.value = Date.now();
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined' && messageStatsTimer !== null) {
+    window.clearInterval(messageStatsTimer);
+    messageStatsTimer = null;
+  }
+});
 
 const scrollMessagesToBottom = async () => {
   await nextTick();

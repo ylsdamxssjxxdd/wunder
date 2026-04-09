@@ -27,6 +27,7 @@ mod skill_call;
 mod sleep_tool;
 mod subagent_control;
 mod swarm_realtime;
+mod swarm_tool_error;
 mod swarm_tool_hint;
 mod thread_control_tool;
 pub(crate) mod tool_error;
@@ -116,6 +117,10 @@ use swarm_realtime::{
     apply_session_run_to_swarm_task, emit_swarm_run_started, emit_swarm_run_terminal,
     emit_swarm_task_dispatched, emit_swarm_task_updated, reconcile_swarm_task_from_session_run,
     sync_swarm_run_summary,
+};
+use swarm_tool_error::{
+    agent_swarm_batch_send_example, agent_swarm_send_example, agent_swarm_spawn_example,
+    agent_swarm_wait_example, build_agent_swarm_args_failure,
 };
 use swarm_tool_hint::resolve_swarm_agent_record;
 use tokio::io::AsyncReadExt;
@@ -1878,11 +1883,37 @@ fn is_swarm_task_terminal_status(status: &str) -> bool {
 }
 
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: AgentSwarmControlArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let payload: AgentSwarmControlArgs = match serde_json::from_value(args.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "unknown",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm arguments are invalid: {err}"),
+                "请先提供 action，并只使用 list、status、send、history、spawn、batch_send、wait 之一。",
+                &["action"],
+                json!({ "action": "list" }),
+                args,
+                json!({
+                    "allowed_actions": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
+                }),
+            ));
+        }
+    };
     let action = payload.action.trim();
     if action.is_empty() {
-        return Err(anyhow!("agent_swarm action cannot be empty"));
+        return Ok(build_agent_swarm_args_failure(
+            "unknown",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm action cannot be empty",
+            "请先提供 action，并只使用 list、status、send、history、spawn、batch_send、wait 之一。",
+            &["action"],
+            json!({ "action": "list" }),
+            args,
+            json!({
+                "allowed_actions": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
+            }),
+        ));
     }
     let action_lower = action.to_lowercase();
     match action_lower.as_str() {
@@ -1904,7 +1935,18 @@ async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         "spawn" | "agent_spawn" | "agents_spawn" | "swarm_spawn" => {
             agent_swarm_spawn(context, args).await
         }
-        _ => Err(anyhow!("unknown agent_swarm action: {action}")),
+        _ => Ok(build_agent_swarm_args_failure(
+            action,
+            "TOOL_ARGS_INVALID",
+            format!("unknown agent_swarm action: {action}"),
+            "请改用 list、status、send、history、spawn、batch_send、wait 之一，并严格按对应字段传参。",
+            &["action"],
+            json!({ "action": "list" }),
+            args,
+            json!({
+                "allowed_actions": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
+            }),
+        )),
     }
 }
 
@@ -2037,21 +2079,59 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
 }
 
 async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: AgentSwarmSendArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let payload: AgentSwarmSendArgs = match serde_json::from_value(args.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "send",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm send arguments are invalid: {err}"),
+                "请提供 action=\"send\"，并同时给出非空 message 与 agentId、agentName、sessionKey 三者之一。",
+                &["message", "agentId|agentName|sessionKey"],
+                agent_swarm_send_example(),
+                args,
+                json!({}),
+            ));
+        }
+    };
     let user_id = context.user_id.trim();
     if user_id.is_empty() {
         return Err(anyhow!(i18n::t("error.user_id_required")));
     }
     let message = payload.message.trim().to_string();
     if message.is_empty() {
-        return Err(anyhow!(i18n::t("error.content_required")));
+        return Ok(build_agent_swarm_args_failure(
+            "send",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm send requires non-empty message",
+            "请提供非空 message，并指定 agentId、agentName 或 sessionKey。",
+            &["message"],
+            agent_swarm_send_example(),
+            args,
+            json!({}),
+        ));
     }
     let current_agent_id = current_agent_id(context);
     let include_current = payload.include_current.unwrap_or(false);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let requested_agent_id = normalize_optional_string(payload.agent_id);
     let requested_agent_name = normalize_optional_string(payload.agent_name);
+    let has_session_key = payload
+        .session_key
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty());
+    if requested_agent_id.is_none() && requested_agent_name.is_none() && !has_session_key {
+        return Ok(build_agent_swarm_args_failure(
+            "send",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm send requires agent_id/agent_name or session_id",
+            "请至少提供一个目标字段：agentId、agentName 或 sessionKey，再发送 message。",
+            &["agentId|agentName|sessionKey"],
+            agent_swarm_send_example(),
+            args,
+            json!({}),
+        ));
+    }
     let (target_agent, target_session_id, created_session) = if let Some(session_key) =
         payload.session_key
     {
@@ -2313,10 +2393,32 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
 }
 
 async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: AgentSwarmBatchSendArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let payload: AgentSwarmBatchSendArgs = match serde_json::from_value(args.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "batch_send",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm batch_send arguments are invalid: {err}"),
+                "请提供 action=\"batch_send\" 和非空 tasks；每个 task 都必须指定目标，message 建议在每个 task 内显式给出。",
+                &["tasks"],
+                agent_swarm_batch_send_example(),
+                args,
+                json!({}),
+            ));
+        }
+    };
     if payload.tasks.is_empty() {
-        return Err(anyhow!("agent_swarm batch_send requires non-empty tasks"));
+        return Ok(build_agent_swarm_args_failure(
+            "batch_send",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm batch_send requires non-empty tasks",
+            "请提供非空 tasks。每个 task 至少要指定一个目标字段和一个非空 message。",
+            &["tasks"],
+            agent_swarm_batch_send_example(),
+            args,
+            json!({}),
+        ));
     }
 
     let user_id = context.user_id.trim();
@@ -2331,15 +2433,75 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         .max_parallel_tasks_per_team
         .max(1);
     if payload.tasks.len() > max_tasks {
-        return Err(anyhow!(
-            "agent_swarm batch_send task count {} exceeds max_parallel_tasks_per_team {}",
-            payload.tasks.len(),
-            max_tasks
+        return Ok(build_agent_swarm_args_failure(
+            "batch_send",
+            "TOOL_ARGS_INVALID",
+            format!(
+                "agent_swarm batch_send task count {} exceeds max_parallel_tasks_per_team {}",
+                payload.tasks.len(),
+                max_tasks
+            ),
+            format!("请减少 tasks 数量到 {max_tasks} 个以内，或拆成多次 batch_send。"),
+            &[],
+            agent_swarm_batch_send_example(),
+            args,
+            json!({
+                "max_parallel_tasks_per_team": max_tasks
+            }),
         ));
     }
 
     let shared_message = normalize_optional_string(payload.message.clone());
     let shared_label = normalize_optional_string(payload.label.clone());
+    for (index, task) in payload.tasks.iter().enumerate() {
+        let has_target = normalize_optional_string(task.agent_id.clone()).is_some()
+            || normalize_optional_string(task.agent_name.clone()).is_some()
+            || task
+                .session_key
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
+        if !has_target {
+            return Ok(build_agent_swarm_args_failure(
+                "batch_send",
+                "TOOL_ARGS_MISSING_FIELD",
+                format!(
+                    "agent_swarm batch_send task[{index}] requires agent_id/agent_name or session_id"
+                ),
+                "请在每个 task 内至少提供 agentId、agentName、sessionKey 之一，不要传空对象。",
+                &["tasks[].agentId|agentName|sessionKey"],
+                agent_swarm_batch_send_example(),
+                args,
+                json!({
+                    "task_index": index,
+                    "expected_task_shape": {
+                        "agentName": "政策副手",
+                        "message": "请总结政府退休政策的核心要点。"
+                    }
+                }),
+            ));
+        }
+        let has_message = normalize_optional_string(task.message.clone())
+            .or_else(|| shared_message.clone())
+            .is_some();
+        if !has_message {
+            return Ok(build_agent_swarm_args_failure(
+                "batch_send",
+                "TOOL_ARGS_MISSING_FIELD",
+                format!("agent_swarm batch_send task[{index}] requires message"),
+                "请为每个 task 提供非空 message，或在顶层传入共享 message。最稳妥的写法是每个 task 都显式填写 message。",
+                &["tasks[].message"],
+                agent_swarm_batch_send_example(),
+                args,
+                json!({
+                    "task_index": index,
+                    "expected_task_shape": {
+                        "agentName": "政策副手",
+                        "message": "请总结政府退休政策的核心要点。"
+                    }
+                }),
+            ));
+        }
+    }
     let default_include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
@@ -2811,15 +2973,37 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 }
 
 async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: AgentSwarmWaitArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let payload: AgentSwarmWaitArgs = match serde_json::from_value(args.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "wait",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm wait arguments are invalid: {err}"),
+                "请提供 action=\"wait\"，并传入 runIds 数组或单个 runId。",
+                &["runIds|runId"],
+                agent_swarm_wait_example(),
+                args,
+                json!({}),
+            ));
+        }
+    };
     let mut run_ids = payload.run_ids.unwrap_or_default();
     if let Some(run_id) = payload.run_id {
         run_ids.push(run_id);
     }
     let run_ids = dedupe_non_empty_strings(run_ids);
     if run_ids.is_empty() {
-        return Err(anyhow!("agent_swarm wait requires runIds"));
+        return Ok(build_agent_swarm_args_failure(
+            "wait",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm wait requires runIds",
+            "请传入 runIds 数组或 runId。通常应先从 send/batch_send 的返回结果中复制 run_id 再等待。",
+            &["runIds|runId"],
+            agent_swarm_wait_example(),
+            args,
+            json!({}),
+        ));
     }
     let wait_mode = resolve_swarm_wait_mode(
         payload.wait_seconds,
@@ -3097,8 +3281,21 @@ async fn agent_swarm_history(context: &ToolContext<'_>, args: &Value) -> Result<
 }
 
 async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let payload: SessionSpawnArgs =
-        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let payload: SessionSpawnArgs = match serde_json::from_value(args.clone()) {
+        Ok(payload) => payload,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "spawn",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm spawn arguments are invalid: {err}"),
+                "请提供 action=\"spawn\"、非空 task，以及 agentId 或 agentName。临时子会话请改用 subagent_control.spawn。",
+                &["task", "agentId|agentName"],
+                agent_swarm_spawn_example(),
+                args,
+                json!({}),
+            ));
+        }
+    };
     let SessionSpawnArgs {
         task,
         label,
@@ -3108,8 +3305,32 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         run_timeout_seconds,
         cleanup: _,
     } = payload;
+    if task.trim().is_empty() {
+        return Ok(build_agent_swarm_args_failure(
+            "spawn",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm spawn requires non-empty task",
+            "请提供非空 task；如果是向已存在智能体派发任务，优先写清楚预期产出。",
+            &["task"],
+            agent_swarm_spawn_example(),
+            args,
+            json!({}),
+        ));
+    }
     let requested_agent_id = normalize_optional_string(agent_id);
     let requested_agent_name = normalize_optional_string(agent_name);
+    if requested_agent_id.is_none() && requested_agent_name.is_none() {
+        return Ok(build_agent_swarm_args_failure(
+            "spawn",
+            "TOOL_ARGS_MISSING_FIELD",
+            "agent_swarm spawn requires agent_id/agent_name",
+            "请提供 agentId 或 agentName；如果你想创建临时子会话而不是调用已存在智能体，请改用 subagent_control.spawn。",
+            &["agentId|agentName"],
+            agent_swarm_spawn_example(),
+            args,
+            json!({}),
+        ));
+    }
     let include_current = args
         .get("includeCurrent")
         .or_else(|| args.get("include_current"))
@@ -3126,11 +3347,7 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         requested_agent_id.as_deref(),
         requested_agent_name.as_deref(),
     )?
-    .ok_or_else(|| {
-        anyhow!(
-            "agent_swarm spawn requires agent_id/agent_name; use subagent_control spawn for ad-hoc child sessions"
-        )
-    })?;
+    .ok_or_else(|| anyhow!("agent_swarm spawn target agent not found"))?;
     let mut send_args = json!({
         "agentId": target_agent.agent_id,
         "message": task,
@@ -9510,6 +9727,194 @@ PATCH"#;
         }))
         .expect("parse snake args");
         assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
+    }
+
+    #[tokio::test]
+    async fn agent_swarm_batch_send_missing_message_returns_actionable_failure_and_skips_team_run()
+    {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-batch-send-validation.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let worker_agent = sample_agent_record();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_parent"),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let result = agent_swarm_batch_send(
+            &context,
+            &json!({
+                "action": "batch_send",
+                "tasks": [
+                    { "agentName": "政策副手" }
+                ]
+            }),
+        )
+        .await
+        .expect("batch send result");
+
+        assert_eq!(result.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            result.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("TOOL_ARGS_MISSING_FIELD")
+        );
+        assert_eq!(
+            result.pointer("/data/task_index").and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            result
+                .pointer("/data/example/action")
+                .and_then(Value::as_str),
+            Some("batch_send")
+        );
+        let (runs, total) = storage_backend
+            .list_team_runs("alice", Some("hive_policy"), Some("sess_parent"), 0, 20)
+            .expect("list team runs");
+        assert_eq!(total, 0);
+        assert!(runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_swarm_send_missing_target_returns_actionable_failure() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-send-validation.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_parent"),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend,
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let result = agent_swarm_send(
+            &context,
+            &json!({
+                "action": "send",
+                "message": "请总结政府退休政策的核心要点。"
+            }),
+        )
+        .await
+        .expect("send result");
+
+        assert_eq!(result.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            result.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("TOOL_ARGS_MISSING_FIELD")
+        );
+        assert_eq!(
+            result
+                .pointer("/data/example/agentName")
+                .and_then(Value::as_str),
+            Some("worker_a")
+        );
     }
 
     #[test]

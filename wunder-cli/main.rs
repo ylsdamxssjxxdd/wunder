@@ -6265,7 +6265,6 @@ fn build_cli_llm_model_config(
         stream: None,
         stream_include_usage: None,
         history_compaction_ratio: None,
-        history_compaction_reset: None,
         tool_call_mode: Some("tool_call".to_string()),
         reasoning_effort: None,
         model_type: Some("llm".to_string()),

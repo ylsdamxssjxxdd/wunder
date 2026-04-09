@@ -707,7 +707,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生到已存在智能体)/list(列成员)。",
+                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生到已存在智能体)/list(列成员)。必须显式提供，不要留空。",
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": "目标智能体 ID。"},
@@ -718,7 +718,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agentId/agentName 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
                     "tasks": {
                         "type": "array",
-                        "description": "batch_send 任务列表。",
+                        "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agentId/agentName/sessionKey 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
                         "minItems": 1,
                         "items": {
                             "type": "object",
@@ -779,9 +779,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     }
                 ],
                 "examples": [
-                    {"action": "send", "agentName": "", "message": ""},
-                    {"action": "batch_send", "tasks": [{"agentName": "", "message": ""}]},
-                    {"action": "wait", "runIds": [""]}
+                    {"action": "send", "agentName": "worker_a", "message": "请完成指定任务。"},
+                    {"action": "batch_send", "tasks": [{"agentName": "worker_a", "message": "请完成任务 A。"}, {"agentName": "worker_b", "message": "请完成任务 B。"}]},
+                    {"action": "wait", "runIds": ["run_demo_1"]}
                 ]
             }),
         },

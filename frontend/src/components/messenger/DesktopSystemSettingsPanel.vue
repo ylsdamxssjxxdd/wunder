@@ -307,18 +307,6 @@
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.historyCompactionRatio') }}</span>
               <el-input v-model="selectedModel.history_compaction_ratio" />
             </label>
-            <label class="desktop-system-settings-field">
-              <span class="desktop-system-settings-field-label">{{ t('desktop.system.historyCompactionReset') }}</span>
-              <el-select
-                v-model="selectedModel.history_compaction_reset"
-                class="desktop-system-settings-input"
-                popper-class="desktop-system-settings-popper"
-              >
-                <el-option :label="t('desktop.system.compactionReset.zero')" value="zero" />
-                <el-option :label="t('desktop.system.compactionReset.current')" value="current" />
-                <el-option :label="t('desktop.system.compactionReset.keep')" value="keep" />
-              </el-select>
-            </label>
           </div>
           <div v-else class="desktop-system-settings-section-empty">
             {{ t('desktop.system.sectionLlmOnly') }}
@@ -515,7 +503,6 @@ import {
 type ModelType = 'llm' | 'embedding';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type ReasoningEffort = '' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
-type HistoryCompactionReset = 'zero' | 'current' | 'keep';
 type SelectedModelPreference = {
   key: string;
   modelType: ModelType;
@@ -540,7 +527,6 @@ type ModelRow = {
   tool_call_mode: ToolCallMode;
   reasoning_effort: ReasoningEffort;
   history_compaction_ratio: string;
-  history_compaction_reset: HistoryCompactionReset;
   raw: Record<string, unknown>;
 };
 
@@ -870,13 +856,6 @@ const handleModelSuggestionSelect = (item: { value?: string }) => {
   applyModelPresetContext(current);
 };
 
-const normalizeHistoryCompactionReset = (value: unknown): HistoryCompactionReset => {
-  const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'current') return 'current';
-  if (raw === 'keep') return 'keep';
-  return 'zero';
-};
-
 const FLOAT_INPUT_PRECISION = 7;
 
 const roundFloat = (value: number): number => {
@@ -922,7 +901,6 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
     reasoning_effort: normalizeReasoningEffort(raw.reasoning_effort),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.9),
-    history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
   }));
 
@@ -1024,7 +1002,6 @@ const addModel = (modelType: ModelType = 'llm') => {
     tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
     reasoning_effort: '',
     history_compaction_ratio: modelType === 'llm' ? '0.9' : '',
-    history_compaction_reset: 'zero',
     raw: {}
   };
   modelRows.value.push(row);
@@ -1129,7 +1106,6 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     setText('tool_call_mode', row.tool_call_mode);
     setText('reasoning_effort', normalizeReasoningEffort(row.reasoning_effort));
     setFloat('history_compaction_ratio', row.history_compaction_ratio);
-    setText('history_compaction_reset', normalizeHistoryCompactionReset(row.history_compaction_reset));
   } else {
     delete output.temperature;
     delete output.max_rounds;
@@ -1141,7 +1117,6 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     delete output.tool_call_mode;
     delete output.reasoning_effort;
     delete output.history_compaction_ratio;
-    delete output.history_compaction_reset;
   }
 
   return output;

@@ -91,6 +91,14 @@ type SnapshotAssistantMessage = {
   waiting_updated_at_ms?: number | null;
   waiting_first_output_at_ms?: number | null;
   waiting_phase_first_output_at_ms?: number | null;
+  retry_state?: string;
+  retry_attempt?: number | null;
+  retry_max_attempts?: number | null;
+  retry_delay_s?: number | null;
+  retry_started_at_ms?: number | null;
+  retry_next_attempt_at_ms?: number | null;
+  retry_reason?: string;
+  retry_error?: string;
   workflowItems?: unknown[];
   plan?: unknown;
   questionPanel?: unknown;
@@ -1028,6 +1036,46 @@ const markAssistantWaitingOutputVisible = (message, value = Date.now()) => {
   return millis;
 };
 
+const clearAssistantRetryState = (message) => {
+  if (!message || message.role !== 'assistant') return;
+  delete message.retry_state;
+  delete message.retry_attempt;
+  delete message.retry_max_attempts;
+  delete message.retry_delay_s;
+  delete message.retry_started_at_ms;
+  delete message.retry_next_attempt_at_ms;
+  delete message.retry_reason;
+  delete message.retry_error;
+};
+
+const markAssistantRetryState = (
+  message,
+  options: {
+    attempt?: number | null;
+    maxAttempts?: number | null;
+    delayS?: number | null;
+    startedAtMs?: number | null;
+    reason?: string;
+    error?: string;
+  } = {}
+) => {
+  if (!message || message.role !== 'assistant') return;
+  const startedAtMs = normalizeInteractionTimestamp(options.startedAtMs) ?? Date.now();
+  const attempt = parseOptionalCount(options.attempt);
+  const maxAttempts = parseOptionalCount(options.maxAttempts);
+  const delayS = Number.isFinite(Number(options.delayS)) && Number(options.delayS) > 0
+    ? Number(options.delayS)
+    : null;
+  message.retry_state = 'retrying';
+  message.retry_attempt = attempt;
+  message.retry_max_attempts = maxAttempts;
+  message.retry_delay_s = delayS;
+  message.retry_started_at_ms = startedAtMs;
+  message.retry_next_attempt_at_ms = delayS !== null ? startedAtMs + delayS * 1000 : null;
+  message.retry_reason = String(options.reason || '').trim();
+  message.retry_error = String(options.error || '').trim();
+};
+
 const normalizeHiddenInternalMessage = (value) => Boolean(value);
 
 const resolveGreetingContent = (override) => {
@@ -1436,6 +1484,44 @@ const normalizeSnapshotMessage = (message) => {
     if (waitingPhaseFirstOutputAtMs !== null) {
       base.waiting_phase_first_output_at_ms = waitingPhaseFirstOutputAtMs;
     }
+    const retryState = String(message.retry_state ?? message.retryState ?? '').trim().toLowerCase();
+    if (retryState) {
+      base.retry_state = retryState;
+    }
+    const retryAttempt = parseOptionalCount(message.retry_attempt ?? message.retryAttempt);
+    if (retryAttempt !== null) {
+      base.retry_attempt = retryAttempt;
+    }
+    const retryMaxAttempts = parseOptionalCount(
+      message.retry_max_attempts ?? message.retryMaxAttempts
+    );
+    if (retryMaxAttempts !== null) {
+      base.retry_max_attempts = retryMaxAttempts;
+    }
+    const retryDelaySeconds = Number(message.retry_delay_s ?? message.retryDelayS);
+    if (Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0) {
+      base.retry_delay_s = retryDelaySeconds;
+    }
+    const retryStartedAtMs = normalizeInteractionTimestamp(
+      message.retry_started_at_ms ?? message.retryStartedAtMs
+    );
+    if (retryStartedAtMs !== null) {
+      base.retry_started_at_ms = retryStartedAtMs;
+    }
+    const retryNextAttemptAtMs = normalizeInteractionTimestamp(
+      message.retry_next_attempt_at_ms ?? message.retryNextAttemptAtMs
+    );
+    if (retryNextAttemptAtMs !== null) {
+      base.retry_next_attempt_at_ms = retryNextAttemptAtMs;
+    }
+    const retryReason = String(message.retry_reason ?? message.retryReason ?? '').trim();
+    if (retryReason) {
+      base.retry_reason = retryReason;
+    }
+    const retryError = String(message.retry_error ?? message.retryError ?? '').trim();
+    if (retryError) {
+      base.retry_error = retryError;
+    }
     if (Array.isArray(message.workflowItems) && message.workflowItems.length) {
       base.workflowItems = message.workflowItems;
     }
@@ -1617,6 +1703,14 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   const snapshotWaitingPhaseFirstOutputAtMs = normalizeInteractionTimestamp(
     snapshot.waiting_phase_first_output_at_ms
   );
+  const snapshotRetryState = String(snapshot.retry_state || '').trim().toLowerCase();
+  const snapshotRetryAttempt = parseOptionalCount(snapshot.retry_attempt);
+  const snapshotRetryMaxAttempts = parseOptionalCount(snapshot.retry_max_attempts);
+  const snapshotRetryDelaySeconds = Number(snapshot.retry_delay_s);
+  const snapshotRetryStartedAtMs = normalizeInteractionTimestamp(snapshot.retry_started_at_ms);
+  const snapshotRetryNextAttemptAtMs = normalizeInteractionTimestamp(snapshot.retry_next_attempt_at_ms);
+  const snapshotRetryReason = String(snapshot.retry_reason || '').trim();
+  const snapshotRetryError = String(snapshot.retry_error || '').trim();
   const snapshotManualCompactionMarker = normalizeFlag(
     snapshot.manual_compaction_marker ?? snapshot.manualCompactionMarker
   );
@@ -1641,6 +1735,13 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       snapshotWaitingUpdatedAtMs !== null ||
       snapshotWaitingFirstOutputAtMs !== null ||
       snapshotWaitingPhaseFirstOutputAtMs !== null ||
+      Boolean(snapshotRetryState) ||
+      snapshotRetryAttempt !== null ||
+      snapshotRetryMaxAttempts !== null ||
+      snapshotRetryStartedAtMs !== null ||
+      snapshotRetryNextAttemptAtMs !== null ||
+      Boolean(snapshotRetryReason) ||
+      Boolean(snapshotRetryError) ||
       hasWorkflowItems ||
       hasSnapshotPlan ||
       snapshotRound !== null ||
@@ -1737,6 +1838,36 @@ const mergeSnapshotAssistant = (target, snapshot) => {
         (normalizeInteractionTimestamp(target.waiting_phase_first_output_at_ms) ?? 0)
     ) {
       target.waiting_phase_first_output_at_ms = snapshotWaitingPhaseFirstOutputAtMs;
+    }
+    if (snapshotRetryState) {
+      target.retry_state = snapshotRetryState;
+    }
+    if (snapshotRetryAttempt !== null) {
+      target.retry_attempt = snapshotRetryAttempt;
+    }
+    if (snapshotRetryMaxAttempts !== null) {
+      target.retry_max_attempts = snapshotRetryMaxAttempts;
+    }
+    if (Number.isFinite(snapshotRetryDelaySeconds) && snapshotRetryDelaySeconds > 0) {
+      target.retry_delay_s = snapshotRetryDelaySeconds;
+    }
+    if (
+      snapshotRetryStartedAtMs !== null &&
+      snapshotRetryStartedAtMs >= (normalizeInteractionTimestamp(target.retry_started_at_ms) ?? 0)
+    ) {
+      target.retry_started_at_ms = snapshotRetryStartedAtMs;
+    }
+    if (
+      snapshotRetryNextAttemptAtMs !== null &&
+      snapshotRetryNextAttemptAtMs >= (normalizeInteractionTimestamp(target.retry_next_attempt_at_ms) ?? 0)
+    ) {
+      target.retry_next_attempt_at_ms = snapshotRetryNextAttemptAtMs;
+    }
+    if (snapshotRetryReason) {
+      target.retry_reason = snapshotRetryReason;
+    }
+    if (snapshotRetryError) {
+      target.retry_error = snapshotRetryError;
     }
   }
   if (snapshotStats) {
@@ -4373,6 +4504,7 @@ const clearCompletedAssistantStreamingState = (
     message.workflowStreaming = false;
     message.stream_incomplete = false;
     message.reasoningStreaming = false;
+    clearAssistantRetryState(message);
   });
 };
 
@@ -5350,7 +5482,7 @@ const startSessionWatcher = (store, sessionId) => {
         const processor = createWorkflowProcessor(
           candidate,
           workflowState,
-          () => notifySessionSnapshot(store, key, sessionMessagesRef),
+          (immediate = false) => notifySessionSnapshot(store, key, sessionMessagesRef, immediate),
           {
             streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
             sessionId: key,
@@ -5389,7 +5521,7 @@ const startSessionWatcher = (store, sessionId) => {
     const processor = createWorkflowProcessor(
       assistantMessage,
       workflowState,
-      () => notifySessionSnapshot(store, key, sessionMessagesRef),
+      (immediate = false) => notifySessionSnapshot(store, key, sessionMessagesRef, immediate),
       {
         streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
         sessionId: key,
@@ -7752,9 +7884,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     thinkStreamParser.reset();
   };
 
-  const notifySnapshot = () => {
+  const notifySnapshot = (immediate = false) => {
     if (typeof onSnapshot === 'function') {
-      onSnapshot();
+      onSnapshot(immediate);
     }
   };
 
@@ -7975,6 +8107,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'llm_request': {
         resetAssistantWaitingOutputPhase(assistantMessage, payload?.timestamp ?? data?.timestamp);
+        clearAssistantRetryState(assistantMessage);
         chatDebugLog('chat.llm.request', 'event', {
           sessionId: options.sessionId ?? null,
           round: resolveRound(payload, data),
@@ -8008,6 +8141,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const retryError = String(data?.error ?? payload?.error ?? '').trim();
         const retryDelayRaw = Number(data?.delay_s ?? payload?.delay_s);
         const retryDelay = Number.isFinite(retryDelayRaw) && retryDelayRaw > 0 ? retryDelayRaw : null;
+        markAssistantRetryState(assistantMessage, {
+          attempt,
+          maxAttempts,
+          delayS: retryDelay,
+          startedAtMs: payload?.timestamp ?? data?.timestamp,
+          reason: retryReason,
+          error: retryError
+        });
         assistantMessage.workflowItems.push(
           buildWorkflowItem(
             t('chat.workflow.modelRetry'),
@@ -8023,6 +8164,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             }
           )
         );
+        notifySnapshot(true);
         break;
       }
       case 'knowledge_request': {
@@ -8500,6 +8642,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'llm_output_delta': {
         const round = resolveRound(payload, data);
+        clearAssistantRetryState(assistantMessage);
         if (round !== null) {
           lastRound = round;
           assistantMessage.stream_round = round;
@@ -8555,6 +8698,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'llm_output': {
         const round = resolveRound(payload, data);
+        clearAssistantRetryState(assistantMessage);
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data,
           data?.prefill_duration_s ?? payload?.prefill_duration_s,
@@ -9030,6 +9174,23 @@ const hydrateMessage = (message, workflowState) => {
     waiting_phase_first_output_at_ms: normalizeInteractionTimestamp(
       message?.waiting_phase_first_output_at_ms ?? message?.waitingPhaseFirstOutputAtMs
     ),
+    retry_state: String(message?.retry_state ?? message?.retryState ?? '').trim().toLowerCase(),
+    retry_attempt: parseOptionalCount(message?.retry_attempt ?? message?.retryAttempt),
+    retry_max_attempts: parseOptionalCount(
+      message?.retry_max_attempts ?? message?.retryMaxAttempts
+    ),
+    retry_delay_s: (() => {
+      const retryDelaySeconds = Number(message?.retry_delay_s ?? message?.retryDelayS);
+      return Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0 ? retryDelaySeconds : null;
+    })(),
+    retry_started_at_ms: normalizeInteractionTimestamp(
+      message?.retry_started_at_ms ?? message?.retryStartedAtMs
+    ),
+    retry_next_attempt_at_ms: normalizeInteractionTimestamp(
+      message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs
+    ),
+    retry_reason: String(message?.retry_reason ?? message?.retryReason ?? '').trim(),
+    retry_error: String(message?.retry_error ?? message?.retryError ?? '').trim(),
     hiddenInternal: normalizeHiddenInternalMessage(message?.hiddenInternal),
     manual_compaction_marker: normalizeFlag(
       message?.manual_compaction_marker ?? message?.manualCompactionMarker
@@ -10859,7 +11020,7 @@ export const useChatStore = defineStore('chat', {
       const processor = createWorkflowProcessor(
         assistantMessage,
         workflowState,
-        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
+        (immediate = false) => notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
           sessionId,
@@ -11217,6 +11378,7 @@ export const useChatStore = defineStore('chat', {
           pendingAssistant.reasoningStreaming = false;
           pendingAssistant.stream_incomplete = false;
           pendingAssistant.resume_available = true;
+          clearAssistantRetryState(pendingAssistant);
           if (!pendingAssistant.content) {
             pendingAssistant.content = t('chat.workflow.aborted');
           }
@@ -11246,6 +11408,7 @@ export const useChatStore = defineStore('chat', {
       const perfStreamStart = perfEnabled ? performance.now() : 0;
       message.resume_available = false;
       message.slow_client = false;
+      clearAssistantRetryState(message);
       message.workflowStreaming = true;
       message.stream_incomplete = true;
       resetAssistantWaitingOutputPhase(message);
@@ -11256,7 +11419,7 @@ export const useChatStore = defineStore('chat', {
       const processor = createWorkflowProcessor(
         message,
         workflowState,
-        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
+        (immediate = false) => notifySessionSnapshot(this, sessionId, sessionMessagesRef, immediate),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
           sessionId,

@@ -143,7 +143,6 @@ async fn build_test_context_with_mock_llm_and_tool_mode(
                 stream: Some(false),
                 stream_include_usage: Some(false),
                 history_compaction_ratio: None,
-                history_compaction_reset: None,
                 tool_call_mode: Some(tool_call_mode.clone()),
                 reasoning_effort: None,
                 model_type: None,

@@ -997,15 +997,14 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/reasoning_effort/history_compaction_ratio/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：当检测到模型连接失败、`503 Loading model`、连接拒绝/重置、请求发送失败或超时等 LLM 不可用错误时，编排层会至少按长退避重试 5 次；若最终仍失败，错误码统一返回 `LLM_UNAVAILABLE`。
   - 说明：`provider` 支持预置（`openai_compatible/openai/anthropic/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`）；`openai_compatible` 需显式填写 `base_url`，其余 provider 可省略 `base_url` 自动补齐。
   - 说明：`provider=anthropic` 使用 `/v1/messages` 协议，鉴权头为 `x-api-key`（同时兼容 `Authorization: Bearer`）。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
   - 说明：`history_compaction_ratio` 默认 `0.9`，达到 `max_context * ratio` 后会优先触发预压缩。
-  - 说明：上下文压缩后会固定保留“最开始 2 轮用户轮次”和“最近 2 轮用户轮次”的原始对话锚点，用于让模型继续接续长期任务；这些锚点会做角色归一化、tool/observation 摘要化与 token 裁剪，避免前后保留段过长再次触发连续压缩。
-  - 说明：`history_compaction_reset` 控制的是压缩摘要之外的中间实时窗口：`zero` 不额外回放中间窗口，只保留摘要与前后锚点；`current` 额外保留当前用户问题；`keep` 额外保留前后锚点之间最近用户消息窗口（最多约 20k token），且不会重复回放已落入尾部锚点的轮次。
+  - 说明：当前压缩策略已对齐 Codex，不再支持 `history_compaction_reset`。压缩后统一提交 `replacement_history`，其主体为真实用户消息窗口与一条 `[上下文摘要]` 消息，不再依赖前后锚点与 reset mode。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
   - 说明：`reasoning_effort` 可选 `none|minimal|low|medium|high|xhigh`；留空表示跟随模型默认思考等级。
   - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
@@ -1327,7 +1326,7 @@
   - `ok`：是否成功
   - `message`：提示信息
 - 说明：仅会话空闲时可触发，触发后会向监控事件写入 `compaction` 记录。
-- 说明：压缩重建默认保留“最近用户消息窗口（最多 20k token，按 token 窗口而非固定轮次）+ 压缩摘要 + 当前用户消息”；`compaction` 事件会额外包含 `recent_user_messages_retained`、`recent_user_tokens_retained` 与 `recent_user_window_token_limit` 字段。
+- 说明：压缩重建默认保留“最近用户消息窗口（最多 20k token，按 token 窗口而非固定轮次）+ 压缩摘要 + 当前用户消息”；`compaction` 事件会额外包含 `retained_user_message_count`、`retained_user_tokens` 与 `retained_user_window_token_limit` 字段。
 - 说明：每次压缩都会生成唯一 `compaction_id`，并在 `progress / llm_request / llm_response / compaction` 事件中保持一致；压缩完成事件会额外带上 `replacement_history_message_count` 与 `replacement_history_tokens`，用于核对已提交的压缩基线。
 - 说明：若压缩摘要模型请求失败并回退到本地裁剪摘要，`compaction` 事件会额外附带 `summary_fallback_reason`、`summary_failure_code`、`summary_failure_message` 与 `summary_failure_retryable` 字段，便于区分“摘要请求失败”和“摘要输出为空”。
 

@@ -57,7 +57,6 @@ fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelCon
         stream: Some(false),
         stream_include_usage: Some(false),
         history_compaction_ratio: None,
-        history_compaction_reset: None,
         tool_call_mode: Some("tool_call".to_string()),
         reasoning_effort: None,
         model_type: Some(model_type.to_string()),

@@ -34,7 +34,8 @@ import {
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import {
   resolveNextBeeroomMotherDispatchSessionId,
-  resolvePreferredBeeroomDispatchSessionId
+  resolvePreferredBeeroomDispatchSessionId,
+  shouldFinishBeeroomTerminalHydration
 } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import { useBeeroomDispatchSessionPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
@@ -991,6 +992,38 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return hydrated;
   };
 
+  const collectDispatchSessionMessages = async (
+    sessionId: string,
+    loadOptions: { hydrate?: boolean } = {}
+  ): Promise<MissionChatMessage[]> => {
+    const targetSessionId = String(sessionId || '').trim();
+    if (!targetSessionId) {
+      return [];
+    }
+    ensureDispatchSessionKnown(targetSessionId, false);
+    const collectFromCache = () =>
+      readDispatchSessionMessages(targetSessionId)
+        .filter(
+          (message) =>
+            !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
+        )
+        .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+    const cached = collectFromCache();
+    if (loadOptions.hydrate === false) {
+      return cached;
+    }
+    try {
+      await chatStore.preloadSessionDetail(targetSessionId, { force: true, syncActive: true });
+    } catch (error) {
+      logBeeroomRuntime('collect-dispatch-session-messages:hydrate-error', {
+        sessionId: targetSessionId,
+        error: summarizeDebugError(error)
+      });
+      return cached;
+    }
+    return collectFromCache();
+  };
+
   const hydrateTerminalDispatchSessionMessages = async (options: {
     sessionId: string;
     expectedReplyText?: string;
@@ -1014,9 +1047,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         });
         return latestMessages;
       }
-      latestMessages = await syncDispatchSessionMessages({
-        hydrate: true,
-        forceReplace: true
+      latestMessages = await collectDispatchSessionMessages(targetSessionId, {
+        hydrate: true
       });
       const assistantSignature = buildSessionAssistantSignature(latestMessages, targetSessionId);
       const hasExpectedReply =
@@ -1024,21 +1056,31 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         resolveSessionScopedAssistantMessages(latestMessages, targetSessionId).some(
           (message) => String(message?.body || '').trim() === expectedReplyText
         );
+      const shouldFinishHydration = shouldFinishBeeroomTerminalHydration({
+        expectedReplyText,
+        expectedReplyMatched: hasExpectedReply,
+        baselineAssistantSignature,
+        assistantSignature
+      });
       logBeeroomRuntime('hydrate-terminal-dispatch-session:attempt', {
         sessionId: targetSessionId,
         attemptIndex,
         messageCount: latestMessages.length,
         expectedReplyMatched: hasExpectedReply,
         baselineAssistantSignature,
-        assistantSignature
+        assistantSignature,
+        shouldFinishHydration
       });
-      if (hasExpectedReply) {
-        return latestMessages;
-      }
-      if (assistantSignature && assistantSignature !== baselineAssistantSignature) {
+      if (shouldFinishHydration) {
+        replaceManualChatMessages(latestMessages);
         return latestMessages;
       }
     }
+    logBeeroomRuntime('hydrate-terminal-dispatch-session:preserve-local-final-reply', {
+      sessionId: targetSessionId,
+      expectedReplyText: clipDebugText(expectedReplyText),
+      finalAssistantSignature: buildSessionAssistantSignature(latestMessages, targetSessionId)
+    });
     return latestMessages;
   };
 

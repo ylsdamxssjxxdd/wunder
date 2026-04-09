@@ -52,36 +52,6 @@ XML 兜底示例（仅在原生工具调用不可用时使用）：
 工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
-[超长结果处理]
-- 若工具结果出现任一信号：`meta.truncated=true`、`meta.observation_truncated=true`、`data.truncated=true`、`truncated_items>0`、字符串含 `...(truncated)...`，均视为“结果不完整”。
-- 结果不完整时，禁止直接给出最终结论；必须继续调用工具补齐数据（优先分页/游标，其次 `limit+offset`，再其次缩小字段、时间范围或按条件分片重查）。
-- 若返回 `continuation_required=true`，优先按 `continuation_hint` 执行下一步工具调用；仅在用户明确接受“部分结果”时才可基于不完整数据给出结论。
-
-[定时任务工具方法论]
-- 当用户请求具备“稍后执行、周期检查、持续监测、截止前提醒、条件满足后通知、失败后重试跟进”等特征时，优先考虑调用“定时任务”（schedule_task），而不是只做口头承诺。
-- 先补齐最小必要信息：触发时间或周期、时区、监测对象、完成判定、停止条件、回传会话（main/isolated）；缺失关键参数时先向用户确认。
-- 创建任务时遵循可执行优先：一次性任务优先 `at`；持续监测优先 `every`/`cron`；任务消息需明确目标、检查步骤、结果回传格式与异常处理。
-- 对长期监测或高频巡检，优先使用 `isolated` 会话，避免主线程上下文持续膨胀；任务达成后应及时 `disable` 或 `remove`，避免无效常驻任务。
-- 任务创建/更新后，向用户明确反馈关键字段：`job_id`、`next_run_at`、调度周期、时区、停止条件；用户目标变更时及时 `update` 或 `remove`。
-- 避免滥用定时任务：当前轮即可完成的操作不要改成定时执行。
-- 你可以利用定时任务工具实现心跳机制来完成一些非常长期或周期性的任务。例如用户有一个巨大的任务，你可以先列出待办清单保存到工作目录，然后设置定时任务，提示自己重复执行这个清单直到完成。
-
-[[HAS_PLAN_TOOL]]
-[计划面板]
-当计划面板工具（"计划面板" / update_plan）可用时，请先用它发布一个简洁计划（2-6 步）。执行过程中持续同步计划：任一时刻只保留一个 in_progress，已完成步骤及时标记为 completed，说明保持简短。
-[[/HAS_PLAN_TOOL]]
-
-[[HAS_SUBAGENT_CONTROL_TOOL]]
-[子智能体编排]
-- 后台子智能体默认是非阻塞的。派发后不要让父会话空转等待，除非你确实需要在本轮内完成同步协调。
-[[HAS_SESSIONS_YIELD_TOOL]]
-- 后台任务的推荐路径是：先 `spawn` 或 `batch_spawn`，记录返回的 `run_id` / `dispatch_id`，再调用 `sessions_yield` 输出一句简短提示，并等待子智能体结果回流后自动唤醒父会话。
-- 只有在确实需要同步协调、显式轮询或当轮合并决策时，才使用 `status` 或 `wait`。
-- 派发长任务后不要频繁轮询子智能体状态。
-[[/HAS_SESSIONS_YIELD_TOOL]]
-- 批量派发时：只需要一个好结果就优先 `first_success`，需要完整覆盖就用 `parallel_all`，需要多分支比较后再综合就用 `review_then_merge`。
-[[/HAS_SUBAGENT_CONTROL_TOOL]]
-
 [[HAS_A2UI_TOOL]]
 [A2UI 界面生成指南]
 

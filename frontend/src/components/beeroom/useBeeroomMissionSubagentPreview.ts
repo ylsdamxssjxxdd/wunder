@@ -11,35 +11,18 @@ import {
   resolveBeeroomTaskMoment,
   type BeeroomWorkflowItem
 } from './beeroomTaskWorkflow';
+import {
+  ACTIVE_BEEROOM_SUBAGENT_STATUSES,
+  collectBeeroomHistoricalSubagentItems,
+  flattenBeeroomSessionEventRounds,
+  mergeBeeroomMissionSubagentItems,
+  normalizeBeeroomMissionSubagentItem,
+  sortBeeroomMissionSubagentItems,
+  type BeeroomMissionSubagentItem
+} from './beeroomMissionSubagentState';
 
-export type BeeroomMissionSubagentItem = {
-  key: string;
-  sessionId: string;
-  runId: string;
-  runKind: string;
-  requestedBy: string;
-  spawnedBy: string;
-  agentId: string;
-  title: string;
-  label: string;
-  status: string;
-  summary: string;
-  userMessage: string;
-  assistantMessage: string;
-  errorMessage: string;
-  updatedTime: number;
-  terminal: boolean;
-  failed: boolean;
-  depth: number | null;
-  role: string;
-  controlScope: string;
-  spawnMode: string;
-  strategy: string;
-  dispatchLabel: string;
-  controllerSessionId: string;
-  parentSessionId: string;
-  workflowItems: BeeroomWorkflowItem[];
-};
+export type { BeeroomMissionSubagentItem } from './beeroomMissionSubagentState';
+export { normalizeBeeroomMissionSubagentItem } from './beeroomMissionSubagentState';
 
 type TaskSubagentFetchMeta = {
   requestKey: string;
@@ -53,8 +36,6 @@ type SessionWorkflowFetchMeta = {
 
 const SUBAGENT_POLL_INTERVAL_MS = 1400;
 const SUBAGENT_LIST_LIMIT = 64;
-
-const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
 
 const clipDebugText = (value: unknown, limit = 120) => {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -98,41 +79,7 @@ const summarizeProjectionDecision = (item: BeeroomMissionSubagentItem) => {
   };
 };
 
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-};
-
 const normalizeText = (value: unknown): string => String(value || '').trim();
-
-const normalizeOptionalCount = (value: unknown): number | null => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const normalizeSubagentUpdatedTime = (value: unknown): number => {
-  if (value === null || value === undefined) return 0;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return 0;
-    return value > 1_000_000_000_000 ? value / 1000 : value;
-  }
-  const text = String(value).trim();
-  if (!text) return 0;
-  if (/^-?\d+(\.\d+)?$/.test(text)) {
-    const numeric = Number(text);
-    if (!Number.isFinite(numeric)) return 0;
-    return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
-  }
-  const parsed = Date.parse(text);
-  return Number.isFinite(parsed) ? parsed / 1000 : 0;
-};
-
-const normalizeSubagentStatus = (value: unknown): string => {
-  const normalized = normalizeText(value).toLowerCase();
-  return normalized || 'running';
-};
 
 const resolveSubagentWorkflowKey = (
   item: Pick<BeeroomMissionSubagentItem, 'sessionId' | 'runId' | 'key'>
@@ -153,84 +100,6 @@ const buildWorkflowItemsFingerprint = (items: BeeroomWorkflowItem[]): string =>
     )
     .join('||');
 
-export const normalizeBeeroomMissionSubagentItem = (
-  value: unknown
-): BeeroomMissionSubagentItem | null => {
-  const source = asRecord(value);
-  if (!source) return null;
-  const sessionId = normalizeText(source.session_id ?? source.sessionId);
-  const runId = normalizeText(source.run_id ?? source.runId);
-  const key = runId || sessionId;
-  if (!key) return null;
-  const status = normalizeSubagentStatus(source.status);
-  const detail = asRecord(source.detail) || asRecord(source.metadata) || {};
-  const userMessage = normalizeText(
-    source.user_message ??
-      source.userMessage ??
-      detail.user_message ??
-      detail.userMessage
-  );
-  const assistantMessage = normalizeText(
-    source.assistant_message ??
-      source.assistantMessage ??
-      detail.assistant_message ??
-      detail.assistantMessage
-  );
-  const errorMessage = normalizeText(
-    source.error_message ??
-      source.errorMessage ??
-      detail.error_message ??
-      detail.errorMessage ??
-      source.error
-  );
-  const summary = normalizeText(
-    source.summary ??
-      assistantMessage ??
-      errorMessage
-  );
-  const title = normalizeText(source.title) || normalizeText(source.label) || sessionId || runId || 'subagent';
-  const updatedTime = normalizeSubagentUpdatedTime(
-    source.updated_time ??
-      source.updatedTime ??
-      source.finished_time ??
-      source.finishedTime ??
-      source.started_time ??
-      source.startedTime
-  );
-
-  return {
-    key,
-    sessionId,
-    runId,
-    runKind: normalizeText(source.run_kind ?? source.runKind),
-    requestedBy: normalizeText(source.requested_by ?? source.requestedBy),
-    spawnedBy: normalizeText(source.spawned_by ?? source.spawnedBy),
-    agentId: normalizeText(source.agent_id ?? source.agentId),
-    title,
-    label: normalizeText(source.label ?? source.spawn_label ?? source.spawnLabel),
-    status,
-    summary,
-    userMessage,
-    assistantMessage,
-    errorMessage,
-    updatedTime,
-    terminal: Boolean(source.terminal),
-    failed: Boolean(source.failed),
-    depth: normalizeOptionalCount(source.depth ?? detail.depth),
-    role: normalizeText(source.role ?? detail.role),
-    controlScope: normalizeText(source.control_scope ?? source.controlScope ?? detail.control_scope),
-    spawnMode: normalizeText(source.spawn_mode ?? source.spawnMode ?? detail.spawn_mode),
-    strategy: normalizeText(source.strategy ?? detail.strategy),
-    dispatchLabel: normalizeText(
-      source.dispatch_label ?? source.dispatchLabel ?? detail.dispatch_label ?? source.label
-    ),
-    controllerSessionId: normalizeText(
-      source.controller_session_id ?? source.controllerSessionId ?? detail.controller_session_id
-    ),
-    parentSessionId: normalizeText(source.parent_session_id ?? source.parentSessionId),
-    workflowItems: []
-  };
-};
 
 const buildSubagentFingerprint = (item: BeeroomMissionSubagentItem) =>
   [
@@ -254,7 +123,10 @@ const buildSubagentFingerprint = (item: BeeroomMissionSubagentItem) =>
     item.controlScope,
     item.spawnMode,
     item.strategy,
-    item.dispatchLabel
+    item.dispatchLabel,
+    item.parentTurnRef,
+    item.parentUserRound,
+    item.parentModelRound
   ].join('|');
 
 const sameSubagentList = (
@@ -443,7 +315,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
       item.summary
     ].join('|');
     const previous = workflowFetchMeta.get(workflowKey);
-    const isActiveSubagent = ACTIVE_SUBAGENT_STATUSES.has(item.status);
+    const isActiveSubagent = ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status);
 
     if (
       !force &&
@@ -553,24 +425,41 @@ export const useBeeroomMissionSubagentPreview = (options: {
     inFlightRequestKeys.set(taskId, requestKey);
 
     try {
-      const response = await getSessionSubagents(
-        sessionId,
-        {
-          limit: SUBAGENT_LIST_LIMIT
-        },
-        { signal: controller.signal }
-      );
+      let subagentsError: unknown = null;
+      let eventsError: unknown = null;
+      const [subagentsResponse, eventsResponse] = await Promise.all([
+        getSessionSubagents(
+          sessionId,
+          {
+            limit: SUBAGENT_LIST_LIMIT
+          },
+          { signal: controller.signal }
+        ).catch((error) => {
+          subagentsError = error;
+          return null;
+        }),
+        getSessionEvents(sessionId, { signal: controller.signal }).catch((error) => {
+          eventsError = error;
+          return null;
+        })
+      ]);
       if (disposed || !mounted || controller.signal.aborted) return;
-      const source = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
-      const normalized = source
+      if (!subagentsResponse && !eventsResponse) {
+        throw subagentsError || eventsError || new Error('beeroom task subagent preview sync failed');
+      }
+      const source = Array.isArray(subagentsResponse?.data?.data?.items) ? subagentsResponse.data.data.items : [];
+      const liveItems = source
         .map((item: unknown) => normalizeBeeroomMissionSubagentItem(item))
         .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item))
-        .sort((left, right) => {
-          const activeDiff =
-            Number(ACTIVE_SUBAGENT_STATUSES.has(right.status)) - Number(ACTIVE_SUBAGENT_STATUSES.has(left.status));
-          if (activeDiff !== 0) return activeDiff;
-          return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
-        });
+        .map((item) => ({ ...item, workflowItems: [] as BeeroomWorkflowItem[] }));
+      const events = flattenBeeroomSessionEventRounds(eventsResponse?.data?.data?.rounds);
+      const historicalItems = collectBeeroomHistoricalSubagentItems(events).map((item) => ({
+        ...item,
+        workflowItems: [] as BeeroomWorkflowItem[]
+      }));
+      const normalized = sortBeeroomMissionSubagentItems(
+        mergeBeeroomMissionSubagentItems(liveItems, historicalItems) as BeeroomMissionSubagentItem[]
+      );
       updateTaskSubagents(taskId, normalized);
       pruneStaleWorkflowState();
       await Promise.allSettled(normalized.map((item) => fetchSubagentWorkflow(item, force)));
@@ -581,6 +470,8 @@ export const useBeeroomMissionSubagentPreview = (options: {
         taskStatus: task.status,
         force,
         count: normalized.length,
+        liveCount: liveItems.length,
+        historicalCount: historicalItems.length,
         canvasProjectableCount: normalized.filter((item) =>
           resolveBeeroomSwarmSubagentProjectionDecision(item).projectable
         ).length,
@@ -614,7 +505,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
     if (!mounted || disposed || typeof window === 'undefined') return;
     const hasActiveTask = missionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status));
     const hasActiveSubagent = Object.values(rawSubagentsByTask.value).some((items) =>
-      items.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))
+      items.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))
     );
     if (!hasActiveTask && !hasActiveSubagent) return;
     syncTimer = window.setTimeout(() => {

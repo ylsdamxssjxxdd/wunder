@@ -960,6 +960,7 @@
                       item.message.manual_compaction_marker === true
                         || item.message.manualCompactionMarker === true
                     "
+                    :session-busy="activeMessengerSessionBusy"
                   />
                 </template>
                 <template v-else>
@@ -976,6 +977,7 @@
                         item.message.stream_incomplete
                     )
                   "
+                  :session-busy="activeMessengerSessionBusy"
                 />
                 <div class="messenger-message-meta">
                   <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
@@ -3207,6 +3209,12 @@ const pendingApprovalAgentIdSet = computed(() => {
 
 const isSessionBusy = (sessionId: unknown): boolean =>
   Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
+
+const activeMessengerSessionBusy = computed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return false;
+  return isSessionBusy(sessionId);
+});
 
 const TERMINAL_RUNTIME_STATUS_SET = new Set(['idle', 'not_loaded', 'system_error']);
 
@@ -6594,15 +6602,36 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
 const shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean =>
   hasMessageContent(buildAssistantDisplayContent(message, t));
 
+const messageStatsNowTick = ref(Date.now());
+let messageStatsTimer: number | null = null;
+
 const buildMessageStatsEntries = (message: Record<string, unknown>) =>
-  buildAssistantMessageStatsEntries(
-    message as Record<string, any>,
-    t,
-    chatStore.messages as Record<string, any>[]
+  (
+    void messageStatsNowTick.value,
+    buildAssistantMessageStatsEntries(
+      message as Record<string, any>,
+      t,
+      chatStore.messages as Record<string, any>[],
+      messageStatsNowTick.value
+    )
   );
 
 const shouldShowMessageStats = (message: Record<string, unknown>): boolean =>
   buildMessageStatsEntries(message).length > 0;
+
+onMounted(() => {
+  if (typeof window === 'undefined' || messageStatsTimer !== null) return;
+  messageStatsTimer = window.setInterval(() => {
+    messageStatsNowTick.value = Date.now();
+  }, 1000);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined' && messageStatsTimer !== null) {
+    window.clearInterval(messageStatsTimer);
+    messageStatsTimer = null;
+  }
+});
 
 const hasPlanSteps = (plan: unknown): boolean =>
   Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&

@@ -351,8 +351,6 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub history_compaction_ratio: Option<f32>,
     #[serde(default)]
-    pub history_compaction_reset: Option<String>,
-    #[serde(default)]
     pub tool_call_mode: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,

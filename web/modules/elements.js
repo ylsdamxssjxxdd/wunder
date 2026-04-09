@@ -811,7 +811,6 @@ export const elements = {
   llmToolCallMode: document.getElementById("llmToolCallMode"),
   llmReasoningEffort: document.getElementById("llmReasoningEffort"),
   llmHistoryCompactionRatio: document.getElementById("llmHistoryCompactionRatio"),
-  llmHistoryCompactionReset: document.getElementById("llmHistoryCompactionReset"),
   llmCapabilitiesCard: document.getElementById("llmCapabilitiesCard"),
   llmCompactionCard: document.getElementById("llmCompactionCard"),
   channelsSearchInput: document.getElementById("channelsSearchInput"),

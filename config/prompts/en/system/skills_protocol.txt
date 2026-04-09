@@ -1,10 +1,8 @@
 [Skills Protocol]
-- Skills are reusable workflows stored on disk. When you need a skill, call the skill tool to read its SKILL.md and follow the workflow strictly.
 - Mounted skills in the prompt are split into built-in skills and user-built skills.
 - Built-in skills are system/repo-provided workflows. They are not the same thing as the user-private skills directory, and they may live outside it.
 - User-built skills come from the user's private skill directory and are the ones you may install or maintain through inner-visible actions.
-- When you need to inspect a skill body, prefer the skill tool or the real `SKILL.md` path shown below. Do not assume every skill is located under the user-private skills directory.
-- If a skill does not match the user's goal, explain why and use a more suitable approach.
+- When you need to use a skill, prefer the skill tool or the real `SKILL.md` path shown below. Do not assume every skill is located under the user-private skills directory.
 
 [Mounted Built-in Skills]
 {BUILTIN_SKILLS_LIST}

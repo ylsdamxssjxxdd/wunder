@@ -154,30 +154,45 @@ const isModelOutputWorkflowItem = (item: WorkflowItemLike): boolean => {
 const buildRetryStatusValue = (
   message: Record<string, any>,
   retryItem: WorkflowItemLike | null,
-  t: TranslateFn
+  t: TranslateFn,
+  nowMs = Date.now()
 ): string => {
   const parts = [t('messenger.messageStatus.retrying')];
-  const attempt = parsePositiveInteger(retryItem?.attempt);
-  const maxAttempts = parsePositiveInteger(retryItem?.maxAttempts);
+  const attempt = parsePositiveInteger(retryItem?.attempt ?? message?.retry_attempt ?? message?.retryAttempt);
+  const maxAttempts = parsePositiveInteger(
+    retryItem?.maxAttempts ?? message?.retry_max_attempts ?? message?.retryMaxAttempts
+  );
   if (attempt && maxAttempts) {
     parts.push(t('messenger.messageStatus.retryAttemptCompact', { attempt, maxAttempts }));
   } else if (attempt) {
     parts.push(t('messenger.messageStatus.retryAttemptCompactSingle', { attempt }));
   }
-  const retryDelaySeconds = Number(retryItem?.delayS);
-  const retryDelayLabel =
-    Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0
-      ? formatCompactElapsed(retryDelaySeconds * 1000)
-      : '';
+  const retryNextAttemptAtMs = Number(
+    message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs
+  );
+  const retryDelaySeconds = Number(
+    retryItem?.delayS ?? message?.retry_delay_s ?? message?.retryDelayS
+  );
+  const retryDelayMs =
+    Number.isFinite(retryNextAttemptAtMs) && retryNextAttemptAtMs > nowMs
+      ? retryNextAttemptAtMs - nowMs
+      : Number.isFinite(retryDelaySeconds) && retryDelaySeconds > 0
+        ? retryDelaySeconds * 1000
+        : 0;
+  const retryDelayLabel = retryDelayMs > 0 ? formatCompactElapsed(retryDelayMs) : '';
   if (retryDelayLabel) {
     parts.push(t('messenger.messageStatus.retryDelayCompact', { delay: retryDelayLabel }));
     return parts.join(' · ');
   }
   const retryStartedAtMs = Number(
-    message?.waiting_updated_at_ms ?? message?.waitingUpdatedAtMs ?? message?.stats?.interaction_start_ms
+    message?.retry_started_at_ms ??
+      message?.retryStartedAtMs ??
+      message?.waiting_updated_at_ms ??
+      message?.waitingUpdatedAtMs ??
+      message?.stats?.interaction_start_ms
   );
   if (Number.isFinite(retryStartedAtMs) && retryStartedAtMs > 0) {
-    const elapsedLabel = formatCompactElapsed(Date.now() - retryStartedAtMs);
+    const elapsedLabel = formatCompactElapsed(nowMs - retryStartedAtMs);
     if (elapsedLabel) {
       parts.push(t('messenger.messageStatus.retryElapsedCompact', { time: elapsedLabel }));
     }
@@ -217,6 +232,11 @@ const hasAssistantActivitySignals = (message: Record<string, any> | null | undef
       isAssistantStreaming(message) ||
       message?.resume_available ||
       message?.slow_client ||
+      parsePositiveInteger(message?.retry_attempt ?? message?.retryAttempt) ||
+      parsePositiveInteger(message?.retry_max_attempts ?? message?.retryMaxAttempts) ||
+      Number.isFinite(Number(message?.retry_started_at_ms ?? message?.retryStartedAtMs)) ||
+      Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
+      normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying' ||
       (Array.isArray(message?.workflowItems) && message.workflowItems.length > 0) ||
       (message?.stats && typeof message.stats === 'object')
   );
@@ -278,7 +298,8 @@ const buildStatusEntry = (
 const resolveAssistantStatusEntry = (
   message: Record<string, any>,
   t: TranslateFn,
-  allMessages?: MessageLike[] | null
+  allMessages?: MessageLike[] | null,
+  nowMs = Date.now()
 ): MessageStatsEntry | null => {
   if (!hasAssistantActivitySignals(message)) return null;
 
@@ -331,14 +352,24 @@ const resolveAssistantStatusEntry = (
       return isModelOutputWorkflowItem(item);
     }
   );
+  const hasPersistedRetryState = Boolean(
+    parsePositiveInteger(message?.retry_attempt ?? message?.retryAttempt) ||
+      parsePositiveInteger(message?.retry_max_attempts ?? message?.retryMaxAttempts) ||
+      Number.isFinite(Number(message?.retry_started_at_ms ?? message?.retryStartedAtMs)) ||
+      Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
+      normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying'
+  );
   if (message?.resume_available && !isAssistantStreaming(message)) {
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
   }
-  if (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) {
-    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t), 'warning', true);
+  if (
+    (latestRetry.index >= 0 && latestRetry.index >= latestOutput.index) ||
+    hasPersistedRetryState
+  ) {
+    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
   }
   if (message?.slow_client && !hasAssistantVisibleOutput(message)) {
-    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t), 'warning', true);
+    return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
   }
   if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.queued'), 'muted', true);
@@ -377,12 +408,13 @@ const resolveAssistantStatusEntry = (
 export const buildAssistantMessageStatsEntries = (
   message: Record<string, any> | null | undefined,
   t: TranslateFn,
-  allMessages?: MessageLike[] | null
+  allMessages?: MessageLike[] | null,
+  nowMs = Date.now()
 ): MessageStatsEntry[] => {
   if (!message || message.role !== 'assistant' || message.isGreeting) {
     return [];
   }
-  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages);
+  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
   if (isAssistantStreaming(message)) {

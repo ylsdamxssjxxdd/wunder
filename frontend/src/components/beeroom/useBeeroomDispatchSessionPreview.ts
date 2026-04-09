@@ -5,9 +5,13 @@ import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasCh
 import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
+  ACTIVE_BEEROOM_SUBAGENT_STATUSES,
+  collectBeeroomHistoricalSubagentItems,
+  flattenBeeroomSessionEventRounds,
+  mergeBeeroomMissionSubagentItems,
   type BeeroomMissionSubagentItem,
   normalizeBeeroomMissionSubagentItem
-} from '@/components/beeroom/useBeeroomMissionSubagentPreview';
+} from '@/components/beeroom/beeroomMissionSubagentState';
 import { chatDebugLog } from '@/utils/chatDebug';
 
 export type BeeroomDispatchSessionPreview = {
@@ -21,18 +25,7 @@ export type BeeroomDispatchSessionPreview = {
   subagents: BeeroomMissionSubagentItem[];
 };
 
-type SessionEventRecord = {
-  event?: unknown;
-  type?: unknown;
-  data?: unknown;
-  title?: unknown;
-  timestamp?: unknown;
-  timestamp_ms?: unknown;
-};
-
-type SessionEventRound = {
-  events?: SessionEventRecord[];
-};
+type SessionEventRecord = import('@/components/beeroom/beeroomMissionSubagentState').BeeroomSessionEventRecord;
 
 const SUBAGENT_LIST_LIMIT = 64;
 const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
@@ -42,9 +35,14 @@ const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
   'resuming'
 ]);
 const ACTIVE_PREVIEW_STATUSES = new Set(['queued', 'running']);
-const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
-
 const normalizeText = (value: unknown): string => String(value || '').trim();
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
 
 const clipText = (value: unknown, limit: number): string => {
   const text = normalizeText(value).replace(/\s+/g, ' ');
@@ -89,47 +87,15 @@ const summarizeDebugError = (error: unknown) => {
   return [name, message].filter(Boolean).join(': ') || normalizeText(error);
 };
 
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-  return value as Record<string, unknown>;
-};
-
 const resolveEventName = (event: SessionEventRecord): string =>
   normalizeText(event?.event ?? event?.type).toLowerCase();
 
 const resolveEventPayload = (event: SessionEventRecord): Record<string, unknown> => {
-  const source = asRecord(event?.data);
+  const source =
+    event?.data && typeof event.data === 'object' && !Array.isArray(event.data)
+      ? (event.data as Record<string, unknown>)
+      : null;
   return source || {};
-};
-
-const resolveEventTimestamp = (event: SessionEventRecord): number => {
-  const timestampMs = Number(event?.timestamp_ms ?? resolveEventPayload(event).timestamp_ms ?? 0);
-  if (Number.isFinite(timestampMs) && timestampMs > 0) {
-    return timestampMs / 1000;
-  }
-  const numeric = Number(event?.timestamp ?? resolveEventPayload(event).timestamp ?? 0);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
-  }
-  const iso = normalizeText(event?.timestamp);
-  if (!iso) return 0;
-  const parsed = Date.parse(iso);
-  return Number.isFinite(parsed) ? parsed / 1000 : 0;
-};
-
-const flattenRounds = (rounds: unknown): SessionEventRecord[] => {
-  const items: SessionEventRecord[] = [];
-  (Array.isArray(rounds) ? rounds : []).forEach((round) => {
-    const source = round as SessionEventRound;
-    if (!Array.isArray(source?.events)) return;
-    source.events.forEach((event) => {
-      if (!event || typeof event !== 'object') return;
-      items.push(event);
-    });
-  });
-  return items;
 };
 
 const resolveSummaryFromEvents = (events: SessionEventRecord[]): string => {
@@ -213,7 +179,7 @@ const resolvePreviewStatus = (
   subagents: BeeroomMissionSubagentItem[]
 ): string => {
   if (running) return 'running';
-  if (subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))) {
+  if (subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
     return 'running';
   }
   if (subagents.some((item) => item.failed)) {
@@ -296,36 +262,42 @@ export const useBeeroomDispatchSessionPreview = (options: {
     });
 
     try {
+      let eventsError: unknown = null;
+      let subagentsError: unknown = null;
       const [sessionResponse, eventsResponse, subagentsResponse] = await Promise.all([
         getSession(sessionId, { signal: controller.signal }).catch(() => null),
-        getSessionEvents(sessionId, { signal: controller.signal }),
+        getSessionEvents(sessionId, { signal: controller.signal }).catch((error) => {
+          eventsError = error;
+          return null;
+        }),
         getSessionSubagents(
           sessionId,
           { limit: SUBAGENT_LIST_LIMIT, latest_turn_only: true },
           { signal: controller.signal }
-        )
+        ).catch((error) => {
+          subagentsError = error;
+          return null;
+        })
       ]);
       if (controller.signal.aborted) return;
+      if (!eventsResponse && !subagentsResponse) {
+        throw eventsError || subagentsError || new Error('beeroom dispatch preview sync failed');
+      }
 
       const eventsPayload = eventsResponse?.data?.data || {};
       const sessionDetail = sessionResponse?.data?.data || null;
-      const events = flattenRounds(eventsPayload.rounds);
+      const events = flattenBeeroomSessionEventRounds(eventsPayload.rounds);
       const running = eventsPayload.running === true;
-      const subagents = (Array.isArray(subagentsResponse?.data?.data?.items)
+      const liveSubagents = (Array.isArray(subagentsResponse?.data?.data?.items)
         ? subagentsResponse.data.data.items
         : []
       )
         .map((item: unknown) => normalizeBeeroomMissionSubagentItem(item))
-        .filter(
-          (item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item)
-        )
-        .sort((left, right) => {
-          const activeDiff =
-            Number(ACTIVE_SUBAGENT_STATUSES.has(right.status)) -
-            Number(ACTIVE_SUBAGENT_STATUSES.has(left.status));
-          if (activeDiff !== 0) return activeDiff;
-          return Number(right.updatedTime || 0) - Number(left.updatedTime || 0);
-        });
+        .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item));
+      const historicalSubagents = collectBeeroomHistoricalSubagentItems(events, {
+        latestTurnOnly: true
+      });
+      const subagents = mergeBeeroomMissionSubagentItems(liveSubagents, historicalSubagents);
       const canvasProjectableSubagents = subagents.filter((item) =>
         resolveBeeroomSwarmSubagentProjectionDecision(item).projectable
       );
@@ -336,7 +308,18 @@ export const useBeeroomDispatchSessionPreview = (options: {
 
       const summary = resolveSummaryFromEvents(events);
       const updatedTime = Math.max(
-        ...events.map(resolveEventTimestamp),
+        ...events.map((event) => {
+          const timestampMs = Number(event?.timestamp_ms ?? resolveEventPayload(event).timestamp_ms ?? 0);
+          if (Number.isFinite(timestampMs) && timestampMs > 0) return timestampMs / 1000;
+          const numeric = Number(event?.timestamp ?? resolveEventPayload(event).timestamp ?? 0);
+          if (Number.isFinite(numeric) && numeric > 0) {
+            return numeric > 1_000_000_000_000 ? numeric / 1000 : numeric;
+          }
+          const iso = normalizeText(event?.timestamp);
+          if (!iso) return 0;
+          const parsed = Date.parse(iso);
+          return Number.isFinite(parsed) ? parsed / 1000 : 0;
+        }),
         ...subagents.map((item) => Number(item.updatedTime || 0)),
         running || ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)
           ? Math.floor(Date.now() / 1000)
@@ -354,7 +337,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
         updatedTime,
         subagents
       };
-      if (!running && !subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status))) {
+      if (!running && !subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
         if (previewStatus === 'completed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
           options.runtimeStatus.value = 'completed';
         } else if (previewStatus === 'failed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
@@ -375,7 +358,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
       const shouldPoll =
         running ||
         ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value) ||
-        subagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status));
+        subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status));
       logDispatchPreview('sync-result', {
         sessionId,
         targetAgentId,
@@ -387,6 +370,8 @@ export const useBeeroomDispatchSessionPreview = (options: {
         subagentCount: subagents.length,
         canvasProjectableSubagentCount: canvasProjectableSubagents.length,
         canvasFilteredSubagentCount: Math.max(0, subagents.length - canvasProjectableSubagents.length),
+        liveSubagentCount: liveSubagents.length,
+        historicalSubagentCount: historicalSubagents.length,
         updatedTime,
         shouldPoll,
         summary: clipText(summary, 120),
@@ -437,7 +422,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
     );
     const stillActive =
       ACTIVE_PREVIEW_STATUSES.has(preview.status) ||
-      filteredSubagents.some((item) => ACTIVE_SUBAGENT_STATUSES.has(item.status));
+      filteredSubagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status));
     if (!stillActive && previewMoment > 0 && previewMoment <= clearedAfter && filteredSubagents.length === 0) {
       return null;
     }

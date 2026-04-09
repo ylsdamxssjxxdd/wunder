@@ -2852,6 +2852,9 @@ fn build_tool_failure_next_step_hint(tool_name: &str, error_code: &str, detail: 
     {
         return "建议下一步：改用 ASCII SQL 标点并简化查询（先 `SELECT ... LIMIT` 验证字段，再做聚合/导出）。".to_string();
     }
+    if code == "TOOL_ARGS_INVALID" || code == "TOOL_ARGS_MISSING_FIELD" {
+        return "建议下一步：严格按工具要求重构参数；优先直接复制错误结果里的 example，再替换成当前目标和值。".to_string();
+    }
     if code == "TOOL_TIMEOUT" {
         return "建议下一步：缩小查询范围或改用可分页/导出路径，避免单次超时。".to_string();
     }
@@ -3414,25 +3417,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_user_content_for_persist_keeps_current_user_even_with_zero_mode_marker() {
-        let messages = vec![
-            json!({ "role": "system", "content": "system" }),
-            json!({
-                "role": "user",
-                "content": "current question",
-                "meta": {
-                    super::memory::COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: true
-                }
-            }),
-        ];
-        let fallback = json!({ "role": "user", "content": "raw question" });
-        let content = resolve_user_content_for_persist(&messages, &fallback)
-            .and_then(|value| value.as_str().map(ToString::to_string))
-            .unwrap_or_default();
-        assert_eq!(content, "current question");
-    }
-
-    #[test]
     fn extract_channel_display_question_override_reads_trimmed_value() {
         let overrides = json!({
             CHANNEL_DISPLAY_QUESTION_OVERRIDE_KEY: "  please compress this image  "
@@ -3778,7 +3762,6 @@ mod tests {
             stream: None,
             stream_include_usage: None,
             history_compaction_ratio: None,
-            history_compaction_reset: None,
             tool_call_mode: None,
             reasoning_effort: None,
             model_type: None,

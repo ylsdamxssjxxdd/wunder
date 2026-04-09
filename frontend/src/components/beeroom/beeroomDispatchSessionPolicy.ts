@@ -53,6 +53,21 @@ export const resolveNextBeeroomMotherDispatchSessionId = (options: {
   return fallbackPrimarySessionId;
 };
 
+export const shouldFinishBeeroomTerminalHydration = (options: {
+  expectedReplyText?: string;
+  expectedReplyMatched?: boolean;
+  baselineAssistantSignature?: string;
+  assistantSignature?: string;
+}) => {
+  const expectedReplyText = String(options.expectedReplyText || '').trim();
+  if (expectedReplyText) {
+    return options.expectedReplyMatched === true;
+  }
+  const baselineAssistantSignature = String(options.baselineAssistantSignature || '').trim();
+  const assistantSignature = String(options.assistantSignature || '').trim();
+  return Boolean(assistantSignature) && assistantSignature !== baselineAssistantSignature;
+};
+
 export const shouldPreserveBeeroomDispatchPreviewOnSyncError = (options: {
   status: number;
   currentPreviewSessionId: string;

@@ -23,12 +23,14 @@ type Props = {
   items?: unknown[];
   isStreaming?: boolean;
   manualMarker?: boolean;
+  sessionBusy?: boolean;
 };
 
 const props = withDefaults(defineProps<Props>(), {
   items: () => [],
   isStreaming: false,
-  manualMarker: false
+  manualMarker: false,
+  sessionBusy: false
 });
 
 const { t } = useI18n();
@@ -66,7 +68,15 @@ const snapshot = computed(() => resolveLatestCompactionSnapshot(props.items));
 
 const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>(() => {
   if (!snapshot.value) {
-    return props.manualMarker && props.isStreaming ? 'running' : null;
+    return props.manualMarker && (props.isStreaming || props.sessionBusy) ? 'running' : null;
+  }
+  const manualBusyFallback =
+    props.manualMarker &&
+    props.sessionBusy &&
+    snapshot.value.status !== 'failed' &&
+    snapshot.value.status !== 'cancelled';
+  if (manualBusyFallback) {
+    return 'running';
   }
   const running = isCompactionRunningFromWorkflowItems(props.items);
   if (snapshot.value.status === 'cancelled') return 'cancelled';

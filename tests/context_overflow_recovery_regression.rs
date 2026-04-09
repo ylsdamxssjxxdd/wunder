@@ -59,12 +59,12 @@ async fn build_test_context(username: &str) -> TestContext {
 async fn build_test_context_with_compaction(
     username: &str,
     max_context: u32,
-    reset_mode: Option<&str>,
+    _reset_mode: Option<&str>,
 ) -> TestContext {
     build_test_context_with_compaction_and_mock_limit(
         username,
         max_context,
-        reset_mode,
+        _reset_mode,
         DEFAULT_MOCK_CONTEXT_LIMIT,
     )
     .await
@@ -73,7 +73,7 @@ async fn build_test_context_with_compaction(
 async fn build_test_context_with_compaction_and_mock_limit(
     username: &str,
     max_context: u32,
-    reset_mode: Option<&str>,
+    _reset_mode: Option<&str>,
     mock_context_limit: i64,
 ) -> TestContext {
     let temp_dir = tempfile::tempdir().expect("tempdir");
@@ -112,7 +112,6 @@ async fn build_test_context_with_compaction_and_mock_limit(
             stream: Some(false),
             stream_include_usage: Some(false),
             history_compaction_ratio: Some(0.9),
-            history_compaction_reset: reset_mode.map(str::to_string),
             tool_call_mode: Some("tool_call".to_string()),
             reasoning_effort: None,
             model_type: Some("llm".to_string()),
@@ -564,6 +563,28 @@ fn assert_request_uses_replacement_history(
     );
 }
 
+fn assert_compaction_history_is_semantically_clean(messages: &[Value]) {
+    for message in messages {
+        let serialized = message
+            .get("content")
+            .cloned()
+            .unwrap_or(Value::Null)
+            .to_string();
+        assert!(
+            !serialized.contains("Assistant issued tool call(s):"),
+            "compaction replay should not retain assistant tool-call placeholders: {serialized}"
+        );
+        assert!(
+            !serialized.contains("tool_response:"),
+            "compaction replay should not retain raw observation wrappers: {serialized}"
+        );
+        assert!(
+            !serialized.contains("results_jsonl"),
+            "compaction replay should not retain raw tool observation payloads: {serialized}"
+        );
+    }
+}
+
 async fn trigger_manual_compaction_and_wait(
     context: &TestContext,
     session_id: &str,
@@ -684,6 +705,7 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
         &session_id,
         0,
     );
+    assert_compaction_history_is_semantically_clean(&replay_messages);
     assert!(
         !replay_messages.is_empty(),
         "expected replay history to remain available after recovery"
@@ -728,6 +750,7 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         !replacement_history.is_empty(),
         "manual compaction should commit replacement_history snapshot"
     );
+    assert_compaction_history_is_semantically_clean(&replacement_history);
 
     let replay_messages = HistoryManager.load_history_messages(
         context.state.workspace.as_ref(),
@@ -735,6 +758,7 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         &session_id,
         0,
     );
+    assert_compaction_history_is_semantically_clean(&replay_messages);
     assert_eq!(
         replay_messages
             .iter()
@@ -773,6 +797,9 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         &replacement_history,
         "[mindie-overflow-regression] round=7",
     );
+    assert_compaction_history_is_semantically_clean(
+        &request_messages[1..request_messages.len() - 1],
+    );
     let request_summary = request_messages
         .iter()
         .find(|item| HistoryManager::is_compaction_summary_item(item))
@@ -795,7 +822,7 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compaction_reset_modes_align_history_replay_shapes() {
+async fn compaction_ignores_legacy_reset_mode_and_replay_shape_stays_consistent() {
     const ROUNDS: usize = 6;
     const REPEAT: usize = 24;
 
@@ -819,26 +846,27 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
         let summary_item = latest_compaction_summary_item_with_trigger(&raw_history, "manual")
             .or_else(|| latest_compaction_summary_item(&raw_history))
             .expect("expected latest compaction summary item");
-        assert_eq!(
+        assert!(
             summary_item
                 .get("meta")
                 .and_then(Value::as_object)
                 .and_then(|meta| meta.get("reset_mode"))
-                .and_then(Value::as_str),
-            Some(mode),
-            "mode={mode} latest summary should record effective reset mode"
+                .is_none(),
+            "mode={mode} compacted summary should no longer persist reset_mode semantics"
         );
         let replacement_history = latest_replacement_history_snapshot(&raw_history);
         assert!(
             !replacement_history.is_empty(),
             "mode={mode} manual compaction should commit replacement_history snapshot"
         );
+        assert_compaction_history_is_semantically_clean(&replacement_history);
         let replay_messages = HistoryManager.load_history_messages(
             context.state.workspace.as_ref(),
             &context.user_id,
             &session_id,
             0,
         );
+        assert_compaction_history_is_semantically_clean(&replay_messages);
         assert_eq!(
             replay_messages
                 .iter()
@@ -850,38 +878,14 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
                 .collect::<Vec<_>>(),
             "mode={mode} persisted replay should be rebuilt directly from committed replacement_history"
         );
-
-        match mode {
-            "zero" => {
-                assert_eq!(
-                    compaction_event
-                        .get("recent_user_messages_retained")
-                        .and_then(Value::as_u64),
-                    Some(0),
-                    "zero mode should not keep a middle recent-user window in the rebuilt compaction context"
-                );
-            }
-            "current" => {
-                assert_eq!(
-                    compaction_event
-                        .get("recent_user_messages_retained")
-                        .and_then(Value::as_u64),
-                    Some(0),
-                    "current mode should not keep a middle recent-user window in the rebuilt compaction context"
-                );
-            }
-            "keep" => {
-                assert!(
-                    compaction_event
-                        .get("recent_user_messages_retained")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0)
-                        >= 1,
-                    "keep mode should keep at least one middle recent-user message in the rebuilt compaction context"
-                );
-            }
-            _ => unreachable!("unexpected reset mode"),
-        }
+        assert!(
+            compaction_event
+                .get("retained_user_message_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                >= 1,
+            "mode={mode} compaction should retain a Codex-style user message window"
+        );
     }
 }
 
@@ -934,7 +938,6 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
         .and_then(Value::as_array)
         .expect("manual compaction round events");
 
-    let mut saw_compacting_progress = false;
     let mut saw_summary_request = false;
     let mut saw_summary_response = false;
     let mut saw_final_compaction = false;
@@ -953,9 +956,6 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
                         Some(compaction_id.as_str()),
                         "manual compaction progress should keep one compaction_id"
                     );
-                    if stage == "compacting" {
-                        saw_compacting_progress = true;
-                    }
                 }
             }
             "llm_request" => {
@@ -990,10 +990,6 @@ async fn manual_compaction_keeps_single_compaction_id_across_events_and_summary_
         }
     }
 
-    assert!(
-        saw_compacting_progress,
-        "manual compaction round should include compacting progress event"
-    );
     assert!(
         saw_summary_request,
         "manual compaction round should include compaction summary request event"

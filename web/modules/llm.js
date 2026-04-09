@@ -281,11 +281,6 @@ const normalizeLlmConfig = (raw) => {
     typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
       ? raw.history_compaction_ratio
       : 0.9,
-  history_compaction_reset: ["zero", "current", "keep"].includes(
-    String(raw?.history_compaction_reset || "zero").trim()
-  )
-    ? String(raw?.history_compaction_reset || "zero").trim()
-    : "zero",
   mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
   };
 };
@@ -352,7 +347,6 @@ const clearLlmForm = () => {
     elements.llmReasoningEffort.value = "";
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.9, 0.9);
-  elements.llmHistoryCompactionReset.value = "zero";
   applyProviderDefaults(DEFAULT_PROVIDER_ID, { forceBaseUrl: false });
   lastProviderSelection = DEFAULT_PROVIDER_ID;
   updateLlmTypeVisibility("llm");
@@ -412,7 +406,6 @@ const applyLlmConfigToForm = (name, config) => {
     llm.history_compaction_ratio ?? 0.9,
     0.9
   );
-  elements.llmHistoryCompactionReset.value = llm.history_compaction_reset || "zero";
   updateLlmTypeVisibility(llm.model_type);
   applyProviderDefaults(llm.provider, {
     forceBaseUrl: !llm.base_url,
@@ -535,9 +528,6 @@ const buildLlmConfigFromForm = (baseConfig) => {
   const maxContext = Number.parseInt(elements.llmMaxContext.value, 10);
   const maxOutput = Number.parseInt(elements.llmMaxOutput.value, 10);
   const historyCompactionRatio = parseFloatInput(elements.llmHistoryCompactionRatio, 0.9);
-  const historyCompactionReset = String(
-    elements.llmHistoryCompactionReset.value || ""
-  ).trim();
   const modelType = normalizeModelType(elements.llmModelType?.value || base.model_type);
   const provider = normalizeProviderId(elements.llmProvider.value || base.provider);
   const baseUrl = elements.llmBaseUrl.value.trim();
@@ -569,7 +559,6 @@ const buildLlmConfigFromForm = (baseConfig) => {
       tool_call_mode: null,
       reasoning_effort: null,
       history_compaction_ratio: null,
-      history_compaction_reset: null,
       mock_if_unconfigured: base.mock_if_unconfigured,
     };
   }
@@ -599,9 +588,6 @@ const buildLlmConfigFromForm = (baseConfig) => {
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
         ? historyCompactionRatio
         : base.history_compaction_ratio ?? 0.9,
-    history_compaction_reset: ["zero", "current", "keep"].includes(historyCompactionReset)
-      ? historyCompactionReset
-      : base.history_compaction_reset ?? "zero",
     mock_if_unconfigured: base.mock_if_unconfigured,
   };
 };

@@ -3,24 +3,13 @@ use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
-const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
-const COMPACTION_RETAINED_EDGE_TURN_COUNT: usize = 2;
-const COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN: i64 = 512;
-const COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MAX: i64 = 12_000;
-const COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS: i64 = 3_072;
-const COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS: i64 = 6_144;
-const COMPACTION_RETAINED_MESSAGE_MAX_TOKENS: i64 = 1_024;
+const COMPACTION_USER_MESSAGE_WINDOW_TOKENS: i64 = 20_000;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
-pub(super) const COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY: &str =
-    "compaction_skip_persist_current_user";
 const COMPACTION_INFLIGHT_CURRENT_USER_META_KEY: &str = "compaction_inflight_current_user";
 const COMPACTION_SUMMARY_REASONING_EFFORT: &str = "none";
 const COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS: i64 = 256;
-const COMPACTION_SUMMARY_TOOL_CALL_MAX_TOKENS: i64 = 96;
-const COMPACTION_SUMMARY_MAX_TOOL_NAMES: usize = 4;
 const COMPACTION_TEXT_TRUNCATION_SUFFIX: &str = "...(truncated)";
 const COMPACTION_SUMMARY_MAX_CHARS: usize = 20_000;
-const COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS: usize = 20_000;
 const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 
 #[derive(Debug, Default)]
@@ -36,60 +25,6 @@ struct RebuiltContextGuardStats {
     summary_tokens_after: i64,
     summary_removed: bool,
     fallback_trim_applied: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct CompactionTurnRange {
-    start: usize,
-    end: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-struct RetainedCompactionEdge {
-    messages: Vec<Value>,
-    tokens: i64,
-    turn_count: usize,
-    start_index: Option<usize>,
-    end_index: Option<usize>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct RetainedCompactionEdges {
-    head: RetainedCompactionEdge,
-    tail: RetainedCompactionEdge,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
-enum CompactionResetMode {
-    Zero,
-    Current,
-    Keep,
-}
-
-impl CompactionResetMode {
-    fn from_config(raw: Option<&str>) -> Self {
-        match raw.unwrap_or("").trim().to_ascii_lowercase().as_str() {
-            "current" => Self::Current,
-            "keep" => Self::Keep,
-            _ => Self::Zero,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Zero => "zero",
-            Self::Current => "current",
-            Self::Keep => "keep",
-        }
-    }
-
-    fn keep_recent_user_window(self) -> bool {
-        matches!(self, Self::Keep)
-    }
-
-    fn skip_persist_current_user(self) -> bool {
-        matches!(self, Self::Zero)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,26 +47,14 @@ impl CompactionRunMode {
 #[derive(Clone, Copy, Debug)]
 struct CompactionExecutionProfile {
     run_mode: CompactionRunMode,
-    retained_edge_turn_count: usize,
-    allow_recent_user_window: bool,
     prefer_preserving_summary: bool,
 }
 
 impl CompactionExecutionProfile {
     fn new(run_mode: CompactionRunMode) -> Self {
-        match run_mode {
-            CompactionRunMode::Manual => Self {
-                run_mode,
-                retained_edge_turn_count: COMPACTION_RETAINED_EDGE_TURN_COUNT,
-                allow_recent_user_window: true,
-                prefer_preserving_summary: false,
-            },
-            CompactionRunMode::AutoLoop | CompactionRunMode::OverflowRecovery => Self {
-                run_mode,
-                retained_edge_turn_count: COMPACTION_RETAINED_EDGE_TURN_COUNT,
-                allow_recent_user_window: false,
-                prefer_preserving_summary: true,
-            },
+        Self {
+            run_mode,
+            prefer_preserving_summary: true,
         }
     }
 
@@ -176,12 +99,6 @@ fn new_compaction_id(run_mode: CompactionRunMode) -> String {
         run_mode.trigger_mode(),
         Uuid::new_v4().simple()
     )
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct CompactionBoundarySelection {
-    boundary_index: Option<usize>,
-    boundary_ts_override: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -349,9 +266,6 @@ impl Orchestrator {
         let compaction_id = new_compaction_id(compaction_profile.run_mode);
         let compaction_id_ref = Some(compaction_id.as_str());
 
-        let configured_reset_mode =
-            CompactionResetMode::from_config(llm_config.history_compaction_reset.as_deref());
-
         let summary_text = if should_compact_by_history {
             i18n::t("compaction.reason.history_threshold")
         } else {
@@ -408,15 +322,6 @@ impl Orchestrator {
         {
             question_candidates.push(current_user_signature.clone());
         }
-        let current_user_has_non_text = current_user_message
-            .as_ref()
-            .is_some_and(message_has_non_text_content);
-        let reset_mode =
-            if configured_reset_mode == CompactionResetMode::Zero && current_user_has_non_text {
-                CompactionResetMode::Current
-            } else {
-                configured_reset_mode
-            };
         let mut source_messages: Vec<Value> = Vec::new();
         for (index, message) in messages.iter().enumerate() {
             if system_message.is_some() && index == 0 {
@@ -528,7 +433,6 @@ impl Orchestrator {
                 "presampling_limit": compaction_decision.presampling_limit,
                 "message_budget": message_budget,
                 "total_tokens": total_tokens,
-                "reset_mode": reset_mode.as_str(),
                 "context_guard_applied": guard_stats.applied,
                 "context_guard_tokens_before": guard_stats.tokens_before,
                 "context_guard_tokens_after": guard_stats.tokens_after,
@@ -569,40 +473,6 @@ impl Orchestrator {
             summary_input[index] = compaction_message;
         } else {
             summary_input.push(compaction_message);
-        }
-
-        let mut compacted_until_ts: Option<f64> = None;
-        let mut compacted_until: Option<String> = None;
-        let history_limit = if is_admin {
-            0
-        } else {
-            config.workspace.max_history_items
-        };
-        let history = self
-            .workspace
-            .load_history_async(user_id, session_id, history_limit)
-            .await
-            .unwrap_or_default();
-        let (history_items, _) = HistoryManager::build_compaction_candidates(&history);
-        let current_question_index =
-            locate_matching_history_user_index(&history_items, &question_candidates);
-        let boundary = select_compaction_boundary(
-            &history_items,
-            current_question_index,
-            reset_mode,
-            COMPACTION_RECENT_USER_WINDOW_TOKENS,
-        );
-        if let Some(value) = boundary.boundary_ts_override {
-            compacted_until_ts = Some(value);
-        } else if let Some(boundary_item) = boundary
-            .boundary_index
-            .and_then(|index| history_items.get(index))
-        {
-            compacted_until_ts = HistoryManager::get_item_timestamp(boundary_item);
-            compacted_until = boundary_item
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .map(|value| value.to_string());
         }
 
         let summary_config = build_compaction_summary_config(llm_config);
@@ -695,34 +565,7 @@ impl Orchestrator {
                 String::new()
             }
         };
-        let mut retained_source_edges = build_retained_compaction_edges(
-            &source_messages,
-            message_budget,
-            None,
-            compaction_profile.retained_edge_turn_count,
-        );
-        apply_retained_edge_char_limit(
-            &mut retained_source_edges,
-            COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS,
-        );
-        let recent_user_source_start = retained_source_edges
-            .head
-            .end_index
-            .map(|index| index.saturating_add(1))
-            .unwrap_or(0)
-            .min(source_messages.len());
-        let recent_user_source_end = retained_source_edges
-            .tail
-            .start_index
-            .unwrap_or(source_messages.len())
-            .min(source_messages.len());
-        let fallback_summary_source = if recent_user_source_start < recent_user_source_end {
-            &source_messages[recent_user_source_start..recent_user_source_end]
-        } else {
-            &source_messages[..]
-        };
-        let fallback_content =
-            build_compaction_fallback_summary(fallback_summary_source, &user_content);
+        let fallback_content = build_compaction_fallback_summary(&source_messages, &user_content);
         let (fresh_memory_block, fresh_memory_count, fresh_memory_total_count) = self
             .build_fresh_memory_block_for_compaction(
                 config,
@@ -775,7 +618,6 @@ impl Orchestrator {
                 "presampling_limit": compaction_decision.presampling_limit,
                 "message_budget": message_budget,
                 "total_tokens": total_tokens,
-                "reset_mode": reset_mode.as_str(),
                 "context_guard_applied": guard_stats.applied,
                 "context_guard_tokens_before": guard_stats.tokens_before,
                 "context_guard_tokens_after": guard_stats.tokens_after,
@@ -823,36 +665,17 @@ impl Orchestrator {
                 compaction_id,
             ));
         };
-        let retained_history_edges = build_retained_compaction_edges(
-            &history_items,
-            message_budget,
-            current_question_index,
-            compaction_profile.retained_edge_turn_count,
+        let retained_user_messages = collect_recent_user_messages_for_compaction(
+            &source_messages,
+            COMPACTION_USER_MESSAGE_WINDOW_TOKENS,
         );
-        let recent_user_source = if recent_user_source_start < recent_user_source_end {
-            &source_messages[recent_user_source_start..recent_user_source_end]
-        } else {
-            &source_messages[0..0]
-        };
-        let recent_user_messages = if compaction_profile.allow_recent_user_window
-            && reset_mode.keep_recent_user_window()
-        {
-            collect_recent_user_messages_for_compaction(
-                recent_user_source,
-                COMPACTION_RECENT_USER_WINDOW_TOKENS,
-            )
-        } else {
-            Vec::new()
-        };
-        let recent_user_messages_retained = recent_user_messages.len();
-        let recent_user_tokens_retained = estimate_messages_tokens(&recent_user_messages);
+        let retained_user_message_count = retained_user_messages.len();
+        let retained_user_tokens = estimate_messages_tokens(&retained_user_messages);
         let mut base_messages: Vec<Value> = Vec::new();
         if let Some(system_message) = replay_system_message.clone() {
             base_messages.push(system_message);
         }
-        base_messages.extend(retained_source_edges.head.messages.iter().cloned());
-        base_messages.extend(recent_user_messages.iter().cloned());
-        base_messages.extend(retained_source_edges.tail.messages.iter().cloned());
+        base_messages.extend(retained_user_messages.iter().cloned());
         if let Some(current_user_message) = current_user_message.clone() {
             base_messages.push(current_user_message);
         } else if !question_text.is_empty() {
@@ -887,8 +710,6 @@ impl Orchestrator {
             summary_text = committed_trimmed;
         }
         let summary_chars = summary_text.chars().count();
-        let retained_head_chars = count_messages_text_chars(&retained_source_edges.head.messages);
-        let retained_tail_chars = count_messages_text_chars(&retained_source_edges.tail.messages);
         let injected_summary_text = summary_text.clone();
         let mut response_payload = json!({
             "content": summary_text.clone(),
@@ -911,9 +732,6 @@ impl Orchestrator {
                     message.clone()
                 };
             mark_current_user_message_inflight(&mut candidate);
-            if reset_mode.skip_persist_current_user() {
-                mark_current_user_message_skip_persist(&mut candidate);
-            }
             candidate
         });
 
@@ -921,18 +739,13 @@ impl Orchestrator {
         if let Some(system_message) = replay_system_message {
             rebuilt.push(system_message);
         }
-        rebuilt.extend(retained_source_edges.head.messages.clone());
+        rebuilt.extend(retained_user_messages.clone());
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
-        rebuilt.extend(recent_user_messages);
-        rebuilt.extend(retained_source_edges.tail.messages.clone());
         if let Some(current_user_message) = current_user_message_for_request {
             rebuilt.push(current_user_message);
         } else if !question_text.is_empty() {
             let mut current_user_placeholder = json!({ "role": "user", "content": question_text });
             mark_current_user_message_inflight(&mut current_user_placeholder);
-            if reset_mode.skip_persist_current_user() {
-                mark_current_user_message_skip_persist(&mut current_user_placeholder);
-            }
             rebuilt.push(current_user_placeholder);
         }
         let mut rebuilt = self.shrink_messages_to_limit(rebuilt, message_budget);
@@ -961,22 +774,6 @@ impl Orchestrator {
         meta.insert(
             COMPACTION_REPLACEMENT_HISTORY_META_KEY.to_string(),
             Value::Array(committed_replacement_history.clone()),
-        );
-        if let Some(value) = compacted_until_ts {
-            meta.insert("compacted_until_ts".to_string(), json!(value));
-        }
-        if let Some(value) = compacted_until.clone() {
-            meta.insert("compacted_until".to_string(), Value::String(value));
-        }
-        if let Some(value) = retained_history_edges.head.end_index {
-            meta.insert("retained_head_until_index".to_string(), json!(value));
-        }
-        if let Some(value) = retained_history_edges.tail.start_index {
-            meta.insert("retained_tail_from_index".to_string(), json!(value));
-        }
-        meta.insert(
-            "reset_mode".to_string(),
-            Value::String(reset_mode.as_str().to_string()),
         );
         meta.insert(
             "trigger_mode".to_string(),
@@ -1056,48 +853,16 @@ impl Orchestrator {
             json!(fresh_memory_total_count),
         );
         compaction_payload_map.insert(
-            "recent_user_messages_retained".to_string(),
-            json!(recent_user_messages_retained),
+            "retained_user_message_count".to_string(),
+            json!(retained_user_message_count),
         );
         compaction_payload_map.insert(
-            "recent_user_tokens_retained".to_string(),
-            json!(recent_user_tokens_retained),
+            "retained_user_tokens".to_string(),
+            json!(retained_user_tokens),
         );
         compaction_payload_map.insert(
-            "recent_user_window_token_limit".to_string(),
-            json!(COMPACTION_RECENT_USER_WINDOW_TOKENS),
-        );
-        compaction_payload_map.insert(
-            "retained_edge_turn_limit".to_string(),
-            json!(compaction_profile.retained_edge_turn_count),
-        );
-        compaction_payload_map.insert(
-            "retained_head_turns".to_string(),
-            json!(retained_source_edges.head.turn_count),
-        );
-        compaction_payload_map.insert(
-            "retained_head_tokens".to_string(),
-            json!(retained_source_edges.head.tokens),
-        );
-        compaction_payload_map.insert(
-            "retained_head_chars".to_string(),
-            json!(retained_head_chars),
-        );
-        compaction_payload_map.insert(
-            "retained_tail_turns".to_string(),
-            json!(retained_source_edges.tail.turn_count),
-        );
-        compaction_payload_map.insert(
-            "retained_tail_tokens".to_string(),
-            json!(retained_source_edges.tail.tokens),
-        );
-        compaction_payload_map.insert(
-            "retained_tail_chars".to_string(),
-            json!(retained_tail_chars),
-        );
-        compaction_payload_map.insert(
-            "retained_edge_chars_limit".to_string(),
-            json!(COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS),
+            "retained_user_window_token_limit".to_string(),
+            json!(COMPACTION_USER_MESSAGE_WINDOW_TOKENS),
         );
         compaction_payload_map.insert(
             "summary_tokens".to_string(),
@@ -1148,24 +913,12 @@ impl Orchestrator {
         );
         compaction_payload_map.insert("message_budget".to_string(), json!(message_budget));
         compaction_payload_map.insert(
-            "reset_mode".to_string(),
-            Value::String(reset_mode.as_str().to_string()),
-        );
-        compaction_payload_map.insert(
-            "configured_reset_mode".to_string(),
-            Value::String(configured_reset_mode.as_str().to_string()),
-        );
-        compaction_payload_map.insert(
             "compaction_run_mode".to_string(),
             Value::String(compaction_profile.trigger_mode().to_string()),
         );
         compaction_payload_map.insert(
             "summary_priority".to_string(),
             Value::Bool(compaction_profile.prefer_preserving_summary),
-        );
-        compaction_payload_map.insert(
-            "current_user_non_text_preserved".to_string(),
-            json!(current_user_has_non_text),
         );
         compaction_payload_map.insert(
             "context_guard_applied".to_string(),
@@ -2624,8 +2377,6 @@ fn prepare_compaction_summary_messages(messages: Vec<Value>, max_tokens: i64) ->
         };
         let per_message_target = if is_compaction_observation_message(role.as_str(), obj) {
             target.min(COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS)
-        } else if role == "assistant" && has_compaction_summary_tool_calls(obj) {
-            target.min(COMPACTION_SUMMARY_TOOL_CALL_MAX_TOKENS)
         } else {
             target
         };
@@ -2671,20 +2422,10 @@ fn extract_compaction_summary_message_text(role: &str, obj: &Map<String, Value>)
     let text = if is_compaction_observation_message(role, obj) {
         summarize_compaction_observation(content)
     } else {
-        extract_memory_summary_text_value(content)
+        strip_compaction_internal_tool_lines(&extract_memory_summary_text_value(content))
     };
     if !text.is_empty() {
         return Some(text);
-    }
-    if role == "assistant" {
-        let tool_summary = summarize_compaction_tool_calls(
-            obj.get("tool_calls")
-                .or_else(|| obj.get("tool_call"))
-                .or_else(|| obj.get("function_call")),
-        );
-        if !tool_summary.is_empty() {
-            return Some(tool_summary);
-        }
     }
     None
 }
@@ -2692,13 +2433,6 @@ fn extract_compaction_summary_message_text(role: &str, obj: &Map<String, Value>)
 fn is_compaction_observation_message(role: &str, obj: &Map<String, Value>) -> bool {
     let content = obj.get("content").unwrap_or(&Value::Null);
     Orchestrator::is_observation_message(role, content)
-}
-
-fn has_compaction_summary_tool_calls(obj: &Map<String, Value>) -> bool {
-    obj.get("tool_calls")
-        .or_else(|| obj.get("tool_call"))
-        .or_else(|| obj.get("function_call"))
-        .is_some()
 }
 
 fn summarize_compaction_observation(content: &Value) -> String {
@@ -2799,46 +2533,6 @@ fn extract_compaction_observation_text_candidate(value: &Value) -> Option<String
                 Some(text)
             }
         }
-    }
-}
-
-fn summarize_compaction_tool_calls(tool_calls: Option<&Value>) -> String {
-    let Some(tool_calls) = tool_calls else {
-        return String::new();
-    };
-    let mut tool_names = collect_compaction_tool_call_names(tool_calls);
-    tool_names.dedup();
-    if tool_names.is_empty() {
-        return "Assistant issued tool call(s).".to_string();
-    }
-    let hidden = tool_names
-        .len()
-        .saturating_sub(COMPACTION_SUMMARY_MAX_TOOL_NAMES);
-    tool_names.truncate(COMPACTION_SUMMARY_MAX_TOOL_NAMES);
-    let mut summary = format!("Assistant issued tool call(s): {}", tool_names.join(", "));
-    if hidden > 0 {
-        summary.push_str(&format!(" (+{hidden} more)"));
-    }
-    summary
-}
-
-fn collect_compaction_tool_call_names(tool_calls: &Value) -> Vec<String> {
-    match tool_calls {
-        Value::Array(items) => items
-            .iter()
-            .flat_map(collect_compaction_tool_call_names)
-            .collect(),
-        Value::Object(map) => map
-            .get("function")
-            .and_then(Value::as_object)
-            .and_then(|function| function.get("name"))
-            .or_else(|| map.get("name"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| vec![value.to_string()])
-            .unwrap_or_default(),
-        _ => Vec::new(),
     }
 }
 
@@ -3153,234 +2847,6 @@ fn message_has_non_text_content(message: &Value) -> bool {
     }
 }
 
-fn is_compaction_turn_start_message(message: &Value) -> bool {
-    let role = message.get("role").and_then(Value::as_str).unwrap_or("");
-    if role != "user" {
-        return false;
-    }
-    let content = message.get("content").unwrap_or(&Value::Null);
-    if Orchestrator::is_observation_message(role, content) {
-        return false;
-    }
-    let content_text = extract_guard_content_text(content);
-    !content_text.is_empty() && !starts_with_compaction_prefix(&content_text)
-}
-
-fn collect_compaction_turn_ranges(
-    messages: &[Value],
-    excluded_turn_start_index: Option<usize>,
-) -> Vec<CompactionTurnRange> {
-    let mut turn_starts = Vec::new();
-    for (index, message) in messages.iter().enumerate() {
-        if is_compaction_turn_start_message(message) {
-            turn_starts.push(index);
-        }
-    }
-    let mut ranges = Vec::new();
-    for (position, start) in turn_starts.iter().enumerate() {
-        let end = turn_starts
-            .get(position + 1)
-            .copied()
-            .unwrap_or(messages.len());
-        if Some(*start) == excluded_turn_start_index {
-            continue;
-        }
-        if *start < end {
-            ranges.push(CompactionTurnRange { start: *start, end });
-        }
-    }
-    ranges
-}
-
-fn select_compaction_edge_turn_ranges(
-    turn_ranges: &[CompactionTurnRange],
-    edge_turn_count: usize,
-) -> (Vec<CompactionTurnRange>, Vec<CompactionTurnRange>) {
-    if turn_ranges.is_empty() || edge_turn_count == 0 {
-        return (Vec::new(), Vec::new());
-    }
-    let head_count = turn_ranges.len().min(edge_turn_count);
-    let tail_start = turn_ranges
-        .len()
-        .saturating_sub(edge_turn_count)
-        .max(head_count);
-    (
-        turn_ranges[..head_count].to_vec(),
-        turn_ranges[tail_start..].to_vec(),
-    )
-}
-
-fn resolve_retained_edge_window_budgets(
-    message_budget: i64,
-    head_turn_count: usize,
-    tail_turn_count: usize,
-) -> (i64, i64) {
-    if message_budget <= 0 || (head_turn_count == 0 && tail_turn_count == 0) {
-        return (0, 0);
-    }
-    let max_total = message_budget.min(COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MAX);
-    if max_total <= 0 {
-        return (0, 0);
-    }
-    let desired_total = (message_budget / 3).max(1);
-    let total_budget = if max_total <= COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN {
-        max_total
-    } else {
-        desired_total
-            .max(COMPACTION_RETAINED_EDGE_TOTAL_BUDGET_MIN)
-            .min(max_total)
-    };
-    if head_turn_count == 0 {
-        return (
-            0,
-            total_budget.min(COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS),
-        );
-    }
-    if tail_turn_count == 0 {
-        return (
-            total_budget.min(COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS),
-            0,
-        );
-    }
-    let head_budget = (total_budget / 3)
-        .max(1)
-        .min(COMPACTION_RETAINED_HEAD_WINDOW_MAX_TOKENS);
-    let tail_budget = total_budget
-        .saturating_sub(head_budget)
-        .max(1)
-        .min(COMPACTION_RETAINED_TAIL_WINDOW_MAX_TOKENS);
-    (head_budget, tail_budget)
-}
-
-fn count_message_text_chars(message: &Value) -> usize {
-    extract_guard_content_text(message.get("content").unwrap_or(&Value::Null))
-        .chars()
-        .count()
-}
-
-fn count_messages_text_chars(messages: &[Value]) -> usize {
-    messages.iter().map(count_message_text_chars).sum()
-}
-
-fn trim_message_to_fit_chars(message: &Value, max_chars: usize) -> Option<Value> {
-    if max_chars == 0 || count_message_text_chars(message) <= max_chars {
-        return None;
-    }
-    let mut message_obj = message.as_object().cloned().unwrap_or_else(|| {
-        let mut fallback = serde_json::Map::new();
-        fallback.insert("role".to_string(), Value::String("user".to_string()));
-        fallback.insert("content".to_string(), message.clone());
-        fallback
-    });
-    let source = extract_guard_content_text(message_obj.get("content").unwrap_or(&Value::Null));
-    if source.trim().is_empty() {
-        return None;
-    }
-    let content = trim_text_to_chars(&source, max_chars, COMPACTION_TEXT_TRUNCATION_SUFFIX);
-    message_obj.insert("content".to_string(), Value::String(content));
-    message_obj.remove("reasoning_content");
-    message_obj.remove("reasoning");
-    Some(Value::Object(message_obj))
-}
-
-fn clamp_messages_to_char_limit(messages: &mut Vec<Value>, max_chars: usize) {
-    if messages.is_empty() {
-        return;
-    }
-    if max_chars == 0 {
-        messages.clear();
-        return;
-    }
-    let total_chars = count_messages_text_chars(messages);
-    if total_chars <= max_chars {
-        return;
-    }
-
-    let original = messages.clone();
-    let original_total = total_chars;
-    let mut remaining_budget = max_chars;
-    let mut remaining_original_chars = original_total;
-    let mut trimmed = Vec::with_capacity(original.len());
-
-    for (index, message) in original.iter().enumerate() {
-        let original_chars = count_message_text_chars(message);
-        let remaining_messages = original.len().saturating_sub(index);
-        if remaining_budget == 0 || remaining_messages == 0 {
-            break;
-        }
-
-        let budget = if remaining_messages == 1 {
-            remaining_budget
-        } else if remaining_original_chars <= remaining_budget {
-            original_chars.min(remaining_budget)
-        } else {
-            let proportional = ((remaining_budget as u128) * (original_chars as u128)
-                / (remaining_original_chars as u128)) as usize;
-            let min_reserved = remaining_messages.saturating_sub(1);
-            proportional
-                .max(1)
-                .min(remaining_budget.saturating_sub(min_reserved))
-        };
-
-        let candidate =
-            trim_message_to_fit_chars(message, budget).unwrap_or_else(|| message.clone());
-        let used_chars = count_message_text_chars(&candidate).min(remaining_budget);
-        trimmed.push(candidate);
-        remaining_budget = remaining_budget.saturating_sub(used_chars);
-        remaining_original_chars = remaining_original_chars.saturating_sub(original_chars);
-    }
-
-    *messages = trimmed;
-}
-
-fn resolve_retained_edge_window_char_budgets(
-    head_chars: usize,
-    tail_chars: usize,
-    total_limit: usize,
-) -> (usize, usize) {
-    if total_limit == 0 || (head_chars == 0 && tail_chars == 0) {
-        return (0, 0);
-    }
-    if head_chars == 0 {
-        return (0, tail_chars.min(total_limit));
-    }
-    if tail_chars == 0 {
-        return (head_chars.min(total_limit), 0);
-    }
-
-    let desired_head = (total_limit / 3).max(1);
-    let mut head_budget = desired_head.min(head_chars);
-    let mut tail_budget = total_limit.saturating_sub(head_budget).min(tail_chars);
-    let mut remaining = total_limit.saturating_sub(head_budget + tail_budget);
-
-    if remaining > 0 {
-        let tail_extra = remaining.min(tail_chars.saturating_sub(tail_budget));
-        tail_budget += tail_extra;
-        remaining = remaining.saturating_sub(tail_extra);
-    }
-    if remaining > 0 {
-        let head_extra = remaining.min(head_chars.saturating_sub(head_budget));
-        head_budget += head_extra;
-    }
-
-    (head_budget, tail_budget)
-}
-
-fn apply_retained_edge_char_limit(edges: &mut RetainedCompactionEdges, max_chars: usize) {
-    let head_chars = count_messages_text_chars(&edges.head.messages);
-    let tail_chars = count_messages_text_chars(&edges.tail.messages);
-    if head_chars.saturating_add(tail_chars) <= max_chars {
-        return;
-    }
-
-    let (head_budget, tail_budget) =
-        resolve_retained_edge_window_char_budgets(head_chars, tail_chars, max_chars);
-    clamp_messages_to_char_limit(&mut edges.head.messages, head_budget);
-    clamp_messages_to_char_limit(&mut edges.tail.messages, tail_budget);
-    edges.head.tokens = estimate_messages_tokens(&edges.head.messages);
-    edges.tail.tokens = estimate_messages_tokens(&edges.tail.messages);
-}
-
 fn summarize_compaction_fallback_text(text: &str) -> String {
     let mut selected_lines = Vec::new();
     for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
@@ -3446,198 +2912,6 @@ fn build_compaction_fallback_summary(messages: &[Value], default_fallback: &str)
     format!("Compressed earlier context.\n{}", entries.join("\n"))
 }
 
-fn summarize_retained_edge_message_text(obj: &Map<String, Value>) -> String {
-    let role = obj
-        .get("role")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    let content = obj.get("content").unwrap_or(&Value::Null);
-    let mut text = if is_compaction_observation_message(role.as_str(), obj) {
-        summarize_compaction_observation(content)
-    } else {
-        extract_guard_content_text(content)
-    };
-    if role == "assistant" {
-        let tool_summary = summarize_compaction_tool_calls(
-            obj.get("tool_calls")
-                .or_else(|| obj.get("tool_call"))
-                .or_else(|| obj.get("function_call")),
-        );
-        if !tool_summary.is_empty() {
-            if text.is_empty() {
-                text = tool_summary;
-            } else if !text.contains(&tool_summary) {
-                text = format!("{text}\n{tool_summary}");
-            }
-        }
-    }
-    text.trim().to_string()
-}
-
-fn build_retained_edge_message(message: &Value, max_tokens: i64) -> Option<Value> {
-    if max_tokens <= 0 {
-        return None;
-    }
-    let obj = message.as_object()?;
-    let role = obj
-        .get("role")
-        .and_then(Value::as_str)
-        .unwrap_or("user")
-        .trim()
-        .to_ascii_lowercase();
-    if role == "system" {
-        return None;
-    }
-    let mut content = summarize_retained_edge_message_text(obj);
-    if content.is_empty() {
-        return None;
-    }
-    let normalized_role = if role == "assistant" {
-        "assistant"
-    } else {
-        "user"
-    };
-    let mut candidate_map = serde_json::Map::new();
-    candidate_map.insert(
-        "role".to_string(),
-        Value::String(normalized_role.to_string()),
-    );
-    let mut target_tokens = max_tokens
-        .min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS)
-        .max(1);
-    for _ in 0..4 {
-        let trimmed =
-            trim_text_to_tokens(&content, target_tokens, COMPACTION_TEXT_TRUNCATION_SUFFIX);
-        candidate_map.insert("content".to_string(), Value::String(trimmed));
-        let candidate = Value::Object(candidate_map.clone());
-        let cost = estimate_message_tokens(&candidate);
-        if cost <= max_tokens {
-            return Some(candidate);
-        }
-        let overflow = cost - max_tokens;
-        let next_target = (target_tokens - overflow).max(1);
-        if next_target == target_tokens {
-            return Some(candidate);
-        }
-        target_tokens = next_target;
-        content = candidate
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-    }
-    Some(Value::Object(candidate_map))
-}
-
-fn build_retained_turn_messages(messages: &[Value], turn_budget: i64) -> Vec<Value> {
-    if messages.is_empty() || turn_budget <= 0 {
-        return Vec::new();
-    }
-    let mut selected = Vec::new();
-    let mut used_tokens = 0;
-    let first_message_budget = turn_budget
-        .min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS)
-        .max(1);
-    if let Some(first) = build_retained_edge_message(&messages[0], first_message_budget) {
-        used_tokens += estimate_message_tokens(&first);
-        selected.push(first);
-    }
-    if used_tokens >= turn_budget {
-        return selected;
-    }
-    let mut tail_selected_rev = Vec::new();
-    for message in messages.iter().skip(1).rev() {
-        if used_tokens >= turn_budget {
-            break;
-        }
-        let remaining = turn_budget.saturating_sub(used_tokens);
-        let per_message_budget = remaining.min(COMPACTION_RETAINED_MESSAGE_MAX_TOKENS).max(1);
-        let Some(candidate) = build_retained_edge_message(message, per_message_budget) else {
-            continue;
-        };
-        let candidate_tokens = estimate_message_tokens(&candidate);
-        if candidate_tokens > remaining {
-            continue;
-        }
-        tail_selected_rev.push(candidate);
-        used_tokens += candidate_tokens;
-    }
-    tail_selected_rev.reverse();
-    selected.extend(tail_selected_rev);
-    selected
-}
-
-fn build_retained_compaction_edge(
-    messages: &[Value],
-    turn_ranges: &[CompactionTurnRange],
-    total_budget: i64,
-) -> RetainedCompactionEdge {
-    if turn_ranges.is_empty() || total_budget <= 0 {
-        return RetainedCompactionEdge::default();
-    }
-    let mut retained_messages = Vec::new();
-    let mut remaining_budget = total_budget.max(0);
-    let total_turns = turn_ranges.len();
-    for (index, range) in turn_ranges.iter().enumerate() {
-        if remaining_budget <= 0 {
-            break;
-        }
-        let remaining_turns = (total_turns - index) as i64;
-        let turn_budget = (remaining_budget / remaining_turns).max(1);
-        let turn_messages =
-            build_retained_turn_messages(&messages[range.start..range.end], turn_budget);
-        let turn_tokens = estimate_messages_tokens(&turn_messages);
-        if turn_tokens <= 0 {
-            continue;
-        }
-        retained_messages.extend(turn_messages);
-        remaining_budget = remaining_budget.saturating_sub(turn_tokens);
-    }
-    let tokens = estimate_messages_tokens(&retained_messages);
-    RetainedCompactionEdge {
-        messages: retained_messages,
-        tokens,
-        turn_count: turn_ranges.len(),
-        start_index: turn_ranges.first().map(|range| range.start),
-        end_index: turn_ranges.last().map(|range| range.end.saturating_sub(1)),
-    }
-}
-
-fn build_retained_compaction_edges(
-    messages: &[Value],
-    message_budget: i64,
-    excluded_turn_start_index: Option<usize>,
-    edge_turn_count: usize,
-) -> RetainedCompactionEdges {
-    let turn_ranges = collect_compaction_turn_ranges(messages, excluded_turn_start_index);
-    let (head_ranges, tail_ranges) =
-        select_compaction_edge_turn_ranges(&turn_ranges, edge_turn_count);
-    let (head_budget, tail_budget) =
-        resolve_retained_edge_window_budgets(message_budget, head_ranges.len(), tail_ranges.len());
-    RetainedCompactionEdges {
-        head: build_retained_compaction_edge(messages, &head_ranges, head_budget),
-        tail: build_retained_compaction_edge(messages, &tail_ranges, tail_budget),
-    }
-}
-
-fn mark_current_user_message_skip_persist(message: &mut Value) {
-    let Some(map) = message.as_object_mut() else {
-        return;
-    };
-    let meta = map
-        .entry("meta".to_string())
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    let Some(meta_obj) = meta.as_object_mut() else {
-        return;
-    };
-    meta_obj.insert(
-        COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY.to_string(),
-        Value::Bool(true),
-    );
-}
-
 fn mark_current_user_message_inflight(message: &mut Value) {
     let Some(map) = message.as_object_mut() else {
         return;
@@ -3687,108 +2961,76 @@ fn build_committed_replacement_history_from_rebuilt(messages: &[Value]) -> Vec<V
             }
             let mut cloned = message.clone();
             clear_compaction_inflight_current_user_marker(&mut cloned);
-            Some(cloned)
+            normalize_committed_replacement_history_message(&cloned)
         })
         .collect()
+}
+
+fn is_compaction_tool_call_summary_text(text: &str) -> bool {
+    let cleaned = text.trim();
+    cleaned == "Assistant issued tool call(s)."
+        || cleaned.starts_with("Assistant issued tool call(s):")
+}
+
+fn strip_compaction_internal_tool_lines(text: &str) -> String {
+    let stripped = strip_tool_calls(text);
+    let cleaned = stripped.trim();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    let filtered = cleaned
+        .lines()
+        .filter(|line| !is_compaction_tool_call_summary_text(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    filtered.trim().to_string()
+}
+
+fn normalize_committed_replacement_history_message(message: &Value) -> Option<Value> {
+    let obj = message.as_object()?;
+    let role = obj
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if role.is_empty() || role == "system" || role == "tool" {
+        return None;
+    }
+
+    let content = obj.get("content").unwrap_or(&Value::Null);
+    if Orchestrator::is_observation_message(role.as_str(), content) {
+        return None;
+    }
+
+    let cleaned_text = strip_compaction_internal_tool_lines(&extract_guard_content_text(content));
+    let has_non_text = message_has_non_text_content(message);
+    if cleaned_text.is_empty() && !has_non_text {
+        return None;
+    }
+
+    let normalized_role = if role == "assistant" {
+        "assistant"
+    } else {
+        "user"
+    };
+    let normalized_content = if !cleaned_text.is_empty() {
+        Value::String(cleaned_text)
+    } else if normalized_role == "user" {
+        content.clone()
+    } else {
+        return None;
+    };
+
+    Some(json!({
+        "role": normalized_role,
+        "content": normalized_content,
+    }))
 }
 
 fn clear_compaction_inflight_markers(messages: &mut [Value]) {
     for message in messages {
         clear_compaction_inflight_current_user_marker(message);
-    }
-}
-
-fn locate_matching_history_user_index(
-    history_items: &[Value],
-    question_candidates: &[String],
-) -> Option<usize> {
-    if question_candidates.is_empty() {
-        return None;
-    }
-    history_items.iter().rposition(|item| {
-        let role = item.get("role").and_then(Value::as_str).unwrap_or("");
-        if role != "user" {
-            return false;
-        }
-        let content = extract_guard_content_text(item.get("content").unwrap_or(&Value::Null));
-        !content.is_empty()
-            && question_candidates
-                .iter()
-                .any(|candidate| candidate.trim() == content.trim())
-    })
-}
-
-fn select_recent_user_window_start_index(
-    history_items: &[Value],
-    token_limit: i64,
-) -> Option<usize> {
-    if token_limit <= 0 {
-        return None;
-    }
-    let mut remaining = token_limit.max(0);
-    let mut earliest_index: Option<usize> = None;
-
-    for (index, item) in history_items.iter().enumerate().rev() {
-        if remaining <= 0 {
-            break;
-        }
-        if item.get("role").and_then(Value::as_str) != Some("user") {
-            continue;
-        }
-        let content = item.get("content").cloned().unwrap_or(Value::Null);
-        let text = extract_guard_content_text(&content);
-        if text.is_empty() || starts_with_compaction_prefix(&text) {
-            continue;
-        }
-        let message = json!({ "role": "user", "content": content });
-        let message_tokens = estimate_message_tokens(&message).max(1);
-        earliest_index = Some(index);
-        if message_tokens >= remaining {
-            break;
-        }
-        remaining = remaining.saturating_sub(message_tokens);
-    }
-
-    earliest_index
-}
-
-fn select_compaction_boundary(
-    history_items: &[Value],
-    current_question_index: Option<usize>,
-    reset_mode: CompactionResetMode,
-    recent_user_window_tokens: i64,
-) -> CompactionBoundarySelection {
-    let last_index = history_items.len().checked_sub(1);
-    match reset_mode {
-        CompactionResetMode::Zero => CompactionBoundarySelection {
-            boundary_index: current_question_index.or(last_index),
-            boundary_ts_override: None,
-        },
-        CompactionResetMode::Current => CompactionBoundarySelection {
-            boundary_index: current_question_index
-                .and_then(|index| index.checked_sub(1))
-                .or(last_index),
-            boundary_ts_override: None,
-        },
-        CompactionResetMode::Keep => {
-            match select_recent_user_window_start_index(history_items, recent_user_window_tokens) {
-                Some(0) => CompactionBoundarySelection {
-                    boundary_index: None,
-                    boundary_ts_override: history_items
-                        .first()
-                        .and_then(HistoryManager::get_item_timestamp)
-                        .map(|value| value - 0.001),
-                },
-                Some(index) => CompactionBoundarySelection {
-                    boundary_index: index.checked_sub(1),
-                    boundary_ts_override: None,
-                },
-                None => CompactionBoundarySelection {
-                    boundary_index: last_index,
-                    boundary_ts_override: None,
-                },
-            }
-        }
     }
 }
 
@@ -4162,7 +3404,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prepare_compaction_summary_messages_merges_system_and_flattens_tool_calls() {
+    fn test_prepare_compaction_summary_messages_merges_system_and_skips_tool_only_assistant() {
         let messages = vec![
             json!({ "role": "system", "content": "system prompt" }),
             json!({ "role": "system", "content": "artifact index" }),
@@ -4176,18 +3418,11 @@ mod tests {
             }),
         ];
         let prepared = prepare_compaction_summary_messages(messages, 2048);
-        assert_eq!(prepared.len(), 2);
+        assert_eq!(prepared.len(), 1);
         assert_eq!(
             prepared[0].get("content").and_then(Value::as_str),
             Some("system prompt\n\nartifact index")
         );
-        let assistant = prepared[1]
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert!(assistant.contains("search_content"));
-        assert!(assistant.contains("read_file"));
-        assert!(prepared[1].get("tool_calls").is_none());
     }
 
     #[test]
@@ -4390,105 +3625,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_retained_compaction_edges_keeps_first_and_last_turns_without_current_turn() {
-        let messages = vec![
-            json!({ "role": "user", "content": "turn 1 question" }),
-            json!({ "role": "assistant", "content": "turn 1 answer" }),
-            json!({ "role": "user", "content": "turn 2 question" }),
-            json!({ "role": "assistant", "content": "turn 2 answer" }),
-            json!({ "role": "user", "content": "turn 3 question" }),
-            json!({ "role": "assistant", "content": "turn 3 answer" }),
-            json!({ "role": "user", "content": "turn 4 question" }),
-            json!({ "role": "assistant", "content": "turn 4 answer" }),
-            json!({ "role": "user", "content": "turn 5 question" }),
-            json!({ "role": "assistant", "content": "turn 5 answer" }),
-        ];
-
-        let retained = build_retained_compaction_edges(
-            &messages,
-            12_000,
-            Some(8),
-            COMPACTION_RETAINED_EDGE_TURN_COUNT,
-        );
-        let head_contents = retained
-            .head
-            .messages
-            .iter()
-            .map(|item| item["content"].as_str().unwrap_or("").to_string())
-            .collect::<Vec<_>>();
-        let tail_contents = retained
-            .tail
-            .messages
-            .iter()
-            .map(|item| item["content"].as_str().unwrap_or("").to_string())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            head_contents,
-            vec![
-                "turn 1 question".to_string(),
-                "turn 1 answer".to_string(),
-                "turn 2 question".to_string(),
-                "turn 2 answer".to_string(),
-            ]
-        );
-        assert_eq!(
-            tail_contents,
-            vec![
-                "turn 3 question".to_string(),
-                "turn 3 answer".to_string(),
-                "turn 4 question".to_string(),
-                "turn 4 answer".to_string(),
-            ]
-        );
-        assert!(tail_contents
-            .iter()
-            .all(|content| !content.contains("turn 5")));
-    }
-
-    #[test]
-    fn test_build_retained_compaction_edges_trims_oversized_edge_messages_to_budget() {
-        let messages = vec![
-            json!({ "role": "user", "content": "A".repeat(12_000) }),
-            json!({ "role": "assistant", "content": "B".repeat(12_000) }),
-            json!({ "role": "user", "content": "middle question" }),
-            json!({ "role": "assistant", "content": "middle answer" }),
-            json!({ "role": "user", "content": "C".repeat(12_000) }),
-            json!({ "role": "assistant", "content": "D".repeat(12_000) }),
-            json!({ "role": "user", "content": "E".repeat(12_000) }),
-            json!({ "role": "assistant", "content": "F".repeat(12_000) }),
-        ];
-        let message_budget = 600;
-        let retained = build_retained_compaction_edges(
-            &messages,
-            message_budget,
-            None,
-            COMPACTION_RETAINED_EDGE_TURN_COUNT,
-        );
-        let (head_budget, tail_budget) = resolve_retained_edge_window_budgets(message_budget, 2, 2);
-
-        assert!(retained.head.tokens <= head_budget);
-        assert!(retained.tail.tokens <= tail_budget);
-        assert!(retained
-            .head
-            .messages
-            .iter()
-            .chain(retained.tail.messages.iter())
-            .all(|item| estimate_message_tokens(item) <= COMPACTION_RETAINED_MESSAGE_MAX_TOKENS));
-        assert!(retained
-            .head
-            .messages
-            .iter()
-            .chain(retained.tail.messages.iter())
-            .any(|item| {
-                item["content"]
-                    .as_str()
-                    .unwrap_or("")
-                    .contains("...(truncated)")
-            }));
-    }
-
-    #[test]
     fn test_build_committable_compaction_summary_rejects_placeholder_fragment() {
         assert!(build_committable_compaction_summary("...(truncated)", "").is_none());
         assert!(build_committable_compaction_summary("ok", "").is_none());
@@ -4515,162 +3651,6 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_retained_edge_char_limit_clamps_combined_edge_chars() {
-        let messages = vec![
-            json!({ "role": "user", "content": "head question ".repeat(2_000) }),
-            json!({ "role": "assistant", "content": "head answer ".repeat(2_000) }),
-            json!({ "role": "user", "content": "middle question" }),
-            json!({ "role": "assistant", "content": "middle answer" }),
-            json!({ "role": "user", "content": "tail question ".repeat(2_400) }),
-            json!({ "role": "assistant", "content": "tail answer ".repeat(2_400) }),
-            json!({ "role": "user", "content": "tail latest ".repeat(2_400) }),
-            json!({ "role": "assistant", "content": "tail latest answer ".repeat(2_400) }),
-        ];
-
-        let mut retained = build_retained_compaction_edges(
-            &messages,
-            20_000,
-            None,
-            COMPACTION_RETAINED_EDGE_TURN_COUNT,
-        );
-        apply_retained_edge_char_limit(&mut retained, COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS);
-
-        let total_chars = count_messages_text_chars(&retained.head.messages)
-            + count_messages_text_chars(&retained.tail.messages);
-        assert!(total_chars <= COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS);
-        assert!(!retained.head.messages.is_empty());
-        assert!(!retained.tail.messages.is_empty());
-    }
-
-    #[test]
-    fn test_auto_compaction_profiles_keep_edge_turns_but_skip_recent_user_window() {
-        let auto_loop = CompactionExecutionProfile::new(CompactionRunMode::AutoLoop);
-        let overflow_recovery =
-            CompactionExecutionProfile::new(CompactionRunMode::OverflowRecovery);
-
-        for profile in [auto_loop, overflow_recovery] {
-            assert_eq!(
-                profile.retained_edge_turn_count,
-                COMPACTION_RETAINED_EDGE_TURN_COUNT
-            );
-            assert!(!profile.allow_recent_user_window);
-            assert!(profile.prefer_preserving_summary);
-        }
-    }
-
-    #[test]
-    fn test_select_compaction_boundary_index_zero_mode_targets_current_question() {
-        let history_items = vec![
-            json!({ "role": "user", "content": "older question" }),
-            json!({ "role": "assistant", "content": "older answer" }),
-            json!({ "role": "user", "content": "current question" }),
-        ];
-        let current_index =
-            locate_matching_history_user_index(&history_items, &[String::from("current question")]);
-        let boundary = select_compaction_boundary(
-            &history_items,
-            current_index,
-            CompactionResetMode::Zero,
-            COMPACTION_RECENT_USER_WINDOW_TOKENS,
-        );
-        assert_eq!(current_index, Some(2));
-        assert_eq!(boundary.boundary_index, Some(2));
-    }
-
-    #[test]
-    fn test_select_compaction_boundary_index_current_mode_stops_before_current_question() {
-        let history_items = vec![
-            json!({ "role": "user", "content": "older question" }),
-            json!({ "role": "assistant", "content": "older answer" }),
-            json!({ "role": "user", "content": "current question" }),
-        ];
-        let current_index =
-            locate_matching_history_user_index(&history_items, &[String::from("current question")]);
-        let boundary = select_compaction_boundary(
-            &history_items,
-            current_index,
-            CompactionResetMode::Current,
-            COMPACTION_RECENT_USER_WINDOW_TOKENS,
-        );
-        assert_eq!(boundary.boundary_index, Some(1));
-    }
-
-    #[test]
-    fn test_select_compaction_boundary_index_keep_mode_retains_recent_tail_window() {
-        let history_items = vec![
-            json!({ "role": "user", "content": "older question" }),
-            json!({ "role": "assistant", "content": "older answer" }),
-            json!({ "role": "user", "content": "middle question" }),
-            json!({ "role": "assistant", "content": "middle answer" }),
-            json!({ "role": "user", "content": "current question" }),
-        ];
-        let keep_tokens = estimate_message_tokens(&json!({
-            "role": "user",
-            "content": "middle question"
-        })) + estimate_message_tokens(&json!({
-            "role": "user",
-            "content": "current question"
-        }));
-        let boundary = select_compaction_boundary(
-            &history_items,
-            locate_matching_history_user_index(&history_items, &[String::from("current question")]),
-            CompactionResetMode::Keep,
-            keep_tokens,
-        );
-        assert_eq!(boundary.boundary_index, Some(1));
-    }
-
-    #[test]
-    fn test_select_compaction_boundary_index_keep_mode_supports_full_window() {
-        let history_items = vec![
-            json!({
-                "role": "user",
-                "content": "older question",
-                "timestamp": "2026-03-27T00:00:01Z"
-            }),
-            json!({
-                "role": "assistant",
-                "content": "older answer",
-                "timestamp": "2026-03-27T00:00:02Z"
-            }),
-            json!({
-                "role": "user",
-                "content": "current question",
-                "timestamp": "2026-03-27T00:00:03Z"
-            }),
-        ];
-        let keep_tokens = estimate_message_tokens(&json!({
-            "role": "user",
-            "content": "older question"
-        })) + estimate_message_tokens(&json!({
-            "role": "user",
-            "content": "current question"
-        })) + 32;
-        let boundary = select_compaction_boundary(
-            &history_items,
-            locate_matching_history_user_index(&history_items, &[String::from("current question")]),
-            CompactionResetMode::Keep,
-            keep_tokens,
-        );
-        assert_eq!(boundary.boundary_index, None);
-        assert!(boundary.boundary_ts_override.is_some());
-    }
-
-    #[test]
-    fn test_mark_current_user_message_skip_persist_sets_meta_flag() {
-        let mut message = json!({ "role": "user", "content": "current question" });
-        mark_current_user_message_skip_persist(&mut message);
-        assert_eq!(
-            message
-                .get("meta")
-                .and_then(Value::as_object)
-                .and_then(|meta| meta.get(COMPACTION_SKIP_PERSIST_CURRENT_USER_META_KEY))
-                .and_then(Value::as_bool),
-            Some(true)
-        );
-    }
-
-    #[test]
     fn test_build_committed_replacement_history_from_rebuilt_strips_system_and_inflight_user() {
         let mut inflight_user = json!({ "role": "user", "content": "current question" });
         mark_current_user_message_inflight(&mut inflight_user);
@@ -4692,6 +3672,59 @@ mod tests {
         assert!(committed
             .iter()
             .all(|item| !is_compaction_inflight_current_user_message(item)));
+    }
+
+    #[test]
+    fn test_build_committed_replacement_history_from_rebuilt_strips_internal_compaction_artifacts()
+    {
+        let mut inflight_user = json!({ "role": "user", "content": "current question" });
+        mark_current_user_message_inflight(&mut inflight_user);
+        let rebuilt = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({
+                "role": "assistant",
+                "content": "I will inspect the file.\nAssistant issued tool call(s): read_file",
+                "tool_calls": [{
+                    "function": { "name": "read_file" }
+                }],
+                "tool_call_id": "call_1"
+            }),
+            json!({
+                "role": "user",
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "read_file",
+                    "ok": true,
+                    "data": {
+                        "results_jsonl": "{\"path\":\"/tmp/demo.txt\"}"
+                    }
+                })),
+            }),
+            json!({
+                "role": "assistant",
+                "content": "Assistant issued tool call(s): read_file",
+                "tool_calls": [{
+                    "function": { "name": "read_file" }
+                }]
+            }),
+            json!({
+                "role": "user",
+                "content": format!("{}\nsummary", i18n::t("history.compaction_prefix"))
+            }),
+            inflight_user,
+        ];
+
+        let committed = build_committed_replacement_history_from_rebuilt(&rebuilt);
+
+        assert_eq!(
+            committed,
+            vec![
+                json!({ "role": "assistant", "content": "I will inspect the file." }),
+                json!({
+                    "role": "user",
+                    "content": format!("{}\nsummary", i18n::t("history.compaction_prefix"))
+                }),
+            ]
+        );
     }
 
     #[test]
