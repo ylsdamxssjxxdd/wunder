@@ -531,8 +531,7 @@ fn split_legacy_retained_summary_items(
     active_items: &[Value],
     summary_item: Option<&Value>,
 ) -> Option<(usize, Vec<Value>)> {
-    let head_end =
-        extract_legacy_retained_summary_index(summary_item, "retained_head_until_index");
+    let head_end = extract_legacy_retained_summary_index(summary_item, "retained_head_until_index");
     let tail_start =
         extract_legacy_retained_summary_index(summary_item, "retained_tail_from_index");
     if head_end.is_none() && tail_start.is_none() {

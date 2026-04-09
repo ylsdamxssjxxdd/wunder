@@ -1,4 +1,3 @@
-import defaultAgentAvatarImage from '@/assets/agent-avatars/avatar-046.jpg';
 import {
   AGENT_AVATAR_IMAGE_MAP,
   AGENT_AVATAR_OPTION_KEYS,
@@ -145,4 +144,6 @@ export const resolveAgentAvatarInitial = (value: unknown): string => {
 };
 
 export const DEFAULT_AGENT_AVATAR_IMAGE =
-  AGENT_AVATAR_IMAGE_MAP.get(DEFAULT_AGENT_AVATAR_ICON_NAME) || defaultAgentAvatarImage;
+  AGENT_AVATAR_IMAGE_MAP.get(DEFAULT_AGENT_AVATAR_ICON_NAME)
+  || AGENT_AVATAR_IMAGE_MAP.get(DEFAULT_AGENT_AVATAR_IMAGE_KEY)
+  || '';

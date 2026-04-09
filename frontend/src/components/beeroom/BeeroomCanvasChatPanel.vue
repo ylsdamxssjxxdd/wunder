@@ -70,7 +70,10 @@
             </div>
             <div class="beeroom-canvas-chat-bubble">
               <span v-if="message.mention" class="beeroom-canvas-chat-mention">@{{ message.mention }}</span>
-              <span>{{ message.body }}</span>
+              <BeeroomCanvasChatMarkdown
+                :cache-key="`beeroom:${message.key}`"
+                :content="message.body"
+              />
             </div>
             <div v-if="message.meta" class="beeroom-canvas-chat-extra">{{ message.meta }}</div>
           </div>
@@ -169,6 +172,7 @@ import { nextTick, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { chatDebugLog } from '@/utils/chatDebug';
 
+import BeeroomCanvasChatMarkdown from './BeeroomCanvasChatMarkdown.vue';
 import type {
   ComposerTargetOption,
   DispatchApprovalItem,
@@ -521,8 +525,7 @@ watch(
 }
 
 .beeroom-canvas-chat-bubble {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
   padding: 10px 12px;
   border-radius: 14px;
@@ -532,6 +535,10 @@ watch(
   font-size: 12.5px;
   line-height: 1.65;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.beeroom-canvas-chat-bubble > * {
+  min-width: 0;
 }
 
 .beeroom-canvas-chat-message.is-mother .beeroom-canvas-chat-bubble {

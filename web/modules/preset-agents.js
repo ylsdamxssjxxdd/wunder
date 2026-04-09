@@ -34,75 +34,105 @@ const PRESET_AVATAR_BASE_URL = (() => {
   }
 })();
 
-const PRESET_AGENT_AVATAR_KEYS = [
-  "avatar-000",
-  "avatar-001",
-  "avatar-003",
-  "avatar-004",
-  "avatar-007",
-  "avatar-010",
-  "avatar-011",
-  "avatar-012",
-  "avatar-013",
-  "avatar-014",
-  "avatar-015",
-  "avatar-016",
-  "avatar-017",
-  "avatar-018",
-  "avatar-019",
-  "avatar-020",
-  "avatar-021",
-  "avatar-022",
-  "avatar-023",
-  "avatar-024",
-  "avatar-025",
-  "avatar-027",
-  "avatar-028",
-  "avatar-029",
-  "avatar-032",
-  "avatar-034",
-  "avatar-036",
-  "avatar-040",
-  "avatar-041",
-  "avatar-043",
-  "avatar-044",
-  "avatar-046",
-  "avatar-048",
-  "avatar-049",
-  "avatar-050",
-  "avatar-051",
-  "avatar-052",
-  "avatar-054",
-  "avatar-055",
-  "avatar-056",
-  "avatar-057",
-  "avatar-058",
-  "avatar-059",
-  "avatar-060",
-  "avatar-061",
-  "avatar-062",
-  "avatar-063",
-  "avatar-065",
-  "avatar-066",
-  "avatar-067",
-  "avatar-069",
-  "avatar-070",
-  "avatar-072",
-  "avatar-073",
-  "avatar-075",
-  "avatar-076",
-  "avatar-077",
-];
+const PRESET_AGENT_AVATAR_EXTENSION_MAP = {
+  "avatar-000": "jpg",
+  "avatar-001": "jpg",
+  "avatar-003": "jpg",
+  "avatar-004": "jpg",
+  "avatar-007": "jpg",
+  "avatar-010": "png",
+  "avatar-011": "jpg",
+  "avatar-012": "jpg",
+  "avatar-013": "jpg",
+  "avatar-014": "jpg",
+  "avatar-015": "png",
+  "avatar-016": "jpg",
+  "avatar-017": "jpg",
+  "avatar-018": "jpg",
+  "avatar-019": "jpg",
+  "avatar-020": "jpg",
+  "avatar-021": "jpg",
+  "avatar-022": "jpg",
+  "avatar-023": "jpg",
+  "avatar-024": "jpg",
+  "avatar-025": "jpg",
+  "avatar-027": "jpg",
+  "avatar-028": "jpg",
+  "avatar-029": "jpg",
+  "avatar-032": "jpg",
+  "avatar-034": "jpg",
+  "avatar-036": "jpg",
+  "avatar-040": "jpg",
+  "avatar-041": "jpg",
+  "avatar-043": "jpg",
+  "avatar-044": "jpg",
+  "avatar-046": "jpg",
+  "avatar-047": "jpg",
+  "avatar-048": "jpg",
+  "avatar-049": "jpg",
+  "avatar-050": "jpg",
+  "avatar-051": "jpg",
+  "avatar-054": "jpg",
+  "avatar-055": "jpg",
+  "avatar-056": "jpg",
+  "avatar-057": "jpg",
+  "avatar-058": "jpg",
+  "avatar-059": "jpg",
+  "avatar-060": "jpg",
+  "avatar-061": "jpg",
+  "avatar-062": "jpg",
+  "avatar-063": "jpg",
+  "avatar-065": "jpg",
+  "avatar-066": "jpg",
+  "avatar-067": "jpg",
+  "avatar-069": "jpg",
+  "avatar-070": "jpg",
+  "avatar-072": "jpg",
+  "avatar-073": "jpg",
+  "avatar-075": "jpg",
+  "avatar-076": "jpg",
+  "avatar-077": "jpg",
+};
 
-const PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", label: "initial" }].concat(
-  PRESET_AGENT_AVATAR_KEYS.map((key) => ({
-    key,
-    image: `${PRESET_AVATAR_BASE_URL}${key}.jpg`,
-    label: `Agent Avatar ${key.slice("avatar-".length)}`,
-  }))
+const PRESET_AVATAR_EXTENSION_CANDIDATES = ["png", "jpg", "jpeg"];
+
+const PRESET_AGENT_AVATAR_KEYS = Object.keys(PRESET_AGENT_AVATAR_EXTENSION_MAP).sort((left, right) =>
+  left.localeCompare(right, "en", { numeric: true, sensitivity: "base" })
 );
 
-const PRESET_AVATAR_IMAGE_MAP = new Map(PRESET_AVATAR_OPTIONS.filter((item) => item.image).map((item) => [item.key, item.image]));
+const buildPresetAvatarImageCandidates = (key) => {
+  const normalized = String(key || "").trim();
+  if (!normalized) {
+    return [];
+  }
+  const preferredExtension = String(PRESET_AGENT_AVATAR_EXTENSION_MAP[normalized] || "")
+    .trim()
+    .toLowerCase();
+  return Array.from(
+    new Set(
+      [preferredExtension, ...PRESET_AVATAR_EXTENSION_CANDIDATES].filter((item) => Boolean(String(item || "").trim()))
+    )
+  ).map((extension) => `${PRESET_AVATAR_BASE_URL}${normalized}.${extension}`);
+};
+
+const PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", imageCandidates: [], label: "initial" }].concat(
+  PRESET_AGENT_AVATAR_KEYS.map((key) => {
+    const imageCandidates = buildPresetAvatarImageCandidates(key);
+    return {
+      key,
+      image: imageCandidates[0] || "",
+      imageCandidates,
+      label: `Agent Avatar ${key.slice("avatar-".length)}`,
+    };
+  })
+);
+
+const PRESET_AVATAR_IMAGE_CANDIDATE_MAP = new Map(
+  PRESET_AVATAR_OPTIONS.filter((item) => Array.isArray(item.imageCandidates) && item.imageCandidates.length).map((item) => [
+    item.key,
+    item.imageCandidates,
+  ])
+);
 const PRESET_AVATAR_OPTION_KEYS = new Set(PRESET_AVATAR_OPTIONS.map((item) => item.key));
 const DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("avatar-000")
   ? "avatar-000"
@@ -325,7 +355,37 @@ const normalizeIconName = (
   return fallbackWhenUnknown;
 };
 
-const resolveAvatarImageByKey = (value) => PRESET_AVATAR_IMAGE_MAP.get(String(value || "").trim()) || "";
+const resolveAvatarImageCandidatesByKey = (value) => {
+  const normalized = String(value || "").trim();
+  return PRESET_AVATAR_IMAGE_CANDIDATE_MAP.get(normalized) || [];
+};
+
+const bindAvatarImageSource = (image, candidates, onExhausted) => {
+  const urls = Array.from(
+    new Set((Array.isArray(candidates) ? candidates : []).map((item) => String(item || "").trim()).filter(Boolean))
+  );
+  if (!urls.length) {
+    if (typeof onExhausted === "function") {
+      onExhausted();
+    }
+    return false;
+  }
+  let index = 0;
+  const loadNext = () => {
+    if (index >= urls.length) {
+      image.removeAttribute("src");
+      if (typeof onExhausted === "function") {
+        onExhausted();
+      }
+      return;
+    }
+    image.src = urls[index];
+    index += 1;
+  };
+  image.addEventListener("error", loadNext);
+  loadNext();
+  return true;
+};
 
 const resolveAvatarInitial = (value) => {
   const cleaned = String(value || "").trim();
@@ -1046,30 +1106,25 @@ const renderAvatarFace = (container, { iconName, color, initial, imageClass = ""
   });
   const normalizedColor = normalizeIconColor(color);
   const normalizedInitial = resolveAvatarInitial(initial);
-  const imageUrl = resolveAvatarImageByKey(normalizedIcon);
+  const imageCandidates = resolveAvatarImageCandidatesByKey(normalizedIcon);
   target.textContent = "";
-  target.style.background = imageUrl ? "transparent" : normalizedColor;
+  target.style.background = imageCandidates.length ? "transparent" : normalizedColor;
 
-  if (imageUrl) {
+  if (imageCandidates.length) {
     const image = document.createElement("img");
     if (imageClass) {
       image.className = imageClass;
     }
-    image.src = imageUrl;
     image.alt = "";
-    image.addEventListener(
-      "error",
-      () => {
-        target.textContent = "";
-        target.style.background = normalizedColor;
-        const fallback = document.createElement("span");
-        fallback.className = initialClass;
-        fallback.textContent = normalizedInitial;
-        target.appendChild(fallback);
-      },
-      { once: true }
-    );
     target.appendChild(image);
+    bindAvatarImageSource(image, imageCandidates, () => {
+      target.textContent = "";
+      target.style.background = normalizedColor;
+      const fallback = document.createElement("span");
+      fallback.className = initialClass;
+      fallback.textContent = normalizedInitial;
+      target.appendChild(fallback);
+    });
     return;
   }
 
@@ -1145,24 +1200,19 @@ const renderPresetAvatarPicker = () => {
     option.title = label;
     option.setAttribute("aria-label", label);
 
-    if (item.image) {
+    if (item.imageCandidates?.length) {
       const image = document.createElement("img");
       image.className = "preset-agent-avatar-option-image";
-      image.src = item.image;
       image.alt = "";
-      image.addEventListener(
-        "error",
-        () => {
-          option.textContent = "";
-          const fallback = document.createElement("span");
-          fallback.className = "preset-agent-avatar-option-initial";
-          fallback.textContent = resolveAvatarInitial(selectedPreset()?.name);
-          fallback.style.background = normalizeIconColor(avatarModalState.color);
-          option.appendChild(fallback);
-        },
-        { once: true }
-      );
       option.appendChild(image);
+      bindAvatarImageSource(image, item.imageCandidates, () => {
+        option.textContent = "";
+        const fallback = document.createElement("span");
+        fallback.className = "preset-agent-avatar-option-initial";
+        fallback.textContent = resolveAvatarInitial(selectedPreset()?.name);
+        fallback.style.background = normalizeIconColor(avatarModalState.color);
+        option.appendChild(fallback);
+      });
     } else {
       const initial = document.createElement("span");
       initial.className = "preset-agent-avatar-option-initial";
@@ -1204,7 +1254,7 @@ const renderPresetAvatarModalState = () => {
     initial: resolveAvatarInitial(selectedPreset()?.name),
     initialClass: "preset-agent-avatar-option-initial",
   });
-  const hasImage = Boolean(resolveAvatarImageByKey(iconName));
+  const hasImage = resolveAvatarImageCandidatesByKey(iconName).length > 0;
   elements.presetAgentAvatarColorRow.style.display = hasImage ? "none" : "";
   syncPresetAvatarColorControl();
   renderPresetAvatarPicker();

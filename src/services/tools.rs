@@ -142,7 +142,7 @@ use tool_error::{build_failed_tool_result, ToolErrorMeta};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
 const MAX_READ_LINES: usize = 2000;
-const MAX_READ_FILES: usize = 5;
+const DEFAULT_START_LINE_WINDOW: usize = 200;
 const MAX_READ_BUDGET_FILES: usize = 20;
 const MIN_READ_OUTPUT_BUDGET_BYTES: usize = 1024;
 const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
@@ -1797,16 +1797,16 @@ fn build_swarm_timeout_monitoring_payload(
             "purpose": "继续等待 60 秒",
             "args": {
                 "action": "wait",
-                "runIds": [run_id],
-                "waitSeconds": 60
+                "run_ids": [run_id],
+                "wait_seconds": 60
             }
         }));
         suggestions.push(json!({
             "purpose": "立即查看当前快照",
             "args": {
                 "action": "wait",
-                "runIds": [run_id],
-                "waitSeconds": 0
+                "run_ids": [run_id],
+                "wait_seconds": 0
             }
         }));
     }
@@ -1816,7 +1816,7 @@ fn build_swarm_timeout_monitoring_payload(
             "purpose": "查看工蜂会话历史",
             "args": {
                 "action": "history",
-                "sessionKey": session_key
+                "session_id": session_key
             }
         }));
     }
@@ -1839,16 +1839,16 @@ fn build_swarm_wait_monitoring_payload(run_ids: &[String]) -> Value {
                 "purpose": "继续等待 60 秒",
                 "args": {
                     "action": "wait",
-                    "runIds": run_ids,
-                    "waitSeconds": 60
+                    "run_ids": run_ids,
+                    "wait_seconds": 60
                 }
             },
             {
                 "purpose": "立即查看当前快照",
                 "args": {
                     "action": "wait",
-                    "runIds": run_ids,
-                    "waitSeconds": 0
+                    "run_ids": run_ids,
+                    "wait_seconds": 0
                 }
             }
         ]
@@ -2086,8 +2086,8 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                 "send",
                 "TOOL_ARGS_INVALID",
                 format!("agent_swarm send arguments are invalid: {err}"),
-                "请提供 action=\"send\"，并同时给出非空 message 与 agentId、agentName、sessionKey 三者之一。",
-                &["message", "agentId|agentName|sessionKey"],
+                "请提供 action=\"send\"，并同时给出非空 message 与 agent_id、agent_name、session_id 三者之一。",
+                &["message", "agent_id|agent_name|session_id"],
                 agent_swarm_send_example(),
                 args,
                 json!({}),
@@ -2104,7 +2104,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             "send",
             "TOOL_ARGS_MISSING_FIELD",
             "agent_swarm send requires non-empty message",
-            "请提供非空 message，并指定 agentId、agentName 或 sessionKey。",
+            "请提供非空 message，并指定 agent_id、agent_name 或 session_id。",
             &["message"],
             agent_swarm_send_example(),
             args,
@@ -2125,8 +2125,8 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             "send",
             "TOOL_ARGS_MISSING_FIELD",
             "agent_swarm send requires agent_id/agent_name or session_id",
-            "请至少提供一个目标字段：agentId、agentName 或 sessionKey，再发送 message。",
-            &["agentId|agentName|sessionKey"],
+            "请至少提供一个目标字段：agent_id、agent_name 或 session_id，再发送 message。",
+            &["agent_id|agent_name|session_id"],
             agent_swarm_send_example(),
             args,
             json!({}),
@@ -2467,14 +2467,14 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 format!(
                     "agent_swarm batch_send task[{index}] requires agent_id/agent_name or session_id"
                 ),
-                "请在每个 task 内至少提供 agentId、agentName、sessionKey 之一，不要传空对象。",
-                &["tasks[].agentId|agentName|sessionKey"],
+                "请在每个 task 内至少提供 agent_id、agent_name、session_id 之一，不要传空对象。",
+                &["tasks[].agent_id|agent_name|session_id"],
                 agent_swarm_batch_send_example(),
                 args,
                 json!({
                     "task_index": index,
                     "expected_task_shape": {
-                        "agentName": "政策副手",
+                        "agent_name": "worker_a",
                         "message": "请总结政府退休政策的核心要点。"
                     }
                 }),
@@ -2495,7 +2495,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 json!({
                     "task_index": index,
                     "expected_task_shape": {
-                        "agentName": "政策副手",
+                        "agent_name": "worker_a",
                         "message": "请总结政府退休政策的核心要点。"
                     }
                 }),
@@ -2980,8 +2980,8 @@ async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Val
                 "wait",
                 "TOOL_ARGS_INVALID",
                 format!("agent_swarm wait arguments are invalid: {err}"),
-                "请提供 action=\"wait\"，并传入 runIds 数组或单个 runId。",
-                &["runIds|runId"],
+                "请提供 action=\"wait\"，并传入 run_ids 数组或单个 run_id。",
+                &["run_ids|run_id"],
                 agent_swarm_wait_example(),
                 args,
                 json!({}),
@@ -2998,8 +2998,8 @@ async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Val
             "wait",
             "TOOL_ARGS_MISSING_FIELD",
             "agent_swarm wait requires runIds",
-            "请传入 runIds 数组或 runId。通常应先从 send/batch_send 的返回结果中复制 run_id 再等待。",
-            &["runIds|runId"],
+            "请传入 run_ids 数组或 run_id。通常应先从 send/batch_send 的返回结果中复制 run_id 再等待。",
+            &["run_ids|run_id"],
             agent_swarm_wait_example(),
             args,
             json!({}),
@@ -3288,8 +3288,8 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "spawn",
                 "TOOL_ARGS_INVALID",
                 format!("agent_swarm spawn arguments are invalid: {err}"),
-                "请提供 action=\"spawn\"、非空 task，以及 agentId 或 agentName。临时子会话请改用 subagent_control.spawn。",
-                &["task", "agentId|agentName"],
+                "请提供 action=\"spawn\"、非空 task，以及 agent_id 或 agent_name。临时子会话请改用 subagent_control.spawn。",
+                &["task", "agent_id|agent_name"],
                 agent_swarm_spawn_example(),
                 args,
                 json!({}),
@@ -3324,8 +3324,8 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "spawn",
             "TOOL_ARGS_MISSING_FIELD",
             "agent_swarm spawn requires agent_id/agent_name",
-            "请提供 agentId 或 agentName；如果你想创建临时子会话而不是调用已存在智能体，请改用 subagent_control.spawn。",
-            &["agentId|agentName"],
+            "请提供 agent_id 或 agent_name；如果你想创建临时子会话而不是调用已存在智能体，请改用 subagent_control.spawn。",
+            &["agent_id|agent_name"],
             agent_swarm_spawn_example(),
             args,
             json!({}),
@@ -6816,6 +6816,23 @@ impl ReadSpecParseError {
             }),
         }
     }
+
+    fn too_many_files(count: usize, max: usize) -> Self {
+        let params = HashMap::from([
+            ("count".to_string(), count.to_string()),
+            ("max".to_string(), max.to_string()),
+        ]);
+        Self {
+            code: "TOOL_READ_TOO_MANY_FILES",
+            message: i18n::t_with_params("tool.read.too_many_files", &params),
+            hint: Some(i18n::t("tool.read.too_many_files_hint")),
+            data: json!({
+                "kind": "too_many_files",
+                "count": count,
+                "max_files": max,
+            }),
+        }
+    }
 }
 
 fn parse_read_file_specs(
@@ -6824,7 +6841,13 @@ fn parse_read_file_specs(
     let mut specs = Vec::new();
 
     if let Some(files) = args.get("files").and_then(Value::as_array) {
-        for file in files.iter().take(MAX_READ_FILES) {
+        if files.len() > MAX_READ_BUDGET_FILES {
+            return Err(ReadSpecParseError::too_many_files(
+                files.len(),
+                MAX_READ_BUDGET_FILES,
+            ));
+        }
+        for file in files {
             let Some(obj) = file.as_object() else {
                 continue;
             };
@@ -6905,7 +6928,7 @@ fn parse_read_file_spec_object(
         let end = obj
             .get("end_line")
             .and_then(parse_line_number)
-            .unwrap_or(start);
+            .unwrap_or_else(|| start.saturating_add(DEFAULT_START_LINE_WINDOW.saturating_sub(1)));
         validate_line_range_order(start, end)?;
         requested_ranges.push((start, end));
         ranges.push(normalize_range(start, end));
@@ -9177,6 +9200,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_read_file_specs_treats_start_line_without_end_line_as_window() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "README.md",
+            "start_line": 18,
+        }))
+        .expect("start_line window payload should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "README.md");
+        assert_eq!(
+            specs[0].ranges,
+            vec![(18, 18 + DEFAULT_START_LINE_WINDOW - 1)]
+        );
+    }
+
+    #[test]
     fn parse_read_file_specs_clamps_explicit_range_to_max_span() {
         let specs = parse_read_file_specs(&json!({
             "path": "README.md",
@@ -9201,6 +9240,28 @@ mod tests {
         assert_eq!(err.code, "TOOL_READ_INVALID_RANGE");
         assert!(err.message.contains("80"));
         assert!(err.message.contains("12"));
+    }
+
+    #[test]
+    fn parse_read_file_specs_rejects_more_than_max_budget_files() {
+        let files = (0..=MAX_READ_BUDGET_FILES)
+            .map(|idx| {
+                json!({
+                    "path": format!("docs/{idx}.md"),
+                })
+            })
+            .collect::<Vec<_>>();
+        let err = parse_read_file_specs(&json!({
+            "files": files,
+        }))
+        .expect_err("oversized files payload should fail");
+
+        assert_eq!(err.code, "TOOL_READ_TOO_MANY_FILES");
+        assert_eq!(err.data.get("count").and_then(Value::as_u64), Some(21));
+        assert_eq!(
+            err.data.get("max_files").and_then(Value::as_u64),
+            Some(MAX_READ_BUDGET_FILES as u64)
+        );
     }
 
     #[test]
@@ -9715,7 +9776,7 @@ PATCH"#;
     #[test]
     fn agent_swarm_batch_send_args_accept_team_run_id_aliases() {
         let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
-            "tasks": [{ "agentId": "worker_a", "message": "hello" }],
+            "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
             "teamRunId": "team_demo_camel",
         }))
         .expect("parse camel args");
@@ -9727,6 +9788,28 @@ PATCH"#;
         }))
         .expect("parse snake args");
         assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
+    }
+
+    #[test]
+    fn agent_swarm_send_args_accept_canonical_session_id() {
+        let payload: AgentSwarmSendArgs = serde_json::from_value(json!({
+            "session_id": "sess_worker_demo",
+            "message": "hello",
+        }))
+        .expect("parse canonical send args");
+        assert_eq!(payload.session_key.as_deref(), Some("sess_worker_demo"));
+        assert_eq!(payload.message, "hello");
+    }
+
+    #[test]
+    fn agent_swarm_wait_args_accept_canonical_run_ids() {
+        let payload: AgentSwarmWaitArgs = serde_json::from_value(json!({
+            "run_ids": ["run_demo_1"],
+            "wait_seconds": 3,
+        }))
+        .expect("parse canonical wait args");
+        assert_eq!(payload.run_ids, Some(vec!["run_demo_1".to_string()]));
+        assert_eq!(payload.wait_seconds, Some(3.0));
     }
 
     #[tokio::test]
@@ -9802,7 +9885,7 @@ PATCH"#;
             &json!({
                 "action": "batch_send",
                 "tasks": [
-                    { "agentName": "政策副手" }
+                    { "agent_name": "worker_a" }
                 ]
             }),
         )
@@ -9911,7 +9994,7 @@ PATCH"#;
         );
         assert_eq!(
             result
-                .pointer("/data/example/agentName")
+                .pointer("/data/example/agent_name")
                 .and_then(Value::as_str),
             Some("worker_a")
         );

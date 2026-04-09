@@ -386,56 +386,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": t("tool.spec.search.args.query")},
-                    "pattern": {"type": "string", "description": t("tool.spec.search.args.pattern")},
                     "path": {"type": "string", "description": t("tool.spec.search.args.path")},
-                    "file_pattern": {"type": "string", "description": t("tool.spec.search.args.file_pattern")},
                     "glob": {"type": "string", "description": t("tool.spec.search.args.glob")},
-                    "type": {
-                        "anyOf": [
-                            {"type": "string"},
-                            {"type": "array", "items": {"type": "string"}}
-                        ],
-                        "description": t("tool.spec.search.args.type")
-                    },
                     "query_mode": {"type": "string", "enum": ["literal", "regex"], "description": t("tool.spec.search.args.query_mode")},
-                    "regex": {"type": "boolean", "description": t("tool.spec.search.args.regex")},
-                    "fixed_strings": {"type": "boolean", "description": t("tool.spec.search.args.fixed_strings")},
-                    "-F": {"type": "boolean", "description": t("tool.spec.search.args.fixed_strings")},
                     "case_sensitive": {"type": "boolean", "description": t("tool.spec.search.args.case_sensitive")},
-                    "ignore_case": {"type": "boolean", "description": t("tool.spec.search.args.ignore_case")},
-                    "-i": {"type": "boolean", "description": t("tool.spec.search.args.ignore_case")},
-                    "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
-                    "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")},
                     "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of matches to return (default 200)."},
-                    "max_count": {"type": "integer", "minimum": 1, "maximum": 2000, "description": t("tool.spec.search.args.max_count")},
-                    "head_limit": {"type": "integer", "minimum": 1, "maximum": 2000, "description": t("tool.spec.search.args.max_count")},
-                    "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000, "description": "Maximum candidate files produced by fast search engine (default 4000)."},
                     "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Search timeout in milliseconds (default 30000)."},
-                    "engine": {"type": "string", "enum": ["auto", "rg", "rust"], "description": "Search engine strategy: auto prefers rg and falls back to rust scanner."},
-                    "dry_run": {"type": "boolean", "description": "Validate search plan and resolved budget without scanning files."},
-                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Optional time budget cap in milliseconds for this search call."},
-                    "output_budget_bytes": {"type": "integer", "minimum": 2048, "maximum": 4194304, "description": "Optional cap for returned hits payload size in bytes."},
-                    "budget": {
-                        "type": "object",
-                        "properties": {
-                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
-                            "output_budget_bytes": {"type": "integer", "minimum": 2048, "maximum": 4194304},
-                            "max_files": {"type": "integer", "minimum": 1, "maximum": 20000},
-                            "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000},
-                            "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000}
-                        }
-                    },
                     "context": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context")},
-                    "-C": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_alias")},
                     "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
-                    "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")},
-                    "-B": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.before_alias")},
-                    "-A": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.after_alias")}
+                    "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
                 },
-                "anyOf": [
-                    {"required": ["query"]},
-                    {"required": ["pattern"]}
-                ]
+                "required": ["query"]
             }),
         },
         ToolSpec {
@@ -598,29 +559,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["list", "history", "send", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
-                    "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
-                    "messageLimit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
-                    "parentId": {"type": "string", "description": "Parent session id. list/status/wait default to the current session when omitted."},
+                    "active_minutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
+                    "message_limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
+                    "parent_id": {"type": "string", "description": "Parent session id. list/status/wait default to the current session when omitted."},
                     "session_id": {"type": "string", "description": "Exact child session id. Prefer the session_id returned by spawn. send/history require exactly one child session."},
-                    "sessionId": {"type": "string", "description": "Exact child session id. Prefer the session_id returned by spawn. send/history require exactly one child session."},
-                    "sessionIds": {"type": "array", "description": "Child session ids under the current session. status/wait may use multiple targets; send/history must resolve to exactly one child session.", "items": {"type": "string"}},
-                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                    "runId": {"type": "string", "description": "Child run id. send/history may use a single runId to resolve the child session; status/wait may inspect by runId directly."},
-                    "runIds": {"type": "array", "description": "Child run ids for status/wait or multi-target inspection.", "items": {"type": "string"}},
-                    "dispatchId": {"type": "string", "description": "Dispatch id returned by batch_spawn."},
+                    "session_ids": {"type": "array", "description": "Child session ids under the current session. status/wait may use multiple targets; send/history must resolve to exactly one child session.", "items": {"type": "string"}},
+                    "run_id": {"type": "string", "description": "Child run id. send/history may use a single run_id to resolve the child session; status/wait may inspect by run_id directly."},
+                    "run_ids": {"type": "array", "description": "Child run ids for status/wait or multi-target inspection.", "items": {"type": "string"}},
+                    "dispatch_id": {"type": "string", "description": "Dispatch id returned by batch_spawn."},
                     "strategy": {
                         "type": "string",
                         "description": "Batch dispatch strategy. first_success aligns with Codex-style early convergence.",
                         "enum": ["parallel_all", "first_success", "review_then_merge"]
                     },
-                    "remainingAction": {
+                    "remaining_action": {
                         "type": "string",
                         "description": "How to handle unfinished sibling subagents after early convergence. first_success defaults to interrupt; wait keeps siblings unless specified.",
                         "enum": ["keep", "interrupt", "close"]
                     },
-                    "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
+                    "include_tools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
                     "message": {"type": "string", "description": "Message content for a follow-up turn on an existing child session. Do not use action=send immediately after spawn unless you are continuing the same child conversation."},
-                    "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
+                    "timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
                     "task": {"type": "string", "description": "Initial task or first prompt for the child session. action=spawn/batch_spawn dispatches this task immediately and starts the first child turn; do not repeat the same content with send unless you intentionally want a follow-up turn."},
                     "tasks": {
                         "type": "array",
@@ -630,27 +589,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "properties": {
                                 "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
                                 "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
-                                "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                                "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
                                 "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
-                                "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                                "run_timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
                                 "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
                             },
                             "required": ["task"]
                         }
                     },
                     "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
-                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
                     "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
-                    "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                    "run_timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
                     "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
-                    "waitSeconds": {"type": "number", "description": "Wait time for batch/status polling."},
-                    "pollIntervalSeconds": {"type": "number", "description": "Polling interval for wait."},
-                    "waitMode": {
+                    "wait_seconds": {"type": "number", "description": "Wait time for batch/status polling."},
+                    "poll_interval_seconds": {"type": "number", "description": "Polling interval for wait."},
+                    "wait_mode": {
                         "type": "string",
                         "description": "Wait completion mode for subagent wait. all waits every target, any returns on first terminal target, first_success returns on the first success or when all targets finish.",
                         "enum": ["all", "any", "first_success"]
                     },
-                    "dispatchLabel": {"type": "string", "description": "Optional label for the dispatch batch."},
+                    "dispatch_label": {"type": "string", "description": "Optional label for the dispatch batch."},
                     "cascade": {"type": "boolean", "description": "Apply close/resume recursively to descendants."}
                 },
                 "required": ["action"]
@@ -701,7 +660,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
-            description: "蜂群协作工具，只管理已存在的其他智能体。spawn 必须提供 agentId/agentName；临时子会话请改用子智能体控制。".to_string(),
+            description: "蜂群协作工具，只管理已存在的其他智能体。使用 canonical 字段 agent_id/agent_name/session_id/run_ids。spawn 必须提供 agent_id 或 agent_name；临时子会话请改用子智能体控制。".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -710,78 +669,37 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生到已存在智能体)/list(列成员)。必须显式提供，不要留空。",
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
-                    "agentId": {"type": "string", "description": "目标智能体 ID。"},
-                    "agentName": {"type": "string", "description": "目标智能体名称。"},
-                    "name": {"type": "string", "description": "agentName 的简写别名。"},
-                    "sessionKey": {"type": "string", "description": "目标会话 ID。"},
+                    "agent_id": {"type": "string", "description": "目标智能体 ID。"},
+                    "agent_name": {"type": "string", "description": "目标智能体名称。"},
+                    "session_id": {"type": "string", "description": "目标会话 ID。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
-                    "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agentId/agentName 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
+                    "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agent_id/agent_name 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
+                    "limit": {"type": "integer", "description": "Maximum number of items to return for list/status.", "minimum": 1},
+                    "wait_seconds": {"type": "number", "description": "Optional wait duration in seconds for wait/batch_send."},
+                    "poll_interval_seconds": {"type": "number", "description": "Polling interval in seconds while waiting."},
+                    "include_current": {"type": "boolean", "description": "Whether the current agent can also be selected as a target."},
                     "tasks": {
                         "type": "array",
-                        "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agentId/agentName/sessionKey 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
+                        "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agent_id/agent_name/session_id 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
                         "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "agentId": {"type": "string", "description": "目标智能体 ID。"},
-                                "agentName": {"type": "string", "description": "目标智能体名称。"},
-                                "name": {"type": "string", "description": "agentName 的简写别名。"},
-                                "sessionKey": {"type": "string", "description": "目标会话 ID。"},
+                                "agent_id": {"type": "string", "description": "目标智能体 ID。"},
+                                "agent_name": {"type": "string", "description": "目标智能体名称。"},
+                                "session_id": {"type": "string", "description": "目标会话 ID。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
-                            "required": ["message"],
-                            "anyOf": [
-                                {"required": ["agentId"]},
-                                {"required": ["agentName"]},
-                                {"required": ["name"]},
-                                {"required": ["sessionKey"]}
-                            ]
+                            "required": ["message"]
                         }
                     },
-                    "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}, "minItems": 1}
+                    "run_ids": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}, "minItems": 1}
                 },
                 "required": ["action"],
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "send"}}},
-                        "then": {
-                            "required": ["message"],
-                            "anyOf": [
-                                {"required": ["agentId"]},
-                                {"required": ["agentName"]},
-                                {"required": ["name"]},
-                                {"required": ["sessionKey"]}
-                            ]
-                        }
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "history"}}},
-                        "then": {"required": ["sessionKey"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "spawn"}}},
-                        "then": {
-                            "required": ["task"],
-                            "anyOf": [
-                                {"required": ["agentId"]},
-                                {"required": ["agentName"]},
-                                {"required": ["name"]}
-                            ]
-                        }
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "batch_send"}}},
-                        "then": {"required": ["tasks"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "wait"}}},
-                        "then": {"required": ["runIds"]}
-                    }
-                ],
                 "examples": [
-                    {"action": "send", "agentName": "worker_a", "message": "请完成指定任务。"},
-                    {"action": "batch_send", "tasks": [{"agentName": "worker_a", "message": "请完成任务 A。"}, {"agentName": "worker_b", "message": "请完成任务 B。"}]},
-                    {"action": "wait", "runIds": ["run_demo_1"]}
+                    {"action": "send", "agent_name": "worker_a", "message": "请完成指定任务。"},
+                    {"action": "batch_send", "tasks": [{"agent_name": "worker_a", "message": "请完成任务 A。"}, {"agent_name": "worker_b", "message": "请完成任务 B。"}]},
+                    {"action": "wait", "run_ids": ["run_demo_1"]}
                 ]
             }),
         },
@@ -1577,6 +1495,8 @@ mod tests {
             .expect("read_file spec");
         assert!(spec.description.contains("plain-text"));
         assert!(spec.description.contains("search_content"));
+        assert!(spec.description.contains("start_line"));
+        assert!(spec.description.contains("offset+limit"));
         assert!(!spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
             ["path"]["description"]
@@ -1585,6 +1505,14 @@ mod tests {
         assert!(path_description.contains("plain-text"));
         assert!(path_description.contains("targeted"));
         assert!(path_description.contains("binary"));
+        assert!(path_description.contains("/workspaces/"));
+        assert!(path_description.contains("/工作目录/"));
+        let start_line_description = spec.input_schema["properties"]["files"]["items"]
+            ["properties"]["start_line"]["description"]
+            .as_str()
+            .expect("start_line description");
+        assert!(start_line_description.contains("200-line window"));
+        assert!(start_line_description.contains("offset+limit"));
     }
 
     #[test]
@@ -1595,6 +1523,8 @@ mod tests {
             .expect("read_file spec");
         assert!(spec.description.contains("纯文本"));
         assert!(spec.description.contains("search_content"));
+        assert!(spec.description.contains("默认读取 200 行"));
+        assert!(spec.description.contains("offset+limit"));
         assert!(!spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
             ["path"]["description"]
@@ -1603,60 +1533,62 @@ mod tests {
         assert!(path_description.contains("纯文本"));
         assert!(path_description.contains("定点"));
         assert!(path_description.contains("二进制"));
+        assert!(path_description.contains("/工作目录/"));
+        let start_line_description = spec.input_schema["properties"]["files"]["items"]
+            ["properties"]["start_line"]["description"]
+            .as_str()
+            .expect("start_line description");
+        assert!(start_line_description.contains("默认读取 200 行"));
+        assert!(start_line_description.contains("offset+limit"));
     }
 
     #[test]
-    fn search_spec_exposes_rg_style_aliases_in_english() {
+    fn search_spec_exposes_canonical_model_side_fields_in_english() {
         let canonical = resolve_tool_name("search_content");
         let spec = builtin_tool_specs_with_language("en-US")
             .into_iter()
             .find(|spec| spec.name == canonical)
             .expect("search spec");
         assert!(spec.description.contains("rg"));
-        assert!(spec.input_schema["properties"]["pattern"].is_object());
+        assert!(spec.input_schema["properties"]["query"].is_object());
         assert!(spec.input_schema["properties"]["glob"].is_object());
-        assert!(spec.input_schema["properties"]["type"].is_object());
-        assert!(spec.input_schema["properties"]["-C"].is_object());
-        assert!(spec.input_schema["properties"]["-i"].is_object());
-        assert!(spec.input_schema["properties"]["-F"].is_object());
-        assert!(spec.input_schema["properties"]["max_count"].is_object());
-        assert!(spec.input_schema["anyOf"].is_array());
+        assert!(spec.input_schema["properties"]["query_mode"].is_object());
+        assert!(spec.input_schema["properties"]["context_before"].is_object());
+        assert!(spec.input_schema["properties"]["context_after"].is_object());
+        assert!(spec.input_schema["properties"]["max_matches"].is_object());
+        assert!(spec.input_schema["properties"]["pattern"].is_null());
+        assert!(spec.input_schema["properties"]["-C"].is_null());
+        assert!(spec.input_schema["properties"]["-i"].is_null());
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == "query")));
     }
 
     #[test]
-    fn agent_swarm_schema_accepts_agent_name_variants() {
+    fn agent_swarm_schema_exposes_canonical_fields() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
             .find(|spec| spec.name == "智能体蜂群")
             .expect("agent_swarm spec");
         assert!(spec.description.contains("子智能体控制"));
-        assert!(spec.input_schema["properties"]["agentName"].is_object());
-        assert!(spec.input_schema["properties"]["name"].is_object());
+        assert!(spec
+            .description
+            .contains("agent_id/agent_name/session_id/run_ids"));
+        assert!(spec.input_schema["properties"]["agent_id"].is_object());
+        assert!(spec.input_schema["properties"]["agent_name"].is_object());
+        assert!(spec.input_schema["properties"]["session_id"].is_object());
+        assert!(spec.input_schema["properties"]["run_ids"].is_object());
+        assert!(spec.input_schema["properties"]["agentName"].is_null());
+        assert!(spec.input_schema["properties"]["name"].is_null());
         assert!(spec.input_schema["properties"]["task"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("subagent_control.spawn")));
         let task_props = &spec.input_schema["properties"]["tasks"]["items"]["properties"];
-        assert!(task_props["agentName"].is_object());
-        assert!(task_props["name"].is_object());
-        let all_of = spec.input_schema["allOf"]
-            .as_array()
-            .expect("allOf should be array");
-        let send_rule = all_of
-            .iter()
-            .find(|item| item["if"]["properties"]["action"]["const"] == "send")
-            .expect("send rule");
-        let send_any_of = send_rule["then"]["anyOf"].as_array().expect("send anyOf");
-        assert!(send_any_of
-            .iter()
-            .any(|item| item["required"][0] == "agentName"));
-        let spawn_rule = all_of
-            .iter()
-            .find(|item| item["if"]["properties"]["action"]["const"] == "spawn")
-            .expect("spawn rule");
-        let spawn_any_of = spawn_rule["then"]["anyOf"].as_array().expect("spawn anyOf");
-        assert!(spawn_any_of
-            .iter()
-            .any(|item| item["required"][0] == "name"));
+        assert!(task_props["agent_id"].is_object());
+        assert!(task_props["agent_name"].is_object());
+        assert!(task_props["session_id"].is_object());
+        assert!(task_props["agentName"].is_null());
+        assert!(spec.input_schema["allOf"].is_null());
     }
 
     #[test]
@@ -1666,12 +1598,14 @@ mod tests {
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent_control spec");
         assert!(spec.description.contains("当前会话"));
-        assert!(spec.input_schema["properties"]["parentId"]["description"]
+        assert!(spec.input_schema["properties"]["parent_id"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("current session")));
-        assert!(spec.input_schema["properties"]["sessionId"]["description"]
+        assert!(spec.input_schema["properties"]["session_id"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("child session")));
+        assert!(spec.input_schema["properties"]["sessionId"].is_null());
+        assert!(spec.input_schema["properties"]["runId"].is_null());
     }
 
     #[test]

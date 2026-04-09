@@ -86,14 +86,54 @@ const emit = defineEmits<{
   (event: 'dblclick'): void;
 }>();
 
-const cardStyle = computed(() => ({
-  '--node-accent': props.node.accentColor,
-  '--node-intro-x': `${Math.round(props.reveal?.offsetX || 0)}px`,
-  '--node-intro-y': `${Math.round(props.reveal?.offsetY || 0)}px`,
-  '--node-intro-delay': `${Math.max(0, Number(props.reveal?.order || 0)) * 70}ms`,
-  width: `${props.node.width}px`,
-  height: `${props.node.height}px`
-}));
+const DEFAULT_ACTIVITY_ACCENT_RGB = '59, 130, 246';
+
+const resolveAccentRgb = (color: string) => {
+  const normalized = String(color || '').trim();
+  const hexMatch = normalized.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1];
+    if (hex.length === 3) {
+      const [r, g, b] = hex.split('');
+      return [
+        Number.parseInt(`${r}${r}`, 16),
+        Number.parseInt(`${g}${g}`, 16),
+        Number.parseInt(`${b}${b}`, 16)
+      ].join(', ');
+    }
+    return [
+      Number.parseInt(hex.slice(0, 2), 16),
+      Number.parseInt(hex.slice(2, 4), 16),
+      Number.parseInt(hex.slice(4, 6), 16)
+    ].join(', ');
+  }
+  const rgbMatch = normalized.match(/^rgba?\(([^)]+)\)$/i);
+  if (rgbMatch) {
+    const channels = rgbMatch[1]
+      .split(',')
+      .slice(0, 3)
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter((value) => Number.isFinite(value) && value >= 0 && value <= 255);
+    if (channels.length === 3) return channels.join(', ');
+  }
+  return DEFAULT_ACTIVITY_ACCENT_RGB;
+};
+
+const cardStyle = computed(() => {
+  const accentRgb = resolveAccentRgb(props.node.accentColor);
+  return {
+    '--node-accent': props.node.accentColor,
+    '--node-accent-rgb': accentRgb,
+    '--node-activity-glow': `rgba(${accentRgb}, 0.18)`,
+    '--node-activity-border': `rgba(${accentRgb}, 0.42)`,
+    '--node-activity-border-soft': `rgba(${accentRgb}, 0.12)`,
+    '--node-intro-x': `${Math.round(props.reveal?.offsetX || 0)}px`,
+    '--node-intro-y': `${Math.round(props.reveal?.offsetY || 0)}px`,
+    '--node-intro-delay': `${Math.max(0, Number(props.reveal?.order || 0)) * 70}ms`,
+    width: `${props.node.width}px`,
+    height: `${props.node.height}px`
+  };
+});
 
 const visibleWorkflowLines = computed(() =>
   (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : [])
@@ -282,29 +322,10 @@ onBeforeUnmount(() => {
 .beeroom-node-card.is-running,
 .beeroom-node-card.is-queued,
 .beeroom-node-card.is-awaiting_idle {
-  --node-activity-glow: rgba(248, 113, 113, 0.18);
-  --node-activity-border: rgba(248, 113, 113, 0.42);
-  --node-activity-border-soft: rgba(248, 113, 113, 0.12);
   box-shadow:
-    0 0 0 1px rgba(248, 113, 113, 0.08),
-    0 14px 28px rgba(127, 29, 29, 0.2),
+    0 0 0 1px rgba(var(--node-accent-rgb), 0.08),
+    0 14px 28px rgba(var(--node-accent-rgb), 0.16),
     0 0 22px var(--node-activity-glow);
-}
-
-.beeroom-node-card.is-mother.is-running,
-.beeroom-node-card.is-mother.is-queued,
-.beeroom-node-card.is-mother.is-awaiting_idle {
-  --node-activity-glow: rgba(245, 158, 11, 0.18);
-  --node-activity-border: rgba(251, 191, 36, 0.44);
-  --node-activity-border-soft: rgba(251, 191, 36, 0.12);
-}
-
-.beeroom-node-card.is-subagent.is-emphasis-active.is-running,
-.beeroom-node-card.is-subagent.is-emphasis-active.is-queued,
-.beeroom-node-card.is-subagent.is-emphasis-active.is-awaiting_idle {
-  --node-activity-glow: rgba(34, 211, 238, 0.18);
-  --node-activity-border: rgba(34, 211, 238, 0.4);
-  --node-activity-border-soft: rgba(34, 211, 238, 0.12);
 }
 
 .beeroom-node-card.is-running::after,

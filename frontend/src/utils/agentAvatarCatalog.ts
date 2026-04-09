@@ -1,17 +1,54 @@
-const AGENT_AVATAR_IMAGE_FILES = import.meta.glob('../assets/agent-avatars/avatar-???.jpg', {
-  eager: true,
-  import: 'default'
-}) as Record<string, string>;
+const AGENT_AVATAR_IMAGE_FILES = import.meta.glob(
+  [
+    '../assets/agent-avatars/avatar-???.jpg',
+    '../assets/agent-avatars/avatar-???.jpeg',
+    '../assets/agent-avatars/avatar-???.png'
+  ],
+  {
+    eager: true,
+    import: 'default'
+  }
+) as Record<string, string>;
 
-const AGENT_AVATAR_IMAGE_ENTRIES = Object.entries(AGENT_AVATAR_IMAGE_FILES)
-  .map(([path, image]) => {
-    const fileName = path.split('/').pop() || '';
-    const stem = fileName.replace(/\.jpg$/i, '').trim();
-    return {
-      key: stem,
-      image
-    };
-  })
+const AGENT_AVATAR_IMAGE_EXTENSION_PRIORITY: Record<string, number> = {
+  png: 3,
+  jpg: 2,
+  jpeg: 1
+};
+
+const agentAvatarImageEntryByKey = new Map<
+  string,
+  {
+    key: string;
+    image: string;
+    priority: number;
+  }
+>();
+
+Object.entries(AGENT_AVATAR_IMAGE_FILES).forEach(([path, image]) => {
+  const fileName = path.split('/').pop() || '';
+  const extension = (fileName.split('.').pop() || '').trim().toLowerCase();
+  const stem = fileName.replace(/\.(?:jpe?g|png)$/i, '').trim();
+  if (!stem) {
+    return;
+  }
+  const priority = AGENT_AVATAR_IMAGE_EXTENSION_PRIORITY[extension] || 0;
+  const current = agentAvatarImageEntryByKey.get(stem);
+  if (current && current.priority >= priority) {
+    return;
+  }
+  agentAvatarImageEntryByKey.set(stem, {
+    key: stem,
+    image,
+    priority
+  });
+});
+
+const AGENT_AVATAR_IMAGE_ENTRIES = Array.from(agentAvatarImageEntryByKey.values())
+  .map(({ key, image }) => ({
+    key,
+    image
+  }))
   .sort((left, right) => left.key.localeCompare(right.key, 'en', { numeric: true, sensitivity: 'base' }));
 
 export const AGENT_AVATAR_IMAGE_KEYS = AGENT_AVATAR_IMAGE_ENTRIES.map((item) => item.key);

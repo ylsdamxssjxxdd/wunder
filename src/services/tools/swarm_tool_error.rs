@@ -7,7 +7,7 @@ const AGENT_SWARM_TOOL_LABEL: &str = "智能体蜂群";
 pub(crate) fn agent_swarm_send_example() -> Value {
     json!({
         "action": "send",
-        "agentName": "worker_a",
+        "agent_name": "worker_a",
         "message": "请完成指定任务。"
     })
 }
@@ -17,11 +17,11 @@ pub(crate) fn agent_swarm_batch_send_example() -> Value {
         "action": "batch_send",
         "tasks": [
             {
-                "agentName": "worker_a",
+                "agent_name": "worker_a",
                 "message": "请完成任务 A。"
             },
             {
-                "agentName": "worker_b",
+                "agent_name": "worker_b",
                 "message": "请完成任务 B。"
             }
         ]
@@ -31,14 +31,14 @@ pub(crate) fn agent_swarm_batch_send_example() -> Value {
 pub(crate) fn agent_swarm_wait_example() -> Value {
     json!({
         "action": "wait",
-        "runIds": ["run_demo_1"]
+        "run_ids": ["run_demo_1"]
     })
 }
 
 pub(crate) fn agent_swarm_spawn_example() -> Value {
     json!({
         "action": "spawn",
-        "agentName": "worker_a",
+        "agent_name": "worker_a",
         "task": "请完成指定任务。"
     })
 }

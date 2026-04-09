@@ -1063,6 +1063,14 @@
     "en-US": "No file path provided.",
     "zh-CN": "未提供文件路径。"
   },
+  "tool.read.too_many_files": {
+    "en-US": "Too many files requested for one read call: received {count}, maximum {max}.",
+    "zh-CN": "单次读取请求的文件过多：收到 {count} 个，最大只允许 {max} 个。"
+  },
+  "tool.read.too_many_files_hint": {
+    "en-US": "Split the request into smaller batches, or set max_files deliberately if you need a smaller processed subset.",
+    "zh-CN": "请拆成更小批次调用；如果你只想处理其中一部分，请显式设置 max_files。"
+  },
   "tool.read.not_found": {
     "en-US": "File not found.",
     "zh-CN": "文件不存在。"
@@ -2132,16 +2140,16 @@
     "zh-CN": "可选的包含式行号范围列表；每个范围都必须按升序填写。"
   },
   "tool.spec.read.args.files.path": {
-    "en-US": "Path to a local plain-text file for targeted reading. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. If the file or heading is uncertain, use list_files/search_content first. Do not pass images or other binary files here.",
-    "zh-CN": "用于定点读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；文件或标题不确定时先用 list_files/search_content。不要在这里传入图片或其他二进制文件。"
+    "en-US": "Path to a local plain-text file for targeted reading. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. Do not invent pseudo roots such as /工作目录/...; if the file or heading is uncertain, use list_files/search_content first. Do not pass images or other binary files here.",
+    "zh-CN": "用于定点读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；不要虚构 `/工作目录/...` 这类伪根路径。文件或标题不确定时先用 list_files/search_content。不要在这里传入图片或其他二进制文件。"
   },
   "tool.spec.read.args.files.start_line": {
-    "en-US": "Optional start line (inclusive). Must be less than or equal to end_line.",
-    "zh-CN": "可选起始行（包含），且必须小于等于 end_line。"
+    "en-US": "Optional start line (inclusive). If end_line is omitted, the tool reads a 200-line window starting here. Use end_line or offset+limit when you need a different window size.",
+    "zh-CN": "可选起始行（包含）。如果未提供 end_line，工具会从这里开始默认读取 200 行；需要不同窗口大小时请同时提供 end_line，或改用 offset+limit。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. For long documents, always locate hits first, then read narrow windows or indentation blocks; do not do blind fixed-step paging, and avoid more than three consecutive reads on the same file without new evidence. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
-    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。面对长文档时，必须先定位命中点再读小窗口或缩进块，禁止盲目固定步长翻页；在没有新增依据时，同一文件连续读取不应超过 3 次。不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
+    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. When you pass only start_line, the tool reads a 200-line window starting there; use end_line or offset+limit for a different window size. For long documents, always locate hits first, then read narrow windows or indentation blocks; do not do blind fixed-step paging, and avoid more than three consecutive reads on the same file without new evidence. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
+    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。若只传 `start_line`，工具会从该行开始默认读取 200 行；需要不同窗口大小时请同时传 `end_line`，或改用 `offset+limit`。面对长文档时，必须先定位命中点再读小窗口或缩进块，禁止盲目固定步长翻页；在没有新增依据时，同一文件连续读取不应超过 3 次。不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",

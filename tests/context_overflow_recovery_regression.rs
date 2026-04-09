@@ -585,6 +585,22 @@ fn assert_compaction_history_is_semantically_clean(messages: &[Value]) {
     }
 }
 
+fn assert_replacement_history_keeps_edge_rounds(
+    replacement_history: &[Value],
+    expected_markers: &[&str],
+) {
+    let texts = replacement_history
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    for marker in expected_markers {
+        assert!(
+            texts.iter().any(|text| text.contains(marker)),
+            "expected replacement_history to retain marker {marker}, got {texts:?}"
+        );
+    }
+}
+
 async fn trigger_manual_compaction_and_wait(
     context: &TestContext,
     session_id: &str,
@@ -751,6 +767,15 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         "manual compaction should commit replacement_history snapshot"
     );
     assert_compaction_history_is_semantically_clean(&replacement_history);
+    assert_replacement_history_keeps_edge_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=1",
+            "[mindie-overflow-regression] round=2",
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
 
     let replay_messages = HistoryManager.load_history_messages(
         context.state.workspace.as_ref(),
