@@ -71,7 +71,10 @@ pub async fn reset_user_work_state(
             session_ids.insert(session_id.to_string());
         }
     }
-    for lock in state.user_store.list_session_locks_by_user(cleaned_user_id)? {
+    for lock in state
+        .user_store
+        .list_session_locks_by_user(cleaned_user_id)?
+    {
         let session_id = lock.session_id.trim();
         if !session_id.is_empty() {
             session_ids.insert(session_id.to_string());
@@ -83,9 +86,10 @@ pub async fn reset_user_work_state(
         .filter(|session_id| state.monitor.cancel(session_id))
         .count();
 
-    let (all_sessions, _) = state
-        .user_store
-        .list_chat_sessions(cleaned_user_id, None, None, 0, 4096)?;
+    let (all_sessions, _) =
+        state
+            .user_store
+            .list_chat_sessions(cleaned_user_id, None, None, 0, 4096)?;
     let mut cancelled_tasks = 0usize;
     let mut cancelled_task_ids = HashSet::new();
     for session in &all_sessions {
@@ -124,7 +128,10 @@ pub async fn reset_user_work_state(
         cleaned_user_id,
         state.user_store.default_sandbox_container_id(),
     ));
-    for variant in state.workspace.scoped_user_id_variants(cleaned_user_id, None) {
+    for variant in state
+        .workspace
+        .scoped_user_id_variants(cleaned_user_id, None)
+    {
         workspace_scopes.insert(variant);
     }
     for agent in &agents {
@@ -143,8 +150,8 @@ pub async fn reset_user_work_state(
 
     let mut removed_workspace_entries = 0u64;
     for scope in &workspace_scopes {
-        removed_workspace_entries =
-            removed_workspace_entries.saturating_add(state.workspace.clear_workspace_contents(scope)?);
+        removed_workspace_entries = removed_workspace_entries
+            .saturating_add(state.workspace.clear_work_state_contents(scope)?);
     }
 
     let mut fresh_main_sessions = Vec::with_capacity(agents.len().saturating_add(1));

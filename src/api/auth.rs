@@ -2,8 +2,8 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::org_units;
 use crate::services::external as external_service;
-use crate::services::work_state_reset::reset_user_work_state;
 use crate::services::user_access::filter_user_agents_by_access;
+use crate::services::work_state_reset::reset_user_work_state;
 use crate::state::AppState;
 use crate::storage::{OrgUnitRecord, UserAccountRecord, UserAgentRecord};
 use crate::user_store::{build_default_agent_record_from_storage, UserStore};
@@ -46,7 +46,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/auth/me/preferences",
             get(me_preferences).patch(update_me_preferences),
         )
-        .route("/wunder/auth/me/reset_work_state", post(reset_my_work_state))
+        .route(
+            "/wunder/auth/me/reset_work_state",
+            post(reset_my_work_state),
+        )
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
 

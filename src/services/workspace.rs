@@ -39,6 +39,7 @@ const TEMP_FILES_CLEANUP_INTERVAL_S: f64 = 3600.0;
 const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
+const USER_PRIVATE_PERSISTENT_ROOTS: &[&str] = &["global", "knowledge", "skills"];
 
 fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
     // Single-root mode points to a user-managed local workspace (CLI/Desktop),
@@ -1611,6 +1612,31 @@ impl WorkspaceManager {
         Ok(removed)
     }
 
+    pub fn clear_work_state_contents(&self, user_id: &str) -> Result<u64> {
+        let safe_id = self.safe_user_id(user_id);
+        let workspace_root = self.workspace_root(&safe_id);
+        if !workspace_root.exists() {
+            self.clear_workspace_cache(&safe_id);
+            self.mark_tree_dirty(&safe_id);
+            return Ok(0);
+        }
+        if !workspace_root.is_dir() {
+            return Err(anyhow!(
+                "workspace root is not a directory: {}",
+                workspace_root.display()
+            ));
+        }
+        let removed = if extract_container_id_from_scoped_user(&safe_id) == USER_PRIVATE_CONTAINER_ID
+        {
+            clear_dir_contents_except(&workspace_root, USER_PRIVATE_PERSISTENT_ROOTS)
+        } else {
+            clear_dir_contents(&workspace_root)
+        };
+        self.clear_workspace_cache(&safe_id);
+        self.mark_tree_dirty(&safe_id);
+        Ok(removed)
+    }
+
     pub fn get_tree_version(&self, user_id: &str) -> u64 {
         let safe_id = self.safe_user_id(user_id);
         self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
@@ -1864,6 +1890,10 @@ fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_
 }
 
 fn clear_dir_contents(path: &Path) -> u64 {
+    clear_dir_contents_except(path, &[])
+}
+
+fn clear_dir_contents_except(path: &Path, preserved_names: &[&str]) -> u64 {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) => {
@@ -1872,7 +1902,16 @@ fn clear_dir_contents(path: &Path) -> u64 {
         }
     };
     let mut removed = 0u64;
+    let preserved = preserved_names
+        .iter()
+        .map(|name| name.trim())
+        .filter(|name| !name.is_empty())
+        .collect::<HashSet<_>>();
     for entry in entries.flatten() {
+        let entry_name = entry.file_name().to_string_lossy().to_string();
+        if preserved.contains(entry_name.as_str()) {
+            continue;
+        }
         let target = entry.path();
         let result = match entry.file_type() {
             Ok(file_type) if file_type.is_dir() => fs::remove_dir_all(&target),
@@ -2156,6 +2195,7 @@ mod tests {
     use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
     use crate::storage::{SqliteStorage, StorageBackend};
     use std::collections::HashMap;
+    use std::fs;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -2258,5 +2298,50 @@ mod tests {
             workspace.load_session_context_limit_hint(user_id, session_id),
             None
         );
+    }
+
+    #[test]
+    fn clear_work_state_contents_preserves_private_persistent_roots() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "alice";
+        let private_root = workspace.workspace_root(user_id);
+        fs::create_dir_all(private_root.join("skills").join("demo")).expect("create skills dir");
+        fs::create_dir_all(private_root.join("knowledge").join("demo"))
+            .expect("create knowledge dir");
+        fs::create_dir_all(private_root.join("global")).expect("create global dir");
+        fs::create_dir_all(private_root.join("chat_media").join("derived"))
+            .expect("create chat media dir");
+        fs::write(
+            private_root.join("skills").join("demo").join("SKILL.md"),
+            "# skill\n",
+        )
+        .expect("write skill file");
+        fs::write(
+            private_root.join("knowledge").join("demo").join("note.txt"),
+            "kb",
+        )
+        .expect("write knowledge file");
+        fs::write(
+            private_root.join("global").join("tooling.json"),
+            "{\"ok\":true}",
+        )
+        .expect("write tooling config");
+        fs::write(
+            private_root.join("chat_media").join("derived").join("clip.txt"),
+            "temp",
+        )
+        .expect("write transient file");
+        fs::write(private_root.join("scratch.txt"), "temp").expect("write scratch file");
+
+        let removed = workspace
+            .clear_work_state_contents(user_id)
+            .expect("clear work state");
+
+        assert_eq!(removed, 2);
+        assert!(private_root.join("skills").join("demo").join("SKILL.md").exists());
+        assert!(private_root.join("knowledge").join("demo").join("note.txt").exists());
+        assert!(private_root.join("global").join("tooling.json").exists());
+        assert!(!private_root.join("chat_media").exists());
+        assert!(!private_root.join("scratch.txt").exists());
     }
 }

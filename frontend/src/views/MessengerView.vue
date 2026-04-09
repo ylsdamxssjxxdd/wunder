@@ -990,6 +990,7 @@
                   <MessageToolWorkflow
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
+                    :render-version="chatStore.messageMutationVersion"
                     :visible="
                       Boolean(
                         item.message.workflowStreaming ||
@@ -6594,7 +6595,11 @@ const shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean
   hasMessageContent(buildAssistantDisplayContent(message, t));
 
 const buildMessageStatsEntries = (message: Record<string, unknown>) =>
-  buildAssistantMessageStatsEntries(message as Record<string, any>, t);
+  buildAssistantMessageStatsEntries(
+    message as Record<string, any>,
+    t,
+    chatStore.messages as Record<string, any>[]
+  );
 
 const shouldShowMessageStats = (message: Record<string, unknown>): boolean =>
   buildMessageStatsEntries(message).length > 0;

@@ -73,3 +73,4 @@ config/knowledge/plan
 target_codex_check
 target_codex_b3
 config/preset_worker_cards
+.wunder_perf_probe*

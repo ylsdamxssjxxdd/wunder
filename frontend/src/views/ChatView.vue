@@ -360,6 +360,7 @@
                   v-if="message.role === 'assistant'"
                   :items="message.workflowItems || []"
                   :loading="Boolean(message.workflowStreaming)"
+                  :render-version="chatStore.messageMutationVersion"
                   :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
                 />
                 <MessageWaitingNotice

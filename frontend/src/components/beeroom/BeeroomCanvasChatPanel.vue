@@ -17,24 +17,6 @@
           <button class="beeroom-canvas-icon-btn" type="button" :title="t('common.clear')" @click="emit('clear')">
             <i class="fa-solid fa-broom" aria-hidden="true"></i>
           </button>
-          <button
-            class="beeroom-canvas-icon-btn"
-            type="button"
-            :title="t('common.stop')"
-            :disabled="!dispatchCanStop"
-            @click="emit('stop')"
-          >
-            <i class="fa-solid fa-stop" aria-hidden="true"></i>
-          </button>
-          <button
-            class="beeroom-canvas-icon-btn"
-            type="button"
-            :title="t('chat.message.resume')"
-            :disabled="!dispatchCanResume"
-            @click="emit('resume')"
-          >
-            <i class="fa-solid fa-play" aria-hidden="true"></i>
-          </button>
         </div>
       </div>
 
@@ -145,10 +127,9 @@
           class="beeroom-canvas-chat-textarea"
           :value="composerText"
           :placeholder="t('beeroom.canvas.chatInputPlaceholder')"
-          :disabled="composerSending"
           rows="3"
           @input="emit('update:composerText', ($event.target as HTMLTextAreaElement).value)"
-          @keydown.enter.exact.prevent="emit('send')"
+          @keydown.enter.exact.prevent="!composerSending && emit('send')"
         ></textarea>
         <div class="beeroom-canvas-chat-compose-foot">
           <el-select
@@ -157,7 +138,6 @@
             class="beeroom-canvas-chat-select"
             popper-class="beeroom-canvas-chat-select-popper"
             :placeholder="t('beeroom.canvas.chatTarget')"
-            :disabled="composerSending"
             @update:model-value="emit('update:composerTargetAgentId', String($event || ''))"
           >
             <el-option
@@ -169,20 +149,12 @@
           </el-select>
           <button
             class="beeroom-canvas-chat-send"
+            :class="{ 'is-stop': composerSending }"
             type="button"
-            :disabled="composerSending || !composerCanSend"
+            :disabled="composerSending ? !dispatchCanStop : !composerCanSend"
             @click="emit('send')"
           >
-            {{ composerSending ? t('common.loading') : t('chat.input.send') }}
-          </button>
-          <button
-            class="beeroom-canvas-chat-demo"
-            :class="{ 'is-running': demoCanCancel }"
-            type="button"
-            :disabled="demoActionDisabled"
-            @click="emit('demo')"
-          >
-            {{ demoActionLabel }}
+            {{ composerSending ? t('common.stop') : t('chat.input.send') }}
           </button>
         </div>
         <div v-if="composerError" class="beeroom-canvas-chat-compose-status is-error">{{ composerError }}</div>
@@ -208,7 +180,6 @@ const props = defineProps<{
   messages: MissionChatMessage[];
   approvals: DispatchApprovalItem[];
   dispatchCanStop: boolean;
-  dispatchCanResume: boolean;
   dispatchApprovalBusy: boolean;
   composerText: string;
   composerTargetAgentId: string;
@@ -216,9 +187,6 @@ const props = defineProps<{
   composerSending: boolean;
   composerCanSend: boolean;
   composerError: string;
-  demoActionDisabled: boolean;
-  demoActionLabel: string;
-  demoCanCancel: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>();
@@ -228,10 +196,7 @@ const emit = defineEmits<{
   (event: 'update:composerText', value: string): void;
   (event: 'update:composerTargetAgentId', value: string): void;
   (event: 'clear'): void;
-  (event: 'stop'): void;
-  (event: 'resume'): void;
   (event: 'send'): void;
-  (event: 'demo'): void;
   (event: 'open-agent', agentId: string): void;
   (event: 'approval', value: { decision: 'approve_once' | 'approve_session' | 'deny'; approvalId: string }): void;
 }>();
@@ -762,8 +727,7 @@ watch(
   background: rgba(127, 29, 29, 0.6);
 }
 
-.beeroom-canvas-chat-send,
-.beeroom-canvas-chat-demo {
+.beeroom-canvas-chat-send {
   min-height: 34px;
   padding: 0 12px;
   border-radius: 12px;
@@ -778,21 +742,14 @@ watch(
   box-shadow: 0 10px 24px rgba(127, 29, 29, 0.24);
 }
 
-.beeroom-canvas-chat-demo {
-  min-width: 86px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
-  background: rgba(30, 41, 59, 0.72);
-  color: rgba(226, 232, 240, 0.92);
-}
-
-.beeroom-canvas-chat-demo.is-running {
-  border-color: rgba(245, 158, 11, 0.34);
-  background: rgba(120, 53, 15, 0.44);
-  color: rgba(254, 240, 138, 0.98);
+.beeroom-canvas-chat-send.is-stop {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(135deg, rgba(180, 83, 9, 0.92), rgba(146, 64, 14, 0.92));
+  color: #fef3c7;
+  box-shadow: 0 10px 24px rgba(120, 53, 15, 0.24);
 }
 
 .beeroom-canvas-chat-send:disabled,
-.beeroom-canvas-chat-demo:disabled,
 .beeroom-canvas-chat-approval-btn:disabled,
 .beeroom-canvas-icon-btn:disabled {
   opacity: 0.55;

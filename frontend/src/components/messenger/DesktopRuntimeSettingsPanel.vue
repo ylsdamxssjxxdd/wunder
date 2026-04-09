@@ -148,8 +148,11 @@ const handleResetWorkState = async () => {
 .desktop-runtime-settings-danger {
   display: grid;
   gap: 12px;
-  border: 1px solid rgba(214, 77, 77, 0.28);
-  background: linear-gradient(180deg, rgba(84, 18, 18, 0.9), rgba(36, 11, 11, 0.94));
+  border: 1px solid rgba(225, 127, 97, 0.24);
+  background:
+    linear-gradient(180deg, rgba(255, 249, 245, 0.96), rgba(255, 252, 249, 0.98)),
+    var(--portal-panel, #ffffff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .desktop-runtime-settings-danger-head {
@@ -160,7 +163,7 @@ const handleResetWorkState = async () => {
 }
 
 .desktop-runtime-settings-danger-note {
-  color: rgba(255, 226, 226, 0.88);
+  color: rgba(121, 74, 58, 0.9);
   line-height: 1.6;
   font-size: 13px;
 }
@@ -172,15 +175,39 @@ const handleResetWorkState = async () => {
 
 .desktop-runtime-settings-danger-btn {
   border-radius: 10px;
-  border: 1px solid rgba(248, 113, 113, 0.46);
-  background: rgba(127, 29, 29, 0.88);
-  color: #fff1f2;
+  border: 1px solid rgba(214, 111, 78, 0.28);
+  background: linear-gradient(180deg, rgba(255, 244, 238, 0.98), rgba(255, 238, 230, 0.98));
+  color: #a14a2b;
   box-shadow: none;
 }
 
 .desktop-runtime-settings-danger-btn:hover:not(:disabled) {
-  border-color: rgba(252, 165, 165, 0.8);
-  background: rgba(153, 27, 27, 0.96);
-  color: #ffffff;
+  border-color: rgba(214, 111, 78, 0.45);
+  background: linear-gradient(180deg, rgba(255, 238, 230, 1), rgba(255, 229, 218, 1));
+  color: #8f3f23;
+}
+
+:global(:root[data-user-accent='tech-blue'] .desktop-runtime-settings-danger) {
+  border-color: rgba(248, 146, 115, 0.28);
+  background:
+    linear-gradient(180deg, rgba(44, 24, 20, 0.92), rgba(31, 18, 16, 0.94)),
+    var(--portal-panel, rgba(18, 26, 38, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+:global(:root[data-user-accent='tech-blue'] .desktop-runtime-settings-danger .desktop-runtime-settings-danger-note) {
+  color: rgba(255, 213, 201, 0.84);
+}
+
+:global(:root[data-user-accent='tech-blue'] .desktop-runtime-settings-danger .desktop-runtime-settings-danger-btn) {
+  border-color: rgba(248, 146, 115, 0.32);
+  background: linear-gradient(180deg, rgba(86, 40, 31, 0.92), rgba(67, 31, 24, 0.94));
+  color: #ffd9ce;
+}
+
+:global(:root[data-user-accent='tech-blue'] .desktop-runtime-settings-danger .desktop-runtime-settings-danger-btn:hover:not(:disabled)) {
+  border-color: rgba(248, 146, 115, 0.5);
+  background: linear-gradient(180deg, rgba(101, 46, 35, 0.94), rgba(78, 35, 27, 0.96));
+  color: #fff1ec;
 }
 </style>

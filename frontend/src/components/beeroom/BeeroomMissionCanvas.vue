@@ -28,7 +28,6 @@
           :messages="displayChatMessages"
           :approvals="dispatchApprovals"
           :dispatch-can-stop="dispatchCanStop"
-          :dispatch-can-resume="dispatchCanResume"
           :dispatch-approval-busy="dispatchApprovalBusy"
           :composer-text="composerText"
           :composer-target-agent-id="composerTargetAgentId"
@@ -36,19 +35,13 @@
           :composer-sending="composerSending"
           :composer-can-send="composerCanSend"
           :composer-error="composerError"
-          :demo-action-disabled="demoActionDisabled"
-          :demo-action-label="demoActionLabel"
-          :demo-can-cancel="demoCanCancel"
           :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="composerText = $event"
           @update:composer-target-agent-id="composerTargetAgentId = $event"
           @clear="handleClearHistory"
-          @stop="handleDispatchStop"
-          @resume="handleDispatchResume"
           @send="handleComposerSend"
-          @demo="handleDemoAction"
           @open-agent="emit('open-agent', $event)"
           @approval="handleDispatchApproval($event.decision, $event.approvalId)"
         />
@@ -96,12 +89,8 @@ const {
   composerSending,
   composerCanSend,
   composerError,
-  demoActionDisabled,
-  demoActionLabel,
-  demoCanCancel,
   dispatchApprovals,
   dispatchApprovalBusy,
-  dispatchCanResume,
   dispatchCanStop,
   dispatchPreview,
   displayChatMessages,
@@ -112,9 +101,6 @@ const {
   clearManualChatHistory,
   handleComposerSend,
   handleDispatchApproval,
-  handleDispatchResume,
-  handleDispatchStop,
-  handleDemoAction,
   resolveAgentAvatarImageByAgentId,
   resolveMessageAvatarImage,
   avatarLabel

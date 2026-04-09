@@ -1846,7 +1846,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const handleComposerSend = async () => {
-    if (composerSending.value) return;
+    if (composerSending.value) {
+      await handleDispatchStop();
+      return;
+    }
     const content = String(composerText.value || '').trim();
     if (!content) return;
     const inputOverflow = resolveChatRequestTextInputOverflow(content, [], ({ actualChars, maxChars }) =>

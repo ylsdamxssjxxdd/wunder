@@ -21,14 +21,26 @@ use wunder_server::{
     state::{AppState, AppStateInitOptions},
 };
 
-const MOCK_CONTEXT_LIMIT: i64 = 4500;
+const DEFAULT_MOCK_CONTEXT_LIMIT: i64 = 4500;
 
-#[derive(Default)]
 struct MindieOverflowMockState {
+    context_limit: i64,
     total_calls: AtomicUsize,
     overflow_calls: AtomicUsize,
     success_calls: AtomicUsize,
     last_success_payload: Mutex<Option<Value>>,
+}
+
+impl MindieOverflowMockState {
+    fn new(context_limit: i64) -> Self {
+        Self {
+            context_limit,
+            total_calls: AtomicUsize::new(0),
+            overflow_calls: AtomicUsize::new(0),
+            success_calls: AtomicUsize::new(0),
+            last_success_payload: Mutex::new(None),
+        }
+    }
 }
 
 struct TestContext {
@@ -49,8 +61,23 @@ async fn build_test_context_with_compaction(
     max_context: u32,
     reset_mode: Option<&str>,
 ) -> TestContext {
+    build_test_context_with_compaction_and_mock_limit(
+        username,
+        max_context,
+        reset_mode,
+        DEFAULT_MOCK_CONTEXT_LIMIT,
+    )
+    .await
+}
+
+async fn build_test_context_with_compaction_and_mock_limit(
+    username: &str,
+    max_context: u32,
+    reset_mode: Option<&str>,
+    mock_context_limit: i64,
+) -> TestContext {
     let temp_dir = tempfile::tempdir().expect("tempdir");
-    let (base_url, mock_state) = spawn_mindie_overflow_mock_server().await;
+    let (base_url, mock_state) = spawn_mindie_overflow_mock_server(mock_context_limit).await;
 
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
@@ -134,8 +161,10 @@ async fn build_test_context_with_compaction(
     }
 }
 
-async fn spawn_mindie_overflow_mock_server() -> (String, Arc<MindieOverflowMockState>) {
-    let state = Arc::new(MindieOverflowMockState::default());
+async fn spawn_mindie_overflow_mock_server(
+    context_limit: i64,
+) -> (String, Arc<MindieOverflowMockState>) {
+    let state = Arc::new(MindieOverflowMockState::new(context_limit));
     let app = Router::new()
         .route("/v1/chat/completions", post(mock_chat_completions))
         .with_state(state.clone());
@@ -157,16 +186,17 @@ async fn mock_chat_completions(
     Json(payload): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     state.total_calls.fetch_add(1, Ordering::Relaxed);
+    let context_limit = state.context_limit;
     let estimated_tokens = estimate_request_tokens(&payload);
-    if estimated_tokens > MOCK_CONTEXT_LIMIT {
+    if estimated_tokens > context_limit {
         let overflow_index = state.overflow_calls.fetch_add(1, Ordering::Relaxed) + 1;
         let message = if overflow_index % 2 == 0 {
             format!(
-                "InternalError.Algo.InvalidParameter: Range of prompt length should be [1, {MOCK_CONTEXT_LIMIT}]"
+                "InternalError.Algo.InvalidParameter: Range of prompt length should be [1, {context_limit}]"
             )
         } else {
             format!(
-                "模型调用失败：提示词过长，最大上下文长度为 {MOCK_CONTEXT_LIMIT}，请缩短输入后重试。"
+                "模型调用失败：提示词过长，最大上下文长度为 {context_limit}，请缩短输入后重试。"
             )
         };
         return (
@@ -442,6 +472,53 @@ fn latest_success_request_messages(context: &TestContext) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn assert_request_preserves_anchor_shape(
+    request_messages: &[Value],
+    head_markers: &[String],
+    middle_markers: &[String],
+    tail_markers: &[String],
+    label: &str,
+) {
+    let summary_index = first_replay_summary_index(request_messages)
+        .expect("expected replay summary message in request payload");
+
+    for marker in head_markers {
+        let count = count_content_containing(request_messages, marker);
+        assert_eq!(
+            count, 1,
+            "{label} expected head anchor {marker} exactly once in request"
+        );
+        let index =
+            first_message_index_containing(request_messages, marker).expect("head marker index");
+        assert!(
+            index < summary_index,
+            "{label} expected head anchor {marker} before summary"
+        );
+    }
+
+    for marker in tail_markers {
+        let count = count_content_containing(request_messages, marker);
+        assert_eq!(
+            count, 1,
+            "{label} expected tail anchor {marker} exactly once in request"
+        );
+        let index =
+            first_message_index_containing(request_messages, marker).expect("tail marker index");
+        assert!(
+            index > summary_index,
+            "{label} expected tail anchor {marker} after summary"
+        );
+    }
+
+    for marker in middle_markers {
+        assert_eq!(
+            count_content_containing(request_messages, marker),
+            0,
+            "{label} request should not retain middle marker {marker}"
+        );
+    }
+}
+
 async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &str) -> Value {
     let (status, accepted) = send_json(
         &context.app,
@@ -530,7 +607,7 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
         .state
         .workspace
         .load_session_context_limit_hint(&context.user_id, &session_id);
-    assert_eq!(persisted_limit_hint, Some(MOCK_CONTEXT_LIMIT));
+    assert_eq!(persisted_limit_hint, Some(DEFAULT_MOCK_CONTEXT_LIMIT));
     assert!(
         !context
             .state
@@ -594,9 +671,13 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compaction_replay_uses_committed_summary_in_next_request() {
-    let context =
-        build_test_context_with_compaction("mindie_compaction_request_shape", 8_000, Some("keep"))
-            .await;
+    let context = build_test_context_with_compaction_and_mock_limit(
+        "mindie_compaction_request_shape",
+        32_768,
+        Some("keep"),
+        12_000,
+    )
+    .await;
     let session_id = create_test_session(&context, "Compaction request shape").await;
 
     run_pressure_rounds(&context, &session_id, 6, 420).await;
@@ -638,10 +719,6 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
         .expect("summary-first auto compaction should keep the committed summary in next request");
 
     assert!(
-        request_summary.starts_with("[上下文摘要]"),
-        "next request should still carry a committed summary item: {request_summary}"
-    );
-    assert!(
         !summary_body(request_summary).starts_with("...("),
         "next request summary should not degrade into placeholder fragment: {request_summary}"
     );
@@ -652,6 +729,26 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
     assert!(
         !summary_body(&replay_summary).starts_with("...("),
         "replay summary should not be a broken placeholder: {replay_summary}"
+    );
+
+    let head_markers = [
+        format!("[mindie-overflow-regression] round=1"),
+        format!("[mindie-overflow-regression] round=2"),
+    ];
+    let middle_markers = [
+        format!("[mindie-overflow-regression] round=3"),
+        format!("[mindie-overflow-regression] round=4"),
+    ];
+    let tail_markers = [
+        format!("[mindie-overflow-regression] round=5"),
+        format!("[mindie-overflow-regression] round=6"),
+    ];
+    assert_request_preserves_anchor_shape(
+        &request_messages,
+        &head_markers,
+        &middle_markers,
+        &tail_markers,
+        "manual compaction follow-up",
     );
 }
 

@@ -4300,6 +4300,9 @@ const notifySessionSnapshot = (store, sessionId, messages, immediate = false, op
   cacheSessionMessages(key, messages);
   const activeKey = resolveSessionKey(store?.activeSessionId);
   if (activeKey && activeKey === key) {
+    if (store && typeof store === 'object') {
+      store.messageMutationVersion = Number(store.messageMutationVersion || 0) + 1;
+    }
     if (options.skipWindowing !== true) {
       applyMessageWindow(store, key, messages);
     }
@@ -9063,6 +9066,7 @@ export const useChatStore = defineStore('chat', {
     sessions: [],
     activeSessionId: null,
     messages: [],
+    messageMutationVersion: 0,
     loadingBySession: {},
     greetingOverride: '',
     draftAgentId: '',

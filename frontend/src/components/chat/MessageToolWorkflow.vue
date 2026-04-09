@@ -174,6 +174,7 @@ type Props = {
   loading?: boolean;
   visible?: boolean;
   terminalAutoStick?: TerminalAutoStickMode;
+  renderVersion?: number;
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -229,7 +230,8 @@ const props = withDefaults(defineProps<Props>(), {
   items: () => [],
   loading: false,
   visible: false,
-  terminalAutoStick: 'smart'
+  terminalAutoStick: 'smart',
+  renderVersion: 0
 });
 const emit = defineEmits<{
   (event: 'layout-change'): void;
@@ -3172,6 +3174,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const buildEntries = (): ToolEntryView[] => {
+  void props.renderVersion;
   return buildWorkflowToolRuns(props.items)
     .map(buildEntryView);
 };
@@ -3278,7 +3281,7 @@ const handleEntryToggle = (key: string, event: Event) => {
 
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
 const pendingPlaceholder = computed(() =>
-  props.visible && props.loading && entries.value.length === 0
+  (void props.renderVersion, props.visible && props.loading && entries.value.length === 0)
     ? resolveWorkflowPendingPlaceholder(props.items)
     : null
 );
@@ -3334,6 +3337,7 @@ const buildWorkflowDebugSnapshot = () => {
   return {
     visible: Boolean(props.visible),
     loading: Boolean(props.loading),
+    renderVersion: Number(props.renderVersion || 0),
     rawItemCount: Array.isArray(props.items) ? props.items.length : 0,
     entryCount: entries.value.length,
     shouldRender: shouldRender.value,

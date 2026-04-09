@@ -1330,6 +1330,14 @@ fn should_auto_wake_parent_after_child_run(wait_forever: bool, timeout_seconds: 
     !wait_forever && timeout_seconds <= 0.0
 }
 
+fn should_auto_wake_parent_follow_up(
+    is_swarm_task: bool,
+    wait_forever: bool,
+    timeout_seconds: f64,
+) -> bool {
+    !is_swarm_task && should_auto_wake_parent_after_child_run(wait_forever, timeout_seconds)
+}
+
 fn sync_announce_auto_wake(
     announce: &mut AnnounceConfig,
     run_metadata: Option<&mut Value>,
@@ -2929,6 +2937,7 @@ async fn wait_for_swarm_runs(
                     );
                 }
             }
+            crate::services::subagents::suppress_auto_wake_from_wait_result(&response);
             return Ok(response);
         }
 
@@ -3090,8 +3099,17 @@ async fn agent_swarm_history(context: &ToolContext<'_>, args: &Value) -> Result<
 async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SessionSpawnArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let requested_agent_id = normalize_optional_string(payload.agent_id);
-    let requested_agent_name = normalize_optional_string(payload.agent_name);
+    let SessionSpawnArgs {
+        task,
+        label,
+        agent_id,
+        agent_name,
+        model: _,
+        run_timeout_seconds,
+        cleanup: _,
+    } = payload;
+    let requested_agent_id = normalize_optional_string(agent_id);
+    let requested_agent_name = normalize_optional_string(agent_name);
     let include_current = args
         .get("includeCurrent")
         .or_else(|| args.get("include_current"))
@@ -3113,14 +3131,98 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
             "agent_swarm spawn requires agent_id/agent_name; use subagent_control spawn for ad-hoc child sessions"
         )
     })?;
-    let mut spawn_args = args.clone();
-    if let Value::Object(ref mut map) = spawn_args {
-        map.insert("agentId".to_string(), json!(target_agent.agent_id));
-        map.remove("agentName");
-        map.remove("agent_name");
-        map.remove("name");
+    let mut send_args = json!({
+        "agentId": target_agent.agent_id,
+        "message": task,
+    });
+    if let Value::Object(ref mut map) = send_args {
+        if let Some(label) = label {
+            map.insert("label".to_string(), json!(label));
+        }
+        if include_current {
+            map.insert("includeCurrent".to_string(), Value::Bool(true));
+        }
+        if let Some(timeout_seconds) = run_timeout_seconds {
+            map.insert(
+                "timeoutSeconds".to_string(),
+                json!(timeout_seconds.max(0.0)),
+            );
+        }
+        if let Some(hive_id) = swarm_hive_arg(args) {
+            map.insert("hiveId".to_string(), json!(hive_id));
+        }
     }
-    sessions_spawn(context, &spawn_args).await
+    let result = agent_swarm_send(context, &send_args).await?;
+    Ok(enrich_agent_swarm_spawn_response(result))
+}
+
+fn enrich_agent_swarm_spawn_response(mut response: Value) -> Value {
+    let status = response
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("accepted")
+        .to_ascii_lowercase();
+    let run_id = response
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let child_session_id = response
+        .get("target_session_id")
+        .or_else(|| response.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let follow_up_required = matches!(status.as_str(), "accepted" | "timeout" | "running");
+    let Some(object) = response.as_object_mut() else {
+        return response;
+    };
+    if let Some(session_id) = child_session_id.as_ref() {
+        object.insert("session_id".to_string(), Value::String(session_id.clone()));
+        object.insert(
+            "child_session_id".to_string(),
+            Value::String(session_id.clone()),
+        );
+    }
+    object.insert("task_started".to_string(), Value::Bool(true));
+    object.insert("initial_turn_dispatched".to_string(), Value::Bool(true));
+    object.insert(
+        "follow_up_required".to_string(),
+        Value::Bool(follow_up_required),
+    );
+    object.insert("reply_pending".to_string(), Value::Bool(follow_up_required));
+    object.insert(
+        "child_reply_pending".to_string(),
+        Value::Bool(follow_up_required),
+    );
+    if let (Some(run_id), Some(session_id)) = (run_id.as_ref(), child_session_id.as_ref()) {
+        object.insert(
+            "recommended_follow_up_target".to_string(),
+            json!({
+                "run_id": run_id,
+                "session_id": session_id,
+            }),
+        );
+    }
+    if follow_up_required {
+        object.insert(
+            "follow_up_condition".to_string(),
+            Value::String(
+                "The worker session has accepted the initial task, but its first reply is still pending. Use wait/status/history before reporting completion.".to_string(),
+            ),
+        );
+        object.insert(
+            "next_step_hint".to_string(),
+            Value::String(
+                "spawn already dispatched the initial task to the worker session. Do not call send again. Use wait/status/history to confirm the worker reply before continuing."
+                    .to_string(),
+            ),
+        );
+    }
+    response
 }
 
 fn collect_swarm_agents(
@@ -3279,7 +3381,7 @@ fn prepare_swarm_child_session(
     if parent_session_id.is_empty() {
         return Err(anyhow!(i18n::t("error.session_not_found")));
     }
-    prepare_child_session(
+    let prepared = prepare_child_session(
         context,
         parent_session_id,
         task,
@@ -3287,7 +3389,18 @@ fn prepare_swarm_child_session(
         Some(agent_id.to_string()),
         None,
         ChildSessionToolMode::UseTargetAgentDefaults,
-    )
+    )?;
+    let user_id = context.user_id.trim();
+    if !user_id.is_empty() {
+        if let Some(mut session) = context
+            .storage
+            .get_chat_session(user_id, &prepared.child_session_id)?
+        {
+            session.spawned_by = Some("agent_swarm".to_string());
+            context.storage.upsert_chat_session(&session)?;
+        }
+    }
+    Ok(prepared)
 }
 
 fn ensure_swarm_agent_in_hive(agent: &UserAgentRecord, hive_id: &str) -> Result<()> {
@@ -3423,7 +3536,12 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         .touch_chat_session(user_id, &session_id, now, now);
     let wait_forever = payload.wait_forever.unwrap_or(false);
     let timeout_seconds = payload.timeout_seconds.unwrap_or(0.0).max(0.0);
-    let auto_wake = should_auto_wake_parent_after_child_run(wait_forever, timeout_seconds);
+    let swarm_team_task_id = normalize_optional_string(payload.team_task_id);
+    let auto_wake = should_auto_wake_parent_follow_up(
+        swarm_team_task_id.is_some(),
+        wait_forever,
+        timeout_seconds,
+    );
     let request = WunderRequest {
         user_id: user_id.to_string(),
         question: message,
@@ -3443,7 +3561,6 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         approval_tx: None,
     };
     let announce_label = normalize_optional_string(payload.label);
-    let swarm_team_task_id = normalize_optional_string(payload.team_task_id);
     let announce = build_parent_follow_up_announce(
         payload.announce_parent_session_id,
         &session_id,
@@ -9367,6 +9484,15 @@ PATCH"#;
                 .as_deref(),
             Some("sess_parent")
         );
+        assert_eq!(
+            storage_backend
+                .get_chat_session("alice", &prepared.child_session_id)
+                .expect("reload child session")
+                .expect("child session")
+                .spawned_by
+                .as_deref(),
+            Some("agent_swarm")
+        );
     }
 
     #[test]
@@ -9411,6 +9537,45 @@ PATCH"#;
         assert!(should_auto_wake_parent_after_child_run(false, 0.0));
         assert!(!should_auto_wake_parent_after_child_run(false, 5.0));
         assert!(!should_auto_wake_parent_after_child_run(true, 0.0));
+        assert!(should_auto_wake_parent_follow_up(false, false, 0.0));
+        assert!(!should_auto_wake_parent_follow_up(true, false, 0.0));
+    }
+
+    #[test]
+    fn enrich_agent_swarm_spawn_response_preserves_spawn_contract() {
+        let response = enrich_agent_swarm_spawn_response(json!({
+            "status": "accepted",
+            "run_id": "run_swarm_demo",
+            "target_session_id": "sess_worker_demo",
+            "team_run_id": "team_demo",
+            "task_id": "task_demo"
+        }));
+
+        assert_eq!(
+            response.get("session_id").and_then(Value::as_str),
+            Some("sess_worker_demo")
+        );
+        assert_eq!(
+            response.get("child_session_id").and_then(Value::as_str),
+            Some("sess_worker_demo")
+        );
+        assert_eq!(
+            response
+                .get("recommended_follow_up_target")
+                .and_then(|value| value.get("run_id"))
+                .and_then(Value::as_str),
+            Some("run_swarm_demo")
+        );
+        assert_eq!(
+            response.get("follow_up_required").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            response
+                .get("initial_turn_dispatched")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]

@@ -127,7 +127,7 @@ impl CompactionExecutionProfile {
             },
             CompactionRunMode::AutoLoop | CompactionRunMode::OverflowRecovery => Self {
                 run_mode,
-                retained_edge_turn_count: 0,
+                retained_edge_turn_count: COMPACTION_RETAINED_EDGE_TURN_COUNT,
                 allow_recent_user_window: false,
                 prefer_preserving_summary: true,
             },
@@ -4391,6 +4391,22 @@ mod tests {
         assert!(total_chars <= COMPACTION_RETAINED_EDGE_TOTAL_MAX_CHARS);
         assert!(!retained.head.messages.is_empty());
         assert!(!retained.tail.messages.is_empty());
+    }
+
+    #[test]
+    fn test_auto_compaction_profiles_keep_edge_turns_but_skip_recent_user_window() {
+        let auto_loop = CompactionExecutionProfile::new(CompactionRunMode::AutoLoop);
+        let overflow_recovery =
+            CompactionExecutionProfile::new(CompactionRunMode::OverflowRecovery);
+
+        for profile in [auto_loop, overflow_recovery] {
+            assert_eq!(
+                profile.retained_edge_turn_count,
+                COMPACTION_RETAINED_EDGE_TURN_COUNT
+            );
+            assert!(!profile.allow_recent_user_window);
+            assert!(profile.prefer_preserving_summary);
+        }
     }
 
     #[test]

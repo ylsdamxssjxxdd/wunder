@@ -13,6 +13,7 @@ export type MessageStatsEntry = {
 
 type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 type WorkflowItemLike = Record<string, any>;
+type MessageLike = Record<string, any>;
 
 const formatDuration = (seconds: unknown): string => {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '-';
@@ -221,6 +222,42 @@ const hasAssistantActivitySignals = (message: Record<string, any> | null | undef
   );
 };
 
+const isAssistantCompactionMessageRunning = (message: MessageLike | null | undefined): boolean => {
+  if (!message || message.role !== 'assistant' || message.isGreeting) return false;
+  return isCompactionRunningFromWorkflowItems(message?.workflowItems);
+};
+
+const resolveMessageIndex = (message: MessageLike, allMessages: MessageLike[]): number => {
+  const directIndex = allMessages.lastIndexOf(message);
+  if (directIndex >= 0) return directIndex;
+  const role = String(message?.role || '');
+  const createdAt = String(message?.created_at || '');
+  const streamEventId = String(message?.stream_event_id || '');
+  const streamRound = String(message?.stream_round || '');
+  return allMessages.findIndex((item) => {
+    if (!item || typeof item !== 'object') return false;
+    return (
+      String(item?.role || '') === role &&
+      String(item?.created_at || '') === createdAt &&
+      String(item?.stream_event_id || '') === streamEventId &&
+      String(item?.stream_round || '') === streamRound
+    );
+  });
+};
+
+const hasConversationCompactionRunning = (
+  message: MessageLike,
+  allMessages: MessageLike[] | null | undefined
+): boolean => {
+  if (!Array.isArray(allMessages) || allMessages.length < 2) return false;
+  const currentIndex = resolveMessageIndex(message, allMessages);
+  if (currentIndex < 0) return false;
+  return allMessages.some((item, index) => {
+    if (index === currentIndex || index < currentIndex) return false;
+    return isAssistantCompactionMessageRunning(item);
+  });
+};
+
 const buildStatusEntry = (
   value: string,
   tone: NonNullable<MessageStatsEntry['tone']>,
@@ -236,7 +273,8 @@ const buildStatusEntry = (
 
 const resolveAssistantStatusEntry = (
   message: Record<string, any>,
-  t: TranslateFn
+  t: TranslateFn,
+  allMessages?: MessageLike[] | null
 ): MessageStatsEntry | null => {
   if (!hasAssistantActivitySignals(message)) return null;
 
@@ -304,6 +342,12 @@ const resolveAssistantStatusEntry = (
   if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
   }
+  if (
+    (isAssistantStreaming(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
+    hasConversationCompactionRunning(message, allMessages)
+  ) {
+    return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
+  }
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
   }
@@ -328,12 +372,13 @@ const resolveAssistantStatusEntry = (
 
 export const buildAssistantMessageStatsEntries = (
   message: Record<string, any> | null | undefined,
-  t: TranslateFn
+  t: TranslateFn,
+  allMessages?: MessageLike[] | null
 ): MessageStatsEntry[] => {
   if (!message || message.role !== 'assistant' || message.isGreeting) {
     return [];
   }
-  const statusEntry = resolveAssistantStatusEntry(message, t);
+  const statusEntry = resolveAssistantStatusEntry(message, t, allMessages);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
   if (isAssistantStreaming(message)) {

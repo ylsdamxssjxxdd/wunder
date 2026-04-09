@@ -9,7 +9,9 @@ const createTranslator = () => {
     'chat.stats.duration': 'Duration',
     'chat.stats.speed': 'Speed',
     'chat.stats.contextTokens': 'Context',
-    'chat.stats.toolCalls': 'Tools'
+    'chat.stats.toolCalls': 'Tools',
+    'messenger.messageStatus.compacting': 'Compacting',
+    'messenger.messageStatus.requesting': 'Requesting'
   };
   return (key: string) => table[key] || key;
 };
@@ -218,6 +220,38 @@ test('message stats hides tool-turn speed when no reliable average exists', () =
     t
   );
   assert.equal(findEntryValue(entries, 'Speed'), '-');
+});
+
+test('message stats prefers compacting when another assistant message is running compaction', () => {
+  const t = createTranslator();
+  const pendingAssistant = {
+    role: 'assistant',
+    workflowStreaming: true,
+    workflowItems: [
+      {
+        eventType: 'llm_request',
+        status: 'loading'
+      }
+    ]
+  };
+  const compactionAssistant = {
+    role: 'assistant',
+    workflowStreaming: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading'
+      }
+    ]
+  };
+
+  const entries = buildAssistantMessageStatsEntries(
+    pendingAssistant,
+    t,
+    [pendingAssistant, compactionAssistant]
+  );
+
+  assert.equal(entries[0]?.value, 'Compacting');
 });
 
 test('turn decode speed summary matches backend user-round average semantics', () => {

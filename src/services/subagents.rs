@@ -151,11 +151,15 @@ fn payload_dispatch_id(payload: &Value) -> Option<String> {
 }
 
 pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
-    if !result
+    let completion_reached = result
         .get("completion_reached")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-    {
+        || result
+            .get("all_finished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    if !completion_reached {
         return;
     }
     let selected_items = result
@@ -328,6 +332,7 @@ pub fn list_parent_subagents_with_options(
         });
         items
     };
+    items.retain(should_include_parent_subagent_runtime_item);
     if items.len() > safe_limit as usize {
         items.truncate(safe_limit as usize);
     }
@@ -994,6 +999,27 @@ fn build_runtime_item(
         error_message,
         updated_time,
     })
+}
+
+fn runtime_marker_matches(value: Option<&str>, expected: &str) -> bool {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+fn should_include_parent_subagent_runtime_item(item: &SubagentRuntimeItem) -> bool {
+    !runtime_marker_matches(item.session.spawned_by.as_deref(), "agent_swarm")
+        && !item
+            .run
+            .as_ref()
+            .and_then(|record| record.run_kind.as_deref())
+            .is_some_and(|value| runtime_marker_matches(Some(value), "swarm"))
+        && !item
+            .run
+            .as_ref()
+            .and_then(|record| record.requested_by.as_deref())
+            .is_some_and(|value| runtime_marker_matches(Some(value), "agent_swarm"))
 }
 
 fn runtime_item_payload(item: SubagentRuntimeItem) -> Value {
@@ -2006,6 +2032,93 @@ mod tests {
     }
 
     #[test]
+    fn list_parent_subagents_ignores_swarm_worker_sessions() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+
+        upsert_child_session(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_subagent",
+            41.0,
+            None,
+        );
+        upsert_session_run(
+            &storage,
+            user_id,
+            parent_session_id,
+            "sess_subagent",
+            "run_subagent",
+            41.0,
+            Some("dispatch-subagent"),
+            Some(json!({
+                "parent_turn_ref": encode_parent_turn_ref(Some(6), Some(1)),
+                "parent_user_round": 6,
+                "parent_model_round": 1
+            })),
+        );
+
+        storage
+            .upsert_chat_session(&ChatSessionRecord {
+                session_id: "sess_swarm_worker".to_string(),
+                user_id: user_id.to_string(),
+                title: "swarm worker".to_string(),
+                status: "active".to_string(),
+                created_at: 42.0,
+                updated_at: 42.0,
+                last_message_at: 42.0,
+                agent_id: Some("agent-sess_swarm_worker".to_string()),
+                tool_overrides: Vec::new(),
+                parent_session_id: Some(parent_session_id.to_string()),
+                parent_message_id: None,
+                spawn_label: Some("swarm worker".to_string()),
+                spawned_by: Some("agent_swarm".to_string()),
+            })
+            .expect("upsert swarm worker session");
+        storage
+            .upsert_session_run(&SessionRunRecord {
+                run_id: "run_swarm_worker".to_string(),
+                session_id: "sess_swarm_worker".to_string(),
+                parent_session_id: Some(parent_session_id.to_string()),
+                user_id: user_id.to_string(),
+                dispatch_id: Some("dispatch-swarm".to_string()),
+                run_kind: Some("swarm".to_string()),
+                requested_by: Some("agent_swarm".to_string()),
+                agent_id: Some("agent-sess_swarm_worker".to_string()),
+                model_name: None,
+                status: "completed".to_string(),
+                queued_time: 42.0,
+                started_time: 42.0,
+                finished_time: 42.0,
+                elapsed_s: 0.2,
+                result: Some("swarm-result".to_string()),
+                error: None,
+                updated_time: 42.0,
+                metadata: Some(json!({
+                    "parent_turn_ref": encode_parent_turn_ref(Some(6), Some(2)),
+                    "parent_user_round": 6,
+                    "parent_model_round": 2
+                })),
+            })
+            .expect("upsert swarm worker run");
+
+        let items = list_parent_subagents_with_options(
+            &storage,
+            None,
+            user_id,
+            parent_session_id,
+            ParentSubagentListOptions::default(),
+        )
+        .expect("list parent subagents");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["session_id"], json!("sess_subagent"));
+    }
+
+    #[test]
     fn wait_result_suppresses_single_run_auto_wake_after_completion() {
         let parent_session_id = "sess_parent_wait_single";
         let run_id = "run_wait_single";
@@ -2052,5 +2165,21 @@ mod tests {
             Some("dispatch_wait_consumed_other"),
             None
         ));
+    }
+
+    #[test]
+    fn wait_result_suppresses_auto_wake_when_all_finished_flag_is_present() {
+        let parent_session_id = "sess_parent_wait_all_finished";
+        let run_id = "run_wait_all_finished";
+        suppress_auto_wake_from_wait_result(&json!({
+            "all_finished": true,
+            "items": [
+                {
+                    "parent_session_id": parent_session_id,
+                    "run_id": run_id,
+                }
+            ]
+        }));
+        assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
     }
 }
