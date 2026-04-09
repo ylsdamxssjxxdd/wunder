@@ -17,6 +17,10 @@ import {
   DispatchRuntimeStatus,
   MissionChatMessage
 } from '@/components/beeroom/beeroomCanvasChatModel';
+import {
+  isBeeroomDefaultAgentLike,
+  normalizeBeeroomActorName
+} from '@/components/beeroom/beeroomActorIdentity';
 import { setBeeroomMissionChatState, getBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import {
   getBeeroomMissionCanvasState,
@@ -45,6 +49,8 @@ import {
 import { createBeeroomChatRealtimeRuntime } from '@/realtime/beeroomChatRealtimeRuntime';
 import { resolveChatRequestTextInputOverflow } from '@/utils/chatRequestInputLimit';
 import { chatDebugLog } from '@/utils/chatDebug';
+import { useAgentStore } from '@/stores/agents';
+import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { replaceMessageArrayKeepingReference } from '@/stores/chatMessageArraySync';
 import {
@@ -55,10 +61,13 @@ import {
 } from '@/stores/beeroom';
 import { consumeSseStream } from '@/utils/sse';
 import {
+  DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
+import { PROFILE_AVATAR_OPTION_KEYS, resolveProfileAvatarImageByKey } from '@/utils/avatarCatalog';
+import { normalizeAvatarIcon, readUserAppearanceFromStorage } from '@/utils/userPreferences';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 
 type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
@@ -110,6 +119,8 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   t: TranslationFn;
   onRefresh: () => void;
 }) => {
+  const agentStore = useAgentStore();
+  const authStore = useAuthStore();
   const chatStore = useChatStore();
   const beeroomStore = useBeeroomStore();
   const chatCollapsed = ref(false);
@@ -190,6 +201,45 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     clearedAfter: chatMessagesClearedAfter
   });
 
+  const swarmMemberAgentIds = computed(
+    () =>
+      new Set(
+        options.agents.value
+          .map((member) => String(member.agent_id || '').trim())
+          .filter(Boolean)
+      )
+  );
+
+  const avatarHydrationAgentIds = computed(() => {
+    const ids = new Set<string>();
+    const collect = (value: unknown) => {
+      const agentId = String(value || '').trim();
+      if (!agentId || swarmMemberAgentIds.value.has(agentId)) return;
+      if (Object.prototype.hasOwnProperty.call(agentStore.agentMap, agentId)) return;
+      ids.add(agentId);
+    };
+    collect(dispatchTargetAgentId.value);
+    collect(dispatchPreview.value?.targetAgentId);
+    Object.values(sessionAssistantIdentityBySession.value).forEach((identity) => collect(identity?.agentId));
+    (Array.isArray(dispatchPreview.value?.subagents) ? dispatchPreview.value?.subagents : []).forEach((item) =>
+      collect(item?.agentId)
+    );
+    Object.values(subagentsByTask.value || {}).forEach((items) =>
+      (Array.isArray(items) ? items : []).forEach((item) => collect(item?.agentId))
+    );
+    return Array.from(ids);
+  });
+
+  watch(
+    avatarHydrationAgentIds,
+    (agentIds) => {
+      agentIds.forEach((agentId) => {
+        void agentStore.getAgent(agentId).catch(() => null);
+      });
+    },
+    { immediate: true }
+  );
+
   const {
     demoBusy,
     demoError,
@@ -215,21 +265,89 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return demoBusy.value || composerSending.value || !demoCanStart.value;
   });
 
+  const currentUserId = computed(
+    () =>
+      String(
+        (authStore.user as Record<string, unknown> | null)?.id ||
+          (authStore.user as Record<string, unknown> | null)?.user_id ||
+          (authStore.user as Record<string, unknown> | null)?.username ||
+          ''
+      ).trim()
+  );
+
+  const currentUserAvatarIcon = computed(() => {
+    const currentUser = (authStore.user || null) as Record<string, unknown> | null;
+    const persistedAppearance = readUserAppearanceFromStorage(currentUserId.value, PROFILE_AVATAR_OPTION_KEYS);
+    return normalizeAvatarIcon(
+      currentUser?.avatar_icon ?? currentUser?.avatarIcon ?? persistedAppearance.avatarIcon,
+      PROFILE_AVATAR_OPTION_KEYS
+    );
+  });
+
+  const currentUserAvatarImageUrl = computed(() => resolveProfileAvatarImageByKey(currentUserAvatarIcon.value));
+
+  const hasExplicitAgentAvatarIcon = (value: unknown): boolean => {
+    if (!value) return false;
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+    const record = value as Record<string, unknown>;
+    return Boolean(String(record.name ?? record.icon ?? record.avatar_icon ?? record.avatarIcon ?? '').trim());
+  };
+
   const agentAvatarImageMap = computed(() => {
     const map = new Map<string, string>();
     options.agents.value.forEach((member) => {
       const agentId = String(member.agent_id || '').trim();
       if (!agentId) return;
-      const imageUrl = resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(member.icon));
+      const imageUrl = hasExplicitAgentAvatarIcon(member.icon)
+        ? resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(member.icon))
+        : '';
       if (imageUrl) {
         map.set(agentId, imageUrl);
       }
     });
+    Object.entries(agentStore.agentMap || {}).forEach(([agentId, agent]) => {
+      const normalizedAgentId = String(agentId || '').trim();
+      if (!normalizedAgentId || map.has(normalizedAgentId)) return;
+      if (normalizedAgentId === DEFAULT_AGENT_KEY) {
+        map.set(DEFAULT_AGENT_KEY, DEFAULT_AGENT_AVATAR_IMAGE);
+        return;
+      }
+      const icon =
+        agent && typeof agent === 'object' ? (agent as Record<string, unknown>).icon : undefined;
+      const imageUrl = hasExplicitAgentAvatarIcon(icon)
+        ? resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(icon))
+        : '';
+      if (imageUrl) {
+        map.set(normalizedAgentId, imageUrl);
+      }
+    });
+    if (!map.has(DEFAULT_AGENT_KEY)) {
+      map.set(DEFAULT_AGENT_KEY, DEFAULT_AGENT_AVATAR_IMAGE);
+    }
     return map;
   });
 
   const resolveAgentAvatarImageByAgentId = (agentId: unknown): string =>
     agentAvatarImageMap.value.get(String(agentId || '').trim()) || '';
+
+  const resolveMessageAvatarImage = (message: MissionChatMessage): string => {
+    if (message?.tone === 'user') {
+      return currentUserAvatarImageUrl.value;
+    }
+    const senderAgentId = String(message?.senderAgentId || '').trim();
+    if (senderAgentId) {
+      return resolveAgentAvatarImageByAgentId(senderAgentId);
+    }
+    if (isBeeroomDefaultAgentLike(message?.senderName)) {
+      return resolveAgentAvatarImageByAgentId(DEFAULT_AGENT_KEY) || DEFAULT_AGENT_AVATAR_IMAGE;
+    }
+    return '';
+  };
 
   const avatarLabel = (value: unknown) => resolveAgentAvatarInitial(value);
 
@@ -255,13 +373,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       .toLowerCase()
       .replace(/\s+/g, '');
 
-  const normalizeChatActorName = (value: unknown): string => {
-    const text = String(value || '').trim();
-    if (!text || text === '-' || text === '新会话') {
-      return '';
-    }
-    return text;
-  };
+  const normalizeChatActorName = (value: unknown): string => normalizeBeeroomActorName(value, options.t);
 
   const composerTargetOptions = computed<ComposerTargetOption[]>(() => {
     const seen = new Set<string>();
@@ -1854,6 +1966,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const displayChatMessages = computed(() =>
     [...manualChatMessages.value, ...derivedSubagentChatMessages.value]
+      .map((message) => ({
+        ...message,
+        senderName:
+          message.tone === 'user'
+            ? String(message.senderName || '').trim()
+            : normalizeChatActorName(message.senderName) || String(message.senderName || '').trim(),
+        mention: normalizeChatActorName(message.mention) || String(message.mention || '').trim()
+      }))
       .sort(compareMissionChatMessages)
       .filter(
         (message) =>
@@ -2253,6 +2373,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     handleDispatchStop,
     handleDemoAction,
     resolveAgentAvatarImageByAgentId,
+    resolveMessageAvatarImage,
     avatarLabel
   };
 };

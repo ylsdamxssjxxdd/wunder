@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+import { normalizeBeeroomActorName } from '../../src/components/beeroom/beeroomActorIdentity';
+import { resolveBeeroomProjectedSubagentAvatarImage } from '../../src/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import {
   resolveProjectedWorkerSubagents,
   resolveBeeroomSwarmSubagentProjectionDecision,
@@ -70,6 +72,14 @@ const buildSubagent = (partial: Partial<TestSubagent> = {}): TestSubagent => ({
   controllerSessionId: String(partial.controllerSessionId || ''),
   parentSessionId: String(partial.parentSessionId || ''),
   workflowItems: Array.isArray(partial.workflowItems) ? partial.workflowItems : []
+});
+
+const t = (key: string) => (key === 'messenger.defaultAgent' ? '默认智能体' : key);
+
+test('beeroom actor naming normalizes default agent aliases to 默认智能体', () => {
+  assert.equal(normalizeBeeroomActorName('Default Agent', t), '默认智能体');
+  assert.equal(normalizeBeeroomActorName('__default__', t), '默认智能体');
+  assert.equal(normalizeBeeroomActorName('默认智能体', t), '默认智能体');
 });
 
 test('canvas projection rejects swarm worker sessions from the generic subagent feed', () => {
@@ -247,5 +257,41 @@ test('mother runtime projection ignores swarm worker sessions while keeping real
   assert.deepEqual(
     subagents.map((item) => item.sessionId),
     ['sess_real_subagent']
+  );
+});
+
+test('derived subagent avatars prefer external agent resolver and keep default-agent fallback', () => {
+  assert.equal(
+    resolveBeeroomProjectedSubagentAvatarImage({
+      agentId: 'derived-agent-1',
+      name: 'Default Agent',
+      explicitAvatarImageUrl: '',
+      resolveAgentAvatarImageByAgentId: (agentId: unknown) => {
+        const normalized = String(agentId || '').trim();
+        if (normalized === 'derived-agent-1') {
+          return 'https://example.com/derived-agent-1.png';
+        }
+        if (normalized === '__default__') {
+          return 'https://example.com/default-agent.png';
+        }
+        return '';
+      },
+      defaultAgentAvatarImageUrl: 'https://example.com/default-agent-fallback.png',
+      fallbackAvatarImageUrl: 'https://example.com/subagent-fallback.png'
+    }),
+    'https://example.com/derived-agent-1.png'
+  );
+
+  assert.equal(
+    resolveBeeroomProjectedSubagentAvatarImage({
+      agentId: '',
+      name: 'Default Agent',
+      explicitAvatarImageUrl: '',
+      resolveAgentAvatarImageByAgentId: (agentId: unknown) =>
+        String(agentId || '').trim() === '__default__' ? 'https://example.com/default-agent.png' : '',
+      defaultAgentAvatarImageUrl: 'https://example.com/default-agent-fallback.png',
+      fallbackAvatarImageUrl: 'https://example.com/subagent-fallback.png'
+    }),
+    'https://example.com/default-agent.png'
   );
 });

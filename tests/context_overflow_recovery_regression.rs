@@ -7,7 +7,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
@@ -28,6 +28,7 @@ struct MindieOverflowMockState {
     total_calls: AtomicUsize,
     overflow_calls: AtomicUsize,
     success_calls: AtomicUsize,
+    last_success_payload: Mutex<Option<Value>>,
 }
 
 struct TestContext {
@@ -181,6 +182,10 @@ async fn mock_chat_completions(
     }
 
     state.success_calls.fetch_add(1, Ordering::Relaxed);
+    *state
+        .last_success_payload
+        .lock()
+        .expect("last success payload lock") = Some(payload.clone());
     (
         StatusCode::OK,
         Json(json!({
@@ -377,6 +382,21 @@ fn latest_compaction_summary_item(history: &[Value]) -> Option<&Value> {
         .find(|item| HistoryManager::is_compaction_summary_item(item))
 }
 
+fn latest_compaction_summary_item_with_trigger<'a>(
+    history: &'a [Value],
+    trigger_mode: &str,
+) -> Option<&'a Value> {
+    history.iter().rev().find(|item| {
+        HistoryManager::is_compaction_summary_item(item)
+            && item
+                .get("meta")
+                .and_then(Value::as_object)
+                .and_then(|meta| meta.get("trigger_mode"))
+                .and_then(Value::as_str)
+                == Some(trigger_mode)
+    })
+}
+
 fn count_content_containing(items: &[Value], marker: &str) -> usize {
     items
         .iter()
@@ -400,6 +420,26 @@ fn first_replay_summary_index(items: &[Value]) -> Option<usize> {
     items
         .iter()
         .position(HistoryManager::is_compaction_summary_item)
+}
+
+fn summary_body(content: &str) -> &str {
+    content
+        .split_once('\n')
+        .map(|(_, body)| body.trim())
+        .unwrap_or_else(|| content.trim())
+}
+
+fn latest_success_request_messages(context: &TestContext) -> Vec<Value> {
+    context
+        .mock_state
+        .last_success_payload
+        .lock()
+        .expect("last success payload lock")
+        .as_ref()
+        .and_then(|payload| payload.get("messages"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 async fn trigger_manual_compaction_and_wait(context: &TestContext, session_id: &str) -> Value {
@@ -510,6 +550,21 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
             .any(HistoryManager::is_compaction_summary_item),
         "expected compaction summary item in raw history"
     );
+    let summary_item = latest_compaction_summary_item(&raw_history)
+        .expect("expected latest compaction summary item");
+    let summary_text = summary_item
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let summary_body = summary_body(summary_text);
+    assert!(
+        !summary_body.starts_with("...("),
+        "persisted summary should not collapse into placeholder fragment: {summary_text}"
+    );
+    assert!(
+        summary_body.chars().count() > 32,
+        "persisted summary should remain readable after compaction: {summary_text}"
+    );
 
     let replay_messages = HistoryManager.load_history_messages(
         context.state.workspace.as_ref(),
@@ -538,14 +593,77 @@ async fn mindie_context_overflow_recovers_and_session_keeps_running() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_replay_uses_committed_summary_in_next_request() {
+    let context =
+        build_test_context_with_compaction("mindie_compaction_request_shape", 8_000, Some("keep"))
+            .await;
+    let session_id = create_test_session(&context, "Compaction request shape").await;
+
+    run_pressure_rounds(&context, &session_id, 6, 420).await;
+    trigger_manual_compaction_and_wait(&context, &session_id).await;
+
+    let replay_messages = HistoryManager.load_history_messages(
+        context.state.workspace.as_ref(),
+        &context.user_id,
+        &session_id,
+        0,
+    );
+    let replay_summary = replay_messages
+        .iter()
+        .find(|item| HistoryManager::is_compaction_summary_item(item))
+        .and_then(|item| item.get("content"))
+        .and_then(Value::as_str)
+        .expect("expected replay summary after compaction")
+        .to_string();
+
+    let (status, payload) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": build_pressure_question(7, 420),
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "follow-up round failed: {payload}");
+
+    let request_messages = latest_success_request_messages(&context);
+    let request_summary = request_messages
+        .iter()
+        .find(|item| HistoryManager::is_compaction_summary_item(item))
+        .and_then(|item| item.get("content"))
+        .and_then(Value::as_str)
+        .expect("summary-first auto compaction should keep the committed summary in next request");
+
+    assert!(
+        request_summary.starts_with("[上下文摘要]"),
+        "next request should still carry a committed summary item: {request_summary}"
+    );
+    assert!(
+        !summary_body(request_summary).starts_with("...("),
+        "next request summary should not degrade into placeholder fragment: {request_summary}"
+    );
+    assert!(
+        summary_body(request_summary).chars().count() > 32,
+        "next request summary should remain readable after auto compaction: {request_summary}"
+    );
+    assert!(
+        !summary_body(&replay_summary).starts_with("...("),
+        "replay summary should not be a broken placeholder: {replay_summary}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compaction_reset_modes_align_history_replay_shapes() {
     const ROUNDS: usize = 6;
-    const REPEAT: usize = 560;
+    const REPEAT: usize = 24;
 
     for mode in ["zero", "current", "keep"] {
         let context = build_test_context_with_compaction(
             &format!("mindie_compaction_reset_{mode}"),
-            5_000,
+            32_768,
             Some(mode),
         )
         .await;
@@ -559,7 +677,8 @@ async fn compaction_reset_modes_align_history_replay_shapes() {
             .workspace
             .load_history(&context.user_id, &session_id, 0)
             .expect("load raw history");
-        let summary_item = latest_compaction_summary_item(&raw_history)
+        let summary_item = latest_compaction_summary_item_with_trigger(&raw_history, "manual")
+            .or_else(|| latest_compaction_summary_item(&raw_history))
             .expect("expected latest compaction summary item");
         assert_eq!(
             summary_item

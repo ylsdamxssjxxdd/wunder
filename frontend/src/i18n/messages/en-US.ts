@@ -953,6 +953,18 @@ export default {
   'desktop.system.modelUnnamed': 'Unnamed model',
   'desktop.system.modelsTitle': 'Models',
   'desktop.system.modelListEmpty': 'No model configs yet',
+  'desktop.system.resetWorkStateTitle': 'Reset work state',
+  'desktop.system.resetWorkStateDescription':
+    'Abort all current agent work, create fresh main threads, and clear every agent workspace directory for the current desktop user.',
+  'desktop.system.resetWorkStateWarning':
+    'This action is destructive. Running sessions, queued tasks, swarm tasks, and workspace files will be cleared and cannot be restored.',
+  'desktop.system.resetWorkStateButton': 'Reset in one click',
+  'desktop.system.resetWorkStateConfirmTitle': 'Confirm reset',
+  'desktop.system.resetWorkStateConfirmMessage':
+    'This will abort all current agent work, create fresh threads, and clear all agent workspace files for the current desktop user. Continue?',
+  'desktop.system.resetWorkStateSuccess':
+    'Work state reset completed. Cancelled {sessions} sessions, {tasks} queued tasks, and refreshed {workspaces} workspaces.',
+  'desktop.system.resetWorkStateFailed': 'Failed to reset work state',
   'desktop.system.pythonInterpreterTitle': 'Python Interpreter',
   'desktop.system.pythonInterpreterPath': 'Python Interpreter Path',
   'desktop.system.pythonInterpreterPathPlaceholder':

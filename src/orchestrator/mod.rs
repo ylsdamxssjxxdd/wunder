@@ -36,7 +36,7 @@ use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
     approx_token_count, estimate_message_tokens, estimate_messages_tokens, trim_messages_to_budget,
-    trim_text_to_tokens,
+    trim_text_to_chars, trim_text_to_tokens,
 };
 use crate::tools::{
     build_desktop_followup_user_message, build_read_image_followup_user_message, builtin_aliases,

@@ -2840,15 +2840,6 @@ const isManualCompactionRoundSummary = (summary): boolean => {
 const isManualCompactionRoundEvents = (events): boolean =>
   isManualCompactionRoundSummary(summarizeCompactionRoundEvents(events));
 
-const hasVisibleAssistantBody = (message): boolean => {
-  if (!message || typeof message !== 'object') return false;
-  if (String(message.content || '').trim()) return true;
-  if (String(message.reasoning || '').trim()) return true;
-  if (hasPlanSteps(message.plan)) return true;
-  const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
-  return panelStatus === 'pending';
-};
-
 const buildManualCompactionMarkerMessage = (roundNumber, events) => ({
   ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
   workflowItems: [],
@@ -2857,6 +2848,24 @@ const buildManualCompactionMarkerMessage = (roundNumber, events) => ({
   stream_round: roundNumber,
   manual_compaction_marker: true
 });
+
+const insertMessageByTimestamp = (messages, message) => {
+  const markerTime = resolveTimestampMs(message?.created_at);
+  if (markerTime === null) {
+    messages.push(message);
+    return messages.length - 1;
+  }
+  for (let index = 0; index < messages.length; index += 1) {
+    const currentTime = resolveTimestampMs(messages[index]?.created_at);
+    if (currentTime === null) continue;
+    if (currentTime > markerTime) {
+      messages.splice(index, 0, message);
+      return index;
+    }
+  }
+  messages.push(message);
+  return messages.length - 1;
+};
 
 const summarizeCompactionWorkflowItemsForDebug = (items) => {
   if (!Array.isArray(items) || items.length === 0) {
@@ -2933,15 +2942,16 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
-    const syntheticMessage = isManualCompactionRoundEvents(events)
-      ? buildManualCompactionMarkerMessage(currentRound, events)
-      : {
-          ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
-          workflowItems: [],
-          workflowStreaming: false,
-          stream_incomplete: false,
-          stream_round: currentRound
-        };
+    if (isManualCompactionRoundEvents(events)) {
+      return;
+    }
+    const syntheticMessage = {
+      ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+      workflowItems: [],
+      workflowStreaming: false,
+      stream_incomplete: false,
+      stream_round: currentRound
+    };
     lastAssistantIndex = pushMessage(syntheticMessage);
   };
   const assignRound = (roundNumber = currentRound) => {
@@ -2953,20 +2963,19 @@ const attachWorkflowEvents = (messages, rounds) => {
       return;
     }
     const manualCompactionRound = isManualCompactionRoundEvents(events);
-    if (
-      manualCompactionRound &&
-      (
-        lastAssistantIndex === null ||
-        hasVisibleAssistantBody(hydratedMessages[lastAssistantIndex]) ||
-        hydratedMessages[lastAssistantIndex]?.manual_compaction_marker !== true
-      )
-    ) {
-      lastAssistantIndex = pushMessage(buildManualCompactionMarkerMessage(roundNumber, events));
+    if (manualCompactionRound) {
+      const compactionSummary = summarizeCompactionRoundEvents(events);
+      if (compactionSummary) {
+        chatDebugLog('chat.compaction.hydrate', 'defer-manual-round-marker', {
+          round: roundNumber,
+          anchorIndex: lastAssistantIndex,
+          anchorCreatedAt: hydratedMessages[lastAssistantIndex]?.created_at ?? null,
+          summary: compactionSummary
+        });
+      }
+      return;
     }
     const target = hydratedMessages[lastAssistantIndex];
-    if (manualCompactionRound && target && typeof target === 'object') {
-      target.manual_compaction_marker = true;
-    }
     target.workflow_events = normalizeWorkflowEvents(events, target);
     assignedRounds.add(roundNumber);
     const compactionSummary = summarizeCompactionRoundEvents(events);
@@ -3003,7 +3012,8 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
-    const syntheticMessage = isManualCompactionRoundEvents(events)
+    const manualCompactionRound = isManualCompactionRoundEvents(events);
+    const syntheticMessage = manualCompactionRound
       ? buildManualCompactionMarkerMessage(roundNumber, events)
       : {
           ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
@@ -3013,15 +3023,22 @@ const attachWorkflowEvents = (messages, rounds) => {
           stream_round: roundNumber
         };
     syntheticMessage.workflow_events = normalizeWorkflowEvents(events, syntheticMessage);
-    pushMessage(syntheticMessage);
+    const insertedIndex = manualCompactionRound
+      ? insertMessageByTimestamp(hydratedMessages, syntheticMessage)
+      : pushMessage(syntheticMessage);
     assignedRounds.add(roundNumber);
     const compactionSummary = summarizeCompactionRoundEvents(events);
     if (compactionSummary) {
-      chatDebugLog('chat.compaction.hydrate', 'append-synthetic-round', {
+      chatDebugLog(
+        'chat.compaction.hydrate',
+        manualCompactionRound ? 'insert-manual-round-marker' : 'append-synthetic-round',
+        {
         round: roundNumber,
+        targetIndex: insertedIndex,
         createdAt: syntheticMessage.created_at,
         summary: compactionSummary
-      });
+        }
+      );
     }
   });
   return hydratedMessages;

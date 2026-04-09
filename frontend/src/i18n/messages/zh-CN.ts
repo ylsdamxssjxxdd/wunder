@@ -941,6 +941,18 @@ export default {
   'desktop.system.modelUnnamed': '未命名模型',
   'desktop.system.modelsTitle': '模型列表',
   'desktop.system.modelListEmpty': '暂无模型配置',
+  'desktop.system.resetWorkStateTitle': '一键重置工作状态',
+  'desktop.system.resetWorkStateDescription':
+    '中止当前用户所有智能体的任务，为其创建新的主线程，并清空所有智能体工作目录中的文件。',
+  'desktop.system.resetWorkStateWarning':
+    '这是高风险操作。运行中会话、队列任务、蜂群任务和工作区文件都会被清空，无法恢复。',
+  'desktop.system.resetWorkStateButton': '一键重置',
+  'desktop.system.resetWorkStateConfirmTitle': '确认重置',
+  'desktop.system.resetWorkStateConfirmMessage':
+    '这将中止当前用户所有智能体的工作，为其创建新线程，并清空所有智能体工作目录文件。确定继续吗？',
+  'desktop.system.resetWorkStateSuccess':
+    '已完成工作状态重置：已中止 {sessions} 个会话、{tasks} 个队列任务，并重置 {workspaces} 个工作区。',
+  'desktop.system.resetWorkStateFailed': '重置工作状态失败',
   'desktop.system.pythonInterpreterTitle': 'Python 解析器',
   'desktop.system.pythonInterpreterPath': 'Python 解析器路径',
   'desktop.system.pythonInterpreterPathPlaceholder':

@@ -1591,6 +1591,26 @@ impl WorkspaceManager {
         cache.dirty.insert(safe_id);
     }
 
+    pub fn clear_workspace_contents(&self, user_id: &str) -> Result<u64> {
+        let safe_id = self.safe_user_id(user_id);
+        let workspace_root = self.workspace_root(&safe_id);
+        if !workspace_root.exists() {
+            self.clear_workspace_cache(&safe_id);
+            self.mark_tree_dirty(&safe_id);
+            return Ok(0);
+        }
+        if !workspace_root.is_dir() {
+            return Err(anyhow!(
+                "workspace root is not a directory: {}",
+                workspace_root.display()
+            ));
+        }
+        let removed = clear_dir_contents(&workspace_root);
+        self.clear_workspace_cache(&safe_id);
+        self.mark_tree_dirty(&safe_id);
+        Ok(removed)
+    }
+
     pub fn get_tree_version(&self, user_id: &str) -> u64 {
         let safe_id = self.safe_user_id(user_id);
         self.versions.get(&safe_id).map(|value| *value).unwrap_or(0)
@@ -1839,18 +1859,19 @@ fn cleanup_idle_temp_files(root: &Path, storage: &Arc<dyn StorageBackend>, idle_
         if now - last_seen < idle_ttl_s {
             continue;
         }
-        clear_dir_contents(&workspace_root);
+        let _ = clear_dir_contents(&workspace_root);
     }
 }
 
-fn clear_dir_contents(path: &Path) {
+fn clear_dir_contents(path: &Path) -> u64 {
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(err) => {
             warn!("failed to read temp dir {}: {err}", path.display());
-            return;
+            return 0;
         }
     };
+    let mut removed = 0u64;
     for entry in entries.flatten() {
         let target = entry.path();
         let result = match entry.file_type() {
@@ -1860,8 +1881,11 @@ fn clear_dir_contents(path: &Path) {
         };
         if let Err(err) = result {
             warn!("failed to remove temp entry {}: {err}", target.display());
+            continue;
         }
+        removed = removed.saturating_add(1);
     }
+    removed
 }
 
 const WORKSPACE_TREE_MAX_LINES: usize = 320;

@@ -17,6 +17,7 @@
           :mother-workflow-items="motherWorkflowItems"
           :workflow-items-by-task="workflowItemsByTask"
           :workflow-preview-by-task="workflowPreviewByTask"
+          :resolve-agent-avatar-image-by-agent-id="resolveAgentAvatarImageByAgentId"
           :fullscreen="canvasFullscreen"
           @open-agent="emit('open-agent', $event)"
           @toggle-fullscreen="toggleCanvasFullscreen"
@@ -38,7 +39,7 @@
           :demo-action-disabled="demoActionDisabled"
           :demo-action-label="demoActionLabel"
           :demo-can-cancel="demoCanCancel"
-          :resolve-agent-avatar-image-by-agent-id="resolveAgentAvatarImageByAgentId"
+          :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="composerText = $event"
@@ -115,6 +116,7 @@ const {
   handleDispatchStop,
   handleDemoAction,
   resolveAgentAvatarImageByAgentId,
+  resolveMessageAvatarImage,
   avatarLabel
 } = useBeeroomMissionCanvasRuntime({
   group: groupRef,

@@ -595,6 +595,7 @@ impl Orchestrator {
     }
 }
 
+#[cfg(test)]
 fn classify_llm_failure(message: &str) -> LlmFailureKind {
     if is_context_window_error_text(message) {
         return LlmFailureKind::ContextWindow;
@@ -619,7 +620,11 @@ fn classify_llm_error(error: &anyhow::Error) -> LlmFailureKind {
 fn is_llm_request_transport_error(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
         source.downcast_ref::<reqwest::Error>().is_some_and(|err| {
-            err.is_timeout() || err.is_connect() || err.is_request() || err.is_body() || err.is_decode()
+            err.is_timeout()
+                || err.is_connect()
+                || err.is_request()
+                || err.is_body()
+                || err.is_decode()
         })
     })
 }

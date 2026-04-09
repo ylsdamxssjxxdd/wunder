@@ -130,6 +130,20 @@ export type DesktopSeedControlPayload = {
   action: 'pause' | 'resume' | 'cancel';
 };
 
+export type DesktopResetWorkStateSession = {
+  agent_id: string;
+  session_id: string;
+};
+
+export type DesktopResetWorkStateSummary = {
+  cancelled_sessions: number;
+  cancelled_tasks: number;
+  cancelled_team_runs: number;
+  cleared_workspaces: number;
+  removed_workspace_entries: number;
+  fresh_main_sessions: DesktopResetWorkStateSession[];
+};
+
 const desktopApi = axios.create({
   timeout: 30000
 });
@@ -152,6 +166,11 @@ export const fetchDesktopSettings = () =>
 
 export const updateDesktopSettings = (payload: ApiPayload) =>
   desktopApi.put('/wunder/desktop/settings', payload, {
+    headers: buildDesktopHeaders()
+  });
+
+export const resetDesktopWorkState = () =>
+  desktopApi.post('/wunder/desktop/reset_work_state', undefined, {
     headers: buildDesktopHeaders()
   });
 

@@ -8,6 +8,32 @@
     </section>
 
     <section
+      v-if="showRuntimePanel"
+      class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--danger"
+    >
+      <div class="desktop-system-settings-danger-head">
+        <div>
+          <div class="messenger-settings-title">{{ t('desktop.system.resetWorkStateTitle') }}</div>
+          <div class="messenger-settings-subtitle">
+            {{ t('desktop.system.resetWorkStateDescription') }}
+          </div>
+        </div>
+      </div>
+      <div class="desktop-system-settings-danger-note">
+        {{ t('desktop.system.resetWorkStateWarning') }}
+      </div>
+      <div class="desktop-system-settings-danger-actions">
+        <el-button
+          class="desktop-system-settings-btn desktop-system-settings-btn--danger"
+          :loading="resettingWorkState"
+          @click="handleResetWorkState"
+        >
+          {{ t('desktop.system.resetWorkStateButton') }}
+        </el-button>
+      </div>
+    </section>
+
+    <section
       v-if="showModelPanel"
       class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
     >
@@ -456,16 +482,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useRouter } from 'vue-router';
 
 import {
   fetchDesktopSettings,
   listDesktopLanPeers,
   probeDesktopLlmContextWindow,
+  resetDesktopWorkState,
   updateDesktopSettings,
   type DesktopLanMeshSettings,
   type DesktopLanPeer,
+  type DesktopResetWorkStateSummary,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
 import {
@@ -478,6 +506,7 @@ import {
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 import DesktopRuntimePreferencesPanel from '@/components/messenger/DesktopRuntimePreferencesPanel.vue';
+import { useChatStore } from '@/stores/chat';
 import {
   getProviderModelPresets,
   resolveProviderModelPresetMaxContext
@@ -531,11 +560,13 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const router = useRouter();
+const chatStore = useChatStore();
 
 const loading = ref(false);
 const savingModel = ref(false);
 const probingContext = ref(false);
 const connectingRemote = ref(false);
+const resettingWorkState = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
@@ -616,6 +647,15 @@ const desktopSettingsWaitingState = computed<DesktopSettingsWaitingState | null>
     progress: 34
   };
 });
+
+const resolveErrorMessage = (error: unknown, fallback: string): string => {
+  const responseMessage = (error as { response?: { data?: { message?: string } } })?.response?.data
+    ?.message;
+  const detailMessage = (error as { response?: { data?: { detail?: string } } })?.response?.data
+    ?.detail;
+  const message = (error as { message?: string })?.message;
+  return String(responseMessage || detailMessage || message || fallback);
+};
 
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
@@ -1430,6 +1470,75 @@ const disconnectRemoteServer = async () => {
   }
 };
 
+const resolveCurrentResetAgentId = (): string => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (activeSessionId) {
+    const activeSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === activeSessionId);
+    const activeAgentId = String(activeSession?.agent_id || '').trim();
+    if (activeAgentId || activeSession) {
+      return activeAgentId;
+    }
+  }
+  return String(chatStore.draftAgentId || '').trim();
+};
+
+const syncChatStateAfterReset = async (summary: DesktopResetWorkStateSummary) => {
+  const targetAgentId = resolveCurrentResetAgentId();
+  await chatStore.loadSessions();
+
+  const targetSessionId =
+    chatStore.sessions.find((item) => {
+      const itemAgentId = String(item?.agent_id || '').trim();
+      return itemAgentId === targetAgentId && item?.is_main === true;
+    })?.id ||
+    summary.fresh_main_sessions.find(
+      (item) => String(item.agent_id || '').trim() === targetAgentId
+    )?.session_id ||
+    '';
+
+  if (targetSessionId) {
+    await chatStore.loadSessionDetail(targetSessionId);
+    return;
+  }
+  chatStore.openDraftSession({ agent_id: targetAgentId });
+};
+
+const handleResetWorkState = async () => {
+  try {
+    await ElMessageBox.confirm(
+      t('desktop.system.resetWorkStateConfirmMessage'),
+      t('desktop.system.resetWorkStateConfirmTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('desktop.system.resetWorkStateButton'),
+        cancelButtonText: t('common.cancel'),
+        confirmButtonClass: 'el-button--danger'
+      }
+    );
+  } catch {
+    return;
+  }
+
+  resettingWorkState.value = true;
+  try {
+    const response = await resetDesktopWorkState();
+    const summary = (response?.data?.data || {}) as DesktopResetWorkStateSummary;
+    await syncChatStateAfterReset(summary);
+    ElMessage.success(
+      t('desktop.system.resetWorkStateSuccess', {
+        sessions: summary.cancelled_sessions ?? 0,
+        tasks: summary.cancelled_tasks ?? 0,
+        workspaces: summary.cleared_workspaces ?? 0
+      })
+    );
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveErrorMessage(error, t('desktop.system.resetWorkStateFailed')));
+  } finally {
+    resettingWorkState.value = false;
+  }
+};
+
 onMounted(() => {
   refreshRemoteConnected();
   if (showModelPanel.value || showRemotePanel.value || showLanPanel.value) {
@@ -1465,6 +1574,29 @@ onMounted(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 2px;
+}
+
+.desktop-system-settings-panel--danger {
+  border: 1px solid rgba(214, 77, 77, 0.28);
+  background: linear-gradient(180deg, rgba(84, 18, 18, 0.9), rgba(36, 11, 11, 0.94));
+}
+
+.desktop-system-settings-danger-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.desktop-system-settings-danger-note {
+  color: rgba(255, 226, 226, 0.88);
+  line-height: 1.6;
+  font-size: 13px;
+}
+
+.desktop-system-settings-danger-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .desktop-system-settings-head {

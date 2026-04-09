@@ -500,7 +500,7 @@ impl Orchestrator {
                         request_overhead_tokens,
                         force_compaction_on_entry,
                         true,
-                        None,
+                        super::memory::CompactionRunMode::AutoLoop,
                     )
                     .await?;
                 if force_compaction_on_entry {
@@ -667,7 +667,7 @@ impl Orchestrator {
                                     request_overhead_tokens,
                                     true,
                                     true,
-                                    None,
+                                    super::memory::CompactionRunMode::OverflowRecovery,
                                 )
                                 .await?;
                             let _ = self

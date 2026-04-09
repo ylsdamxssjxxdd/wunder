@@ -10,11 +10,14 @@ import {
   compareBeeroomMissionTasksByDisplayPriority,
   resolveBeeroomTaskMoment
 } from '@/components/beeroom/beeroomTaskWorkflow';
+import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
 import { resolveProjectedWorkerSubagents } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import type { BeeroomCanvasPositionOverride } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import { normalizeBeeroomActorName } from '@/components/beeroom/beeroomActorIdentity';
 import type { BeeroomMissionSubagentItem } from '@/components/beeroom/useBeeroomMissionSubagentPreview';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import {
+  DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
@@ -409,15 +412,37 @@ const buildDispatchPreviewLines = (
   return lines.slice(0, 3);
 };
 
+const hasExplicitAvatarIcon = (value: unknown): boolean => {
+  if (!value) return false;
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return Boolean(String(record.name ?? record.icon ?? record.avatar_icon ?? record.avatarIcon ?? '').trim());
+};
+
 const resolveAgentAvatarImage = (icon: unknown): string =>
-  resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(icon));
+  hasExplicitAvatarIcon(icon) ? resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(icon)) : '';
 
 const DEFAULT_SWARM_SUBAGENT_AVATAR_ICON = 'avatar-048';
 
-const resolveSubagentAvatarImage = (icon: unknown): string => {
-  const normalizedIcon = typeof icon === 'string' ? icon.trim() : '';
-  return resolveAgentAvatarImage(normalizedIcon || DEFAULT_SWARM_SUBAGENT_AVATAR_ICON);
-};
+const resolveSubagentAvatarImage = (options: {
+  agentId: unknown;
+  icon: unknown;
+  name: unknown;
+  resolveAgentAvatarImageByAgentId?: ((agentId: unknown) => string) | undefined;
+}): string =>
+  resolveBeeroomProjectedSubagentAvatarImage({
+    agentId: options.agentId,
+    name: options.name,
+    explicitAvatarImageUrl: resolveAgentAvatarImage(options.icon),
+    resolveAgentAvatarImageByAgentId: options.resolveAgentAvatarImageByAgentId,
+    defaultAgentAvatarImageUrl: DEFAULT_AGENT_AVATAR_IMAGE,
+    fallbackAvatarImageUrl: resolveAgentAvatarImageByConfig(parseAgentAvatarIconConfig(DEFAULT_SWARM_SUBAGENT_AVATAR_ICON))
+  });
 
 const buildWorkflowSnapshot = (options: {
   task: BeeroomMissionTask | null;
@@ -673,6 +698,7 @@ export const buildBeeroomSwarmProjection = (options: {
   motherWorkflowItems: BeeroomWorkflowItem[];
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
+  resolveAgentAvatarImageByAgentId?: (agentId: unknown) => string;
   t: TranslationFn;
 }): SwarmProjection => {
   const mission = options.mission;
@@ -760,7 +786,8 @@ export const buildBeeroomSwarmProjection = (options: {
     const statusLabel = resolveStatusLabel(status, options.t);
     const nodeId = `agent:${agentId}`;
     const roleLabel = isMother ? options.t('beeroom.canvas.legendMother') : options.t('beeroom.canvas.legendWorker');
-    const name = String(member?.name || (isMother ? options.group?.mother_agent_name : '') || agentId).trim();
+    const rawName = String(member?.name || (isMother ? options.group?.mother_agent_name : '') || agentId).trim();
+    const name = normalizeBeeroomActorName(rawName, options.t) || rawName;
     const summary = String(
       agentTasks.map((task) => task.result_summary || task.error || '').find((item) => String(item || '').trim()) ||
         member?.description ||
@@ -810,7 +837,9 @@ export const buildBeeroomSwarmProjection = (options: {
       selected: nodeId === String(options.selectedNodeId || '').trim(),
       accentColor: resolveNodeAccent(agentId, meta.role),
       avatarInitial: resolveAgentAvatarInitial(name),
-      avatarImageUrl: resolveAgentAvatarImage(member?.icon),
+      avatarImageUrl:
+        resolveAgentAvatarImage(member?.icon) ||
+        String(options.resolveAgentAvatarImageByAgentId?.(agentId) || '').trim(),
       x: position.x,
       y: position.y,
       width: NODE_WIDTH,
@@ -925,7 +954,7 @@ export const buildBeeroomSwarmProjection = (options: {
       const taskId = String(latestTask?.task_id || '').trim();
       const nodeId = `subagent:${item.sessionId || item.runId || item.key}`;
       const visualState = resolveSubagentVisualState(item, options.t);
-      const name =
+      const rawName =
         String(
           item.label ||
             item.title ||
@@ -935,6 +964,7 @@ export const buildBeeroomSwarmProjection = (options: {
             item.runId ||
             item.key
         ).trim() || '-';
+      const name = normalizeBeeroomActorName(rawName, options.t) || rawName;
       const position =
         options.nodePositionOverrides[nodeId] ||
         resolveSubagentBranchPosition(workerNode, motherNode, subagentIndex, subagents.length, workerIndex + 1);
@@ -968,7 +998,12 @@ export const buildBeeroomSwarmProjection = (options: {
         selected: nodeId === String(options.selectedNodeId || '').trim(),
         accentColor: visualState.accentColor,
         avatarInitial: resolveAgentAvatarInitial(name),
-        avatarImageUrl: resolveSubagentAvatarImage(memberMap.get(item.agentId)?.icon),
+        avatarImageUrl: resolveSubagentAvatarImage({
+          agentId: item.agentId,
+          icon: memberMap.get(item.agentId)?.icon,
+          name,
+          resolveAgentAvatarImageByAgentId: options.resolveAgentAvatarImageByAgentId
+        }),
         x: position.x,
         y: position.y,
         width: SUBAGENT_NODE_WIDTH,

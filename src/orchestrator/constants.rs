@@ -89,23 +89,28 @@ fn truncate_tool_result_head_tail(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        truncate_tool_result_text, truncate_tool_result_text_with_budget, TOOL_RESULT_HEAD_CHARS,
-        TOOL_RESULT_TAIL_CHARS, TOOL_RESULT_TRUNCATION_MARKER,
+    use super::{truncate_tool_result_text, truncate_tool_result_text_with_budget};
+    use crate::orchestrator::{
+        TOOL_RESULT_HEAD_CHARS, TOOL_RESULT_MAX_CHARS, TOOL_RESULT_TAIL_CHARS,
+        TOOL_RESULT_TRUNCATION_MARKER,
     };
 
     #[test]
     fn truncate_tool_result_text_keeps_head_and_tail() {
         let input = format!(
             "{}{}",
-            "a".repeat(TOOL_RESULT_HEAD_CHARS + 8),
-            "z".repeat(32)
+            "a".repeat(TOOL_RESULT_HEAD_CHARS + 64),
+            "z".repeat(TOOL_RESULT_TAIL_CHARS + 64)
         );
         let output = truncate_tool_result_text(&input);
+        let marker_chars = TOOL_RESULT_TRUNCATION_MARKER.chars().count();
+        let visible_chars = TOOL_RESULT_MAX_CHARS - marker_chars;
+        let expected_head_chars = visible_chars / 2;
+        let expected_tail_chars = visible_chars - expected_head_chars;
 
-        assert!(output.starts_with(&"a".repeat(TOOL_RESULT_HEAD_CHARS)));
+        assert!(output.starts_with(&"a".repeat(expected_head_chars)));
         assert!(output.contains(TOOL_RESULT_TRUNCATION_MARKER));
-        assert!(output.ends_with(&"z".repeat(TOOL_RESULT_TAIL_CHARS.min(32))));
+        assert!(output.ends_with(&"z".repeat(expected_tail_chars.min(TOOL_RESULT_TAIL_CHARS))));
     }
 
     #[test]

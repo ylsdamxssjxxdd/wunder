@@ -52,13 +52,16 @@
             @click="emit('open-agent', message.senderAgentId)"
           >
             <img
-              v-if="resolveAgentAvatarImageByAgentId(message.senderAgentId)"
+              v-if="resolveMessageAvatarImage(message)"
               class="beeroom-canvas-chat-avatar-img"
-              :src="resolveAgentAvatarImageByAgentId(message.senderAgentId)"
+              :src="resolveMessageAvatarImage(message)"
               alt=""
             />
             <span v-else>{{ avatarLabel(message.senderName) }}</span>
           </button>
+          <div v-else-if="resolveMessageAvatarImage(message)" class="beeroom-canvas-chat-avatar">
+            <img class="beeroom-canvas-chat-avatar-img" :src="resolveMessageAvatarImage(message)" alt="" />
+          </div>
           <div
             v-else-if="message.tone !== 'user' && message.senderName"
             class="beeroom-canvas-chat-avatar is-agent-shell"
@@ -216,7 +219,7 @@ const props = defineProps<{
   demoActionDisabled: boolean;
   demoActionLabel: string;
   demoCanCancel: boolean;
-  resolveAgentAvatarImageByAgentId: (agentId: unknown) => string;
+  resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>();
 

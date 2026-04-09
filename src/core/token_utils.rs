@@ -15,6 +15,29 @@ pub fn approx_token_count(text: &str) -> i64 {
     ((text.len() as f64) / APPROX_BYTES_PER_TOKEN).ceil() as i64
 }
 
+pub fn trim_text_to_chars(text: &str, max_chars: usize, suffix: &str) -> String {
+    if text.is_empty() || max_chars == 0 {
+        return String::new();
+    }
+
+    let text_chars = text.chars().count();
+    if text_chars <= max_chars {
+        return text.to_string();
+    }
+
+    let suffix_chars = suffix.chars().count();
+    if suffix.is_empty() || max_chars <= suffix_chars + 1 {
+        return text.chars().take(max_chars).collect();
+    }
+
+    let keep_chars = max_chars.saturating_sub(suffix_chars);
+    let trimmed: String = text.chars().take(keep_chars).collect();
+    if trimmed.trim().is_empty() {
+        return text.chars().take(max_chars).collect();
+    }
+    format!("{trimmed}{suffix}")
+}
+
 pub fn trim_text_to_tokens(text: &str, max_tokens: i64, suffix: &str) -> String {
     if text.is_empty() {
         return String::new();
@@ -27,16 +50,11 @@ pub fn trim_text_to_tokens(text: &str, max_tokens: i64, suffix: &str) -> String 
     }
     let suffix_text = suffix;
     let suffix_tokens = approx_token_count(suffix_text);
+    let max_chars = (max_tokens.max(1) as f64 * APPROX_BYTES_PER_TOKEN) as usize;
     if max_tokens <= suffix_tokens {
-        let max_chars = (max_tokens.max(1) as f64 * APPROX_BYTES_PER_TOKEN) as usize;
-        return suffix_text.chars().take(max_chars).collect();
+        return trim_text_to_chars(text, max_chars, "");
     }
-    let max_chars = (max_tokens as f64 * APPROX_BYTES_PER_TOKEN) as usize;
-    let trimmed: String = text
-        .chars()
-        .take(max_chars.saturating_sub(suffix_text.len()))
-        .collect();
-    format!("{trimmed}{suffix_text}")
+    trim_text_to_chars(text, max_chars, suffix_text)
 }
 
 pub fn estimate_message_tokens(message: &Value) -> i64 {
@@ -221,5 +239,18 @@ mod tests {
         let message = json!({ "role": "tool", "content": "ok", "tool_call_id": "call_1" });
         let tokens = estimate_message_tokens(&message);
         assert!(tokens > baseline);
+    }
+
+    #[test]
+    fn test_trim_text_to_chars_avoids_suffix_only_fragment() {
+        let trimmed = trim_text_to_chars("abcdef", 4, "...(truncated)");
+        assert_eq!(trimmed, "abcd");
+    }
+
+    #[test]
+    fn test_trim_text_to_tokens_prefers_source_over_partial_suffix() {
+        let trimmed = trim_text_to_tokens("abcdef", 1, "...(truncated)");
+        assert_eq!(trimmed, "abcd");
+        assert!(!trimmed.starts_with("..."));
     }
 }

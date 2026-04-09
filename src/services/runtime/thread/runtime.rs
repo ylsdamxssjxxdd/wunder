@@ -233,6 +233,19 @@ impl ThreadRuntime {
         self.resolve_or_create_main_session(user_id, agent_id).await
     }
 
+    pub async fn create_fresh_main_session_id(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        reason: &str,
+    ) -> Result<String> {
+        let session_id = self.create_isolated_session(user_id, agent_id)?;
+        let _ = self
+            .set_main_session(user_id, agent_id, &session_id, reason)
+            .await?;
+        Ok(session_id)
+    }
+
     pub async fn set_main_session(
         &self,
         user_id: &str,
