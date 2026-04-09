@@ -2035,9 +2035,7 @@ fn reduce_to_summary_priority_context(
     stats: &mut RebuiltContextGuardStats,
 ) {
     let summary_index = locate_compaction_summary_message_index(messages);
-    let current_user_index = messages
-        .iter()
-        .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+    let current_user_index = locate_rebuilt_current_user_index(messages);
 
     let mut prioritized = Vec::new();
     if let Some(system_message) = messages
@@ -2064,9 +2062,7 @@ fn reduce_to_summary_priority_context(
     let mut total_tokens = estimate_messages_tokens(messages);
 
     if total_tokens > limit {
-        let current_user_index = messages
-            .iter()
-            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let current_user_index = locate_rebuilt_current_user_index(messages);
         let summary_index = locate_compaction_summary_message_index(messages);
         if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index)
         {
@@ -2118,9 +2114,7 @@ fn rebalance_retained_interaction_context(messages: &mut Vec<Value>, limit: i64)
     }
 
     let summary_index = locate_compaction_summary_message_index(messages);
-    let current_user_index = messages
-        .iter()
-        .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+    let current_user_index = locate_rebuilt_current_user_index(messages);
     let preserved_tokens = messages
         .iter()
         .enumerate()
@@ -2254,9 +2248,7 @@ fn apply_rebuilt_context_guard(
     if total_tokens > limit {
         loop {
             let summary_index = locate_compaction_summary_message_index(messages);
-            let current_user_index = messages
-                .iter()
-                .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+            let current_user_index = locate_rebuilt_current_user_index(messages);
             let removable_index = messages.iter().enumerate().find_map(|(index, message)| {
                 if Some(index) == summary_index || Some(index) == current_user_index {
                     return None;
@@ -2287,9 +2279,7 @@ fn apply_rebuilt_context_guard(
 
     if total_tokens > limit && !prefer_preserving_summary {
         let summary_index = locate_compaction_summary_message_index(messages);
-        let current_user_index = messages
-            .iter()
-            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let current_user_index = locate_rebuilt_current_user_index(messages);
         if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index)
         {
             if summary_index != current_user_index && summary_index < messages.len() {
@@ -2302,9 +2292,7 @@ fn apply_rebuilt_context_guard(
 
     if total_tokens > limit {
         let summary_index = locate_compaction_summary_message_index(messages);
-        let current_user_index = messages
-            .iter()
-            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let current_user_index = locate_rebuilt_current_user_index(messages);
         if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index)
         {
             if current_user_index != summary_index {
@@ -2364,9 +2352,7 @@ fn apply_rebuilt_context_guard(
     if total_tokens > limit {
         if let Some(last_index) = messages.len().checked_sub(1) {
             let last_tokens = estimate_message_tokens(&messages[last_index]);
-            let current_user_index = messages
-                .iter()
-                .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+            let current_user_index = locate_rebuilt_current_user_index(messages);
             let trimming_current_user = current_user_index == Some(last_index);
             if trimming_current_user && stats.current_user_tokens_before == 0 {
                 stats.current_user_tokens_before = last_tokens;
@@ -3222,6 +3208,12 @@ fn clear_retained_interaction_markers(messages: &mut [Value]) {
     for message in messages {
         clear_retained_interaction_marker(message);
     }
+}
+
+fn locate_rebuilt_current_user_index(messages: &[Value]) -> Option<usize> {
+    messages
+        .iter()
+        .rposition(is_compaction_inflight_current_user_message)
 }
 
 fn locate_compaction_summary_message_index(messages: &[Value]) -> Option<usize> {

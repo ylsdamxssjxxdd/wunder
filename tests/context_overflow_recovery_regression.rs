@@ -773,7 +773,6 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
             "[mindie-overflow-regression] round=1",
             "[mindie-overflow-regression] round=2",
             "[mindie-overflow-regression] round=5",
-            "[mindie-overflow-regression] round=6",
         ],
     );
 
@@ -843,6 +842,42 @@ async fn compaction_replay_uses_committed_summary_in_next_request() {
     assert!(
         !summary_body(&replay_summary).starts_with("...("),
         "replay summary should not be a broken placeholder: {replay_summary}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_compaction_keeps_first_and_recent_two_turns() {
+    let context = build_test_context_with_compaction_and_mock_limit(
+        "mindie_manual_compaction_edge_turns",
+        65_536,
+        Some("keep"),
+        65_536,
+    )
+    .await;
+    let session_id = create_test_session(&context, "Manual compaction edge turns").await;
+
+    run_pressure_rounds(&context, &session_id, 6, 160).await;
+    trigger_manual_compaction_and_wait(&context, &session_id).await;
+
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history after manual compaction");
+    let replacement_history = latest_replacement_history_snapshot(&raw_history);
+    assert!(
+        !replacement_history.is_empty(),
+        "manual compaction should commit replacement_history snapshot"
+    );
+    assert_compaction_history_is_semantically_clean(&replacement_history);
+    assert_replacement_history_keeps_edge_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=1",
+            "[mindie-overflow-regression] round=2",
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
     );
 }
 

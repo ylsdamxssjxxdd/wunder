@@ -117,39 +117,25 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "description": t("tool.spec.schedule_task.args.action"),
                         "enum": ["add", "update", "remove", "enable", "disable", "get", "list", "run", "status"]
                     },
-                    "job": {
+                    "job_id": {"type": "string", "description": t("tool.spec.schedule_task.args.job.job_id")},
+                    "name": {"type": "string", "description": t("tool.spec.schedule_task.args.job.name")},
+                    "schedule": {
                         "type": "object",
-                        "description": t("tool.spec.schedule_task.args.job"),
                         "properties": {
-                            "job_id": {"type": "string", "description": t("tool.spec.schedule_task.args.job.job_id")},
-                            "name": {"type": "string", "description": t("tool.spec.schedule_task.args.job.name")},
-                            "schedule": {
-                                "type": "object",
-                                "description": t("tool.spec.schedule_task.args.job.schedule"),
-                                "properties": {
-                                    "kind": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.kind"), "enum": ["at", "every", "cron"]},
-                                    "at": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.at")},
-                                    "every_ms": {"type": "integer", "description": t("tool.spec.schedule_task.args.job.schedule.every_ms"), "minimum": 1000},
-                                    "cron": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.cron")},
-                                    "tz": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.tz")}
-                                },
-                                "required": ["kind"]
-                            },
-                            "schedule_text": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule_text")},
-                            "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
-                            "payload": {
-                                "type": "object",
-                                "description": t("tool.spec.schedule_task.args.job.payload"),
-                                "properties": {
-                                    "message": {"type": "string", "description": t("tool.spec.schedule_task.args.job.payload.message")}
-                                }
-                            },
-                            "deliver": {"type": "object", "description": t("tool.spec.schedule_task.args.job.deliver")},
-                            "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")},
-                            "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
-                            "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
-                        }
-                    }
+                            "kind": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.kind"), "enum": ["at", "every", "cron"]},
+                            "at": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.at")},
+                            "every_ms": {"type": "integer", "description": t("tool.spec.schedule_task.args.job.schedule.every_ms"), "minimum": 1000},
+                            "cron": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.cron")},
+                            "tz": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.tz")}
+                        },
+                        "required": ["kind"]
+                    },
+                    "schedule_text": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule_text")},
+                    "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
+                    "message": {"type": "string", "description": t("tool.spec.schedule_task.args.job.payload.message")},
+                    "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")},
+                    "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
+                    "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
                 },
                 "required": ["action"]
             }),
@@ -217,7 +203,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "keyword": {"type": "string", "description": t("tool.spec.channel_tool.args.keyword")},
                     "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.channel_tool.args.offset")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.channel_tool.args.limit")},
-                    "refresh": {"type": "boolean", "description": t("tool.spec.channel_tool.args.refresh")},
                     "contact": {
                         "type": "object",
                         "description": t("tool.spec.channel_tool.args.contact"),
@@ -232,7 +217,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "to": {"type": "string", "description": t("tool.spec.channel_tool.args.to")},
                     "peer_kind": {"type": "string", "enum": ["user", "group"], "description": t("tool.spec.channel_tool.args.peer_kind")},
                     "thread_id": {"type": "string", "description": t("tool.spec.channel_tool.args.thread_id")},
-                    "text": {"type": "string", "description": t("tool.spec.channel_tool.args.text")},
                     "content": {"type": "string", "description": t("tool.spec.channel_tool.args.content")},
                     "attachments": {
                         "type": "array",
@@ -248,23 +232,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             }
                         }
                     },
-                    "meta": {"type": "object", "description": t("tool.spec.channel_tool.args.meta")},
                     "wait": {"type": "boolean", "description": t("tool.spec.channel_tool.args.wait")},
                     "wait_timeout_s": {"type": "number", "minimum": 1, "maximum": 30, "description": t("tool.spec.channel_tool.args.wait_timeout_s")}
                 },
-                "required": ["action"],
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "send_message"}}},
-                        "then": {
-                            "anyOf": [
-                                {"required": ["text"]},
-                                {"required": ["content"]},
-                                {"required": ["attachments"]}
-                            ]
-                        }
-                    }
-                ]
+                "required": ["action"]
             }),
         },
         ToolSpec {
@@ -406,15 +377,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "dry_run": {"type": "boolean", "description": "Resolve targets and metadata without reading full file content."},
-                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000, "description": "Optional time budget cap in milliseconds for this read call."},
-                    "output_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 2097152, "description": "Optional cap for aggregated read output text bytes."},
-                    "max_files": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Optional cap for number of files processed in this call."},
                     "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
-                    "file_path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
                     "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
                     "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
-                    "offset": {"type": "integer", "minimum": 1, "description": "Codex-compatible alias of start_line. Use with limit to read a line window."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Codex-compatible line window size used with offset."},
                     "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}},
                     "mode": {"type": "string", "enum": ["slice", "indentation"], "description": "Read mode: slice ranges or indentation-aware block."},
                     "indentation": {
@@ -426,45 +391,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "include_header": {"type": "boolean"},
                             "max_lines": {"type": "integer", "minimum": 1}
                         }
-                    },
-                    "budget": {
-                        "type": "object",
-                        "properties": {
-                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000},
-                            "output_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 2097152},
-                            "max_files": {"type": "integer", "minimum": 1, "maximum": 20}
-                        }
-                    },
-                    "files": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
-                                "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
-                                "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
-                                "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}},
-                                "mode": {"type": "string", "enum": ["slice", "indentation"], "description": "Read mode: slice ranges or indentation-aware block."},
-                                "indentation": {
-                                    "type": "object",
-                                    "properties": {
-                                        "anchor_line": {"type": "integer", "minimum": 1},
-                                        "max_levels": {"type": "integer", "minimum": 0},
-                                        "include_siblings": {"type": "boolean"},
-                                        "include_header": {"type": "boolean"},
-                                        "max_lines": {"type": "integer", "minimum": 1}
-                                    }
-                                }
-                            },
-                            "required": ["path"]
-                        }
                     }
                 },
-                "anyOf": [
-                    {"required": ["files"]},
-                    {"required": ["path"]},
-                    {"required": ["file_path"]}
-                ]
+                "required": ["path"]
             }),
         },
         ToolSpec {
@@ -638,9 +567,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     },
                     "session_id": {"type": "string", "description": t("tool.spec.thread_control.args.session_id")},
                     "parent_session_id": {"type": "string", "description": t("tool.spec.thread_control.args.parent_session_id")},
-                    "agentId": {"type": "string", "description": t("tool.spec.thread_control.args.agent_id")},
                     "title": {"type": "string", "description": t("tool.spec.thread_control.args.title")},
-                    "label": {"type": "string", "description": t("tool.spec.thread_control.args.label")},
                     "scope": {
                         "type": "string",
                         "description": t("tool.spec.thread_control.args.scope"),
@@ -652,8 +579,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["active", "archived", "all"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.thread_control.args.limit"), "minimum": 1, "maximum": 200},
-                    "switch": {"type": "boolean", "description": t("tool.spec.thread_control.args.switch")},
-                    "setMain": {"type": "boolean", "description": t("tool.spec.thread_control.args.set_main")}
+                    "set_main": {"type": "boolean", "description": t("tool.spec.thread_control.args.set_main")}
                 },
                 "required": ["action"]
             }),
@@ -773,7 +699,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "close",
                             "navigate",
                             "snapshot",
-                            "act",
                             "click",
                             "type",
                             "press",
@@ -793,36 +718,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "text": { "type": "string", "description": t("tool.spec.browser.args.text") },
                     "key": { "type": "string", "description": t("tool.spec.browser.args.key") },
                     "full_page": { "type": "boolean", "description": t("tool.spec.browser.args.full_page") },
-                    "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") },
-                    "request": { "type": "object", "description": t("tool.spec.browser.args.request") }
+                    "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") }
                 },
-                "required": ["action"],
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "navigate"}}},
-                        "then": {"required": ["url"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "click"}}},
-                        "then": {"required": ["selector"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "type"}}},
-                        "then": {"required": ["selector", "text"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "focus"}}},
-                        "then": {"required": ["target_id"]}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "snapshot"}}},
-                        "then": {"properties": {"format": {"enum": ["role", "aria", "ai"]}}}
-                    },
-                    {
-                        "if": {"properties": {"action": {"const": "act"}}},
-                        "then": {"required": ["request"]}
-                    }
-                ]
+                "required": ["action"]
             }),
         },
         ToolSpec {
@@ -1498,8 +1396,7 @@ mod tests {
         assert!(spec.description.contains("start_line"));
         assert!(spec.description.contains("offset+limit"));
         assert!(!spec.description.contains("read_image"));
-        let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
-            ["path"]["description"]
+        let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
@@ -1507,12 +1404,16 @@ mod tests {
         assert!(path_description.contains("binary"));
         assert!(path_description.contains("/workspaces/"));
         assert!(path_description.contains("/工作目录/"));
-        let start_line_description = spec.input_schema["properties"]["files"]["items"]
-            ["properties"]["start_line"]["description"]
+        let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
             .as_str()
             .expect("start_line description");
         assert!(start_line_description.contains("200-line window"));
         assert!(start_line_description.contains("offset+limit"));
+        assert!(spec.input_schema["properties"]["file_path"].is_null());
+        assert!(spec.input_schema["properties"]["files"].is_null());
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == "path")));
     }
 
     #[test]
@@ -1526,20 +1427,20 @@ mod tests {
         assert!(spec.description.contains("默认读取 200 行"));
         assert!(spec.description.contains("offset+limit"));
         assert!(!spec.description.contains("read_image"));
-        let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
-            ["path"]["description"]
+        let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("纯文本"));
         assert!(path_description.contains("定点"));
         assert!(path_description.contains("二进制"));
         assert!(path_description.contains("/工作目录/"));
-        let start_line_description = spec.input_schema["properties"]["files"]["items"]
-            ["properties"]["start_line"]["description"]
+        let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
             .as_str()
             .expect("start_line description");
         assert!(start_line_description.contains("默认读取 200 行"));
         assert!(start_line_description.contains("offset+limit"));
+        assert!(spec.input_schema["properties"]["file_path"].is_null());
+        assert!(spec.input_schema["properties"]["files"].is_null());
     }
 
     #[test]
@@ -1606,6 +1507,62 @@ mod tests {
             .is_some_and(|value| value.contains("child session")));
         assert!(spec.input_schema["properties"]["sessionId"].is_null());
         assert!(spec.input_schema["properties"]["runId"].is_null());
+    }
+
+    #[test]
+    fn schedule_task_schema_exposes_flat_model_side_fields() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "定时任务")
+            .expect("schedule_task spec");
+        assert!(spec.input_schema["properties"]["job_id"].is_object());
+        assert!(spec.input_schema["properties"]["schedule_text"].is_object());
+        assert!(spec.input_schema["properties"]["message"].is_object());
+        assert!(spec.input_schema["properties"]["enabled"].is_object());
+        assert!(spec.input_schema["properties"]["job"].is_null());
+    }
+
+    #[test]
+    fn channel_tool_schema_prefers_content_over_legacy_text() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "渠道工具")
+            .expect("channel tool spec");
+        assert!(spec.input_schema["properties"]["content"].is_object());
+        assert!(spec.input_schema["properties"]["attachments"].is_object());
+        assert!(spec.input_schema["properties"]["text"].is_null());
+        assert!(spec.input_schema["properties"]["meta"].is_null());
+        assert!(spec.input_schema["allOf"].is_null());
+    }
+
+    #[test]
+    fn thread_control_schema_exposes_canonical_fields() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "会话线程控制")
+            .expect("thread control spec");
+        assert!(spec.input_schema["properties"]["session_id"].is_object());
+        assert!(spec.input_schema["properties"]["parent_session_id"].is_object());
+        assert!(spec.input_schema["properties"]["set_main"].is_object());
+        assert!(spec.input_schema["properties"]["agentId"].is_null());
+        assert!(spec.input_schema["properties"]["label"].is_null());
+        assert!(spec.input_schema["properties"]["setMain"].is_null());
+    }
+
+    #[test]
+    fn browser_schema_hides_generic_request_mode_from_model_side() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "浏览器")
+            .expect("browser spec");
+        let actions = spec.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .expect("action enum");
+        assert!(actions.iter().all(|item| item != "act"));
+        assert!(spec.input_schema["properties"]["request"].is_null());
+        assert!(spec.input_schema["allOf"].is_null());
+        assert!(spec.input_schema["properties"]["selector"].is_object());
+        assert!(spec.input_schema["properties"]["url"].is_object());
     }
 
     #[test]

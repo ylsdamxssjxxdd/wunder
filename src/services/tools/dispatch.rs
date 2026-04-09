@@ -19,7 +19,7 @@ use crate::i18n;
 use crate::skills::execute_skill;
 use crate::user_store::UserStore;
 use anyhow::{anyhow, Result};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -111,8 +111,9 @@ pub async fn execute_builtin_tool(
         "计划面板" => execute_plan_tool(context, args).await,
         "问询面板" => execute_question_panel_tool(context, args).await,
         "定时任务" => {
+            let normalized = normalize_cron_action_args(args);
             let payload: CronActionRequest =
-                serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+                serde_json::from_value(normalized).map_err(|err| anyhow!(err.to_string()))?;
             let user_tool_manager = context
                 .user_tool_manager
                 .clone()
@@ -140,5 +141,89 @@ pub async fn execute_builtin_tool(
         channel_tool::TOOL_CHANNEL => channel_tool::channel_tool(context, args).await,
         "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
+    }
+}
+
+fn normalize_cron_action_args(args: &Value) -> Value {
+    let Some(obj) = args.as_object() else {
+        return args.clone();
+    };
+    if obj.contains_key("job") {
+        return args.clone();
+    }
+
+    let mut normalized = obj.clone();
+    let mut job = Map::new();
+    for key in [
+        "job_id",
+        "name",
+        "schedule",
+        "schedule_text",
+        "session",
+        "payload",
+        "deliver",
+        "enabled",
+        "delete_after_run",
+        "dedupe_key",
+        "session_id",
+        "agent_id",
+    ] {
+        if let Some(value) = normalized.remove(key) {
+            job.insert(key.to_string(), value);
+        }
+    }
+
+    if let Some(message) = normalized.remove("message") {
+        match job.get_mut("payload") {
+            Some(Value::Object(payload)) => {
+                payload.entry("message".to_string()).or_insert(message);
+            }
+            _ => {
+                let mut payload = Map::new();
+                payload.insert("message".to_string(), message);
+                job.insert("payload".to_string(), Value::Object(payload));
+            }
+        }
+    }
+
+    if !job.is_empty() {
+        normalized.insert("job".to_string(), Value::Object(job));
+    }
+    Value::Object(normalized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_cron_action_args;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_cron_action_args_flattens_message_into_job_payload() {
+        let normalized = normalize_cron_action_args(&json!({
+            "action": "add",
+            "job_id": "job_demo",
+            "schedule_text": "every 5 minutes",
+            "message": "hello",
+            "enabled": true
+        }));
+        assert_eq!(normalized["action"], json!("add"));
+        assert_eq!(normalized["job"]["job_id"], json!("job_demo"));
+        assert_eq!(normalized["job"]["schedule_text"], json!("every 5 minutes"));
+        assert_eq!(normalized["job"]["payload"]["message"], json!("hello"));
+        assert_eq!(normalized["job"]["enabled"], json!(true));
+        assert!(normalized.get("message").is_none());
+    }
+
+    #[test]
+    fn normalize_cron_action_args_preserves_existing_job_object() {
+        let original = json!({
+            "action": "add",
+            "job": {
+                "job_id": "job_demo",
+                "payload": { "message": "hello" }
+            }
+        });
+        let normalized = normalize_cron_action_args(&original);
+        assert_eq!(normalized, original);
     }
 }
