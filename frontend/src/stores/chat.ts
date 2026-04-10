@@ -3763,6 +3763,12 @@ const loadSessionEventsSnapshot = (
   });
 };
 
+const resolveTerminableSubagentSessionIds = (items: unknown[]): string[] =>
+  normalizeMessageSubagents(items)
+    .filter((item) => item.canTerminate && !item.terminal)
+    .map((item) => String(item.session_id || '').trim())
+    .filter(Boolean);
+
 const readProtectedRealtimeMessages = (sessionId) => {
   const sessionKey = resolveSessionKey(sessionId);
   if (!sessionKey) return [];
@@ -9812,6 +9818,73 @@ export const useChatStore = defineStore('chat', {
       await this.refreshSessionSubagents(targetSessionId, { force: true });
       return data?.data || null;
     },
+    async terminateSessionSubagentTree(sessionId, options: { force?: boolean } = {}) {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) {
+        return {
+          terminatedSessionIds: [],
+          failedSessionIds: []
+        };
+      }
+      const visitedParents = new Set<string>();
+      const relations: Array<{ parentSessionId: string; childSessionIds: string[] }> = [];
+      const stack = [targetSessionId];
+      while (stack.length > 0) {
+        const parentSessionId = String(stack.pop() || '').trim();
+        if (!parentSessionId || visitedParents.has(parentSessionId)) continue;
+        visitedParents.add(parentSessionId);
+        let items: unknown[] = [];
+        try {
+          const fetched = await this.refreshSessionSubagents(parentSessionId, { force: options.force === true });
+          items = Array.isArray(fetched) ? fetched : [];
+        } catch {
+          items = [];
+        }
+        const childSessionIds = resolveTerminableSubagentSessionIds(items);
+        if (!childSessionIds.length) continue;
+        relations.push({ parentSessionId, childSessionIds });
+        childSessionIds.forEach((childSessionId) => {
+          if (!visitedParents.has(childSessionId)) {
+            stack.push(childSessionId);
+          }
+        });
+      }
+
+      const terminatedSessionIds = new Set<string>();
+      const failedSessionIds = new Set<string>();
+      for (const relation of relations.reverse()) {
+        try {
+          const { data } = await controlSessionSubagentsApi(relation.parentSessionId, {
+            action: 'terminate',
+            session_ids: relation.childSessionIds
+          });
+          const payload = data?.data as Record<string, unknown> | null;
+          const resultItems = Array.isArray(payload?.items) ? payload.items : [];
+          const updatedIds = resolveTerminableSubagentSessionIds(resultItems);
+          relation.childSessionIds.forEach((childSessionId) => {
+            if (updatedIds.includes(childSessionId)) {
+              failedSessionIds.add(childSessionId);
+            } else {
+              terminatedSessionIds.add(childSessionId);
+            }
+          });
+        } catch {
+          relation.childSessionIds.forEach((childSessionId) => {
+            failedSessionIds.add(childSessionId);
+          });
+        } finally {
+          await this.refreshSessionSubagents(relation.parentSessionId, { force: true }).catch(() => []);
+        }
+      }
+
+      terminatedSessionIds.forEach((sessionKey) => {
+        failedSessionIds.delete(sessionKey);
+      });
+      return {
+        terminatedSessionIds: Array.from(terminatedSessionIds),
+        failedSessionIds: Array.from(failedSessionIds)
+      };
+    },
     async ensureAssistantMessageHistoryId(sessionId, message = null) {
       const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
       if (!targetSessionId) return 0;
@@ -11389,27 +11462,32 @@ export const useChatStore = defineStore('chat', {
         }
       }
     },
-    async stopStream() {
-      if (!this.activeSessionId) {
+    async stopSessionActivity(
+      sessionId = null,
+      options: { terminateSubagents?: boolean } = {}
+    ) {
+      const targetSessionId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetSessionId) {
         return false;
       }
-      const sessionId = this.activeSessionId;
-      clearSessionEventsSnapshot(sessionId);
-      const runtime = ensureRuntime(sessionId);
+      clearSessionEventsSnapshot(targetSessionId);
+      const runtime = ensureRuntime(targetSessionId);
       if (runtime) {
         runtime.stopRequested = true;
       }
-      abortSendStream(sessionId);
-      abortCompactRequest(sessionId);
+      abortSendStream(targetSessionId);
+      abortCompactRequest(targetSessionId);
       let cancelled = false;
       try {
-        const { data } = await cancelMessageStream(sessionId);
+        const { data } = await cancelMessageStream(targetSessionId);
         cancelled = Boolean(data?.data?.cancelled);
       } catch (error) {
         // Ignore cancel API failures; local stop behavior still applies.
       }
       const targetMessages =
-        String(this.activeSessionId || '').trim() === sessionId ? this.messages : getSessionMessages(sessionId);
+        String(this.activeSessionId || '').trim() === targetSessionId
+          ? this.messages
+          : getSessionMessages(targetSessionId);
       clearSupersededPendingAssistantMessages(targetMessages);
       const pendingAssistant = findPendingAssistantMessage(targetMessages);
       if (pendingAssistant) {
@@ -11432,13 +11510,23 @@ export const useChatStore = defineStore('chat', {
         cancelled = true;
       }
       this.dismissPendingInquiryPanel();
-      if (Array.isArray(targetMessages)) {
-        cacheSessionMessages(sessionId, targetMessages);
-        touchSessionUpdatedAt(this, sessionId, Date.now());
-        notifySessionSnapshot(this, sessionId, targetMessages, true);
+      let terminatedSubagentCount = 0;
+      if (options.terminateSubagents !== false) {
+        const termination = await this.terminateSessionSubagentTree(targetSessionId, { force: true });
+        terminatedSubagentCount = Array.isArray(termination?.terminatedSessionIds)
+          ? termination.terminatedSessionIds.length
+          : 0;
       }
-      setSessionLoading(this, sessionId, false);
-      return cancelled;
+      if (Array.isArray(targetMessages)) {
+        cacheSessionMessages(targetSessionId, targetMessages);
+        touchSessionUpdatedAt(this, targetSessionId, Date.now());
+        notifySessionSnapshot(this, targetSessionId, targetMessages, true);
+      }
+      setSessionLoading(this, targetSessionId, false);
+      return cancelled || terminatedSubagentCount > 0;
+    },
+    async stopStream() {
+      return this.stopSessionActivity(this.activeSessionId, { terminateSubagents: true });
     },
     async resumeStream(sessionId, message, options: ResumeStreamOptions = {}) {
       const force = options.force === true;

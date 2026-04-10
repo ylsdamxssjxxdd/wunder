@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-07T15:45:26.198767+00:00",
+  "generated_at": "2026-04-10T09:00:13.101808+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -159,7 +159,7 @@
                   {
                     "slug": "zh-CN/concepts/swarm",
                     "title": "蜂群协作",
-                    "summary": "wunder 的蜂群能力用于多智能体协同、资产化与智能体循环编排。",
+                    "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
                     "url": "/docs/zh-CN/concepts/swarm/"
                   }
                 ]
@@ -436,7 +436,7 @@
                   {
                     "slug": "zh-CN/surfaces/frontend",
                     "title": "用户侧前端",
-                    "summary": "用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台。",
+                    "summary": "用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台，并覆盖资料、聊天、蜂群、工作区和系统设置。",
                     "url": "/docs/zh-CN/surfaces/frontend/"
                   },
                   {
@@ -911,15 +911,15 @@
       "language": "zh-CN",
       "title": "Desktop 入门",
       "summary": "先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。",
-      "updated_at": "2026-04-05",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你要先把 wunder 用起来",
         "你更关心桌面工作台，而不是先搭整套服务"
       ],
       "source_docs": [
-        "README.md",
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/API文档.md",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue",
+        "frontend/src/components/messenger/MessengerSettingsPanel.vue"
       ],
       "tab": "开始",
       "group": "入门",
@@ -936,115 +936,80 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "什么时候选 Desktop？"
+          "text": "什么时候选 Desktop"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Desktop 是什么？"
+          "text": "Desktop 是什么"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "你会看到什么"
+          "level": 2,
+          "text": "你打开后会看到什么"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "它不只是聊天"
+          "level": 2,
+          "text": "5 步上手"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "5 步上手 Desktop"
-        },
-        {
-          "id": "section-7",
           "level": 3,
           "text": "1. 下载安装"
         },
         {
-          "id": "section-8",
+          "id": "section-7",
           "level": 3,
           "text": "2. 首次启动"
         },
         {
-          "id": "section-9",
+          "id": "section-8",
           "level": 3,
           "text": "3. 配置模型"
         },
         {
+          "id": "section-9",
+          "level": 3,
+          "text": "4. 处理账号资料"
+        },
+        {
           "id": "section-10",
           "level": 3,
-          "text": "4. 发起第一次对话"
+          "text": "5. 发起第一次对话"
         },
         {
           "id": "section-11",
-          "level": 3,
-          "text": "5. 探索更多能力"
+          "level": 2,
+          "text": "两个你很快会遇到的交互约束"
         },
         {
           "id": "section-12",
-          "level": 2,
-          "text": "聊天输入区常用操作"
+          "level": 3,
+          "text": "运行中不能直接新建线程"
         },
         {
           "id": "section-13",
-          "level": 2,
-          "text": "本地模式下的额外输入能力"
+          "level": 3,
+          "text": "蜂群运行会有持续高亮"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "不会用时，直接打开帮助手册"
+          "text": "系统设置里的恢复入口"
         },
         {
           "id": "section-15",
           "level": 2,
-          "text": "本地模式的关键约定"
+          "text": "本地模式下的额外输入能力"
         },
         {
           "id": "section-16",
-          "level": 3,
-          "text": "工作区持久化"
+          "level": 2,
+          "text": "不会用时，直接打开帮助手册"
         },
         {
           "id": "section-17",
-          "level": 3,
-          "text": "容器分层"
-        },
-        {
-          "id": "section-18",
-          "level": 3,
-          "text": "智能体内见系统"
-        },
-        {
-          "id": "section-19",
-          "level": 2,
-          "text": "Desktop 特有能力"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "桌面控制（仅本地模式）"
-        },
-        {
-          "id": "section-21",
-          "level": 3,
-          "text": "端云协同"
-        },
-        {
-          "id": "section-22",
-          "level": 3,
-          "text": "在线更新"
-        },
-        {
-          "id": "section-23",
-          "level": 2,
-          "text": "常见问题"
-        },
-        {
-          "id": "section-24",
           "level": 2,
           "text": "下一步"
         }
@@ -2294,15 +2259,16 @@
       "slug": "zh-CN/concepts/swarm",
       "language": "zh-CN",
       "title": "蜂群协作",
-      "summary": "wunder 的蜂群能力用于多智能体协同、资产化与智能体循环编排。",
-      "updated_at": "2026-04-05",
+      "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你要理解 wunder 的多智能体能力",
-        "你要区分普通单智能体会话和蜂群协作"
+        "你要区分母蜂、工蜂和子智能体"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/蜂巢协议设计.md"
+        "docs/API文档.md",
+        "frontend/src/components/beeroom/canvas/swarmCanvasModel.ts",
+        "frontend/src/components/beeroom/canvas/BeeroomSwarmNodeCard.vue"
       ],
       "tab": "概念",
       "group": "核心概念",
@@ -2324,20 +2290,55 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "相关概念"
+          "text": "先分清三个角色"
         },
         {
           "id": "section-4",
-          "level": 2,
-          "text": "为什么它重要"
+          "level": 3,
+          "text": "母蜂"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "当前你需要先知道的事"
+          "level": 3,
+          "text": "工蜂"
         },
         {
           "id": "section-6",
+          "level": 3,
+          "text": "子智能体"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "蜂群和子智能体控制有什么区别"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "工蜂为什么默认会新建线程"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "主线程为什么重要"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "当前前端怎么显示蜂群状态"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "现在工作流区域重点看什么"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "什么时候适合用蜂群"
+        },
+        {
+          "id": "section-13",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -4010,14 +4011,14 @@
       "language": "zh-CN",
       "title": "智能体蜂群",
       "summary": "智能体蜂群面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。",
-      "updated_at": "2026-04-07",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你要同时调度多个智能体",
-        "你要查 batch_send -&gt; wait 这条典型协作路径"
+        "你要查 `batch_send -> wait` 这条典型协作路径"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs"
+        "docs/API文档.md",
+        "src/services/tools/catalog.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -4034,80 +4035,85 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "先判断适不适合用它"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "支持的动作"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "支持的动作"
+          "text": "最常用路径"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "使用示例"
+          "text": "send 的关键语义"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "列出可用智能体"
+          "text": "示例：单目标发送"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "单目标发送"
+          "level": 2,
+          "text": "batchsend 的关键语义"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "派生到已存在智能体"
+          "text": "示例：批量派发"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "批量派发"
+          "level": 2,
+          "text": "wait 怎么理解"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "等待结果"
+          "text": "示例：等待结果"
         },
         {
           "id": "section-11",
-          "level": 3,
-          "text": "查看运行状态"
+          "level": 2,
+          "text": "spawn 什么时候用"
         },
         {
           "id": "section-12",
-          "level": 2,
-          "text": "完整智能体循环示例"
+          "level": 3,
+          "text": "示例：继续派生"
         },
         {
           "id": "section-13",
           "level": 2,
-          "text": "推荐路径"
+          "text": "与子智能体控制的区别"
         },
         {
           "id": "section-14",
           "level": 2,
-          "text": "与子智能体控制的区别"
+          "text": "常见误区"
         },
         {
           "id": "section-15",
-          "level": 2,
-          "text": "适用场景"
+          "level": 3,
+          "text": "误区一：send 一定会复用老线程"
         },
         {
           "id": "section-16",
-          "level": 2,
-          "text": "注意事项"
+          "level": 3,
+          "text": "误区二：wait 的输入是会话标题"
         },
         {
           "id": "section-17",
+          "level": 3,
+          "text": "误区三：蜂群和子智能体是一回事"
+        },
+        {
+          "id": "section-18",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -5478,16 +5484,17 @@
       "slug": "zh-CN/surfaces/frontend",
       "language": "zh-CN",
       "title": "用户侧前端",
-      "summary": "用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台。",
-      "updated_at": "2026-04-05",
+      "summary": "用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台，并覆盖资料、聊天、蜂群、工作区和系统设置。",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你要理解 Wunder 面向普通用户的主要界面",
-        "你要知道聊天、用户世界、工具、文件和设置如何组织"
+        "你要知道聊天、资料、蜂群、文件和设置如何组织"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "README.md"
+        "docs/API文档.md",
+        "frontend/src/views/MessengerView.vue",
+        "frontend/src/components/messenger/MessengerSettingsPanel.vue",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "界面",
       "group": "前端与桌面",
@@ -5509,50 +5516,55 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "当前的主要入口"
+          "text": "当前主要入口"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "界面组织方式"
+          "text": "界面怎么组织"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "消息工作台里怎么找功能"
+          "text": "登录、注册与密码"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "聊天输入区支持什么"
+          "text": "我的概况现在能看什么"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "本地桌面输入增强"
+          "text": "聊天区支持什么"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "帮助手册入口"
+          "text": "新建线程为什么有时会被禁用"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "这套前端承载什么能力"
+          "text": "蜂群页面现在怎么看状态"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "它和 Desktop 的关系"
+          "text": "系统设置里的危险操作"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "什么时候你应该先看这部分文档"
+          "text": "帮助手册入口"
         },
         {
           "id": "section-12",
+          "level": 2,
+          "text": "什么时候优先看这页"
+        },
+        {
+          "id": "section-13",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -5999,16 +6011,15 @@
       "language": "zh-CN",
       "title": "Desktop 本地模式",
       "summary": "Desktop 本地模式不是缩小版 server，而是一套本地优先、持久目录优先的运行形态。",
-      "updated_at": "2026-04-05",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你主要使用 wunder-desktop",
         "你要判断本地模式和远端 server 模式分别适合什么"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
         "docs/API文档.md",
-        "docs/设计方案.md",
-        "src/api/desktop.rs"
+        "src/api/desktop.rs",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "运维",
       "group": "部署与治理",
@@ -6060,22 +6071,22 @@
         {
           "id": "section-9",
           "level": 2,
-          "text": "什么时候该切远端"
+          "text": "一键重置工作状态是什么"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "渠道能力在本地模式下会怎样"
+          "text": "重置后会保留什么"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "最适合本地模式的使用者"
+          "text": "什么时候该切远端"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "你最容易踩到的坑"
+          "text": "本地模式容易踩的坑"
         },
         {
           "id": "section-13",
@@ -7010,15 +7021,16 @@
       "language": "zh-CN",
       "title": "故障排查",
       "summary": "按“入口 -> 鉴权 -> 配置 -> 依赖 -> 实时通道”顺序排查，可快速定位大部分 Wunder 故障。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-10",
       "read_when": [
         "Wunder 跑不起来或行为异常",
         "你已确认不是单纯使用问题"
       ],
       "source_docs": [
         "docs/API文档.md",
-        "docs/系统介绍.md",
-        "config/wunder-example.yaml"
+        "frontend/src/views/LoginView.vue",
+        "frontend/src/views/MessengerView.vue",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "帮助",
       "group": "帮助",
@@ -7045,52 +7057,77 @@
         {
           "id": "section-4",
           "level": 3,
-          "text": "1) 接口直接 401 / 403"
+          "text": "1. 接口直接 401 / 403"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "2) 配置改了没生效"
+          "text": "2. 配置改了没生效"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "3) 服务启动成功但能力不可用"
+          "text": "3. 服务启动成功但能力不可用"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "4) 实时状态不更新、看不到中间过程"
+          "text": "4. 实时状态不更新、看不到中间过程"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "5) 工具不出现或无法调用"
+          "text": "5. 工具不出现或无法调用"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "6) 附件一直处理中，或者上传后无法发送"
+          "text": "6. 附件一直处理中，或者上传后无法发送"
         },
         {
           "id": "section-10",
           "level": 3,
-          "text": "7) 麦克风或截图按钮不可用"
+          "text": "7. 登录页重置密码失败"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "8) 帮助手册空白或打不开"
+          "text": "8. 编辑资料或修改密码保存失败"
         },
         {
           "id": "section-12",
+          "level": 3,
+          "text": "9. 新建线程按钮是灰的"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "10. 蜂群页面状态看起来不对"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "11. 会话或蜂群状态整体乱了"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "12. 麦克风或截图按钮不可用"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "13. 帮助手册空白或打不开"
+        },
+        {
+          "id": "section-17",
           "level": 2,
           "text": "仍未定位时"
         },
         {
-          "id": "section-13",
+          "id": "section-18",
           "level": 2,
-          "text": "提交问题建议附带信息"
+          "text": "提交问题时建议附带"
         }
       ],
       "prev_slug": "zh-CN/help/index",
@@ -7103,15 +7140,15 @@
       "language": "zh-CN",
       "title": "FAQ",
       "summary": "wunder 的高频问题快速答复，适合在进入详细排障前先做判断。",
-      "updated_at": "2026-04-07",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你有高频使用疑问",
         "你想先快速判断是否属于故障"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
         "docs/API文档.md",
-        "docs/设计方案.md"
+        "frontend/src/views/LoginView.vue",
+        "frontend/src/views/MessengerView.vue"
       ],
       "tab": "帮助",
       "group": "帮助",
@@ -7148,40 +7185,45 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "线程 system prompt 会在每轮重算吗？"
+          "text": "登录页重置密码需要什么？"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "长期记忆会在每轮自动重新注入吗？"
+          "text": "已登录后在哪里改用户名或密码？"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "tempdir 可以当长期存储目录吗？"
+          "text": "为什么新建线程按钮有时是灰的？"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "为什么工具在某个会话里看不到？"
+          "text": "蜂群和子智能体怎么选？"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "Desktop 模式是否必须先部署 Server？"
+          "text": "tempdir 可以当长期存储目录吗？"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "webfetch 和浏览器工具有什么区别？"
+          "text": "为什么工具在某个会话里看不到？"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "渠道接入失败通常先查哪里？"
+          "text": "Desktop 模式是否必须先部署 Server？"
         },
         {
           "id": "section-13",
+          "level": 2,
+          "text": "webfetch 和浏览器工具有什么区别？"
+        },
+        {
+          "id": "section-14",
           "level": 2,
           "text": "出现问题时先看哪一页？"
         }

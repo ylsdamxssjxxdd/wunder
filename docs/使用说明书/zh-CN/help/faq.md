@@ -5,9 +5,10 @@ read_when:
   - 你有高频使用疑问
   - 你想先快速判断是否属于故障
 source_docs:
-  - docs/系统介绍.md
   - docs/API文档.md
-  - docs/设计方案.md
+  - frontend/src/views/LoginView.vue
+  - frontend/src/views/MessengerView.vue
+updated_at: 2026-04-10
 ---
 
 # FAQ
@@ -28,16 +29,37 @@ source_docs:
 
 要分两层看：
 
-- `round_usage.total_tokens` 是单轮请求完成后的实际上下文占用，也是当前统一口径。
-- 实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
+- `round_usage.total_tokens` 是单轮请求完成后的实际上下文占用
+- 实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加
 
-## 线程 system prompt 会在每轮重算吗？
+## 登录页重置密码需要什么？
 
-不会。线程首次确定后会冻结，后续轮次不会改写该线程 system prompt。
+只需要：
 
-## 长期记忆会在每轮自动重新注入吗？
+- 用户名
+- 邮箱
+- 新密码
 
-不会。长期记忆只在线程初始化阶段注入一次。
+## 已登录后在哪里改用户名或密码？
+
+去“我的概况 -> 编辑资料”。
+
+这里可以：
+
+- 改用户名
+- 改邮箱
+- 改登录密码
+
+## 为什么新建线程按钮有时是灰的？
+
+因为当前智能体还在运行。
+
+前端会在运行中禁用 `新建线程`，避免主线程状态错位。等它完成，或先停止当前会话再新建。
+
+## 蜂群和子智能体怎么选？
+
+- 要调用已有其他智能体协作：用蜂群
+- 要从当前会话临时派生一条子运行：用子智能体控制
 
 ## `temp_dir` 可以当长期存储目录吗？
 
@@ -53,12 +75,8 @@ source_docs:
 
 ## `web_fetch` 和浏览器工具有什么区别？
 
-`web_fetch` 用于正文抓取；浏览器工具用于真实页面交互（点击、输入、导航）。
-
-## 渠道接入失败通常先查哪里？
-
-先查渠道运行态、Webhook 验签、outbox 投递，再看模型链路。
+`web_fetch` 用于正文抓取；浏览器工具用于真实页面交互。
 
 ## 出现问题时先看哪一页？
 
-先看 [故障排查](/docs/zh-CN/help/troubleshooting/)。
+先看 [故障排查](/docs/zh-CN/help/troubleshooting/)。

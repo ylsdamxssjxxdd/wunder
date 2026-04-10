@@ -1,5 +1,5 @@
 use super::context_compactor::ContextCompactor;
-use super::preflight::PreflightDecision;
+use super::preflight::{build_preflight_rewrite_summary, PreflightDecision};
 use super::retry_governor::RetryGovernor;
 use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
@@ -1916,15 +1916,18 @@ impl Orchestrator {
                         args: rewritten_args,
                         diagnostics,
                     } => {
+                        let (rewrite_summary, rewrite_changes) =
+                            build_preflight_rewrite_summary(&diagnostics);
                         let diagnostics = diagnostics
                             .into_iter()
                             .map(|item| item.to_value())
                             .collect::<Vec<_>>();
                         let mut rewrite_payload = json!({
                             "stage": "tool_preflight_rewrite",
-                            "summary": "Tool preflight rewrote tool arguments before execution.",
+                            "summary": rewrite_summary,
                             "tool": name.clone(),
                             "code": code,
+                            "changes": rewrite_changes,
                             "diagnostics": diagnostics,
                         });
                         if let Value::Object(ref mut map) = rewrite_payload {
@@ -1936,6 +1939,8 @@ impl Orchestrator {
                         preflight_meta = Some(json!({
                             "status": "rewrite",
                             "code": code,
+                            "summary": rewrite_summary,
+                            "changes": rewrite_changes,
                             "diagnostics": diagnostics,
                         }));
                     }
@@ -1951,6 +1956,7 @@ impl Orchestrator {
                         let preflight = json!({
                             "status": "reject",
                             "code": code,
+                            "summary": message,
                             "diagnostics": diagnostics,
                         });
                         let hint = preflight

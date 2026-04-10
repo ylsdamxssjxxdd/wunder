@@ -152,7 +152,7 @@ wunder-cli
 
 ## 下一步
 
-- 想深入理解系统？→ [概念概览](/docs/zh-CN/concepts/)
+- 想深入理解系统？→ [核心概览](/docs/zh-CN/concepts/)
 - 要接入到你的系统？→ [接入概览](/docs/zh-CN/integration/)
 - 遇到问题了？→ [故障排查](/docs/zh-CN/help/troubleshooting/)
 - 想看所有工具？→ [工具总览](/docs/zh-CN/tools/)

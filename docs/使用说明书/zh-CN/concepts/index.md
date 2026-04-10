@@ -1,167 +1,127 @@
 ---
-title: 概念概览
-summary: 先建立 Wunder 的基础运行模型，再阅读接口和工具细节，会明显降低接入与排障成本。
+title: 核心概览
+summary: 用 `docs/总体设计.md` 的 11 个核心快速建立 Wunder 的整体运行模型；细分机制和旧概念页统一转入参考部分。
 read_when:
   - 你第一次系统性理解 Wunder
-  - 你在接入或排障时遇到概念混淆
+  - 你准备做接入、运维或工具开发，需要统一视角
+  - 你已经会用 Wunder，但想理解它为什么这样设计
 source_docs:
+  - docs/总体设计.md
   - docs/系统介绍.md
   - docs/设计方案.md
-  - docs/API文档.md
 ---
 
-# 概念概览
+# 核心概览
 
-如果你经常把「会话、线程、工作区、智能体」混成一个词，这页先看。
+理解 Wunder，先不要把注意力分散到零碎术语。先抓住 `docs/总体设计.md` 定义的 11 个核心，再去看接口、工具和界面，整体会清楚很多。
 
-## 先建立四个锚点
+旧的概念细页没有删除，而是归入 [参考概览](/docs/zh-CN/reference/)。这页只负责建立系统主骨架。
 
-在深入细节之前，先把这四个核心概念分清楚：
+## 11 个核心一览
 
-| 概念 | 是什么？ | 核心职责 |
-|------|----------|----------|
-| **会话** | 用户侧对话单元 | 承载用户与智能体的交互历史 |
-| **线程** | 模型执行上下文单元 | 维护连续的执行状态和记忆 |
-| **工作区** | 文件与产物隔离单元 | 管理文件、工具可操作范围 |
-| **智能体** | 执行角色与策略单元 | 定义人格、提示词、可用工具 |
+| 核心 | 一句话理解 | 延伸参考 |
+|------|------------|----------|
+| 智能体循环 | 让线程稳定完成一轮又一轮“思考、行动、观察、继续” | [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)、[流式执行](/docs/zh-CN/concepts/streaming/) |
+| 工具 | 让模型可靠调用能力，而不是只会生成文本 | [工具体系](/docs/zh-CN/concepts/tools/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) |
+| 蜂群 | 让母蜂调度工蜂并行协作，而不是把一切塞进单线程 | [蜂群协作](/docs/zh-CN/concepts/swarm/) |
+| 上下文压缩 | 让长会话继续跑下去，同时保留有效信息 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/) |
+| 记忆 | 让长期资料可用，但不污染线程核心认知 | [长期记忆](/docs/zh-CN/concepts/memory/)、[工作区与容器](/docs/zh-CN/concepts/workspaces/) |
+| 渠道 | 让 server、desktop、cli 和第三方入口共享同一内核 | [系统架构](/docs/zh-CN/concepts/architecture/)、[接入概览](/docs/zh-CN/integration/) |
+| 定时任务 | 让周期执行和后台治理进入统一系统能力 | [计划任务工具](/docs/zh-CN/tools/schedule-task/)、[运维概览](/docs/zh-CN/ops/) |
+| 多用户管理 | 让组织、租户、权限和配额成为一等能力 | [Server 部署](/docs/zh-CN/start/server/)、[认证与安全](/docs/zh-CN/ops/auth-and-security/) |
+| 实时性 | 让前端和外部系统持续感知线程与任务变化 | [流式事件参考](/docs/zh-CN/reference/stream-events/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) |
+| 稳定性 | 让系统在长会话、高并发、多工具下依然能跑 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[故障排查](/docs/zh-CN/help/troubleshooting/) |
+| 可观测性 | 让系统能解释发生了什么、为什么、怎么复盘 | [流式事件参考](/docs/zh-CN/reference/stream-events/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/) |
 
-这四个锚点分清后，绝大多数接口都会变得直观。
+## 1. 智能体循环
 
----
+- 设计目标：让智能体稳定执行连续回合，而不是每次请求都像一次孤立问答。
+- 核心能力：线程状态机、模型调用、工具调用、重试治理、终态收敛、恢复续跑。
+- 关键约束：线程语义必须稳定，不能因为展示层或临时逻辑破坏运行时主链路。
+- 延伸参考：[会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)、[流式执行](/docs/zh-CN/concepts/streaming/)、[运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/)
 
-## 核心关系图
+## 2. 工具
 
-```
-用户 (user_id)
-  └─ 蜂群 (hive_id) ← 协作分组
-      └─ 智能体 (agent_id) ← 执行角色
-          ├─ 主线程 (agent_thread) ← 默认执行上下文
-          │   └─ 主会话 (session_id, is_main=true)
-          └─ 历史会话 (chat_sessions)
-              └─ 子线程 (可选)
+- 设计目标：让模型更容易正确调用能力，并可靠消费结果。
+- 核心能力：清晰工具描述、结构化参数、统一结果截断、工具工作流展示、失败反馈。
+- 关键约束：对大模型来说一切皆工具；工具返回必须精简明确；工具事实与展示投影必须分离。
+- 延伸参考：[工具体系](/docs/zh-CN/concepts/tools/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)、[工具总览](/docs/zh-CN/tools/)
 
-工作区 (workspace)
-  └─ 用户容器 (container_id=0) ← 用户私有文件
-  └─ 智能体容器 (container_id=1~10) ← 智能体运行空间
-```
+## 3. 蜂群
 
----
+- 设计目标：支持母蜂调度多个工蜂完成协作任务，并把结果汇回主线程。
+- 核心能力：任务拆解、工蜂派发、节点状态同步、汇总结果、父子会话关联。
+- 关键约束：母蜂与工蜂职责分离；不能把蜂群误当普通子智能体链路；协作过程必须持续可见。
+- 延伸参考：[蜂群协作](/docs/zh-CN/concepts/swarm/)、[子智能体控制](/docs/zh-CN/tools/subagent-control/)、[蜂群工具](/docs/zh-CN/tools/agent-swarm/)
 
-## 从一个请求看概念流转
+## 4. 上下文压缩
 
-让我们通过一次完整的请求，看看这些概念如何配合：
+- 设计目标：在长会话中控制上下文规模，同时保留有效信息。
+- 核心能力：手动压缩、自动压缩、溢出恢复、压缩摘要回注、压缩前后对比与回放。
+- 关键约束：压缩结果必须可追溯；不能伪造事实；压缩过程与终态要可观测。
+- 延伸参考：[边界处理](/docs/zh-CN/concepts/boundary-handling/)、[额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/)、[流式事件参考](/docs/zh-CN/reference/stream-events/)
 
-```
-1. 用户发消息 → 绑定到「用户 + 智能体」
-   ↓
-2. 系统找到「主线程」，或创建新「会话」
-   ↓
-3. 加载「工作区」文件，注入「长期记忆」
-   ↓
-4. 「线程」执行：调用 LLM → 调用工具 → 循环
-   ↓
-5. 写入「会话」历史，更新「线程」状态
-   ↓
-6. 通过 WebSocket/SSE 流式推送事件
-```
+## 5. 记忆
 
----
+- 设计目标：支持长会话和长期资料利用，但不污染线程核心认知。
+- 核心能力：线程初始化记忆注入、知识库、工作区文件、长期资料读取。
+- 关键约束：长期记忆只允许在线程初始化注入一次；线程首次确定后的 `system prompt` 必须冻结。
+- 延伸参考：[长期记忆](/docs/zh-CN/concepts/memory/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)、[工作区与容器](/docs/zh-CN/concepts/workspaces/)
 
-## 按问题找概念
+## 6. 渠道
 
-### 我在做接入开发
+- 设计目标：支持多入口接入同一运行时能力。
+- 核心能力：HTTP、WebSocket、Desktop、CLI、第三方渠道、网关适配。
+- 关键约束：多入口共核，只允许接入面差异，不允许演化成多套独立系统。
+- 延伸参考：[系统架构](/docs/zh-CN/concepts/architecture/)、[接入概览](/docs/zh-CN/integration/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
 
-| 问题 | 看这个概念 |
-|------|------------|
-| 如何建立连接、接收流式事件？ | [流式执行](/docs/zh-CN/concepts/streaming/) |
-| 如何知道智能体当前是忙还是闲？ | [运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/) |
-| 用户发了多条消息，怎么算轮次？ | [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/) |
+## 7. 定时任务
 
-### 我在做文件与产物
+- 设计目标：支持系统级周期执行与后台治理。
+- 核心能力：定时触发、计划任务、后台巡检、自动维护、异步执行链路。
+- 关键约束：定时任务必须与在线线程语义区分；失败重试和执行记录要可追踪。
+- 延伸参考：[计划任务工具](/docs/zh-CN/tools/schedule-task/)、[部署与运行](/docs/zh-CN/ops/deployment/)、[运维概览](/docs/zh-CN/ops/)
 
-| 问题 | 看这个概念 |
-|------|------------|
-| 智能体能看到哪些文件？ | [工作区与容器](/docs/zh-CN/concepts/workspaces/) |
-| 工具有哪些？怎么用？ | [工具体系](/docs/zh-CN/concepts/tools/) |
+## 8. 多用户管理
 
-### 我在做治理与稳定性
+- 设计目标：支持组织、用户、租户和权限治理。
+- 核心能力：用户体系、单位与租户隔离、权限控制、资源配额、管理后台。
+- 关键约束：默认按多用户并发设计；数据隔离、权限边界和治理能力不能后补。
+- 延伸参考：[Server 部署](/docs/zh-CN/start/server/)、[认证与安全](/docs/zh-CN/ops/auth-and-security/)、[管理端面板索引](/docs/zh-CN/reference/admin-panels/)
 
-| 问题 | 看这个概念 |
-|------|------------|
-| 提示词能动态改吗？ | [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) |
-| 如何让智能体记住长期信息？ | [长期记忆](/docs/zh-CN/concepts/memory/) |
-| 怎么控制成本和配额？ | [额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/) |
-| 上下文超限了怎么办？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
-| 网络中断如何恢复？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
-| 工具失败了怎么处理？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
+## 9. 实时性
 
----
+- 设计目标：让前端和外部系统及时感知线程与任务变化。
+- 核心能力：WebSocket 事件流、快照补偿、增量同步、断线重连、回放恢复。
+- 关键约束：前端消费事件流但不定义后端真相；实时展示允许投影但不能篡改状态语义。
+- 延伸参考：[流式执行](/docs/zh-CN/concepts/streaming/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)、[流式事件参考](/docs/zh-CN/reference/stream-events/)
 
-## 核心概念入口
+## 10. 稳定性
 
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/concepts/architecture/">
-    <strong>系统架构</strong>
-    <span>看分层与模块边界。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/workspaces/">
-    <strong>工作区与容器</strong>
-    <span>理解 `user_id/container_id/agent_id` 路由关系。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/sessions-and-rounds/">
-    <strong>会话与轮次</strong>
-    <span>区分用户轮次和模型轮次。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/streaming/">
-    <strong>流式执行</strong>
-    <span>看事件流、终态和恢复机制。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/tools/">
-    <strong>工具体系</strong>
-    <span>内置工具、MCP、Skills 的统一视角。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/prompt-and-skills/">
-    <strong>提示词与技能</strong>
-    <span>线程冻结和技能挂载边界。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/memory/">
-    <strong>长期记忆</strong>
-    <span>结构化记忆碎片与召回机制。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/swarm/">
-    <strong>蜂群协作</strong>
-    <span>多智能体分工与结果归并。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/boundary-handling/">
-    <strong>边界处理</strong>
-    <span>上下文超限、网络中断、错误恢复。</span>
-  </a>
-</div>
+- 设计目标：让系统在长会话、高并发、多工具、多入口场景下持续可运行。
+- 核心能力：错误隔离、超时与重试、恢复续跑、资源治理、线程终态收敛、回归验收。
+- 关键约束：稳定性依赖程序结构保障，不能只靠 prompt 和人工操作；必须优先控制高风险链路的故障扩散。
+- 延伸参考：[边界处理](/docs/zh-CN/concepts/boundary-handling/)、[故障排查](/docs/zh-CN/help/troubleshooting/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)
 
----
+## 11. 可观测性
 
-## 常见误区澄清
+- 设计目标：让系统能解释“发生了什么、为什么、如何复盘”。
+- 核心能力：线程事实流、时间线回放、管理员画像、吞吐评测、调试导出。
+- 关键约束：区分事实层、回放层、画像层；区分请求、结果、观察结果；指标口径统一。
+- 延伸参考：[流式事件参考](/docs/zh-CN/reference/stream-events/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)、[管理端面板索引](/docs/zh-CN/reference/admin-panels/)
 
-在继续之前，先澄清几个最容易踩坑的点：
+## 总体原则
 
-| 误区 | 正确理解 |
-|------|----------|
-| 工作区 = 会话 | ❌ 工作区是文件空间，会话是对话历史 |
-| 线程 = 会话 | ❌ 线程是执行上下文，会话是交互记录 |
-| 流式事件 = 最终结果 | ❌ 要等 `turn_terminal` 才是终态 |
-| Token 统计 = 账单消耗 | ❌ 当前上下文占用看 `round_usage.total_tokens`，总消耗按各请求 `round_usage.total_tokens` 累加 |
-| 每次都重写 system prompt | ❌ 首次确定后会**冻结**，后续不再改写 |
-| 长期记忆每轮都注入 | ❌ 只在线程**初始化时注入一次** |
-| 上下文超限就会崩溃 | ❌ 系统有自动压缩机制，不会崩溃 |
-| 网络断开连接就丢失数据 | ❌ 有重连和事件补发机制 |
-| 工具失败就任务失败 | ❌ 有重试和降级策略 |
+| 原则 | 说明 |
+|------|------|
+| 一切围绕线程 | 会话、工具、压缩、蜂群、回放最终都要落回线程语义上统一治理 |
+| 一切围绕事件 | 实时同步、排障、回放、监控都应建立在事件与状态变更之上 |
+| 一切围绕约束 | prompt 冻结、记忆一次性注入、指标口径统一、事实与画像分离都是硬约束 |
+| 一切围绕性能 | 高并发访问、长会话、工具链执行和多前端同步必须优先考虑速度与资源成本 |
 
----
+## 下一步怎么读
 
-## 延伸阅读
-
-- [接入概览](/docs/zh-CN/integration/)
-- [运维概览](/docs/zh-CN/ops/)
-- [工具总览](/docs/zh-CN/tools/)
-- [边界处理](/docs/zh-CN/concepts/boundary-handling/)
-- [故障排查](/docs/zh-CN/help/troubleshooting/)
+- 想继续看拆开的运行模型细节：去 [参考概览](/docs/zh-CN/reference/) 的“运行模型参考”。
+- 想直接接入系统：去 [接入概览](/docs/zh-CN/integration/)。
+- 想理解工具层：去 [工具总览](/docs/zh-CN/tools/)。
+- 想排障和看约束落地：去 [运维概览](/docs/zh-CN/ops/) 和 [故障排查](/docs/zh-CN/help/troubleshooting/)。

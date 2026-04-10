@@ -19,7 +19,7 @@ source_docs:
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/start/quickstart/">
     <strong>快速开始</strong>
-    <span>先跑起来，再补概念。</span>
+    <span>先跑起来，再补核心。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/start/desktop/">
     <strong>Desktop 入门</strong>
@@ -63,9 +63,9 @@ source_docs:
     <strong>CLI 使用</strong>
     <span>脚本化、调试和自动化入口。</span>
   </a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/architecture/">
-    <strong>系统架构</strong>
-    <span>先看边界，再看实现细节。</span>
+  <a class="docs-card" href="/docs/zh-CN/concepts/">
+    <strong>核心概览</strong>
+    <span>先抓住 11 个核心，再深入细节。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/">
     <strong>接入概览</strong>

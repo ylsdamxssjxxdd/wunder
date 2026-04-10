@@ -673,6 +673,13 @@ impl Orchestrator {
                 compaction_id,
             ));
         };
+        let source_interaction_blocks = collect_normalized_interaction_blocks(&source_messages);
+        let source_interaction_messages = source_interaction_blocks
+            .iter()
+            .map(|block| block.message.clone())
+            .collect::<Vec<_>>();
+        let source_interaction_block_count = source_interaction_messages.len();
+        let source_interaction_tokens = estimate_messages_tokens(&source_interaction_messages);
         let retained_segments = collect_retained_interaction_segments_with_indexes_for_compaction(
             &source_messages,
             COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
@@ -915,6 +922,20 @@ impl Orchestrator {
         compaction_payload_map.insert(
             "retained_interaction_tokens".to_string(),
             json!(retained_interaction_tokens),
+        );
+        compaction_payload_map.insert(
+            "source_interaction_block_count".to_string(),
+            json!(source_interaction_block_count),
+        );
+        compaction_payload_map.insert(
+            "source_interaction_tokens".to_string(),
+            json!(source_interaction_tokens),
+        );
+        compaction_payload_map.insert(
+            "source_interaction_messages_debug".to_string(),
+            Value::Array(build_compaction_message_debug_entries(
+                &source_interaction_messages,
+            )),
         );
         compaction_payload_map.insert(
             "retained_head_messages_debug".to_string(),
@@ -3402,6 +3423,13 @@ fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionB
     turns
 }
 
+fn collect_normalized_interaction_blocks(messages: &[Value]) -> Vec<InteractionBlock> {
+    split_messages_into_interaction_turns(messages)
+        .iter()
+        .filter_map(normalize_interaction_turn_messages)
+        .collect()
+}
+
 fn estimate_message_chars(message: &Value) -> usize {
     let content = message.get("content").unwrap_or(&Value::Null);
     match content {
@@ -3602,18 +3630,13 @@ fn collect_retained_interaction_segments_with_indexes_for_compaction(
         };
     }
 
-    let turns = split_messages_into_interaction_turns(messages);
-    if turns.is_empty() {
+    if split_messages_into_interaction_turns(messages).is_empty() {
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
             tail_messages: Vec::new(),
         };
     }
-    let normalized_turns = turns
-        .iter()
-        .map(|turn| normalize_interaction_turn_messages(turn))
-        .flatten()
-        .collect::<Vec<_>>();
+    let normalized_turns = collect_normalized_interaction_blocks(messages);
     if normalized_turns.is_empty() {
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
@@ -3659,15 +3682,10 @@ fn collect_retained_interaction_messages_from_window(
     if token_limit <= 0 || messages.is_empty() {
         return Vec::new();
     }
-    let turns = split_messages_into_interaction_turns(messages);
-    if turns.is_empty() {
+    if split_messages_into_interaction_turns(messages).is_empty() {
         return Vec::new();
     }
-    let normalized_turns = turns
-        .iter()
-        .map(|turn| normalize_interaction_turn_messages(turn))
-        .flatten()
-        .collect::<Vec<_>>();
+    let normalized_turns = collect_normalized_interaction_blocks(messages);
     if normalized_turns.is_empty() {
         return Vec::new();
     }

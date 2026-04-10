@@ -84,7 +84,6 @@
                 :content="message.body"
               />
             </div>
-            <div v-if="message.meta" class="beeroom-canvas-chat-extra">{{ message.meta }}</div>
           </div>
         </article>
       </section>
@@ -171,7 +170,6 @@
             {{ composerSending ? t('common.stop') : t('chat.input.send') }}
           </button>
         </div>
-        <div v-if="composerError" class="beeroom-canvas-chat-compose-status is-error">{{ composerError }}</div>
       </section>
     </template>
   </aside>
@@ -438,9 +436,7 @@ watch(
 }
 
 .beeroom-canvas-chat-time,
-.beeroom-canvas-chat-extra,
-.beeroom-canvas-chat-approval-meta,
-.beeroom-canvas-chat-compose-status {
+.beeroom-canvas-chat-approval-meta {
   font-size: 11px;
   color: rgba(156, 163, 175, 0.92);
 }

@@ -35,6 +35,33 @@ impl PreflightDiagnostic {
             "hint": self.hint,
         })
     }
+
+    fn brief_change(&self) -> String {
+        match self.rule {
+            "python.indent.global_offset" => "dedented common leading indentation".to_string(),
+            "python.indent.tabs_to_spaces" => "converted leading tabs to spaces".to_string(),
+            "python.indent.two_to_four_spaces" => "expanded 2-space indent to 4 spaces".to_string(),
+            "sql.punctuation.fullwidth" => "normalized fullwidth punctuation".to_string(),
+            _ => self.message.trim().trim_end_matches('.').to_string(),
+        }
+    }
+}
+
+pub(super) fn build_preflight_rewrite_summary(
+    diagnostics: &[PreflightDiagnostic],
+) -> (String, Vec<String>) {
+    let mut changes = diagnostics
+        .iter()
+        .map(PreflightDiagnostic::brief_change)
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    changes.dedup();
+    let summary = if changes.is_empty() {
+        "Auto-fixed before run.".to_string()
+    } else {
+        format!("Auto-fixed before run: {}.", changes.join("; "))
+    };
+    (summary, changes)
 }
 
 #[derive(Clone, Debug)]

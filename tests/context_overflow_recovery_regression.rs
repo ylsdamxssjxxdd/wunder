@@ -456,7 +456,13 @@ fn latest_compaction_summary_item_with_trigger<'a>(
 
 fn latest_replacement_history_snapshot(history: &[Value]) -> Vec<Value> {
     latest_compaction_summary_item(history)
-        .and_then(|item| item.get("meta"))
+        .map(extract_replacement_history_snapshot)
+        .unwrap_or_default()
+}
+
+fn extract_replacement_history_snapshot(summary_item: &Value) -> Vec<Value> {
+    summary_item
+        .get("meta")
         .and_then(Value::as_object)
         .and_then(|meta| meta.get("replacement_history"))
         .and_then(Value::as_array)
@@ -916,6 +922,72 @@ async fn manual_compaction_keeps_first_and_recent_two_turns() {
             "[mindie-overflow-regression] round=5",
             "[mindie-overflow-regression] round=6",
         ],
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_baseline() {
+    let context = build_test_context_with_compaction_and_mock_limit(
+        "mindie_auto_loop_edge_turns",
+        12_000,
+        Some("keep"),
+        12_000,
+    )
+    .await;
+    let session_id = create_test_session(&context, "Auto loop compaction edge turns").await;
+
+    run_pressure_rounds(&context, &session_id, 4, 260).await;
+    trigger_manual_compaction_and_wait(&context, &session_id).await;
+    run_pressure_rounds(&context, &session_id, 2, 260).await;
+
+    let (status, payload) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": build_pressure_question(7, 260),
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "auto-loop follow-up round failed: {payload}"
+    );
+
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history after auto loop compaction");
+    let auto_loop_summary = latest_compaction_summary_item_with_trigger(&raw_history, "auto_loop")
+        .expect("expected auto_loop compaction summary item");
+    let replacement_history = extract_replacement_history_snapshot(auto_loop_summary);
+    assert!(
+        !replacement_history.is_empty(),
+        "auto_loop compaction should commit replacement_history snapshot"
+    );
+    assert_compaction_history_is_semantically_clean(&replacement_history);
+    assert_replacement_history_keeps_edge_rounds(
+        &replacement_history,
+        &[
+            "[mindie-overflow-regression] round=1",
+            "[mindie-overflow-regression] round=2",
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
+
+    let request_messages = latest_success_request_messages(&context);
+    assert_request_uses_replacement_history(
+        &request_messages,
+        &replacement_history,
+        "[mindie-overflow-regression] round=7",
+    );
+    assert_compaction_history_is_semantically_clean(
+        &request_messages[1..request_messages.len().saturating_sub(1)],
     );
 }
 

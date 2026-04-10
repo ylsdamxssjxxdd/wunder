@@ -51,17 +51,7 @@ pub(super) fn normalize_tool_result_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let preflight_code = result
-        .meta
-        .as_ref()
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("preflight"))
-        .and_then(Value::as_object)
-        .and_then(|preflight| preflight.get("code"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
+    let preflight_code = extract_reject_preflight_code(result.meta.as_ref());
     let explicit_retryable = explicit_error_meta
         .as_ref()
         .and_then(|meta| meta.get("retryable"))
@@ -337,6 +327,27 @@ fn merge_meta(meta: Option<Value>) -> Map<String, Value> {
     }
 }
 
+fn extract_reject_preflight_code(meta: Option<&Value>) -> Option<String> {
+    let preflight = meta
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("preflight"))
+        .and_then(Value::as_object)?;
+    let status = preflight
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if status != "reject" {
+        return None;
+    }
+    preflight
+        .get("code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
 fn is_execute_command_tool_name(tool_name: &str) -> bool {
     let cleaned = tool_name.trim();
     cleaned == resolve_tool_name("execute_command")
@@ -456,6 +467,43 @@ mod tests {
         assert_eq!(
             meta.get("normalized_final_ok").and_then(Value::as_bool),
             Some(true)
+        );
+        assert!(meta.get("error_code").is_none());
+    }
+
+    #[test]
+    fn successful_rewrite_preflight_does_not_promote_error_code() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({
+                "stdout": "ok"
+            }),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "preflight": {
+                    "status": "rewrite",
+                    "code": "PRECHECK_PYTHON_INDENTATION_NORMALIZED",
+                    "summary": "Auto-fixed before run: dedented common leading indentation.",
+                    "changes": ["dedented common leading indentation"]
+                }
+            })),
+        };
+        let normalized = normalize_tool_result_payload("ptc", payload);
+        assert!(normalized.ok);
+        let meta = normalized.meta.expect("meta");
+        assert_eq!(
+            meta.get("normalized_final_ok").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(meta.get("error_code").is_none());
+        assert_eq!(
+            meta.get("preflight")
+                .and_then(Value::as_object)
+                .and_then(|preflight| preflight.get("summary"))
+                .and_then(Value::as_str),
+            Some("Auto-fixed before run: dedented common leading indentation.")
         );
     }
 

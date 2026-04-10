@@ -18,7 +18,7 @@ source_docs:
 ## 如果你只看三页
 
 - [快速开始](/docs/zh-CN/start/quickstart/)
-- [系统架构](/docs/zh-CN/concepts/architecture/)
+- [核心概览](/docs/zh-CN/concepts/)
 - [wunder API](/docs/zh-CN/integration/wunder-api/)
 
 ## 第一次使用
@@ -30,6 +30,7 @@ source_docs:
 
 ## 理解系统
 
+- [核心概览](/docs/zh-CN/concepts/)
 - [系统架构](/docs/zh-CN/concepts/architecture/)
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
@@ -72,7 +73,7 @@ source_docs:
 
 如果你不知道某个问题应该先从哪一层看，按这个顺序：
 
-1. 先看开始页或概念页，确认问题属于哪一层。
+1. 先看开始页或核心页，确认问题属于哪一层。
 2. 再看接入页、工具页或界面页，确认具体入口。
 3. 最后再回参考页或故障排查页查字段、事件和异常路径。
 

@@ -2,7 +2,6 @@ import { ElMessage } from 'element-plus';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue';
 
 import {
-  cancelMessageStream,
   createSession,
   listSessions,
   resumeMessageStream,
@@ -2201,7 +2200,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       dispatchStreamController = null;
     }
     try {
-      await cancelMessageStream(sessionId);
+      await chatStore.stopSessionActivity(sessionId, { terminateSubagents: true });
     } catch {
       // Keep local interrupt behavior even if cancel API fails.
     } finally {

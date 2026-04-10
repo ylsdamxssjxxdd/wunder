@@ -46,27 +46,12 @@
             ]
           },
           {
-            "tab": "概念",
+            "tab": "核心",
             "groups": [
               {
-                "group": "概览",
+                "group": "11个核心",
                 "pages": [
                   "zh-CN/concepts/index"
-                ]
-              },
-              {
-                "group": "核心概念",
-                "pages": [
-                  "zh-CN/concepts/architecture",
-                  "zh-CN/concepts/workspaces",
-                  "zh-CN/concepts/sessions-and-rounds",
-                  "zh-CN/concepts/streaming",
-                  "zh-CN/concepts/presence-and-runtime",
-                  "zh-CN/concepts/tools",
-                  "zh-CN/concepts/prompt-and-skills",
-                  "zh-CN/concepts/memory",
-                  "zh-CN/concepts/quota-and-token-usage",
-                  "zh-CN/concepts/swarm"
                 ]
               }
             ]
@@ -217,6 +202,22 @@
                   "zh-CN/reference/workspace-routing",
                   "zh-CN/reference/prompt-templates",
                   "zh-CN/reference/admin-panels"
+                ]
+              },
+              {
+                "group": "运行模型参考",
+                "pages": [
+                  "zh-CN/concepts/architecture",
+                  "zh-CN/concepts/workspaces",
+                  "zh-CN/concepts/sessions-and-rounds",
+                  "zh-CN/concepts/streaming",
+                  "zh-CN/concepts/presence-and-runtime",
+                  "zh-CN/concepts/tools",
+                  "zh-CN/concepts/prompt-and-skills",
+                  "zh-CN/concepts/memory",
+                  "zh-CN/concepts/quota-and-token-usage",
+                  "zh-CN/concepts/swarm",
+                  "zh-CN/concepts/boundary-handling"
                 ]
               }
             ]

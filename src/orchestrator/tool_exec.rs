@@ -110,6 +110,9 @@ impl ToolResultPayload {
                 if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
                     map.insert("retryable".to_string(), Value::Bool(retryable));
                 }
+                if let Some(preflight) = compact_public_preflight(meta) {
+                    map.insert("preflight".to_string(), preflight);
+                }
             }
         }
         payload
@@ -149,6 +152,9 @@ impl ToolResultPayload {
                 }
                 if let Some(retryable) = meta.get("error_retryable").and_then(Value::as_bool) {
                     map.insert("retryable".to_string(), Value::Bool(retryable));
+                }
+                if let Some(preflight) = compact_public_preflight(meta) {
+                    map.insert("preflight".to_string(), preflight);
                 }
             }
         }
@@ -1442,6 +1448,42 @@ fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
     }
 }
 
+fn compact_public_preflight(meta: &Value) -> Option<Value> {
+    let preflight = meta
+        .as_object()
+        .and_then(|meta| meta.get("preflight"))
+        .and_then(Value::as_object)?;
+    let mut compacted = Map::new();
+    if let Some(status) = preflight.get("status").and_then(Value::as_str) {
+        let cleaned = status.trim();
+        if !cleaned.is_empty() {
+            compacted.insert("status".to_string(), Value::String(cleaned.to_string()));
+        }
+    }
+    if let Some(summary) = preflight.get("summary").and_then(Value::as_str) {
+        let cleaned = summary.trim();
+        if !cleaned.is_empty() {
+            compacted.insert("summary".to_string(), Value::String(cleaned.to_string()));
+        }
+    }
+    if let Some(changes) = preflight.get("changes").and_then(Value::as_array) {
+        let changes = changes
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| Value::String(value.to_string()))
+            .collect::<Vec<_>>();
+        if !changes.is_empty() {
+            compacted.insert("changes".to_string(), Value::Array(changes));
+        }
+    }
+    if compacted.is_empty() {
+        return None;
+    }
+    Some(Value::Object(compacted))
+}
+
 const OBSERVATION_MAX_CHARS: usize = 20_000;
 const OBSERVATION_HEAD_CHARS: usize = 10_000;
 const OBSERVATION_TAIL_CHARS: usize = 10_000;
@@ -2717,6 +2759,59 @@ mod tests {
         assert_eq!(
             compacted.get("duration_ms").and_then(Value::as_i64),
             Some(1280)
+        );
+    }
+
+    #[test]
+    fn test_observation_payload_keeps_compact_preflight_rewrite_summary() {
+        let payload = ToolResultPayload {
+            ok: true,
+            data: json!({"stdout": "ok"}),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "preflight": {
+                    "status": "rewrite",
+                    "code": "PRECHECK_PYTHON_INDENTATION_NORMALIZED",
+                    "summary": "Auto-fixed before run: dedented common leading indentation; converted leading tabs to spaces.",
+                    "changes": [
+                        "dedented common leading indentation",
+                        "converted leading tabs to spaces"
+                    ],
+                    "diagnostics": [
+                        {
+                            "rule": "python.indent.global_offset",
+                            "severity": "warn",
+                            "message": "Detected global leading indentation (4 spaces); auto-dedented."
+                        }
+                    ]
+                }
+            })),
+        };
+
+        let compacted = payload.to_compact_payload("ptc");
+        let preflight = compacted
+            .get("preflight")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            preflight.get("status").and_then(Value::as_str),
+            Some("rewrite")
+        );
+        assert_eq!(
+            preflight.get("summary").and_then(Value::as_str),
+            Some(
+                "Auto-fixed before run: dedented common leading indentation; converted leading tabs to spaces."
+            )
+        );
+        assert_eq!(
+            preflight
+                .get("changes")
+                .and_then(Value::as_array)
+                .map(|items| items.len()),
+            Some(2)
         );
     }
 

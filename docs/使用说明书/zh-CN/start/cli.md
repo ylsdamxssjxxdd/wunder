@@ -209,4 +209,4 @@ A: 默认在 `~/.wunder/sessions/`，可以通过配置修改。
 - 想看所有工具？→ [工具总览](/docs/zh-CN/tools/)
 - 要做自动化？→ [接入概览](/docs/zh-CN/integration/)
 - 遇到问题？→ [故障排查](/docs/zh-CN/help/troubleshooting/)
-- 想深入概念？→ [概念概览](/docs/zh-CN/concepts/)
+- 想深入系统核心？→ [核心概览](/docs/zh-CN/concepts/)
