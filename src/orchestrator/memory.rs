@@ -3,7 +3,6 @@ use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
-const COMPACTION_USER_MESSAGE_WINDOW_TOKENS: i64 = 20_000;
 const COMPACTION_RETAINED_INTERACTION_TURN_COUNT: usize = 2;
 const COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS: i64 = 8_192;
 const COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS: i64 = 16_384;
@@ -17,6 +16,7 @@ const COMPACTION_SUMMARY_OBSERVATION_MAX_TOKENS: i64 = 256;
 const COMPACTION_TEXT_TRUNCATION_SUFFIX: &str = "...(truncated)";
 const COMPACTION_SUMMARY_MAX_CHARS: usize = 20_000;
 const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
+const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -678,16 +678,9 @@ impl Orchestrator {
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
         let retained_head_messages = retained_segments.head_messages;
-        let retained_tail_interaction_messages = retained_segments.tail_messages;
-        let retained_recent_user_messages = collect_recent_user_messages_for_compaction_excluding(
-            &source_messages,
-            COMPACTION_USER_MESSAGE_WINDOW_TOKENS,
-            &retained_segments.retained_indexes,
-        );
-        let retained_tail_messages = merge_retained_replay_messages(
-            &retained_tail_interaction_messages,
-            &retained_recent_user_messages,
-        );
+        let retained_tail_messages = retained_segments.tail_messages;
+        let retained_head_message_count = retained_head_messages.len();
+        let retained_tail_message_count = retained_tail_messages.len();
         let mut retained_head_messages_for_rebuilt = retained_head_messages.clone();
         mark_retained_interaction_messages(&mut retained_head_messages_for_rebuilt);
         let mut retained_tail_messages_for_rebuilt = retained_tail_messages.clone();
@@ -795,8 +788,11 @@ impl Orchestrator {
             message_budget,
             compaction_profile.prefer_preserving_summary,
         );
+        let rebuilt_request_debug = build_compaction_message_debug_entries(&rebuilt);
         let committed_replacement_history =
             build_committed_replacement_history_from_rebuilt(&rebuilt);
+        let replacement_history_debug =
+            build_compaction_message_debug_entries(&committed_replacement_history);
         clear_retained_interaction_markers(&mut rebuilt);
         clear_compaction_inflight_markers(&mut rebuilt);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
@@ -903,16 +899,32 @@ impl Orchestrator {
             json!(retained_user_tokens),
         );
         compaction_payload_map.insert(
-            "retained_user_window_token_limit".to_string(),
-            json!(COMPACTION_USER_MESSAGE_WINDOW_TOKENS),
-        );
-        compaction_payload_map.insert(
             "retained_interaction_message_count".to_string(),
             json!(retained_interaction_message_count),
         );
         compaction_payload_map.insert(
+            "retained_head_message_count".to_string(),
+            json!(retained_head_message_count),
+        );
+        compaction_payload_map.insert(
+            "retained_tail_message_count".to_string(),
+            json!(retained_tail_message_count),
+        );
+        compaction_payload_map.insert(
             "retained_interaction_tokens".to_string(),
             json!(retained_interaction_tokens),
+        );
+        compaction_payload_map.insert(
+            "retained_head_messages_debug".to_string(),
+            Value::Array(build_compaction_message_debug_entries(
+                &retained_head_messages,
+            )),
+        );
+        compaction_payload_map.insert(
+            "retained_tail_messages_debug".to_string(),
+            Value::Array(build_compaction_message_debug_entries(
+                &retained_tail_messages,
+            )),
         );
         compaction_payload_map.insert(
             "retained_head_turn_count".to_string(),
@@ -933,6 +945,14 @@ impl Orchestrator {
         compaction_payload_map.insert(
             "replacement_history_tokens".to_string(),
             json!(committed_replacement_history_tokens),
+        );
+        compaction_payload_map.insert(
+            "replacement_history_debug".to_string(),
+            Value::Array(replacement_history_debug),
+        );
+        compaction_payload_map.insert(
+            "rebuilt_request_debug".to_string(),
+            Value::Array(rebuilt_request_debug),
         );
         compaction_payload_map.insert("summary_chars".to_string(), json!(summary_chars));
         compaction_payload_map.insert(
@@ -3255,42 +3275,120 @@ fn locate_compaction_summary_message_index(messages: &[Value]) -> Option<usize> 
     })
 }
 
-fn is_real_user_turn_start(message: &Value) -> bool {
-    let role = message.get("role").and_then(Value::as_str).unwrap_or("");
-    if role != "user" {
-        return false;
-    }
-    let content = message.get("content").unwrap_or(&Value::Null);
-    if Orchestrator::is_observation_message(role, content) {
-        return false;
-    }
-    let content_text = extract_guard_content_text(content);
-    !content_text.is_empty() && !starts_with_compaction_prefix(&content_text)
+#[derive(Clone, Debug)]
+struct InteractionBlock {
+    indexes: Vec<usize>,
+    message: Value,
 }
 
-fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<Vec<(usize, Value)>> {
-    let mut turns: Vec<Vec<(usize, Value)>> = Vec::new();
-    let mut current_turn: Vec<(usize, Value)> = Vec::new();
+fn normalize_message_for_interaction_block(message: &Value) -> Option<(&'static str, String)> {
+    let obj = message.as_object()?;
+    let role = obj
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if role.is_empty() || role == "system" || role == "tool" {
+        return None;
+    }
+    let content = obj.get("content").unwrap_or(&Value::Null);
+    let text = if is_compaction_observation_message(role.as_str(), obj) {
+        summarize_compaction_observation(content)
+    } else {
+        strip_compaction_internal_tool_lines(&extract_guard_content_text(content))
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized_role = if role == "assistant" {
+        "assistant"
+    } else {
+        "user"
+    };
+    Some((normalized_role, trimmed.to_string()))
+}
+
+fn build_interaction_block_message(role: &str, parts: &[String]) -> Option<Value> {
+    let merged = parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .fold(Vec::<String>::new(), |mut acc, part| {
+            if acc.last().map(String::as_str) != Some(part) {
+                acc.push(part.to_string());
+            }
+            acc
+        })
+        .join("\n\n");
+    let cleaned = merged.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "role": role,
+        "content": cleaned,
+    }))
+}
+
+fn split_messages_into_interaction_turns(messages: &[Value]) -> Vec<InteractionBlock> {
+    let mut turns: Vec<InteractionBlock> = Vec::new();
+    let mut current_role: Option<&'static str> = None;
+    let mut current_indexes: Vec<usize> = Vec::new();
+    let mut current_parts: Vec<String> = Vec::new();
+
+    let flush_current = |turns: &mut Vec<InteractionBlock>,
+                         current_role: &mut Option<&'static str>,
+                         current_indexes: &mut Vec<usize>,
+                         current_parts: &mut Vec<String>| {
+        let Some(role) = *current_role else {
+            return;
+        };
+        if current_indexes.is_empty() || current_parts.is_empty() {
+            current_indexes.clear();
+            current_parts.clear();
+            *current_role = None;
+            return;
+        }
+        if let Some(message) = build_interaction_block_message(role, current_parts) {
+            turns.push(InteractionBlock {
+                indexes: std::mem::take(current_indexes),
+                message,
+            });
+        } else {
+            current_indexes.clear();
+        }
+        current_parts.clear();
+        *current_role = None;
+    };
 
     for (index, message) in messages.iter().enumerate() {
         if HistoryManager::is_compaction_summary_item(message) {
             continue;
         }
-        if is_real_user_turn_start(message) {
-            if !current_turn.is_empty() {
-                turns.push(std::mem::take(&mut current_turn));
-            }
-            current_turn.push((index, message.clone()));
+        let Some((normalized_role, text)) = normalize_message_for_interaction_block(message) else {
             continue;
+        };
+        if current_role != Some(normalized_role) {
+            flush_current(
+                &mut turns,
+                &mut current_role,
+                &mut current_indexes,
+                &mut current_parts,
+            );
+            current_role = Some(normalized_role);
         }
-        if !current_turn.is_empty() {
-            current_turn.push((index, message.clone()));
-        }
+        current_indexes.push(index);
+        current_parts.push(text);
     }
 
-    if !current_turn.is_empty() {
-        turns.push(current_turn);
-    }
+    flush_current(
+        &mut turns,
+        &mut current_role,
+        &mut current_indexes,
+        &mut current_parts,
+    );
     turns
 }
 
@@ -3336,82 +3434,87 @@ fn trim_message_to_fit_chars(message: &Value, max_chars: usize) -> Option<Value>
     Some(cloned)
 }
 
-fn normalize_interaction_turn_messages(turn: &[(usize, Value)]) -> Vec<(usize, Value)> {
-    let mut normalized: Vec<(usize, Value)> = turn
+fn build_compaction_message_debug_entries(messages: &[Value]) -> Vec<Value> {
+    messages
         .iter()
-        .filter_map(|(index, message)| {
-            let normalized = normalize_committed_replacement_history_message(message)?;
-            let capped = trim_message_to_fit_tokens(
-                &normalized,
-                COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS,
-            )
-            .unwrap_or(normalized);
-            Some((*index, capped))
+        .enumerate()
+        .map(|(index, message)| {
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let content = message.get("content").unwrap_or(&Value::Null);
+            let preview = trim_text_to_chars(
+                &extract_guard_content_text(content),
+                COMPACTION_DEBUG_PREVIEW_CHARS,
+                COMPACTION_TEXT_TRUNCATION_SUFFIX,
+            );
+            json!({
+                "index": index,
+                "role": role,
+                "tokens": estimate_message_tokens(message),
+                "chars": estimate_message_chars(message),
+                "is_summary": HistoryManager::is_compaction_summary_item(message),
+                "is_current_user": is_compaction_inflight_current_user_message(message),
+                "preview": preview,
+            })
         })
-        .collect();
-    if normalized.is_empty() {
-        return normalized;
-    }
+        .collect()
+}
 
-    let mut remaining_chars = COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS;
-    let mut clamped: Vec<(usize, Value)> = Vec::new();
-    for (index, message) in normalized.drain(..) {
-        if remaining_chars == 0 {
-            break;
-        }
-        let chars = estimate_message_chars(&message);
-        if chars <= remaining_chars {
-            remaining_chars = remaining_chars.saturating_sub(chars);
-            clamped.push((index, message));
-            continue;
-        }
-        if let Some(trimmed) = trim_message_to_fit_chars(&message, remaining_chars) {
-            clamped.push((index, trimmed));
-        }
-        break;
+fn normalize_interaction_turn_messages(turn: &InteractionBlock) -> Option<InteractionBlock> {
+    let capped = trim_message_to_fit_tokens(
+        &turn.message,
+        COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS,
+    )
+    .unwrap_or_else(|| turn.message.clone());
+    if COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS == 0 {
+        return None;
     }
-    clamped
+    let chars = estimate_message_chars(&capped);
+    let message = if chars <= COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS {
+        capped
+    } else {
+        trim_message_to_fit_chars(&capped, COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS)?
+    };
+    Some(InteractionBlock {
+        indexes: turn.indexes.clone(),
+        message,
+    })
 }
 
 fn trim_interaction_turn_to_budget(
-    turn: &[(usize, Value)],
+    turn: &InteractionBlock,
     token_limit: i64,
-) -> Vec<(usize, Value)> {
+) -> Option<InteractionBlock> {
     if token_limit <= 0 {
-        return Vec::new();
+        return None;
     }
-    let mut remaining = token_limit;
-    let mut selected: Vec<(usize, Value)> = Vec::new();
-    for (index, message) in turn {
-        if remaining <= 0 {
-            break;
-        }
-        let message_tokens = estimate_message_tokens(message);
-        if message_tokens <= remaining {
-            selected.push((*index, message.clone()));
-            remaining = remaining.saturating_sub(message_tokens);
-            continue;
-        }
-        if let Some(trimmed) = trim_message_to_fit_tokens(message, remaining.max(1)) {
-            selected.push((*index, trimmed));
-        }
-        break;
-    }
-    selected
+    let message_tokens = estimate_message_tokens(&turn.message);
+    let message = if message_tokens <= token_limit {
+        turn.message.clone()
+    } else {
+        trim_message_to_fit_tokens(&turn.message, token_limit.max(1))?
+    };
+    Some(InteractionBlock {
+        indexes: turn.indexes.clone(),
+        message,
+    })
 }
 
 fn collect_interaction_turns_with_budget(
-    turns: &[Vec<(usize, Value)>],
+    turns: &[InteractionBlock],
     token_limit: i64,
     from_end: bool,
-) -> Vec<(usize, Value)> {
+) -> Vec<InteractionBlock> {
     if token_limit <= 0 || turns.is_empty() {
         return Vec::new();
     }
     let mut remaining = token_limit;
-    let mut selected_turns: Vec<Vec<(usize, Value)>> = Vec::new();
+    let mut selected_turns: Vec<InteractionBlock> = Vec::new();
 
-    let iter: Box<dyn Iterator<Item = &Vec<(usize, Value)>>> = if from_end {
+    let iter: Box<dyn Iterator<Item = &InteractionBlock>> = if from_end {
         Box::new(turns.iter().rev())
     } else {
         Box::new(turns.iter())
@@ -3421,19 +3524,13 @@ fn collect_interaction_turns_with_budget(
         if remaining <= 0 {
             break;
         }
-        let turn_tokens = estimate_messages_tokens(
-            &turn
-                .iter()
-                .map(|(_, message)| message.clone())
-                .collect::<Vec<_>>(),
-        );
+        let turn_tokens = estimate_message_tokens(&turn.message);
         if turn_tokens <= remaining {
             selected_turns.push(turn.clone());
             remaining = remaining.saturating_sub(turn_tokens);
             continue;
         }
-        let trimmed_turn = trim_interaction_turn_to_budget(turn, remaining);
-        if !trimmed_turn.is_empty() {
+        if let Some(trimmed_turn) = trim_interaction_turn_to_budget(turn, remaining) {
             selected_turns.push(trimmed_turn);
         }
         break;
@@ -3442,7 +3539,7 @@ fn collect_interaction_turns_with_budget(
     if from_end {
         selected_turns.reverse();
     }
-    selected_turns.into_iter().flatten().collect()
+    selected_turns
 }
 
 #[cfg(test)]
@@ -3458,7 +3555,7 @@ fn collect_retained_interaction_messages_for_compaction(
         head_token_limit,
         tail_token_limit,
     );
-    merge_retained_replay_messages(&head_messages, &tail_messages)
+    head_messages.into_iter().chain(tail_messages).collect()
 }
 
 #[allow(dead_code)]
@@ -3480,7 +3577,6 @@ fn collect_retained_interaction_segments_for_compaction(
 struct RetainedInteractionSegments {
     head_messages: Vec<Value>,
     tail_messages: Vec<Value>,
-    retained_indexes: HashSet<usize>,
 }
 
 fn collect_retained_interaction_segments_with_indexes_for_compaction(
@@ -3493,7 +3589,6 @@ fn collect_retained_interaction_segments_with_indexes_for_compaction(
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
             tail_messages: Vec::new(),
-            retained_indexes: HashSet::new(),
         };
     }
 
@@ -3502,19 +3597,17 @@ fn collect_retained_interaction_segments_with_indexes_for_compaction(
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
             tail_messages: Vec::new(),
-            retained_indexes: HashSet::new(),
         };
     }
     let normalized_turns = turns
         .iter()
         .map(|turn| normalize_interaction_turn_messages(turn))
-        .filter(|turn| !turn.is_empty())
+        .flatten()
         .collect::<Vec<_>>();
     if normalized_turns.is_empty() {
         return RetainedInteractionSegments {
             head_messages: Vec::new(),
             tail_messages: Vec::new(),
-            retained_indexes: HashSet::new(),
         };
     }
 
@@ -3535,21 +3628,15 @@ fn collect_retained_interaction_segments_with_indexes_for_compaction(
             true,
         )
     };
-    let retained_indexes = head_messages
-        .iter()
-        .chain(tail_messages.iter())
-        .map(|(index, _)| *index)
-        .collect::<HashSet<_>>();
     RetainedInteractionSegments {
         head_messages: head_messages
             .into_iter()
-            .map(|(_, message)| message)
+            .map(|block| block.message)
             .collect(),
         tail_messages: tail_messages
             .into_iter()
-            .map(|(_, message)| message)
+            .map(|block| block.message)
             .collect(),
-        retained_indexes,
     }
 }
 
@@ -3569,83 +3656,15 @@ fn collect_retained_interaction_messages_from_window(
     let normalized_turns = turns
         .iter()
         .map(|turn| normalize_interaction_turn_messages(turn))
-        .filter(|turn| !turn.is_empty())
+        .flatten()
         .collect::<Vec<_>>();
     if normalized_turns.is_empty() {
         return Vec::new();
     }
     collect_interaction_turns_with_budget(&normalized_turns, token_limit, from_end)
         .into_iter()
-        .map(|(_, message)| message)
+        .map(|block| block.message)
         .collect()
-}
-
-fn merge_retained_replay_messages(primary: &[Value], fallback: &[Value]) -> Vec<Value> {
-    let mut merged: Vec<Value> = Vec::new();
-    for message in primary.iter().chain(fallback.iter()) {
-        let duplicate = merged.iter().any(|existing| {
-            existing.get("role") == message.get("role")
-                && existing.get("content") == message.get("content")
-        });
-        if !duplicate {
-            merged.push(message.clone());
-        }
-    }
-    merged
-}
-
-#[allow(dead_code)]
-fn collect_recent_user_messages_for_compaction(messages: &[Value], token_limit: i64) -> Vec<Value> {
-    collect_recent_user_messages_for_compaction_excluding(messages, token_limit, &HashSet::new())
-}
-
-fn collect_recent_user_messages_for_compaction_excluding(
-    messages: &[Value],
-    token_limit: i64,
-    excluded_indexes: &HashSet<usize>,
-) -> Vec<Value> {
-    if token_limit <= 0 {
-        return Vec::new();
-    }
-    let mut remaining = token_limit.max(0);
-    let mut selected_rev: Vec<Value> = Vec::new();
-
-    for (index, message) in messages.iter().enumerate().rev() {
-        if remaining <= 0 {
-            break;
-        }
-        if excluded_indexes.contains(&index) {
-            continue;
-        }
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("");
-        if role != "user" {
-            continue;
-        }
-        let content = message.get("content").unwrap_or(&Value::Null);
-        if Orchestrator::is_observation_message(role, content) {
-            continue;
-        }
-        let content_text = extract_guard_content_text(content);
-        if content_text.is_empty() || starts_with_compaction_prefix(&content_text) {
-            continue;
-        }
-
-        let message_tokens = estimate_message_tokens(message);
-        if message_tokens <= remaining {
-            selected_rev.push(message.clone());
-            remaining = remaining.saturating_sub(message_tokens);
-            continue;
-        }
-
-        let target_tokens = remaining.max(1);
-        if let Some(trimmed) = trim_message_to_fit_tokens(message, target_tokens) {
-            selected_rev.push(trimmed);
-        }
-        break;
-    }
-
-    selected_rev.reverse();
-    selected_rev
 }
 
 #[cfg(test)]
@@ -4146,7 +4165,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_recent_turns() {
+    fn test_collect_retained_interaction_messages_for_compaction_keeps_first_and_recent_blocks() {
         let messages = vec![
             json!({ "role": "user", "content": "round-1 user" }),
             json!({ "role": "assistant", "content": "round-1 assistant" }),
@@ -4176,10 +4195,6 @@ mod tests {
             vec![
                 "round-1 user".to_string(),
                 "round-1 assistant".to_string(),
-                "round-2 user".to_string(),
-                "round-2 assistant".to_string(),
-                "round-4 user".to_string(),
-                "round-4 assistant".to_string(),
                 "round-5 user".to_string(),
                 "round-5 assistant".to_string(),
             ]
@@ -4187,7 +4202,60 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_retained_interaction_messages_for_compaction_strips_tool_noise() {
+    fn test_collect_retained_interaction_messages_for_compaction_keeps_oldest_and_latest_task_blocks(
+    ) {
+        let messages = vec![
+            json!({ "role": "user", "content": "[SWARM_CONTEXT]\\nolder task" }),
+            json!({ "role": "assistant", "content": "older answer" }),
+            json!({ "role": "user", "content": "current question" }),
+            json!({ "role": "assistant", "content": "searching current task" }),
+            json!({
+                "role": "user",
+                "content": format!(
+                    "{OBSERVATION_PREFIX}{}",
+                    json!({ "tool": "search_content", "ok": true, "summary": "11 hits" })
+                )
+            }),
+            json!({ "role": "assistant", "content": "reading current task files" }),
+        ];
+
+        let retained = collect_retained_interaction_messages_for_compaction(
+            &messages,
+            2,
+            COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
+            COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
+        );
+        let roles = retained
+            .iter()
+            .map(|message| message["role"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+        let contents = retained
+            .iter()
+            .map(|message| message["content"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            roles,
+            vec![
+                "user".to_string(),
+                "assistant".to_string(),
+                "user".to_string(),
+                "assistant".to_string(),
+            ]
+        );
+        assert_eq!(
+            contents,
+            vec![
+                "[SWARM_CONTEXT]\nolder task".to_string(),
+                "older answer".to_string(),
+                "Tool observation (search_content): success\n11 hits".to_string(),
+                "reading current task files".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_split_messages_into_interaction_turns_merges_same_side_content_and_observations() {
         let messages = vec![
             json!({ "role": "user", "content": "round-1 user" }),
             json!({
@@ -4196,41 +4264,49 @@ mod tests {
                 "tool_calls": [{ "function": { "name": "read_file" } }]
             }),
             json!({
+                "role": "assistant",
+                "content": "Reading file details",
+            }),
+            json!({
                 "role": "user",
-                "content": format!("{OBSERVATION_PREFIX}{}", json!({ "tool": "read_file", "ok": true }))
+                "content": format!("{OBSERVATION_PREFIX}{}", json!({
+                    "tool": "read_file",
+                    "ok": true,
+                    "summary": "Loaded /tmp/demo.txt"
+                }))
             }),
             json!({ "role": "assistant", "content": "round-1 answer" }),
-            json!({ "role": "user", "content": "round-2 user" }),
-            json!({ "role": "assistant", "content": "round-2 answer" }),
-            json!({ "role": "user", "content": "round-3 user" }),
-            json!({ "role": "assistant", "content": "round-3 answer" }),
         ];
 
-        let retained = collect_retained_interaction_messages_for_compaction(
-            &messages,
-            1,
-            COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
-            COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
-        );
-        let contents = retained
+        let turns = split_messages_into_interaction_turns(&messages);
+        let roles = turns
             .iter()
-            .map(|message| message["content"].as_str().unwrap_or("").to_string())
+            .map(|turn| turn.message["role"].as_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>();
+        let contents = turns
+            .iter()
+            .map(|turn| turn.message["content"].as_str().unwrap_or("").to_string())
             .collect::<Vec<_>>();
 
+        assert_eq!(
+            roles,
+            vec![
+                "user".to_string(),
+                "assistant".to_string(),
+                "user".to_string(),
+                "assistant".to_string(),
+            ]
+        );
         assert!(contents
             .iter()
             .all(|content| !content.contains("Assistant issued tool call(s):")));
-        assert!(contents
-            .iter()
-            .all(|content| !content.contains("tool_response:")));
         assert_eq!(
             contents,
             vec![
                 "round-1 user".to_string(),
-                "Inspecting".to_string(),
+                "Inspecting\n\nReading file details".to_string(),
+                "Tool observation (read_file): success\nLoaded /tmp/demo.txt".to_string(),
                 "round-1 answer".to_string(),
-                "round-3 user".to_string(),
-                "round-3 answer".to_string(),
             ]
         );
     }
@@ -4264,12 +4340,7 @@ mod tests {
 
         assert_eq!(
             head_contents,
-            vec![
-                "round-1 user".to_string(),
-                "round-1 assistant".to_string(),
-                "round-2 user".to_string(),
-                "round-2 assistant".to_string(),
-            ]
+            vec!["round-1 user".to_string(), "round-1 assistant".to_string(),]
         );
         assert_eq!(
             tail_contents,
@@ -4278,77 +4349,43 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_recent_user_messages_for_compaction_skips_messages_already_retained() {
-        let summary = format!("{}\nsummary", i18n::t("history.compaction_prefix"));
+    fn test_collect_retained_interaction_messages_for_compaction_trims_large_block_to_budget() {
+        let large_assistant = "assistant detail ".repeat(8_000);
         let messages = vec![
             json!({ "role": "user", "content": "round-1 user" }),
-            json!({ "role": "assistant", "content": "round-1 assistant" }),
-            json!({ "role": "user", "content": summary }),
+            json!({ "role": "assistant", "content": large_assistant }),
+            json!({ "role": "user", "content": "round-2 user" }),
+            json!({ "role": "assistant", "content": "round-2 assistant" }),
         ];
 
-        let retained = collect_retained_interaction_segments_with_indexes_for_compaction(
-            &messages,
-            2,
-            COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
-            COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
-        );
-        let recent_users = collect_recent_user_messages_for_compaction_excluding(
-            &messages,
-            COMPACTION_USER_MESSAGE_WINDOW_TOKENS,
-            &retained.retained_indexes,
-        );
-
-        let head_contents = retained
-            .head_messages
-            .iter()
-            .map(|message| message["content"].as_str().unwrap_or("").to_string())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            head_contents,
-            vec!["round-1 user".to_string(), "round-1 assistant".to_string()]
-        );
-        assert!(recent_users.is_empty());
+        let retained = collect_retained_interaction_messages_for_compaction(&messages, 2, 256, 256);
+        assert_eq!(retained.len(), 4);
+        assert_eq!(retained[0]["content"], json!("round-1 user"));
+        assert_eq!(retained[2]["content"], json!("round-2 user"));
+        assert_eq!(retained[3]["content"], json!("round-2 assistant"));
+        assert!(estimate_message_tokens(&retained[1]) <= 256);
+        assert_ne!(retained[1]["content"], json!(large_assistant));
     }
 
     #[test]
-    fn test_collect_recent_user_messages_for_compaction_excludes_summary_and_observation() {
-        let summary = format!("{}\nsummary", i18n::t("history.compaction_prefix"));
-        let observation = format!("{OBSERVATION_PREFIX}{{\"tool\":\"read_file\"}}");
+    fn test_build_compaction_message_debug_entries_marks_summary_and_current_user() {
+        let mut current_user = json!({ "role": "user", "content": "current question" });
+        mark_current_user_message_inflight(&mut current_user);
         let messages = vec![
-            json!({ "role": "user", "content": summary }),
-            json!({ "role": "user", "content": observation }),
-            json!({ "role": "assistant", "content": "ok" }),
+            json!({
+                "role": "user",
+                "content": format!("{}\nsummary", i18n::t("history.compaction_prefix"))
+            }),
+            current_user,
         ];
-        let kept = collect_recent_user_messages_for_compaction(&messages, 1024);
-        assert!(kept.is_empty());
-    }
 
-    #[test]
-    fn test_collect_recent_user_messages_for_compaction_keeps_latest_user_window() {
-        let latest = json!({ "role": "user", "content": "latest question" });
-        let previous = json!({ "role": "user", "content": "B".repeat(800) });
-        let messages = vec![
-            json!({ "role": "assistant", "content": "answer" }),
-            previous.clone(),
-            latest.clone(),
-        ];
-        let limit = estimate_message_tokens(&latest).saturating_add(4);
-        let kept = collect_recent_user_messages_for_compaction(&messages, limit);
-        assert!(!kept.is_empty());
-        assert_eq!(kept.last(), Some(&latest));
-        assert!(kept.len() <= 2);
-    }
+        let debug = build_compaction_message_debug_entries(&messages);
 
-    #[test]
-    fn test_collect_recent_user_messages_for_compaction_trims_oversized_latest_user_message() {
-        let large = json!({ "role": "user", "content": "X".repeat(24_000) });
-        let messages = vec![large];
-        let token_limit = 512;
-        let kept = collect_recent_user_messages_for_compaction(&messages, token_limit);
-        assert_eq!(kept.len(), 1);
-        let kept_tokens = estimate_message_tokens(&kept[0]);
-        assert!(kept_tokens <= token_limit.max(1));
+        assert_eq!(debug.len(), 2);
+        assert_eq!(debug[0]["is_summary"], json!(true));
+        assert_eq!(debug[0]["is_current_user"], json!(false));
+        assert_eq!(debug[1]["is_summary"], json!(false));
+        assert_eq!(debug[1]["is_current_user"], json!(true));
     }
 
     #[test]

@@ -1,12 +1,16 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
-import { getSession, getSessionEvents, getSessionSubagents } from '@/api/chat';
+import { getSession, getSessionEvents, getSessionHistoryPage, getSessionSubagents } from '@/api/chat';
 import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasChatModel';
 import { resolveBeeroomDispatchPreviewStatus } from '@/components/beeroom/beeroomDispatchPreviewStatus';
 import {
   isBeeroomSwarmWorkerShadowItem,
   resolveBeeroomSwarmSubagentProjectionDecision
 } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import {
+  resolveBeeroomSwarmWorkerReplyFromHistoryMessages,
+  resolveBeeroomSwarmWorkerTerminalState
+} from '@/components/beeroom/beeroomSwarmWorkerShadowState';
 import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
   ACTIVE_BEEROOM_SUBAGENT_STATUSES,
@@ -344,6 +348,9 @@ const resolveDispatchLabel = (events: SessionEventRecord[], summary: string): st
   return clipText(summary, 42);
 };
 
+const buildSubagentIdentity = (item: Pick<BeeroomMissionSubagentItem, 'key' | 'sessionId' | 'runId'>) =>
+  normalizeText(item.runId || item.sessionId || item.key);
+
 const extractReplyTextFromEvents = (events: SessionEventRecord[]): string => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
@@ -366,17 +373,48 @@ const extractReplyTextFromEvents = (events: SessionEventRecord[]): string => {
   return '';
 };
 
-const resolveHydratedSwarmWorkerStatus = (options: {
-  currentStatus: string;
-  running: boolean;
-  workflowItems: Array<{ status?: string | null | undefined }>;
-}) => {
-  if (options.running) return 'running';
-  const tailStatus = normalizeText(options.workflowItems[options.workflowItems.length - 1]?.status).toLowerCase();
-  if (tailStatus === 'loading' || tailStatus === 'pending') {
-    return 'running';
+const extractReplyTextFromWorkflowItems = (
+  workflowItems: Array<{
+    eventType?: string | null | undefined;
+    title?: string | null | undefined;
+    detail?: string | null | undefined;
+  }>
+): string => {
+  for (let index = workflowItems.length - 1; index >= 0; index -= 1) {
+    const item = workflowItems[index];
+    const eventType = normalizeText(item?.eventType).toLowerCase();
+    if (eventType && eventType !== 'final' && eventType !== 'llm_output') {
+      continue;
+    }
+    const detailRecord = asRecord(item?.detail);
+    const structuredReply = normalizeText(
+      detailRecord?.answer ??
+        detailRecord?.content ??
+        detailRecord?.reply ??
+        detailRecord?.message ??
+        detailRecord?.text ??
+        detailRecord?.output ??
+        detailRecord?.final_reply
+    );
+    if (structuredReply) return structuredReply;
+    if (eventType === 'final') {
+      const detailText = normalizeText(item?.detail);
+      if (detailText) return detailText;
+    }
   }
-  return normalizeText(options.currentStatus).toLowerCase() || 'completed';
+  return '';
+};
+
+const mergeStickySwarmWorkerShadowItems = (
+  current: BeeroomMissionSubagentItem[],
+  sticky: BeeroomMissionSubagentItem[]
+) => {
+  const stickyOnly = sticky.filter((item) => {
+    const identity = buildSubagentIdentity(item);
+    if (!identity) return false;
+    return !current.some((candidate) => buildSubagentIdentity(candidate) === identity);
+  });
+  return mergeBeeroomMissionSubagentItems(current, stickyOnly);
 };
 
 const hydrateSwarmWorkerShadowItems = async (
@@ -399,23 +437,47 @@ const hydrateSwarmWorkerShadowItems = async (
           return item;
         }
         const workflowItems = buildSessionWorkflowItems(rounds, t);
-        const replyText = extractReplyTextFromEvents(events);
+        let replyText =
+          extractReplyTextFromEvents(events) || extractReplyTextFromWorkflowItems(workflowItems);
         const summary = resolveSummaryFromEvents(events);
         const updatedTime = Math.max(
           Number(item.updatedTime || 0),
           ...events.map((event) => resolveBeeroomSessionEventTimestamp(event))
         );
         const running = response?.data?.data?.running === true;
+        const terminalState = resolveBeeroomSwarmWorkerTerminalState({
+          currentStatus: item.status,
+          running,
+          events,
+          workflowItems
+        });
+        if (!replyText && terminalState.terminal) {
+          try {
+            const historyResponse = await getSessionHistoryPage(item.sessionId, { limit: 24 });
+            if (!signal.aborted) {
+              const historyMessages = Array.isArray(historyResponse?.data?.data?.messages)
+                ? historyResponse.data.data.messages
+                : [];
+              replyText = resolveBeeroomSwarmWorkerReplyFromHistoryMessages(historyMessages);
+            }
+          } catch (historyError) {
+            if ((historyError as { name?: string })?.name !== 'CanceledError' && (historyError as { name?: string })?.name !== 'AbortError') {
+              logDispatchPreview('hydrate-swarm-worker-shadow-history-error', {
+                sessionId: item.sessionId,
+                runId: item.runId,
+                error: summarizeDebugError(historyError)
+              });
+            }
+          }
+        }
         const next: BeeroomMissionSubagentItem = {
           ...item,
           assistantMessage: replyText || item.assistantMessage,
           summary: summary || item.summary,
           updatedTime,
-          status: resolveHydratedSwarmWorkerStatus({
-            currentStatus: item.status,
-            running,
-            workflowItems
-          }),
+          status: terminalState.status,
+          terminal: terminalState.terminal,
+          failed: terminalState.failed,
           workflowItems
         };
         logDispatchPreview('hydrate-swarm-worker-shadow-session', {
@@ -451,6 +513,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
   t: TranslationFn;
 }) => {
   const rawPreview = ref<BeeroomDispatchSessionPreview | null>(null);
+  const stickySwarmWorkerShadowItems = ref<Record<string, BeeroomMissionSubagentItem>>({});
   const logDispatchPreview = (event: string, payload?: unknown) => {
     chatDebugLog('beeroom.dispatch-preview', event, payload);
   };
@@ -493,6 +556,10 @@ export const useBeeroomDispatchSessionPreview = (options: {
       cancelActiveRequest();
       clearSyncTimer();
       return;
+    }
+
+    if (normalizeText(rawPreview.value?.sessionId) && normalizeText(rawPreview.value?.sessionId) !== sessionId) {
+      stickySwarmWorkerShadowItems.value = {};
     }
 
     if (!rawPreview.value || normalizeText(rawPreview.value.sessionId) !== sessionId) {
@@ -555,11 +622,20 @@ export const useBeeroomDispatchSessionPreview = (options: {
         latestTurnOnly: true
       });
       const mergedSubagents = mergeBeeroomMissionSubagentItems(liveSubagents, historicalSubagents);
+      const stickySubagents = Object.values(stickySwarmWorkerShadowItems.value || {}).filter((item) =>
+        isBeeroomSwarmWorkerShadowItem(item)
+      );
       const subagents = await hydrateSwarmWorkerShadowItems(
-        mergedSubagents,
+        mergeStickySwarmWorkerShadowItems(mergedSubagents, stickySubagents),
         controller.signal,
         options.t,
         logDispatchPreview
+      );
+      stickySwarmWorkerShadowItems.value = Object.fromEntries(
+        subagents
+          .filter((item) => isBeeroomSwarmWorkerShadowItem(item))
+          .map((item) => [buildSubagentIdentity(item), item])
+          .filter(([identity]) => Boolean(identity))
       );
       const canvasProjectableSubagents = subagents.filter((item) =>
         resolveBeeroomSwarmSubagentProjectionDecision(item).projectable

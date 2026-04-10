@@ -146,6 +146,9 @@ const visibleWorkflowLines = computed(() =>
 const workflowContainerRef = ref<HTMLElement | null>(null);
 const workflowStepsRef = ref<HTMLElement | null>(null);
 let workflowResizeObserver: ResizeObserver | null = null;
+let workflowTailFollowTimer: number | null = null;
+let workflowFollowRafPrimary: number | null = null;
+let workflowFollowRafSecondary: number | null = null;
 
 const workflowLineSignature = computed(() =>
   visibleWorkflowLines.value
@@ -163,6 +166,22 @@ const scrollWorkflowToBottom = () => {
   element.scrollTop = element.scrollHeight;
 };
 
+const clearWorkflowTailFollowSchedule = () => {
+  if (typeof window === 'undefined') return;
+  if (workflowTailFollowTimer !== null) {
+    window.clearTimeout(workflowTailFollowTimer);
+    workflowTailFollowTimer = null;
+  }
+  if (workflowFollowRafPrimary !== null) {
+    window.cancelAnimationFrame(workflowFollowRafPrimary);
+    workflowFollowRafPrimary = null;
+  }
+  if (workflowFollowRafSecondary !== null) {
+    window.cancelAnimationFrame(workflowFollowRafSecondary);
+    workflowFollowRafSecondary = null;
+  }
+};
+
 const releaseWorkflowResizeObserver = () => {
   if (workflowResizeObserver) {
     workflowResizeObserver.disconnect();
@@ -174,7 +193,19 @@ const scheduleWorkflowTailFollow = async () => {
   if (!shouldFollowWorkflowTail.value || !visibleWorkflowLines.value.length) return;
   await nextTick();
   if (typeof window !== 'undefined') {
-    window.requestAnimationFrame(scrollWorkflowToBottom);
+    clearWorkflowTailFollowSchedule();
+    workflowFollowRafPrimary = window.requestAnimationFrame(() => {
+      workflowFollowRafPrimary = null;
+      scrollWorkflowToBottom();
+      workflowFollowRafSecondary = window.requestAnimationFrame(() => {
+        workflowFollowRafSecondary = null;
+        scrollWorkflowToBottom();
+      });
+    });
+    workflowTailFollowTimer = window.setTimeout(() => {
+      workflowTailFollowTimer = null;
+      scrollWorkflowToBottom();
+    }, 42);
     return;
   }
   scrollWorkflowToBottom();
@@ -182,13 +213,19 @@ const scheduleWorkflowTailFollow = async () => {
 
 const attachWorkflowResizeObserver = () => {
   releaseWorkflowResizeObserver();
-  const element = workflowStepsRef.value;
-  if (!element || typeof ResizeObserver === 'undefined') return;
+  const stepsElement = workflowStepsRef.value;
+  const containerElement = workflowContainerRef.value;
+  if ((!stepsElement && !containerElement) || typeof ResizeObserver === 'undefined') return;
   workflowResizeObserver = new ResizeObserver(() => {
     if (!shouldFollowWorkflowTail.value || !visibleWorkflowLines.value.length) return;
-    scrollWorkflowToBottom();
+    void scheduleWorkflowTailFollow();
   });
-  workflowResizeObserver.observe(element);
+  if (stepsElement) {
+    workflowResizeObserver.observe(stepsElement);
+  }
+  if (containerElement) {
+    workflowResizeObserver.observe(containerElement);
+  }
 };
 
 watch(
@@ -215,11 +252,24 @@ watch(
   }
 );
 
+watch(
+  () => [props.node.id, props.node.workflowTone, props.node.height].join('|'),
+  async () => {
+    await scheduleWorkflowTailFollow();
+  },
+  {
+    flush: 'post',
+    immediate: true
+  }
+);
+
 onMounted(() => {
   attachWorkflowResizeObserver();
+  void scheduleWorkflowTailFollow();
 });
 
 onBeforeUnmount(() => {
+  clearWorkflowTailFollowSchedule();
   releaseWorkflowResizeObserver();
 });
 </script>

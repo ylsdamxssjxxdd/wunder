@@ -354,7 +354,12 @@ async fn execute_plan_tool(context: &ToolContext<'_>, args: &Value) -> Result<Va
             }),
         );
     }
-    Ok(json!({ "status": "ok" }))
+    Ok(build_model_tool_success(
+        "plan_update",
+        "completed",
+        "Updated the execution plan.",
+        json!({ "status": "ok" }),
+    ))
 }
 
 #[derive(Debug)]
@@ -484,11 +489,16 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
             }),
         );
     }
-    Ok(json!({
-        "question": question,
-        "routes": routes,
-        "multiple": payload.multiple
-    }))
+    Ok(build_model_tool_success(
+        "question_panel",
+        "awaiting_input",
+        "Opened a question panel and is waiting for user input.",
+        json!({
+            "question": question,
+            "routes": routes,
+            "multiple": payload.multiple
+        }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -552,13 +562,17 @@ async fn user_world_list_users(
             })
         })
         .collect::<Vec<_>>();
-    Ok(json!({
-        "action": "list_users",
-        "items": items,
-        "total": total,
-        "offset": offset,
-        "limit": limit
-    }))
+    Ok(build_model_tool_success(
+        "list_users",
+        "completed",
+        format!("Listed {total} users from user world."),
+        json!({
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit
+        }),
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -970,17 +984,21 @@ async fn user_world_send_message(
             "inserted": send_result.inserted
         }));
     }
-    Ok(json!({
-        "action": "send_message",
-        "results": results,
-        "staged_files": copied_files.iter().map(|item| {
-            json!({
-                "source_path": item.source_path,
-                "staged_path": item.staged_path,
-                "entry_type": item.entry_type
-            })
-        }).collect::<Vec<_>>()
-    }))
+    Ok(build_model_tool_success(
+        "send_message",
+        "completed",
+        format!("Processed {} user world message deliveries.", results.len()),
+        json!({
+            "results": results,
+            "staged_files": copied_files.iter().map(|item| {
+                json!({
+                    "source_path": item.source_path,
+                    "staged_path": item.staged_path,
+                    "entry_type": item.entry_type
+                })
+            }).collect::<Vec<_>>()
+        }),
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1086,12 +1104,16 @@ async fn execute_node_list(context: &ToolContext<'_>) -> Result<Value> {
             left_connection.cmp(right_connection)
         })
     });
-    Ok(json!({
-        "action": "list",
-        "state_version": snapshot.state_version,
-        "count": nodes.len(),
-        "nodes": nodes
-    }))
+    Ok(build_model_tool_success(
+        "list",
+        "completed",
+        format!("Listed {} gateway nodes.", nodes.len()),
+        json!({
+            "state_version": snapshot.state_version,
+            "count": nodes.len(),
+            "nodes": nodes
+        }),
+    ))
 }
 
 async fn execute_node_invoke_action(
@@ -1117,12 +1139,16 @@ async fn execute_node_invoke_action(
         })
         .await?;
     if result.ok {
-        Ok(json!({
-            "action": "invoke",
-            "node_id": node_id,
-            "command": command,
-            "result": result.payload
-        }))
+        Ok(build_model_tool_success(
+            "invoke",
+            "completed",
+            format!("Invoked command {command} on node {node_id}."),
+            json!({
+                "node_id": node_id,
+                "command": command,
+                "result": result.payload
+            }),
+        ))
     } else {
         let message = result
             .error
@@ -1733,15 +1759,19 @@ async fn dispatch_swarm_batch_task(
     )
     .await?;
 
-    Ok(json!({
-        "status": "accepted",
-        "task_id": task.team_task_id,
-        "run_id": run_id,
-        "session_id": task.session_id,
-        "agent_id": task.agent_id,
-        "agent_name": task.agent_name,
-        "created_session": task.created_session,
-    }))
+    Ok(build_model_tool_success(
+        "spawn",
+        "accepted",
+        format!("Spawned swarm task {}.", task.team_task_id),
+        json!({
+            "task_id": task.team_task_id,
+            "run_id": run_id,
+            "session_id": task.session_id,
+            "agent_id": task.agent_id,
+            "agent_name": task.agent_name,
+            "created_session": task.created_session,
+        }),
+    ))
 }
 
 fn claim_swarm_mother_for_context(
@@ -2047,7 +2077,12 @@ async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Val
             break;
         }
     }
-    Ok(json!({ "total": items.len(), "items": items }))
+    Ok(build_model_tool_success(
+        "list",
+        "completed",
+        format!("Listed {} swarm workers.", items.len()),
+        json!({ "total": items.len(), "items": items }),
+    ))
 }
 
 async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2100,24 +2135,29 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
             "active": active_set.contains(&record.session_id),
         }));
     }
-    Ok(json!({
-        "agent": {
-            "agent_id": agent.agent_id,
-            "hive_id": normalize_hive_id(&agent.hive_id),
-            "name": agent.name,
-            "description": agent.description,
-            "status": agent.status,
-            "is_shared": agent.is_shared,
-            "access_level": agent.access_level,
-            "updated_at": format_ts(agent.updated_at),
-        },
-        "session_total": session_total,
-        "active_session_total": active_session_ids.len(),
-        "running_session_total": runtime.map(|entry| entry.running_sessions.len()).unwrap_or(0),
-        "lock_session_total": runtime.map(|entry| entry.lock_sessions.len()).unwrap_or(0),
-        "active_session_ids": active_session_ids,
-        "recent_sessions": recent_sessions,
-    }))
+    Ok(build_model_tool_success(
+        "status",
+        "completed",
+        format!("Loaded swarm status for {}.", agent.name),
+        json!({
+            "agent": {
+                "agent_id": agent.agent_id,
+                "hive_id": normalize_hive_id(&agent.hive_id),
+                "name": agent.name,
+                "description": agent.description,
+                "status": agent.status,
+                "is_shared": agent.is_shared,
+                "access_level": agent.access_level,
+                "updated_at": format_ts(agent.updated_at),
+            },
+            "session_total": session_total,
+            "active_session_total": active_session_ids.len(),
+            "running_session_total": runtime.map(|entry| entry.running_sessions.len()).unwrap_or(0),
+            "lock_session_total": runtime.map(|entry| entry.lock_sessions.len()).unwrap_or(0),
+            "active_session_ids": active_session_ids,
+            "recent_sessions": recent_sessions,
+        }),
+    ))
 }
 
 async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -3784,7 +3824,12 @@ async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         }
         items.push(item);
     }
-    Ok(json!({ "total": total, "items": items }))
+    Ok(build_model_tool_success(
+        "list",
+        "completed",
+        format!("Listed {total} sessions."),
+        json!({ "total": total, "items": items }),
+    ))
 }
 
 async fn sessions_history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -3809,7 +3854,16 @@ async fn sessions_history(context: &ToolContext<'_>, args: &Value) -> Result<Val
         include_tools,
     )
     .await;
-    Ok(json!({ "session_id": session_id, "messages": messages }))
+    Ok(build_model_tool_success(
+        "history",
+        "completed",
+        format!(
+            "Loaded {} messages from session {}.",
+            messages.len(),
+            session_id
+        ),
+        json!({ "session_id": session_id, "messages": messages }),
+    ))
 }
 
 fn normalize_tool_run_state(status: &str) -> String {
@@ -5257,11 +5311,16 @@ async fn execute_user_mcp_tool(
     {
         return Err(anyhow!(i18n::t("tool.invoke.mcp_result_error")));
     }
-    Ok(json!({
-        "server": server_name,
-        "tool": tool_name,
-        "result": result
-    }))
+    Ok(build_model_tool_success(
+        "mcp_call",
+        "completed",
+        format!("Called MCP tool {tool_name}@{server_name}."),
+        json!({
+            "server": server_name,
+            "tool": tool_name,
+            "result": result
+        }),
+    ))
 }
 
 async fn execute_user_knowledge(
@@ -5335,10 +5394,15 @@ async fn execute_user_knowledge(
         .into_iter()
         .map(|doc| doc.to_value())
         .collect::<Vec<_>>();
-    Ok(json!({
-        "knowledge_base": base.name,
-        "documents": documents
-    }))
+    Ok(build_knowledge_tool_success(
+        &base.name,
+        Some(&query),
+        &[],
+        None,
+        false,
+        documents,
+        None,
+    ))
 }
 
 async fn execute_knowledge_tool(
@@ -5387,10 +5451,15 @@ async fn execute_knowledge_tool(
         .into_iter()
         .map(|doc| doc.to_value())
         .collect::<Vec<_>>();
-    Ok(json!({
-        "knowledge_base": base.name,
-        "documents": documents
-    }))
+    Ok(build_knowledge_tool_success(
+        &base.name,
+        Some(&query),
+        &[],
+        None,
+        false,
+        documents,
+        None,
+    ))
 }
 
 async fn execute_vector_knowledge(
@@ -5507,25 +5576,29 @@ async fn execute_vector_knowledge(
             "documents": documents
         }));
     }
-    let mut response = json!({
-        "knowledge_base": base.name,
-        "vector": true,
-        "embedding_model": embedding_name.clone(),
-        "queries": grouped_results
-    });
-    if queries.len() == 1 {
-        if let Some(entry) = response
-            .get("queries")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
+    let documents = if queries.len() == 1 {
+        grouped_results
+            .first()
             .and_then(|value| value.get("documents"))
-        {
-            response["documents"] = entry.clone();
-        }
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     } else {
-        response["documents"] = json!(flat_documents);
-    }
-    Ok(response)
+        flat_documents
+    };
+    Ok(build_knowledge_tool_success(
+        &base.name,
+        if query.is_empty() {
+            None
+        } else {
+            Some(query.as_str())
+        },
+        &queries,
+        Some(embedding_name.as_str()),
+        true,
+        documents,
+        (queries.len() > 1).then_some(grouped_results),
+    ))
 }
 
 fn split_mcp_target(target: &str) -> Option<(&str, &str)> {
@@ -5546,6 +5619,105 @@ fn find_knowledge_base(config: &Config, name: &str) -> Option<KnowledgeBaseConfi
         .iter()
         .find(|base| base.enabled && base.name == name && !base.root.trim().is_empty())
         .cloned()
+}
+
+fn compact_knowledge_document_for_model(item: &Value) -> Value {
+    json!({
+        "document": item.get("document").cloned().unwrap_or(Value::Null),
+        "name": item.get("name").cloned().unwrap_or(Value::Null),
+        "section_path": item.get("section_path").cloned().unwrap_or(Value::Null),
+        "content": item.get("content").cloned().unwrap_or(Value::Null),
+        "score": item.get("score").cloned().unwrap_or(Value::Null),
+        "reason": item.get("reason").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn compact_vector_knowledge_document_for_model(item: &Value) -> Value {
+    json!({
+        "doc_id": item.get("doc_id").cloned().unwrap_or(Value::Null),
+        "document": item.get("document").cloned().unwrap_or(Value::Null),
+        "chunk_index": item.get("chunk_index").cloned().unwrap_or(Value::Null),
+        "start": item.get("start").cloned().unwrap_or(Value::Null),
+        "end": item.get("end").cloned().unwrap_or(Value::Null),
+        "content": item.get("content").cloned().unwrap_or(Value::Null),
+        "score": item.get("score").cloned().unwrap_or(Value::Null),
+        "keyword": item.get("keyword").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn build_knowledge_tool_success(
+    base_name: &str,
+    query: Option<&str>,
+    queries: &[String],
+    embedding_model: Option<&str>,
+    vector: bool,
+    documents: Vec<Value>,
+    grouped_queries: Option<Vec<Value>>,
+) -> Value {
+    let compact_documents = documents
+        .iter()
+        .map(|item| {
+            if vector {
+                compact_vector_knowledge_document_for_model(item)
+            } else {
+                compact_knowledge_document_for_model(item)
+            }
+        })
+        .collect::<Vec<_>>();
+    let count = compact_documents.len();
+    let mut data = json!({
+        "knowledge_base": base_name,
+        "vector": vector,
+        "count": count,
+        "documents": compact_documents,
+    });
+    if let Some(map) = data.as_object_mut() {
+        if let Some(query) = query.map(str::trim).filter(|value| !value.is_empty()) {
+            map.insert("query".to_string(), Value::String(query.to_string()));
+        }
+        if queries.len() > 1 {
+            map.insert("keywords".to_string(), json!(queries));
+        }
+        if let Some(embedding_model) = embedding_model
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert(
+                "embedding_model".to_string(),
+                Value::String(embedding_model.to_string()),
+            );
+        }
+        if let Some(grouped_queries) = grouped_queries {
+            let compact_queries = grouped_queries
+                .into_iter()
+                .map(|entry| {
+                    json!({
+                        "keyword": entry.get("keyword").cloned().unwrap_or(Value::Null),
+                        "documents": entry
+                            .get("documents")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items.iter()
+                                    .map(compact_vector_knowledge_document_for_model)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            map.insert("queries".to_string(), json!(compact_queries));
+        }
+    }
+    build_model_tool_success_with_hint(
+        "knowledge",
+        "completed",
+        format!("Retrieved {count} knowledge snippets from {base_name}."),
+        data,
+        (count == 0).then(|| {
+            "No matching knowledge snippets were found. Refine the query or try narrower keywords."
+                .to_string()
+        }),
+    )
 }
 
 fn extract_keywords(args: &Value) -> Vec<String> {
@@ -5812,6 +5984,34 @@ struct CommandRunResult {
     stdout_capture: CommandOutputCaptureMeta,
     stderr_capture: CommandOutputCaptureMeta,
     command_session_id: Option<String>,
+}
+
+fn compact_command_result_for_model(item: &Value) -> Value {
+    let output_meta = item.get("output_meta").and_then(Value::as_object);
+    json!({
+        "command": item.get("command").cloned().unwrap_or(Value::Null),
+        "command_index": item.get("command_index").cloned().unwrap_or(Value::Null),
+        "command_session_id": item.get("command_session_id").cloned().unwrap_or(Value::Null),
+        "returncode": item.get("returncode").cloned().unwrap_or(Value::Null),
+        "stdout": item.get("stdout").cloned().unwrap_or(Value::Null),
+        "stderr": item.get("stderr").cloned().unwrap_or(Value::Null),
+        "truncated": output_meta
+            .and_then(|meta| meta.get("truncated"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "total_bytes": output_meta
+            .and_then(|meta| meta.get("total_bytes"))
+            .cloned()
+            .unwrap_or(Value::Null),
+        "omitted_bytes": output_meta
+            .and_then(|meta| meta.get("omitted_bytes"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    })
+}
+
+fn compact_command_results_for_model(items: &[Value]) -> Vec<Value> {
+    items.iter().map(compact_command_result_for_model).collect()
 }
 
 async fn join_output_task(
@@ -6450,25 +6650,24 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         }
     }
     if dry_run {
-        return Ok(json!({
-            "ok": true,
-            "data": {
+        return Ok(build_model_tool_success(
+            "execute_command",
+            "dry_run",
+            "Validated command plan without execution.",
+            json!({
                 "dry_run": true,
                 "workdir": cwd.to_string_lossy().to_string(),
                 "command_count": commands.len(),
                 "commands": commands,
                 "timeout_s": timeout_s,
                 "budget": command_budget.to_json(),
-            },
-            "error": "",
-            "meta": {
                 "output_guard": {
                     "default_total_bytes": DEFAULT_CAPTURE_TOTAL_BYTES,
                     "effective_total_bytes": effective_output_budget_bytes,
-                }
-            },
-            "sandbox": false,
-        }));
+                },
+                "sandbox": false,
+            }),
+        ));
     }
     for (command_index, command) in commands.into_iter().enumerate() {
         if command.trim().is_empty() {
@@ -6562,16 +6761,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                     &HashMap::from([("detail".to_string(), detail)]),
                 ),
                 json!({
-                    "results": results,
-                    "meta": {
-                        "output_guard": {
-                            "truncated": guarded_truncated_commands > 0,
-                            "commands": guarded_total_commands,
-                            "truncated_commands": guarded_truncated_commands,
-                            "total_bytes": guarded_total_bytes,
-                            "omitted_bytes": guarded_omitted_bytes,
-                            "effective_total_bytes": effective_output_budget_bytes,
-                        }
+                    "results": compact_command_results_for_model(&results),
+                    "output_guard": {
+                        "truncated": guarded_truncated_commands > 0,
+                        "commands": guarded_total_commands,
+                        "truncated_commands": guarded_truncated_commands,
+                        "total_bytes": guarded_total_bytes,
+                        "omitted_bytes": guarded_omitted_bytes,
+                        "effective_total_bytes": effective_output_budget_bytes,
                     }
                 }),
                 ToolErrorMeta::new(
@@ -6591,16 +6788,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             return Ok(build_failed_tool_result(
                 i18n::t("tool.exec.failed"),
                 json!({
-                    "results": results,
-                    "meta": {
-                        "output_guard": {
-                            "truncated": guarded_truncated_commands > 0,
-                            "commands": guarded_total_commands,
-                            "truncated_commands": guarded_truncated_commands,
-                            "total_bytes": guarded_total_bytes,
-                            "omitted_bytes": guarded_omitted_bytes,
-                            "effective_total_bytes": effective_output_budget_bytes,
-                        }
+                    "results": compact_command_results_for_model(&results),
+                    "output_guard": {
+                        "truncated": guarded_truncated_commands > 0,
+                        "commands": guarded_total_commands,
+                        "truncated_commands": guarded_truncated_commands,
+                        "total_bytes": guarded_total_bytes,
+                        "omitted_bytes": guarded_omitted_bytes,
+                        "effective_total_bytes": effective_output_budget_bytes,
                     }
                 }),
                 ToolErrorMeta::new(
@@ -6614,12 +6809,13 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         }
     }
     context.workspace.mark_tree_dirty(context.workspace_id);
-    Ok(json!({
-        "ok": true,
-        "data": { "results": results },
-        "error": "",
-        "budget": command_budget.to_json(),
-        "meta": {
+    Ok(build_model_tool_success_with_hint(
+        "execute_command",
+        "completed",
+        format!("Executed {guarded_total_commands} commands."),
+        json!({
+            "results": compact_command_results_for_model(&results),
+            "budget": command_budget.to_json(),
             "output_guard": {
                 "truncated": guarded_truncated_commands > 0,
                 "commands": guarded_total_commands,
@@ -6627,10 +6823,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "total_bytes": guarded_total_bytes,
                 "omitted_bytes": guarded_omitted_bytes,
                 "effective_total_bytes": effective_output_budget_bytes,
-            }
-        },
-        "sandbox": false,
-    }))
+            },
+            "sandbox": false,
+        }),
+        (guarded_truncated_commands > 0).then(|| {
+            "Command output was truncated by the output guard. Narrow the command or raise output_budget_bytes only if needed."
+                .to_string()
+        }),
+    ))
 }
 
 fn normalize_ptc_script_name(raw_filename: &str) -> std::result::Result<PathBuf, &'static str> {
@@ -6659,15 +6859,23 @@ fn normalize_ptc_script_name(raw_filename: &str) -> std::result::Result<PathBuf,
 }
 
 fn build_ptc_exec_error(detail: impl Into<String>) -> Value {
-    json!({
-        "ok": false,
-        "data": {},
-        "error": i18n::t_with_params(
+    build_failed_tool_result(
+        i18n::t_with_params(
             "tool.ptc.exec_error",
             &HashMap::from([("detail".to_string(), detail.into())]),
         ),
-        "sandbox": false,
-    })
+        json!({}),
+        ToolErrorMeta::new(
+            "TOOL_PTC_EXEC_ERROR",
+            Some(
+                "Inspect stderr/stdout and the saved script path, then fix the Python script or workdir."
+                    .to_string(),
+            ),
+            false,
+            None,
+        ),
+        false,
+    )
 }
 
 fn recover_tool_args_value(args: &Value) -> Value {
@@ -6699,24 +6907,37 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let script_name = match normalize_ptc_script_name(filename) {
         Ok(name) => name,
         Err(key) => {
-            return Ok(json!({
-                "ok": false,
-                "data": {},
-                "error": i18n::t(key),
-                "sandbox": false,
-            }));
+            return Ok(build_failed_tool_result(
+                i18n::t(key),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_PTC_INVALID_FILENAME",
+                    Some(
+                        "Use a simple Python filename like helper.py without path separators."
+                            .to_string(),
+                    ),
+                    false,
+                    None,
+                ),
+                false,
+            ));
         }
     };
 
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
     if content.trim().is_empty() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.ptc.content_required"),
-            "sandbox": false,
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.ptc.content_required"),
+            json!({}),
+            ToolErrorMeta::new(
+                "TOOL_PTC_CONTENT_REQUIRED",
+                Some("Provide the full Python script content in content.".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
 
     let content = context
@@ -6789,32 +7010,45 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 
     if output.timed_out {
         let detail = format!("timeout after {}s", LOCAL_PTC_TIMEOUT_S);
-        return Ok(json!({
-            "ok": false,
-            "data": data,
-            "error": i18n::t_with_params(
+        return Ok(build_failed_tool_result(
+            i18n::t_with_params(
                 "tool.ptc.exec_error",
                 &HashMap::from([("detail".to_string(), detail)]),
             ),
-            "sandbox": false,
-        }));
+            data,
+            ToolErrorMeta::new(
+                "TOOL_PTC_TIMEOUT",
+                Some(
+                    "Shorten the script, reduce external waits, or switch to execute_command for simpler shell work."
+                        .to_string(),
+                ),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
 
     if output.returncode != 0 {
-        return Ok(json!({
-            "ok": false,
-            "data": data,
-            "error": i18n::t("tool.ptc.exec_failed"),
-            "sandbox": false,
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.ptc.exec_failed"),
+            data,
+            ToolErrorMeta::new(
+                "TOOL_PTC_EXEC_FAILED",
+                Some("Inspect stderr and fix the Python script before retrying.".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
 
-    Ok(json!({
-        "ok": true,
-        "data": data,
-        "error": "",
-        "sandbox": false,
-    }))
+    Ok(build_model_tool_success(
+        "ptc",
+        "completed",
+        format!("Executed Python script {}.", script_path.display()),
+        data,
+    ))
 }
 
 async fn list_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -6951,11 +7185,20 @@ fn list_files_inner(
 ) -> Result<Value> {
     let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
     if !root.exists() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.list.path_not_found")
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.list.path_not_found"),
+            json!({ "path": path }),
+            ToolErrorMeta::new(
+                "TOOL_LIST_PATH_NOT_FOUND",
+                Some(
+                    "Use a directory path that exists under the current workspace or allowed roots."
+                        .to_string(),
+                ),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
     let mut items = Vec::new();
     let mut seen_entries: usize = 0;
@@ -7012,16 +7255,26 @@ fn list_files_inner(
     let returned = items.len();
     let next_offset = page_start.saturating_add(returned);
     let next_cursor = has_more.then(|| next_offset.to_string());
-    Ok(json!({
-        "items": items,
-        "cursor": page_start.to_string(),
-        "offset": page_start,
-        "limit": page_limit,
-        "returned": returned,
-        "has_more": has_more,
-        "next_offset": has_more.then_some(next_offset),
-        "next_cursor": next_cursor,
-    }))
+    Ok(build_model_tool_success_with_hint(
+        "list_files",
+        "completed",
+        format!("Listed {returned} entries from {path}."),
+        json!({
+            "path": path,
+            "items": items,
+            "offset": page_start,
+            "limit": page_limit,
+            "returned": returned,
+            "has_more": has_more,
+            "next_offset": has_more.then_some(next_offset),
+            "next_cursor": next_cursor,
+            "max_depth": max_depth,
+        }),
+        has_more.then(|| {
+            "More entries are available. Reuse next_cursor to continue listing the same directory."
+                .to_string()
+        }),
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -7543,6 +7796,26 @@ fn summary_requires_read_continuation(summary: &Value) -> bool {
     used_default_range && read_lines > 0 && total_lines > read_lines
 }
 
+fn compact_read_file_summary_for_model(summary: &Value) -> Value {
+    json!({
+        "path": summary.get("path").cloned().unwrap_or(Value::Null),
+        "mode": summary.get("mode").cloned().unwrap_or(Value::Null),
+        "requested_ranges": summary.get("requested_ranges").cloned().unwrap_or(Value::Null),
+        "effective_ranges": summary.get("effective_ranges").cloned().unwrap_or(Value::Null),
+        "used_default_range": summary.get("used_default_range").cloned().unwrap_or(Value::Null),
+        "exists": summary.get("exists").cloned().unwrap_or(Value::Null),
+        "binary": summary.get("binary").cloned().unwrap_or(Value::Null),
+        "mime_type": summary.get("mime_type").cloned().unwrap_or(Value::Null),
+        "size_bytes": summary.get("size_bytes").cloned().unwrap_or(Value::Null),
+        "read_lines": summary.get("read_lines").cloned().unwrap_or(Value::Null),
+        "total_lines": summary.get("total_lines").cloned().unwrap_or(Value::Null),
+        "request_satisfied": summary.get("request_satisfied").cloned().unwrap_or(Value::Null),
+        "complete": summary.get("complete").cloned().unwrap_or(Value::Null),
+        "truncated_by_size": summary.get("truncated_by_size").cloned().unwrap_or(Value::Null),
+        "error": summary.get("error").cloned().unwrap_or(Value::Null),
+    })
+}
+
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
     let dry_run = parse_dry_run(&args);
@@ -7883,30 +8156,21 @@ fn read_files_inner(
     let continuation_required =
         output_budget_hit || summaries.iter().any(summary_requires_read_continuation);
     let processed_files = summaries.len();
-    let scope = json!({
-        "kind": "workspace_local",
-        "local_only": true,
-        "supports_web": false,
-    });
-    let scope_note = "Reads local workspace text files only. It does not fetch web pages and should not be used for images, PDFs, Office documents, archives, audio/video, or other binary files.";
     let mut data = json!({
         "content": result,
-        "scope": scope,
-        "scope_note": scope_note,
-        "meta": {
-            "files": summaries,
-            "read": {
-                "dry_run": dry_run,
-                "requested_files": requested_files,
-                "processed_files": processed_files,
-                "budget_file_limit_hit": budget_file_limit_hit,
-                "timeout_hit": timeout_hit,
-                "output_budget_hit": output_budget_hit,
-                "output_budget_omitted_bytes": output_budget_omitted_bytes,
-                "content_bytes_before_budget": bytes_before_budget,
-                "budget": budget.to_json(),
-            }
-        }
+        "files": summaries
+            .iter()
+            .map(compact_read_file_summary_for_model)
+            .collect::<Vec<_>>(),
+        "dry_run": dry_run,
+        "requested_files": requested_files,
+        "processed_files": processed_files,
+        "budget_file_limit_hit": budget_file_limit_hit,
+        "timeout_hit": timeout_hit,
+        "output_budget_hit": output_budget_hit,
+        "output_budget_omitted_bytes": output_budget_omitted_bytes,
+        "content_bytes_before_budget": bytes_before_budget,
+        "budget": budget.to_json(),
     });
     if continuation_required {
         data["continuation_required"] = Value::Bool(true);
@@ -7925,7 +8189,17 @@ fn read_files_inner(
             false,
         ));
     }
-    Ok(data)
+    Ok(build_model_tool_success_with_hint(
+        "read_file",
+        if dry_run { "dry_run" } else { "completed" },
+        if dry_run {
+            format!("Validated {processed_files} file read targets without reading content.")
+        } else {
+            format!("Read {processed_files} files.")
+        },
+        data,
+        continuation_required.then(|| i18n::t("tool.read.continuation_hint")),
+    ))
 }
 
 fn classify_read_failure(failures: &[ReadFailure]) -> (&'static str, String) {
@@ -8053,14 +8327,19 @@ async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<V
     let path = absolute_path_string_from_text(&spec.path);
     let root = absolute_path_string(&spec.root);
     let content = render_skill_markdown_for_model(&content, &root);
-    Ok(json!({
-        "name": spec.name,
-        "description": spec.description,
-        "path": path,
-        "root": root,
-        "skill_md": content,
-        "tree": tree
-    }))
+    Ok(build_model_tool_success(
+        "skill_call",
+        "completed",
+        format!("Loaded skill {}.", spec.name),
+        json!({
+            "name": spec.name,
+            "description": spec.description,
+            "path": path,
+            "root": root,
+            "content": content,
+            "tree": tree
+        }),
+    ))
 }
 
 fn build_skill_tree(root: &Path) -> Vec<String> {
@@ -8358,16 +8637,26 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     } else {
         touch_lsp_file(context, &write_outcome.target, true).await
     };
-    Ok(json!({
-        "ok": true,
-        "path": path,
-        "bytes": bytes,
-        "dry_run": dry_run,
-        "existed": write_outcome.existed,
-        "previous_bytes": write_outcome.previous_bytes,
-        "target": write_outcome.target.to_string_lossy().to_string(),
-        "lsp": lsp_info
-    }))
+    Ok(build_model_tool_success(
+        "write_file",
+        if dry_run { "dry_run" } else { "completed" },
+        if dry_run {
+            format!("Validated write target for {path} without writing content.")
+        } else if write_outcome.existed {
+            format!("Updated file {path}.")
+        } else {
+            format!("Created file {path}.")
+        },
+        json!({
+            "path": path,
+            "bytes": bytes,
+            "dry_run": dry_run,
+            "existed": write_outcome.existed,
+            "previous_bytes": write_outcome.previous_bytes,
+            "target": write_outcome.target.to_string_lossy().to_string(),
+            "lsp": lsp_info
+        }),
+    ))
 }
 
 async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -8562,12 +8851,21 @@ async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             },
         )
         .await?;
-    Ok(json!({
-        "ok": true,
-        "operation": operation,
-        "path": path,
-        "results": results
-    }))
+    Ok(build_model_tool_success_with_hint(
+        "lsp_query",
+        "completed",
+        format!("Ran LSP {operation} on {path} across {} servers.", results.len()),
+        json!({
+            "operation": operation,
+            "path": path,
+            "results": results,
+            "server_count": results.len(),
+        }),
+        results.is_empty().then(|| {
+            "No LSP servers returned a result for this file. Check server availability or file type support."
+                .to_string()
+        }),
+    ))
 }
 
 fn normalize_lsp_operation_key(raw: &str) -> String {
@@ -8618,6 +8916,55 @@ struct A2aTaskInfo {
 struct A2aObserveSnapshot {
     tasks: Vec<A2aTaskSnapshot>,
     pending: Vec<A2aTaskSnapshot>,
+}
+
+fn build_a2a_snapshot_success(
+    action: &str,
+    snapshot: &A2aObserveSnapshot,
+    elapsed_s: Option<f64>,
+    timed_out: bool,
+) -> Value {
+    let done = snapshot.pending.is_empty();
+    let total = snapshot.tasks.len();
+    let pending = snapshot.pending.len();
+    let mut data = json!({
+        "tasks": snapshot.tasks.iter().map(A2aTaskSnapshot::to_value).collect::<Vec<_>>(),
+        "pending": snapshot.pending.iter().map(A2aTaskSnapshot::to_value).collect::<Vec<_>>(),
+        "done": done,
+        "total": total,
+        "pending_total": pending,
+    });
+    if let Some(map) = data.as_object_mut() {
+        if let Some(elapsed_s) = elapsed_s {
+            map.insert("elapsed_s".to_string(), json!(elapsed_s));
+        }
+        if action == "a2a_wait" {
+            map.insert("timeout".to_string(), Value::Bool(timed_out));
+        }
+    }
+    let summary = if action == "a2a_wait" {
+        if done {
+            format!("All {total} A2A tasks finished.")
+        } else if timed_out {
+            format!("{pending} of {total} A2A tasks are still pending after waiting.")
+        } else {
+            format!("{pending} of {total} A2A tasks are still pending.")
+        }
+    } else if done {
+        format!("Observed {total} A2A tasks; all finished.")
+    } else {
+        format!("Observed {total} A2A tasks; {pending} still pending.")
+    };
+    build_model_tool_success_with_hint(
+        action,
+        if done { "completed" } else { "running" },
+        summary,
+        data,
+        (!done).then(|| {
+            "Call a2a_wait again or inspect the pending tasks before assuming the A2A workflow is complete."
+                .to_string()
+        }),
+    )
 }
 
 fn is_a2a_service_tool(name: &str) -> bool {
@@ -8705,25 +9052,33 @@ async fn execute_a2a_service(context: &ToolContext<'_>, name: &str, args: &Value
         updated_time: now,
         answer: info.answer.clone().unwrap_or_default(),
     });
-    Ok(json!({
-        "endpoint": service.endpoint,
-        "service_name": service.name,
-        "task_id": info.id,
-        "context_id": info.context_id,
-        "status": info.status,
-        "answer": info.answer,
-    }))
+    Ok(build_model_tool_success(
+        "a2a_send",
+        "accepted",
+        format!(
+            "Submitted task {} to A2A service {}.",
+            info.id, service.name
+        ),
+        json!({
+            "endpoint": service.endpoint,
+            "service_name": service.name,
+            "task_id": info.id,
+            "context_id": info.context_id,
+            "status": info.status,
+            "answer": info.answer,
+        }),
+    ))
 }
 
 /// 观察 A2A 任务状态并返回快照。
 async fn a2a_observe(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let snapshot = a2a_observe_snapshot(context, args).await?;
-    Ok(json!({
-        "tasks": snapshot.tasks.iter().map(|item| item.to_value()).collect::<Vec<_>>(),
-        "pending": snapshot.pending.iter().map(|item| item.to_value()).collect::<Vec<_>>(),
-        "done": snapshot.pending.is_empty(),
-        "total": snapshot.tasks.len(),
-    }))
+    Ok(build_a2a_snapshot_success(
+        "a2a_observe",
+        &snapshot,
+        None,
+        false,
+    ))
 }
 
 /// 等待 A2A 任务完成或达到超时时间。
@@ -8761,14 +9116,14 @@ async fn a2a_wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         last_snapshot = a2a_observe_snapshot(context, args).await?;
     }
     let elapsed = start.elapsed().as_secs_f64();
-    Ok(json!({
-        "tasks": last_snapshot.tasks.iter().map(|item| item.to_value()).collect::<Vec<_>>(),
-        "pending": last_snapshot.pending.iter().map(|item| item.to_value()).collect::<Vec<_>>(),
-        "done": last_snapshot.pending.is_empty(),
-        "total": last_snapshot.tasks.len(),
-        "elapsed_s": (elapsed * 1000.0).round() / 1000.0,
-        "timeout": !last_snapshot.pending.is_empty() && timeout_s > 0.0 && elapsed >= timeout_s,
-    }))
+    let elapsed_s = (elapsed * 1000.0).round() / 1000.0;
+    let timed_out = !last_snapshot.pending.is_empty() && timeout_s > 0.0 && elapsed >= timeout_s;
+    Ok(build_a2a_snapshot_success(
+        "a2a_wait",
+        &last_snapshot,
+        Some(elapsed_s),
+        timed_out,
+    ))
 }
 
 async fn a2a_observe_snapshot(
@@ -9453,48 +9808,48 @@ mod tests {
         let page1 = list_files_inner(&workspace, "admin", ".", &[], 1, 0, 2).expect("page1");
         assert_eq!(
             page1
-                .pointer("/items")
+                .pointer("/data/items")
                 .and_then(Value::as_array)
                 .map(|v| v.len()),
             Some(2)
         );
         assert_eq!(
-            page1.pointer("/next_cursor").and_then(Value::as_str),
+            page1.pointer("/data/next_cursor").and_then(Value::as_str),
             Some("2")
         );
         assert_eq!(
-            page1.pointer("/has_more").and_then(Value::as_bool),
+            page1.pointer("/data/has_more").and_then(Value::as_bool),
             Some(true)
         );
 
         let page2 = list_files_inner(&workspace, "admin", ".", &[], 1, 2, 2).expect("page2");
         assert_eq!(
             page2
-                .pointer("/items")
+                .pointer("/data/items")
                 .and_then(Value::as_array)
                 .map(|v| v.len()),
             Some(2)
         );
         assert_eq!(
-            page2.pointer("/next_cursor").and_then(Value::as_str),
+            page2.pointer("/data/next_cursor").and_then(Value::as_str),
             Some("4")
         );
         assert_eq!(
-            page2.pointer("/has_more").and_then(Value::as_bool),
+            page2.pointer("/data/has_more").and_then(Value::as_bool),
             Some(true)
         );
 
         let page3 = list_files_inner(&workspace, "admin", ".", &[], 1, 4, 2).expect("page3");
         assert_eq!(
             page3
-                .pointer("/items")
+                .pointer("/data/items")
                 .and_then(Value::as_array)
                 .map(|v| v.len()),
             Some(1)
         );
-        assert_eq!(page3.pointer("/next_cursor"), Some(&Value::Null));
+        assert_eq!(page3.pointer("/data/next_cursor"), Some(&Value::Null));
         assert_eq!(
-            page3.pointer("/has_more").and_then(Value::as_bool),
+            page3.pointer("/data/has_more").and_then(Value::as_bool),
             Some(false)
         );
     }
@@ -9788,12 +10143,12 @@ mod tests {
         assert_ne!(value.get("ok").and_then(Value::as_bool), Some(false));
         assert_eq!(
             value
-                .pointer("/meta/files/0/truncated_by_size")
+                .pointer("/data/files/0/truncated_by_size")
                 .and_then(Value::as_bool),
             Some(true)
         );
         let body = value
-            .pointer("/content")
+            .pointer("/data/content")
             .and_then(Value::as_str)
             .expect("content should exist");
         assert!(body.contains("line 00001"));
@@ -9842,20 +10197,166 @@ mod tests {
         .expect("read files result");
 
         assert_eq!(
-            value.get("continuation_required").and_then(Value::as_bool),
-            Some(true)
-        );
-        assert_eq!(
             value
-                .pointer("/meta/files/0/request_satisfied")
+                .pointer("/data/continuation_required")
                 .and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
             value
-                .pointer("/meta/files/0/used_default_range")
+                .pointer("/data/files/0/request_satisfied")
                 .and_then(Value::as_bool),
             Some(true)
+        );
+        assert_eq!(
+            value
+                .pointer("/data/files/0/used_default_range")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn compact_command_result_for_model_flattens_output_guard_fields() {
+        let value = compact_command_result_for_model(&json!({
+            "command": "rg hello src",
+            "command_index": 1,
+            "command_session_id": "cmdsess_1",
+            "returncode": 0,
+            "stdout": "hello",
+            "stderr": "",
+            "output_meta": {
+                "truncated": true,
+                "total_bytes": 8192,
+                "omitted_bytes": 2048
+            },
+            "raw_bytes": 12345
+        }));
+
+        assert_eq!(
+            value,
+            json!({
+                "command": "rg hello src",
+                "command_index": 1,
+                "command_session_id": "cmdsess_1",
+                "returncode": 0,
+                "stdout": "hello",
+                "stderr": "",
+                "truncated": true,
+                "total_bytes": 8192,
+                "omitted_bytes": 2048
+            })
+        );
+    }
+
+    #[test]
+    fn compact_knowledge_document_for_model_keeps_only_model_relevant_fields() {
+        let value = compact_knowledge_document_for_model(&json!({
+            "code": "sec-1",
+            "document": "design.md",
+            "name": "Overview",
+            "section_path": ["Overview"],
+            "content": "Important details",
+            "score": 0.92,
+            "reason": "semantic_match",
+        }));
+
+        assert_eq!(
+            value,
+            json!({
+                "document": "design.md",
+                "name": "Overview",
+                "section_path": ["Overview"],
+                "content": "Important details",
+                "score": 0.92,
+                "reason": "semantic_match",
+            })
+        );
+    }
+
+    #[test]
+    fn compact_vector_knowledge_document_for_model_drops_embedding_noise() {
+        let value = compact_vector_knowledge_document_for_model(&json!({
+            "doc_id": "doc-1",
+            "document": "guide.md",
+            "name": "guide.md",
+            "chunk_index": 3,
+            "start": 120,
+            "end": 240,
+            "content": "Chunk content",
+            "embedding_model": "bge-large",
+            "score": 0.81,
+            "keyword": "timeout",
+        }));
+
+        assert_eq!(
+            value,
+            json!({
+                "doc_id": "doc-1",
+                "document": "guide.md",
+                "chunk_index": 3,
+                "start": 120,
+                "end": 240,
+                "content": "Chunk content",
+                "score": 0.81,
+                "keyword": "timeout",
+            })
+        );
+    }
+
+    #[test]
+    fn build_a2a_snapshot_success_marks_running_and_includes_hint() {
+        let snapshot = A2aObserveSnapshot {
+            tasks: vec![
+                A2aTaskSnapshot {
+                    task_id: "task-1".to_string(),
+                    context_id: Some("ctx-1".to_string()),
+                    status: Some("running".to_string()),
+                    endpoint: Some("http://a2a.local".to_string()),
+                    service_name: Some("helper".to_string()),
+                    answer: None,
+                    updated_time: Some("2026-01-01T00:00:00+08:00".to_string()),
+                    refresh_error: None,
+                },
+                A2aTaskSnapshot {
+                    task_id: "task-2".to_string(),
+                    context_id: Some("ctx-2".to_string()),
+                    status: Some("completed".to_string()),
+                    endpoint: Some("http://a2a.local".to_string()),
+                    service_name: Some("helper".to_string()),
+                    answer: Some("done".to_string()),
+                    updated_time: Some("2026-01-01T00:00:01+08:00".to_string()),
+                    refresh_error: None,
+                },
+            ],
+            pending: vec![A2aTaskSnapshot {
+                task_id: "task-1".to_string(),
+                context_id: Some("ctx-1".to_string()),
+                status: Some("running".to_string()),
+                endpoint: Some("http://a2a.local".to_string()),
+                service_name: Some("helper".to_string()),
+                answer: None,
+                updated_time: Some("2026-01-01T00:00:00+08:00".to_string()),
+                refresh_error: None,
+            }],
+        };
+
+        let value = build_a2a_snapshot_success("a2a_wait", &snapshot, Some(1.25), true);
+
+        assert_eq!(value.get("state").and_then(Value::as_str), Some("running"));
+        assert_eq!(
+            value.pointer("/data/pending_total").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            value.pointer("/data/timeout").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            value.get("next_step_hint").and_then(Value::as_str),
+            Some(
+                "Call a2a_wait again or inspect the pending tasks before assuming the A2A workflow is complete."
+            )
         );
     }
 

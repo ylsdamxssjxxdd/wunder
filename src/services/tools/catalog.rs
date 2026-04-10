@@ -14,12 +14,24 @@ use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
+fn localized_hint(language: &str, zh_cn: &str, en_us: &str) -> String {
+    if language.to_ascii_lowercase().starts_with("zh") {
+        zh_cn.to_string()
+    } else {
+        en_us.to_string()
+    }
+}
+
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
     vec![
         ToolSpec {
             name: "最终回复".to_string(),
-            description: t("tool.spec.final.description"),
+            description: localized_hint(
+                language,
+                "向用户返回最终内容。只有在你已经完成工具调用和推理后再使用；输出文件或图片时在 content 中直接给可预览链接。",
+                "Return the final answer to the user. Use it only after tool calls and reasoning are complete; if you produced files or images, include direct previewable links in content.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -31,7 +43,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2ui".to_string(),
-            description: t("tool.spec.a2ui.description"),
+            description: localized_hint(
+                language,
+                "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。",
+                "Send structured UI instructions to the frontend. Prefer the known message shapes beginRendering, surfaceUpdate, dataModelUpdate, and deleteSurface, and avoid inventing arbitrary payload shapes.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -119,7 +135,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: sessions_yield_tool::TOOL_SESSIONS_YIELD.to_string(),
-            description: t("tool.spec.sessions_yield.description"),
+            description: localized_hint(
+                language,
+                "让出当前回合控制权，并可附带一条简短说明。它不是最终回复，只表示当前步骤暂停或等待。",
+                "Yield control of the current turn, optionally with a short note. It is not a final answer; it only means the current step is pausing or waiting.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -133,7 +153,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "定时任务".to_string(),
-            description: t("tool.spec.schedule_task.description"),
+            description: localized_hint(
+                language,
+                "管理定时任务：add/update/remove/enable/disable/get/list/run/status。优先使用扁平字段 job_id、schedule_text、message、enabled；只有需要精确 at/every/cron 时再填写 schedule。",
+                "Manage scheduled tasks: add/update/remove/enable/disable/get/list/run/status. Prefer flat fields such as job_id, schedule_text, message, and enabled; only fill schedule when you need precise at/every/cron timing.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -159,9 +183,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "schedule_text": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule_text")},
                     "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
                     "message": {"type": "string", "description": t("tool.spec.schedule_task.args.job.payload.message")},
-                    "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")},
-                    "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
-                    "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
+                    "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")}
                 },
                 "required": ["action"],
                 "additionalProperties": false
@@ -169,7 +191,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: sleep_tool::TOOL_SLEEP_WAIT.to_string(),
-            description: t("tool.spec.sleep.description"),
+            description: localized_hint(
+                language,
+                "按秒等待一段时间，适合主动轮询间隔。常用 seconds，reason 仅用于补充说明。",
+                "Sleep for a number of seconds, mainly for active polling intervals. Usually only seconds is needed; reason is optional context.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -182,7 +208,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "用户世界工具".to_string(),
-            description: t("tool.spec.user_world.description"),
+            description: localized_hint(
+                language,
+                "用户世界检索与投递工具。list_users 常用 keyword、limit；send_message 常用 user_id 或 user_ids、content、content_type。优先直接给目标用户，不要依赖分页偏移。",
+                "User-world lookup and delivery tool. list_users usually needs keyword and limit; send_message usually needs user_id or user_ids, content, and content_type. Prefer explicit target users instead of relying on pagination offsets.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -192,7 +222,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["list_users", "send_message"]
                     },
                     "keyword": {"type": "string", "description": t("tool.spec.user_world.args.keyword")},
-                    "offset": {"type": "integer", "description": t("tool.spec.user_world.args.offset"), "minimum": 0},
                     "limit": {"type": "integer", "description": t("tool.spec.user_world.args.limit"), "minimum": 0},
                     "user_id": {"type": "string", "description": t("tool.spec.user_world.args.user_id")},
                     "user_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.user_world.args.user_ids")},
@@ -206,7 +235,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: channel_tool::TOOL_CHANNEL.to_string(),
-            description: t("tool.spec.channel_tool.description"),
+            description: localized_hint(
+                language,
+                "渠道联系人与消息工具。list_contacts 常用 channel/account_id/keyword/limit；send_message 常用 to、peer_kind、thread_id、content、attachments、wait。正文只用 content，不要使用旧字段 text/meta/contact。",
+                "List channel contacts or send channel messages. list_contacts usually needs channel/account_id/keyword/limit; send_message usually needs to, peer_kind, thread_id, content, attachments, and wait. Use content as the only message body field and avoid legacy text/meta/contact fields.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -218,20 +251,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "channel": {"type": "string", "description": t("tool.spec.channel_tool.args.channel")},
                     "account_id": {"type": "string", "description": t("tool.spec.channel_tool.args.account_id")},
                     "keyword": {"type": "string", "description": t("tool.spec.channel_tool.args.keyword")},
-                    "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.channel_tool.args.offset")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.channel_tool.args.limit")},
-                    "contact": {
-                        "type": "object",
-                        "description": t("tool.spec.channel_tool.args.contact"),
-                        "properties": {
-                            "channel": {"type": "string"},
-                            "account_id": {"type": "string"},
-                            "to": {"type": "string"},
-                            "peer_kind": {"type": "string", "enum": ["user", "group"]},
-                            "thread_id": {"type": "string"}
-                        },
-                        "additionalProperties": false
-                    },
                     "to": {"type": "string", "description": t("tool.spec.channel_tool.args.to")},
                     "peer_kind": {"type": "string", "enum": ["user", "group"], "description": t("tool.spec.channel_tool.args.peer_kind")},
                     "thread_id": {"type": "string", "description": t("tool.spec.channel_tool.args.thread_id")},
@@ -260,7 +280,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "记忆管理".to_string(),
-            description: t("tool.spec.memory_manager.description"),
+            description: localized_hint(
+                language,
+                "管理当前智能体的长期记忆：list/add/update/delete/clear/recall。拿不准、信息可能过期或用户刚纠正你时优先 recall；只有稳定事实、长期偏好、约束和可复用流程才写入。",
+                "Manage the current agent's long-term memory: list/add/update/delete/clear/recall. Prefer recall when confidence is low, facts may be stale, or the user just corrected you; only write stable facts, durable preferences, constraints, and reusable workflows.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -289,7 +313,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2a观察".to_string(),
-            description: t("tool.spec.a2a_observe.description"),
+            description: localized_hint(
+                language,
+                "查看 A2A 任务快照。常用 task_ids；必要时再指定 endpoint 或 service_name；refresh 用于主动刷新远端状态。",
+                "Inspect A2A task snapshots. Usually provide task_ids; only specify endpoint or service_name when needed; use refresh to actively refresh remote state.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -304,7 +332,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "a2a等待".to_string(),
-            description: t("tool.spec.a2a_wait.description"),
+            description: localized_hint(
+                language,
+                "等待 A2A 任务完成。常用 wait_s、poll_interval_s、task_ids；等待结束后再结合 a2a观察 查看最终快照。",
+                "Wait for A2A tasks to finish. Usually use wait_s, poll_interval_s, and task_ids; inspect the final snapshot with a2a观察 afterward.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -312,9 +344,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "poll_interval_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.poll_interval")},
                     "task_ids": {"type": "array", "items": {"type": "string"}},
                     "endpoint": {"type": "string", "description": t("tool.spec.a2a_wait.args.endpoint")},
-                    "service_name": {"type": "string", "description": t("tool.spec.a2a_wait.args.service_name")},
-                    "refresh": {"type": "boolean", "description": t("tool.spec.a2a_wait.args.refresh")},
-                    "timeout_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.timeout")}
+                    "service_name": {"type": "string", "description": t("tool.spec.a2a_wait.args.service_name")}
                 },
                 "additionalProperties": false
             }),
@@ -350,7 +380,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "列出文件".to_string(),
-            description: t("tool.spec.list.description"),
+            description: localized_hint(
+                language,
+                "列出目录下的直接子文件和子目录。常用 path、cursor、limit、max_depth；如果要搜内容而不是列目录，请改用 search_content。",
+                "List direct child files and folders in a directory. Usually use path, cursor, limit, and max_depth; use search_content instead when you need content search rather than directory listing.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -364,7 +398,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "搜索内容".to_string(),
-            description: t("tool.spec.search.description"),
+            description: localized_hint(
+                language,
+                "搜索本地工作区纯文本文件，不联网。优先使用 query + path/glob 缩小范围；只有需要正则时才改用 query_mode=regex；上下文请优先使用 context_before/context_after。",
+                "Search local workspace text files only, never the web. Prefer query with path/glob to narrow the scope; switch to query_mode=regex only when needed; prefer context_before/context_after for surrounding lines.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -375,7 +413,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "case_sensitive": {"type": "boolean", "description": t("tool.spec.search.args.case_sensitive")},
                     "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of matches to return (default 200)."},
                     "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Search timeout in milliseconds (default 30000)."},
-                    "context": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context")},
                     "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
                     "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
                 },
@@ -385,18 +422,63 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "读取文件".to_string(),
-            description: t("tool.spec.read.description"),
+            description: localized_hint(
+                language,
+                "定点读取本地纯文本片段。若不确定文件或位置，先用 search_content；常用 path + start_line/end_line 或 line_ranges；mode=indentation 仅用于按缩进读取代码块。不要用于图片或二进制文件。",
+                "Read targeted local plain-text excerpts. If the file or location is uncertain, use search_content first; prefer path with start_line/end_line or line_ranges; use mode=indentation only for indentation-based code blocks. Do not use it for images or binary files.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "dry_run": {"type": "boolean", "description": "Resolve targets and metadata without reading full file content."},
-                    "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
-                    "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
-                    "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
-                    "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}},
-                    "mode": {"type": "string", "enum": ["slice", "indentation"], "description": "Read mode: slice ranges or indentation-aware block."},
+                    "path": {
+                        "type": "string",
+                        "description": localized_hint(
+                            language,
+                            "本地纯文本文件路径。适合代码、配置、日志、Markdown 等定点读取；不要传图片或其他二进制文件。",
+                            "Path to a local plain-text file. Use it for targeted reads of code, config, logs, markdown, and similar text files; do not pass images or other binary files.",
+                        )
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": localized_hint(
+                            language,
+                            "起始行（包含）。常与 end_line 一起使用。",
+                            "Start line (inclusive). Usually used together with end_line.",
+                        )
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": localized_hint(
+                            language,
+                            "结束行（包含），必须大于等于 start_line。",
+                            "End line (inclusive). Must be greater than or equal to start_line.",
+                        )
+                    },
+                    "line_ranges": {
+                        "type": "array",
+                        "description": localized_hint(
+                            language,
+                            "多个行区间，每项为 [start_line, end_line]。",
+                            "Multiple line ranges. Each item is [start_line, end_line].",
+                        ),
+                        "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["slice", "indentation"],
+                        "description": localized_hint(
+                            language,
+                            "读取模式：slice 为按行切片，indentation 为按缩进读取代码块。",
+                            "Read mode: slice reads explicit line slices, indentation reads indentation-based code blocks.",
+                        )
+                    },
                     "indentation": {
                         "type": "object",
+                        "description": localized_hint(
+                            language,
+                            "mode=indentation 时使用的缩进块参数。",
+                            "Indentation block options used when mode=indentation.",
+                        ),
                         "properties": {
                             "anchor_line": {"type": "integer", "minimum": 1},
                             "max_levels": {"type": "integer", "minimum": 0},
@@ -413,7 +495,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: read_image_tool::TOOL_READ_IMAGE.to_string(),
-            description: t("tool.spec.read_image.description"),
+            description: localized_hint(
+                language,
+                "读取本地图片并提取所需信息。必须提供本地 path；prompt 仅用于说明你想看什么，不是联网看图工具。",
+                "Read a local image and extract the needed information. A local path is required; prompt only explains what to inspect, and this is not a web image-search tool.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -426,7 +512,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "技能调用".to_string(),
-            description: t("tool.spec.skill_call.description"),
+            description: localized_hint(
+                language,
+                "加载指定技能的 SKILL.md 和目录结构。只传技能名，不要猜测技能文件路径。",
+                "Load the SKILL.md and directory tree for a named skill. Pass only the skill name instead of guessing file paths.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -438,7 +528,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "写入文件".to_string(),
-            description: t("tool.spec.write.description"),
+            description: localized_hint(
+                language,
+                "写入文件内容，已存在文件会被覆盖。常用 path 和 content；dry_run 仅用于预览，不会真正落盘。",
+                "Write file content and overwrite existing files when present. Usually use path and content; dry_run only previews the write and does not persist changes.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -452,19 +546,28 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "应用补丁".to_string(),
-            description: t("tool.spec.apply_patch.description"),
+            description: localized_hint(
+                language,
+                "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。",
+                "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")},
                     "dry_run": {"type": "boolean", "description": "Parse and resolve patch targets without writing files."}
                 },
-                "required": ["input"]
+                "required": ["input"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
             name: "LSP查询".to_string(),
-            description: t("tool.spec.lsp.description"),
+            description: localized_hint(
+                language,
+                "查询代码智能信息。definition/references/hover/implementation/call_hierarchy 常用 path + line + character；workspace_symbol 常用 query；call_hierarchy_direction 仅用于 call_hierarchy。",
+                "Query code intelligence. definition/references/hover/implementation/call_hierarchy usually need path + line + character; workspace_symbol usually needs query; call_hierarchy_direction is only for call_hierarchy.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -497,41 +600,47 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "子智能体控制".to_string(),
-            description: t("tool.spec.subagent_control.description"),
+            description: localized_hint(
+                language,
+                "管理当前会话下的子智能体。常用流程：spawn(task) -> wait/status -> history；spawn 已经会发送第一轮任务，不要立刻再 send；优先使用 spawn 返回的 session_id 或 run_id。",
+                "Manage child sub-agents under the current session. Common flow: spawn(task) -> wait/status -> history; spawn already sends the first turn, so do not call send immediately after spawn; prefer the session_id or run_id returned by spawn.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": format!("{} {}", t("tool.spec.subagent_control.args.action"), "Important: spawn already sends the first turn. Do not call send immediately after spawn unless you are deliberately continuing the same child conversation."),
+                        "description": localized_hint(
+                            language,
+                            "动作。spawn 已发送第一轮任务；send 仅用于已有子会话的后续追问；wait/status/history 用于查看结果。",
+                            "Action. spawn already sends the first task; use send only for follow-up turns on an existing child session; use wait/status/history to inspect results.",
+                        ),
                         "enum": ["list", "history", "send", "spawn", "batch_spawn", "status", "wait", "interrupt", "close", "resume"]
                     },
                     "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
-                    "active_minutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
-                    "message_limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
-                    "parent_id": {"type": "string", "description": "Parent session id. list/status/wait default to the current session when omitted."},
-                    "session_id": {"type": "string", "description": "Exact child session id. Prefer the session_id returned by spawn. send/history require exactly one child session."},
-                    "session_ids": {"type": "array", "description": "Child session ids under the current session. status/wait may use multiple targets; send/history must resolve to exactly one child session.", "items": {"type": "string"}},
-                    "run_id": {"type": "string", "description": "Child run id. send/history may use a single run_id to resolve the child session; status/wait may inspect by run_id directly."},
-                    "run_ids": {"type": "array", "description": "Child run ids for status/wait or multi-target inspection.", "items": {"type": "string"}},
-                    "dispatch_id": {"type": "string", "description": "Dispatch id returned by batch_spawn."},
+                    "parent_id": {"type": "string", "description": localized_hint(language, "父会话 ID；list/status/wait 不填时默认当前会话。", "Parent session id. list/status/wait default to the current session when omitted.")},
+                    "session_id": {"type": "string", "description": localized_hint(language, "单个子会话 ID。优先使用 spawn 返回的 session_id。", "Single child session id. Prefer the session_id returned by spawn.")},
+                    "session_ids": {"type": "array", "description": localized_hint(language, "批量状态/等待时可传多个子会话 ID。", "Use multiple child session ids only for batch status/wait."), "items": {"type": "string"}},
+                    "run_id": {"type": "string", "description": localized_hint(language, "单个子运行 ID。优先使用 spawn 或 list 返回的 run_id。", "Single child run id. Prefer the run_id returned by spawn or list.")},
+                    "run_ids": {"type": "array", "description": localized_hint(language, "批量状态/等待时可传多个子运行 ID。", "Use multiple child run ids only for batch status/wait."), "items": {"type": "string"}},
+                    "dispatch_id": {"type": "string", "description": localized_hint(language, "batch_spawn 返回的批次 ID。", "Dispatch id returned by batch_spawn.")},
                     "strategy": {
                         "type": "string",
-                        "description": "Batch dispatch strategy. first_success aligns with Codex-style early convergence.",
+                        "description": localized_hint(language, "batch_spawn 的调度策略。", "Batch dispatch strategy for batch_spawn."),
                         "enum": ["parallel_all", "first_success", "review_then_merge"]
                     },
                     "remaining_action": {
                         "type": "string",
-                        "description": "How to handle unfinished sibling subagents after early convergence. first_success defaults to interrupt; wait keeps siblings unless specified.",
+                        "description": localized_hint(language, "提前收敛后如何处理未完成的兄弟子智能体。", "How to handle unfinished sibling subagents after early convergence."),
                         "enum": ["keep", "interrupt", "close"]
                     },
                     "include_tools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
-                    "message": {"type": "string", "description": "Message content for a follow-up turn on an existing child session. Do not use action=send immediately after spawn unless you are continuing the same child conversation."},
+                    "message": {"type": "string", "description": localized_hint(language, "send 的后续消息内容。不要在 spawn 后立刻重复发送同一任务。", "Follow-up message content for send. Do not resend the same task immediately after spawn.")},
                     "timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
-                    "task": {"type": "string", "description": "Initial task or first prompt for the child session. action=spawn/batch_spawn dispatches this task immediately and starts the first child turn; do not repeat the same content with send unless you intentionally want a follow-up turn."},
+                    "task": {"type": "string", "description": localized_hint(language, "spawn 或 batch_spawn 的首轮任务。", "First task for spawn or batch_spawn.")},
                     "tasks": {
                         "type": "array",
-                        "description": "Batch child tasks.",
+                        "description": localized_hint(language, "batch_spawn 的子任务列表。", "Child tasks for batch_spawn."),
                         "items": {
                             "type": "object",
                             "properties": {
@@ -542,7 +651,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "run_timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
                                 "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
                             },
-                            "required": ["task"]
+                            "required": ["task"],
+                            "additionalProperties": false
                         }
                     },
                     "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
@@ -550,22 +660,25 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
                     "run_timeout_seconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
                     "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
-                    "wait_seconds": {"type": "number", "description": "Wait time for batch/status polling."},
-                    "poll_interval_seconds": {"type": "number", "description": "Polling interval for wait."},
+                    "wait_seconds": {"type": "number", "description": localized_hint(language, "wait 的等待秒数。", "Wait duration in seconds for wait.")},
+                    "poll_interval_seconds": {"type": "number", "description": localized_hint(language, "wait 的轮询间隔秒数。", "Polling interval in seconds for wait.")},
                     "wait_mode": {
                         "type": "string",
-                        "description": "Wait completion mode for subagent wait. all waits every target, any returns on first terminal target, first_success returns on the first success or when all targets finish.",
+                        "description": localized_hint(language, "wait 的完成判定模式。", "Completion mode for wait."),
                         "enum": ["all", "any", "first_success"]
-                    },
-                    "dispatch_label": {"type": "string", "description": "Optional label for the dispatch batch."},
-                    "cascade": {"type": "boolean", "description": "Apply close/resume recursively to descendants."}
+                    }
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
             name: thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
-            description: t("tool.spec.thread_control.description"),
+            description: localized_hint(
+                language,
+                "管理会话线程。常用流程：list/info 查看，create 新建，switch/back 切换，archive/restore 归档恢复；优先使用 session_id、parent_session_id、title、scope、status、set_main。",
+                "Manage conversation threads. Common flow: list/info to inspect, create to open a new thread, switch/back to move between threads, archive/restore to change lifecycle; prefer session_id, parent_session_id, title, scope, status, and set_main.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -600,18 +713,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "limit": {"type": "integer", "description": t("tool.spec.thread_control.args.limit"), "minimum": 1, "maximum": 200},
                     "set_main": {"type": "boolean", "description": t("tool.spec.thread_control.args.set_main")}
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
-            description: "蜂群协作工具，只管理已存在的其他智能体。使用 canonical 字段 agent_id/agent_name/session_id/run_ids。spawn 必须提供 agent_id 或 agent_name；临时子会话请改用子智能体控制。".to_string(),
+            description: localized_hint(
+                language,
+                "蜂群协作工具，只管理已存在的其他智能体。常用流程：send/batch_send -> wait/status -> history。优先使用 canonical 字段 agent_id、agent_name、session_id、run_ids；临时子会话请改用子智能体控制。",
+                "Swarm collaboration tool for already existing agents only. Common flow: send/batch_send -> wait/status -> history. Prefer canonical fields agent_id, agent_name, session_id, and run_ids; use subagent_control for temporary child sessions.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "send(发单目标)/batch_send(并发)/wait(等结果)/status(看状态)/history(看会话)/spawn(派生到已存在智能体)/list(列成员)。必须显式提供，不要留空。",
+                        "description": localized_hint(
+                            language,
+                            "动作。send/batch_send 用于派发任务；wait/status/history 用于查看结果；spawn 仅用于派生到已存在智能体。",
+                            "Action. Use send/batch_send to dispatch work; use wait/status/history to inspect results; use spawn only to branch into an existing agent.",
+                        ),
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agent_id": {"type": "string", "description": "目标智能体 ID。"},
@@ -622,7 +744,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "limit": {"type": "integer", "description": "Maximum number of items to return for list/status.", "minimum": 1},
                     "wait_seconds": {"type": "number", "description": "Optional wait duration in seconds for wait/batch_send."},
                     "poll_interval_seconds": {"type": "number", "description": "Polling interval in seconds while waiting."},
-                    "include_current": {"type": "boolean", "description": "Whether the current agent can also be selected as a target."},
                     "tasks": {
                         "type": "array",
                         "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agent_id/agent_name/session_id 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
@@ -635,12 +756,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "session_id": {"type": "string", "description": "目标会话 ID。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
-                            "required": ["message"]
+                            "required": ["message"],
+                            "additionalProperties": false
                         }
                     },
                     "run_ids": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}, "minItems": 1}
                 },
                 "required": ["action"],
+                "additionalProperties": false,
                 "examples": [
                     {"action": "send", "agent_name": "worker_a", "message": "请完成指定任务。"},
                     {"action": "batch_send", "tasks": [{"agent_name": "worker_a", "message": "请完成任务 A。"}, {"agent_name": "worker_b", "message": "请完成任务 B。"}]},
@@ -650,7 +773,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "节点调用".to_string(),
-            description: t("tool.spec.node_invoke.description"),
+            description: localized_hint(
+                language,
+                "查询节点或向节点下发命令。list 只看节点列表；invoke 常用 node_id、command、args、timeout_s。",
+                "List gateway nodes or invoke a command on a node. list inspects nodes only; invoke usually uses node_id, command, args, and timeout_s.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -664,12 +791,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")}
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
             name: web_fetch_tool::TOOL_WEB_FETCH.to_string(),
-            description: t("tool.spec.web_fetch.description"),
+            description: localized_hint(
+                language,
+                "抓取单个网页并提取正文。常用 url、extract_mode、max_chars；它偏静态抓取，不适合复杂交互网页。",
+                "Fetch a single webpage and extract the main content. Usually use url, extract_mode, and max_chars; it is aimed at static fetches rather than complex interactive pages.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -691,7 +823,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: browser_tool::TOOL_BROWSER.to_string(),
-            description: t("tool.spec.browser.description"),
+            description: localized_hint(
+                language,
+                "浏览器自动化工具。常用流程：start/open -> snapshot/read_page -> click/type/press -> wait/screenshot。优先使用 browser_session_id、target_id、url、selector、text、key、format、max_chars。",
+                "Browser automation tool. Common flow: start/open -> snapshot/read_page -> click/type/press -> wait/screenshot. Prefer browser_session_id, target_id, url, selector, text, key, format, and max_chars.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -718,7 +854,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "read_page"
                         ]
                     },
-                    "profile": { "type": "string", "description": t("tool.spec.browser.args.profile") },
                     "browser_session_id": { "type": "string", "description": t("tool.spec.browser.args.browser_session_id") },
                     "target_id": { "type": "string", "description": t("tool.spec.browser.args.target_id") },
                     "url": { "type": "string", "description": t("tool.spec.browser.args.url") },
@@ -730,12 +865,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "full_page": { "type": "boolean", "description": t("tool.spec.browser.args.full_page") },
                     "max_chars": { "type": "integer", "minimum": 1, "description": t("tool.spec.browser.args.max_chars") }
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
             name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
-            description: t("tool.spec.desktop_controller.description"),
+            description: localized_hint(
+                language,
+                "执行桌面输入动作。常用 bbox + action；键盘动作用 key 或 text；滚动用 scroll_steps；拖拽用 to_bbox；delay/duration 仅在需要精细控制时填写。",
+                "Execute desktop input actions. Usually use bbox + action; keyboard actions use key or text; scrolling uses scroll_steps; drag operations use to_bbox; only fill delay/duration when fine-grained timing is needed.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -805,7 +945,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: self_status_tool::TOOL_SELF_STATUS.to_string(),
-            description: t("tool.spec.self_status.description"),
+            description: localized_hint(
+                language,
+                "诊断当前会话运行状态。默认只看摘要；需要更多事件时提高 detail_level 或开启 include_events。普通任务中不要高频调用。",
+                "Inspect the current session runtime state. Use the default summary first; raise detail_level or enable include_events only when you need more event detail. Do not call it frequently in normal task solving.",
+            ),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -823,10 +967,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "minimum": 1,
                         "maximum": 200,
                         "description": t("tool.spec.self_status.args.events_limit")
-                    },
-                    "include_system_metrics": {
-                        "type": "boolean",
-                        "description": t("tool.spec.self_status.args.include_system_metrics")
                     }
                 },
                 "additionalProperties": false
@@ -1402,24 +1542,22 @@ mod tests {
             .expect("read_file spec");
         assert!(spec.description.contains("plain-text"));
         assert!(spec.description.contains("search_content"));
-        assert!(spec.description.contains("start_line"));
-        assert!(spec.description.contains("offset+limit"));
-        assert!(!spec.description.contains("read_image"));
+        assert!(spec.description.contains("line_ranges"));
+        assert!(spec.description.contains("binary files"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
         assert!(path_description.contains("targeted"));
         assert!(path_description.contains("binary"));
-        assert!(path_description.contains("/workspaces/"));
-        assert!(path_description.contains("/工作目录/"));
         let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
             .as_str()
             .expect("start_line description");
-        assert!(start_line_description.contains("200-line window"));
-        assert!(start_line_description.contains("offset+limit"));
+        assert!(start_line_description.contains("Start line"));
+        assert!(start_line_description.contains("end_line"));
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["files"].is_null());
+        assert!(spec.input_schema["properties"]["dry_run"].is_null());
         assert!(spec.input_schema["required"]
             .as_array()
             .is_some_and(|items| items.iter().any(|item| item == "path")));
@@ -1433,23 +1571,22 @@ mod tests {
             .expect("read_file spec");
         assert!(spec.description.contains("纯文本"));
         assert!(spec.description.contains("search_content"));
-        assert!(spec.description.contains("默认读取 200 行"));
-        assert!(spec.description.contains("offset+limit"));
-        assert!(!spec.description.contains("read_image"));
+        assert!(spec.description.contains("line_ranges"));
+        assert!(spec.description.contains("二进制文件"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("纯文本"));
         assert!(path_description.contains("定点"));
         assert!(path_description.contains("二进制"));
-        assert!(path_description.contains("/工作目录/"));
         let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
             .as_str()
             .expect("start_line description");
-        assert!(start_line_description.contains("默认读取 200 行"));
-        assert!(start_line_description.contains("offset+limit"));
+        assert!(start_line_description.contains("起始行"));
+        assert!(start_line_description.contains("end_line"));
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["files"].is_null());
+        assert!(spec.input_schema["properties"]["dry_run"].is_null());
     }
 
     #[test]
@@ -1459,13 +1596,15 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == canonical)
             .expect("search spec");
-        assert!(spec.description.contains("rg"));
+        assert!(spec.description.contains("local workspace text files"));
+        assert!(spec.description.contains("never the web"));
         assert!(spec.input_schema["properties"]["query"].is_object());
         assert!(spec.input_schema["properties"]["glob"].is_object());
         assert!(spec.input_schema["properties"]["query_mode"].is_object());
         assert!(spec.input_schema["properties"]["context_before"].is_object());
         assert!(spec.input_schema["properties"]["context_after"].is_object());
         assert!(spec.input_schema["properties"]["max_matches"].is_object());
+        assert!(spec.input_schema["properties"]["context"].is_null());
         assert!(spec.input_schema["properties"]["pattern"].is_null());
         assert!(spec.input_schema["properties"]["-C"].is_null());
         assert!(spec.input_schema["properties"]["-i"].is_null());
@@ -1549,6 +1688,8 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == canonical_name)
             .expect("lsp spec");
+        assert!(spec.description.contains("path + line + character"));
+        assert!(spec.description.contains("workspace_symbol"));
         let operations = spec.input_schema["properties"]["operation"]["enum"]
             .as_array()
             .expect("lsp operations");
@@ -1571,6 +1712,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == canonical_name)
             .expect("web_fetch spec");
+        assert!(spec.description.contains("静态抓取"));
         assert!(spec.input_schema["properties"]["url"].is_object());
         assert!(spec.input_schema["properties"]["extract_mode"].is_object());
         assert!(spec.input_schema["properties"]["max_chars"].is_object());
@@ -1590,10 +1732,14 @@ mod tests {
         assert!(spec
             .description
             .contains("agent_id/agent_name/session_id/run_ids"));
+        assert!(spec
+            .description
+            .contains("send/batch_send -> wait/status -> history"));
         assert!(spec.input_schema["properties"]["agent_id"].is_object());
         assert!(spec.input_schema["properties"]["agent_name"].is_object());
         assert!(spec.input_schema["properties"]["session_id"].is_object());
         assert!(spec.input_schema["properties"]["run_ids"].is_object());
+        assert!(spec.input_schema["properties"]["include_current"].is_null());
         assert!(spec.input_schema["properties"]["agentName"].is_null());
         assert!(spec.input_schema["properties"]["name"].is_null());
         assert!(spec.input_schema["properties"]["task"]["description"]
@@ -1604,6 +1750,14 @@ mod tests {
         assert!(task_props["agent_name"].is_object());
         assert!(task_props["session_id"].is_object());
         assert!(task_props["agentName"].is_null());
+        assert_eq!(
+            spec.input_schema["properties"]["tasks"]["items"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
         assert!(spec.input_schema["allOf"].is_null());
     }
 
@@ -1614,14 +1768,29 @@ mod tests {
             .find(|spec| spec.name == "子智能体控制")
             .expect("subagent_control spec");
         assert!(spec.description.contains("当前会话"));
+        assert!(spec
+            .description
+            .contains("spawn(task) -> wait/status -> history"));
         assert!(spec.input_schema["properties"]["parent_id"]["description"]
             .as_str()
-            .is_some_and(|value| value.contains("current session")));
+            .is_some_and(|value| value.contains("当前会话")));
         assert!(spec.input_schema["properties"]["session_id"]["description"]
             .as_str()
-            .is_some_and(|value| value.contains("child session")));
+            .is_some_and(|value| value.contains("子会话")));
+        assert!(spec.input_schema["properties"]["active_minutes"].is_null());
+        assert!(spec.input_schema["properties"]["message_limit"].is_null());
+        assert!(spec.input_schema["properties"]["dispatch_label"].is_null());
+        assert!(spec.input_schema["properties"]["cascade"].is_null());
         assert!(spec.input_schema["properties"]["sessionId"].is_null());
         assert!(spec.input_schema["properties"]["runId"].is_null());
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            spec.input_schema["properties"]["tasks"]["items"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1630,10 +1799,13 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "定时任务")
             .expect("schedule_task spec");
+        assert!(spec.description.contains("优先使用扁平字段"));
         assert!(spec.input_schema["properties"]["job_id"].is_object());
         assert!(spec.input_schema["properties"]["schedule_text"].is_object());
         assert!(spec.input_schema["properties"]["message"].is_object());
         assert!(spec.input_schema["properties"]["enabled"].is_object());
+        assert!(spec.input_schema["properties"]["delete_after_run"].is_null());
+        assert!(spec.input_schema["properties"]["dedupe_key"].is_null());
         assert!(spec.input_schema["properties"]["job"].is_null());
     }
 
@@ -1643,8 +1815,11 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "渠道工具")
             .expect("channel tool spec");
+        assert!(spec.description.contains("正文只用 content"));
         assert!(spec.input_schema["properties"]["content"].is_object());
         assert!(spec.input_schema["properties"]["attachments"].is_object());
+        assert!(spec.input_schema["properties"]["offset"].is_null());
+        assert!(spec.input_schema["properties"]["contact"].is_null());
         assert!(spec.input_schema["properties"]["text"].is_null());
         assert!(spec.input_schema["properties"]["meta"].is_null());
         assert!(spec.input_schema["allOf"].is_null());
@@ -1686,12 +1861,17 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "会话线程控制")
             .expect("thread control spec");
+        assert!(spec.description.contains("list/info"));
         assert!(spec.input_schema["properties"]["session_id"].is_object());
         assert!(spec.input_schema["properties"]["parent_session_id"].is_object());
         assert!(spec.input_schema["properties"]["set_main"].is_object());
         assert!(spec.input_schema["properties"]["agentId"].is_null());
         assert!(spec.input_schema["properties"]["label"].is_null());
         assert!(spec.input_schema["properties"]["setMain"].is_null());
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1700,14 +1880,22 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "浏览器")
             .expect("browser spec");
+        assert!(spec
+            .description
+            .contains("start/open -> snapshot/read_page"));
         let actions = spec.input_schema["properties"]["action"]["enum"]
             .as_array()
             .expect("action enum");
         assert!(actions.iter().all(|item| item != "act"));
+        assert!(spec.input_schema["properties"]["profile"].is_null());
         assert!(spec.input_schema["properties"]["request"].is_null());
         assert!(spec.input_schema["allOf"].is_null());
         assert!(spec.input_schema["properties"]["selector"].is_object());
         assert!(spec.input_schema["properties"]["url"].is_object());
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1716,6 +1904,8 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "用户世界工具")
             .expect("user world spec");
+        assert!(spec.description.contains("优先直接给目标用户"));
+        assert!(spec.input_schema["properties"]["offset"].is_null());
         assert!(spec.input_schema["properties"]["user_id"].is_object());
         assert!(spec.input_schema["properties"]["user_ids"].is_object());
         assert!(spec.input_schema["properties"]["content"].is_object());
@@ -1728,6 +1918,7 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "a2a观察")
             .expect("a2a observe spec");
+        assert!(observe.description.contains("task_ids"));
         assert!(observe.input_schema["properties"]["task_ids"].is_object());
         assert!(observe.input_schema["properties"]["tasks"].is_null());
 
@@ -1735,9 +1926,12 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "a2a等待")
             .expect("a2a wait spec");
+        assert!(wait.description.contains("wait_s"));
         assert!(wait.input_schema["properties"]["task_ids"].is_object());
         assert!(wait.input_schema["properties"]["wait_s"].is_object());
         assert!(wait.input_schema["properties"]["tasks"].is_null());
+        assert!(wait.input_schema["properties"]["refresh"].is_null());
+        assert!(wait.input_schema["properties"]["timeout_s"].is_null());
     }
 
     #[test]
@@ -1746,6 +1940,8 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "节点调用")
             .expect("node invoke spec");
+        assert!(spec.description.contains("list"));
+        assert!(spec.description.contains("invoke"));
         assert!(spec.input_schema["properties"]["action"].is_object());
         assert!(spec.input_schema["properties"]["node_id"].is_object());
         assert!(spec.input_schema["properties"]["command"].is_object());
@@ -1755,6 +1951,10 @@ mod tests {
             .is_some_and(|items| items.iter().any(|item| item == "action")));
         assert!(spec.input_schema["allOf"].is_null());
         assert!(spec.input_schema["anyOf"].is_null());
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 
     #[test]
@@ -1763,6 +1963,8 @@ mod tests {
             .into_iter()
             .find(|spec| spec.name == "桌面控制器")
             .expect("desktop controller spec");
+        assert!(spec.description.contains("bbox + action"));
+        assert!(spec.description.contains("to_bbox"));
         assert!(spec.input_schema["properties"]["bbox"].is_object());
         assert!(spec.input_schema["properties"]["action"].is_object());
         assert!(spec.input_schema["properties"]["description"].is_null());
@@ -1835,6 +2037,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("final_response"))
             .expect("final response spec");
+        assert!(final_spec.description.contains("最终内容"));
         assert_eq!(
             final_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1844,6 +2047,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == "a2ui")
             .expect("a2ui spec");
+        assert!(a2ui_spec.description.contains("结构化 UI 指令"));
         assert_eq!(
             a2ui_spec.input_schema["properties"]["a2ui"]["items"]["additionalProperties"].as_bool(),
             Some(false)
@@ -1853,6 +2057,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == super::sessions_yield_tool::TOOL_SESSIONS_YIELD)
             .expect("sessions yield spec");
+        assert!(sessions_yield_spec.description.contains("不是最终回复"));
         assert_eq!(
             sessions_yield_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1880,10 +2085,6 @@ mod tests {
             Some(false)
         );
         assert_eq!(
-            channel_spec.input_schema["properties"]["contact"]["additionalProperties"].as_bool(),
-            Some(false)
-        );
-        assert_eq!(
             channel_spec.input_schema["properties"]["attachments"]["items"]["additionalProperties"]
                 .as_bool(),
             Some(false)
@@ -1893,6 +2094,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == super::sleep_tool::TOOL_SLEEP_WAIT)
             .expect("sleep spec");
+        assert!(sleep_spec.description.contains("主动轮询间隔"));
         assert_eq!(
             sleep_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1902,6 +2104,8 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("memory_manage"))
             .expect("memory manage spec");
+        assert!(memory_spec.description.contains("长期记忆"));
+        assert!(memory_spec.description.contains("优先 recall"));
         assert_eq!(
             memory_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1925,6 +2129,17 @@ mod tests {
             Some(false)
         );
 
+        let self_status_spec = specs
+            .iter()
+            .find(|spec| spec.name == super::self_status_tool::TOOL_SELF_STATUS)
+            .expect("self status spec");
+        assert!(self_status_spec.description.contains("不要高频调用"));
+        assert!(self_status_spec.input_schema["properties"]["include_system_metrics"].is_null());
+        assert_eq!(
+            self_status_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
         let execute_spec = specs
             .iter()
             .find(|spec| spec.name == resolve_tool_name("execute_command"))
@@ -1938,6 +2153,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("list_files"))
             .expect("list files spec");
+        assert!(list_spec.description.contains("search_content"));
         assert_eq!(
             list_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1964,11 +2180,13 @@ mod tests {
             read_spec.input_schema["properties"]["indentation"]["additionalProperties"].as_bool(),
             Some(false)
         );
+        assert!(read_spec.input_schema["properties"]["dry_run"].is_null());
 
         let read_image_spec = specs
             .iter()
             .find(|spec| spec.name == super::read_image_tool::TOOL_READ_IMAGE)
             .expect("read image spec");
+        assert!(read_image_spec.description.contains("本地图片"));
         assert_eq!(
             read_image_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1978,6 +2196,7 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("skill_call"))
             .expect("skill call spec");
+        assert!(skill_spec.description.contains("SKILL.md"));
         assert_eq!(
             skill_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
@@ -1987,8 +2206,19 @@ mod tests {
             .iter()
             .find(|spec| spec.name == resolve_tool_name("write_file"))
             .expect("write file spec");
+        assert!(write_spec.description.contains("已存在文件会被覆盖"));
         assert_eq!(
             write_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let apply_patch_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("apply_patch"))
+            .expect("apply patch spec");
+        assert!(apply_patch_spec.description.contains("apply_patch grammar"));
+        assert_eq!(
+            apply_patch_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
         );
     }

@@ -1,4 +1,4 @@
-use super::context::ToolContext;
+use super::{build_model_tool_success_with_hint, context::ToolContext};
 use crate::i18n;
 use crate::storage::{AgentThreadRecord, ChatSessionRecord};
 use anyhow::{anyhow, Result};
@@ -314,6 +314,15 @@ fn emit_thread_control_event(context: &ToolContext<'_>, payload: Value) {
     }
 }
 
+fn build_thread_control_success(
+    action: &str,
+    summary: impl Into<String>,
+    data: Value,
+    next_step_hint: Option<String>,
+) -> Value {
+    build_model_tool_success_with_hint(action, "completed", summary, data, next_step_hint)
+}
+
 fn bind_main_session(
     context: &ToolContext<'_>,
     user_id: &str,
@@ -563,17 +572,21 @@ async fn list_threads(context: &ToolContext<'_>, args: ThreadControlArgs) -> Res
     let main_session_id = agent_scope
         .as_deref()
         .and_then(|agent_key| resolve_main_session_id(context, user_id, agent_key));
-    Ok(json!({
-        "action": "list",
-        "scope": scope,
-        "status": status.unwrap_or("all"),
-        "agent_id": agent_scope,
-        "current_session_id": current.as_ref().map(|record| record.session_id.clone()),
-        "target_session_id": target_session_id,
-        "main_session_id": main_session_id,
-        "total": items.len(),
-        "items": items,
-    }))
+    Ok(build_thread_control_success(
+        "list",
+        format!("Listed {} threads.", items.len()),
+        json!({
+            "scope": scope,
+            "status": status.unwrap_or("all"),
+            "agent_id": agent_scope,
+            "current_session_id": current.as_ref().map(|record| record.session_id.clone()),
+            "target_session_id": target_session_id,
+            "main_session_id": main_session_id,
+            "total": items.len(),
+            "items": items,
+        }),
+        None,
+    ))
 }
 
 async fn info_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -604,16 +617,20 @@ async fn info_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
         None,
         MAX_LIST_LIMIT,
     )?;
-    Ok(json!({
-        "action": "info",
-        "session": session_payload(context, user_id, &record, Some("current")),
-        "parent": parent.as_ref().map(|item| session_payload(context, user_id, item, Some("parent"))),
-        "children": children
-            .iter()
-            .map(|item| session_payload(context, user_id, item, Some("child")))
-            .collect::<Vec<_>>(),
-        "main_session_id": resolve_main_session_id(context, user_id, &agent_key),
-    }))
+    Ok(build_thread_control_success(
+        "info",
+        format!("Loaded thread {}.", record.session_id),
+        json!({
+            "session": session_payload(context, user_id, &record, Some("current")),
+            "parent": parent.as_ref().map(|item| session_payload(context, user_id, item, Some("parent"))),
+            "children": children
+                .iter()
+                .map(|item| session_payload(context, user_id, item, Some("child")))
+                .collect::<Vec<_>>(),
+            "main_session_id": resolve_main_session_id(context, user_id, &agent_key),
+        }),
+        None,
+    ))
 }
 
 async fn create_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -686,14 +703,18 @@ async fn create_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "create",
-        "session": session,
-        "main_session": main_session,
-        "switch_session": switch_session,
-        "switch": switch,
-        "set_main": set_main,
-    }))
+    Ok(build_thread_control_success(
+        "create",
+        format!("Created thread {}.", record.session_id),
+        json!({
+            "session": session,
+            "main_session": main_session,
+            "switch_session": switch_session,
+            "switch": switch,
+            "set_main": set_main,
+        }),
+        None,
+    ))
 }
 
 async fn switch_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -731,14 +752,18 @@ async fn switch_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Re
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "switch",
-        "session": session,
-        "main_session": main_session,
-        "switch_session": session,
-        "switch": true,
-        "set_main": set_main,
-    }))
+    Ok(build_thread_control_success(
+        "switch",
+        format!("Switched to thread {}.", record.session_id),
+        json!({
+            "session": session,
+            "main_session": main_session,
+            "switch_session": session,
+            "switch": true,
+            "set_main": set_main,
+        }),
+        None,
+    ))
 }
 
 async fn back_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -773,6 +798,12 @@ async fn back_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Resu
     .map(|mut value| {
         if let Value::Object(ref mut map) = value {
             map.insert("action".to_string(), json!("back"));
+            if let Some(summary) = map.get_mut("summary") {
+                *summary = json!("Switched back to the parent thread.");
+            }
+        }
+        if let Some(data) = value.get_mut("data").and_then(Value::as_object_mut) {
+            data.insert("via_back".to_string(), Value::Bool(true));
         }
         value
     })
@@ -810,10 +841,14 @@ async fn update_thread_title(context: &ToolContext<'_>, args: ThreadControlArgs)
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "update_title",
-        "session": session,
-    }))
+    Ok(build_thread_control_success(
+        "update_title",
+        format!("Updated thread title for {}.", record.session_id),
+        json!({
+            "session": session,
+        }),
+        None,
+    ))
 }
 
 async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -862,13 +897,20 @@ async fn archive_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "archive",
-        "session": session,
-        "main_session": main_session,
-        "switch_session": switch_session,
-        "switch": switch_session.is_some(),
-    }))
+    Ok(build_thread_control_success(
+        "archive",
+        format!("Archived thread {}.", record.session_id),
+        json!({
+            "session": session,
+            "main_session": main_session,
+            "switch_session": switch_session,
+            "switch": switch_session.is_some(),
+        }),
+        switch_session.is_some().then(|| {
+            "The archived thread was also switched away from because a fallback session was chosen."
+                .to_string()
+        }),
+    ))
 }
 
 async fn restore_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -928,14 +970,18 @@ async fn restore_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> R
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "restore",
-        "session": session,
-        "main_session": main_session,
-        "switch_session": switch_session,
-        "switch": switch,
-        "set_main": set_main,
-    }))
+    Ok(build_thread_control_success(
+        "restore",
+        format!("Restored thread {}.", record.session_id),
+        json!({
+            "session": session,
+            "main_session": main_session,
+            "switch_session": switch_session,
+            "switch": switch,
+            "set_main": set_main,
+        }),
+        None,
+    ))
 }
 
 async fn set_main_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> Result<Value> {
@@ -969,14 +1015,18 @@ async fn set_main_thread(context: &ToolContext<'_>, args: ThreadControlArgs) -> 
             Some(context.session_id),
         ),
     );
-    Ok(json!({
-        "action": "set_main",
-        "session": session,
-        "main_session": session,
-        "switch_session": switch_session,
-        "switch": switch,
-        "set_main": true,
-    }))
+    Ok(build_thread_control_success(
+        "set_main",
+        format!("Set thread {} as main.", record.session_id),
+        json!({
+            "session": session,
+            "main_session": session,
+            "switch_session": switch_session,
+            "switch": switch,
+            "set_main": true,
+        }),
+        None,
+    ))
 }
 
 #[cfg(test)]
@@ -1140,7 +1190,7 @@ mod tests {
             .await
             .expect("create thread");
         let created_id = result
-            .get("session")
+            .pointer("/data/session")
             .and_then(|value| value.get("id"))
             .and_then(Value::as_str)
             .expect("created id");
@@ -1200,7 +1250,7 @@ mod tests {
             .await
             .expect("back thread");
         let switch_id = result
-            .get("switch_session")
+            .pointer("/data/switch_session")
             .and_then(|value| value.get("id"))
             .and_then(Value::as_str);
         assert_eq!(switch_id, Some("sess_parent"));

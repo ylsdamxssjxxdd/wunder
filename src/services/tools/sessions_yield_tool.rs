@@ -1,4 +1,4 @@
-use super::context::ToolContext;
+use super::{build_model_tool_success, context::ToolContext};
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -26,14 +26,17 @@ pub(crate) async fn execute_sessions_yield_tool(
     let payload: SessionsYieldArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
     let message = normalize_yield_message(payload.message.as_deref());
-    Ok(json!({
-        "ok": true,
-        "data": {
+    let mut result = build_model_tool_success(
+        "sessions_yield",
+        "yielded",
+        "Yielded the current turn and is waiting.",
+        json!({
             "status": "yielded",
             "message": message,
-        },
-        "meta": build_turn_yield_meta(&message),
-    }))
+        }),
+    );
+    result["meta"] = build_turn_yield_meta(&message);
+    Ok(result)
 }
 
 pub(crate) fn extract_turn_yield_message(meta: Option<&Value>, data: &Value) -> Option<String> {

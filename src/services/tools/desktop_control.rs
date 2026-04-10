@@ -1,4 +1,4 @@
-use super::ToolContext;
+use super::{build_model_tool_success, ToolContext};
 use crate::config::{Config, DesktopControllerConfig};
 use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use anyhow::{anyhow, Result};
@@ -370,25 +370,29 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
         screenshot.norm_width,
         screenshot.norm_height,
     );
-    Ok(json!({
-        "status": "ok",
-        "action": payload.action_raw,
-        "description": description,
-        "center_norm": [cx_norm, cy_norm],
-        "center_screen": [cx, cy],
-        "normalized_width": screenshot.norm_width,
-        "normalized_height": screenshot.norm_height,
-        "screen_width": screenshot.screen_width,
-        "screen_height": screenshot.screen_height,
-        "screenshot_path": screenshot.path.to_string_lossy().to_string(),
-        "previous_screenshot_path": previous_screenshot_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string()),
-        "screenshot_download_url": screenshot.download_url,
-        "screenshot_bytes": screenshot.size_bytes,
-        "elapsed_ms": elapsed_ms,
-        "followup_prompt": prompt,
-    }))
+    Ok(build_model_tool_success(
+        "desktop_controller",
+        "completed",
+        format!("Completed desktop action {}.", payload.action_raw),
+        json!({
+            "action": payload.action_raw,
+            "description": description,
+            "center_norm": [cx_norm, cy_norm],
+            "center_screen": [cx, cy],
+            "normalized_width": screenshot.norm_width,
+            "normalized_height": screenshot.norm_height,
+            "screen_width": screenshot.screen_width,
+            "screen_height": screenshot.screen_height,
+            "screenshot_path": screenshot.path.to_string_lossy().to_string(),
+            "previous_screenshot_path": previous_screenshot_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            "screenshot_download_url": screenshot.download_url,
+            "screenshot_bytes": screenshot.size_bytes,
+            "elapsed_ms": elapsed_ms,
+            "followup_prompt": prompt,
+        }),
+    ))
 }
 
 pub async fn tool_desktop_monitor(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -420,22 +424,26 @@ pub async fn tool_desktop_monitor(context: &ToolContext<'_>, args: &Value) -> Re
         screenshot.norm_width,
         screenshot.norm_height,
     );
-    Ok(json!({
-        "status": "ok",
-        "wait_ms": wait_ms,
-        "normalized_width": screenshot.norm_width,
-        "normalized_height": screenshot.norm_height,
-        "screen_width": screenshot.screen_width,
-        "screen_height": screenshot.screen_height,
-        "screenshot_path": screenshot.path.to_string_lossy().to_string(),
-        "previous_screenshot_path": previous_screenshot_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().to_string()),
-        "screenshot_download_url": screenshot.download_url,
-        "screenshot_bytes": screenshot.size_bytes,
-        "followup_prompt": prompt,
-        "note": args.get("note"),
-    }))
+    Ok(build_model_tool_success(
+        "desktop_monitor",
+        "completed",
+        "Captured a desktop screenshot for inspection.",
+        json!({
+            "wait_ms": wait_ms,
+            "normalized_width": screenshot.norm_width,
+            "normalized_height": screenshot.norm_height,
+            "screen_width": screenshot.screen_width,
+            "screen_height": screenshot.screen_height,
+            "screenshot_path": screenshot.path.to_string_lossy().to_string(),
+            "previous_screenshot_path": previous_screenshot_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
+            "screenshot_download_url": screenshot.download_url,
+            "screenshot_bytes": screenshot.size_bytes,
+            "followup_prompt": prompt,
+            "note": args.get("note"),
+        }),
+    ))
 }
 
 pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<Value>> {

@@ -7,6 +7,10 @@ import {
   shouldFinishBeeroomTerminalHydration,
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
+import {
+  resolveBeeroomSwarmWorkerReplyFromHistoryMessages,
+  resolveBeeroomSwarmWorkerTerminalState
+} from '../../src/components/beeroom/beeroomSwarmWorkerShadowState';
 
 test('mother dispatch keeps following current primary session instead of stale previous session', () => {
   const sessionId = resolvePreferredBeeroomDispatchSessionId({
@@ -158,4 +162,80 @@ test('terminal beeroom hydration waits for the expected final reply instead of a
     }),
     true
   );
+});
+
+test('swarm worker reply extraction reads structured assistant history payloads', () => {
+  const reply = resolveBeeroomSwarmWorkerReplyFromHistoryMessages([
+    {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: '{"answer":"工蜂已完成法规梳理"}'
+        }
+      ]
+    }
+  ]);
+  assert.equal(reply, '工蜂已完成法规梳理');
+});
+
+test('swarm worker terminal resolution keeps workflow-active sessions running', () => {
+  const runningState = resolveBeeroomSwarmWorkerTerminalState({
+    currentStatus: 'awaiting_idle',
+    running: false,
+    events: [],
+    workflowItems: [
+      {
+        status: 'loading',
+        eventType: 'tool_call'
+      }
+    ]
+  });
+  assert.deepEqual(runningState, {
+    status: 'running',
+    terminal: false,
+    failed: false
+  });
+});
+
+test('swarm worker terminal resolution prefers the latest successful terminal event over earlier errors', () => {
+  const completedState = resolveBeeroomSwarmWorkerTerminalState({
+    currentStatus: 'running',
+    running: false,
+    events: [
+      {
+        event: 'error',
+        data: {
+          message: 'intermediate tool error'
+        }
+      },
+      {
+        event: 'final',
+        data: {
+          answer: 'worker done'
+        }
+      },
+      {
+        event: 'turn_terminal',
+        data: {
+          status: 'completed'
+        }
+      }
+    ],
+    workflowItems: [
+      {
+        status: 'failed',
+        eventType: 'tool_call'
+      },
+      {
+        status: 'completed',
+        eventType: 'final'
+      }
+    ]
+  });
+  assert.deepEqual(completedState, {
+    status: 'completed',
+    terminal: true,
+    failed: false
+  });
 });

@@ -1,4 +1,4 @@
-use super::ToolContext;
+use super::{build_model_tool_success, ToolContext};
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -67,12 +67,16 @@ pub async fn tool_sleep_wait(_context: &ToolContext<'_>, args: &Value) -> Result
     let started_at = Instant::now();
     sleep(Duration::from_secs_f64(seconds)).await;
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
-    Ok(json!({
-        "status": "completed",
-        "requested_seconds": seconds,
-        "elapsed_ms": elapsed_ms,
-        "reason": normalize_reason(payload.reason.as_deref()),
-    }))
+    Ok(build_model_tool_success(
+        "sleep",
+        "completed",
+        format!("Slept for {seconds} seconds."),
+        json!({
+            "requested_seconds": seconds,
+            "elapsed_ms": elapsed_ms,
+            "reason": normalize_reason(payload.reason.as_deref()),
+        }),
+    ))
 }
 
 fn resolve_sleep_seconds(payload: &SleepArgs) -> Result<f64> {

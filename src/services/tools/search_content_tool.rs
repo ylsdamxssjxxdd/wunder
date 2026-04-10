@@ -1,6 +1,6 @@
 use super::command_options::parse_dry_run;
 use super::{
-    collect_read_roots, resolve_tool_path, roots_allow_any_path,
+    build_model_tool_success, collect_read_roots, resolve_tool_path, roots_allow_any_path,
     tool_error::build_failed_tool_result, tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES,
     MAX_SEARCH_MATCHES,
 };
@@ -342,9 +342,11 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     };
 
     if dry_run {
-        return Ok(json!({
-            "ok": true,
-            "data": {
+        return Ok(build_model_tool_success(
+            "search_content",
+            "dry_run",
+            "Validated local search plan without scanning files.",
+            json!({
                 "dry_run": true,
                 "path": root.to_string_lossy().to_string(),
                 "resolved_path": resolved_path,
@@ -372,9 +374,8 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
                         "query_used": attempt.query.clone(),
                     }))
                     .collect::<Vec<_>>(),
-            },
-            "error": "",
-        }));
+            }),
+        ));
     }
 
     let started_at = Instant::now();

@@ -1,4 +1,4 @@
-use super::ToolContext;
+use super::{build_model_tool_success, ToolContext};
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -61,13 +61,18 @@ pub async fn tool_read_image(context: &ToolContext<'_>, args: &Value) -> Result<
     let mime_type = detect_image_mime(&resolved, &sample)
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.read_image.not_image")))?;
 
-    Ok(json!({
-        "path": raw_path,
-        "resolved_path": resolved.to_string_lossy().to_string(),
-        "mime_type": mime_type,
-        "size_bytes": metadata.len(),
-        "prompt": normalize_optional_prompt(payload.prompt.as_deref()),
-    }))
+    Ok(build_model_tool_success(
+        "read_image",
+        "completed",
+        format!("Prepared image {} for model inspection.", raw_path),
+        json!({
+            "path": raw_path,
+            "resolved_path": resolved.to_string_lossy().to_string(),
+            "mime_type": mime_type,
+            "size_bytes": metadata.len(),
+            "prompt": normalize_optional_prompt(payload.prompt.as_deref()),
+        }),
+    ))
 }
 
 pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<Value>> {

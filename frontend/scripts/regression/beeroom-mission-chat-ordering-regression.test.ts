@@ -8,6 +8,7 @@ import {
   compareMissionChatMessages,
   type MissionChatMessage
 } from '../../src/components/beeroom/beeroomCanvasChatModel';
+import { reconcileBeeroomSessionBackedManualMessages } from '../../src/components/beeroom/beeroomMissionChatSync';
 
 const buildMessage = (partial: Partial<MissionChatMessage>): MissionChatMessage => ({
   key: partial.key || 'message',
@@ -99,5 +100,116 @@ test('dispatch chat keeps only the final assistant reply for each user turn', ()
   assert.deepEqual(
     messages.map((message) => message.key),
     ['user-1', 'assistant-1-final', 'user-2', 'assistant-2-final']
+  );
+});
+
+test('session hydration preserves optimistic second user message until remote history catches up', () => {
+  const reconciled = reconcileBeeroomSessionBackedManualMessages({
+    sessionId: 'sess_main',
+    limit: 120,
+    current: [
+      buildMessage({
+        key: 'session:sess_main:message:user:100:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第一问',
+        time: 100,
+        tone: 'user'
+      }),
+      buildMessage({
+        key: 'session:sess_main:message:assistant:101:2',
+        senderName: '默认智能体',
+        mention: '用户',
+        body: '第一答',
+        time: 101,
+        tone: 'mother'
+      }),
+      buildMessage({
+        key: 'user:102:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第二问',
+        time: 102,
+        tone: 'user'
+      })
+    ],
+    incoming: [
+      buildMessage({
+        key: 'session:sess_main:message:user:100:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第一问',
+        time: 100,
+        tone: 'user'
+      }),
+      buildMessage({
+        key: 'session:sess_main:message:assistant:101:2',
+        senderName: '默认智能体',
+        mention: '用户',
+        body: '第一答',
+        time: 101,
+        tone: 'mother'
+      })
+    ]
+  });
+
+  assert.deepEqual(
+    reconciled.map((message) => message.key),
+    [
+      'session:sess_main:message:user:100:1',
+      'session:sess_main:message:assistant:101:2',
+      'user:102:1'
+    ]
+  );
+});
+
+test('session hydration drops optimistic user message after matching remote message arrives', () => {
+  const reconciled = reconcileBeeroomSessionBackedManualMessages({
+    sessionId: 'sess_main',
+    limit: 120,
+    current: [
+      buildMessage({
+        key: 'session:sess_main:message:user:100:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第一问',
+        time: 100,
+        tone: 'user'
+      }),
+      buildMessage({
+        key: 'user:102:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第二问',
+        time: 102,
+        tone: 'user'
+      })
+    ],
+    incoming: [
+      buildMessage({
+        key: 'session:sess_main:message:user:100:1',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第一问',
+        time: 100,
+        tone: 'user'
+      }),
+      buildMessage({
+        key: 'session:sess_main:message:user:102:3',
+        senderName: '用户',
+        mention: '默认智能体',
+        body: '第二问',
+        time: 102,
+        tone: 'user'
+      })
+    ]
+  });
+
+  assert.deepEqual(
+    reconciled.map((message) => message.key),
+    [
+      'session:sess_main:message:user:100:1',
+      'session:sess_main:message:user:102:3'
+    ]
   );
 });

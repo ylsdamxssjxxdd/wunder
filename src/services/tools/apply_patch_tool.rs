@@ -292,23 +292,30 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
 
     if dry_run {
         let summary = summarize_patch_ops(&resolved_ops);
-        return Ok(json!({
-            "ok": true,
-            "dry_run": true,
-            "changed_files": summary.changed_files.len(),
-            "added": summary.added,
-            "updated": summary.updated,
-            "deleted": summary.deleted,
-            "moved": summary.moved,
-            "hunks_applied": summary.hunks_applied,
-            "files": summary.file_summaries.into_iter().map(|item| json!({
-                "action": item.action,
-                "path": item.path,
-                "to_path": item.to_path,
-                "hunks": item.hunks,
-            })).collect::<Vec<_>>(),
-            "lsp": Vec::<Value>::new(),
-        }));
+        return Ok(build_model_tool_success(
+            "apply_patch",
+            "dry_run",
+            format!(
+                "Validated patch touching {} files without applying it.",
+                summary.changed_files.len()
+            ),
+            json!({
+                "dry_run": true,
+                "changed_files": summary.changed_files.len(),
+                "added": summary.added,
+                "updated": summary.updated,
+                "deleted": summary.deleted,
+                "moved": summary.moved,
+                "hunks_applied": summary.hunks_applied,
+                "files": summary.file_summaries.into_iter().map(|item| json!({
+                    "action": item.action,
+                    "path": item.path,
+                    "to_path": item.to_path,
+                    "hunks": item.hunks,
+                })).collect::<Vec<_>>(),
+                "lsp": Vec::<Value>::new(),
+            }),
+        ));
     }
 
     let summary = tokio::task::spawn_blocking(move || apply_patch_ops(resolved_ops))
@@ -343,22 +350,29 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         }
     }
 
-    Ok(json!({
-        "ok": true,
-        "changed_files": summary.changed_files.len(),
-        "added": summary.added,
-        "updated": summary.updated,
-        "deleted": summary.deleted,
-        "moved": summary.moved,
-        "hunks_applied": summary.hunks_applied,
-        "files": summary.file_summaries.into_iter().map(|item| json!({
-            "action": item.action,
-            "path": item.path,
-            "to_path": item.to_path,
-            "hunks": item.hunks,
-        })).collect::<Vec<_>>(),
-        "lsp": lsp_records,
-    }))
+    Ok(build_model_tool_success(
+        "apply_patch",
+        "completed",
+        format!(
+            "Applied patch touching {} files.",
+            summary.changed_files.len()
+        ),
+        json!({
+            "changed_files": summary.changed_files.len(),
+            "added": summary.added,
+            "updated": summary.updated,
+            "deleted": summary.deleted,
+            "moved": summary.moved,
+            "hunks_applied": summary.hunks_applied,
+            "files": summary.file_summaries.into_iter().map(|item| json!({
+                "action": item.action,
+                "path": item.path,
+                "to_path": item.to_path,
+                "hunks": item.hunks,
+            })).collect::<Vec<_>>(),
+            "lsp": lsp_records,
+        }),
+    ))
 }
 
 fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {

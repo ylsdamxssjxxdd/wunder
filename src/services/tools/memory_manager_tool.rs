@@ -1,4 +1,4 @@
-use super::context::ToolContext;
+use super::{build_model_tool_success_with_hint, context::ToolContext};
 use crate::i18n;
 use crate::memory::{build_agent_memory_owner, normalize_agent_memory_scope, MemoryStore};
 use crate::services::memory_fragments::{
@@ -174,6 +174,62 @@ fn normalize_memory_recall_limit(limit: Option<i64>) -> usize {
     limit.unwrap_or(6).clamp(1, MAX_MEMORY_RECALL_LIMIT as i64) as usize
 }
 
+fn compact_memory_item(item: Value) -> Value {
+    json!({
+        "memory_id": item.get("memory_id").cloned().unwrap_or(Value::Null),
+        "title": item.get("title").cloned().unwrap_or(Value::Null),
+        "summary": item.get("summary").cloned().unwrap_or(Value::Null),
+        "content": item.get("content").cloned().unwrap_or(Value::Null),
+        "category": item.get("category").cloned().unwrap_or(Value::Null),
+        "tags": item.get("tags").cloned().unwrap_or(Value::Null),
+        "status": item.get("status").cloned().unwrap_or(Value::Null),
+        "updated_at": item
+            .get("updated_at")
+            .cloned()
+            .or_else(|| item.get("updated_time_ts").cloned())
+            .unwrap_or(Value::Null),
+        "why": item.get("why").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn build_memory_manager_success(
+    action: &str,
+    agent_scope: &str,
+    data: Value,
+    next_step_hint: Option<String>,
+) -> Value {
+    let state = "completed";
+    let summary = match action {
+        "list" => format!(
+            "Listed {} memory entries.",
+            data.get("count").and_then(Value::as_u64).unwrap_or(0)
+        ),
+        "recall" => format!(
+            "Recalled {} memory entries.",
+            data.get("count").and_then(Value::as_u64).unwrap_or(0)
+        ),
+        "add" => "Saved a memory entry.".to_string(),
+        "update" => "Updated a memory entry.".to_string(),
+        "delete" => format!(
+            "Deleted {} memory entries.",
+            data.get("deleted").and_then(Value::as_i64).unwrap_or(0)
+        ),
+        "clear" => format!(
+            "Cleared {} memory entries.",
+            data.get("deleted").and_then(Value::as_i64).unwrap_or(0)
+        ),
+        _ => format!("memory_manage {action} completed."),
+    };
+    let mut payload = data;
+    if let Some(map) = payload.as_object_mut() {
+        map.insert(
+            "agent_id".to_string(),
+            Value::String(agent_scope.to_string()),
+        );
+    }
+    build_model_tool_success_with_hint(action, state, summary, payload, next_step_hint)
+}
+
 fn normalize_memory_order_desc(order: Option<&str>) -> bool {
     let cleaned = order.unwrap_or("").trim().to_lowercase();
     if cleaned.is_empty() {
@@ -309,13 +365,15 @@ pub(crate) async fn execute_memory_manager_tool(
                     })
                 })
                 .collect::<Vec<_>>();
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "count": items.len(),
-                "items": items,
-                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "count": items.len(),
+                    "items": items.into_iter().map(compact_memory_item).collect::<Vec<_>>(),
+                }),
+                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
         }
         "add" => {
             let content = normalize_memory_content(&payload);
@@ -359,13 +417,15 @@ pub(crate) async fn execute_memory_manager_tool(
                     },
                 )
                 .map_err(|err| anyhow!(format!("failed to save memory fragment: {err}")))?;
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "memory_id": saved_record.memory_id,
-                "saved": true,
-                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "memory_id": saved_record.memory_id,
+                    "saved": true,
+                }),
+                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
         }
         "update" => {
             let memory_id = normalize_memory_record_id(&payload);
@@ -417,13 +477,15 @@ pub(crate) async fn execute_memory_manager_tool(
             let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
             let memory_store = MemoryStore::new(context.storage.clone());
             cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "memory_id": updated_record.memory_id,
-                "updated": true,
-                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "memory_id": updated_record.memory_id,
+                    "updated": true,
+                }),
+                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
         }
         "delete" => {
             let memory_id = normalize_memory_record_id(&payload);
@@ -437,25 +499,29 @@ pub(crate) async fn execute_memory_manager_tool(
             let legacy_deleted =
                 cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
             let deleted = i64::from(fragment_deleted) + legacy_deleted;
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "memory_id": memory_id,
-                "deleted": deleted,
-                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "memory_id": memory_id,
+                    "deleted": deleted,
+                }),
+                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
         }
         "clear" => {
             let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
             let memory_store = MemoryStore::new(context.storage.clone());
             let deleted = clear_fragment_scope(&fragment_store, context.user_id, context.agent_id)
                 + memory_store.clear_records(&owner_key);
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "deleted": deleted,
-                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "deleted": deleted,
+                }),
+                Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
         }
         "recall" => {
             let query = normalize_memory_query(&payload);
@@ -493,14 +559,16 @@ pub(crate) async fn execute_memory_manager_tool(
                     })
                 })
                 .collect::<Vec<_>>();
-            json!({
-                "action": action,
-                "agent_id": agent_scope,
-                "query": query,
-                "count": items.len(),
-                "items": items,
-                "note": i18n::t("tool.memory_manager.note_recall_current_session"),
-            })
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "query": query,
+                    "count": items.len(),
+                    "items": items.into_iter().map(compact_memory_item).collect::<Vec<_>>(),
+                }),
+                Some(i18n::t("tool.memory_manager.note_recall_current_session")),
+            )
         }
         _ => return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action"))),
     };
@@ -658,7 +726,10 @@ mod tests {
         )
         .await
         .expect("add memory");
-        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            add.pointer("/data/saved").and_then(Value::as_bool),
+            Some(true)
+        );
 
         let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
         let fragments = fragment_store.list_fragments(
@@ -675,7 +746,10 @@ mod tests {
         let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
             .await
             .expect("list memory");
-        assert_eq!(listed.get("count").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            listed.pointer("/data/count").and_then(Value::as_u64),
+            Some(1)
+        );
 
         let recalled = execute_memory_manager_tool(
             &context,
@@ -686,9 +760,12 @@ mod tests {
         )
         .await
         .expect("recall memory");
-        assert_eq!(recalled.get("count").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            recalled.pointer("/data/count").and_then(Value::as_u64),
+            Some(1)
+        );
         let recall_item = recalled
-            .get("items")
+            .pointer("/data/items")
             .and_then(Value::as_array)
             .and_then(|items| items.first())
             .cloned()
@@ -708,7 +785,10 @@ mod tests {
         )
         .await
         .expect("update memory");
-        assert_eq!(updated.get("updated").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            updated.pointer("/data/updated").and_then(Value::as_bool),
+            Some(true)
+        );
 
         let refreshed = fragment_store
             .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
@@ -724,7 +804,10 @@ mod tests {
         )
         .await
         .expect("delete memory");
-        assert_eq!(deleted.get("deleted").and_then(Value::as_i64), Some(1));
+        assert_eq!(
+            deleted.pointer("/data/deleted").and_then(Value::as_i64),
+            Some(1)
+        );
         assert!(fragment_store
             .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
             .is_none());
@@ -745,9 +828,12 @@ mod tests {
         )
         .await
         .expect("add default-scope memory");
-        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
         assert_eq!(
-            add.get("agent_id").and_then(Value::as_str),
+            add.pointer("/data/saved").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            add.pointer("/data/agent_id").and_then(Value::as_str),
             Some("__default__")
         );
 
@@ -764,9 +850,12 @@ mod tests {
         let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
             .await
             .expect("list default-scope memory");
-        assert_eq!(listed.get("count").and_then(Value::as_u64), Some(1));
         assert_eq!(
-            listed.get("agent_id").and_then(Value::as_str),
+            listed.pointer("/data/count").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            listed.pointer("/data/agent_id").and_then(Value::as_str),
             Some("__default__")
         );
     }
@@ -790,7 +879,10 @@ mod tests {
         )
         .await
         .expect("add structured memory");
-        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            add.pointer("/data/saved").and_then(Value::as_bool),
+            Some(true)
+        );
 
         let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
         let fragment = fragment_store

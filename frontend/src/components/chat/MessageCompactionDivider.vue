@@ -15,6 +15,7 @@
 import { computed } from 'vue';
 import { useI18n } from '@/i18n';
 import {
+  resolveCompactionDividerStatus,
   isCompactionRunningFromWorkflowItems,
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
@@ -65,24 +66,16 @@ const formatTokenCount = (value: number | null): string =>
   value === null ? '' : `${numberFormatter.format(value)}`;
 
 const snapshot = computed(() => resolveLatestCompactionSnapshot(props.items));
+const runningFromWorkflowItems = computed(() => isCompactionRunningFromWorkflowItems(props.items));
 
 const status = computed<'running' | 'completed' | 'failed' | 'cancelled' | null>(() => {
-  if (!snapshot.value) {
-    return props.manualMarker && (props.isStreaming || props.sessionBusy) ? 'running' : null;
-  }
-  const manualBusyFallback =
-    props.manualMarker &&
-    props.sessionBusy &&
-    snapshot.value.status !== 'failed' &&
-    snapshot.value.status !== 'cancelled';
-  if (manualBusyFallback) {
-    return 'running';
-  }
-  const running = isCompactionRunningFromWorkflowItems(props.items);
-  if (snapshot.value.status === 'cancelled') return 'cancelled';
-  if (snapshot.value.status === 'failed') return 'failed';
-  if (running) return 'running';
-  return 'completed';
+  return resolveCompactionDividerStatus({
+    snapshot: snapshot.value,
+    runningFromWorkflowItems: runningFromWorkflowItems.value,
+    manualMarker: props.manualMarker,
+    isStreaming: props.isStreaming,
+    sessionBusy: props.sessionBusy
+  });
 });
 
 const hasCollapsedCompactionSummary = computed(() => {

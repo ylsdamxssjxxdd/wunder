@@ -27,6 +27,7 @@ import {
   filterBeeroomRuntimeRelayMessagesAfter,
   mergeBeeroomRuntimeRelayMessages
 } from '@/components/beeroom/beeroomRuntimeRelayMessages';
+import { reconcileBeeroomSessionBackedManualMessages } from '@/components/beeroom/beeroomMissionChatSync';
 import { setBeeroomMissionChatState, getBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import {
   getBeeroomMissionCanvasState,
@@ -984,12 +985,18 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
 
     const applyFromCache = () => {
-      const next = readDispatchSessionMessages(sessionId)
+      const sessionBackedMessages = readDispatchSessionMessages(sessionId)
         .filter(
           (message) =>
             !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
         )
         .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+      const next = reconcileBeeroomSessionBackedManualMessages({
+        current: manualChatMessages.value,
+        incoming: sessionBackedMessages,
+        sessionId,
+        limit: MANUAL_CHAT_HISTORY_LIMIT
+      });
       if (next.length > 0) {
         if (
           !sameManualChatMessages(manualChatMessages.value, next) &&

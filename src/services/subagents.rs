@@ -151,22 +151,26 @@ fn payload_dispatch_id(payload: &Value) -> Option<String> {
 }
 
 pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
-    let completion_reached = result
+    let payload = result
+        .get("data")
+        .filter(|value| value.is_object())
+        .unwrap_or(result);
+    let completion_reached = payload
         .get("completion_reached")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        || result
+        || payload
             .get("all_finished")
             .and_then(Value::as_bool)
             .unwrap_or(false);
     if !completion_reached {
         return;
     }
-    let selected_items = result
+    let selected_items = payload
         .get("selected_items")
         .and_then(Value::as_array)
         .filter(|items| !items.is_empty());
-    let items = result
+    let items = payload
         .get("items")
         .and_then(Value::as_array)
         .filter(|entries| !entries.is_empty());
@@ -177,7 +181,7 @@ pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
     let Some(parent_session_id) = source.iter().find_map(payload_parent_session_id) else {
         return;
     };
-    let dispatch_id = normalize_optional(result.get("dispatch_id").and_then(Value::as_str))
+    let dispatch_id = normalize_optional(payload.get("dispatch_id").and_then(Value::as_str))
         .or_else(|| source.iter().find_map(payload_dispatch_id));
     mark_auto_wake_consumed(&parent_session_id, dispatch_id.as_deref(), None);
     for item in source {
@@ -2292,6 +2296,26 @@ mod tests {
                     "run_id": run_id,
                 }
             ]
+        }));
+        assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
+    }
+
+    #[test]
+    fn wrapped_wait_result_suppresses_auto_wake_from_nested_data_payload() {
+        let parent_session_id = "sess_parent_wait_wrapped";
+        let run_id = "run_wait_wrapped";
+        suppress_auto_wake_from_wait_result(&json!({
+            "ok": true,
+            "state": "completed",
+            "data": {
+                "all_finished": true,
+                "items": [
+                    {
+                        "parent_session_id": parent_session_id,
+                        "run_id": run_id,
+                    }
+                ]
+            }
         }));
         assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
     }

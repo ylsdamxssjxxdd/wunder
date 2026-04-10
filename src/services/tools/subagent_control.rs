@@ -553,6 +553,37 @@ fn resolve_subagent_parent_scope(
         .ok_or_else(|| anyhow!(i18n::t("error.session_not_found")))
 }
 
+fn normalize_status_wait_target(
+    context: &ToolContext<'_>,
+    target: &SubagentTargetArgs,
+    action: &str,
+) -> Result<SubagentTargetArgs> {
+    if !should_autocorrect_status_wait_target(target) {
+        return Ok(target.clone());
+    }
+    let resolved_session_id = resolve_single_child_session_target(context, target, action)?;
+    Ok(SubagentTargetArgs {
+        session_ids: None,
+        session_id: Some(resolved_session_id),
+        ..target.clone()
+    })
+}
+
+fn should_autocorrect_status_wait_target(target: &SubagentTargetArgs) -> bool {
+    let has_run_selector =
+        !target.run_ids.as_ref().is_none_or(Vec::is_empty) || target.run_id.is_some();
+    let has_scope_selector = normalize_optional_string(target.dispatch_id.clone()).is_some()
+        || normalize_optional_string(target.parent_id.clone()).is_some();
+    if has_run_selector || has_scope_selector {
+        return false;
+    }
+    let mut requested_session_ids = target.session_ids.clone().unwrap_or_default();
+    if let Some(session_id) = target.session_id.clone() {
+        requested_session_ids.push(session_id);
+    }
+    dedupe_non_empty_strings(requested_session_ids).len() == 1
+}
+
 fn resolve_single_child_session_target(
     context: &ToolContext<'_>,
     target: &SubagentTargetArgs,
@@ -1122,7 +1153,8 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 async fn status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentStatusArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let selector = resolve_targets(&payload.target, Some(context.session_id))?;
+    let target = normalize_status_wait_target(context, &payload.target, "status")?;
+    let selector = resolve_targets(&target, Some(context.session_id))?;
     let snapshots = collect_snapshots(context, &selector)?;
     let summary = summarize_snapshots(
         &selector,
@@ -1141,7 +1173,8 @@ async fn status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
 async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SubagentWaitArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
-    let selector = resolve_targets(&payload.target, None)?;
+    let target = normalize_status_wait_target(context, &payload.target, "wait")?;
+    let selector = resolve_targets(&target, None)?;
     let wait_mode = parse_wait_completion_mode(payload.wait_mode.as_deref());
     let remaining_action = parse_remaining_branch_action(payload.remaining_action.as_deref())
         .unwrap_or(RemainingBranchAction::Keep);
@@ -1157,8 +1190,10 @@ async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     )
     .await?;
     apply_remaining_settlement(context, &mut result, remaining_action);
-    let result = compact_subagent_wait_result("wait", result);
+    // Suppress parent auto-wake before compaction because compacted items drop
+    // parent_session_id and can no longer be matched against the wake registry.
     crate::services::subagents::suppress_auto_wake_from_wait_result(&result);
+    let result = compact_subagent_wait_result("wait", result);
     if result
         .pointer("/data/dispatch_id")
         .and_then(Value::as_str)
@@ -2527,6 +2562,106 @@ fn build_dispatch_item_summary_line(item: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::a2a_store::A2aStore;
+    use crate::config::Config;
+    use crate::lsp::LspManager;
+    use crate::skills::SkillRegistry;
+    use crate::storage::{ChatSessionRecord, SqliteStorage, StorageBackend};
+    use crate::workspace::WorkspaceManager;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::{tempdir, TempDir};
+
+    struct SubagentTestHarness {
+        _dir: TempDir,
+        storage: Arc<dyn StorageBackend>,
+        workspace: Arc<WorkspaceManager>,
+        lsp_manager: Arc<LspManager>,
+        config: Config,
+        a2a_store: A2aStore,
+        skills: SkillRegistry,
+        http: reqwest::Client,
+    }
+
+    impl SubagentTestHarness {
+        fn new() -> Self {
+            let dir = tempdir().expect("tempdir");
+            let db_path = dir.path().join("subagent-control-tests.db");
+            let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+            storage.ensure_initialized().expect("init storage");
+            let storage: Arc<dyn StorageBackend> = storage;
+            let workspace_root = dir.path().join("workspace");
+            let workspace = Arc::new(WorkspaceManager::new(
+                workspace_root.to_string_lossy().as_ref(),
+                storage.clone(),
+                0,
+                &HashMap::new(),
+            ));
+            Self {
+                _dir: dir,
+                storage,
+                lsp_manager: LspManager::new(workspace.clone()),
+                workspace,
+                config: Config::default(),
+                a2a_store: A2aStore::default(),
+                skills: SkillRegistry::default(),
+                http: reqwest::Client::new(),
+            }
+        }
+
+        fn upsert_session(&self, session_id: &str, parent_session_id: Option<&str>) {
+            self.storage
+                .upsert_chat_session(&ChatSessionRecord {
+                    session_id: session_id.to_string(),
+                    user_id: "alice".to_string(),
+                    title: session_id.to_string(),
+                    status: "active".to_string(),
+                    created_at: 1.0,
+                    updated_at: 2.0,
+                    last_message_at: 2.0,
+                    agent_id: Some("agent_parent".to_string()),
+                    tool_overrides: Vec::new(),
+                    parent_session_id: parent_session_id.map(str::to_string),
+                    parent_message_id: None,
+                    spawn_label: None,
+                    spawned_by: None,
+                })
+                .expect("upsert chat session");
+        }
+
+        fn context<'a>(&'a self, session_id: &'a str) -> ToolContext<'a> {
+            ToolContext {
+                user_id: "alice",
+                session_id,
+                workspace_id: "workspace-test",
+                agent_id: Some("agent_parent"),
+                user_round: Some(1),
+                model_round: Some(1),
+                is_admin: false,
+                storage: self.storage.clone(),
+                orchestrator: None,
+                monitor: None,
+                beeroom_realtime: None,
+                workspace: self.workspace.clone(),
+                lsp_manager: self.lsp_manager.clone(),
+                config: &self.config,
+                a2a_store: &self.a2a_store,
+                skills: &self.skills,
+                gateway: None,
+                user_world: None,
+                cron_wake_signal: None,
+                user_tool_manager: None,
+                user_tool_bindings: None,
+                user_tool_store: None,
+                request_config_overrides: None,
+                allow_roots: None,
+                read_roots: None,
+                command_sessions: None,
+                event_emitter: None,
+                http: &self.http,
+            }
+        }
+    }
 
     #[test]
     fn effective_status_prefers_terminal_run_status() {
@@ -2628,6 +2763,84 @@ mod tests {
                 "sess_child_2".to_string()
             ]),
             None
+        );
+    }
+
+    #[test]
+    fn should_autocorrect_status_wait_target_requires_single_session_selector() {
+        assert!(should_autocorrect_status_wait_target(&SubagentTargetArgs {
+            session_id: Some("sess_child".to_string()),
+            ..SubagentTargetArgs::default()
+        }));
+        assert!(!should_autocorrect_status_wait_target(
+            &SubagentTargetArgs {
+                session_id: Some("sess_child".to_string()),
+                run_id: Some("run_child".to_string()),
+                ..SubagentTargetArgs::default()
+            }
+        ));
+        assert!(!should_autocorrect_status_wait_target(
+            &SubagentTargetArgs {
+                session_ids: Some(vec!["sess_child_1".to_string(), "sess_child_2".to_string()]),
+                ..SubagentTargetArgs::default()
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_autocorrects_mistyped_single_child_session_id() {
+        let harness = SubagentTestHarness::new();
+        harness.upsert_session("sess_parent", None);
+        harness.upsert_session("sess_9bd234172af749a69f760bd77cee4997", Some("sess_parent"));
+        let context = harness.context("sess_parent");
+
+        let result = status(
+            &context,
+            &json!({
+                "session_id": "sess_9bd234172af749a69f760bd7cee497"
+            }),
+        )
+        .await
+        .expect("status should succeed");
+
+        assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            result
+                .pointer("/data/items/0/session_id")
+                .and_then(Value::as_str),
+            Some("sess_9bd234172af749a69f760bd77cee4997")
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_autocorrects_mistyped_single_child_session_id() {
+        let harness = SubagentTestHarness::new();
+        harness.upsert_session("sess_parent", None);
+        harness.upsert_session("sess_c3387af607f44d47bf90e9b5893ce116", Some("sess_parent"));
+        let context = harness.context("sess_parent");
+
+        let result = wait(
+            &context,
+            &json!({
+                "session_id": "sess_c387af607f4d47bf90e9b5893ce16",
+                "wait_seconds": 0
+            }),
+        )
+        .await
+        .expect("wait should succeed");
+
+        assert_eq!(result.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            result
+                .pointer("/data/session_ids/0")
+                .and_then(Value::as_str),
+            Some("sess_c3387af607f44d47bf90e9b5893ce116")
+        );
+        assert_eq!(
+            result
+                .pointer("/data/items/0/session_id")
+                .and_then(Value::as_str),
+            Some("sess_c3387af607f44d47bf90e9b5893ce116")
         );
     }
 

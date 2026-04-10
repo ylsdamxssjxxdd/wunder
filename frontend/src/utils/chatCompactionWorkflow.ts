@@ -7,6 +7,13 @@ export type WorkflowCompactionSnapshot = {
   detail: UnknownObject | null;
 };
 
+export type CompactionDividerStatus =
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | null;
+
 const asObject = (value: unknown): UnknownObject | null =>
   value && typeof value === 'object' && !Array.isArray(value)
     ? (value as UnknownObject)
@@ -91,6 +98,28 @@ export const isCompactionRunningFromWorkflowItems = (items: unknown): boolean =>
   if (snapshot.eventType !== 'compaction_progress') return false;
   if (!snapshot.explicitStatus) return true;
   return false;
+};
+
+export const resolveCompactionDividerStatus = ({
+  snapshot,
+  runningFromWorkflowItems,
+  manualMarker,
+  isStreaming,
+  sessionBusy
+}: {
+  snapshot: WorkflowCompactionSnapshot | null;
+  runningFromWorkflowItems: boolean;
+  manualMarker: boolean;
+  isStreaming: boolean;
+  sessionBusy: boolean;
+}): CompactionDividerStatus => {
+  if (!snapshot) {
+    return manualMarker && (isStreaming || sessionBusy) ? 'running' : null;
+  }
+  if (snapshot.status === 'cancelled') return 'cancelled';
+  if (snapshot.status === 'failed') return 'failed';
+  if (runningFromWorkflowItems) return 'running';
+  return 'completed';
 };
 
 const isCompactionWorkflowItem = (item: unknown): boolean => {

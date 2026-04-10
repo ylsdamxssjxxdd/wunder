@@ -1,4 +1,4 @@
-use super::ToolContext;
+use super::{build_model_tool_success, build_model_tool_success_with_hint, ToolContext};
 use crate::channels::types::{
     ChannelAccountConfig, ChannelAttachment, ChannelOutboundMessage, ChannelPeer, ChannelThread,
 };
@@ -187,13 +187,17 @@ async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> 
     let account_keys =
         resolve_owned_account_keys(context, channel.as_deref(), account_id.as_deref())?;
     if account_keys.is_empty() {
-        return Ok(json!({
-            "action": "list_contacts",
-            "items": [],
-            "total": 0,
-            "offset": offset,
-            "limit": limit
-        }));
+        return Ok(build_model_tool_success(
+            "list_contacts",
+            "completed",
+            "No contacts matched the selected channel scope.",
+            json!({
+                "items": [],
+                "total": 0,
+                "offset": offset,
+                "limit": limit
+            }),
+        ));
     }
 
     let mut dedupe = HashMap::<String, ContactItem>::new();
@@ -286,7 +290,13 @@ async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> 
             );
         }
     }
-    Ok(result)
+    Ok(build_model_tool_success_with_hint(
+        "list_contacts",
+        "completed",
+        format!("Listed {total} contacts."),
+        result,
+        None,
+    ))
 }
 
 async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> Result<Value> {
@@ -441,38 +451,45 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
             .unwrap_or(DEFAULT_WAIT_TIMEOUT_S)
             .clamp(MIN_WAIT_TIMEOUT_S, MAX_WAIT_TIMEOUT_S);
         let delivery = wait_for_delivery(context, &outbox_id, timeout_s).await?;
-        return Ok(json!({
-            "action": "send_message",
-            "ok": true,
+        return Ok(build_model_tool_success(
+            "send_message",
+            "completed",
+            format!("Queued message to {to} and waited for delivery status."),
+            json!({
+                "outbox_id": outbox_id,
+                "delivery": delivery,
+                "resolved": {
+                    "channel": channel,
+                    "account_id": account_id,
+                    "to": to,
+                    "peer_kind": resolved_peer_kind.clone(),
+                    "thread_id": resolved_thread_id.clone(),
+                    "account_source": account_source,
+                    "target_source": target_source,
+                }
+            }),
+        ));
+    }
+
+    Ok(build_model_tool_success_with_hint(
+        "send_message",
+        "accepted",
+        format!("Queued outbound message to {to}."),
+        json!({
             "outbox_id": outbox_id,
-            "delivery": delivery,
+            "status": "pending",
             "resolved": {
                 "channel": channel,
                 "account_id": account_id,
                 "to": to,
-                "peer_kind": resolved_peer_kind.clone(),
-                "thread_id": resolved_thread_id.clone(),
+                "peer_kind": resolved_peer_kind,
+                "thread_id": resolved_thread_id,
                 "account_source": account_source,
                 "target_source": target_source,
             }
-        }));
-    }
-
-    Ok(json!({
-        "action": "send_message",
-        "ok": true,
-        "outbox_id": outbox_id,
-        "status": "pending",
-        "resolved": {
-            "channel": channel,
-            "account_id": account_id,
-            "to": to,
-            "peer_kind": resolved_peer_kind,
-            "thread_id": resolved_thread_id,
-            "account_source": account_source,
-            "target_source": target_source,
-        }
-    }))
+        }),
+        Some("Call channel_tool with wait=true or inspect the outbox later if you need final delivery status.".to_string()),
+    ))
 }
 
 fn resolve_send_account(
