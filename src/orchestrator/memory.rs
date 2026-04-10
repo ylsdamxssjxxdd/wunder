@@ -3461,6 +3461,7 @@ fn collect_retained_interaction_messages_for_compaction(
     merge_retained_replay_messages(&head_messages, &tail_messages)
 }
 
+#[allow(dead_code)]
 fn collect_retained_interaction_segments_for_compaction(
     messages: &[Value],
     retained_turn_count: usize,
@@ -3593,6 +3594,7 @@ fn merge_retained_replay_messages(primary: &[Value], fallback: &[Value]) -> Vec<
     merged
 }
 
+#[allow(dead_code)]
 fn collect_recent_user_messages_for_compaction(messages: &[Value], token_limit: i64) -> Vec<Value> {
     collect_recent_user_messages_for_compaction_excluding(messages, token_limit, &HashSet::new())
 }

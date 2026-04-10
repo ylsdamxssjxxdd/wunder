@@ -2795,6 +2795,97 @@ mod tests {
     }
 
     #[test]
+    fn build_model_search_success_returns_compact_model_friendly_payload() {
+        let params = SearchParams {
+            query: "alpha".to_string(),
+            query_source: QuerySource::Query,
+            path: "src".to_string(),
+            file_pattern_items: vec!["*.rs".to_string()],
+            query_mode: QueryMode::Literal,
+            query_mode_inferred: false,
+            case_sensitive: false,
+            context_before: 1,
+            context_after: 1,
+            max_depth: 0,
+            max_files: 0,
+            max_matches: 20,
+            max_candidates: DEFAULT_MAX_CANDIDATES,
+            timeout_ms: DEFAULT_TIMEOUT_MS,
+            engine: SearchEngine::Auto,
+            output_budget_bytes: Some(4096),
+        };
+        let attempt = build_search_attempt(
+            SearchStrategy::LiteralExact,
+            "alpha".to_string(),
+            QueryMode::Literal,
+            vec!["alpha".to_string()],
+            Some("alpha".to_string()),
+            false,
+        )
+        .expect("attempt");
+        let response = build_model_search_success(
+            &params,
+            &attempt,
+            SearchSummary {
+                query_source: "query".to_string(),
+                query_mode: "literal".to_string(),
+                query_mode_inferred: false,
+                strategy: "literal_exact".to_string(),
+                fallback_applied: false,
+                returned_match_count: 1,
+                matched_file_count: 1,
+                top_files: vec!["src/lib.rs".to_string()],
+                matched_terms: vec!["alpha".to_string()],
+                focus_points: vec!["src/lib.rs:12 [alpha]".to_string()],
+                next_hint: Some("Narrow the path if you need fewer hits.".to_string()),
+            },
+            vec![SearchHit {
+                path: "src/lib.rs".to_string(),
+                line: 12,
+                content: "alpha beta".to_string(),
+                segments: vec![],
+                matched_terms: vec!["alpha".to_string()],
+                before: vec![ContextLine {
+                    line: 11,
+                    content: "before".to_string(),
+                }],
+                after: vec![ContextLine {
+                    line: 13,
+                    content: "after".to_string(),
+                }],
+            }],
+            1,
+            1,
+            SearchResultFlags {
+                timeout_hit: false,
+                file_limit_hit: false,
+                match_limit_hit: false,
+                candidate_limit_hit: false,
+                output_budget_hit: true,
+            },
+            42,
+        );
+        assert_eq!(response.get("ok").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            response.get("action").and_then(Value::as_str),
+            Some("search_content")
+        );
+        assert_eq!(
+            response
+                .pointer("/data/hits/0/path")
+                .and_then(Value::as_str),
+            Some("src/lib.rs")
+        );
+        assert!(response.pointer("/data/hits/0/segments").is_none());
+        assert_eq!(
+            response
+                .pointer("/data/truncation_reasons/0")
+                .and_then(Value::as_str),
+            Some("output_budget")
+        );
+    }
+
+    #[test]
     fn push_rg_candidate_reference_resolves_relative_path_from_base_dirs() {
         let dir = tempdir().expect("tempdir");
         let relative = Path::new("opt/rg").join(rg_binary_name());

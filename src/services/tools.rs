@@ -10569,7 +10569,9 @@ PATCH"#;
             Some("sess_worker_demo")
         );
         assert_eq!(
-            response.pointer("/data/child_session_id").and_then(Value::as_str),
+            response
+                .pointer("/data/child_session_id")
+                .and_then(Value::as_str),
             Some("sess_worker_demo")
         );
         assert_eq!(

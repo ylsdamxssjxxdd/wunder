@@ -320,7 +320,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
             type="button"
-            :disabled="creatingAgentSession || isMessengerInteractionBlocked"
+            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="startNewSession"
@@ -10894,7 +10894,12 @@ async function openOrReuseFreshAgentSession(
 type StartNewSessionOutcome = 'noop' | 'already_current' | 'opened';
 
 async function runStartNewSession(options: { notify?: boolean } = {}): Promise<StartNewSessionOutcome> {
-  if (!isAgentConversationActive.value || creatingAgentSession.value || isMessengerInteractionBlocked.value) {
+  if (
+    !isAgentConversationActive.value ||
+    creatingAgentSession.value ||
+    isMessengerInteractionBlocked.value ||
+    activeMessengerSessionBusy.value
+  ) {
     return 'noop';
   }
   const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
