@@ -13,7 +13,11 @@
       }
     ]"
     :aria-label="`${node.name} ${node.roleLabel} ${node.statusLabel}`"
+    :data-testid="`beeroom-node:${node.id}`"
     :data-node-id="node.id"
+    :data-node-status="node.status"
+    :data-node-role="node.role"
+    :data-node-emphasis="node.emphasis"
     role="button"
     tabindex="0"
     draggable="false"

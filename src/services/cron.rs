@@ -1242,6 +1242,7 @@ fn build_virtual_user(user_id: &str) -> UserAccountRecord {
         daily_quota: 0,
         daily_quota_used: 0,
         daily_quota_date: None,
+        experience_total: 0,
         is_demo: false,
         created_at: now,
         updated_at: now,

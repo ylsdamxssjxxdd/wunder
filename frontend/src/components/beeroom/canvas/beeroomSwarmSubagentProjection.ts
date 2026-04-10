@@ -22,6 +22,15 @@ const normalizeProjectedSubagentFlag = (value: unknown): string =>
 
 const normalizeProjectedIdentity = (value: unknown): string => String(value || '').trim();
 
+const ACTIVE_SWARM_WORKER_MATCH_STATUSES = new Set([
+  'accepted',
+  'queued',
+  'running',
+  'waiting',
+  'cancelling',
+  'awaiting_idle'
+]);
+
 export type BeeroomSwarmSubagentProjectionContext = {
   swarmTaskSessionIds: ReadonlySet<string>;
   swarmTaskRunIds: ReadonlySet<string>;
@@ -30,6 +39,12 @@ export type BeeroomSwarmSubagentProjectionContext = {
 export type BeeroomSwarmSubagentProjectionDecision = {
   projectable: boolean;
   reason: string;
+};
+
+export const isBeeroomSwarmWorkerShadowItem = <T extends BeeroomProjectedSubagentLike>(item: T) => {
+  const runKind = normalizeProjectedSubagentFlag(item.runKind);
+  const requestedBy = normalizeProjectedSubagentFlag(item.requestedBy);
+  return runKind === 'swarm' || requestedBy === 'agent_swarm';
 };
 
 export const buildBeeroomSwarmSubagentProjectionContext = <Task extends BeeroomProjectedTaskLike>(
@@ -84,8 +99,7 @@ export const resolveBeeroomSwarmSubagentProjectionDecision = <T extends BeeroomP
     };
   }
   const runKind = normalizeProjectedSubagentFlag(item.runKind);
-  const requestedBy = normalizeProjectedSubagentFlag(item.requestedBy);
-  if (runKind === 'swarm' || requestedBy === 'agent_swarm') {
+  if (isBeeroomSwarmWorkerShadowItem(item)) {
     return {
       projectable: false,
       reason: runKind === 'swarm' ? 'filtered:run_kind_swarm' : 'filtered:requested_by_agent_swarm'
@@ -168,4 +182,53 @@ export const resolveProjectedWorkerSubagents = <
     runtimeScopedSubagents,
     buildBeeroomSwarmSubagentProjectionContext(options.tasks, options.swarmTaskProjectionContext)
   );
+};
+
+export const resolveBeeroomSwarmWorkerShadowMatch = <
+  T extends BeeroomProjectedSubagentLike & { agentId?: string; updatedTime?: number | null },
+  Task extends BeeroomProjectedTaskLike & { agent_id?: string | null }
+>(options: {
+  workerAgentId: string;
+  tasks: Task[];
+  runtimeSubagents: T[];
+}) => {
+  const sessionIds = new Set(
+    options.tasks
+      .flatMap((task) => [
+        task?.spawned_session_id,
+        task?.spawnedSessionId,
+        task?.target_session_id,
+        task?.targetSessionId
+      ])
+      .map((value) => normalizeProjectedIdentity(value))
+      .filter(Boolean)
+  );
+  const runIds = new Set(
+    options.tasks
+      .flatMap((task) => [task?.session_run_id, task?.sessionRunId])
+      .map((value) => normalizeProjectedIdentity(value))
+      .filter(Boolean)
+  );
+  const candidates = options.runtimeSubagents
+    .filter((item) => isBeeroomSwarmWorkerShadowItem(item))
+    .map((item) => {
+      let score = 0;
+      const sessionId = normalizeProjectedIdentity(item.sessionId);
+      const runId = normalizeProjectedIdentity(item.runId);
+      const agentId = normalizeProjectedIdentity(item.agentId);
+      if (sessionId && sessionIds.has(sessionId)) score += 8;
+      if (runId && runIds.has(runId)) score += 6;
+      if (agentId && agentId === normalizeProjectedIdentity(options.workerAgentId)) score += 4;
+      if (ACTIVE_SWARM_WORKER_MATCH_STATUSES.has(normalizeProjectedSubagentFlag((item as { status?: unknown }).status))) {
+        score += 2;
+      }
+      return { item, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => {
+      const scoreDiff = right.score - left.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      return Number(right.item.updatedTime || 0) - Number(left.item.updatedTime || 0);
+    });
+  return candidates[0]?.item || null;
 };

@@ -20,12 +20,21 @@
         </div>
       </div>
 
-      <section ref="chatStreamRef" class="beeroom-canvas-chat-stream" @scroll.passive="handleStreamScroll">
+      <section
+        ref="chatStreamRef"
+        class="beeroom-canvas-chat-stream"
+        data-testid="beeroom-chat-stream"
+        @scroll.passive="handleStreamScroll"
+      >
         <article
           v-for="message in messages"
           :key="message.key"
           class="beeroom-canvas-chat-message"
           :class="[`is-${message.tone}`]"
+          :data-testid="`beeroom-chat-message:${message.key}`"
+          :data-message-key="message.key"
+          :data-message-tone="message.tone"
+          :data-sender-name="message.senderName"
         >
           <button
             v-if="message.senderAgentId"
@@ -128,6 +137,7 @@
       <section class="beeroom-canvas-chat-composer">
         <textarea
           class="beeroom-canvas-chat-textarea"
+          data-testid="beeroom-chat-textarea"
           :value="composerText"
           :placeholder="t('beeroom.canvas.chatInputPlaceholder')"
           rows="3"
@@ -153,6 +163,7 @@
           <button
             class="beeroom-canvas-chat-send"
             :class="{ 'is-stop': composerSending }"
+            data-testid="beeroom-chat-send"
             type="button"
             :disabled="composerSending ? !dispatchCanStop : !composerCanSend"
             @click="emit('send')"
@@ -212,6 +223,19 @@ const shouldStickToBottom = ref(true);
 const logChatPanel = (event: string, payload?: unknown) => {
   chatDebugLog('beeroom.chat-panel', event, payload);
 };
+
+const buildMessageListSignature = () =>
+  props.messages
+    .map((message) =>
+      [
+        String(message?.key || '').trim(),
+        String(message?.tone || '').trim(),
+        String(message?.senderName || '').trim(),
+        String(message?.mention || '').trim(),
+        Number(message?.time || 0)
+      ].join(':')
+    )
+    .join('|');
 
 const resolveScrollSnapshot = (element: HTMLElement | null) => {
   if (!element) {
@@ -290,6 +314,26 @@ watch(
       lastMessageKey: props.messages[props.messages.length - 1]?.key || ''
     });
     await scrollChatToBottom();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => buildMessageListSignature(),
+  (signature, previousSignature) => {
+    if (signature === previousSignature) return;
+    logChatPanel('message-list-changed', {
+      messageCount: props.messages.length,
+      firstMessageKey: props.messages[0]?.key || '',
+      lastMessageKey: props.messages[props.messages.length - 1]?.key || '',
+      senders: props.messages.slice(0, 8).map((message) => ({
+        key: message.key,
+        tone: message.tone,
+        senderName: message.senderName
+      })),
+      shouldStickToBottom: shouldStickToBottom.value,
+      ...resolveScrollSnapshot(chatStreamRef.value)
+    });
   },
   { immediate: true }
 );

@@ -15,10 +15,11 @@ type BeeroomMissionChatDispatchState = {
 export type BeeroomMissionChatState = {
   version: number;
   manualMessages: MissionChatMessage[];
+  runtimeRelayMessages: MissionChatMessage[];
   dispatch: BeeroomMissionChatDispatchState | null;
 };
 
-const CHAT_STATE_VERSION = 1;
+const CHAT_STATE_VERSION = 2;
 const CHAT_STATE_STORAGE_KEY = 'wunder:beeroom-mission-chat-state';
 const MAX_CACHE_ENTRIES = 36;
 const ALLOWED_TONES = new Set(['mother', 'worker', 'system', 'user']);
@@ -122,12 +123,14 @@ const normalizeState = (
 ): BeeroomMissionChatState => ({
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state?.manualMessages || []),
+  runtimeRelayMessages: cloneManualMessages(state?.runtimeRelayMessages || []),
   dispatch: cloneDispatchState(state?.dispatch || null)
 });
 
 const cloneState = (state: BeeroomMissionChatState): BeeroomMissionChatState => ({
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state.manualMessages),
+  runtimeRelayMessages: cloneManualMessages(state.runtimeRelayMessages),
   dispatch: cloneDispatchState(state.dispatch)
 });
 
@@ -198,7 +201,7 @@ export const setBeeroomMissionChatState = (
   hydrateCache();
   const key = normalizeScopeKey(scopeKey);
   const next = normalizeState(state || null);
-  if (next.manualMessages.length === 0 && !next.dispatch) {
+  if (next.manualMessages.length === 0 && next.runtimeRelayMessages.length === 0 && !next.dispatch) {
     missionChatStateCache.delete(key);
   } else {
     missionChatStateCache.set(key, next);

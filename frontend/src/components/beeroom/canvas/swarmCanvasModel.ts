@@ -11,8 +11,10 @@ import {
   resolveBeeroomTaskMoment
 } from '@/components/beeroom/beeroomTaskWorkflow';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
+import { resolveBeeroomSwarmNodeStatus } from '@/components/beeroom/canvas/beeroomSwarmNodeStatus';
 import {
   buildBeeroomSwarmSubagentProjectionContext,
+  resolveBeeroomSwarmWorkerShadowMatch,
   resolveProjectedWorkerSubagents
 } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import type { BeeroomCanvasPositionOverride } from '@/components/beeroom/beeroomMissionCanvasStateCache';
@@ -241,29 +243,30 @@ const mergeProjectionMembers = (
   }
 
   const dispatchAgentId = String(dispatchPreview?.targetAgentId || '').trim();
-  if (dispatchAgentId && !merged.has(dispatchAgentId)) {
+  if (dispatchAgentId) {
     const active = ACTIVE_DISPATCH_STATUSES.has(String(dispatchPreview?.status || '').trim().toLowerCase());
-    pushMember({
+    const current = merged.get(dispatchAgentId) || ({} as BeeroomMember);
+    merged.set(dispatchAgentId, {
+      ...current,
       agent_id: dispatchAgentId,
-      name: String(dispatchPreview?.targetName || dispatchAgentId).trim() || dispatchAgentId,
-      idle: !active,
-      active_session_total: active ? 1 : 0
+      name: String(current.name || dispatchPreview?.targetName || dispatchAgentId).trim() || dispatchAgentId,
+      idle: active ? false : current.idle,
+      active_session_total: active
+        ? Math.max(Number(current.active_session_total || 0), 1)
+        : Number(current.active_session_total || 0),
+      active_session_ids: Array.isArray(current.active_session_ids) ? current.active_session_ids : []
     });
   }
 
   return Array.from(merged.values());
 };
 
-const resolveNodeStatus = (tasks: BeeroomMissionTask[], member: BeeroomMember | undefined, missionStatus: string) => {
-  if (member?.idle === false) return 'running';
-  if (!tasks.length) return missionStatus || 'idle';
-  const statuses = tasks.map((task) => String(task.status || '').trim().toLowerCase());
-  if (statuses.some((status) => status === 'running' || status === 'queued')) return 'running';
-  if (statuses.some((status) => status === 'failed' || status === 'error' || status === 'timeout')) return 'failed';
-  if (statuses.some((status) => status === 'cancelled')) return 'cancelled';
-  if (statuses.every((status) => status === 'success' || status === 'completed')) return 'completed';
-  return missionStatus || 'idle';
-};
+const resolveNodeStatus = (tasks: BeeroomMissionTask[], member: BeeroomMember | undefined, missionStatus: string) =>
+  resolveBeeroomSwarmNodeStatus({
+    tasks,
+    member,
+    missionStatus
+  });
 
 const resolveStatusRank = (status: string) => {
   const normalized = String(status || '').trim().toLowerCase();
@@ -481,6 +484,28 @@ const buildWorkflowSnapshot = (options: {
     items: fallbackRuntime.items,
     tone: fallbackRuntime.preview.badgeTone
   };
+};
+
+const buildWorkerShadowWorkflowLines = (
+  item: BeeroomMissionSubagentItem,
+  statusLabel: string,
+  t: TranslationFn
+) => {
+  const workflowLines = buildNodeWorkflowPreviewLines(
+    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[],
+    { includeEventFallback: true }
+  );
+  if (workflowLines.length > 0) {
+    return workflowLines;
+  }
+  return buildSubagentSummaryLines(item, resolveSubagentVisualState(item, t), t).map((line, index) =>
+    index === 0
+      ? {
+          ...line,
+          main: statusLabel
+        }
+      : line
+  );
 };
 
 const buildSubagentSummaryLines = (
@@ -787,8 +812,7 @@ export const buildBeeroomSwarmProjection = (options: {
     const latestTask = pickLatestTask(agentTasks);
     latestTaskByAgent.set(agentId, latestTask);
     const isMother = (hasMotherAgent && agentId === motherAgentId) || (!hasMotherAgent && index === 0);
-    const status = resolveNodeStatus(agentTasks, member, missionStatus);
-    const statusLabel = resolveStatusLabel(status, options.t);
+    const baseStatus = resolveNodeStatus(agentTasks, member, missionStatus);
     const nodeId = `agent:${agentId}`;
     const roleLabel = isMother ? options.t('beeroom.canvas.legendMother') : options.t('beeroom.canvas.legendWorker');
     const rawName = String(member?.name || (isMother ? options.group?.mother_agent_name : '') || agentId).trim();
@@ -806,9 +830,16 @@ export const buildBeeroomSwarmProjection = (options: {
       previewByTask: options.workflowPreviewByTask,
       motherWorkflowItems: options.motherWorkflowItems,
       isMother,
-      status,
+      status: baseStatus,
       t: options.t
     });
+    const status = resolveBeeroomSwarmNodeStatus({
+      tasks: agentTasks,
+      member,
+      missionStatus,
+      workflowTailTone: workflowSnapshot.items[workflowSnapshot.items.length - 1]?.status || ''
+    });
+    const statusLabel = resolveStatusLabel(status, options.t);
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
       includeEventFallback: true
     });
@@ -940,6 +971,40 @@ export const buildBeeroomSwarmProjection = (options: {
       });
     }
   }
+
+  const runtimeDispatchSubagents = Array.isArray(runtimeDispatch?.subagents) ? runtimeDispatch.subagents : [];
+  workerNodes.forEach((workerNode) => {
+    if (workerNode.role !== 'worker') return;
+    const agentTasks = tasksByAgent.get(workerNode.agentId) || [];
+    const workerShadowItem = resolveBeeroomSwarmWorkerShadowMatch({
+      workerAgentId: workerNode.agentId,
+      tasks: agentTasks,
+      runtimeSubagents: runtimeDispatchSubagents
+    });
+    if (!workerShadowItem) return;
+    const shadowStatus = normalizeDispatchPreviewStatus(workerShadowItem.status) || workerNode.status;
+    const shadowStatusLabel = resolveStatusLabel(shadowStatus, options.t);
+    const shadowWorkflowLines = buildWorkerShadowWorkflowLines(workerShadowItem, shadowStatusLabel, options.t);
+    const shadowWorkflowItems = Array.isArray(workerShadowItem.workflowItems)
+      ? (workerShadowItem.workflowItems as BeeroomWorkflowItem[])
+      : [];
+    const shadowWorkflowTone =
+      shadowWorkflowItems.length > 0
+        ? resolveNodeWorkflowTone(shadowWorkflowItems[shadowWorkflowItems.length - 1]?.status || shadowStatus)
+        : resolveNodeWorkflowTone(shadowStatus);
+    workerNode.status = shadowStatus;
+    workerNode.statusLabel = shadowStatusLabel;
+    workerNode.workflowTone = shadowWorkflowTone;
+    workerNode.workflowLines = shadowWorkflowLines;
+    const targetMeta = nodeMetaMap.get(workerNode.id);
+    if (targetMeta) {
+      targetMeta.status = shadowStatus;
+      targetMeta.updated_time = Math.max(targetMeta.updated_time, Number(workerShadowItem.updatedTime || 0));
+      if (workerShadowItem.summary) {
+        targetMeta.summary = workerShadowItem.summary;
+      }
+    }
+  });
 
   const subagentNodes: SwarmProjectionNode[] = [];
 

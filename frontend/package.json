@@ -17,6 +17,7 @@
     "test:composer-approval": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/composer-approval-regression.test.js",
     "test:message-stats": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-stats-regression.test.js",
     "test:message-render": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
+    "test:e2e:beeroom": "playwright test tests/e2e/beeroom-harness.spec.ts",
     "typecheck:vue": "node ./scripts/run-vue-tsc.mjs --noEmit",
     "typecheck:ts": "tsc --noEmit",
     "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false",
@@ -34,6 +35,7 @@
     "vue-router": "^4.4.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^22.10.2",
     "@vitejs/plugin-vue": "6.0.3",
     "typescript": "^5.7.3",

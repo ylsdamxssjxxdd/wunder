@@ -22,6 +22,7 @@ const AdminLoginView = () => import('@/views/AdminLoginView.vue');
 const AdminUsersView = () => import('@/views/AdminUsersView.vue');
 const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
 const AdminSystemView = () => import('@/views/AdminSystemView.vue');
+const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vue');
 
 const USER_LOGIN_PATH = '/login';
 const EMBED_AUTH_QUERY_KEYS = new Set([
@@ -180,6 +181,15 @@ const isAuthRequiredError = (error: unknown): boolean => {
 };
 
 const routes: RouteRecordRaw[] = [
+  ...(import.meta.env.DEV
+    ? ([
+        {
+          path: '/__e2e/beeroom-harness',
+          name: 'beeroom-e2e-harness',
+          component: BeeroomE2EHarnessView
+        }
+      ] satisfies RouteRecordRaw[])
+    : []),
   {
     path: '/',
     redirect: () =>

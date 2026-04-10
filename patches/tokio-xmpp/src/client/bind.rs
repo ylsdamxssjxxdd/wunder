@@ -2,6 +2,7 @@ use futures::stream::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use xmpp_parsers::bind::{BindQuery, BindResponse};
 use xmpp_parsers::iq::{Iq, IqType};
+use xmpp_parsers::jid::{Jid, ResourceRef};
 
 use crate::xmpp_codec::Packet;
 use crate::xmpp_stream::XMPPStream;
@@ -16,7 +17,7 @@ pub async fn bind<S: AsyncRead + AsyncWrite + Unpin>(
         let resource = stream
             .jid
             .resource()
-            .and_then(|resource| Some(resource.to_string()));
+            .map(|resource: &ResourceRef| resource.to_string());
         let iq = Iq::from_set(BIND_REQ_ID, BindQuery::new(resource));
         stream.send_stanza(iq).await?;
 
@@ -25,9 +26,12 @@ pub async fn bind<S: AsyncRead + AsyncWrite + Unpin>(
                 Some(Ok(Packet::Stanza(stanza))) => match Iq::try_from(stanza) {
                     Ok(iq) if iq.id == BIND_REQ_ID => match iq.payload {
                         IqType::Result(payload) => {
-                            payload
-                                .and_then(|payload| BindResponse::try_from(payload).ok())
-                                .map(|bind| stream.jid = bind.into());
+                            if let Some(bind) =
+                                payload.and_then(|payload| BindResponse::try_from(payload).ok())
+                            {
+                                let bound_jid = Jid::from(bind);
+                                stream.jid = bound_jid;
+                            }
                             return Ok(stream);
                         }
                         _ => return Err(ProtocolError::InvalidBindResponse.into()),

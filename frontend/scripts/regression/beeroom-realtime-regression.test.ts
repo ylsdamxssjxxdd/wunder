@@ -93,6 +93,20 @@ test('team runtime event marks workflow refresh only for runtime-critical types'
 test('team runtime reconcile forces immediate refresh for rejected or terminal events', () => {
   assert.equal(
     shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_start',
+      accepted: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_task_dispatch',
+      accepted: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
       eventType: 'team_task_result',
       accepted: false
     }),
@@ -111,13 +125,6 @@ test('team runtime reconcile forces immediate refresh for rejected or terminal e
       accepted: true
     }),
     true
-  );
-  assert.equal(
-    shouldForceImmediateTeamRealtimeReconcile({
-      eventType: 'team_task_dispatch',
-      accepted: true
-    }),
-    false
   );
   assert.equal(
     shouldForceImmediateTeamRealtimeReconcile({

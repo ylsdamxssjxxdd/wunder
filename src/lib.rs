@@ -24,6 +24,6 @@ pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
     a2a_store, attachment, beeroom_realtime, browser, cron, desktop_lan, doc2md, history,
     knowledge, llm, mcp, memory, org_units, presence, prompting, runtime, sim_lab, skills, swarm,
-    tools, user_access, user_prompt_templates, user_store, user_tools, user_world,
+    tools, user_access, user_leveling, user_prompt_templates, user_store, user_tools, user_world,
     vector_knowledge, workspace,
 };

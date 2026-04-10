@@ -3,6 +3,7 @@
 @import "./pages/admin.css";
 @import "./pages/maintenance.css";
 @import "./pages/portal.css";
+@import "./pages/profile.css";
 @import "./chat/shell.css";
 @import "./chat/messages.css";
 @import "./chat/workflow.css";

@@ -82,6 +82,7 @@ pub struct UserAccountRecord {
     pub daily_quota: i64,
     pub daily_quota_used: i64,
     pub daily_quota_date: Option<String>,
+    pub experience_total: i64,
     pub is_demo: bool,
     pub created_at: f64,
     pub updated_at: f64,
@@ -1147,6 +1148,7 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)>;
+    fn add_user_experience(&self, user_id: &str, delta: i64, updated_at: f64) -> Result<i64>;
     fn delete_user_account(&self, user_id: &str) -> Result<i64>;
 
     fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>>;

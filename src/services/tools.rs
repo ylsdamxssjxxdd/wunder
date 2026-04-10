@@ -202,6 +202,46 @@ fn compact_cron_tool_result(value: Value) -> Value {
     output
 }
 
+pub(crate) fn build_model_tool_success(
+    action: &str,
+    state: &str,
+    summary: impl Into<String>,
+    data: Value,
+) -> Value {
+    json!({
+        "ok": true,
+        "action": action,
+        "state": state,
+        "summary": summary.into(),
+        "data": data,
+    })
+}
+
+pub(crate) fn build_model_tool_success_with_hint(
+    action: &str,
+    state: &str,
+    summary: impl Into<String>,
+    data: Value,
+    next_step_hint: Option<String>,
+) -> Value {
+    let mut result = build_model_tool_success(action, state, summary, data);
+    if let Some(next_step_hint) = next_step_hint
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        result["next_step_hint"] = Value::String(next_step_hint);
+    }
+    result
+}
+
+pub(crate) fn tool_result_data(value: &Value) -> &Value {
+    value.get("data").unwrap_or(value)
+}
+
+pub(crate) fn tool_result_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    tool_result_data(value).get(key).or_else(|| value.get(key))
+}
+
 fn compact_cron_jobs(value: &Value) -> Value {
     let Some(items) = value.as_array() else {
         return Value::Array(Vec::new());
@@ -1785,6 +1825,7 @@ fn create_swarm_team_task_record(
     }
 }
 
+#[allow(dead_code)]
 fn build_swarm_timeout_monitoring_payload(
     run_id: Option<&str>,
     team_run_id: &str,
@@ -1829,6 +1870,7 @@ fn build_swarm_timeout_monitoring_payload(
     })
 }
 
+#[allow(dead_code)]
 fn build_swarm_wait_monitoring_payload(run_ids: &[String]) -> Value {
     let run_ids = dedupe_non_empty_strings(run_ids.to_vec());
     json!({
@@ -2288,14 +2330,20 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             return Err(err);
         }
     };
-    let status = result
-        .get("status")
+    let state = tool_result_field(&result, "state")
         .and_then(Value::as_str)
         .map(str::trim)
-        .unwrap_or("accepted")
-        .to_ascii_lowercase();
-    let run_id = result
-        .get("run_id")
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            normalize_tool_run_state(
+                result
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("accepted"),
+            )
+        });
+    let run_id = tool_result_field(&result, "run_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -2303,23 +2351,20 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     if let Some(run_id) = run_id.as_deref() {
         task_record.session_run_id = Some(run_id.to_string());
     }
-    let reply = result
-        .get("reply")
+    let reply = tool_result_field(&result, "reply")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let error_text = result
-        .get("error")
+    let error_text = tool_result_field(&result, "error")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let elapsed_s = result
-        .get("elapsed_s")
+    let elapsed_s = tool_result_field(&result, "elapsed_s")
         .and_then(Value::as_f64)
         .filter(|value| value.is_finite() && *value >= 0.0);
-    let should_sync_progress = matches!(status.as_str(), "" | "accepted" | "timeout");
+    let should_sync_progress = matches!(state.as_str(), "accepted" | "running" | "timeout");
     if let Some(run_id) = run_id.as_deref() {
         if should_sync_progress {
             if let Some(session_run) = context.storage.get_session_run(run_id)? {
@@ -2339,7 +2384,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                 emit_swarm_run_terminal(context, &run_record, failed);
             }
         }
-    } else if status == "error" {
+    } else if state == "error" {
         task_record.status = "error".to_string();
         task_record.error = error_text.as_deref().map(truncate_tool_result_text);
         task_record.updated_time = now_ts();
@@ -2352,6 +2397,22 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             emit_swarm_run_terminal(context, &run_record, failed);
         }
     }
+    return Ok(build_agent_swarm_tool_result(
+        "send",
+        &state,
+        run_record.team_run_id,
+        Some(task_record.task_id),
+        run_id,
+        Some(target_session_id),
+        Some(target_agent_id),
+        Some(target_agent.name),
+        Some(created_session),
+        reply,
+        error_text,
+        elapsed_s,
+        None,
+    ));
+    /*
     let mut response = json!({
         "action": "send",
         "status": status,
@@ -2390,6 +2451,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         }
     }
     Ok(response)
+    */
 }
 
 async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -2839,20 +2901,16 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         emit_swarm_run_terminal(context, &run_record, failed);
     }
 
-    let mut response = json!({
-        "action": "batch_send",
-        "status": if accepted_total > 0 {
-            if failed_total > 0 { "partial" } else { "accepted" }
+    let mut state = if accepted_total > 0 {
+        if failed_total > 0 {
+            "partial".to_string()
         } else {
-            "error"
-        },
-        "task_total": items.len(),
-        "accepted_total": accepted_total,
-        "failed_total": failed_total,
-        "team_run_id": run_record.team_run_id,
-        "run_ids": run_ids,
-        "items": items,
-    });
+            "accepted".to_string()
+        }
+    } else {
+        "error".to_string()
+    };
+    let mut wait_result_value = Value::Null;
 
     let wait_mode = resolve_swarm_wait_mode(
         payload.wait_seconds,
@@ -2870,7 +2928,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             true,
         )
         .await?;
-        if let Some(wait_items) = wait_result.get("items").and_then(Value::as_array) {
+        if let Some(wait_items) = tool_result_field(&wait_result, "items").and_then(Value::as_array)
+        {
             let mut snapshots_by_run_id: HashMap<String, &Value> = HashMap::new();
             for item in wait_items {
                 let Some(run_id) = item
@@ -2922,7 +2981,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     .and_then(Value::as_f64)
                     .filter(|value| value.is_finite() && *value >= 0.0);
                 task_record.result_summary = snapshot
-                    .get("result")
+                    .get("result_preview")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
@@ -2955,21 +3014,35 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 emit_swarm_run_terminal(context, &run_record, failed);
             }
         }
-        if let Value::Object(ref mut map) = response {
-            map.insert("wait".to_string(), wait_result.clone());
-            if let Some(status) = wait_result.get("status").and_then(Value::as_str) {
-                map.insert("status".to_string(), json!(status));
-            }
-            if let Some(message) = wait_result.get("message") {
-                map.insert("message".to_string(), message.clone());
-            }
-            if let Some(monitoring) = wait_result.get("monitoring") {
-                map.insert("monitoring".to_string(), monitoring.clone());
-            }
+        wait_result_value = wait_result.clone();
+        if let Some(wait_state) = wait_result.get("state").and_then(Value::as_str) {
+            state = wait_state.to_string();
         }
     }
-
-    Ok(response)
+    Ok(build_agent_swarm_tool_result(
+        "batch_send",
+        &state,
+        run_record.team_run_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(json!({
+            "run_ids": run_ids,
+            "counts": {
+                "total": items.len(),
+                "accepted": accepted_total,
+                "failed": failed_total,
+            },
+            "items": items,
+            "wait": wait_result_value,
+        })),
+    ))
 }
 
 async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -3022,6 +3095,13 @@ async fn agent_swarm_wait(context: &ToolContext<'_>, args: &Value) -> Result<Val
     .await
 }
 
+fn compact_swarm_run_result_preview(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(truncate_tool_result_text)
+}
+
 async fn wait_for_swarm_runs(
     context: &ToolContext<'_>,
     run_ids: &[String],
@@ -3031,12 +3111,23 @@ async fn wait_for_swarm_runs(
 ) -> Result<Value> {
     let run_ids = dedupe_non_empty_strings(run_ids.to_vec());
     if run_ids.is_empty() {
-        return Ok(json!({
-            "status": "error",
-            "total": 0,
-            "run_ids": [],
-            "items": [],
-        }));
+        return Ok(build_model_tool_success(
+            "wait",
+            "error",
+            "No worker runs were provided.",
+            json!({
+                "run_ids": [],
+                "counts": {
+                    "total": 0,
+                    "done": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "queued": 0,
+                    "running": 0,
+                },
+                "items": [],
+            }),
+        ));
     }
 
     let poll_interval = normalize_swarm_poll_interval(poll_interval_seconds);
@@ -3067,9 +3158,9 @@ async fn wait_for_swarm_runs(
         let immediate_snapshot = wait_seconds.is_some_and(|value| value <= 0.0);
 
         if all_finished || timed_out || immediate_snapshot {
-            let status = if all_finished {
+            let state = if all_finished {
                 if failed_total == 0 {
-                    "ok"
+                    "completed"
                 } else {
                     "partial"
                 }
@@ -3082,6 +3173,46 @@ async fn wait_for_swarm_runs(
                 .into_iter()
                 .map(|item| item.payload)
                 .collect::<Vec<_>>();
+            let response = build_model_tool_success_with_hint(
+                "wait",
+                state,
+                if state == "completed" {
+                    "All worker runs finished.".to_string()
+                } else if state == "partial" {
+                    "Worker runs finished with partial success.".to_string()
+                } else if state == "timeout" {
+                    "Waiting for worker runs timed out.".to_string()
+                } else {
+                    "Worker runs are still executing.".to_string()
+                },
+                json!({
+                    "run_ids": run_ids.clone(),
+                    "wait_seconds": wait_seconds,
+                    "wait_forever": wait_seconds.is_none(),
+                    "elapsed_s": elapsed_s,
+                    "all_finished": all_finished,
+                    "counts": {
+                        "total": total,
+                        "done": done_total,
+                        "success": success_total,
+                        "failed": failed_total,
+                        "queued": queued_total,
+                        "running": running_total,
+                    },
+                    "items": items.clone(),
+                }),
+                if timed_out || !all_finished {
+                    Some(
+                        "Use agent_swarm.wait again or inspect status/history before treating unfinished worker runs as complete."
+                            .to_string(),
+                    )
+                } else {
+                    None
+                },
+            );
+            crate::services::subagents::suppress_auto_wake_from_wait_result(&response);
+            return Ok(response);
+            /*
             let mut response = json!({
                 "action": "wait",
                 "status": status,
@@ -3123,6 +3254,7 @@ async fn wait_for_swarm_runs(
             }
             crate::services::subagents::suppress_auto_wake_from_wait_result(&response);
             return Ok(response);
+            */
         }
 
         if emit_progress {
@@ -3167,14 +3299,11 @@ fn collect_swarm_run_snapshots(
                     "terminal": terminal,
                     "failed": failed,
                     "session_id": record.session_id,
-                    "parent_session_id": record.parent_session_id,
                     "agent_id": record.agent_id,
-                    "model_name": record.model_name,
-                    "queued_time": record.queued_time,
                     "started_time": record.started_time,
                     "finished_time": record.finished_time,
                     "elapsed_s": record.elapsed_s,
-                    "result": record.result,
+                    "result_preview": compact_swarm_run_result_preview(record.result.as_deref()),
                     "error": record.error,
                     "updated_time": record.updated_time,
                 }),
@@ -3374,70 +3503,36 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
 }
 
 fn enrich_agent_swarm_spawn_response(mut response: Value) -> Value {
-    let status = response
-        .get("status")
+    let state = response
+        .get("state")
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or("accepted")
         .to_ascii_lowercase();
-    let run_id = response
-        .get("run_id")
+    let child_session_id = tool_result_field(&response, "session_id")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string);
-    let child_session_id = response
-        .get("target_session_id")
-        .or_else(|| response.get("session_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string);
-    let follow_up_required = matches!(status.as_str(), "accepted" | "timeout" | "running");
-    let Some(object) = response.as_object_mut() else {
-        return response;
-    };
-    if let Some(session_id) = child_session_id.as_ref() {
-        object.insert("session_id".to_string(), Value::String(session_id.clone()));
-        object.insert(
-            "child_session_id".to_string(),
-            Value::String(session_id.clone()),
-        );
+    if let Some(object) = response.as_object_mut() {
+        object.insert("action".to_string(), json!("spawn"));
+        if state == "accepted" {
+            object.insert(
+                "summary".to_string(),
+                json!("Worker session was created and the initial task was queued."),
+            );
+        } else if state == "completed" {
+            object.insert(
+                "summary".to_string(),
+                json!("Worker session completed the initial task."),
+            );
+        }
     }
-    object.insert("task_started".to_string(), Value::Bool(true));
-    object.insert("initial_turn_dispatched".to_string(), Value::Bool(true));
-    object.insert(
-        "follow_up_required".to_string(),
-        Value::Bool(follow_up_required),
-    );
-    object.insert("reply_pending".to_string(), Value::Bool(follow_up_required));
-    object.insert(
-        "child_reply_pending".to_string(),
-        Value::Bool(follow_up_required),
-    );
-    if let (Some(run_id), Some(session_id)) = (run_id.as_ref(), child_session_id.as_ref()) {
-        object.insert(
-            "recommended_follow_up_target".to_string(),
-            json!({
-                "run_id": run_id,
-                "session_id": session_id,
-            }),
-        );
-    }
-    if follow_up_required {
-        object.insert(
-            "follow_up_condition".to_string(),
-            Value::String(
-                "The worker session has accepted the initial task, but its first reply is still pending. Use wait/status/history before reporting completion.".to_string(),
-            ),
-        );
-        object.insert(
-            "next_step_hint".to_string(),
-            Value::String(
-                "spawn already dispatched the initial task to the worker session. Do not call send again. Use wait/status/history to confirm the worker reply before continuing."
-                    .to_string(),
-            ),
-        );
+    if let Some(data) = response.get_mut("data").and_then(Value::as_object_mut) {
+        data.insert("spawned".to_string(), Value::Bool(true));
+        if let Some(session_id) = child_session_id {
+            data.insert("child_session_id".to_string(), Value::String(session_id));
+        }
     }
     response
 }
@@ -3717,6 +3812,120 @@ async fn sessions_history(context: &ToolContext<'_>, args: &Value) -> Result<Val
     Ok(json!({ "session_id": session_id, "messages": messages }))
 }
 
+fn normalize_tool_run_state(status: &str) -> String {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "" => "accepted".to_string(),
+        "ok" | "success" => "completed".to_string(),
+        "accepted" => "accepted".to_string(),
+        "running" | "queued" | "waiting" => "running".to_string(),
+        "timeout" => "timeout".to_string(),
+        "cancelled" | "cancelling" => "cancelled".to_string(),
+        "partial" => "partial".to_string(),
+        "error" | "failed" => "error".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn build_session_tool_result(
+    action: &str,
+    raw_status: &str,
+    session_id: Option<String>,
+    run_id: String,
+    reply: Option<String>,
+    error: Option<String>,
+    elapsed_s: Option<f64>,
+    next_step_hint: Option<String>,
+) -> Value {
+    let state = normalize_tool_run_state(raw_status);
+    let summary = match state.as_str() {
+        "completed" => match action {
+            "spawn" => "Child session completed the initial task.".to_string(),
+            _ => "Child session completed the requested turn.".to_string(),
+        },
+        "accepted" => match action {
+            "spawn" => "Child session was created and the initial task was queued.".to_string(),
+            _ => "Child session accepted the message and is still running.".to_string(),
+        },
+        "running" => "Child session is still running.".to_string(),
+        "timeout" => {
+            "Waiting for the child session timed out; the run may still be executing.".to_string()
+        }
+        "cancelled" => "Child session run was cancelled.".to_string(),
+        "partial" => "Child session finished with partial results.".to_string(),
+        _ => "Child session run failed.".to_string(),
+    };
+    build_model_tool_success_with_hint(
+        action,
+        &state,
+        summary,
+        json!({
+            "run_id": run_id,
+            "session_id": session_id,
+            "reply": reply,
+            "error": error,
+            "elapsed_s": elapsed_s,
+            "reply_pending": matches!(state.as_str(), "accepted" | "running" | "timeout"),
+        }),
+        next_step_hint,
+    )
+}
+
+fn build_agent_swarm_tool_result(
+    action: &str,
+    state: &str,
+    team_run_id: String,
+    task_id: Option<String>,
+    run_id: Option<String>,
+    session_id: Option<String>,
+    target_agent_id: Option<String>,
+    target_agent_name: Option<String>,
+    created_session: Option<bool>,
+    reply: Option<String>,
+    error: Option<String>,
+    elapsed_s: Option<f64>,
+    extra: Option<Value>,
+) -> Value {
+    let summary = match state {
+        "completed" => "Worker finished and returned a result.".to_string(),
+        "accepted" => "Worker task was queued and is still running.".to_string(),
+        "running" => "Worker task is still running.".to_string(),
+        "timeout" => {
+            "Waiting for the worker timed out; the run may still be executing.".to_string()
+        }
+        "partial" => "Worker batch finished with partial success.".to_string(),
+        "cancelled" => "Worker task was cancelled.".to_string(),
+        _ => "Worker task failed.".to_string(),
+    };
+    let next_step_hint = if matches!(state, "accepted" | "running" | "timeout") {
+        Some(
+            "Use agent_swarm.wait or status/history before treating the worker result as final."
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    let mut data = json!({
+        "team_run_id": team_run_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "session_id": session_id,
+        "target_agent_id": target_agent_id,
+        "target_agent_name": target_agent_name,
+        "created_session": created_session,
+        "reply": reply,
+        "error": error,
+        "elapsed_s": elapsed_s,
+    });
+    if let Some(extra) = extra {
+        if let (Some(data_map), Some(extra_map)) = (data.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra_map {
+                data_map.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    build_model_tool_success_with_hint(action, state, summary, data, next_step_hint)
+}
+
 async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: SessionSendArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
@@ -3819,72 +4028,106 @@ async fn sessions_send(context: &ToolContext<'_>, args: &Value) -> Result<Value>
         return match receiver.await {
             Ok(outcome) => {
                 if outcome.status == "success" {
-                    Ok(json!({
-                        "status": "ok",
-                        "run_id": run_id,
-                        "reply": outcome.answer.unwrap_or_default(),
-                        "elapsed_s": outcome.elapsed_s
-                    }))
+                    Ok(build_session_tool_result(
+                        "send",
+                        "ok",
+                        Some(session_id.clone()),
+                        run_id,
+                        outcome.answer,
+                        None,
+                        Some(outcome.elapsed_s),
+                        None,
+                    ))
                 } else {
-                    Ok(json!({
-                        "status": outcome.status,
-                        "run_id": run_id,
-                        "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
-                        "elapsed_s": outcome.elapsed_s
-                    }))
+                    Ok(build_session_tool_result(
+                        "send",
+                        &outcome.status,
+                        Some(session_id.clone()),
+                        run_id,
+                        None,
+                        Some(outcome.error.unwrap_or_else(|| "unknown".to_string())),
+                        Some(outcome.elapsed_s),
+                        None,
+                    ))
                 }
             }
-            Err(err) => Ok(json!({
-                "status": "error",
-                "run_id": run_id,
-                "error": err.to_string()
-            })),
+            Err(err) => Ok(build_session_tool_result(
+                "send",
+                "error",
+                Some(session_id.clone()),
+                run_id,
+                None,
+                Some(err.to_string()),
+                None,
+                None,
+            )),
         };
     }
     if timeout_seconds <= 0.0 {
-        return Ok(json!({
-            "status": "accepted",
-            "run_id": run_id.clone(),
-            "session_id": session_id.clone(),
-            "reply_pending": true,
-            "follow_up_required": true,
-            "follow_up_condition": "The child session has accepted the message, but the reply is still pending.",
-            "recommended_follow_up_target": {
-                "session_id": session_id,
-                "run_id": run_id
-            },
-            "next_step_hint": "send only queued the next child turn. Do not report the child reply or mark the task complete until wait/status/history confirms the child has finished this run."
-        }));
+        return Ok(build_session_tool_result(
+            "send",
+            "accepted",
+            Some(session_id),
+            run_id,
+            None,
+            None,
+            None,
+            Some(
+                "send only queued the child turn. Use wait/status/history before treating the child reply as finished."
+                    .to_string(),
+            ),
+        ));
     }
     let outcome = timeout(Duration::from_secs_f64(timeout_seconds), receiver).await;
     match outcome {
         Ok(Ok(outcome)) => {
             if outcome.status == "success" {
-                Ok(json!({
-                    "status": "ok",
-                    "run_id": run_id,
-                    "reply": outcome.answer.unwrap_or_default(),
-                    "elapsed_s": outcome.elapsed_s
-                }))
+                Ok(build_session_tool_result(
+                    "send",
+                    "ok",
+                    Some(session_id.clone()),
+                    run_id,
+                    outcome.answer,
+                    None,
+                    Some(outcome.elapsed_s),
+                    None,
+                ))
             } else {
-                Ok(json!({
-                    "status": outcome.status,
-                    "run_id": run_id,
-                    "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
-                    "elapsed_s": outcome.elapsed_s
-                }))
+                Ok(build_session_tool_result(
+                    "send",
+                    &outcome.status,
+                    Some(session_id.clone()),
+                    run_id,
+                    None,
+                    Some(outcome.error.unwrap_or_else(|| "unknown".to_string())),
+                    Some(outcome.elapsed_s),
+                    None,
+                ))
             }
         }
-        Ok(Err(err)) => Ok(json!({
-            "status": "error",
-            "run_id": run_id,
-            "error": err.to_string()
-        })),
-        Err(_) => Ok(json!({
-            "status": "timeout",
-            "run_id": run_id,
-            "error": "timeout"
-        })),
+        Ok(Err(err)) => Ok(build_session_tool_result(
+            "send",
+            "error",
+            Some(session_id.clone()),
+            run_id,
+            None,
+            Some(err.to_string()),
+            None,
+            None,
+        )),
+        Err(_) => Ok(build_session_tool_result(
+            "send",
+            "timeout",
+            Some(session_id),
+            run_id,
+            None,
+            Some("timeout".to_string()),
+            None,
+            Some(
+                "The child run may still be executing. Use wait/status/history before retrying or reporting completion."
+                    .to_string(),
+            ),
+        )),
     }
 }
 
@@ -3944,6 +4187,11 @@ fn prepare_child_session(
         &parent_tool_names,
         child_agent_record.as_ref(),
     );
+    // Keep the first spawned child turn aligned with the same effective model
+    // resolution used by the normal chat entrypoint.
+    let resolved_model_name = model_name.or_else(|| {
+        resolve_effective_agent_model_name(context.config, child_agent_record.as_ref())
+    });
     let agent_prompt = child_agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
@@ -4003,7 +4251,7 @@ fn prepare_child_session(
     Ok(PreparedChildSession {
         child_session_id: child_session_id.clone(),
         child_agent_id: child_agent_id.clone(),
-        model_name: model_name.clone(),
+        model_name: resolved_model_name.clone(),
         request: WunderRequest {
             user_id: user_id.to_string(),
             question: cleaned_task.to_string(),
@@ -4013,7 +4261,7 @@ fn prepare_child_session(
             debug_payload: false,
             session_id: Some(child_session_id),
             agent_id: child_agent_id,
-            model_name,
+            model_name: resolved_model_name,
             language: Some(i18n::get_language()),
             config_overrides: context.request_config_overrides.cloned(),
             agent_prompt,
@@ -4039,6 +4287,46 @@ fn prepare_child_session(
             persist_history_message: false,
         },
         run_metadata,
+    })
+}
+
+fn resolve_effective_agent_model_name(
+    config: &Config,
+    agent_record: Option<&UserAgentRecord>,
+) -> Option<String> {
+    if let Some(model_name) = agent_record
+        .and_then(|record| normalize_optional_string(record.model_name.clone()))
+        .filter(|model_name| {
+            config
+                .llm
+                .models
+                .get(model_name)
+                .is_some_and(crate::services::llm::is_llm_model)
+        })
+    {
+        return Some(model_name);
+    }
+
+    let default_model_name = config.llm.default.trim();
+    if config
+        .llm
+        .models
+        .get(default_model_name)
+        .is_some_and(crate::services::llm::is_llm_model)
+    {
+        return Some(default_model_name.to_string());
+    }
+
+    config.llm.models.iter().find_map(|(name, model)| {
+        if !crate::services::llm::is_llm_model(model) {
+            return None;
+        }
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
     })
 }
 
@@ -4102,23 +4390,19 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
     )
     .await?;
     if wait_seconds <= 0.0 {
-        return Ok(json!({
-            "status": "accepted",
-            "run_id": run_id,
-            "session_id": child_session_id.clone(),
-            "child_session_id": child_session_id.clone(),
-            "task_started": true,
-            "initial_turn_dispatched": true,
-            "child_reply_pending": true,
-            "reply_pending": true,
-            "follow_up_required": true,
-            "follow_up_condition": "The child session has accepted the initial task, but its first reply is still pending. Check status/wait/history before reporting completion or sending another turn.",
-            "recommended_follow_up_target": {
-                "session_id": child_session_id.clone(),
-                "run_id": run_id.clone()
-            },
-            "next_step_hint": "spawn already dispatched the initial task to the child session. Do not report the child reply yet, and do not call send immediately. Use status/wait/history to confirm the first child reply before continuing."
-        }));
+        return Ok(build_session_tool_result(
+            "spawn",
+            "accepted",
+            Some(child_session_id),
+            run_id,
+            None,
+            None,
+            None,
+            Some(
+                "spawn already dispatched the initial child task. Use status/wait/history before sending another turn or reporting completion."
+                    .to_string(),
+            ),
+        ));
     }
     let summary = i18n::t("monitor.summary.subagent_wait");
     let wait_payload = json!({
@@ -4161,48 +4445,52 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
     match outcome {
         Ok(Ok(outcome)) => {
             if outcome.status == "success" {
-                Ok(json!({
-                    "status": "ok",
-                    "run_id": run_id,
-                    "session_id": child_session_id.clone(),
-                    "child_session_id": child_session_id.clone(),
-                    "task_started": true,
-                    "initial_turn_dispatched": true,
-                    "follow_up_required": false,
-                    "reply": outcome.answer.unwrap_or_default(),
-                    "elapsed_s": outcome.elapsed_s
-                }))
+                Ok(build_session_tool_result(
+                    "spawn",
+                    "ok",
+                    Some(child_session_id.clone()),
+                    run_id,
+                    outcome.answer,
+                    None,
+                    Some(outcome.elapsed_s),
+                    None,
+                ))
             } else {
-                Ok(json!({
-                    "status": outcome.status,
-                    "run_id": run_id,
-                    "session_id": child_session_id.clone(),
-                    "child_session_id": child_session_id.clone(),
-                    "task_started": true,
-                    "initial_turn_dispatched": true,
-                    "error": outcome.error.unwrap_or_else(|| "unknown".to_string()),
-                    "elapsed_s": outcome.elapsed_s
-                }))
+                Ok(build_session_tool_result(
+                    "spawn",
+                    &outcome.status,
+                    Some(child_session_id.clone()),
+                    run_id,
+                    None,
+                    Some(outcome.error.unwrap_or_else(|| "unknown".to_string())),
+                    Some(outcome.elapsed_s),
+                    None,
+                ))
             }
         }
-        Ok(Err(err)) => Ok(json!({
-            "status": "error",
-            "run_id": run_id,
-            "session_id": child_session_id.clone(),
-            "child_session_id": child_session_id.clone(),
-            "task_started": true,
-            "initial_turn_dispatched": true,
-            "error": err.to_string()
-        })),
-        Err(_) => Ok(json!({
-            "status": "timeout",
-            "run_id": run_id,
-            "session_id": child_session_id.clone(),
-            "child_session_id": child_session_id,
-            "task_started": true,
-            "initial_turn_dispatched": true,
-            "error": "timeout"
-        })),
+        Ok(Err(err)) => Ok(build_session_tool_result(
+            "spawn",
+            "error",
+            Some(child_session_id.clone()),
+            run_id,
+            None,
+            Some(err.to_string()),
+            None,
+            None,
+        )),
+        Err(_) => Ok(build_session_tool_result(
+            "spawn",
+            "timeout",
+            Some(child_session_id),
+            run_id,
+            None,
+            Some("timeout".to_string()),
+            None,
+            Some(
+                "The child session may still be running. Use status/wait/history before retrying or sending another turn."
+                    .to_string(),
+            ),
+        )),
     }
 }
 
@@ -8116,7 +8404,7 @@ async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .await?;
     let uri = lsp_path_to_uri(&target)?;
     let timeout_s = resolve_lsp_timeout_s(context.config);
-    let operation_key = operation.to_lowercase();
+    let operation_key = normalize_lsp_operation_key(&operation);
     let needs_position = matches!(
         operation_key.as_str(),
         "definition" | "references" | "hover" | "implementation" | "callhierarchy"
@@ -8280,6 +8568,10 @@ async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         "path": path,
         "results": results
     }))
+}
+
+fn normalize_lsp_operation_key(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase().replace(['_', '-'], "")
 }
 
 #[derive(Clone)]
@@ -8940,6 +9232,7 @@ fn is_a2a_task_finished(status: &str) -> bool {
 mod tests {
     use super::*;
     use crate::a2a_store::A2aStore;
+    use crate::config::LlmModelConfig;
     use crate::lsp::LspManager;
     use crate::storage::{AgentThreadRecord, ChatSessionRecord, SqliteStorage, UserAgentRecord};
     use crate::workspace::WorkspaceManager;
@@ -8989,6 +9282,33 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+        }
+    }
+
+    fn sample_llm_model_config(model: &str) -> LlmModelConfig {
+        LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai".to_string()),
+            api_mode: None,
+            base_url: Some("http://127.0.0.1:18080/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some(model.to_string()),
+            temperature: Some(0.0),
+            timeout_s: Some(15),
+            retry: Some(0),
+            max_rounds: Some(4),
+            max_context: Some(16_384),
+            max_output: Some(256),
+            support_vision: Some(false),
+            support_hearing: Some(false),
+            stream: Some(false),
+            stream_include_usage: Some(false),
+            history_compaction_ratio: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            reasoning_effort: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
         }
     }
 
@@ -9070,6 +9390,26 @@ mod tests {
         }))
         .expect_err("cursor should be validated");
         assert!(err.to_string().contains("cursor"));
+    }
+
+    #[test]
+    fn normalize_lsp_operation_key_accepts_snake_case_and_legacy_camel_case() {
+        assert_eq!(
+            normalize_lsp_operation_key("document_symbol"),
+            "documentsymbol"
+        );
+        assert_eq!(
+            normalize_lsp_operation_key("documentSymbol"),
+            "documentsymbol"
+        );
+        assert_eq!(
+            normalize_lsp_operation_key("workspace-symbol"),
+            "workspacesymbol"
+        );
+        assert_eq!(
+            normalize_lsp_operation_key("call_hierarchy"),
+            "callhierarchy"
+        );
     }
 
     #[test]
@@ -9774,6 +10114,182 @@ PATCH"#;
     }
 
     #[test]
+    fn prepare_child_session_inherits_effective_model_from_parent_agent() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("subagent-inherit-model.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let mut parent_agent = sample_parent_agent_record();
+        parent_agent.model_name = Some("model-parent".to_string());
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let mut config = Config::default();
+        config.llm.default = "model-default".to_string();
+        config.llm.models.insert(
+            "model-default".to_string(),
+            sample_llm_model_config("provider-default"),
+        );
+        config.llm.models.insert(
+            "model-parent".to_string(),
+            sample_llm_model_config("provider-parent"),
+        );
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some(parent_agent.agent_id.as_str()),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let prepared = prepare_child_session(
+            &context,
+            "sess_parent",
+            "solve it",
+            Some("worker".to_string()),
+            None,
+            None,
+            ChildSessionToolMode::InheritParentSession,
+        )
+        .expect("prepare child session");
+
+        assert_eq!(prepared.model_name.as_deref(), Some("model-parent"));
+        assert_eq!(prepared.request.model_name.as_deref(), Some("model-parent"));
+    }
+
+    #[test]
+    fn prepare_swarm_child_session_uses_target_agent_model_for_initial_run() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-target-model.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let mut worker_agent = sample_agent_record();
+        worker_agent.model_name = Some("model-worker".to_string());
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let mut config = Config::default();
+        config.llm.default = "model-default".to_string();
+        config.llm.models.insert(
+            "model-default".to_string(),
+            sample_llm_model_config("provider-default"),
+        );
+        config.llm.models.insert(
+            "model-worker".to_string(),
+            sample_llm_model_config("provider-worker"),
+        );
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some(parent_agent.agent_id.as_str()),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let prepared = prepare_swarm_child_session(
+            &context,
+            "review this",
+            Some("worker".to_string()),
+            &worker_agent.agent_id,
+        )
+        .expect("prepare swarm child session");
+
+        assert_eq!(prepared.model_name.as_deref(), Some("model-worker"));
+        assert_eq!(prepared.request.model_name.as_deref(), Some("model-worker"));
+    }
+
+    #[test]
     fn agent_swarm_batch_send_args_accept_team_run_id_aliases() {
         let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
             "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
@@ -10032,37 +10548,41 @@ PATCH"#;
     #[test]
     fn enrich_agent_swarm_spawn_response_preserves_spawn_contract() {
         let response = enrich_agent_swarm_spawn_response(json!({
-            "status": "accepted",
-            "run_id": "run_swarm_demo",
-            "target_session_id": "sess_worker_demo",
-            "team_run_id": "team_demo",
-            "task_id": "task_demo"
+            "ok": true,
+            "action": "send",
+            "state": "accepted",
+            "summary": "Worker task was queued and is still running.",
+            "data": {
+                "run_id": "run_swarm_demo",
+                "session_id": "sess_worker_demo",
+                "team_run_id": "team_demo",
+                "task_id": "task_demo"
+            }
         }));
 
         assert_eq!(
-            response.get("session_id").and_then(Value::as_str),
+            response.get("action").and_then(Value::as_str),
+            Some("spawn")
+        );
+        assert_eq!(
+            response.pointer("/data/session_id").and_then(Value::as_str),
             Some("sess_worker_demo")
         );
         assert_eq!(
-            response.get("child_session_id").and_then(Value::as_str),
+            response.pointer("/data/child_session_id").and_then(Value::as_str),
             Some("sess_worker_demo")
         );
         assert_eq!(
-            response
-                .get("recommended_follow_up_target")
-                .and_then(|value| value.get("run_id"))
-                .and_then(Value::as_str),
+            response.pointer("/data/run_id").and_then(Value::as_str),
             Some("run_swarm_demo")
         );
         assert_eq!(
-            response.get("follow_up_required").and_then(Value::as_bool),
+            response.pointer("/data/spawned").and_then(Value::as_bool),
             Some(true)
         );
         assert_eq!(
-            response
-                .get("initial_turn_dispatched")
-                .and_then(Value::as_bool),
-            Some(true)
+            response.get("state").and_then(Value::as_str),
+            Some("accepted")
         );
     }
 

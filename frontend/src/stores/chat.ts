@@ -1687,6 +1687,11 @@ const scheduleChatSnapshot = (storeState, immediate = false) => {
 
 const mergeSnapshotAssistant = (target, snapshot) => {
   if (!target || target.role !== 'assistant' || !snapshot) return false;
+  const targetIsCompactionMarker = isCompactionMarkerAssistantMessage(target);
+  const snapshotIsCompactionMarker = isCompactionMarkerAssistantMessage(snapshot);
+  if (targetIsCompactionMarker !== snapshotIsCompactionMarker) {
+    return false;
+  }
   const snapshotContent = String(snapshot.content || '');
   const serverContent = String(target.content || '');
   const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
@@ -1878,6 +1883,7 @@ const mergeSnapshotAssistant = (target, snapshot) => {
 
 const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   if (!target || cursor < 0) return -1;
+  const targetIsCompactionMarker = isCompactionMarkerAssistantMessage(target);
   const targetEventId = normalizeStreamEventId(target.stream_event_id);
   const targetRound = normalizeStreamRound(target.stream_round);
   const targetTime = resolveTimestampMs(target.created_at);
@@ -1887,6 +1893,9 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   for (let i = cursor; i >= 0; i -= 1) {
     const snapshot = snapshotAssistants[i];
     if (!snapshot) continue;
+    if (isCompactionMarkerAssistantMessage(snapshot) !== targetIsCompactionMarker) {
+      continue;
+    }
     const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
     if (targetEventId !== null && snapshotEventId !== null && snapshotEventId === targetEventId) {
       return i;
@@ -1921,6 +1930,9 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   if (isPendingTarget || !Number.isFinite(targetTime)) {
     const fallback = snapshotAssistants[cursor];
     if (!fallback) return -1;
+    if (isCompactionMarkerAssistantMessage(fallback) !== targetIsCompactionMarker) {
+      return -1;
+    }
     const fallbackEventId = normalizeStreamEventId(fallback.stream_event_id);
     const fallbackRound = normalizeStreamRound(fallback.stream_round);
     const fallbackPending =
@@ -6254,7 +6266,15 @@ const resolveCompactionWorkflowRefFromMessage = (message): string => {
   for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
     const item = items[cursor];
     const ref = String(item?.toolCallId || item?.tool_call_id || '').trim();
-    if (ref) return ref;
+    if (!ref || !ref.startsWith('compaction:')) continue;
+    const eventType = String(item?.eventType || item?.event || '').trim().toLowerCase();
+    if (
+      eventType === 'compaction' ||
+      eventType === 'compaction_progress' ||
+      eventType === 'compaction_notice'
+    ) {
+      return ref;
+    }
   }
   return `compaction:manual:${Date.now()}`;
 };
@@ -7600,15 +7620,29 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return `compaction:auto:${compactionAnonymousRefSeq}`;
   };
 
+  const resolveExistingCompactionWorkflowRef = () => {
+    const items = Array.isArray(assistantMessage?.workflowItems) ? assistantMessage.workflowItems : [];
+    for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+      const ref = String(items[cursor]?.toolCallId || items[cursor]?.tool_call_id || '').trim();
+      if (ref.startsWith('compaction:')) {
+        return ref;
+      }
+    }
+    return '';
+  };
+
   const resolveActiveCompactionWorkflowRef = (round) => {
     if (!activeCompactionWorkflowRef) {
-      activeCompactionWorkflowRef = allocateCompactionWorkflowRef(round);
+      activeCompactionWorkflowRef =
+        resolveExistingCompactionWorkflowRef() || allocateCompactionWorkflowRef(round);
     }
     return activeCompactionWorkflowRef;
   };
 
   const resolveStandaloneCompactionWorkflowRef = (round) =>
-    activeCompactionWorkflowRef || allocateCompactionWorkflowRef(round);
+    activeCompactionWorkflowRef ||
+    resolveExistingCompactionWorkflowRef() ||
+    allocateCompactionWorkflowRef(round);
 
   const ensureCompactionProgressItem = (title, detail, workflowRef) => {
     if (!workflowRef) return null;
@@ -8699,6 +8733,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       case 'llm_output': {
         const round = resolveRound(payload, data);
         clearAssistantRetryState(assistantMessage);
+        const outputPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
+        if (outputPurpose === 'compaction_summary') {
+          chatDebugLog('chat.compaction.event', 'llm-output-compaction-summary', {
+            sessionId: options.sessionId ?? null,
+            payload: cloneCompactionDebugPayload(data ?? payload ?? {}, {})
+          });
+          break;
+        }
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data,
           data?.prefill_duration_s ?? payload?.prefill_duration_s,

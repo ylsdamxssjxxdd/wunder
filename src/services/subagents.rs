@@ -573,6 +573,7 @@ pub async fn handle_child_completion(
             schedule_parent_auto_wake(
                 orchestrator,
                 storage,
+                monitor.clone(),
                 &user_id,
                 &cleaned_parent,
                 config_overrides,
@@ -682,6 +683,7 @@ pub async fn handle_child_completion(
         schedule_parent_auto_wake(
             orchestrator,
             storage,
+            monitor.clone(),
             &user_id,
             &cleaned_parent,
             config_overrides,
@@ -753,6 +755,7 @@ async fn append_parent_stream_event(
 fn schedule_parent_auto_wake(
     orchestrator: Arc<Orchestrator>,
     storage: Arc<dyn StorageBackend>,
+    monitor: Option<Arc<MonitorState>>,
     user_id: &str,
     parent_session_id: &str,
     config_overrides: Option<Value>,
@@ -763,6 +766,22 @@ fn schedule_parent_auto_wake(
     let parent_session_id = parent_session_id.trim().to_string();
     if user_id.is_empty() || parent_session_id.is_empty() {
         return;
+    }
+    match parent_session_blocks_auto_wake(
+        storage.as_ref(),
+        monitor.as_deref(),
+        &user_id,
+        &parent_session_id,
+    ) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(err) => {
+            warn!(
+                "inspect parent auto wake gate failed before enqueue: parent_session_id={}, error={err}",
+                parent_session_id
+            );
+            return;
+        }
     }
     let auto_wake_dispatch_id = dispatch
         .dispatch_id
@@ -804,6 +823,23 @@ fn schedule_parent_auto_wake(
     };
     tokio::spawn(async move {
         wait_parent_session_unlock(storage.clone(), &user_id, &parent_session_id).await;
+        match parent_session_blocks_auto_wake(
+            storage.as_ref(),
+            monitor.as_deref(),
+            &user_id,
+            &parent_session_id,
+        ) {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(err) => {
+                warn!(
+                    "inspect parent auto wake gate failed before run: parent_session_id={}, error={err}",
+                    parent_session_id
+                );
+                unmark_wake_once(&wake_key);
+                return;
+            }
+        }
         if is_auto_wake_consumed(
             &parent_session_id,
             auto_wake_dispatch_id.as_deref(),
@@ -1453,6 +1489,55 @@ fn build_dispatch_summary(items: &[SubagentRuntimeItem]) -> Option<String> {
     }
 }
 
+fn monitor_record_blocks_auto_wake(record: &Value) -> bool {
+    if record
+        .get("cancel_requested")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    matches!(
+        record
+            .get("status")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("cancelling" | "cancelled")
+    )
+}
+
+fn parent_session_blocks_auto_wake(
+    storage: &dyn StorageBackend,
+    monitor: Option<&MonitorState>,
+    user_id: &str,
+    parent_session_id: &str,
+) -> Result<bool> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_parent_session_id = parent_session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_parent_session_id.is_empty() {
+        return Ok(true);
+    }
+    let Some(session) = storage.get_chat_session(cleaned_user_id, cleaned_parent_session_id)?
+    else {
+        return Ok(true);
+    };
+    if normalize_session_status(&session.status) != "active" {
+        return Ok(true);
+    }
+    let monitor_record = monitor
+        .and_then(|state| state.get_record(cleaned_parent_session_id))
+        .or_else(|| {
+            storage
+                .get_monitor_record(cleaned_parent_session_id)
+                .ok()
+                .flatten()
+        });
+    Ok(monitor_record
+        .as_ref()
+        .is_some_and(monitor_record_blocks_auto_wake))
+}
+
 fn normalize_session_status(status: &str) -> String {
     let normalized = status.trim().to_ascii_lowercase();
     if normalized.is_empty() {
@@ -1654,7 +1739,8 @@ fn unmark_wake_once(key: &str) {
 mod tests {
     use super::{
         encode_parent_turn_ref, is_auto_wake_consumed, list_parent_subagents_with_options,
-        suppress_auto_wake_from_wait_result, ParentSubagentListOptions,
+        parent_session_blocks_auto_wake, suppress_auto_wake_from_wait_result,
+        ParentSubagentListOptions,
     };
     use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
     use serde_json::{json, Value};
@@ -1670,12 +1756,21 @@ mod tests {
     }
 
     fn upsert_parent_session(storage: &dyn StorageBackend, user_id: &str, session_id: &str) {
+        upsert_parent_session_with_status(storage, user_id, session_id, "active");
+    }
+
+    fn upsert_parent_session_with_status(
+        storage: &dyn StorageBackend,
+        user_id: &str,
+        session_id: &str,
+        status: &str,
+    ) {
         storage
             .upsert_chat_session(&ChatSessionRecord {
                 session_id: session_id.to_string(),
                 user_id: user_id.to_string(),
                 title: "parent".to_string(),
-                status: "active".to_string(),
+                status: status.to_string(),
                 created_at: 1.0,
                 updated_at: 1.0,
                 last_message_at: 1.0,
@@ -1687,6 +1782,24 @@ mod tests {
                 spawned_by: None,
             })
             .expect("upsert parent session");
+    }
+
+    fn upsert_monitor_record(
+        storage: &dyn StorageBackend,
+        user_id: &str,
+        session_id: &str,
+        status: &str,
+        cancel_requested: bool,
+    ) {
+        storage
+            .upsert_monitor_record(&json!({
+                "session_id": session_id,
+                "user_id": user_id,
+                "status": status,
+                "cancel_requested": cancel_requested,
+                "updated_time": 2.0,
+            }))
+            .expect("upsert monitor record");
     }
 
     fn upsert_child_session(
@@ -2181,5 +2294,45 @@ mod tests {
             ]
         }));
         assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
+    }
+
+    #[test]
+    fn parent_auto_wake_is_blocked_when_parent_monitor_is_cancelling() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent_cancelled";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+        upsert_monitor_record(&storage, user_id, parent_session_id, "cancelling", true);
+
+        assert!(
+            parent_session_blocks_auto_wake(&storage, None, user_id, parent_session_id)
+                .expect("inspect auto wake gate")
+        );
+    }
+
+    #[test]
+    fn parent_auto_wake_is_blocked_when_parent_session_is_not_active() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent_archived";
+        upsert_parent_session_with_status(&storage, user_id, parent_session_id, "archived");
+
+        assert!(
+            parent_session_blocks_auto_wake(&storage, None, user_id, parent_session_id)
+                .expect("inspect auto wake gate")
+        );
+    }
+
+    #[test]
+    fn parent_auto_wake_allows_active_parent_without_cancel_marker() {
+        let (_dir, storage) = build_storage();
+        let user_id = "user_subagents";
+        let parent_session_id = "sess_parent_active";
+        upsert_parent_session(&storage, user_id, parent_session_id);
+
+        assert!(
+            !parent_session_blocks_auto_wake(&storage, None, user_id, parent_session_id)
+                .expect("inspect auto wake gate")
+        );
     }
 }

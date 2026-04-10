@@ -3,6 +3,7 @@ use crate::services::default_agent_protocol::{
     default_agent_meta_key, record_from_default_agent_config,
     DefaultAgentConfig as DefaultAgentConfigSnapshot,
 };
+use crate::services::user_leveling::{build_user_level_snapshot, normalize_total_experience};
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
@@ -60,6 +61,14 @@ pub struct UserProfile {
     pub daily_quota: i64,
     pub daily_quota_used: i64,
     pub daily_quota_date: Option<String>,
+    pub level: i64,
+    pub max_level: i64,
+    pub experience_total: i64,
+    pub experience_current: i64,
+    pub experience_for_next_level: i64,
+    pub experience_remaining: i64,
+    pub experience_progress: f64,
+    pub reached_max_level: bool,
     pub is_demo: bool,
     pub created_at: f64,
     pub updated_at: f64,
@@ -199,6 +208,7 @@ impl UserStore {
         user: &UserAccountRecord,
         unit: Option<&OrgUnitRecord>,
     ) -> UserProfile {
+        let level_snapshot = build_user_level_snapshot(user.experience_total);
         let unit_profile = unit.map(|unit| UserUnitProfile {
             id: unit.unit_id.clone(),
             name: unit.name.clone(),
@@ -218,6 +228,14 @@ impl UserStore {
             daily_quota: user.daily_quota,
             daily_quota_used: user.daily_quota_used,
             daily_quota_date: user.daily_quota_date.clone(),
+            level: level_snapshot.level,
+            max_level: level_snapshot.max_level,
+            experience_total: level_snapshot.experience_total,
+            experience_current: level_snapshot.experience_current,
+            experience_for_next_level: level_snapshot.experience_for_next_level,
+            experience_remaining: level_snapshot.experience_remaining,
+            experience_progress: level_snapshot.experience_progress,
+            reached_max_level: level_snapshot.reached_max_level,
             is_demo: user.is_demo,
             created_at: user.created_at,
             updated_at: user.updated_at,
@@ -355,6 +373,7 @@ impl UserStore {
             daily_quota: Self::default_daily_quota_by_level(unit_level),
             daily_quota_used: 0,
             daily_quota_date: None,
+            experience_total: 0,
             is_demo,
             created_at: now,
             updated_at: now,
@@ -387,6 +406,23 @@ impl UserStore {
 
     pub fn update_user(&self, record: &UserAccountRecord) -> Result<()> {
         self.storage.upsert_user_account(record)
+    }
+
+    pub fn add_experience(&self, user_id: &str, delta: i64) -> Result<i64> {
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let delta = delta.max(0);
+        if delta == 0 {
+            let current = self
+                .storage
+                .get_user_account(cleaned)?
+                .map(|user| normalize_total_experience(user.experience_total))
+                .unwrap_or(0);
+            return Ok(current);
+        }
+        self.storage.add_user_experience(cleaned, delta, now_ts())
     }
 
     pub fn upsert_users(&self, records: &[UserAccountRecord]) -> Result<()> {

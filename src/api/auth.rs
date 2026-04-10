@@ -28,6 +28,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/auth/register", post(register))
         .route("/wunder/auth/login", post(login))
+        .route("/wunder/auth/reset_password", post(reset_password))
         .route("/wunder/auth/demo", post(login_demo))
         .route("/wunder/auth/external/login", post(external_login))
         .route("/wunder/auth/external/code", post(external_issue_code))
@@ -69,6 +70,13 @@ struct RegisterRequest {
 struct LoginRequest {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResetPasswordRequest {
+    username: String,
+    email: String,
+    new_password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -246,6 +254,88 @@ async fn login(
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
     let profile = build_user_profile(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
+}
+
+async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ResetPasswordRequest>,
+) -> Result<Json<Value>, Response> {
+    let normalized_username = UserStore::normalize_user_id(&payload.username).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            localize_reset_password_error_message("invalid username"),
+        )
+    })?;
+    let email = payload.email.trim();
+    let new_password = payload.new_password.trim();
+    if email.is_empty() || new_password.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let mut record = state
+        .user_store
+        .get_user_by_username(&normalized_username)
+        .map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                localize_reset_password_error_message(&err.to_string()),
+            )
+        })?
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::UNAUTHORIZED,
+                localize_reset_password_error_message("account or email mismatch"),
+            )
+        })?;
+
+    if record.is_demo {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "演示账号不支持重置密码".to_string(),
+        ));
+    }
+    if record.status.trim().to_ascii_lowercase() != "active" {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            localize_reset_password_error_message("user disabled"),
+        ));
+    }
+    let stored_email = record.email.as_deref().map(str::trim).unwrap_or_default();
+    if stored_email.is_empty() || !stored_email.eq_ignore_ascii_case(email) {
+        return Err(error_response(
+            StatusCode::UNAUTHORIZED,
+            localize_reset_password_error_message("account or email mismatch"),
+        ));
+    }
+    if UserStore::verify_password(&record.password_hash, new_password) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            localize_reset_password_error_message("password same as current"),
+        ));
+    }
+
+    record.password_hash = UserStore::hash_password(new_password).map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            localize_reset_password_error_message(&err.to_string()),
+        )
+    })?;
+    record.updated_at = now_ts();
+    state.user_store.update_user(&record).map_err(|err| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            localize_reset_password_error_message(&err.to_string()),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "data": {
+            "ok": true
+        }
+    })))
 }
 
 async fn login_demo(
@@ -1463,6 +1553,40 @@ fn localize_update_profile_error_message(message: &str) -> String {
     "淇濆瓨璧勬枡澶辫触锛岃绋嶅悗閲嶈瘯".to_string()
 }
 
+fn localize_reset_password_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "重置密码失败，请稍后重试".to_string();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    {
+        return trimmed.to_string();
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
+        return "新密码不能为空".to_string();
+    }
+    if normalized.contains("account or email mismatch")
+        || normalized.contains("user not found")
+        || normalized.contains("email mismatch")
+    {
+        return "账号与邮箱不匹配".to_string();
+    }
+    if normalized.contains("password same as current") {
+        return "新密码不能与当前密码相同".to_string();
+    }
+    if normalized.contains("invalid username") {
+        return "账号格式不正确".to_string();
+    }
+    if normalized.contains("user disabled") {
+        return "账号已被禁用，请联系管理员".to_string();
+    }
+    "重置密码失败，请稍后重试".to_string()
+}
+
 fn localize_register_error_message(message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
@@ -1528,9 +1652,9 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        localize_register_error_message, localize_update_profile_error_message,
-        normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
-        normalize_theme_palette, provision_external_launch_session,
+        localize_register_error_message, localize_reset_password_error_message,
+        localize_update_profile_error_message, normalize_avatar_color, normalize_avatar_icon,
+        normalize_theme_mode, normalize_theme_palette, provision_external_launch_session,
         resolve_external_embed_target_agent_name,
         resolve_external_token_login_target_from_candidates, validate_external_embed_jwt,
         DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
@@ -1783,6 +1907,18 @@ mod tests {
         assert_eq!(
             localize_update_profile_error_message("username already exists"),
             "用户名已被占用"
+        );
+    }
+
+    #[test]
+    fn localize_reset_password_error_message_maps_identity_and_password_errors() {
+        assert_eq!(
+            localize_reset_password_error_message("account or email mismatch"),
+            "账号与邮箱不匹配"
+        );
+        assert_eq!(
+            localize_reset_password_error_message("password same as current"),
+            "新密码不能与当前密码相同"
         );
     }
 }

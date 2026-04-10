@@ -601,6 +601,19 @@ fn assert_replacement_history_keeps_edge_rounds(
     }
 }
 
+fn assert_history_contains_markers(history: &[Value], expected_markers: &[&str]) {
+    let texts = history
+        .iter()
+        .filter_map(|message| message.get("content").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    for marker in expected_markers {
+        assert!(
+            texts.iter().any(|text| text.contains(marker)),
+            "expected history to contain marker {marker}, got {texts:?}"
+        );
+    }
+}
+
 async fn trigger_manual_compaction_and_wait(
     context: &TestContext,
     session_id: &str,
@@ -857,6 +870,31 @@ async fn manual_compaction_keeps_first_and_recent_two_turns() {
     let session_id = create_test_session(&context, "Manual compaction edge turns").await;
 
     run_pressure_rounds(&context, &session_id, 6, 160).await;
+    let raw_history_before = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history before manual compaction");
+    assert_history_contains_markers(
+        &raw_history_before,
+        &[
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
+    let replay_before = HistoryManager.load_history_messages(
+        context.state.workspace.as_ref(),
+        &context.user_id,
+        &session_id,
+        0,
+    );
+    assert_history_contains_markers(
+        &replay_before,
+        &[
+            "[mindie-overflow-regression] round=5",
+            "[mindie-overflow-regression] round=6",
+        ],
+    );
     trigger_manual_compaction_and_wait(&context, &session_id).await;
 
     let raw_history = context

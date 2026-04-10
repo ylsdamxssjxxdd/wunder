@@ -294,6 +294,31 @@ const isManualCompactionConflict = (
   return false;
 };
 
+const isLikelySameCompactionMarker = (
+  remoteMessage: ChatMessage | null | undefined,
+  cachedMessage: ChatMessage | null | undefined
+): boolean => {
+  if (!isCompactionMarkerAssistantMessage(remoteMessage) || !isCompactionMarkerAssistantMessage(cachedMessage)) {
+    return false;
+  }
+  const remoteCallRef = resolveWorkflowCallRef(remoteMessage);
+  const cachedCallRef = resolveWorkflowCallRef(cachedMessage);
+  if (remoteCallRef && cachedCallRef && remoteCallRef === cachedCallRef) {
+    return true;
+  }
+  const remoteIdentity = resolveCompactionIdentity(remoteMessage);
+  const cachedIdentity = resolveCompactionIdentity(cachedMessage);
+  if (remoteIdentity && cachedIdentity && remoteIdentity === cachedIdentity) {
+    return true;
+  }
+  const remoteRound = resolveManualCompactionRound(remoteMessage);
+  const cachedRound = resolveManualCompactionRound(cachedMessage);
+  if (remoteRound !== null && cachedRound !== null && remoteRound === cachedRound) {
+    return true;
+  }
+  return false;
+};
+
 export const mergeCompactionMarkersIntoMessages = (
   remoteMessages: ChatMessage[] | null | undefined,
   cachedMessages: ChatMessage[] | null | undefined
@@ -315,6 +340,9 @@ export const mergeCompactionMarkersIntoMessages = (
   }
   const remoteTerminalManualMarkers = baseMessages.filter((message) =>
     isTerminalManualCompactionMarker(message)
+  );
+  const remoteCompactionMarkers = baseMessages.filter((message) =>
+    isCompactionMarkerAssistantMessage(message)
   );
   const suppressed: string[] = [];
   const result = [...baseMessages];
@@ -343,6 +371,10 @@ export const mergeCompactionMarkersIntoMessages = (
       );
     if (conflictsWithRemoteTerminal) {
       suppressed.push(signature);
+      return;
+    }
+    if (remoteCompactionMarkers.some((message) => isLikelySameCompactionMarker(message, entry.message))) {
+      skipped.push(signature);
       return;
     }
     if (existingSignatures.has(signature)) {

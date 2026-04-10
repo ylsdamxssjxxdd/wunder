@@ -4917,6 +4917,7 @@ async fn admin_user_accounts_seed(
                 daily_quota,
                 daily_quota_used: 0,
                 daily_quota_date: None,
+                experience_total: 0,
                 is_demo: true,
                 created_at: now,
                 updated_at: now,

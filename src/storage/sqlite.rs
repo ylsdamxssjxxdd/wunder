@@ -438,6 +438,20 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_user_account_level_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "user_accounts")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns.contains("experience_total") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN experience_total INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        Ok(())
+    }
+
     fn ensure_user_account_unit_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
@@ -999,6 +1013,7 @@ impl StorageBackend for SqliteStorage {
               daily_quota INTEGER NOT NULL DEFAULT 10000,
               daily_quota_used INTEGER NOT NULL DEFAULT 0,
               daily_quota_date TEXT,
+              experience_total INTEGER NOT NULL DEFAULT 0,
               is_demo INTEGER NOT NULL DEFAULT 0,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
@@ -1652,6 +1667,7 @@ impl StorageBackend for SqliteStorage {
             "#,
         )?;
         self.ensure_user_account_quota_columns(&conn)?;
+        self.ensure_user_account_level_columns(&conn)?;
         self.ensure_user_account_unit_columns(&conn)?;
         self.ensure_user_account_list_indexes(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
@@ -4197,11 +4213,12 @@ impl StorageBackend for SqliteStorage {
         let roles = Self::string_list_to_json(&record.roles);
         conn.execute(
             "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-             daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
              roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
              daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
+             experience_total = excluded.experience_total, \
              is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
             params![
                 record.user_id,
@@ -4215,6 +4232,7 @@ impl StorageBackend for SqliteStorage {
                 record.daily_quota,
                 record.daily_quota_used,
                 record.daily_quota_date,
+                record.experience_total,
                 if record.is_demo { 1 } else { 0 },
                 record.created_at,
                 record.updated_at,
@@ -4234,7 +4252,7 @@ impl StorageBackend for SqliteStorage {
         let row = conn
             .query_row(
                 "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
-                 is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = ?",
+                 experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = ?",
                 params![cleaned],
                 |row| {
                     Ok(UserAccountRecord {
@@ -4249,10 +4267,11 @@ impl StorageBackend for SqliteStorage {
                         daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
                         daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
                         daily_quota_date: row.get(10)?,
-                        is_demo: row.get::<_, i64>(11)? != 0,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                        last_login_at: row.get(14)?,
+                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(12)? != 0,
+                        created_at: row.get(13)?,
+                        updated_at: row.get(14)?,
+                        last_login_at: row.get(15)?,
                     })
                 },
             )
@@ -4270,7 +4289,7 @@ impl StorageBackend for SqliteStorage {
         let row = conn
             .query_row(
                 "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
-                 is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = ?",
+                 experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = ?",
                 params![cleaned],
                 |row| {
                     Ok(UserAccountRecord {
@@ -4285,10 +4304,11 @@ impl StorageBackend for SqliteStorage {
                         daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
                         daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
                         daily_quota_date: row.get(10)?,
-                        is_demo: row.get::<_, i64>(11)? != 0,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                        last_login_at: row.get(14)?,
+                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(12)? != 0,
+                        created_at: row.get(13)?,
+                        updated_at: row.get(14)?,
+                        last_login_at: row.get(15)?,
                     })
                 },
             )
@@ -4306,7 +4326,7 @@ impl StorageBackend for SqliteStorage {
         let row = conn
             .query_row(
                 "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
-                 is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = ?",
+                 experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = ?",
                 params![cleaned],
                 |row| {
                     Ok(UserAccountRecord {
@@ -4321,10 +4341,11 @@ impl StorageBackend for SqliteStorage {
                         daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
                         daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
                         daily_quota_date: row.get(10)?,
-                        is_demo: row.get::<_, i64>(11)? != 0,
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
-                        last_login_at: row.get(14)?,
+                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(12)? != 0,
+                        created_at: row.get(13)?,
+                        updated_at: row.get(14)?,
+                        last_login_at: row.get(15)?,
                     })
                 },
             )
@@ -4373,7 +4394,7 @@ impl StorageBackend for SqliteStorage {
 
         let mut sql = String::from(
             "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
-             is_demo, created_at, updated_at, last_login_at FROM user_accounts",
+             experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts",
         );
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -4400,14 +4421,43 @@ impl StorageBackend for SqliteStorage {
                     daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
                     daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
                     daily_quota_date: row.get(10)?,
-                    is_demo: row.get::<_, i64>(11)? != 0,
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
-                    last_login_at: row.get(14)?,
+                    experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
+                    is_demo: row.get::<_, i64>(12)? != 0,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
+                    last_login_at: row.get(15)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAccountRecord>, _>>()?;
         Ok((rows, total))
+    }
+
+    fn add_user_experience(&self, user_id: &str, delta: i64, updated_at: f64) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let safe_delta = delta.max(0);
+        if safe_delta > 0 {
+            conn.execute(
+                "UPDATE user_accounts \
+                 SET experience_total = COALESCE(experience_total, 0) + ?, updated_at = ? \
+                 WHERE user_id = ?",
+                params![safe_delta, updated_at, cleaned],
+            )?;
+        }
+        let total = conn
+            .query_row(
+                "SELECT experience_total FROM user_accounts WHERE user_id = ?",
+                params![cleaned],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .flatten()
+            .unwrap_or(0);
+        Ok(total.max(0))
     }
 
     fn delete_user_account(&self, user_id: &str) -> Result<i64> {
@@ -4518,11 +4568,12 @@ impl StorageBackend for SqliteStorage {
             let roles = Self::string_list_to_json(&record.roles);
             tx.execute(
                 "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-                 daily_quota, daily_quota_used, daily_quota_date, is_demo, created_at, updated_at, last_login_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                  ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
                  roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
                  daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
+                 experience_total = excluded.experience_total, \
                  is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
                 params![
                     record.user_id,
@@ -4536,6 +4587,7 @@ impl StorageBackend for SqliteStorage {
                     record.daily_quota,
                     record.daily_quota_used,
                     record.daily_quota_date,
+                    record.experience_total,
                     if record.is_demo { 1 } else { 0 },
                     record.created_at,
                     record.updated_at,

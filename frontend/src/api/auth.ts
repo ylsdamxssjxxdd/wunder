@@ -19,6 +19,7 @@ export type ResetWorkStateSummary = {
 export const login = (payload: ApiPayload) => api.post('/auth/login', payload);
 export const register = (payload: ApiPayload) => api.post('/auth/register', payload);
 export const loginDemo = (payload: ApiPayload) => api.post('/auth/demo', payload);
+export const resetPassword = (payload: ApiPayload) => api.post('/auth/reset_password', payload);
 export const fetchMe = () => api.get('/auth/me');
 export const updateProfile = (payload: ApiPayload) => api.patch('/auth/me', payload);
 export const resetMyWorkState = () => api.post('/auth/me/reset_work_state');

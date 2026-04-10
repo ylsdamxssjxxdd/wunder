@@ -2,9 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeBeeroomActorName } from '../../src/components/beeroom/beeroomActorIdentity';
-import { resolveBeeroomProjectedSubagentAvatarImage } from '../../src/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
+import { resolveBeeroomDispatchPreviewStatus } from '../../src/components/beeroom/beeroomDispatchPreviewStatus';
 import {
+  buildBeeroomRuntimeRelayMessageSignature,
+  mergeBeeroomRuntimeRelayMessages
+} from '../../src/components/beeroom/beeroomRuntimeRelayMessages';
+import { resolveBeeroomProjectedSubagentAvatarImage } from '../../src/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
+import { resolveBeeroomSwarmNodeStatus } from '../../src/components/beeroom/canvas/beeroomSwarmNodeStatus';
+import {
+  isBeeroomSwarmWorkerShadowItem,
   buildBeeroomSwarmSubagentProjectionContext,
+  resolveBeeroomSwarmWorkerShadowMatch,
   resolveProjectedWorkerSubagents,
   resolveBeeroomSwarmSubagentProjectionDecision,
   shouldProjectBeeroomSwarmSubagent,
@@ -37,6 +45,10 @@ type TestSubagent = BeeroomProjectedSubagentLike & {
   dispatchLabel: string;
   controllerSessionId: string;
   parentSessionId: string;
+  parentTurnRef: string;
+  parentUserRound: number | null;
+  parentModelRound: number | null;
+  spawnedBy: string;
   workflowItems: unknown[];
 };
 
@@ -75,18 +87,34 @@ const buildSubagent = (partial: Partial<TestSubagent> = {}): TestSubagent => ({
   dispatchLabel: String(partial.dispatchLabel || ''),
   controllerSessionId: String(partial.controllerSessionId || ''),
   parentSessionId: String(partial.parentSessionId || ''),
+  parentTurnRef: String(partial.parentTurnRef || ''),
+  parentUserRound: partial.parentUserRound ?? null,
+  parentModelRound: partial.parentModelRound ?? null,
+  spawnedBy: String(partial.spawnedBy || ''),
   workflowItems: Array.isArray(partial.workflowItems) ? partial.workflowItems : []
 });
 
-const t = (key: string) => (key === 'messenger.defaultAgent' ? '默认智能体' : key);
+const DEFAULT_AGENT_LABEL = 'Default Agent Localized';
+const t = (key: string) => (key === 'messenger.defaultAgent' ? DEFAULT_AGENT_LABEL : key);
 
-test('beeroom actor naming normalizes default agent aliases to 默认智能体', () => {
-  assert.equal(normalizeBeeroomActorName('Default Agent', t), '默认智能体');
-  assert.equal(normalizeBeeroomActorName('__default__', t), '默认智能体');
-  assert.equal(normalizeBeeroomActorName('默认智能体', t), '默认智能体');
+test('beeroom actor naming normalizes default agent aliases to localized label', () => {
+  assert.equal(normalizeBeeroomActorName('Default Agent', t), DEFAULT_AGENT_LABEL);
+  assert.equal(normalizeBeeroomActorName('__default__', t), DEFAULT_AGENT_LABEL);
+  assert.equal(normalizeBeeroomActorName(DEFAULT_AGENT_LABEL, t), DEFAULT_AGENT_LABEL);
 });
 
 test('canvas projection rejects swarm worker sessions from the generic subagent feed', () => {
+  assert.equal(
+    isBeeroomSwarmWorkerShadowItem(
+      buildSubagent({
+        sessionId: 'sess_worker_shadow',
+        runId: 'run_worker_shadow',
+        runKind: 'swarm',
+        requestedBy: 'agent_swarm'
+      })
+    ),
+    true
+  );
   const swarmWorkerDecision = resolveBeeroomSwarmSubagentProjectionDecision(
     buildSubagent({
       sessionId: 'sess_worker_shadow',
@@ -128,6 +156,17 @@ test('canvas projection rejects swarm worker sessions from the generic subagent 
       })
     ),
     true
+  );
+  assert.equal(
+    isBeeroomSwarmWorkerShadowItem(
+      buildSubagent({
+        sessionId: 'sess_real_subagent',
+        runId: 'run_real_subagent',
+        runKind: 'subagent',
+        requestedBy: 'subagent_control'
+      })
+    ),
+    false
   );
 });
 
@@ -388,4 +427,219 @@ test('derived subagent avatars prefer external agent resolver and keep default-a
     }),
     'https://example.com/default-agent.png'
   );
+});
+
+test('runtime relay messages stay visible when live preview temporarily goes empty', () => {
+  const merged = mergeBeeroomRuntimeRelayMessages(
+    [
+      {
+        key: 'subagent:run_worker_shadow:request',
+        senderName: '默认智能体',
+        senderAgentId: '__default__',
+        avatarImageUrl: '',
+        mention: '工蜂 A',
+        body: '@工蜂 A 请处理任务',
+        meta: '',
+        time: 100,
+        timeLabel: '10:00:00',
+        tone: 'mother'
+      }
+    ],
+    [],
+    120
+  );
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.key, 'subagent:run_worker_shadow:request');
+});
+
+test('runtime relay message signature changes when reply body changes under the same key', () => {
+  const before = buildBeeroomRuntimeRelayMessageSignature([
+    {
+      key: 'subagent:run_worker_shadow:reply',
+      senderName: '工蜂 A',
+      senderAgentId: 'worker-a',
+      avatarImageUrl: '',
+      mention: '默认智能体',
+      body: 'first reply',
+      meta: '',
+      time: 200,
+      timeLabel: '10:00:00',
+      tone: 'worker'
+    }
+  ]);
+  const after = buildBeeroomRuntimeRelayMessageSignature([
+    {
+      key: 'subagent:run_worker_shadow:reply',
+      senderName: '工蜂 A',
+      senderAgentId: 'worker-a',
+      avatarImageUrl: '',
+      mention: '默认智能体',
+      body: 'final reply',
+      meta: '',
+      time: 200,
+      timeLabel: '10:00:00',
+      tone: 'worker'
+    }
+  ]);
+  assert.notEqual(before, after);
+});
+
+test('worker shadow matching prefers the runtime shadow session tied to the current worker task', () => {
+  const matched = resolveBeeroomSwarmWorkerShadowMatch({
+    workerAgentId: 'worker-1',
+    tasks: [
+      {
+        task_id: 'task-worker-1',
+        agent_id: 'worker-1',
+        target_session_id: 'sess_worker_shadow',
+        spawned_session_id: 'sess_worker_shadow',
+        session_run_id: 'run_worker_shadow',
+        status: 'awaiting_idle',
+        updated_time: 100
+      }
+    ],
+    runtimeSubagents: [
+      buildSubagent({
+        key: 'wrong-worker',
+        sessionId: 'sess_other',
+        runId: 'run_other',
+        runKind: 'swarm',
+        requestedBy: 'agent_swarm',
+        agentId: 'worker-2',
+        status: 'running',
+        updatedTime: 140
+      }),
+      buildSubagent({
+        key: 'worker-shadow',
+        sessionId: 'sess_worker_shadow',
+        runId: 'run_worker_shadow',
+        runKind: 'swarm',
+        requestedBy: 'agent_swarm',
+        agentId: 'worker-1',
+        status: 'running',
+        updatedTime: 130,
+        workflowItems: [
+          {
+            id: 'tool-call-1',
+            title: 'Tool Call',
+            detail: 'search_workspace',
+            status: 'loading',
+            eventType: 'tool_call',
+            toolName: 'search_workspace'
+          }
+        ]
+      })
+    ]
+  });
+
+  assert.equal(matched?.sessionId, 'sess_worker_shadow');
+  assert.equal(matched?.runId, 'run_worker_shadow');
+  assert.equal(matched?.agentId, 'worker-1');
+});
+
+test('runtime relay message merge keeps worker reply without dropping the earlier dispatch request', () => {
+  const merged = mergeBeeroomRuntimeRelayMessages(
+    [
+      {
+        key: 'subagent:run_worker_shadow:request',
+        senderName: '默认智能体',
+        senderAgentId: '__default__',
+        avatarImageUrl: '',
+        mention: '工蜂 A',
+        body: '@工蜂 A 请处理任务',
+        meta: '',
+        time: 100,
+        timeLabel: '10:00:00',
+        tone: 'mother'
+      }
+    ],
+    [
+      {
+        key: 'subagent:run_worker_shadow:reply',
+        senderName: '工蜂 A',
+        senderAgentId: 'worker-a',
+        avatarImageUrl: '',
+        mention: '默认智能体',
+        body: '@默认智能体 任务已完成',
+        meta: '',
+        time: 101,
+        timeLabel: '10:00:01',
+        tone: 'worker'
+      }
+    ],
+    120
+  );
+
+  assert.deepEqual(
+    merged.map((message) => message.key),
+    ['subagent:run_worker_shadow:request', 'subagent:run_worker_shadow:reply']
+  );
+});
+
+test('worker node stays in running state while workflow tail still shows live activity', () => {
+  const status = resolveBeeroomSwarmNodeStatus({
+    tasks: [
+      {
+        task_id: 'task-worker-runtime',
+        agent_id: 'worker-1',
+        status: 'awaiting_idle'
+      } as never
+    ],
+    member: {
+      agent_id: 'worker-1',
+      name: '工蜂 A',
+      idle: true,
+      active_session_total: 0
+    } as never,
+    missionStatus: 'awaiting_idle',
+    workflowTailTone: 'loading'
+  });
+
+  assert.equal(status, 'running');
+});
+
+test('subagent failure does not automatically mark the parent dispatch preview as failed', () => {
+  const status = resolveBeeroomDispatchPreviewStatus({
+    localStatus: 'completed',
+    running: false,
+    events: [],
+    subagents: [
+      buildSubagent({
+        key: 'failed-child',
+        sessionId: 'sess_failed_child',
+        runId: 'run_failed_child',
+        status: 'failed',
+        failed: true
+      })
+    ] as never
+  });
+
+  assert.equal(status, 'completed');
+});
+
+test('parent dispatch preview still becomes failed when the parent session itself has terminal error events', () => {
+  const status = resolveBeeroomDispatchPreviewStatus({
+    localStatus: 'running',
+    running: false,
+    events: [
+      {
+        event: 'turn_terminal',
+        data: {
+          status: 'failed'
+        }
+      }
+    ] as never,
+    subagents: [
+      buildSubagent({
+        key: 'failed-child',
+        sessionId: 'sess_failed_child',
+        runId: 'run_failed_child',
+        status: 'failed',
+        failed: true
+      })
+    ] as never
+  });
+
+  assert.equal(status, 'failed');
 });

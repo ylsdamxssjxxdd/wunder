@@ -256,6 +256,7 @@ fn build_perf_user_record(user_id: &str) -> UserAccountRecord {
         daily_quota: 0,
         daily_quota_used: 0,
         daily_quota_date: None,
+        experience_total: 0,
         is_demo: false,
         created_at: 0.0,
         updated_at: 0.0,

@@ -201,27 +201,6 @@ struct SearchAttemptTrace {
     scanned_files: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct SearchExecutionMeta {
-    requested_engine: String,
-    resolved_engine: String,
-    rg_program: Option<String>,
-    fallback: bool,
-    fallback_reason: Option<String>,
-    elapsed_ms: u128,
-    timeout_hit: bool,
-    file_limit_hit: bool,
-    match_limit_hit: bool,
-    candidate_limit_hit: bool,
-    output_budget_hit: bool,
-    scanned_files: usize,
-    query_source: String,
-    query_mode_inferred: bool,
-    strategy: String,
-    fallback_applied: bool,
-    attempts_tried: Vec<SearchAttemptTrace>,
-}
-
 #[derive(Debug, Clone)]
 struct SearchComputation {
     hits: Vec<SearchHit>,
@@ -229,6 +208,15 @@ struct SearchComputation {
     timeout_hit: bool,
     file_limit_hit: bool,
     match_limit_hit: bool,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct SearchResultFlags {
+    timeout_hit: bool,
+    file_limit_hit: bool,
+    match_limit_hit: bool,
+    candidate_limit_hit: bool,
+    output_budget_hit: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -479,9 +467,9 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         timeout_hit: selected_timeout_hit,
         file_limit_hit,
         match_limit_hit,
-        resolved_engine,
-        rg_program,
-        fallback_reason,
+        resolved_engine: _resolved_engine,
+        rg_program: _rg_program,
+        fallback_reason: _fallback_reason,
         candidate_limit_hit,
     } = selected_result;
 
@@ -493,14 +481,8 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let matched_files = collect_matched_files(&hits);
     let matched_file_count = matched_files.len();
     let returned_match_count = hits.len();
-    let matches = hits
-        .iter()
-        .map(|item| format!("{}:{}:{}", item.path, item.line, item.content.trim()))
-        .collect::<Vec<_>>();
-
     let elapsed_ms = started_at.elapsed().as_millis();
     let timeout_hit = any_timeout_hit || selected_timeout_hit;
-    let fallback = params.engine == SearchEngine::Auto && resolved_engine == SearchEngine::Rust;
     let summary = build_search_summary(
         &params,
         selected_attempt,
@@ -510,63 +492,22 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         scanned_files,
         output_budget_hit,
     );
-    let meta = SearchExecutionMeta {
-        requested_engine: params.engine.as_str().to_string(),
-        resolved_engine: resolved_engine.as_str().to_string(),
-        rg_program,
-        fallback,
-        fallback_reason,
+    Ok(build_model_search_success(
+        &params,
+        selected_attempt,
+        summary,
+        hits,
+        matched_file_count,
+        returned_match_count,
+        SearchResultFlags {
+            timeout_hit,
+            file_limit_hit,
+            match_limit_hit,
+            candidate_limit_hit,
+            output_budget_hit,
+        },
         elapsed_ms,
-        timeout_hit,
-        file_limit_hit,
-        match_limit_hit,
-        candidate_limit_hit,
-        output_budget_hit,
-        scanned_files,
-        query_source: params.query_source.as_str().to_string(),
-        query_mode_inferred: params.query_mode_inferred,
-        strategy: selected_attempt.strategy.as_str().to_string(),
-        fallback_applied: selected_attempt.strategy == SearchStrategy::LiteralTermsFallback,
-        attempts_tried: attempt_traces.clone(),
-    };
-
-    Ok(json!({
-        "query": params.query,
-        "query_source": params.query_source.as_str(),
-        "query_mode_inferred": params.query_mode_inferred,
-        "query_used": selected_attempt.query.clone(),
-        "path": params.path,
-        "resolved_path": resolved_path,
-        "scope": scope,
-        "scope_note": scope_note,
-        "summary": summary,
-        "matches": matches,
-        "hits": hits,
-        "matched_files": matched_files,
-        "matched_file_count": matched_file_count,
-        "returned_match_count": returned_match_count,
-        "file_pattern_items": params.file_pattern_items,
-        "query_mode": selected_attempt.query_mode.as_str(),
-        "strategy": selected_attempt.strategy.as_str(),
-        "case_sensitive": params.case_sensitive,
-        "context_before": params.context_before,
-        "context_after": params.context_after,
-        "scanned_files": scanned_files,
-        "file_limit_hit": file_limit_hit,
-        "match_limit_hit": match_limit_hit,
-        "timeout_hit": timeout_hit,
-        "engine": resolved_engine.as_str(),
-        "budget": {
-            "time_budget_ms": params.timeout_ms,
-            "output_budget_bytes": params.output_budget_bytes,
-            "max_files": if params.max_files > 0 { Some(params.max_files) } else { None },
-            "max_matches": params.max_matches,
-            "max_candidates": params.max_candidates,
-        },
-        "meta": {
-            "search": meta,
-        },
-    }))
+    ))
 }
 
 fn parse_search_params(args: &Value) -> Result<SearchParams> {
@@ -2185,6 +2126,89 @@ fn build_search_summary(
         focus_points,
         next_hint,
     }
+}
+
+fn compact_context_lines(lines: &[ContextLine]) -> Vec<Value> {
+    lines
+        .iter()
+        .map(|line| {
+            json!({
+                "line": line.line,
+                "content": line.content,
+            })
+        })
+        .collect()
+}
+
+fn compact_search_hits_for_model(hits: &[SearchHit]) -> Vec<Value> {
+    hits.iter()
+        .map(|hit| {
+            json!({
+                "path": hit.path,
+                "line": hit.line,
+                "content": hit.content,
+                "before": compact_context_lines(&hit.before),
+                "after": compact_context_lines(&hit.after),
+            })
+        })
+        .collect()
+}
+
+fn search_truncation_reasons(flags: SearchResultFlags) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if flags.output_budget_hit {
+        reasons.push("output_budget");
+    }
+    if flags.match_limit_hit {
+        reasons.push("max_matches");
+    }
+    if flags.file_limit_hit {
+        reasons.push("max_files");
+    }
+    if flags.candidate_limit_hit {
+        reasons.push("max_candidates");
+    }
+    if flags.timeout_hit {
+        reasons.push("timeout");
+    }
+    reasons
+}
+
+fn build_model_search_success(
+    params: &SearchParams,
+    attempt: &SearchAttempt,
+    summary: SearchSummary,
+    hits: Vec<SearchHit>,
+    matched_file_count: usize,
+    returned_match_count: usize,
+    flags: SearchResultFlags,
+    elapsed_ms: u128,
+) -> Value {
+    let truncation_reasons = search_truncation_reasons(flags);
+    let truncated = !truncation_reasons.is_empty();
+    let summary_text = if returned_match_count == 0 {
+        "No hits in local workspace files.".to_string()
+    } else {
+        format!("Found {returned_match_count} hits in {matched_file_count} files.")
+    };
+    super::build_model_tool_success_with_hint(
+        "search_content",
+        "completed",
+        summary_text,
+        json!({
+            "query": params.query,
+            "query_used": attempt.query,
+            "path": params.path,
+            "query_mode": attempt.query_mode.as_str(),
+            "matched_file_count": matched_file_count,
+            "returned_match_count": returned_match_count,
+            "truncated": truncated,
+            "truncation_reasons": truncation_reasons,
+            "elapsed_ms": elapsed_ms,
+            "hits": compact_search_hits_for_model(&hits),
+        }),
+        summary.next_hint,
+    )
 }
 
 fn estimate_hit_bytes(hit: &SearchHit) -> usize {

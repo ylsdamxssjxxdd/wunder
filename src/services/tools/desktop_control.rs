@@ -543,12 +543,8 @@ fn parse_desktop_controller_args(args: &Value) -> Result<DesktopControllerArgs> 
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            anyhow!(crate::i18n::t(
-                "tool.desktop_controller.description_required"
-            ))
-        })?
-        .to_string();
+        .map(ToString::to_string)
+        .unwrap_or_else(|| action_raw.to_string());
     let action = DesktopAction::from_raw(action_raw)
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.unknown_action")))?;
     let delay_ms = parse_u64(obj.get("delay_ms")).unwrap_or(0);
@@ -1568,5 +1564,16 @@ mod tests {
         let _ = std::fs::remove_file(first_path);
         let _ = std::fs::remove_file(second_path);
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn parse_desktop_controller_args_falls_back_description_to_action() {
+        let payload = parse_desktop_controller_args(&json!({
+            "bbox": [10, 20, 30, 40],
+            "action": "left_click"
+        }))
+        .expect("parse desktop controller args");
+        assert_eq!(payload.action_raw, "left_click");
+        assert_eq!(payload.description, "left_click");
     }
 }

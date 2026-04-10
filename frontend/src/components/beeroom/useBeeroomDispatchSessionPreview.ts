@@ -2,16 +2,22 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
 import { getSession, getSessionEvents, getSessionSubagents } from '@/api/chat';
 import type { DispatchRuntimeStatus } from '@/components/beeroom/beeroomCanvasChatModel';
-import { resolveBeeroomSwarmSubagentProjectionDecision } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
+import { resolveBeeroomDispatchPreviewStatus } from '@/components/beeroom/beeroomDispatchPreviewStatus';
+import {
+  isBeeroomSwarmWorkerShadowItem,
+  resolveBeeroomSwarmSubagentProjectionDecision
+} from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
   ACTIVE_BEEROOM_SUBAGENT_STATUSES,
   collectBeeroomHistoricalSubagentItems,
   flattenBeeroomSessionEventRounds,
   mergeBeeroomMissionSubagentItems,
+  resolveBeeroomSessionEventTimestamp,
   type BeeroomMissionSubagentItem,
   normalizeBeeroomMissionSubagentItem
 } from '@/components/beeroom/beeroomMissionSubagentState';
+import { buildSessionWorkflowItems } from '@/components/beeroom/beeroomTaskWorkflow';
 import { chatDebugLog } from '@/utils/chatDebug';
 
 export type BeeroomDispatchSessionPreview = {
@@ -25,9 +31,25 @@ export type BeeroomDispatchSessionPreview = {
   subagents: BeeroomMissionSubagentItem[];
 };
 
+type BeeroomDispatchSessionPreviewCacheRecord = {
+  version: number;
+  sessionId: string;
+  targetAgentId: string;
+  targetName: string;
+  status: string;
+  summary: string;
+  dispatchLabel: string;
+  updatedTime: number;
+  subagents: ReturnType<typeof serializePreviewSubagentItem>[];
+};
+
 type SessionEventRecord = import('@/components/beeroom/beeroomMissionSubagentState').BeeroomSessionEventRecord;
+type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
 
 const SUBAGENT_LIST_LIMIT = 64;
+const PREVIEW_CACHE_VERSION = 2;
+const PREVIEW_CACHE_STORAGE_KEY = 'wunder:beeroom-dispatch-preview-cache';
+const MAX_PREVIEW_CACHE_ENTRIES = 48;
 const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
   'queued',
   'running',
@@ -36,6 +58,15 @@ const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
 ]);
 const ACTIVE_PREVIEW_STATUSES = new Set(['queued', 'running']);
 const normalizeText = (value: unknown): string => String(value || '').trim();
+
+const resolvePreviewCacheStorage = (): Storage | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -85,6 +116,169 @@ const summarizeDebugError = (error: unknown) => {
   const name = normalizeText(source?.name);
   const message = normalizeText(source?.message);
   return [name, message].filter(Boolean).join(': ') || normalizeText(error);
+};
+
+const serializePreviewSubagentItem = (item: BeeroomMissionSubagentItem) => ({
+  key: item.key,
+  sessionId: item.sessionId,
+  runId: item.runId,
+  runKind: item.runKind,
+  requestedBy: item.requestedBy,
+  spawnedBy: item.spawnedBy,
+  agentId: item.agentId,
+  title: item.title,
+  label: item.label,
+  status: item.status,
+  summary: item.summary,
+  userMessage: item.userMessage,
+  assistantMessage: item.assistantMessage,
+  errorMessage: item.errorMessage,
+  updatedTime: item.updatedTime,
+  terminal: item.terminal,
+  failed: item.failed,
+  depth: item.depth,
+  role: item.role,
+  controlScope: item.controlScope,
+  spawnMode: item.spawnMode,
+  strategy: item.strategy,
+  dispatchLabel: item.dispatchLabel,
+  controllerSessionId: item.controllerSessionId,
+  parentSessionId: item.parentSessionId,
+  parentTurnRef: item.parentTurnRef,
+  parentUserRound: item.parentUserRound,
+  parentModelRound: item.parentModelRound,
+  workflowItems: Array.isArray(item.workflowItems) ? item.workflowItems : []
+});
+
+const cloneDispatchPreview = (
+  preview: BeeroomDispatchSessionPreview | null | undefined
+): BeeroomDispatchSessionPreview | null => {
+  if (!preview) return null;
+  return {
+    sessionId: normalizeText(preview.sessionId),
+    targetAgentId: normalizeText(preview.targetAgentId),
+    targetName: normalizeText(preview.targetName),
+    status: normalizeText(preview.status),
+    summary: normalizeText(preview.summary),
+    dispatchLabel: normalizeText(preview.dispatchLabel),
+    updatedTime: Number(preview.updatedTime || 0),
+    subagents: mergeBeeroomMissionSubagentItems(
+      (Array.isArray(preview.subagents) ? preview.subagents : [])
+        .map((item) => normalizeBeeroomMissionSubagentItem(item))
+        .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item))
+    )
+  };
+};
+
+const dispatchPreviewCache = new Map<string, BeeroomDispatchSessionPreview>();
+let dispatchPreviewCacheHydrated = false;
+
+const persistDispatchPreviewCache = () => {
+  const storage = resolvePreviewCacheStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(
+      PREVIEW_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        version: PREVIEW_CACHE_VERSION,
+        entries: Array.from(dispatchPreviewCache.entries()).map(([sessionId, preview]) => [
+          sessionId,
+          {
+            version: PREVIEW_CACHE_VERSION,
+            sessionId,
+            targetAgentId: preview.targetAgentId,
+            targetName: preview.targetName,
+            status: preview.status,
+            summary: preview.summary,
+            dispatchLabel: preview.dispatchLabel,
+            updatedTime: preview.updatedTime,
+            subagents: preview.subagents.map((item) => serializePreviewSubagentItem(item))
+          } satisfies BeeroomDispatchSessionPreviewCacheRecord
+        ])
+      })
+    );
+  } catch {
+    // Ignore privacy-mode and quota failures.
+  }
+};
+
+const hydrateDispatchPreviewCache = () => {
+  if (dispatchPreviewCacheHydrated) return;
+  dispatchPreviewCacheHydrated = true;
+  const storage = resolvePreviewCacheStorage();
+  if (!storage) return;
+  try {
+    const raw = storage.getItem(PREVIEW_CACHE_STORAGE_KEY);
+    if (!raw) return;
+    const payload = JSON.parse(raw) as {
+      entries?: Array<[unknown, Partial<BeeroomDispatchSessionPreviewCacheRecord>]>;
+    } | null;
+    const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+    entries.forEach((entry) => {
+      if (!Array.isArray(entry) || entry.length < 2) return;
+      const sessionId = normalizeText(entry[0]);
+      if (!sessionId) return;
+      const record = entry[1];
+      const preview = cloneDispatchPreview({
+        sessionId,
+        targetAgentId: normalizeText(record?.targetAgentId),
+        targetName: normalizeText(record?.targetName),
+        status: normalizeText(record?.status),
+        summary: normalizeText(record?.summary),
+        dispatchLabel: normalizeText(record?.dispatchLabel),
+        updatedTime: Number(record?.updatedTime || 0),
+        subagents: (Array.isArray(record?.subagents) ? record.subagents : [])
+          .map((item) => normalizeBeeroomMissionSubagentItem(item))
+          .filter((item: BeeroomMissionSubagentItem | null): item is BeeroomMissionSubagentItem => Boolean(item))
+      });
+      if (!preview) return;
+      dispatchPreviewCache.set(sessionId, preview);
+    });
+    while (dispatchPreviewCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
+      const oldest = dispatchPreviewCache.keys().next();
+      if (oldest.done) break;
+      dispatchPreviewCache.delete(oldest.value);
+    }
+  } catch {
+    try {
+      storage.removeItem(PREVIEW_CACHE_STORAGE_KEY);
+    } catch {
+      // Ignore cleanup failures.
+    }
+  }
+};
+
+const getCachedDispatchPreview = (sessionId: string): BeeroomDispatchSessionPreview | null => {
+  hydrateDispatchPreviewCache();
+  const normalizedSessionId = normalizeText(sessionId);
+  if (!normalizedSessionId) return null;
+  const hit = dispatchPreviewCache.get(normalizedSessionId);
+  if (!hit) return null;
+  dispatchPreviewCache.delete(normalizedSessionId);
+  dispatchPreviewCache.set(normalizedSessionId, hit);
+  persistDispatchPreviewCache();
+  return cloneDispatchPreview(hit);
+};
+
+const setCachedDispatchPreview = (
+  sessionId: string,
+  preview: BeeroomDispatchSessionPreview | null | undefined
+) => {
+  hydrateDispatchPreviewCache();
+  const normalizedSessionId = normalizeText(sessionId);
+  if (!normalizedSessionId) return;
+  const next = cloneDispatchPreview(preview || null);
+  if (!next) {
+    dispatchPreviewCache.delete(normalizedSessionId);
+  } else {
+    dispatchPreviewCache.set(normalizedSessionId, next);
+  }
+  while (dispatchPreviewCache.size > MAX_PREVIEW_CACHE_ENTRIES) {
+    const oldest = dispatchPreviewCache.keys().next();
+    if (oldest.done) break;
+    dispatchPreviewCache.delete(oldest.value);
+  }
+  persistDispatchPreviewCache();
 };
 
 const resolveEventName = (event: SessionEventRecord): string =>
@@ -150,53 +344,102 @@ const resolveDispatchLabel = (events: SessionEventRecord[], summary: string): st
   return clipText(summary, 42);
 };
 
-const resolveTerminalPreviewStatusFromEvents = (events: SessionEventRecord[]): string => {
+const extractReplyTextFromEvents = (events: SessionEventRecord[]): string => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     const payload = resolveEventPayload(event);
     const eventName = resolveEventName(event);
-    if (eventName === 'error') {
-      return 'failed';
+    if (eventName !== 'final' && eventName !== 'error') {
+      continue;
     }
-    if (eventName === 'turn_terminal') {
-      const status = normalizeText(payload.status).toLowerCase();
-      if (status === 'completed') return 'completed';
-      if (status === 'cancelled' || status === 'stopped') return 'cancelled';
-      if (status === 'rejected' || status === 'failed' || status === 'error') return 'failed';
-      if (normalizeText(payload.stop_reason).toUpperCase() === 'USER_BUSY') return 'failed';
-    }
-    if (eventName === 'final') {
-      return 'completed';
-    }
+    const reply = normalizeText(
+      payload.answer ??
+        payload.content ??
+        payload.reply ??
+        payload.message ??
+        payload.text ??
+        payload.output ??
+        event?.title
+    );
+    if (reply) return reply;
   }
   return '';
 };
 
-const resolvePreviewStatus = (
-  localStatus: DispatchRuntimeStatus,
-  running: boolean,
-  events: SessionEventRecord[],
-  subagents: BeeroomMissionSubagentItem[]
-): string => {
-  if (running) return 'running';
-  if (subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
+const resolveHydratedSwarmWorkerStatus = (options: {
+  currentStatus: string;
+  running: boolean;
+  workflowItems: Array<{ status?: string | null | undefined }>;
+}) => {
+  if (options.running) return 'running';
+  const tailStatus = normalizeText(options.workflowItems[options.workflowItems.length - 1]?.status).toLowerCase();
+  if (tailStatus === 'loading' || tailStatus === 'pending') {
     return 'running';
   }
-  if (subagents.some((item) => item.failed)) {
-    return 'failed';
-  }
-  const terminalStatus = resolveTerminalPreviewStatusFromEvents(events);
-  if (terminalStatus) return terminalStatus;
-  if (localStatus === 'queued') return 'queued';
-  if (ACTIVE_LOCAL_RUNTIME_STATUSES.has(localStatus)) return 'running';
-  if (localStatus === 'completed') return 'completed';
-  if (localStatus === 'failed') return 'failed';
-  if (localStatus === 'stopped') return 'cancelled';
+  return normalizeText(options.currentStatus).toLowerCase() || 'completed';
+};
 
-  if (subagents.length > 0) {
-    return 'completed';
-  }
-  return 'idle';
+const hydrateSwarmWorkerShadowItems = async (
+  items: BeeroomMissionSubagentItem[],
+  signal: AbortSignal,
+  t: TranslationFn,
+  logDispatchPreview: (event: string, payload?: unknown) => void
+) => {
+  const hydrated = await Promise.all(
+    items.map(async (item) => {
+      if (!isBeeroomSwarmWorkerShadowItem(item) || !normalizeText(item.sessionId)) {
+        return item;
+      }
+      try {
+        const response = await getSessionEvents(item.sessionId, { signal });
+        if (signal.aborted) return item;
+        const rounds = Array.isArray(response?.data?.data?.rounds) ? response.data.data.rounds : [];
+        const events = flattenBeeroomSessionEventRounds(rounds);
+        if (!events.length) {
+          return item;
+        }
+        const workflowItems = buildSessionWorkflowItems(rounds, t);
+        const replyText = extractReplyTextFromEvents(events);
+        const summary = resolveSummaryFromEvents(events);
+        const updatedTime = Math.max(
+          Number(item.updatedTime || 0),
+          ...events.map((event) => resolveBeeroomSessionEventTimestamp(event))
+        );
+        const running = response?.data?.data?.running === true;
+        const next: BeeroomMissionSubagentItem = {
+          ...item,
+          assistantMessage: replyText || item.assistantMessage,
+          summary: summary || item.summary,
+          updatedTime,
+          status: resolveHydratedSwarmWorkerStatus({
+            currentStatus: item.status,
+            running,
+            workflowItems
+          }),
+          workflowItems
+        };
+        logDispatchPreview('hydrate-swarm-worker-shadow-session', {
+          sessionId: item.sessionId,
+          runId: item.runId,
+          status: next.status,
+          workflowItemCount: workflowItems.length,
+          replyReady: Boolean(next.assistantMessage),
+          updatedTime
+        });
+        return next;
+      } catch (error) {
+        if ((error as { name?: string })?.name === 'CanceledError') return item;
+        if ((error as { name?: string })?.name === 'AbortError') return item;
+        logDispatchPreview('hydrate-swarm-worker-shadow-session-error', {
+          sessionId: item.sessionId,
+          runId: item.runId,
+          error: summarizeDebugError(error)
+        });
+        return item;
+      }
+    })
+  );
+  return mergeBeeroomMissionSubagentItems(hydrated);
 };
 
 export const useBeeroomDispatchSessionPreview = (options: {
@@ -205,6 +448,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
   targetName: Ref<string>;
   runtimeStatus: Ref<DispatchRuntimeStatus>;
   clearedAfter: Ref<number>;
+  t: TranslationFn;
 }) => {
   const rawPreview = ref<BeeroomDispatchSessionPreview | null>(null);
   const logDispatchPreview = (event: string, payload?: unknown) => {
@@ -249,6 +493,19 @@ export const useBeeroomDispatchSessionPreview = (options: {
       cancelActiveRequest();
       clearSyncTimer();
       return;
+    }
+
+    if (!rawPreview.value || normalizeText(rawPreview.value.sessionId) !== sessionId) {
+      const cachedPreview = getCachedDispatchPreview(sessionId);
+      if (cachedPreview) {
+        rawPreview.value = cachedPreview;
+        logDispatchPreview('restore-cached-preview', {
+          sessionId,
+          status: cachedPreview.status,
+          subagentCount: cachedPreview.subagents.length,
+          updatedTime: cachedPreview.updatedTime
+        });
+      }
     }
 
     cancelActiveRequest();
@@ -297,7 +554,13 @@ export const useBeeroomDispatchSessionPreview = (options: {
       const historicalSubagents = collectBeeroomHistoricalSubagentItems(events, {
         latestTurnOnly: true
       });
-      const subagents = mergeBeeroomMissionSubagentItems(liveSubagents, historicalSubagents);
+      const mergedSubagents = mergeBeeroomMissionSubagentItems(liveSubagents, historicalSubagents);
+      const subagents = await hydrateSwarmWorkerShadowItems(
+        mergedSubagents,
+        controller.signal,
+        options.t,
+        logDispatchPreview
+      );
       const canvasProjectableSubagents = subagents.filter((item) =>
         resolveBeeroomSwarmSubagentProjectionDecision(item).projectable
       );
@@ -325,7 +588,12 @@ export const useBeeroomDispatchSessionPreview = (options: {
           ? Math.floor(Date.now() / 1000)
           : 0
       );
-      const previewStatus = resolvePreviewStatus(options.runtimeStatus.value, running, events, subagents);
+      const previewStatus = resolveBeeroomDispatchPreviewStatus({
+        localStatus: options.runtimeStatus.value,
+        running,
+        events,
+        subagents
+      });
       const localStatusBeforeOverride = options.runtimeStatus.value;
       rawPreview.value = {
         sessionId,
@@ -337,6 +605,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
         updatedTime,
         subagents
       };
+      setCachedDispatchPreview(sessionId, rawPreview.value);
       if (!running && !subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
         if (previewStatus === 'completed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
           options.runtimeStatus.value = 'completed';
@@ -399,6 +668,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
       });
       if (!preservePreview) {
         rawPreview.value = null;
+        setCachedDispatchPreview(sessionId, null);
       }
       clearSyncTimer();
     } finally {
@@ -451,6 +721,10 @@ export const useBeeroomDispatchSessionPreview = (options: {
   );
 
   onBeforeUnmount(() => {
+    const sessionId = normalizeText(options.sessionId.value);
+    if (sessionId) {
+      setCachedDispatchPreview(sessionId, rawPreview.value);
+    }
     clearSyncTimer();
     cancelActiveRequest();
   });

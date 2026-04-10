@@ -1516,12 +1516,12 @@
     "zh-CN": "A2UI JSON 消息数组（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。"
   },
   "tool.spec.a2ui.args.uid": {
-    "en-US": "UI Surface identifier used to bind the rendering area.",
-    "zh-CN": "UI Surface 标识，用于绑定渲染区域。"
+    "en-US": "Optional UI surface identifier. When omitted, the current session surface is used.",
+    "zh-CN": "可选的 UI Surface 标识；省略时默认使用当前会话的渲染区域。"
   },
   "tool.spec.a2ui.description": {
-    "en-US": "Generate A2UI UI and send it to the client for rendering.",
-    "zh-CN": "生成 A2UI 界面并返回给客户端渲染。"
+    "en-US": "Send structured A2UI render messages to the client.",
+    "zh-CN": "向客户端发送结构化 A2UI 渲染消息。"
   },
   "tool.spec.apply_patch.args.input": {
     "en-US": "Raw apply_patch payload only (no JSON wrapper / no markdown fence). Start at *** Begin Patch and end at *** End Patch. After @@, every Update File line must start with space/+/-. Do not include editor line numbers like 123:, and do not use *** as an old/new separator inside a hunk. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch",
@@ -1564,8 +1564,8 @@
     "zh-CN": "对现有文本文件应用结构化的行级编辑。"
   },
   "tool.spec.lsp.args.operation": {
-    "en-US": "LSP operation: definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy.",
-    "zh-CN": "LSP 操作类型：definition/references/hover/documentSymbol/workspaceSymbol/implementation/callHierarchy。"
+    "en-US": "LSP operation: definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy.",
+    "zh-CN": "LSP 操作类型：definition/references/hover/document_symbol/workspace_symbol/implementation/call_hierarchy。"
   },
   "tool.spec.lsp.args.path": {
     "en-US": "File path within the workspace.",
@@ -1580,16 +1580,16 @@
     "zh-CN": "列号（从 1 开始，定位类操作必填）。"
   },
   "tool.spec.lsp.args.query": {
-    "en-US": "Workspace symbol search query (required for workspaceSymbol).",
-    "zh-CN": "工作区符号搜索关键词（workspaceSymbol 必填）。"
+    "en-US": "Workspace symbol search query (required for workspace_symbol).",
+    "zh-CN": "工作区符号搜索关键词（workspace_symbol 必填）。"
   },
   "tool.spec.lsp.args.call_hierarchy_direction": {
     "en-US": "Call hierarchy direction: incoming/outgoing.",
     "zh-CN": "调用层级方向：incoming/outgoing。"
   },
   "tool.spec.lsp.description": {
-    "en-US": "Query language server for definitions, references, hover info, symbols, implementations, or call hierarchy.",
-    "zh-CN": "调用 LSP 获取定义、引用、悬停信息、符号、实现或调用层级。"
+    "en-US": "Query the language server for definitions, references, hover info, symbols, implementations, or call hierarchy.",
+    "zh-CN": "查询语言服务器，获取定义、引用、悬停信息、符号、实现或调用层级。"
   },
   "tool.spec.exec.args.content": {
     "en-US": "CLI command. Content has no path restrictions.",
@@ -1604,8 +1604,8 @@
     "zh-CN": "可选，工作目录仅支持工作区内相对路径（不允许绝对路径）。"
   },
   "tool.spec.exec.description": {
-    "en-US": "Run CLI commands when needed to complete the task. Defaults to the workspace root; workdir must stay within the current workspace (relative path only). Command content has no path restrictions.",
-    "zh-CN": "请求执行 CLI 命令。默认在工作区根目录执行；workdir 只能在当前工作目录以内（相对路径），不允许绝对路径；content 不限制路径格式。"
+    "en-US": "Run CLI commands in the workspace. Use workdir only for a workspace-relative subdirectory.",
+    "zh-CN": "在工作区内执行 CLI 命令。`workdir` 仅用于指定工作区内的相对目录。"
   },
   "tool.spec.browser.description": {
     "en-US": "Operate the built-in browser runtime with session, tab, snapshot and act actions.",
@@ -1796,8 +1796,8 @@
     "zh-CN": "本次返回条数。默认 500，最大 500。"
   },
   "tool.spec.list.description": {
-    "en-US": "List direct child folders and files in a directory. Defaults to the workspace root if path is omitted. Avoid repeating the same path listing unless the path changes or the user explicitly asks to refresh.",
-    "zh-CN": "列出目录下所有直接子文件夹和文件。如果未提供路径，默认使用工程师工作目录。除非路径变化或用户明确要求刷新，不要重复调用同一路径。"
+    "en-US": "List direct child files and folders in a workspace directory.",
+    "zh-CN": "列出工作区目录下的直接子文件和文件夹。"
   },
   "tool.spec.plan.args.explanation": {
     "en-US": "Optional. Short explanation for the plan.",
@@ -1844,8 +1844,8 @@
     "zh-CN": "允许多选。"
   },
   "tool.spec.question_panel.description": {
-    "en-US": "Show a route inquiry panel so the user can pick the next direction. Before completion, when multiple viable paths exist, proactively present 2-4 route options or key clarifications and call this tool. If the task already has a single clear route, or the user explicitly says \"no panel / no confirmation / just do it\", follow that and do not call it. Keep each route title short with one-sentence impact; mark one as recommended when appropriate. Pause after calling and wait for user selection or a new message.",
-    "zh-CN": "展示问询面板，让用户选择下一步路线。当可用工具包含“问询面板”时，请在任务完成前或出现多条可行路线时，主动整理 2-4 条路线或需明确的要素，调用该工具向用户发起选择。若任务已有明确单一路线，或用户明确要求“不使用问询面板/无需确认/直接执行”，必须遵循用户指令，不要调用问询面板。每条路线保持标题简短并附一句说明；若推荐某路线请标注推荐。调用后暂停继续执行，等待用户选择或新的消息。"
+    "en-US": "Show a route inquiry panel when the user needs to choose between multiple viable next steps. Prefer 2-4 short routes, mark one as recommended when helpful, then pause and wait for the user's selection.",
+    "zh-CN": "当用户需要在多条可行路线中选择下一步时，展示问询面板。优先提供 2-4 条简短路线，必要时标注推荐项；调用后暂停执行，等待用户选择。"
   },
   "tool.spec.schedule_task.args.action": {
     "en-US": "Action.",
@@ -1932,8 +1932,8 @@
     "zh-CN": "休眠秒数（0 < seconds <= 3600）。"
   },
   "tool.spec.sleep.description": {
-    "en-US": "Pause execution for a specified number of seconds, useful for active waiting between steps.",
-    "zh-CN": "按指定秒数主动休眠，适用于步骤之间的等待。"
+    "en-US": "Pause execution for a specified number of seconds.",
+    "zh-CN": "按指定秒数暂停执行。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",
@@ -2068,8 +2068,8 @@
     "zh-CN": "等待超时秒数（1-30）。"
   },
   "tool.spec.memory_manager.description": {
-    "en-US": "Manage and recall the current agent's long-term memory entries (list/add/update/delete/clear/recall). Use recall proactively when confidence is low, facts may be stale, you might have answered incorrectly, the user explicitly corrects you, or the user feedback changes preferences/constraints. After correction or conflict, recall first for verification, then add/update only if the new information is durable across future turns. Use write actions for stable facts, preferences, constraints, recurring workflows, or persistent to-dos; avoid storing transient tool outputs or one-off task states. For add/update, prefer structured writes: title = topic, summary = one-line conclusion, content = full detail, plus category/tags when helpful.",
-    "zh-CN": "管理并检索当前智能体的长期记忆条目（list/add/update/delete/clear/recall）。当置信度不足、事实可能过期、你可能答错、用户明确纠正你，或用户反馈导致偏好/约束变化时，应主动调用 recall。出现纠错或信息冲突时，先 recall 校验，再仅在信息可跨轮次复用时执行 add/update。写入动作仅用于稳定事实、长期偏好、约束、可复用流程或持续待办；避免写入临时工具输出与一次性任务状态。对 add/update，优先使用结构化写法：title 写主题，summary 写一句结论，content 写完整细节，必要时补充 category 与 tags。"
+    "en-US": "Manage the current agent's long-term memory (list/add/update/delete/clear/recall). Use recall when facts may be stale, confidence is low, or the user corrects you. Write only durable facts, preferences, constraints, reusable workflows, or persistent todos. For add/update, prefer structured fields: title = topic, summary = one-line conclusion, content = full detail.",
+    "zh-CN": "管理当前智能体的长期记忆（list/add/update/delete/clear/recall）。当事实可能过期、把握不足或用户纠正你时，优先先用 recall 校验。写入只用于稳定事实、长期偏好、约束、可复用流程或持续待办，不要写入临时工具输出。对 add/update，优先使用结构化写法：title 写主题，summary 写一句结论，content 写完整细节。"
   },
   "tool.spec.memory_manager.args.action": {
     "en-US": "Action: list/add/update/delete/clear/recall.",
@@ -2160,8 +2160,8 @@
     "zh-CN": "可选，附加给模型的读图说明。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image and attach it to the next model turn for visual analysis.",
-    "zh-CN": "读取本地图片，并在下一轮模型上下文中附加用于视觉分析。"
+    "en-US": "Read a local image and attach it to the next model turn.",
+    "zh-CN": "读取本地图片，并附加到下一轮模型请求。"
   },
   "tool.spec.skill_call.args.name": {
     "en-US": "Skill name to load.",
@@ -2476,8 +2476,8 @@
     "zh-CN": "是否将目标线程绑定为该智能体的主线程。"
   },
   "tool.spec.self_status.description": {
-    "en-US": "Inspect current runtime self-status, including model identity, context occupancy, and thread/session statistics.",
-    "zh-CN": "查看当前运行时的自我状态，包括模型信息、上下文占用和线程/会话统计。"
+    "en-US": "Inspect current runtime status, context occupancy, and recent thread statistics.",
+    "zh-CN": "查看当前运行状态、上下文占用和近期线程统计。"
   },
   "tool.spec.self_status.args.detail_level": {
     "en-US": "Detail level for output: basic, standard, or full.",

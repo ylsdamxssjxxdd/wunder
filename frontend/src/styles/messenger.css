@@ -4895,12 +4895,15 @@ button.messenger-chat-header-model {
 
 .messenger-username-dialog-body {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
 }
 
 .messenger-username-dialog-footer {
-  display: inline-flex;
-  margin-left: auto;
-  gap: 8px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .messenger-settings-action--avatar {

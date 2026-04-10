@@ -303,6 +303,204 @@ pub(super) async fn execute(context: &ToolContext<'_>, args: &Value) -> Result<V
     }
 }
 
+fn compact_subagent_item_for_model(item: &Value) -> Value {
+    let label = item
+        .get("label")
+        .or_else(|| item.get("spawn_label"))
+        .or_else(|| item.get("title"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let result_preview = item
+        .get("result_preview")
+        .cloned()
+        .or_else(|| item.get("result").cloned())
+        .or_else(|| item.pointer("/agent_state/message").cloned())
+        .unwrap_or(Value::Null);
+    json!({
+        "index": item.get("index").cloned().unwrap_or(Value::Null),
+        "dispatch_id": item.get("dispatch_id").cloned().unwrap_or(Value::Null),
+        "run_id": item.get("run_id").cloned().unwrap_or(Value::Null),
+        "session_id": item.get("session_id").cloned().unwrap_or(Value::Null),
+        "status": item.get("status").cloned().unwrap_or(Value::Null),
+        "terminal": item.get("terminal").cloned().unwrap_or(Value::Null),
+        "failed": item.get("failed").cloned().unwrap_or(Value::Null),
+        "updated": item.get("updated").cloned().unwrap_or(Value::Null),
+        "agent_id": item.get("agent_id").cloned().unwrap_or(Value::Null),
+        "label": label,
+        "elapsed_s": item.get("elapsed_s").cloned().unwrap_or(Value::Null),
+        "result_preview": result_preview,
+        "error": item.get("error").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn compact_subagent_items(items: &[Value]) -> Vec<Value> {
+    items.iter().map(compact_subagent_item_for_model).collect()
+}
+
+fn build_subagent_list_result(value: Value) -> Value {
+    let total = value.get("total").and_then(Value::as_i64).unwrap_or(0);
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    super::build_model_tool_success(
+        "list",
+        "completed",
+        format!("Found {total} child sessions."),
+        json!({
+            "total": total,
+            "items": compact_subagent_items(&items),
+        }),
+    )
+}
+
+fn build_subagent_history_result(value: Value) -> Value {
+    let session_id = value
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let messages = value.get("messages").cloned().unwrap_or_else(|| json!([]));
+    let total = messages.as_array().map(Vec::len).unwrap_or(0);
+    super::build_model_tool_success(
+        "history",
+        "completed",
+        format!("Loaded {total} messages from child session history."),
+        json!({
+            "session_id": session_id,
+            "messages": messages,
+        }),
+    )
+}
+
+fn build_subagent_update_result(action: &str, value: Value) -> Value {
+    let updated_total = value
+        .get("updated_total")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let state = if updated_total > 0 {
+        "completed"
+    } else {
+        "noop"
+    };
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    super::build_model_tool_success(
+        action,
+        state,
+        format!("{action} updated {updated_total} child sessions."),
+        json!({
+            "updated_total": updated_total,
+            "items": compact_subagent_items(&items),
+        }),
+    )
+}
+
+fn compact_subagent_wait_result(action: &str, value: Value) -> Value {
+    let state = value
+        .get("status")
+        .and_then(Value::as_str)
+        .map(|status| match status {
+            "ok" => "completed",
+            other => other,
+        })
+        .unwrap_or("running");
+    let items = value
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let selected_items = value
+        .get("selected_items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut data = json!({
+        "dispatch_id": value.get("dispatch_id").cloned().unwrap_or(Value::Null),
+        "parent_id": value.get("parent_id").cloned().unwrap_or(Value::Null),
+        "completion_mode": value.get("completion_mode").cloned().unwrap_or(Value::Null),
+        "completed_reason": value.get("completed_reason").cloned().unwrap_or(Value::Null),
+        "wait_seconds": value.get("wait_seconds").cloned().unwrap_or(Value::Null),
+        "elapsed_s": value.get("elapsed_s").cloned().unwrap_or(Value::Null),
+        "all_finished": value.get("all_finished").cloned().unwrap_or(Value::Null),
+        "run_ids": value.get("run_ids").cloned().unwrap_or_else(|| json!([])),
+        "session_ids": value.get("session_ids").cloned().unwrap_or_else(|| json!([])),
+        "counts": {
+            "total": value.get("total").cloned().unwrap_or(Value::Null),
+            "done": value.get("done_total").cloned().unwrap_or(Value::Null),
+            "success": value.get("success_total").cloned().unwrap_or(Value::Null),
+            "failed": value.get("failed_total").cloned().unwrap_or(Value::Null),
+            "queued": value.get("queued_total").cloned().unwrap_or(Value::Null),
+            "running": value.get("running_total").cloned().unwrap_or(Value::Null),
+            "selected": value.get("selected_total").cloned().unwrap_or(Value::Null),
+            "selected_success": value.get("selected_success_total").cloned().unwrap_or(Value::Null),
+            "selected_failed": value.get("selected_failed_total").cloned().unwrap_or(Value::Null),
+        },
+        "selected_items": compact_subagent_items(&selected_items),
+        "items": compact_subagent_items(&items),
+    });
+    if let Some(extra_keys) = data.as_object_mut() {
+        for key in [
+            "remaining_action",
+            "remaining_active_total",
+            "remaining_action_applied",
+            "settled_total",
+            "settled_items",
+            "requested_total",
+            "accepted_total",
+            "startup_failed_total",
+            "summary",
+            "winner_item",
+            "selected_item",
+            "strategy",
+            "label",
+        ] {
+            if let Some(value) = value.get(key) {
+                extra_keys.insert(
+                    key.to_string(),
+                    if matches!(key, "settled_items") {
+                        Value::Array(
+                            value
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default()
+                                .iter()
+                                .map(compact_subagent_item_for_model)
+                                .collect(),
+                        )
+                    } else if matches!(key, "winner_item" | "selected_item") {
+                        compact_subagent_item_for_model(value)
+                    } else {
+                        value.clone()
+                    },
+                );
+            }
+        }
+    }
+    super::build_model_tool_success_with_hint(
+        action,
+        state,
+        value
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("subagent_control {action} returned {state}.")),
+        data,
+        if matches!(state, "running" | "timeout") {
+            Some(
+                "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
+                    .to_string(),
+            )
+        } else {
+            None
+        },
+    )
+}
+
 async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: super::SessionListArgs =
         serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
@@ -311,7 +509,9 @@ async fn list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if let Value::Object(ref mut map) = scoped_args {
         map.insert("parentId".to_string(), json!(parent_session_id));
     }
-    super::sessions_list(context, &scoped_args).await
+    Ok(build_subagent_list_result(
+        super::sessions_list(context, &scoped_args).await?,
+    ))
 }
 
 async fn history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -323,7 +523,9 @@ async fn history(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         "limit": payload.limit,
         "includeTools": payload.include_tools.unwrap_or(false),
     });
-    super::sessions_history(context, &scoped_args).await
+    Ok(build_subagent_history_result(
+        super::sessions_history(context, &scoped_args).await?,
+    ))
 }
 
 async fn send(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -852,6 +1054,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             dispatch_label.as_deref(),
             remaining_action,
         );
+        let result = compact_subagent_wait_result("batch_spawn", result);
         emit_control_event(context, "subagent_dispatch_finish", &result);
         return Ok(result);
     }
@@ -871,6 +1074,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             dispatch_label.as_deref(),
             remaining_action,
         );
+        let result = compact_subagent_wait_result("batch_spawn", result);
         emit_control_event(context, "subagent_dispatch_finish", &result);
         return Ok(result);
     }
@@ -910,6 +1114,7 @@ async fn batch_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         dispatch_label.as_deref(),
         remaining_action,
     );
+    let merged = compact_subagent_wait_result("batch_spawn", merged);
     emit_control_event(context, "subagent_dispatch_finish", &merged);
     Ok(merged)
 }
@@ -928,6 +1133,7 @@ async fn status(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         evaluate_wait_progress(WaitCompletionMode::All, &snapshots),
         false,
     );
+    let summary = compact_subagent_wait_result("status", summary);
     emit_control_event(context, "subagent_status", &summary);
     Ok(wrap_missing_target_summary(summary, "status"))
 }
@@ -951,8 +1157,13 @@ async fn wait(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     )
     .await?;
     apply_remaining_settlement(context, &mut result, remaining_action);
+    let result = compact_subagent_wait_result("wait", result);
     crate::services::subagents::suppress_auto_wake_from_wait_result(&result);
-    if result.get("dispatch_id").and_then(Value::as_str).is_some() {
+    if result
+        .pointer("/data/dispatch_id")
+        .and_then(Value::as_str)
+        .is_some()
+    {
         emit_control_event(context, "subagent_dispatch_finish", &result);
     } else {
         emit_control_event(context, "subagent_status", &result);
@@ -982,7 +1193,11 @@ fn wrap_missing_target_summary(summary: Value, action: &str) -> Value {
 }
 
 fn selected_items_all_not_found(summary: &Value) -> bool {
-    let Some(items) = summary.get("selected_items").and_then(Value::as_array) else {
+    let Some(items) = summary
+        .get("selected_items")
+        .or_else(|| summary.pointer("/data/selected_items"))
+        .and_then(Value::as_array)
+    else {
         return false;
     };
     !items.is_empty()
@@ -1017,9 +1232,10 @@ async fn interrupt(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         emit_control_event(context, "subagent_interrupt", &item);
         items.push(item);
     }
-    Ok(
-        json!({ "status": if updated_total > 0 { "ok" } else { "noop" }, "updated_total": updated_total, "items": items }),
-    )
+    Ok(build_subagent_update_result(
+        "interrupt",
+        json!({ "updated_total": updated_total, "items": items }),
+    ))
 }
 
 async fn close(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1056,9 +1272,14 @@ async fn session_control(
         emit_control_event(context, event_type, &item);
         items.push(item);
     }
-    Ok(
-        json!({ "status": if updated_total > 0 { "ok" } else { "noop" }, "updated_total": updated_total, "items": items }),
-    )
+    Ok(build_subagent_update_result(
+        if next_status == "closed" {
+            "close"
+        } else {
+            "resume"
+        },
+        json!({ "updated_total": updated_total, "items": items }),
+    ))
 }
 
 fn resolve_targets(

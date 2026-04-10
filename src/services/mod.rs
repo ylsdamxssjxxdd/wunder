@@ -41,6 +41,7 @@ pub mod swarm;
 pub mod tools;
 pub mod user_access;
 pub mod user_agent_presets;
+pub mod user_leveling;
 pub mod user_prompt_templates;
 pub mod user_store;
 pub mod user_tools;

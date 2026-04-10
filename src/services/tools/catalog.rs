@@ -25,7 +25,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "properties": {
                     "content": {"type": "string", "description": t("tool.spec.final.args.content")}
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -35,10 +36,25 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "uid": {"type": "string", "description": t("tool.spec.a2ui.args.uid")},
-                    "a2ui": {"type": "array", "description": t("tool.spec.a2ui.args.messages"), "items": {"type": "object"}},
+                    "a2ui": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": t("tool.spec.a2ui.args.messages"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "beginRendering": {"type": "object"},
+                                "surfaceUpdate": {"type": "object"},
+                                "dataModelUpdate": {"type": "object"},
+                                "deleteSurface": {"type": "object"}
+                            },
+                            "additionalProperties": false
+                        }
+                    },
                     "content": {"type": "string", "description": t("tool.spec.a2ui.args.content")}
                 },
-                "required": ["uid", "a2ui"]
+                "required": ["a2ui"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -50,6 +66,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "explanation": {"type": "string", "description": t("tool.spec.plan.args.explanation")},
                     "plan": {
                         "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
                         "description": t("tool.spec.plan.args.plan"),
                         "items": {
                             "type": "object",
@@ -61,11 +79,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                     "enum": ["pending", "in_progress", "completed"]
                                 }
                             },
-                            "required": ["step", "status"]
+                            "required": ["step", "status"],
+                            "additionalProperties": false
                         }
                     }
                 },
-                "required": ["plan"]
+                "required": ["plan"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -77,6 +97,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "question": {"type": "string", "description": t("tool.spec.question_panel.args.question")},
                     "routes": {
                         "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
                         "description": t("tool.spec.question_panel.args.routes"),
                         "items": {
                             "type": "object",
@@ -85,12 +107,14 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "description": {"type": "string", "description": t("tool.spec.question_panel.args.routes.description")},
                                 "recommended": {"type": "boolean", "description": t("tool.spec.question_panel.args.routes.recommended")}
                             },
-                            "required": ["label"]
+                            "required": ["label"],
+                            "additionalProperties": false
                         }
                     },
                     "multiple": {"type": "boolean", "description": t("tool.spec.question_panel.args.multiple")}
                 },
-                "required": ["routes"]
+                "required": ["routes"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -103,7 +127,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "type": "string",
                         "description": t("tool.spec.sessions_yield.args.message")
                     }
-                }
+                },
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -128,7 +153,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "cron": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.cron")},
                             "tz": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.tz")}
                         },
-                        "required": ["kind"]
+                        "required": ["kind"],
+                        "additionalProperties": false
                     },
                     "schedule_text": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule_text")},
                     "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
@@ -137,7 +163,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
                     "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -149,7 +176,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "seconds": {"type": "number", "description": t("tool.spec.sleep.args.seconds"), "minimum": 0.001},
                     "reason": {"type": "string", "description": t("tool.spec.sleep.args.reason")}
                 },
-                "required": ["seconds"]
+                "required": ["seconds"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -173,18 +201,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "client_msg_id": {"type": "string", "description": t("tool.spec.user_world.args.client_msg_id")}
                 },
                 "required": ["action"],
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "send_message"}}},
-                        "then": {
-                            "required": ["content"],
-                            "anyOf": [
-                                {"required": ["user_id"]},
-                                {"required": ["user_ids"]}
-                            ]
-                        }
-                    }
-                ]
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -212,7 +229,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "to": {"type": "string"},
                             "peer_kind": {"type": "string", "enum": ["user", "group"]},
                             "thread_id": {"type": "string"}
-                        }
+                        },
+                        "additionalProperties": false
                     },
                     "to": {"type": "string", "description": t("tool.spec.channel_tool.args.to")},
                     "peer_kind": {"type": "string", "enum": ["user", "group"], "description": t("tool.spec.channel_tool.args.peer_kind")},
@@ -229,13 +247,15 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "mime": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.mime")},
                                 "size": {"type": "integer", "description": t("tool.spec.channel_tool.args.attachments.size")},
                                 "name": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.name")}
-                            }
+                            },
+                            "additionalProperties": false
                         }
                     },
                     "wait": {"type": "boolean", "description": t("tool.spec.channel_tool.args.wait")},
                     "wait_timeout_s": {"type": "number", "minimum": 1, "maximum": 30, "description": t("tool.spec.channel_tool.args.wait_timeout_s")}
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -263,7 +283,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["desc", "asc"]
                     }
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -273,12 +294,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "task_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.a2a_observe.args.task_ids")},
-                    "tasks": {"type": "array", "items": {"type": "object"}, "description": t("tool.spec.a2a_observe.args.tasks")},
                     "endpoint": {"type": "string", "description": t("tool.spec.a2a_observe.args.endpoint")},
                     "service_name": {"type": "string", "description": t("tool.spec.a2a_observe.args.service_name")},
                     "refresh": {"type": "boolean", "description": t("tool.spec.a2a_observe.args.refresh")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.a2a_observe.args.timeout")}
-                }
+                },
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -290,12 +311,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "wait_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.wait_s")},
                     "poll_interval_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.poll_interval")},
                     "task_ids": {"type": "array", "items": {"type": "string"}},
-                    "tasks": {"type": "array", "items": {"type": "object"}},
                     "endpoint": {"type": "string", "description": t("tool.spec.a2a_wait.args.endpoint")},
                     "service_name": {"type": "string", "description": t("tool.spec.a2a_wait.args.service_name")},
                     "refresh": {"type": "boolean", "description": t("tool.spec.a2a_wait.args.refresh")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.timeout")}
-                }
+                },
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -307,20 +328,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
                     "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
                     "timeout_s": {"type": "number", "description": t("tool.spec.exec.args.timeout")},
-                    "dry_run": {"type": "boolean", "description": "Validate command and budgets without execution."},
-                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000, "description": "Optional execution time budget in milliseconds."},
-                    "output_budget_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304, "description": "Optional command output capture budget in bytes."},
-                    "max_commands": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Optional limit for number of commands parsed from content."},
-                    "budget": {
-                        "type": "object",
-                        "properties": {
-                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000},
-                            "output_budget_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304},
-                            "max_commands": {"type": "integer", "minimum": 1, "maximum": 200}
-                        }
-                    }
+                    "dry_run": {"type": "boolean", "description": "Validate command only without execution."}
                 },
-                "required": ["content"]
+                "required": ["content"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -333,7 +344,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "workdir": {"type": "string", "description": t("tool.spec.ptc.args.workdir")},
                     "content": {"type": "string", "description": t("tool.spec.ptc.args.content")}
                 },
-                "required": ["filename", "content"]
+                "required": ["filename", "content"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -345,9 +357,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "path": {"type": "string", "description": t("tool.spec.list.args.path")},
                     "max_depth": {"type": "integer", "minimum": 0},
                     "cursor": {"type": "string", "description": t("tool.spec.list.args.cursor")},
-                    "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.list.args.offset")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": t("tool.spec.list.args.limit")}
-                }
+                },
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -367,7 +379,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
                     "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
                 },
-                "required": ["query"]
+                "required": ["query"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -390,10 +403,12 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "include_siblings": {"type": "boolean"},
                             "include_header": {"type": "boolean"},
                             "max_lines": {"type": "integer", "minimum": 1}
-                        }
+                        },
+                        "additionalProperties": false
                     }
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -405,7 +420,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "path": {"type": "string", "description": t("tool.spec.read_image.args.path")},
                     "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")}
                 },
-                "required": ["path"]
+                "required": ["path"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -416,7 +432,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "properties": {
                     "name": {"type": "string", "description": t("tool.spec.skill_call.args.name")}
                 },
-                "required": ["name"]
+                "required": ["name"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -429,7 +446,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "content": {"type": "string", "description": t("tool.spec.write.args.content")},
                     "dry_run": {"type": "boolean", "description": "Preview write target and size changes without writing to disk."}
                 },
-                "required": ["path", "content"]
+                "required": ["path", "content"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -457,10 +475,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "definition",
                             "references",
                             "hover",
-                            "documentSymbol",
-                            "workspaceSymbol",
+                            "document_symbol",
+                            "workspace_symbol",
                             "implementation",
-                            "callHierarchy"
+                            "call_hierarchy"
                         ]
                     },
                     "path": {"type": "string", "description": t("tool.spec.lsp.args.path")},
@@ -473,7 +491,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["incoming", "outgoing"]
                     }
                 },
-                "required": ["operation", "path"]
+                "required": ["operation", "path"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -643,19 +662,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "node_id": {"type": "string", "description": t("tool.spec.node_invoke.args.node_id")},
                     "command": {"type": "string", "description": t("tool.spec.node_invoke.args.command")},
                     "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
-                    "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")},
-                    "metadata": {"type": "object", "description": t("tool.spec.node_invoke.args.metadata")}
+                    "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")}
                 },
-                "anyOf": [
-                    {"required": ["action"]},
-                    {"required": ["node_id", "command"]}
-                ],
-                "allOf": [
-                    {
-                        "if": {"properties": {"action": {"const": "invoke"}}},
-                        "then": {"required": ["node_id", "command"]}
-                    }
-                ]
+                "required": ["action"]
             }),
         },
         ToolSpec {
@@ -676,7 +685,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "description": t("tool.spec.web_fetch.args.max_chars")
                     }
                 },
-                "required": ["url"]
+                "required": ["url"],
+                "additionalProperties": false
             }),
         },
         ToolSpec {
@@ -761,7 +771,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "drag_drop"
                         ]
                     },
-                    "description": {"type": "string", "description": t("tool.spec.desktop_controller.args.description")},
                     "key": {"type": "string", "description": t("tool.spec.desktop_controller.args.key")},
                     "text": {"type": "string", "description": t("tool.spec.desktop_controller.args.text")},
                     "delay_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.delay_ms")},
@@ -777,7 +786,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "description": t("tool.spec.desktop_controller.args.to_bbox")
                     }
                 },
-                "required": ["bbox", "action", "description"],
+                "required": ["bbox", "action"],
                 "additionalProperties": false
             }),
         },
@@ -1466,6 +1475,112 @@ mod tests {
     }
 
     #[test]
+    fn a2ui_schema_prefers_minimal_known_message_shape() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "a2ui")
+            .expect("a2ui spec");
+        assert!(spec.input_schema["properties"]["uid"].is_object());
+        assert_eq!(
+            spec.input_schema["properties"]["a2ui"]["minItems"].as_i64(),
+            Some(1)
+        );
+        let message_props = &spec.input_schema["properties"]["a2ui"]["items"]["properties"];
+        assert!(message_props["beginRendering"].is_object());
+        assert!(message_props["surfaceUpdate"].is_object());
+        assert!(message_props["dataModelUpdate"].is_object());
+        assert!(message_props["deleteSurface"].is_object());
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == "a2ui")));
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().all(|item| item != "uid")));
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn panel_schemas_bound_route_and_plan_item_shapes() {
+        let plan_canonical = resolve_tool_name("update_plan");
+        let plan_spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == plan_canonical)
+            .expect("plan spec");
+        assert_eq!(
+            plan_spec.input_schema["properties"]["plan"]["maxItems"].as_i64(),
+            Some(12)
+        );
+        assert_eq!(
+            plan_spec.input_schema["properties"]["plan"]["items"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            plan_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let question_panel_canonical = resolve_tool_name("question_panel");
+        let question_spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == question_panel_canonical)
+            .expect("question panel spec");
+        assert_eq!(
+            question_spec.input_schema["properties"]["routes"]["maxItems"].as_i64(),
+            Some(4)
+        );
+        assert_eq!(
+            question_spec.input_schema["properties"]["routes"]["items"]["additionalProperties"]
+                .as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            question_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn lsp_schema_uses_canonical_snake_case_operations() {
+        let canonical_name = resolve_tool_name("lsp");
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == canonical_name)
+            .expect("lsp spec");
+        let operations = spec.input_schema["properties"]["operation"]["enum"]
+            .as_array()
+            .expect("lsp operations");
+        assert!(operations.iter().any(|item| item == "document_symbol"));
+        assert!(operations.iter().any(|item| item == "workspace_symbol"));
+        assert!(operations.iter().any(|item| item == "call_hierarchy"));
+        assert!(operations.iter().all(|item| item != "documentSymbol"));
+        assert!(operations.iter().all(|item| item != "workspaceSymbol"));
+        assert!(operations.iter().all(|item| item != "callHierarchy"));
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn web_fetch_schema_disallows_extra_model_side_fields() {
+        let canonical_name = resolve_tool_name("web_fetch");
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == canonical_name)
+            .expect("web_fetch spec");
+        assert!(spec.input_schema["properties"]["url"].is_object());
+        assert!(spec.input_schema["properties"]["extract_mode"].is_object());
+        assert!(spec.input_schema["properties"]["max_chars"].is_object());
+        assert_eq!(
+            spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
     fn agent_swarm_schema_exposes_canonical_fields() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
@@ -1536,6 +1651,36 @@ mod tests {
     }
 
     #[test]
+    fn execute_command_schema_hides_budget_compatibility_shape() {
+        let canonical_name = resolve_tool_name("execute_command");
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == canonical_name)
+            .expect("execute command spec");
+        assert!(spec.input_schema["properties"]["content"].is_object());
+        assert!(spec.input_schema["properties"]["workdir"].is_object());
+        assert!(spec.input_schema["properties"]["timeout_s"].is_object());
+        assert!(spec.input_schema["properties"]["dry_run"].is_object());
+        assert!(spec.input_schema["properties"]["time_budget_ms"].is_null());
+        assert!(spec.input_schema["properties"]["output_budget_bytes"].is_null());
+        assert!(spec.input_schema["properties"]["max_commands"].is_null());
+        assert!(spec.input_schema["properties"]["budget"].is_null());
+    }
+
+    #[test]
+    fn list_files_schema_prefers_cursor_over_offset_alias() {
+        let canonical_name = resolve_tool_name("list_files");
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == canonical_name)
+            .expect("list files spec");
+        assert!(spec.input_schema["properties"]["path"].is_object());
+        assert!(spec.input_schema["properties"]["cursor"].is_object());
+        assert!(spec.input_schema["properties"]["limit"].is_object());
+        assert!(spec.input_schema["properties"]["offset"].is_null());
+    }
+
+    #[test]
     fn thread_control_schema_exposes_canonical_fields() {
         let spec = builtin_tool_specs_with_language("zh-CN")
             .into_iter()
@@ -1563,6 +1708,70 @@ mod tests {
         assert!(spec.input_schema["allOf"].is_null());
         assert!(spec.input_schema["properties"]["selector"].is_object());
         assert!(spec.input_schema["properties"]["url"].is_object());
+    }
+
+    #[test]
+    fn user_world_schema_hides_conditional_teaching_shape() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "用户世界工具")
+            .expect("user world spec");
+        assert!(spec.input_schema["properties"]["user_id"].is_object());
+        assert!(spec.input_schema["properties"]["user_ids"].is_object());
+        assert!(spec.input_schema["properties"]["content"].is_object());
+        assert!(spec.input_schema["allOf"].is_null());
+    }
+
+    #[test]
+    fn a2a_schemas_hide_raw_tasks_array_from_model_side() {
+        let observe = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "a2a观察")
+            .expect("a2a observe spec");
+        assert!(observe.input_schema["properties"]["task_ids"].is_object());
+        assert!(observe.input_schema["properties"]["tasks"].is_null());
+
+        let wait = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "a2a等待")
+            .expect("a2a wait spec");
+        assert!(wait.input_schema["properties"]["task_ids"].is_object());
+        assert!(wait.input_schema["properties"]["wait_s"].is_object());
+        assert!(wait.input_schema["properties"]["tasks"].is_null());
+    }
+
+    #[test]
+    fn node_invoke_schema_requires_explicit_action_on_model_side() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "节点调用")
+            .expect("node invoke spec");
+        assert!(spec.input_schema["properties"]["action"].is_object());
+        assert!(spec.input_schema["properties"]["node_id"].is_object());
+        assert!(spec.input_schema["properties"]["command"].is_object());
+        assert!(spec.input_schema["properties"]["metadata"].is_null());
+        assert!(spec.input_schema["required"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item == "action")));
+        assert!(spec.input_schema["allOf"].is_null());
+        assert!(spec.input_schema["anyOf"].is_null());
+    }
+
+    #[test]
+    fn desktop_controller_schema_no_longer_requires_description_for_model_side() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "桌面控制器")
+            .expect("desktop controller spec");
+        assert!(spec.input_schema["properties"]["bbox"].is_object());
+        assert!(spec.input_schema["properties"]["action"].is_object());
+        assert!(spec.input_schema["properties"]["description"].is_null());
+        let required = spec.input_schema["required"]
+            .as_array()
+            .expect("required array");
+        assert!(required.iter().any(|item| item == "bbox"));
+        assert!(required.iter().any(|item| item == "action"));
+        assert!(required.iter().all(|item| item != "description"));
     }
 
     #[test]
@@ -1616,5 +1825,171 @@ mod tests {
         let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
         assert!(available.contains(super::browser_tool::TOOL_BROWSER));
         assert!(available.contains("browser"));
+    }
+
+    #[test]
+    fn simple_builtin_schemas_disallow_extra_model_side_fields() {
+        let specs = builtin_tool_specs_with_language("zh-CN");
+
+        let final_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("final_response"))
+            .expect("final response spec");
+        assert_eq!(
+            final_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let a2ui_spec = specs
+            .iter()
+            .find(|spec| spec.name == "a2ui")
+            .expect("a2ui spec");
+        assert_eq!(
+            a2ui_spec.input_schema["properties"]["a2ui"]["items"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let sessions_yield_spec = specs
+            .iter()
+            .find(|spec| spec.name == super::sessions_yield_tool::TOOL_SESSIONS_YIELD)
+            .expect("sessions yield spec");
+        assert_eq!(
+            sessions_yield_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let schedule_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("schedule_task"))
+            .expect("schedule task spec");
+        assert_eq!(
+            schedule_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            schedule_spec.input_schema["properties"]["schedule"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let channel_spec = specs
+            .iter()
+            .find(|spec| spec.name == super::channel_tool::TOOL_CHANNEL)
+            .expect("channel tool spec");
+        assert_eq!(
+            channel_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            channel_spec.input_schema["properties"]["contact"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            channel_spec.input_schema["properties"]["attachments"]["items"]["additionalProperties"]
+                .as_bool(),
+            Some(false)
+        );
+
+        let sleep_spec = specs
+            .iter()
+            .find(|spec| spec.name == super::sleep_tool::TOOL_SLEEP_WAIT)
+            .expect("sleep spec");
+        assert_eq!(
+            sleep_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let memory_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("memory_manage"))
+            .expect("memory manage spec");
+        assert_eq!(
+            memory_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let observe_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("a2a_observe"))
+            .expect("a2a observe spec");
+        assert_eq!(
+            observe_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let wait_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("a2a_wait"))
+            .expect("a2a wait spec");
+        assert_eq!(
+            wait_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let execute_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("execute_command"))
+            .expect("execute command spec");
+        assert_eq!(
+            execute_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let list_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("list_files"))
+            .expect("list files spec");
+        assert_eq!(
+            list_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let search_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("search_content"))
+            .expect("search content spec");
+        assert_eq!(
+            search_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let read_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("read_file"))
+            .expect("read file spec");
+        assert_eq!(
+            read_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+        assert_eq!(
+            read_spec.input_schema["properties"]["indentation"]["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let read_image_spec = specs
+            .iter()
+            .find(|spec| spec.name == super::read_image_tool::TOOL_READ_IMAGE)
+            .expect("read image spec");
+        assert_eq!(
+            read_image_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let skill_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("skill_call"))
+            .expect("skill call spec");
+        assert_eq!(
+            skill_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
+
+        let write_spec = specs
+            .iter()
+            .find(|spec| spec.name == resolve_tool_name("write_file"))
+            .expect("write file spec");
+        assert_eq!(
+            write_spec.input_schema["additionalProperties"].as_bool(),
+            Some(false)
+        );
     }
 }

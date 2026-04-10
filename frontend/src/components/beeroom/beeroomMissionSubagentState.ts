@@ -66,6 +66,9 @@ const normalizeOptionalCount = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const normalizeWorkflowItems = (value: unknown): unknown[] =>
+  Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+
 const normalizeSubagentUpdatedTime = (value: unknown): number => {
   if (value === null || value === undefined) return 0;
   if (typeof value === 'number') {
@@ -346,7 +349,7 @@ export const normalizeBeeroomMissionSubagentItem = (
     parentTurnRef,
     parentUserRound,
     parentModelRound,
-    workflowItems: []
+    workflowItems: normalizeWorkflowItems(source.workflowItems ?? detail.workflowItems)
   };
 };
 

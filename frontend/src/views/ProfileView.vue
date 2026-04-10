@@ -54,6 +54,38 @@
             </div>
           </div>
         </div>
+        <div class="profile-card profile-level-card">
+          <div class="profile-level-header">
+            <div>
+              <div class="profile-section-title">{{ t('profile.level.title') }}</div>
+              <div class="profile-section-desc">{{ t('profile.level.desc') }}</div>
+            </div>
+            <div class="profile-level-badge">{{ t('profile.level.label', { level: userLevel }) }}</div>
+          </div>
+          <div class="profile-level-progress">
+            <div class="profile-level-progress-track">
+              <div class="profile-level-progress-fill" :style="{ width: `${levelProgressPercent}%` }"></div>
+            </div>
+            <div class="profile-level-progress-meta">
+              <span>{{ levelProgressText }}</span>
+              <span>{{ levelProgressHint }}</span>
+            </div>
+          </div>
+          <div class="profile-level-stats">
+            <div class="profile-level-stat">
+              <div class="profile-stat-label">{{ t('profile.level.totalLabel') }}</div>
+              <div class="profile-stat-value">{{ levelTotalText }}</div>
+            </div>
+            <div class="profile-level-stat">
+              <div class="profile-stat-label">{{ t('profile.level.currentLabel') }}</div>
+              <div class="profile-stat-value">{{ levelCurrentText }}</div>
+            </div>
+            <div class="profile-level-stat">
+              <div class="profile-stat-label">{{ t('profile.level.nextLabel') }}</div>
+              <div class="profile-stat-value">{{ levelNextText }}</div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section class="profile-section profile-metrics-section">
@@ -238,6 +270,58 @@ const sessionCount = computed(() => chatStore.sessions.length);
 const usageSummary = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
+});
+const levelSnapshot = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  const level = parseQuotaNumber(user.level ?? user.userLevel) ?? 1;
+  const maxLevel = parseQuotaNumber(user.max_level ?? user.maxLevel) ?? 200;
+  const experienceTotal = parseQuotaNumber(user.experience_total ?? user.experienceTotal) ?? 0;
+  const experienceCurrent = parseQuotaNumber(user.experience_current ?? user.experienceCurrent) ?? 0;
+  const experienceForNextLevel =
+    parseQuotaNumber(user.experience_for_next_level ?? user.experienceForNextLevel) ?? 0;
+  const experienceRemaining =
+    parseQuotaNumber(user.experience_remaining ?? user.experienceRemaining) ?? 0;
+  const experienceProgress =
+    Number(user.experience_progress ?? user.experienceProgress ?? 0) || 0;
+  const reachedMaxLevel = Boolean(user.reached_max_level ?? user.reachedMaxLevel);
+  return {
+    level: Math.max(1, Math.trunc(level)),
+    maxLevel: Math.max(1, Math.trunc(maxLevel)),
+    experienceTotal: Math.max(0, Math.trunc(experienceTotal)),
+    experienceCurrent: Math.max(0, Math.trunc(experienceCurrent)),
+    experienceForNextLevel: Math.max(0, Math.trunc(experienceForNextLevel)),
+    experienceRemaining: Math.max(0, Math.trunc(experienceRemaining)),
+    experienceProgress: Math.min(Math.max(experienceProgress, 0), 1),
+    reachedMaxLevel
+  };
+});
+const userLevel = computed(() => levelSnapshot.value.level);
+const levelProgressPercent = computed(() =>
+  Math.round((levelSnapshot.value.reachedMaxLevel ? 1 : levelSnapshot.value.experienceProgress) * 1000) / 10
+);
+const levelTotalText = computed(() => formatNumber(levelSnapshot.value.experienceTotal));
+const levelCurrentText = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) return t('profile.level.maxValue');
+  return formatNumber(levelSnapshot.value.experienceCurrent);
+});
+const levelNextText = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) return t('profile.level.maxValue');
+  return formatNumber(levelSnapshot.value.experienceRemaining);
+});
+const levelProgressText = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) return t('profile.level.maxProgress');
+  return t('profile.level.progress', {
+    current: formatNumber(levelSnapshot.value.experienceCurrent),
+    total: formatNumber(levelSnapshot.value.experienceForNextLevel)
+  });
+});
+const levelProgressHint = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) {
+    return t('profile.level.maxHint', { level: levelSnapshot.value.maxLevel });
+  }
+  return t('profile.level.nextHint', {
+    exp: formatNumber(levelSnapshot.value.experienceRemaining)
+  });
 });
 const agentCount = computed(() => {
   const owned = Array.isArray(agentStore.agents) ? agentStore.agents.length : 0;
@@ -726,3 +810,88 @@ watch(editDialogVisible, (visible) => {
   editForm.confirm_password = '';
 });
 </script>
+
+<style scoped>
+.profile-level-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.profile-level-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.profile-level-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.18), rgba(249, 115, 22, 0.14));
+  color: #b45309;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.profile-level-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-level-progress-track {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.profile-level-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+  transition: width 0.24s ease;
+}
+
+.profile-level-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--w-text-2, #64748b);
+  font-size: 13px;
+}
+
+.profile-level-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-level-stat {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+@media (max-width: 720px) {
+  .profile-level-header,
+  .profile-level-progress-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .profile-level-stats {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

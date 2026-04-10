@@ -24,7 +24,9 @@
             <div class="messenger-settings-profile-id">{{ t('profile.idLabel', { id: userId || '-' }) }}</div>
             <div class="messenger-settings-profile-tags">
               <span class="messenger-settings-profile-tag">{{ t('user.unitLabel', { unit: userUnitLabel }) }}</span>
-              <span class="messenger-settings-profile-tag">{{ accountTypeLabel }}</span>
+              <span class="messenger-settings-profile-tag messenger-settings-profile-tag--level">
+                {{ t('profile.level.label', { level: userLevel }) }}
+              </span>
             </div>
           </div>
           <div class="messenger-settings-profile-head-controls">
@@ -46,6 +48,15 @@
             >
               <i class="fa-solid fa-pen" aria-hidden="true"></i>
             </button>
+          </div>
+        </div>
+        <div class="messenger-profile-level-progress messenger-profile-level-progress--bottom">
+          <div class="messenger-profile-level-progress-bar">
+            <span :style="{ width: `${levelProgressPercent}%` }"></span>
+          </div>
+          <div class="messenger-profile-level-progress-meta">
+            <span>{{ levelProgressText }}</span>
+            <span>{{ levelProgressHint }}</span>
           </div>
         </div>
       </section>
@@ -102,8 +113,28 @@
             <span>{{ t('profile.metrics.quotaToday') }}</span>
             <span>{{ quotaRemainingText }} / {{ quotaTotalText }}</span>
           </div>
-          <div class="messenger-profile-quota-bar">
-            <span :style="{ width: `${quotaRemainingPercent}%` }"></span>
+          <div class="messenger-profile-quota-ring-wrap">
+            <div class="messenger-profile-quota-ring-shell">
+              <svg class="messenger-profile-quota-ring-svg" viewBox="0 0 140 140" aria-hidden="true">
+                <path
+                  v-for="segment in quotaRingSegments"
+                  :key="`${segment.key}-outline`"
+                  class="messenger-profile-quota-ring-segment-outline"
+                  :d="segment.path"
+                />
+                <path
+                  v-for="segment in quotaRingSegments"
+                  :key="segment.key"
+                  class="messenger-profile-quota-ring-segment"
+                  :class="`messenger-profile-quota-ring-segment--${segment.tone}`"
+                  :d="segment.path"
+                />
+              </svg>
+              <div class="messenger-profile-quota-ring-inner">
+                <span class="messenger-profile-quota-ring-value">{{ quotaRemainingText }}</span>
+                <span class="messenger-profile-quota-ring-label">{{ t('profile.quota.remaining') }}</span>
+              </div>
+            </div>
           </div>
           <div class="messenger-profile-quota-meta">
             <span>{{ t('profile.quota.used') }}: {{ quotaUsedText }}</span>
@@ -190,21 +221,56 @@
     <el-dialog
       v-model="usernameDialogVisible"
       class="messenger-dialog messenger-username-dialog"
-      :title="t('profile.edit.username')"
-      width="420px"
+      :title="t('profile.edit.title')"
+      width="520px"
       :close-on-click-modal="false"
       append-to-body
       destroy-on-close
       @closed="closeUsernameDialog"
     >
       <div class="messenger-username-dialog-body">
-        <input
-          v-model.trim="usernameDraft"
-          class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
-          type="text"
-          :placeholder="t('profile.edit.usernamePlaceholder')"
-          @keydown.enter.prevent="submitUsernameUpdate"
-        />
+        <label class="messenger-username-dialog-field">
+          <span>{{ t('profile.edit.username') }}</span>
+          <input
+            v-model.trim="usernameDraft"
+            class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
+            type="text"
+            :placeholder="t('profile.edit.usernamePlaceholder')"
+            @keydown.enter.prevent="submitUsernameUpdate"
+          />
+        </label>
+        <div class="messenger-username-dialog-section">
+          <div class="messenger-username-dialog-section-title">{{ t('profile.edit.newPassword') }}</div>
+          <div class="messenger-username-dialog-section-hint">{{ t('profile.edit.passwordHint') }}</div>
+        </div>
+        <label class="messenger-username-dialog-field">
+          <span>{{ t('profile.edit.currentPassword') }}</span>
+          <input
+            v-model="currentPasswordDraft"
+            class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
+            type="password"
+            :placeholder="t('profile.edit.currentPasswordPlaceholder')"
+          />
+        </label>
+        <label class="messenger-username-dialog-field">
+          <span>{{ t('profile.edit.newPassword') }}</span>
+          <input
+            v-model="newPasswordDraft"
+            class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
+            type="password"
+            :placeholder="t('profile.edit.newPasswordPlaceholder')"
+          />
+        </label>
+        <label class="messenger-username-dialog-field">
+          <span>{{ t('profile.edit.confirmPassword') }}</span>
+          <input
+            v-model="confirmPasswordDraft"
+            class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
+            type="password"
+            :placeholder="t('profile.edit.confirmPasswordPlaceholder')"
+            @keydown.enter.prevent="submitUsernameUpdate"
+          />
+        </label>
       </div>
       <template #footer>
         <div class="messenger-username-dialog-footer">
@@ -214,10 +280,10 @@
           <button
             class="messenger-settings-action"
             type="button"
-            :disabled="!canSubmitUsername || usernameSaving"
+            :disabled="!canSubmitUsername || profileSavePending"
             @click="submitUsernameUpdate"
           >
-            {{ usernameSaving ? t('common.saving') : t('common.save') }}
+            {{ profileSavePending ? t('common.saving') : t('common.save') }}
           </button>
         </div>
       </template>
@@ -335,11 +401,14 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+import { updateProfile } from '@/api/auth';
 import { APP_VERSION } from '@/config/appVersion';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { showApiError } from '@/utils/apiError';
 import DesktopRuntimeSettingsPanel from '@/components/messenger/DesktopRuntimeSettingsPanel.vue';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
@@ -431,12 +500,16 @@ const appVersion = APP_VERSION;
 const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const usernameDraft = ref('');
+const currentPasswordDraft = ref('');
+const newPasswordDraft = ref('');
+const confirmPasswordDraft = ref('');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
 const usernameDialogVisible = ref(false);
 const avatarDialogVisible = ref(false);
 const avatarDialogIcon = ref(DEFAULT_AVATAR_ICON);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 const avatarPage = ref(1);
+const profileSavePending = ref(false);
 
 const normalizeSendKey = (value: unknown): SendKeyMode =>
   (() => {
@@ -446,12 +519,18 @@ const normalizeSendKey = (value: unknown): SendKeyMode =>
     return 'enter';
   })();
 const allowUsernameEdit = computed(() => true);
-const usernameSaving = computed(() => props.usernameSaving === true);
+const passwordChangeRequested = computed(() =>
+  Boolean(
+    String(currentPasswordDraft.value || '').trim() ||
+      String(newPasswordDraft.value || '').trim() ||
+      String(confirmPasswordDraft.value || '').trim()
+  )
+);
 const canSubmitUsername = computed(() => {
   if (!allowUsernameEdit.value) return false;
   const target = String(usernameDraft.value || '').trim();
   const current = String(props.username || '').trim();
-  return Boolean(target) && target !== current;
+  return Boolean(target) && (target !== current || passwordChangeRequested.value);
 });
 
 watch(
@@ -608,10 +687,16 @@ const openAvatarDialog = () => {
 
 const openUsernameDialog = () => {
   usernameDraft.value = String(props.username || '').trim();
+  currentPasswordDraft.value = '';
+  newPasswordDraft.value = '';
+  confirmPasswordDraft.value = '';
   usernameDialogVisible.value = true;
 };
 
 const closeUsernameDialog = () => {
+  currentPasswordDraft.value = '';
+  newPasswordDraft.value = '';
+  confirmPasswordDraft.value = '';
   usernameDialogVisible.value = false;
 };
 
@@ -631,25 +716,75 @@ const applyAvatarDialog = () => {
   avatarDialogVisible.value = false;
 };
 
-const submitUsernameUpdate = () => {
-  if (!canSubmitUsername.value || usernameSaving.value) {
+const submitUsernameUpdate = async () => {
+  if (!canSubmitUsername.value || profileSavePending.value) {
     return;
   }
-  emit('update:username', String(usernameDraft.value || '').trim());
-  usernameDialogVisible.value = false;
+  const username = String(usernameDraft.value || '').trim();
+  const current = String(props.username || '').trim();
+  const currentPassword = String(currentPasswordDraft.value || '').trim();
+  const newPassword = String(newPasswordDraft.value || '').trim();
+  const confirmPassword = String(confirmPasswordDraft.value || '').trim();
+
+  if (!username) {
+    ElMessage.warning(t('profile.edit.usernameRequired'));
+    return;
+  }
+  if (passwordChangeRequested.value) {
+    if (!currentPassword) {
+      ElMessage.warning(t('profile.edit.currentPasswordRequired'));
+      return;
+    }
+    if (!newPassword) {
+      ElMessage.warning(t('profile.edit.newPasswordRequired'));
+      return;
+    }
+    if (!confirmPassword) {
+      ElMessage.warning(t('profile.edit.confirmPasswordRequired'));
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      ElMessage.warning(t('profile.edit.passwordMismatch'));
+      return;
+    }
+    if (currentPassword === newPassword) {
+      ElMessage.warning(t('profile.edit.passwordSameAsCurrent'));
+      return;
+    }
+  }
+
+  profileSavePending.value = true;
+  try {
+    const payload: Record<string, string> = {
+      username
+    };
+    if (passwordChangeRequested.value) {
+      payload.current_password = currentPassword;
+      payload.new_password = newPassword;
+    }
+    const { data } = await updateProfile(payload);
+    const profile = data?.data;
+    if (profile && typeof profile === 'object') {
+      authStore.user = profile;
+    } else {
+      await authStore.loadProfile();
+    }
+    if (username !== current) {
+      emit('update:username', username);
+    }
+    closeUsernameDialog();
+    ElMessage.success(t('profile.edit.saved'));
+  } catch (error) {
+    showApiError(error, t('profile.edit.saveFailed'));
+  } finally {
+    profileSavePending.value = false;
+  }
 };
 
 const userUnitLabel = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   const unit = (user.unit || {}) as Record<string, unknown>;
   return String(unit.path_name || unit.pathName || unit.name || user.unit_id || '-');
-});
-
-const accountTypeLabel = computed(() => {
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/demo')) {
-    return t('profile.account.demo');
-  }
-  return t('profile.account.live');
 });
 
 const formatDateKey = (value: unknown): string => {
@@ -798,10 +933,109 @@ const quotaRemainingPercent = computed(() => {
   return Number(percent.toFixed(2));
 });
 
+type QuotaRingTone = 'danger' | 'warning' | 'safe';
+
+type QuotaRingSegment = {
+  key: string;
+  tone: QuotaRingTone;
+  path: string;
+};
+
+const QUOTA_RING_CENTER = 70;
+const QUOTA_RING_RADIUS = 48;
+const QUOTA_RING_START_DEG = 138;
+const QUOTA_RING_GAP_DEG = 7;
+
+const polarToCartesian = (centerX: number, centerY: number, radius: number, angleDeg: number) => {
+  const angleRad = ((angleDeg - 90) * Math.PI) / 180;
+  return {
+    x: centerX + radius * Math.cos(angleRad),
+    y: centerY + radius * Math.sin(angleRad)
+  };
+};
+
+const buildArcPath = (startDeg: number, endDeg: number): string => {
+  const start = polarToCartesian(QUOTA_RING_CENTER, QUOTA_RING_CENTER, QUOTA_RING_RADIUS, startDeg);
+  const end = polarToCartesian(QUOTA_RING_CENTER, QUOTA_RING_CENTER, QUOTA_RING_RADIUS, endDeg);
+  const largeArcFlag = endDeg - startDeg > 180 ? 1 : 0;
+  return `M ${start.x.toFixed(3)} ${start.y.toFixed(3)} A ${QUOTA_RING_RADIUS} ${QUOTA_RING_RADIUS} 0 ${largeArcFlag} 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
+};
+
+const quotaRingSegments = computed<QuotaRingSegment[]>(() => {
+  const remainingRatio = Math.max(0, Math.min(quotaRemainingPercent.value / 100, 1));
+  const usedRatio = Math.max(0, 1 - remainingRatio);
+  const warningRatio = usedRatio <= 0 ? 0 : Math.min(Math.max(usedRatio * 0.38, 0.08), usedRatio);
+  const dangerRatio = Math.max(usedRatio - warningRatio, 0);
+  const segments: Array<{ key: string; tone: QuotaRingTone; ratio: number }> = [
+    { key: 'danger', tone: 'danger', ratio: dangerRatio },
+    { key: 'warning', tone: 'warning', ratio: warningRatio },
+    { key: 'safe', tone: 'safe', ratio: remainingRatio }
+  ];
+  let cursor = QUOTA_RING_START_DEG;
+  return segments
+    .filter((segment) => segment.ratio > 0.001)
+    .map((segment) => {
+      const spanDeg = segment.ratio * 360;
+      const startDeg = cursor + QUOTA_RING_GAP_DEG / 2;
+      const endDeg = cursor + Math.max(spanDeg - QUOTA_RING_GAP_DEG / 2, QUOTA_RING_GAP_DEG / 2);
+      cursor += spanDeg;
+      return {
+        key: segment.key,
+        tone: segment.tone,
+        path: buildArcPath(startDeg, endDeg)
+      };
+    });
+});
+
+const levelSnapshot = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  const level = parseQuotaNumber(user.level ?? user.userLevel) ?? 1;
+  const maxLevel = parseQuotaNumber(user.max_level ?? user.maxLevel) ?? 200;
+  const experienceTotal = parseQuotaNumber(user.experience_total ?? user.experienceTotal) ?? 0;
+  const experienceCurrent = parseQuotaNumber(user.experience_current ?? user.experienceCurrent) ?? 0;
+  const experienceForNextLevel =
+    parseQuotaNumber(user.experience_for_next_level ?? user.experienceForNextLevel) ?? 0;
+  const experienceRemaining =
+    parseQuotaNumber(user.experience_remaining ?? user.experienceRemaining) ?? 0;
+  const experienceProgress = Number(user.experience_progress ?? user.experienceProgress ?? 0) || 0;
+  const reachedMaxLevel = Boolean(user.reached_max_level ?? user.reachedMaxLevel);
+  return {
+    level: Math.max(1, Math.trunc(level)),
+    maxLevel: Math.max(1, Math.trunc(maxLevel)),
+    experienceTotal: Math.max(0, Math.trunc(experienceTotal)),
+    experienceCurrent: Math.max(0, Math.trunc(experienceCurrent)),
+    experienceForNextLevel: Math.max(0, Math.trunc(experienceForNextLevel)),
+    experienceRemaining: Math.max(0, Math.trunc(experienceRemaining)),
+    experienceProgress: Math.min(Math.max(experienceProgress, 0), 1),
+    reachedMaxLevel
+  };
+});
+
+const userLevel = computed(() => levelSnapshot.value.level);
+const levelProgressPercent = computed(() =>
+  Math.round((levelSnapshot.value.reachedMaxLevel ? 1 : levelSnapshot.value.experienceProgress) * 1000) / 10
+);
+
 const formatNumber = (value: number | null): string => {
   if (!Number.isFinite(value as number)) return '-';
   return new Intl.NumberFormat().format(value as number);
 };
+
+const levelProgressText = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) return t('profile.level.maxProgress');
+  return t('profile.level.progress', {
+    current: formatNumber(levelSnapshot.value.experienceCurrent),
+    total: formatNumber(levelSnapshot.value.experienceForNextLevel)
+  });
+});
+const levelProgressHint = computed(() => {
+  if (levelSnapshot.value.reachedMaxLevel) {
+    return t('profile.level.maxHint', { level: levelSnapshot.value.maxLevel });
+  }
+  return t('profile.level.nextHint', {
+    exp: formatNumber(levelSnapshot.value.experienceRemaining)
+  });
+});
 
 const quotaRemainingText = computed(() => formatNumber(quotaRemaining.value));
 const quotaUsedText = computed(() => formatNumber(quotaUsed.value));
@@ -842,3 +1076,220 @@ watch(
 );
 
 </script>
+
+<style scoped>
+:deep(.messenger-username-dialog.el-dialog) {
+  width: min(520px, calc(100vw - 24px)) !important;
+}
+
+:deep(.messenger-username-dialog .el-dialog__body) {
+  padding: 18px 18px 16px;
+}
+
+:deep(.messenger-username-dialog .el-dialog__footer) {
+  padding: 14px 18px 16px;
+}
+
+.messenger-settings-profile-tag--level {
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.14), rgba(251, 191, 36, 0.2));
+  border-color: rgba(249, 115, 22, 0.18);
+  color: #c2410c;
+  font-weight: 700;
+}
+
+.messenger-profile-level-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.messenger-profile-level-progress--bottom {
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.messenger-profile-level-progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.messenger-profile-level-progress-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+  transition: width 0.2s ease;
+}
+
+.messenger-profile-level-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #6f6f6f;
+  font-size: 11px;
+}
+
+.messenger-profile-quota-ring-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0 10px;
+}
+
+.messenger-profile-quota-ring-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 168px;
+  height: 168px;
+}
+
+.messenger-profile-quota-ring-svg {
+  width: 168px;
+  height: 168px;
+  overflow: visible;
+}
+
+.messenger-profile-quota-ring-segment-outline,
+.messenger-profile-quota-ring-segment {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.messenger-profile-quota-ring-segment-outline {
+  stroke: rgba(76, 85, 99, 0.82);
+  stroke-width: 22px;
+}
+
+.messenger-profile-quota-ring-segment {
+  stroke-width: 18px;
+}
+
+.messenger-profile-quota-ring-segment--danger {
+  stroke: #fb6a82;
+}
+
+.messenger-profile-quota-ring-segment--warning {
+  stroke: #ffc42f;
+}
+
+.messenger-profile-quota-ring-segment--safe {
+  stroke: #27c65a;
+}
+
+.messenger-profile-quota-ring-inner {
+  position: absolute;
+  inset: 37px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #f5f7fb);
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 163, 184, 0.2),
+    0 2px 10px rgba(15, 23, 42, 0.06);
+}
+
+.messenger-profile-quota-ring-inner::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  pointer-events: none;
+}
+
+.messenger-profile-quota-ring-value {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: #243244;
+}
+
+.messenger-profile-quota-ring-label {
+  font-size: 11px;
+  line-height: 1;
+  color: #7b8794;
+  letter-spacing: 0.04em;
+}
+
+.messenger-username-dialog-body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.messenger-username-dialog-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  color: #5f6368;
+  font-size: 12px;
+}
+
+.messenger-username-dialog-field > span {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.messenger-username-dialog-field .messenger-settings-profile-edit-input--dialog {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+
+.messenger-username-dialog-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.messenger-username-dialog-section-title {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.messenger-username-dialog-section-hint {
+  color: #7b8794;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.messenger-username-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 720px) {
+  .messenger-profile-level-progress-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .messenger-username-dialog-footer {
+    width: 100%;
+  }
+
+  .messenger-username-dialog-footer .messenger-settings-action {
+    flex: 1;
+    justify-content: center;
+  }
+}
+</style>

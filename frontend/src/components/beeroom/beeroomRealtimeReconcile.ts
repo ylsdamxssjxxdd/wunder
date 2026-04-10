@@ -25,7 +25,10 @@ export const shouldForceImmediateTeamRealtimeReconcile = (
   const normalizedType = normalizeRealtimeEventType(options.eventType);
   return (
     !options.accepted ||
+    normalizedType === 'team_start' ||
+    normalizedType === 'team_task_dispatch' ||
     normalizedType === 'team_task_update' ||
+    normalizedType === 'team_task_result' ||
     normalizedType === 'team_finish' ||
     normalizedType === 'team_error'
   );

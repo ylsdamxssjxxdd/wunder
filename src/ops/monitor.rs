@@ -6,6 +6,7 @@ use crate::ops::sysinfo_compat::{
     disk_space, load_average, new_disks, new_system, refresh_system_snapshot, MonitorDisks,
     MonitorSystem,
 };
+use crate::services::user_leveling::experience_from_runtime_seconds;
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
@@ -293,6 +294,8 @@ struct SessionRecord {
     cancel_requested: bool,
     ended_time: Option<f64>,
     user_rounds: i64,
+    last_awarded_user_round: i64,
+    pending_awarded_user_round: i64,
     context_tokens: i64,
     context_tokens_peak: i64,
     consumed_tokens: i64,
@@ -340,6 +343,8 @@ impl SessionRecord {
             cancel_requested: false,
             ended_time: None,
             user_rounds: 1,
+            last_awarded_user_round: 0,
+            pending_awarded_user_round: 0,
             context_tokens: 0,
             context_tokens_peak: 0,
             consumed_tokens: 0,
@@ -452,6 +457,7 @@ impl SessionRecord {
             "cancel_requested": self.cancel_requested,
             "user_rounds": self.user_rounds,
             "rounds": self.user_rounds,
+            "last_awarded_user_round": self.last_awarded_user_round,
             "context_tokens": self.context_tokens,
             "context_tokens_peak": self.context_tokens_peak,
             "consumed_tokens": self.consumed_tokens,
@@ -533,6 +539,10 @@ impl SessionRecord {
             .or_else(|| payload.get("rounds"))
             .and_then(Value::as_i64)
             .unwrap_or(1);
+        let last_awarded_user_round = payload
+            .get("last_awarded_user_round")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
         let context_tokens = payload
             .get("context_tokens")
             .or_else(|| payload.get("token_usage"))
@@ -613,6 +623,8 @@ impl SessionRecord {
             cancel_requested,
             ended_time,
             user_rounds,
+            last_awarded_user_round,
+            pending_awarded_user_round: 0,
             context_tokens,
             context_tokens_peak: context_tokens_peak.max(context_tokens),
             consumed_tokens,
@@ -623,6 +635,15 @@ impl SessionRecord {
             last_persisted: updated_time,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+struct PendingExperienceAward {
+    session_id: String,
+    user_id: String,
+    user_round: i64,
+    delta: i64,
+    updated_time: f64,
 }
 
 fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i64, i64)> {
@@ -902,11 +923,12 @@ impl MonitorState {
             || (),
             || {
                 let now = now_ts();
-                let to_persist = {
+                let (to_persist, pending_award) = {
                     let mut sessions = self.sessions.lock();
                     let Some(record) = sessions.get_mut(session_id) else {
                         return;
                     };
+                    let mut pending_award = None;
                     record.updated_time = now;
                     if event_type == "context_usage" {
                         if let Some(total) = parse_i64_value(
@@ -980,15 +1002,124 @@ impl MonitorState {
                             .map(str::to_string)
                             .unwrap_or_else(|| i18n::t("monitor.summary.exception"));
                     }
+                    if event_type == "turn_terminal" {
+                        pending_award = self.prepare_user_experience_settlement(record, data, now);
+                    }
                     self.append_event(record, event_type, data, now);
                     record.dirty = true;
-                    self.maybe_persist_record(record, now, false)
+                    (self.maybe_persist_record(record, now, false), pending_award)
                 };
                 if let Some(record) = to_persist {
                     self.save_record(&record);
                 }
+                if let Some(award) = pending_award {
+                    self.finalize_user_experience_settlement(award);
+                }
             },
         );
+    }
+
+    fn prepare_user_experience_settlement(
+        &self,
+        record: &mut SessionRecord,
+        data: &Value,
+        now: f64,
+    ) -> Option<PendingExperienceAward> {
+        let status = data
+            .get("status")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if matches!(status.as_str(), "" | "rejected") {
+            return None;
+        }
+
+        let user_round = data
+            .get("user_round")
+            .or_else(|| data.get("userRound"))
+            .and_then(Value::as_i64)
+            .unwrap_or(record.user_rounds);
+        if user_round <= 0
+            || user_round <= record.last_awarded_user_round
+            || user_round == record.pending_awarded_user_round
+        {
+            return None;
+        }
+
+        let delta = experience_from_runtime_seconds((now - record.start_time).max(0.0));
+        if delta <= 0 {
+            record.last_awarded_user_round = user_round;
+            record.pending_awarded_user_round = 0;
+            return None;
+        }
+        if record.user_id.trim().is_empty() {
+            record.last_awarded_user_round = user_round;
+            record.pending_awarded_user_round = 0;
+            return None;
+        }
+
+        // Award once per completed user round so concurrent agent completions do not double count.
+        record.pending_awarded_user_round = user_round;
+        Some(PendingExperienceAward {
+            session_id: record.session_id.clone(),
+            user_id: record.user_id.clone(),
+            user_round,
+            delta,
+            updated_time: now,
+        })
+    }
+
+    fn finalize_user_experience_settlement(&self, award: PendingExperienceAward) {
+        match self
+            .storage
+            .add_user_experience(&award.user_id, award.delta, award.updated_time)
+        {
+            Ok(_) => {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(&award.session_id) else {
+                        return;
+                    };
+                    if record.pending_awarded_user_round != award.user_round {
+                        return;
+                    }
+                    record.updated_time = record.updated_time.max(award.updated_time);
+                    record.pending_awarded_user_round = 0;
+                    record.last_awarded_user_round = award.user_round;
+                    record.dirty = true;
+                    self.maybe_persist_record(record, award.updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+            }
+            Err(err) => {
+                let to_persist = {
+                    let mut sessions = self.sessions.lock();
+                    let Some(record) = sessions.get_mut(&award.session_id) else {
+                        warn!(
+                            "settle user experience failed after session disappeared: session_id={}, user_id={}, round={}, delta={}, error={err}",
+                            award.session_id, award.user_id, award.user_round, award.delta
+                        );
+                        return;
+                    };
+                    if record.pending_awarded_user_round == award.user_round {
+                        record.updated_time = record.updated_time.max(award.updated_time);
+                        record.pending_awarded_user_round = 0;
+                        record.dirty = true;
+                    }
+                    self.maybe_persist_record(record, award.updated_time, true)
+                };
+                if let Some(record) = to_persist {
+                    self.save_record(&record);
+                }
+                warn!(
+                    "settle user experience failed: session_id={}, user_id={}, round={}, delta={}, error={err}",
+                    award.session_id, award.user_id, award.user_round, award.delta
+                );
+            }
+        }
     }
 
     pub fn mark_finished(&self, session_id: &str) {
