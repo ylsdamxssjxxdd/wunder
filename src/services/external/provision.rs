@@ -315,19 +315,10 @@ fn sync_external_unit_binding(
         return Ok(true);
     }
 
-    let previous_level = user
-        .unit_id
-        .as_deref()
-        .and_then(|id| user_store.get_org_unit(id).ok().flatten())
-        .map(|unit| unit.level);
     let next_unit = user_store
         .get_org_unit(next_unit_id)?
         .ok_or_else(|| anyhow!("unit not found"))?;
-    let previous_default = UserStore::default_daily_quota_by_level(previous_level);
     user.unit_id = Some(next_unit.unit_id.clone());
-    if user.daily_quota == previous_default {
-        user.daily_quota = UserStore::default_daily_quota_by_level(Some(next_unit.level));
-    }
     Ok(true)
 }
 

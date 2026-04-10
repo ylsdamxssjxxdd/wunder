@@ -51,7 +51,18 @@
               {
                 "group": "11个核心",
                 "pages": [
-                  "zh-CN/concepts/index"
+                  "zh-CN/concepts/index",
+                  "zh-CN/concepts/core-agent-loop",
+                  "zh-CN/concepts/core-tools",
+                  "zh-CN/concepts/core-swarm",
+                  "zh-CN/concepts/core-context-compression",
+                  "zh-CN/concepts/core-memory",
+                  "zh-CN/concepts/core-channels",
+                  "zh-CN/concepts/core-scheduled-tasks",
+                  "zh-CN/concepts/core-multi-user-management",
+                  "zh-CN/concepts/core-realtime",
+                  "zh-CN/concepts/core-stability",
+                  "zh-CN/concepts/core-observability"
                 ]
               }
             ]

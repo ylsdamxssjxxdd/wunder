@@ -1,155 +1,142 @@
 ---
 title: 执行命令
-summary: 在工作区中执行系统命令，支持编译、测试、运行脚本，受安全策略和预算约束。
+summary: `execute_command` 的预算、dry-run、输出守卫与返回结构。
 read_when:
-  - 你需要在工作区中运行命令
-  - 你想了解命令执行的安全边界
+  - 你要运行 shell 命令、编译、测试或调用现成 CLI
 source_docs:
-  - src/services/tools/catalog.rs
-  - config/wunder-example.yaml
+  - src/services/tools.rs
+updated_at: 2026-04-10
 ---
 
 # 执行命令
 
-在工作区中执行系统命令，如编译、测试、运行脚本等。
+`execute_command` 现在不是“随便扔一串 shell 文本然后读 stdout”那么简单了。它的关键变化有三点：
 
----
+- 支持 `dry_run`
+- 支持命令预算与输出守卫
+- 会把误传入的 patch 文本自动拦截到 `apply_patch`
 
-## 功能说明
+## 最小参数
 
-`执行命令` 用于在当前工作区中执行系统命令，适用于：
-- 编译项目
-- 运行测试
-- 执行脚本
-- 产物检查
-
-**别名**：
-- `execute_command`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `content` | string | ✅ | 要执行的命令 |
-| `workdir` | string | ❌ | 工作目录，默认为工作区根目录 |
-| `timeout_s` | integer | ❌ | 超时时间（秒） |
-| `dry_run` | boolean | ❌ | 预演模式 |
-| `time_budget_ms` | integer | ❌ | 时间预算（毫秒） |
-| `output_budget_bytes` | integer | ❌ | 输出预算（字节） |
-| `max_commands` | integer | ❌ | 最大命令数 |
-
----
-
-## 使用示例
-
-### 简单命令
 ```json
 {
-  "content": "ls -la"
+  "content": "cargo check --release"
 }
 ```
 
-### 指定工作目录
+## 常用参数
+
+- `content`
+- `workdir`
+- `timeout_s`
+- `budget`
+- `dry_run`
+
+`budget` 常见字段：
+
+- `time_budget_ms`
+- `output_budget_bytes`
+- `max_commands`
+
+## 成功返回
+
 ```json
 {
-  "content": "cargo build",
-  "workdir": "src"
+  "ok": true,
+  "action": "execute_command",
+  "state": "completed",
+  "summary": "Executed 1 commands.",
+  "data": {
+    "results": [
+      {
+        "command": "cargo check --release",
+        "command_index": 0,
+        "command_session_id": "cmd_xxx",
+        "returncode": 0,
+        "stdout": "...",
+        "stderr": "",
+        "output_meta": {
+          "truncated": false,
+          "total_bytes": 1024,
+          "omitted_bytes": 0,
+          "stdout": { "truncated": false },
+          "stderr": { "truncated": false }
+        }
+      }
+    ],
+    "budget": {
+      "time_budget_ms": 60000,
+      "output_budget_bytes": 32768,
+      "max_commands": 4
+    },
+    "output_guard": {
+      "truncated": false,
+      "commands": 1,
+      "truncated_commands": 0,
+      "total_bytes": 1024,
+      "omitted_bytes": 0,
+      "effective_total_bytes": 32768
+    },
+    "sandbox": false
+  }
 }
 ```
 
-### 带超时设置
+如果输出被守卫裁剪，还会出现：
+
 ```json
 {
-  "content": "npm install",
-  "timeout_s": 300
+  "next_step_hint": "Command output was truncated by the output guard..."
 }
 ```
 
-### 预演模式
+## `dry_run`
+
 ```json
 {
-  "content": "rm -rf temp/",
-  "dry_run": true
+  "ok": true,
+  "action": "execute_command",
+  "state": "dry_run",
+  "summary": "Validated command plan without execution.",
+  "data": {
+    "dry_run": true,
+    "workdir": "C:/.../workspace",
+    "command_count": 1,
+    "commands": ["cargo check --release"],
+    "timeout_s": 60,
+    "budget": { ... },
+    "output_guard": { ... },
+    "sandbox": false
+  }
 }
 ```
 
----
+## 失败返回
 
-## 安全边界
+非零退出、超时、工作目录错误都走统一失败骨架。常见错误码：
 
-`执行命令` 不是完全自由的，受以下约束：
+- `TOOL_EXEC_COMMAND_REQUIRED`
+- `TOOL_EXEC_WORKDIR_NOT_FOUND`
+- `TOOL_EXEC_WORKDIR_NOT_DIR`
+- `TOOL_EXEC_NOT_ALLOWED`
+- `TOOL_EXEC_TIMEOUT`
+- `TOOL_EXEC_NON_ZERO_EXIT`
+- `TOOL_EXEC_BUDGET_COMMAND_LIMIT`
 
-| 约束项 | 说明 |
-|--------|------|
-| `allow_commands` | 允许的命令列表 |
-| `allow_paths` | 允许的路径列表 |
-| `deny_globs` | 拒绝的文件模式 |
-| 执行环境 | 本机执行或沙盒执行 |
+超时或非零退出时，`data.results` 里仍会保留已经收集到的 stdout/stderr，方便继续判断。
 
----
+## 特殊行为：误把 patch 文本传进来
 
-## 与 ptc 的对比
+如果 `content` 里不是命令，而是完整的 `*** Begin Patch ... *** End Patch`，系统会自动转去执行 `apply_patch`，并在结果上补一个字段：
 
-| 特性 | 执行命令 | [ptc](/docs/zh-CN/tools/ptc/) |
-|------|----------|--------------------------------|
-| 适用场景 | 运行已有命令、脚本、构建 | 先形成脚本再执行 |
-| 目标 | 执行外部命令 | 程序化执行 |
-| 推荐使用 | 执行已有命令 | 复杂逻辑、图表生成 |
-
----
-
-## 常见场景
-
-### 编译 Rust 项目
 ```json
 {
-  "content": "cargo build --release"
+  "intercepted_from": "execute_command"
 }
 ```
 
-### 运行 Python 脚本
-```json
-{
-  "content": "python script.py"
-}
-```
+## 什么时候别用它
 
-### 安装 npm 依赖
-```json
-{
-  "content": "npm install"
-}
-```
-
-### 运行测试
-```json
-{
-  "content": "cargo test"
-}
-```
-
----
-
-## 注意事项
-
-1. **预算控制很重要**：
-   - 长命令和海量输出可能拖爆上下文
-   - 使用 `output_budget_bytes` 限制输出大小
-
-2. **文件编辑不用命令**：
-   - 文件编辑优先用 `写入文件` 或 `应用补丁`
-   - 不要用 `echo` 等命令创建文件
-
-3. **安全第一**：
-   - 危险命令先用 `dry_run` 预览
-   - 注意命令的影响范围
-
----
-
-## 延伸阅读
-
-- [ptc](/docs/zh-CN/tools/ptc/)
-- [应用补丁](/docs/zh-CN/tools/apply-patch/)
-- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
+- 只想小范围改文件：用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
+- 纯 Python 临时程序：用 [ptc](/docs/zh-CN/tools/ptc/)
+- 只是想读代码：用 [工作区文件](/docs/zh-CN/tools/workspace-files/)

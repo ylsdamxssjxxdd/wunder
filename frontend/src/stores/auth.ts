@@ -24,8 +24,8 @@ const shouldUpdateUser = (currentUser: any, nextUser: any): boolean => {
   const nextVersion = String(
     nextUser.updated_at || nextUser.updated_time || nextUser.last_login_at || ''
   ).trim();
-  if (currentVersion && nextVersion) {
-    return currentVersion !== nextVersion;
+  if (currentVersion && nextVersion && currentVersion !== nextVersion) {
+    return true;
   }
   return JSON.stringify(currentUser) !== JSON.stringify(nextUser);
 };

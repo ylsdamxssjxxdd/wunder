@@ -1,4 +1,4 @@
-# wunder API 文档
+﻿# wunder API 文档
 
 ## 4. API 设计
 
@@ -28,7 +28,7 @@
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
 - 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>[&agent_name=<name>]` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录）。当未传 `agent_name`，或名称未命中当前用户可访问的已有智能体时，接口返回默认智能体 `agent_id=__default__` 且 `focus_mode=false`，前端跳转 `/app/chat?section=messages&entry=default`（desktop 为 `/desktop/chat?section=messages&entry=default`）；当 `agent_name` 命中当前用户可访问的已有智能体时，接口返回对应 `agent_id` 与 `focus_mode=true`，前端进入 `/app/embed/chat`（desktop 为 `/desktop/embed/chat`）并隐藏左/中栏聚焦该智能体。
-- 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`；`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
+- 用户资料接口：`GET /wunder/auth/me` 会额外返回 `usage_summary`（当前用于用户侧“我的概况”展示累计消耗与工具调用数）与 `session_summary`（`total_sessions/sessions_last_7d/trend_last_7d/last_active_at`，用于统一展示总会话、近 7 天会话、7 天趋势与最后活跃时间），并补充等级字段 `level/max_level/experience_total/experience_current/experience_for_next_level/experience_remaining/experience_progress/reached_max_level`，以及 Token 账户字段 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`；`PATCH /wunder/auth/me` 支持更新 `username/email/unit_id`，并保持返回同一结构；已登录用户如同时提交 `current_password` 与 `new_password`，服务端会先校验当前密码，再更新自己的登录密码。另提供未登录的 `POST /wunder/auth/reset_password`，仅凭账号、邮箱和新密码即可重置登录密码。
 - 用户态工作状态重置接口：`POST /wunder/auth/me/reset_work_state`，按当前登录用户中止运行中的会话/排队任务/蜂群任务，清空相关工作区内容，并为默认智能体与各用户智能体重建新的主线程。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
@@ -47,8 +47,8 @@
 - Desktop 引导接口 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 现补充 `runtime_profile` 与 `runtime_capabilities`：前者用于标识 `desktop_embedded` / 其他运行形态，后者用于下发 `embedded_mode/thread_runtime_active/mission_runtime_active/cron_active/channels_enabled/channel_outbox_worker_enabled/lan_overlay_supported` 等能力位，供前端按实际运行能力启用订阅、恢复与降级策略。
 - 控制平面实时状态已收敛到 `state.control.presence`：当前主要负责连接在线态与最近活跃时间，为在线列表与连接恢复提供基础数据。
 - Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
-- 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
-- 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
+- 注册用户按单位层级分配默认每日 Token 发放（一级/二级/三级/四级 = 100M/50M/10M/1M），按天累积到 `token_balance`；模型调用按实际 `total_tokens` 扣减，余额不足返回 429，虚拟用户不受限制。
+- 管理员用户执行请求不受 Token 余额、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
 - 多语言：Rust 版默认从 `config/i18n.messages.json` 读取翻译（可用 `WUNDER_I18N_MESSAGES_PATH` 覆盖）；`/wunder/i18n` 提供语言配置，响应包含 `Content-Language`。
 - Rust 版现状：MCP 服务与工具发现/调用已落地（rmcp + streamable-http）；Skills/知识库转换与数据库持久化仍在迁移，相关接口以轻量结构返回。
@@ -117,7 +117,7 @@
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
-- 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
+- 约束：注册用户按累计 Token 余额限额，按每次模型调用的实际 `total_tokens` 扣减，余额不足返回 429（`detail.code=USER_TOKEN_INSUFFICIENT`）。
 - 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
 - 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`），SSE/WS 返回 `queued` 事件。
 - 队列回放：`queue_enter/queue_start/queue_finish/queue_fail` 现已进入 `stream_events` 持久化流，`watch/resume`、刷新重连和 SSE/WS 补偿都可回放。
@@ -149,7 +149,7 @@
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
 - 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试；若同一工具命中同一个明确的不可重试错误，默认会在第 3 次相同失败后提前触发保护，避免模型持续硬撞同一错误。
-- 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
+- 说明：管理员会话跳过上述限制（会话锁/Token 余额/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
 - 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；`final.stop_reason` 现可能为 `yield`，表示模型主动调用 `sessions_yield` 结束本轮并转入后台子智能体续跑；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
@@ -330,9 +330,8 @@
   - `data.summary.runtime_seconds`：统计窗口内总运行时长
   - `data.summary.billed_tokens`：兼容字段，等价于累计消耗
   - `data.summary.consumed_tokens`：推荐字段，表示统计窗口内累计消耗
-  - `data.summary.quota_consumed`：统计窗口内额度消耗
   - `data.summary.tool_calls`：统计窗口内工具调用次数
-  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/quota_consumed/tool_calls`
+  - `data.daily[]`：按日拆分，字段包括 `date/runtime_seconds/billed_tokens/consumed_tokens/tool_calls`
   - `data.heatmap`：工具调用热力图（`date/max_calls/items[]`）
 - 说明：
   - `consumed_tokens` 按各次请求的 `round_usage.total_tokens` 累加得到。
@@ -1308,6 +1307,7 @@
 - `session.context_tokens/context_tokens_peak` 汇总优先采用 `round_usage.total_tokens` 作为有效占用；`context_usage` 仍保留估算值用于过程观测。
 - `round_usage.total_tokens` 表示单轮请求完成后的实际上下文占用，是当前线程上下文占用的权威口径；实际总消耗按每次请求的 `round_usage.total_tokens` 逐次累加。
 - `round_usage` 事件额外提供 `context_occupancy_tokens` 与 `request_consumed_tokens` 两个显式语义别名；它们当前都与 `round_usage.total_tokens` 相同，新接入可直接按字段名区分“当前占用”和“单次请求消耗”。
+- Token 余额不足时返回 `USER_TOKEN_INSUFFICIENT`，错误明细会附带 `token_balance/token_granted_total/token_used_total/daily_token_grant/last_token_grant_date`。
 
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
@@ -2460,3 +2460,4 @@
 - `tool_result` 事件额外提供 `model_observation`（JSONL 文本，单行 JSON），其内容与本轮实际送入模型的 observation 对齐，可直接用于前端排障展示。
 - 为减少模型上下文占用，observation 压缩阶段会将 `data` 下密集数组压缩为 JSONL 字段（如 `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`）并附带 `*_count` 计数。
 - When truncation happens, payload/meta may include `truncation_reasons` (for example `array_items`/`string_chars`/`char_budget`), and multiple reasons can co-exist in the same result to indicate compound truncation.
+

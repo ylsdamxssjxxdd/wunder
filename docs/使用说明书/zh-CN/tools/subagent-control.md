@@ -1,156 +1,172 @@
 ---
 title: 子智能体控制
-summary: 子智能体控制面向单个子会话运行的发现、历史查看、发消息和派生，适合盯住一个子运行而不是大范围并发派发。
+summary: `subagent_control` 的动作、等待语义、状态语义与返回结构。
 read_when:
-  - 你要查看或操作某个子会话
-  - 你要区分子智能体控制和智能体蜂群
+  - 你要在当前会话内派生子智能体临时工作
 source_docs:
-  - src/services/tools/catalog.rs
-  - src/services/tools.rs
+  - src/services/tools/subagent_control.rs
+updated_at: 2026-04-10
 ---
 
 # 子智能体控制
 
-管理单个子会话的工具。
-
----
-
-## 功能说明
-
-如果 `会话线程控制` 解决的是线程树，`子智能体控制` 解决的就是单个子运行本身。
-
-`子智能体控制` 默认围绕**当前会话**工作：
-- `list` / `status` / `wait` 在未提供 `parentId` 时，默认只看当前会话的子会话
-- `history` / `send` 只接受当前会话的直接子会话，不接受普通顶层会话
-
-**别名**：
-- `subagent_control`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `action` | string | ✅ | 要执行的动作 |
-| 其他参数 | - | ❌ | 根据 action 不同而不同 |
-
----
-
-## 支持的动作
-
-| 动作 | 说明 | 常用附加参数 |
-|------|------|--------------|
-| `list` | 列出子会话 | `parentId`, `limit`, `activeMinutes` |
-| `history` | 查看子会话历史 | `session_id`, `sessionKey`, `messageLimit` |
-| `send` | 给子会话发消息 | `session_id`, `sessionKey`, `message`, `timeoutSeconds` |
-| `spawn` | 派生新子会话 | `parentId`, `task`, `label`, `agentId`, `model`, `runTimeoutSeconds`, `cleanup` |
-
----
-
-## 使用示例
-
-### 列出子会话
-
-```json
-{
-  "action": "list",
-  "limit": 10,
-  "activeMinutes": 60
-}
-```
-
-如果不传 `parentId`，默认就是“当前会话”的子会话。
-
-### 查看子会话历史
-
-```json
-{
-  "action": "history",
-  "sessionKey": "sub-session-456",
-  "messageLimit": 50
-}
-```
-
-`sessionKey` 必须指向当前会话的直接子会话。
-
-### 给子会话发消息
-
-```json
-{
-  "action": "send",
-  "sessionKey": "sub-session-456",
-  "message": "请继续分析这个问题",
-  "timeoutSeconds": 300
-}
-```
-
-`send` 只允许继续驱动当前会话的直接子会话，不能拿它去操作普通历史会话。
-
-### 派生新子会话
-
-```json
-{
-  "action": "spawn",
-  "parentId": "main-session-123",
-  "task": "分析这个代码的性能问题",
-  "label": "性能分析",
-  "agentId": "code-analyzer",
-  "model": "gpt-4",
-  "runTimeoutSeconds": 600,
-  "cleanup": true
-}
-```
-
----
-
-## 与其他协作工具的区别
-
-| 工具 | 说明 | 适用场景 |
-|------|------|----------|
-| [会话线程控制](/docs/zh-CN/tools/thread-control/) | 线程树结构管理 | 管理线程树和主线程 |
-| 子智能体控制 | 单个子会话管理 | 盯住一个子运行 |
-| [智能体蜂群](/docs/zh-CN/tools/agent-swarm/) | 多智能体并发协作 | 大范围并发派发 |
-
----
-
-## 推荐路径
-
-- 看子运行列表：`list`
-- 查某个子运行内容：`history`
-- 派生新子运行：`spawn`
-- 继续追问已有子运行：`send`
-
----
+`subagent_control` 现在是一个明确的多动作工具，不再只是旧版的简单“拉子线程”。
 
 ## 适用场景
 
-✅ **适合使用子智能体控制**：
-- 列出某个父会话下的子运行
-- 查看某个子会话历史
-- 给指定子会话继续发消息
-- 派生一个新的子运行
+它适合：
 
----
+- 在当前主智能体会话里临时派生子智能体
+- 查看、等待、打断、关闭、恢复这些子运行
+- 做一轮或多轮派生协作
 
-## 注意事项
+它不适合：
 
-1. **单个子会话**：
-   - 面向单个子会话，不是面向整个线程树
-   - 如果已经知道要操作哪一个当前会话下的子会话，这个工具最直接
+- 调度用户已经存在的其他正式智能体  
+那是 [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)
 
-2. **spawn 与 send 的区别**：
-   - `spawn` 更像派生一次后台运行
-   - `send` 更像继续驱动已有子会话
+## 主要动作
 
-3. **单目标工具**：
-   - 它是单目标工具
-   - 多目标并发优先看智能体蜂群
+- `list`
+- `history`
+- `send`
+- `spawn`
+- `batch_spawn`
+- `status`
+- `wait`
+- `interrupt`
+- `close`
+- `resume`
 
----
+## `spawn`
 
-## 延伸阅读
+用于拉起新的子智能体运行。
 
-- [会话线程控制](/docs/zh-CN/tools/thread-control/)
-- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
+典型返回会是“已接收但尚未结束”：
+
+```json
+{
+  "ok": true,
+  "action": "spawn",
+  "state": "accepted",
+  "summary": "Spawned child run ...",
+  "data": {
+    "run_id": "run_xxx",
+    "session_id": "sess_xxx",
+    "status": "accepted"
+  },
+  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
+}
+```
+
+## `list`
+
+```json
+{
+  "ok": true,
+  "action": "list",
+  "state": "completed",
+  "summary": "Found 3 child sessions.",
+  "data": {
+    "total": 3,
+    "items": [
+      {
+        "dispatch_id": "dispatch_xxx",
+        "run_id": "run_xxx",
+        "session_id": "sess_xxx",
+        "status": "running",
+        "terminal": false,
+        "failed": false,
+        "agent_id": "worker-a",
+        "label": "检索资料",
+        "elapsed_s": 12.3,
+        "result_preview": null,
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+## `history`
+
+```json
+{
+  "ok": true,
+  "action": "history",
+  "state": "completed",
+  "summary": "Loaded 18 messages from child session history.",
+  "data": {
+    "session_id": "sess_xxx",
+    "messages": [ ... ]
+  }
+}
+```
+
+## `status` / `wait`
+
+这两个动作最关键。
+
+### `status`
+
+看快照，不阻塞：
+
+```json
+{
+  "ok": true,
+  "action": "status",
+  "state": "running",
+  "summary": "1 child runs are still active.",
+  "data": {
+    "status": "running",
+    "items": [ ... ],
+    "selected_items": [ ... ]
+  }
+}
+```
+
+### `wait`
+
+轮询等待，会根据结果变成：
+
+- `completed`
+- `running`
+- `timeout`
+- `partial`
+
+并且常带：
+
+```json
+{
+  "next_step_hint": "Use subagent_control.wait/status/history before treating unfinished child runs as complete."
+}
+```
+
+## `interrupt` / `close` / `resume`
+
+这几个动作返回的核心是“哪些子会话被更新了”：
+
+```json
+{
+  "ok": true,
+  "action": "interrupt",
+  "state": "completed",
+  "summary": "interrupt updated 1 child sessions.",
+  "data": {
+    "updated_total": 1,
+    "items": [
+      {
+        "session_id": "sess_xxx",
+        "status": "cancelling"
+      }
+    ]
+  }
+}
+```
+
+## 重点理解
+
+- `accepted` 不等于完成
+- `status` 是看快照
+- `wait` 才是等待收敛
+- 有 `next_step_hint` 时，说明系统明确希望你继续跟进而不是直接收尾

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>实时性 | wunder 使用说明书</title>
+  <meta name="description" content="实时性核心解释 Wunder 为什么必须把线程变化持续投影给外部，并严格区分事件投影与后端真相。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-realtime","language":"zh-CN","title":"实时性","summary":"实时性核心解释 Wunder 为什么必须把线程变化持续投影给外部，并严格区分事件投影与后端真相。","updated_at":"2026-04-10","read_when":["你在做 WebSocket、流式输出或状态同步","你想理解事件流、快照补偿和断线恢复的边界"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-realtime/","headings":[{"id":"section-1","level":1,"text":"实时性"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：流式只是实时性的一部分"},{"id":"section-8","level":3,"text":"重点二：实时系统要能“接着看”，不是只能“从头看”"},{"id":"section-9","level":3,"text":"重点三：事件语义要为多端复用设计"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-multi-user-management","next_slug":"zh-CN/concepts/core-stability","markdown":"# 实时性\n\n在 Wunder 里，实时性不是“文字一点点出来”这么简单，而是让前端和外部系统持续获得可信、可恢复、可收敛的运行态变化。\n\n![实时性图：线程事实通过事件流、恢复机制投影为客户端状态](/docs/assets/manual/core-realtime.svg)\n\n## 先给结论\n\n- 实时性的重点不是字符流，而是线程状态流。\n- 事件流必须能表达过程、终态和恢复，而不是只会一直吐增量文本。\n- 客户端看到的是投影，投影必须贴近真相，但不能替代真相。\n\n## 为什么它必须单列为核心\n\n如果没有实时性这个核心，系统会出现三个明显问题：\n\n- 用户只能在很晚的时候拿到最终结果，过程不可见。\n- 断线后不知道是否继续执行过，也不知道漏了什么。\n- 前端只能自己猜“还在跑还是已经结束”，状态机会非常脆弱。\n\n## 这个核心真正保护什么\n\n- 保护用户感知：让用户知道系统正在做什么，而不是只等最后一句话。\n- 保护客户端状态机：让列表、详情、工作流和审批区都能基于稳定事件工作。\n- 保护恢复能力：断线、重连、补发、resume 都有统一依据。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 前端消费事件流，但不定义真相 | 防止 UI 状态反向污染后端语义 |\n| 终态必须有明确事件 | 不能让客户端靠超时猜结束 |\n| 恢复机制必须正式存在 | 断线后要能 resume、补发和重建快照 |\n| 事件口径要稳定 | 不能为了某个页面临时发明一套状态名 |\n\n## 设计重点\n\n### 重点一：流式只是实时性的一部分\n\n增量文本、工具输出、审批等待、线程状态、终态事件、恢复补偿，这些合起来才叫实时性。\n\n### 重点二：实时系统要能“接着看”，不是只能“从头看”\n\n只支持长连接推送但不支持恢复的系统，本质上还是脆弱的。\n\n### 重点三：事件语义要为多端复用设计\n\n同一条事件既要被聊天面板消费，也要被管理员页、桌面壳和外部系统消费，所以它不能只服务一个页面。\n\n## 最容易搞错的点\n\n- `final` 或最终回复不是唯一真相，终态判断要结合完整事件语义。\n- “能流式吐字”不等于“具备实时性”，状态同步和恢复同样关键。\n- 前端上的忙闲状态是投影，不是后端状态机的替代物。\n\n## 和其他核心的边界\n\n- 和 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) 的区别：循环定义线程内部如何推进，实时性定义这些推进如何对外可见。\n- 和 [可观测性](/docs/zh-CN/concepts/core-observability/) 的区别：实时性偏在线消费，可观测性偏事后解释与复盘。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：实时性关心状态能否及时送达，稳定性关心异常时是否还能继续工作。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [流式执行](/docs/zh-CN/concepts/streaming/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n","source_path":"使用说明书/zh-CN/concepts/core-realtime.md"}</script>
+</body>
+</html>

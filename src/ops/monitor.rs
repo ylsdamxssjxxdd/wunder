@@ -6,7 +6,8 @@ use crate::ops::sysinfo_compat::{
     disk_space, load_average, new_disks, new_system, refresh_system_snapshot, MonitorDisks,
     MonitorSystem,
 };
-use crate::services::user_leveling::experience_from_runtime_seconds;
+use crate::services::user_leveling::{build_user_level_snapshot, experience_from_runtime_seconds};
+use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
@@ -1075,7 +1076,44 @@ impl MonitorState {
             .storage
             .add_user_experience(&award.user_id, award.delta, award.updated_time)
         {
-            Ok(_) => {
+            Ok(settlement) => {
+                let previous_level = build_user_level_snapshot(settlement.previous_total).level;
+                let current_level = build_user_level_snapshot(settlement.current_total).level;
+                let level_gain = current_level.saturating_sub(previous_level);
+                if level_gain > 0 {
+                    let daily_grant = self
+                        .storage
+                        .get_user_account(&award.user_id)
+                        .ok()
+                        .flatten()
+                        .and_then(|user| {
+                            user.unit_id.as_deref().and_then(|unit_id| {
+                                self.storage
+                                    .get_org_unit(unit_id)
+                                    .ok()
+                                    .flatten()
+                                    .map(|unit| unit.level)
+                            })
+                        })
+                        .map(|level| UserStore::default_daily_token_grant_by_level(Some(level)))
+                        .unwrap_or_else(|| UserStore::default_daily_token_grant_by_level(None));
+                    let reward = level_gain.saturating_mul(DEFAULT_LEVEL_UP_TOKEN_REWARD);
+                    let today = Local::now().format("%Y-%m-%d").to_string();
+                    if reward > 0 {
+                        if let Err(err) = self.storage.grant_user_tokens(
+                            &award.user_id,
+                            &today,
+                            daily_grant,
+                            reward,
+                            award.updated_time,
+                        ) {
+                            warn!(
+                                "grant level-up tokens failed: session_id={}, user_id={}, level_gain={}, reward={}, error={err}",
+                                award.session_id, award.user_id, level_gain, reward
+                            );
+                        }
+                    }
+                }
                 let to_persist = {
                     let mut sessions = self.sessions.lock();
                     let Some(record) = sessions.get_mut(&award.session_id) else {
@@ -2842,11 +2880,15 @@ mod tests {
         derive_effective_context_tokens, is_workspace_usage_dir_name,
         llm_speed_summary_from_monitor_events, resolve_payload_limit,
         should_skip_event_for_profile, trim_string_fields,
-        update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile,
-        WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
+        update_workspace_usage_state_incremental, MonitorEvent, MonitorLogProfile, MonitorState,
+        PendingExperienceAward, WorkspaceUsageScanState, MIN_PAYLOAD_LIMIT,
     };
+    use crate::config::{ObservabilityConfig, SandboxConfig};
+    use crate::services::user_store::{UserStore, DEFAULT_LEVEL_UP_TOKEN_REWARD};
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use chrono::Local;
     use serde_json::json;
-    use std::{collections::VecDeque, fs};
+    use std::{collections::VecDeque, fs, sync::Arc};
     use tempfile::tempdir;
 
     #[test]
@@ -3039,5 +3081,69 @@ mod tests {
         update_workspace_usage_state_incremental(&mut scan_state, &user_dirs, 1);
         assert_eq!(scan_state.per_user.get("beta").copied(), Some(5));
         assert_eq!(scan_state.per_user.get("gamma").copied(), Some(0));
+    }
+
+    #[test]
+    fn finalize_user_experience_settlement_grants_level_up_tokens() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("monitor-level-up.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("initialize storage");
+        let user_store = UserStore::new(storage.clone());
+        let user = user_store
+            .create_user(
+                "alice",
+                None,
+                "password",
+                None,
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let mut seeded = storage
+            .get_user_account(&user.user_id)
+            .expect("load user")
+            .expect("user exists");
+        seeded.experience_total = 267;
+        seeded.token_balance = 10;
+        seeded.token_granted_total = 10;
+        seeded.last_token_grant_date = Some(today.clone());
+        storage
+            .upsert_user_account(&seeded)
+            .expect("seed user account");
+
+        let monitor = MonitorState::new(
+            storage.clone(),
+            ObservabilityConfig::default(),
+            SandboxConfig::default(),
+            temp.path().to_string_lossy().to_string(),
+        );
+        monitor.finalize_user_experience_settlement(PendingExperienceAward {
+            session_id: "missing-session".to_string(),
+            user_id: user.user_id.clone(),
+            user_round: 1,
+            delta: 1,
+            updated_time: 123.0,
+        });
+
+        let updated = storage
+            .get_user_account(&user.user_id)
+            .expect("reload user")
+            .expect("user exists");
+        assert_eq!(updated.experience_total, 268);
+        assert_eq!(updated.token_balance, 10 + DEFAULT_LEVEL_UP_TOKEN_REWARD);
+        assert_eq!(
+            updated.token_granted_total,
+            10 + DEFAULT_LEVEL_UP_TOKEN_REWARD
+        );
+        assert_eq!(updated.token_used_total, 0);
+        assert_eq!(
+            updated.last_token_grant_date.as_deref(),
+            Some(today.as_str())
+        );
     }
 }

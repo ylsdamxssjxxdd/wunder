@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>定时任务 | wunder 使用说明书</title>
+  <meta name="description" content="定时任务核心解释 Wunder 为什么要把时间驱动的后台任务建成正式能力，而不是把它们丢给外部脚本临时处理。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-scheduled-tasks","language":"zh-CN","title":"定时任务","summary":"定时任务核心解释 Wunder 为什么要把时间驱动的后台任务建成正式能力，而不是把它们丢给外部脚本临时处理。","updated_at":"2026-04-10","read_when":["你在设计巡检、提醒、后台维护或延迟执行任务","你想区分在线线程和系统级异步任务"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-scheduled-tasks/","headings":[{"id":"section-1","level":1,"text":"定时任务"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：把“时间”收进系统，而不是放到系统外面"},{"id":"section-8","level":3,"text":"重点二：定时任务是后台执行链，而不是同步等待链"},{"id":"section-9","level":3,"text":"重点三：调度能力必须天然带执行记录"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-channels","next_slug":"zh-CN/concepts/core-multi-user-management","markdown":"# 定时任务\n\n定时任务让 Wunder 不只会响应“现在收到的请求”，还能沿着系统时间轴主动执行治理和业务动作。它解决的是时间驱动任务如何进入统一系统能力，而不是如何写一个外部 cron 脚本。\n\n![定时任务图：调度规则进入调度器，再到后台执行和执行记录](/docs/assets/manual/core-scheduled-tasks.svg)\n\n## 先给结论\n\n- 定时任务不是 `sleep` 的升级版，而是系统级异步调度能力。\n- 时间本身也是系统输入，所以调度、执行、记录和失败恢复都要进入正式治理。\n- 只要任务会长期运行、会影响用户或系统状态，就不该放在外部脚本黑箱里。\n\n## 为什么它必须单列为核心\n\n如果没有定时任务这个核心，系统里的周期行为通常会散落到：\n\n- 外部 cron 脚本。\n- 前端定时轮询。\n- 某个管理员手工触发按钮。\n\n这样做的共同问题是：触发、执行、失败、追踪和权限边界都不再统一，后台任务会逐渐失控。\n\n## 这个核心真正保护什么\n\n- 保护调度语义：任务为什么会在这个时间启动，需要有明确规则。\n- 保护执行边界：后台任务不能和在线会话语义混成一条链。\n- 保护追踪能力：每次计划执行都要有状态、记录和失败原因。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 必须与在线线程语义区分 | 避免把后台调度和即时会话混在一起 |\n| 执行记录必须可追踪 | 回答“跑没跑、为什么失败、下一次何时执行” |\n| 失败重试要有策略 | 防止一次偶发失败直接导致任务长期失效 |\n| 周期任务要有边界 | 避免无限堆积、互相抢资源 |\n\n## 设计重点\n\n### 重点一：把“时间”收进系统，而不是放到系统外面\n\n一旦系统需要定时巡检、定时提醒、定时维护，就说明时间已经成为业务的一部分。那它就应该进系统治理。\n\n### 重点二：定时任务是后台执行链，而不是同步等待链\n\n`sleep` 更像当前流程里的短暂等待；定时任务更像“系统承诺未来某个时间再做一件事”。\n\n### 重点三：调度能力必须天然带执行记录\n\n一个没有执行历史、下一次时间、最后状态的定时系统，运维上基本不可用。\n\n## 最容易搞错的点\n\n- `sleep` 不是定时任务，前者偏同步等待，后者偏异步调度。\n- 定时任务不是逃离主系统的脚本口子，而是正式治理能力。\n- 周期执行越自动，越需要清晰记录和兜底治理。\n\n## 和其他核心的边界\n\n- 和 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) 的区别：智能体循环处理“当前回合怎么跑”，定时任务处理“未来何时启动一轮运行”。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：稳定性负责失败恢复，定时任务负责让周期执行有正式入口。\n- 和 [可观测性](/docs/zh-CN/concepts/core-observability/) 的区别：可观测性记录计划执行结果，定时任务定义计划本身。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [定时任务](/docs/zh-CN/tools/schedule-task/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [运维概览](/docs/zh-CN/ops/)\n","source_path":"使用说明书/zh-CN/concepts/core-scheduled-tasks.md"}</script>
+</body>
+</html>

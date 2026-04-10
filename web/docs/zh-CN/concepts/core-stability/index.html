@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>稳定性 | wunder 使用说明书</title>
+  <meta name="description" content="稳定性核心解释 Wunder 为什么必须用结构性治理来控制故障扩散，而不是把稳定性寄托在 prompt、好运气和人工盯盘上。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-stability","language":"zh-CN","title":"稳定性","summary":"稳定性核心解释 Wunder 为什么必须用结构性治理来控制故障扩散，而不是把稳定性寄托在 prompt、好运气和人工盯盘上。","updated_at":"2026-04-10","read_when":["你在排障、压测或做高风险链路设计","你想判断某项容错能力应该落在哪一层"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-stability/","headings":[{"id":"section-1","level":1,"text":"稳定性"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：稳定性首先是“控扩散”"},{"id":"section-8","level":3,"text":"重点二：恢复链要和主链一样正式"},{"id":"section-9","level":3,"text":"重点三：资源治理是稳定性的组成部分"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-realtime","next_slug":"zh-CN/concepts/core-observability","markdown":"# 稳定性\n\n稳定性不是最后再补的一层保险，而是 Wunder 从一开始就必须围绕的硬目标。因为它面对的不是短平快问答，而是长会话、高并发、多工具、多入口的复合链路。\n\n![稳定性图：风险源经过隔离治理、恢复链路后，避免级联故障并形成可回归系统](/docs/assets/manual/core-stability.svg)\n\n## 先给结论\n\n- 稳定性不是“少报错”，而是“出错时不扩散、能恢复、能复盘”。\n- 一个长期运行的智能体系统，最危险的不是偶发错误，而是错误没有被结构性收住。\n- 只靠 prompt、人工操作或单次热修，无法支撑真正稳定的系统。\n\n## 为什么它必须单列为核心\n\n如果没有稳定性这个核心，系统在规模上来后通常会这样出问题：\n\n- 某个工具输出过大，直接拖垮整轮上下文。\n- 某个网络抖动或模型超时，直接把整条链路打断。\n- 某个入口异常，把其他入口也一起带进不一致状态。\n\n这些问题不是靠“多重试几次”就能解决的，必须靠结构性治理。\n\n## 这个核心真正保护什么\n\n- 保护执行连续性：出错后还能继续，而不是整条链直接废掉。\n- 保护资源边界：高并发、长会话和大工具输出不能无限放大。\n- 保护系统可维护性：同类问题要能被归类、复现、回归验证。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 稳定性依赖结构保障 | 不能只靠 prompt 或人工操作兜底 |\n| 高风险链路优先控扩散 | 模型、工具、网络、存储都要有隔离思路 |\n| 恢复必须有正式链路 | 超时、取消、断线、失败都要有后续动作 |\n| 同类问题必须能回归验证 | 避免修一次、忘一次、再犯一次 |\n\n## 设计重点\n\n### 重点一：稳定性首先是“控扩散”\n\n真正危险的不是单点失败，而是失败把线程、工具、连接、队列和数据一致性一起带崩。\n\n### 重点二：恢复链要和主链一样正式\n\n恢复续跑、重试、补发、事务回滚、outbox、原子写入，本质上都不是旁路技巧，而是主系统的一部分。\n\n### 重点三：资源治理是稳定性的组成部分\n\n上下文太大、输出太长、并发过高、队列积压，本质上都属于稳定性问题，不只是性能问题。\n\n## 最容易搞错的点\n\n- 只要模型回答出来了，不代表系统是稳定的。\n- 重试不是万能药，错误隔离和资源治理同样关键。\n- 没有结构化复盘的“偶发问题修好了”通常只是暂时安静。\n\n## 和其他核心的边界\n\n- 和 [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) 的区别：压缩治理窗口压力，稳定性治理所有高风险链路。\n- 和 [实时性](/docs/zh-CN/concepts/core-realtime/) 的区别：实时性讲状态怎么送，稳定性讲异常时状态和执行还能否保持一致。\n- 和 [可观测性](/docs/zh-CN/concepts/core-observability/) 的区别：可观测性帮助发现和复盘稳定性问题，但不直接替代稳定性设计。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [边界处理](/docs/zh-CN/concepts/boundary-handling/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n- [性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)\n","source_path":"使用说明书/zh-CN/concepts/core-stability.md"}</script>
+</body>
+</html>

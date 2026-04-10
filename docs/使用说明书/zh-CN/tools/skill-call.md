@@ -1,131 +1,60 @@
 ---
 title: 技能调用
-summary: 技能调用会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。
+summary: `skill_call` 如何把技能正文、根目录和文件树返回给模型。
 read_when:
-  - 你要理解技能为什么不是只在提示词里露一个名字
-  - 你在排查 {{SKILL_ROOT}} 为什么会被替换
+  - 你要加载某个 `SKILL.md` 及其目录信息
 source_docs:
-  - src/services/tools/skill_call.rs
-  - src/services/tools/catalog.rs
+  - src/services/tools.rs
+updated_at: 2026-04-10
 ---
 
 # 技能调用
 
-读取技能文档的正式工具入口。
+`skill_call` 的作用不是执行技能，而是**把技能内容加载进当前上下文**，让模型按技能流程继续工作。
 
----
-
-## 功能说明
-
-`技能调用` 让技能从「一个名称」变成「模型可主动读取的操作手册」。
-
-**别名**：
-- `skill_call`
-- `skill_get`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `name` | string | ✅ | 技能名称 |
-
----
-
-## 使用示例
+## 最小参数
 
 ```json
 {
-  "name": "代码重构"
+  "name": "openai-docs"
 }
 ```
 
----
+## 成功返回
 
-## 返回内容
-
-调用后会返回：
-
-| 内容 | 说明 |
-|------|------|
-| `SKILL.md` | 完整的技能文档 |
-| 技能目录结构 | 技能的文件结构 |
-
----
-
-## {{SKILL_ROOT}} 占位符
-
-### 用途
-
-技能文档里建议使用 `{{SKILL_ROOT}}` 来引用脚本、示例和智能体循环文件。
-
-### 替换规则
-
-当 `技能调用` 返回正文时，`{{SKILL_ROOT}}` 会被替换成当前可见的真实技能根目录路径。
-
-### 优势
-
-- ✅ 避免 server、desktop、cli 下路径不一致
-- ✅ 技能迁移后文档路径不会失效
-- ✅ 跨形态复用同一套技能文档
-
-### 使用示例
-
-在 SKILL.md 中：
-
-```markdown
-# 代码重构技能
-
-## 脚本
-
-使用脚本：`{{SKILL_ROOT}}/scripts/refactor.py`
-
-## 示例
-
-参考示例：`{{SKILL_ROOT}}/examples/before/` 和 `{{SKILL_ROOT}}/examples/after/`
+```json
+{
+  "ok": true,
+  "action": "skill_call",
+  "state": "completed",
+  "summary": "Loaded skill openai-docs.",
+  "data": {
+    "name": "openai-docs",
+    "description": "Use official OpenAI docs...",
+    "path": "C:/.../SKILL.md",
+    "root": "C:/.../openai-docs",
+    "content": "# SKILL ... {{SKILL_ROOT}} ...",
+    "tree": [
+      "SKILL.md",
+      "references/",
+      "scripts/"
+    ]
+  }
+}
 ```
 
----
+## 重点变化
 
-## 为什么比只在 prompt 里写技能名更好
+- `content` 会做适合模型阅读的渲染
+- `root` 会明确返回技能根目录
+- 文中可用 `{{SKILL_ROOT}}` 占位
+- `tree` 让模型知道技能目录还有哪些附加文件
 
-很多复杂技能真正重要的是：
-- 细节步骤
-- 资源路径
-- 约束条件
+## 常见失败
 
-如果只把技能名丢给模型，模型很容易误用。
+- 技能名为空
+- 技能不存在
+- 技能名有歧义
+- 技能文件读取失败
 
----
-
-## 适用场景
-
-✅ **适合使用技能调用**：
-- 读取固化流程的详细步骤
-- 获取技能相关的资源路径
-- 复用已定义的最佳实践
-- 避免重复编写相同的提示词
-
----
-
-## 注意事项
-
-1. **技能不只是元信息**：
-   - 应该被看作模型可读取的执行手册
-   - 包含详细步骤和约束条件
-
-2. **路径占位符**：
-   - 使用 `{{SKILL_ROOT}}` 引用技能内资源
-   - 系统会自动替换成真实路径
-
-3. **正式入口**：
-   - `技能调用` 是读取技能正文的正式工具入口
-   - 不要直接猜测技能路径
-
----
-
-## 延伸阅读
-
-- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)
-- [工具体系](/docs/zh-CN/concepts/tools/)
+这些错误通常直接以普通错误返回，不属于复杂异步工具。

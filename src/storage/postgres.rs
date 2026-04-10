@@ -16,14 +16,14 @@ use crate::storage::{
     OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
+    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
+    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
     VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::{anyhow, Result};
-use chrono::Utc;
+use chrono::{Local, Utc};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
@@ -590,29 +590,54 @@ impl PostgresStorage {
             let name: String = row.get(0);
             columns.insert(name);
         }
-        let mut quota_added = false;
-        if !columns.contains("daily_quota") {
+        if !columns.contains("token_balance") {
             conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota BIGINT NOT NULL DEFAULT 10000",
-                &[],
-            )?;
-            quota_added = true;
-        }
-        if !columns.contains("daily_quota_used") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota_used BIGINT NOT NULL DEFAULT 0",
+                "ALTER TABLE user_accounts ADD COLUMN token_balance BIGINT NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
-        if !columns.contains("daily_quota_date") {
+        if !columns.contains("token_granted_total") {
             conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota_date TEXT",
+                "ALTER TABLE user_accounts ADD COLUMN token_granted_total BIGINT NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
-        if quota_added {
-            conn.execute("UPDATE user_accounts SET daily_quota = 10000", &[])?;
+        if !columns.contains("token_used_total") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN token_used_total BIGINT NOT NULL DEFAULT 0",
+                &[],
+            )?;
         }
+        if !columns.contains("last_token_grant_date") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN last_token_grant_date TEXT",
+                &[],
+            )?;
+        }
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        conn.execute(
+            "UPDATE user_accounts
+             SET token_balance = CASE
+                     WHEN COALESCE(token_balance, 0) > 0 THEN token_balance
+                     WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota, 0) - COALESCE(daily_quota_used, 0), 0)
+                     ELSE GREATEST(COALESCE(daily_quota, 0), 0)
+                 END,
+                 token_granted_total = CASE
+                     WHEN COALESCE(token_granted_total, 0) > 0 THEN token_granted_total
+                     ELSE GREATEST(COALESCE(daily_quota, 0), 0)
+                 END,
+                 token_used_total = CASE
+                     WHEN COALESCE(token_used_total, 0) > 0 THEN token_used_total
+                     WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota_used, 0), 0)
+                     ELSE 0
+                 END,
+                 last_token_grant_date = COALESCE(last_token_grant_date, daily_quota_date)
+             WHERE COALESCE(token_balance, 0) = 0
+                OR COALESCE(token_granted_total, 0) = 0
+                OR COALESCE(token_used_total, 0) = 0
+                OR last_token_grant_date IS NULL",
+            &[&today],
+        )?;
         Ok(())
     }
 
@@ -1611,9 +1636,10 @@ impl StorageBackend for PostgresStorage {
                   status TEXT NOT NULL,
                   access_level TEXT NOT NULL,
                   unit_id TEXT,
-                  daily_quota BIGINT NOT NULL DEFAULT 10000,
-                  daily_quota_used BIGINT NOT NULL DEFAULT 0,
-                  daily_quota_date TEXT,
+                  token_balance BIGINT NOT NULL DEFAULT 0,
+                  token_granted_total BIGINT NOT NULL DEFAULT 0,
+                  token_used_total BIGINT NOT NULL DEFAULT 0,
+                  last_token_grant_date TEXT,
                   experience_total BIGINT NOT NULL DEFAULT 0,
                   is_demo INTEGER NOT NULL DEFAULT 0,
                   created_at DOUBLE PRECISION NOT NULL,
@@ -4594,11 +4620,12 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         conn.execute(
             "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-             daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+             token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
              ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
              roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, unit_id = EXCLUDED.unit_id, \
-             daily_quota = EXCLUDED.daily_quota, daily_quota_used = EXCLUDED.daily_quota_used, daily_quota_date = EXCLUDED.daily_quota_date, \
+             token_balance = EXCLUDED.token_balance, token_granted_total = EXCLUDED.token_granted_total, token_used_total = EXCLUDED.token_used_total, \
+             last_token_grant_date = EXCLUDED.last_token_grant_date, \
              experience_total = EXCLUDED.experience_total, \
              is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
             &[
@@ -4610,9 +4637,10 @@ impl StorageBackend for PostgresStorage {
                 &record.status,
                 &record.access_level,
                 &record.unit_id,
-                &record.daily_quota,
-                &record.daily_quota_used,
-                &record.daily_quota_date,
+                &record.token_balance,
+                &record.token_granted_total,
+                &record.token_used_total,
+                &record.last_token_grant_date,
                 &record.experience_total,
                 &(record.is_demo as i32),
                 &record.created_at,
@@ -4634,11 +4662,12 @@ impl StorageBackend for PostgresStorage {
             let roles = Self::string_list_to_json(&record.roles);
             tx.execute(
                 "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-                 daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+                 token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                  ON CONFLICT(user_id) DO UPDATE SET username = EXCLUDED.username, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash, \
                  roles = EXCLUDED.roles, status = EXCLUDED.status, access_level = EXCLUDED.access_level, unit_id = EXCLUDED.unit_id, \
-                 daily_quota = EXCLUDED.daily_quota, daily_quota_used = EXCLUDED.daily_quota_used, daily_quota_date = EXCLUDED.daily_quota_date, \
+                 token_balance = EXCLUDED.token_balance, token_granted_total = EXCLUDED.token_granted_total, token_used_total = EXCLUDED.token_used_total, \
+                 last_token_grant_date = EXCLUDED.last_token_grant_date, \
                  experience_total = EXCLUDED.experience_total, \
                  is_demo = EXCLUDED.is_demo, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, last_login_at = EXCLUDED.last_login_at",
                 &[
@@ -4650,9 +4679,10 @@ impl StorageBackend for PostgresStorage {
                     &record.status,
                     &record.access_level,
                     &record.unit_id,
-                    &record.daily_quota,
-                    &record.daily_quota_used,
-                    &record.daily_quota_date,
+                    &record.token_balance,
+                    &record.token_granted_total,
+                    &record.token_used_total,
+                    &record.last_token_grant_date,
                     &record.experience_total,
                     &(record.is_demo as i32),
                     &record.created_at,
@@ -4672,7 +4702,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = $1",
             &[&cleaned],
         )?;
@@ -4685,14 +4715,15 @@ impl StorageBackend for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            daily_quota_date: row.get(10),
-            experience_total: row.get::<_, Option<i64>>(11).unwrap_or(0),
-            is_demo: row.get::<_, i32>(12) != 0,
-            created_at: row.get(13),
-            updated_at: row.get(14),
-            last_login_at: row.get(15),
+            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_token_grant_date: row.get(11),
+            experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
+            is_demo: row.get::<_, i32>(13) != 0,
+            created_at: row.get(14),
+            updated_at: row.get(15),
+            last_login_at: row.get(16),
         }))
     }
 
@@ -4704,7 +4735,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = $1",
             &[&cleaned],
         )?;
@@ -4717,14 +4748,15 @@ impl StorageBackend for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            daily_quota_date: row.get(10),
-            experience_total: row.get::<_, Option<i64>>(11).unwrap_or(0),
-            is_demo: row.get::<_, i32>(12) != 0,
-            created_at: row.get(13),
-            updated_at: row.get(14),
-            last_login_at: row.get(15),
+            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_token_grant_date: row.get(11),
+            experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
+            is_demo: row.get::<_, i32>(13) != 0,
+            created_at: row.get(14),
+            updated_at: row.get(15),
+            last_login_at: row.get(16),
         }))
     }
 
@@ -4736,7 +4768,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = $1",
             &[&cleaned],
         )?;
@@ -4749,14 +4781,15 @@ impl StorageBackend for PostgresStorage {
             status: row.get(5),
             access_level: row.get(6),
             unit_id: row.get(7),
-            daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
-            daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
-            daily_quota_date: row.get(10),
-            experience_total: row.get::<_, Option<i64>>(11).unwrap_or(0),
-            is_demo: row.get::<_, i32>(12) != 0,
-            created_at: row.get(13),
-            updated_at: row.get(14),
-            last_login_at: row.get(15),
+            token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+            token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+            token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+            last_token_grant_date: row.get(11),
+            experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
+            is_demo: row.get::<_, i32>(13) != 0,
+            created_at: row.get(14),
+            updated_at: row.get(15),
+            last_login_at: row.get(16),
         }))
     }
 
@@ -4809,7 +4842,7 @@ impl StorageBackend for PostgresStorage {
                 let pattern = format!("%{keyword}%");
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
                          ORDER BY created_at DESC LIMIT $3 OFFSET $4",
@@ -4817,7 +4850,7 @@ impl StorageBackend for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE (username ILIKE $1 OR email ILIKE $1) AND unit_id = ANY($2) \
                          ORDER BY created_at DESC",
@@ -4829,7 +4862,7 @@ impl StorageBackend for PostgresStorage {
                 let pattern = format!("%{keyword}%");
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE username ILIKE $1 OR email ILIKE $1 \
                          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
@@ -4837,7 +4870,7 @@ impl StorageBackend for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE username ILIKE $1 OR email ILIKE $1 \
                          ORDER BY created_at DESC",
@@ -4848,7 +4881,7 @@ impl StorageBackend for PostgresStorage {
             (None, Some(unit_ids)) => {
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE unit_id = ANY($1) \
                          ORDER BY created_at DESC LIMIT $2 OFFSET $3",
@@ -4856,7 +4889,7 @@ impl StorageBackend for PostgresStorage {
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          WHERE unit_id = ANY($1) ORDER BY created_at DESC",
                         &[unit_ids],
@@ -4866,14 +4899,14 @@ impl StorageBackend for PostgresStorage {
             (None, None) => {
                 if limit > 0 {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts \
                          ORDER BY created_at DESC LIMIT $1 OFFSET $2",
                         &[&limit, &offset.max(0)],
                     )?
                 } else {
                     conn.query(
-                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                        "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                          experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts ORDER BY created_at DESC",
                         &[],
                     )?
@@ -4892,26 +4925,43 @@ impl StorageBackend for PostgresStorage {
                 status: row.get(5),
                 access_level: row.get(6),
                 unit_id: row.get(7),
-                daily_quota: row.get::<_, Option<i64>>(8).unwrap_or(0),
-                daily_quota_used: row.get::<_, Option<i64>>(9).unwrap_or(0),
-                daily_quota_date: row.get(10),
-                experience_total: row.get::<_, Option<i64>>(11).unwrap_or(0),
-                is_demo: row.get::<_, i32>(12) != 0,
-                created_at: row.get(13),
-                updated_at: row.get(14),
-                last_login_at: row.get(15),
+                token_balance: row.get::<_, Option<i64>>(8).unwrap_or(0),
+                token_granted_total: row.get::<_, Option<i64>>(9).unwrap_or(0),
+                token_used_total: row.get::<_, Option<i64>>(10).unwrap_or(0),
+                last_token_grant_date: row.get(11),
+                experience_total: row.get::<_, Option<i64>>(12).unwrap_or(0),
+                is_demo: row.get::<_, i32>(13) != 0,
+                created_at: row.get(14),
+                updated_at: row.get(15),
+                last_login_at: row.get(16),
             });
         }
         Ok((output, total))
     }
 
-    fn add_user_experience(&self, user_id: &str, delta: i64, updated_at: f64) -> Result<i64> {
+    fn add_user_experience(
+        &self,
+        user_id: &str,
+        delta: i64,
+        updated_at: f64,
+    ) -> Result<UserExperienceUpdateResult> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
-            return Ok(0);
+            return Ok(UserExperienceUpdateResult {
+                previous_total: 0,
+                current_total: 0,
+            });
         }
         let mut conn = self.conn()?;
+        let previous_total = conn
+            .query_opt(
+                "SELECT experience_total FROM user_accounts WHERE user_id = $1",
+                &[&cleaned],
+            )?
+            .map(|value| value.get::<_, Option<i64>>(0).unwrap_or(0))
+            .unwrap_or(0)
+            .max(0);
         let safe_delta = delta.max(0);
         if safe_delta > 0 {
             let row = conn.query_one(
@@ -4922,16 +4972,22 @@ impl StorageBackend for PostgresStorage {
                 &[&safe_delta, &updated_at, &cleaned],
             )?;
             let total: i64 = row.get::<_, Option<i64>>(0).unwrap_or(0);
-            return Ok(total.max(0));
+            return Ok(UserExperienceUpdateResult {
+                previous_total,
+                current_total: total.max(0),
+            });
         }
         let row = conn.query_opt(
             "SELECT experience_total FROM user_accounts WHERE user_id = $1",
             &[&cleaned],
         )?;
-        Ok(row
-            .map(|value| value.get::<_, Option<i64>>(0).unwrap_or(0))
-            .unwrap_or(0)
-            .max(0))
+        Ok(UserExperienceUpdateResult {
+            previous_total,
+            current_total: row
+                .map(|value| value.get::<_, Option<i64>>(0).unwrap_or(0))
+                .unwrap_or(0)
+                .max(0),
+        })
     }
 
     fn delete_user_account(&self, user_id: &str) -> Result<i64> {
@@ -9845,7 +9901,12 @@ impl StorageBackend for PostgresStorage {
         Ok(affected as i64)
     }
 
-    fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>> {
+    fn prepare_user_token_balance(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
@@ -9858,7 +9919,7 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
         let row = tx.query_opt(
-            "SELECT daily_quota, daily_quota_used, daily_quota_date \
+            "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date \
              FROM user_accounts WHERE user_id = $1 FOR UPDATE",
             &[&cleaned],
         )?;
@@ -9866,35 +9927,166 @@ impl StorageBackend for PostgresStorage {
             tx.commit()?;
             return Ok(None);
         };
-        let daily_quota: i64 = row.get(0);
-        let daily_used: i64 = row.get(1);
-        let daily_date: Option<String> = row.get(2);
-        let safe_quota = daily_quota.max(0);
-        let mut used = daily_used.max(0);
-        let date_match = daily_date.as_deref() == Some(today);
-        if !date_match {
-            used = 0;
-        }
-        let mut allowed = false;
-        if safe_quota > 0 && used < safe_quota {
-            allowed = true;
-            used += 1;
-        }
-        let should_update = allowed || !date_match;
-        if should_update {
+        let mut balance: i64 = row.get::<_, Option<i64>>(0).unwrap_or(0).max(0);
+        let mut granted_total: i64 = row.get::<_, Option<i64>>(1).unwrap_or(0).max(0);
+        let used_total: i64 = row.get::<_, Option<i64>>(2).unwrap_or(0).max(0);
+        let mut last_grant_date: Option<String> = row.get(3);
+        let safe_daily_grant = daily_grant.max(0);
+        if safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today) {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
             tx.execute(
-                "UPDATE user_accounts SET daily_quota_used = $1, daily_quota_date = $2 WHERE user_id = $3",
-                &[&used, &today, &cleaned],
+                "UPDATE user_accounts
+                 SET token_balance = $1, token_granted_total = $2, last_token_grant_date = $3, updated_at = $4
+                 WHERE user_id = $5",
+                &[&balance, &granted_total, &last_grant_date, &Self::now_ts(), &cleaned],
             )?;
         }
         tx.commit()?;
-        let remaining = (safe_quota - used).max(0);
-        Ok(Some(UserQuotaStatus {
-            daily_quota: safe_quota,
-            used,
-            remaining,
-            date: today.to_string(),
-            allowed,
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens: 0,
+        }))
+    }
+
+    fn consume_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let today = today.trim();
+        if today.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let row = tx.query_opt(
+            "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date \
+             FROM user_accounts WHERE user_id = $1 FOR UPDATE",
+            &[&cleaned],
+        )?;
+        let Some(row) = row else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let mut balance: i64 = row.get::<_, Option<i64>>(0).unwrap_or(0).max(0);
+        let mut granted_total: i64 = row.get::<_, Option<i64>>(1).unwrap_or(0).max(0);
+        let mut used_total: i64 = row.get::<_, Option<i64>>(2).unwrap_or(0).max(0);
+        let mut last_grant_date: Option<String> = row.get(3);
+        let safe_daily_grant = daily_grant.max(0);
+        if safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today) {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
+        }
+        let safe_amount = amount.max(0);
+        let charged = balance.min(safe_amount);
+        let overspent_tokens = safe_amount.saturating_sub(charged);
+        balance = balance.saturating_sub(charged);
+        used_total = used_total.saturating_add(safe_amount);
+        tx.execute(
+            "UPDATE user_accounts
+             SET token_balance = $1, token_granted_total = $2, token_used_total = $3, last_token_grant_date = $4, updated_at = $5
+             WHERE user_id = $6",
+            &[
+                &balance,
+                &granted_total,
+                &used_total,
+                &last_grant_date,
+                &Self::now_ts(),
+                &cleaned,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens,
+        }))
+    }
+
+    fn grant_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+        updated_at: f64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let today = today.trim();
+        if today.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let row = tx.query_opt(
+            "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date \
+             FROM user_accounts WHERE user_id = $1 FOR UPDATE",
+            &[&cleaned],
+        )?;
+        let Some(row) = row else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let mut balance: i64 = row.get::<_, Option<i64>>(0).unwrap_or(0).max(0);
+        let mut granted_total: i64 = row.get::<_, Option<i64>>(1).unwrap_or(0).max(0);
+        let used_total: i64 = row.get::<_, Option<i64>>(2).unwrap_or(0).max(0);
+        let mut last_grant_date: Option<String> = row.get(3);
+        let safe_daily_grant = daily_grant.max(0);
+        if safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today) {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
+        }
+        let safe_amount = amount.max(0);
+        if safe_amount > 0 {
+            balance = balance.saturating_add(safe_amount);
+            granted_total = granted_total.saturating_add(safe_amount);
+            tx.execute(
+                "UPDATE user_accounts
+                 SET token_balance = $1, token_granted_total = $2, last_token_grant_date = $3, updated_at = $4
+                 WHERE user_id = $5",
+                &[&balance, &granted_total, &last_grant_date, &updated_at, &cleaned],
+            )?;
+        } else if safe_daily_grant > 0 && last_grant_date.as_deref() == Some(today) {
+            tx.execute(
+                "UPDATE user_accounts
+                 SET token_balance = $1, token_granted_total = $2, last_token_grant_date = $3, updated_at = $4
+                 WHERE user_id = $5",
+                &[&balance, &granted_total, &last_grant_date, &updated_at, &cleaned],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens: 0,
         }))
     }
 }

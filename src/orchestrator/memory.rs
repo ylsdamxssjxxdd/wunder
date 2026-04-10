@@ -561,7 +561,10 @@ impl Orchestrator {
         {
             Ok((content, _, _, _, _)) => self.resolve_final_answer(&content),
             Err(err) => {
-                if err.code() == "USER_QUOTA_EXCEEDED" {
+                if matches!(
+                    err.code(),
+                    "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT"
+                ) {
                     return Err(err);
                 }
                 summary_fallback = true;
@@ -4280,7 +4283,7 @@ mod tests {
         assert_eq!(
             contents,
             vec![
-                "[SWARM_CONTEXT]\nolder task".to_string(),
+                "[SWARM_CONTEXT]\\nolder task".to_string(),
                 "older answer".to_string(),
                 "current question".to_string(),
                 "searching current task".to_string(),

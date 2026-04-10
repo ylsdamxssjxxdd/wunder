@@ -953,7 +953,9 @@ fn extract_error_message(response: Response) -> String {
     match code.as_str() {
         "AUTH_REQUIRED" | "UNAUTHORIZED" => i18n::t("error.auth_required"),
         "SESSION_NOT_FOUND" => i18n::t("error.session_not_found"),
-        "USER_QUOTA_EXCEEDED" => i18n::t("error.user_quota_exceeded"),
+        "USER_TOKEN_INSUFFICIENT" | "USER_QUOTA_EXCEEDED" => {
+            i18n::t("error.user_token_insufficient")
+        }
         _ => i18n::t("error.content_required"),
     }
 }

@@ -115,18 +115,20 @@ const normalizeUserAccount = (item) => {
   const activeSessions = Number(item?.active_sessions ?? item?.activeSessions ?? 0);
   const online =
     typeof item?.online === "boolean" ? item.online : Number.isFinite(activeSessions) && activeSessions > 0;
-  const dailyQuota = Number(item?.daily_quota ?? item?.dailyQuota ?? 0);
-  const dailyUsed = Number(item?.daily_quota_used ?? item?.dailyQuotaUsed ?? 0);
+  const tokenBalance = Number(
+    item?.token_balance ?? item?.tokenBalance ?? item?.daily_quota_remaining ?? item?.dailyQuotaRemaining ?? 0
+  );
+  const tokenUsed = Number(item?.token_used_total ?? item?.tokenUsedTotal ?? item?.daily_quota_used ?? item?.dailyQuotaUsed ?? 0);
+  const tokenGranted = Number(item?.token_granted_total ?? item?.tokenGrantedTotal ?? item?.daily_quota ?? item?.dailyQuota ?? 0);
+  const dailyTokenGrant = Number(item?.daily_token_grant ?? item?.dailyTokenGrant ?? 0);
   const unit = item?.unit || item?.unit_profile || null;
   const unitId = String(item?.unit_id || item?.unitId || unit?.id || unit?.unit_id || "").trim();
   const unitPath = String(unit?.path_name || unit?.pathName || "").trim();
   const unitName = String(unit?.name || "").trim();
-  let dailyRemaining = Number(item?.daily_quota_remaining ?? item?.dailyQuotaRemaining);
-  const safeDailyQuota = Number.isFinite(dailyQuota) ? Math.max(0, Math.floor(dailyQuota)) : 0;
-  const safeDailyUsed = Number.isFinite(dailyUsed) ? Math.max(0, Math.floor(dailyUsed)) : 0;
-  if (!Number.isFinite(dailyRemaining)) {
-    dailyRemaining = Math.max(safeDailyQuota - safeDailyUsed, 0);
-  }
+  const safeTokenBalance = Number.isFinite(tokenBalance) ? Math.max(0, Math.floor(tokenBalance)) : 0;
+  const safeTokenUsed = Number.isFinite(tokenUsed) ? Math.max(0, Math.floor(tokenUsed)) : 0;
+  const safeTokenGranted = Number.isFinite(tokenGranted) ? Math.max(0, Math.floor(tokenGranted)) : 0;
+  const safeDailyTokenGrant = Number.isFinite(dailyTokenGrant) ? Math.max(0, Math.floor(dailyTokenGrant)) : 0;
   return {
     id,
     username,
@@ -137,10 +139,11 @@ const normalizeUserAccount = (item) => {
     unit_level: Number.isFinite(Number(unit?.level)) ? Number(unit?.level) : null,
     status: String(item?.status || "active"),
     roles: Array.isArray(item?.roles) ? item.roles : [],
-    daily_quota: safeDailyQuota,
-    daily_quota_used: safeDailyUsed,
-    daily_quota_remaining: Number.isFinite(dailyRemaining) ? Math.max(0, Math.floor(dailyRemaining)) : 0,
-    daily_quota_date: String(item?.daily_quota_date || item?.dailyQuotaDate || "").trim(),
+    token_balance: safeTokenBalance,
+    token_used_total: safeTokenUsed,
+    token_granted_total: safeTokenGranted,
+    daily_token_grant: safeDailyTokenGrant,
+    last_token_grant_date: String(item?.last_token_grant_date || item?.lastTokenGrantDate || item?.daily_quota_date || item?.dailyQuotaDate || "").trim(),
     last_login_at: item?.last_login_at ?? item?.lastLoginAt ?? null,
     is_demo: Boolean(item?.is_demo || item?.isDemo),
     active_sessions: Number.isFinite(activeSessions) ? activeSessions : 0,
@@ -192,32 +195,22 @@ const formatQuotaValue = (user) => {
   if (!user) {
     return "-";
   }
-  const total = Number(user.daily_quota);
-  if (!Number.isFinite(total)) {
+  const balance = Number(user.token_balance);
+  if (!Number.isFinite(balance)) {
     return "-";
   }
-  const safeTotal = Math.max(0, Math.floor(total));
-  const remaining = Number(user.daily_quota_remaining);
-  if (!Number.isFinite(remaining)) {
-    return String(safeTotal);
-  }
-  const safeRemaining = Math.max(0, Math.floor(remaining));
-  if (!safeTotal) {
-    return "0";
-  }
-  return `${safeRemaining} / ${safeTotal}`;
+  return String(Math.max(0, Math.floor(balance)));
 };
 
 const formatQuotaMeta = (user) => {
   if (!user) {
     return "";
   }
-  const total = Number.isFinite(user.daily_quota) ? Math.max(0, Math.floor(user.daily_quota)) : 0;
-  const used = Number.isFinite(user.daily_quota_used) ? Math.max(0, Math.floor(user.daily_quota_used)) : 0;
-  const remaining = Number.isFinite(user.daily_quota_remaining)
-    ? Math.max(0, Math.floor(user.daily_quota_remaining))
-    : Math.max(total - used, 0);
-  return t("userAccounts.modal.settings.quota.meta", { used, remaining, total });
+  const balance = Number.isFinite(user.token_balance) ? Math.max(0, Math.floor(user.token_balance)) : 0;
+  const used = Number.isFinite(user.token_used_total) ? Math.max(0, Math.floor(user.token_used_total)) : 0;
+  const granted = Number.isFinite(user.token_granted_total) ? Math.max(0, Math.floor(user.token_granted_total)) : 0;
+  const daily = Number.isFinite(user.daily_token_grant) ? Math.max(0, Math.floor(user.daily_token_grant)) : 0;
+  return t("userAccounts.modal.settings.quota.meta", { balance, used, granted, daily });
 };
 
 const formatOnlineStatus = (user) =>
@@ -698,7 +691,7 @@ const syncSettingsTarget = (user) => {
     return;
   }
   elements.userAccountSettingsUser.textContent = user.username || user.id || "-";
-  elements.userAccountQuotaInput.value = Number.isFinite(user.daily_quota) ? user.daily_quota : "";
+  elements.userAccountQuotaInput.value = Number.isFinite(user.token_balance) ? user.token_balance : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
   elements.userAccountSettingsPasswordInput.value = "";
   syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
@@ -752,7 +745,7 @@ const saveQuota = async () => {
     notify(t("userAccounts.toast.quotaInvalid"), "warn");
     return;
   }
-  const ok = await updateUserAccount(settingsTarget.id, { daily_quota: Math.floor(raw) });
+  const ok = await updateUserAccount(settingsTarget.id, { token_balance: Math.floor(raw) });
   if (ok) {
     refreshSettingsTarget();
   }

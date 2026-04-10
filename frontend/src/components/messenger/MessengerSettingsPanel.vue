@@ -139,6 +139,7 @@
           <div class="messenger-profile-quota-meta">
             <span>{{ t('profile.quota.used') }}: {{ quotaUsedText }}</span>
             <span>{{ t('profile.quota.remaining') }}: {{ quotaRemainingText }}</span>
+            <span>{{ t('profile.quota.dailyGrant') }}: {{ dailyTokenGrantText }}</span>
           </div>
         </div>
       </section>
@@ -794,10 +795,13 @@ const formatDateKey = (value: unknown): string => {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
 };
 
-const sessionCount = computed(() => chatStore.sessions.length);
 const usageSummary = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
+});
+const sessionSummary = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  return (user.session_summary || user.sessionSummary || null) as Record<string, unknown> | null;
 });
 const agentCount = computed(() => {
   const owned = Array.isArray(agentStore.agents) ? agentStore.agents.length : 0;
@@ -805,7 +809,7 @@ const agentCount = computed(() => {
   return 1 + owned + shared;
 });
 
-const recentSessionCount = computed(() => {
+const fallbackRecentSessionCount = (): number => {
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000;
   return chatStore.sessions.filter((session) => {
@@ -815,6 +819,20 @@ const recentSessionCount = computed(() => {
     const time = parsed.getTime();
     return Number.isFinite(time) && time >= cutoff;
   }).length;
+};
+
+const sessionCount = computed(() => {
+  const total = Number(sessionSummary.value?.total_sessions ?? sessionSummary.value?.totalSessions);
+  if (Number.isFinite(total) && total >= 0) return total;
+  return chatStore.sessions.length;
+});
+
+const recentSessionCount = computed(() => {
+  const total = Number(
+    sessionSummary.value?.sessions_last_7d ?? sessionSummary.value?.sessionsLast7d
+  );
+  if (Number.isFinite(total) && total >= 0) return total;
+  return fallbackRecentSessionCount();
 });
 
 const assistantMessages = computed(() =>
@@ -841,12 +859,31 @@ const tokenUsageTotal = computed(() =>
 );
 
 const lastActiveTime = computed(() => {
+  const summaryValue = sessionSummary.value?.last_active_at ?? sessionSummary.value?.lastActiveAt;
+  if (summaryValue) {
+    return formatTime(summaryValue);
+  }
   const latest = chatStore.sessions[0];
   if (!latest) return '-';
   return formatTime(latest.updated_at || latest.created_at);
 });
 
 const weeklySessionTrend = computed(() => {
+  const summaryTrend = sessionSummary.value?.trend_last_7d ?? sessionSummary.value?.trendLast7d;
+  if (Array.isArray(summaryTrend) && summaryTrend.length) {
+    const points = summaryTrend.map((item, index) => {
+      const record = (item || {}) as Record<string, unknown>;
+      const key = String(record.date || record.key || `day-${index}`);
+      const count = Math.max(0, Number(record.count) || 0);
+      const label = key.length >= 10 ? key.slice(5).replace('-', '/') : key;
+      return { key, label, count, height: 8 };
+    });
+    const maxCount = Math.max(...points.map((item) => item.count), 1);
+    return points.map((item) => ({
+      ...item,
+      height: item.count > 0 ? Math.max(18, Math.round((item.count / maxCount) * 100)) : 8
+    }));
+  }
   const days = 7;
   const today = new Date();
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
@@ -906,15 +943,23 @@ const resolveTodayString = (): string => {
 
 const quotaSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
-  const daily = parseQuotaNumber(user.daily_quota ?? user.dailyQuota);
-  const rawUsed = parseQuotaNumber(user.daily_quota_used ?? user.dailyQuotaUsed);
-  const date = normalizeQuotaDate(user.daily_quota_date ?? user.dailyQuotaDate ?? '');
-  const today = resolveTodayString();
-  const used = date && date === today ? rawUsed : 0;
-  if (daily === null && used === null) return null;
-  const remaining =
-    Number.isFinite(daily) && Number.isFinite(used) ? Math.max((daily as number) - (used as number), 0) : null;
-  return { daily, used, remaining };
+  const daily = parseQuotaNumber(
+    user.token_granted_total ?? user.tokenGrantedTotal ?? user.daily_quota ?? user.dailyQuota
+  );
+  const used = parseQuotaNumber(
+    user.token_used_total ?? user.tokenUsedTotal ?? user.daily_quota_used ?? user.dailyQuotaUsed
+  );
+  const remaining = parseQuotaNumber(
+    user.token_balance
+      ?? user.tokenBalance
+      ?? user.daily_quota_remaining
+      ?? user.dailyQuotaRemaining
+  );
+  const dailyGrant = parseQuotaNumber(
+    user.daily_token_grant ?? user.dailyTokenGrant ?? user.token_daily_grant ?? user.tokenDailyGrant
+  );
+  if (daily === null && used === null && remaining === null && dailyGrant === null) return null;
+  return { daily, used, remaining, dailyGrant };
 });
 
 const quotaTotal = computed(() => quotaSnapshot.value?.daily ?? null);
@@ -1040,6 +1085,7 @@ const levelProgressHint = computed(() => {
 const quotaRemainingText = computed(() => formatNumber(quotaRemaining.value));
 const quotaUsedText = computed(() => formatNumber(quotaUsed.value));
 const quotaTotalText = computed(() => formatNumber(quotaTotal.value));
+const dailyTokenGrantText = computed(() => formatNumber(quotaSnapshot.value?.dailyGrant ?? null));
 
 const formatTime = (value: unknown): string => {
   if (!value) return '-';

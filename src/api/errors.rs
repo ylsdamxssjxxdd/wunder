@@ -71,7 +71,9 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "HANDSHAKE_TIMEOUT" | "REQUEST_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
         "CONTEXT_WINDOW_EXCEEDED" => StatusCode::PAYLOAD_TOO_LARGE,
         "PAYLOAD_TOO_LARGE" => StatusCode::PAYLOAD_TOO_LARGE,
-        "RATE_LIMITED" | "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
+        "RATE_LIMITED" | "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT" => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
         "PUSH_NOT_SUPPORTED" => StatusCode::NOT_IMPLEMENTED,
         "SWARM_HIVE_UNRESOLVED" => StatusCode::BAD_REQUEST,
         "SWARM_HIVE_DENIED" => StatusCode::FORBIDDEN,
@@ -104,7 +106,7 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         "SESSION_REQUIRED" | "SESSION_NOT_FOUND" => {
             Some("Verify session identifier and ownership before retrying.")
         }
-        "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "RATE_LIMITED" => {
+        "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT" | "RATE_LIMITED" => {
             Some("Retry later or reduce request frequency.")
         }
         "CANCELLED" => Some("Start a new turn if you still want the task to continue."),
@@ -301,7 +303,7 @@ mod tests {
     #[test]
     fn status_mapping_for_custom_error_code_is_stable() {
         assert_eq!(
-            status_for_error_code("USER_QUOTA_EXCEEDED"),
+            status_for_error_code("USER_TOKEN_INSUFFICIENT"),
             StatusCode::TOO_MANY_REQUESTS
         );
         assert_eq!(

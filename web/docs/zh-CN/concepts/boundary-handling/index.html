@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>边界处理 | wunder 使用说明书</title>
+  <meta name="description" content="wunder 在上下文超限、网络中断、工具失败、系统异常等边界场景下的处理策略与恢复机制。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/boundary-handling","language":"zh-CN","title":"边界处理","summary":"wunder 在上下文超限、网络中断、工具失败、系统异常等边界场景下的处理策略与恢复机制。","updated_at":"2026-04-02","read_when":["你要理解系统在异常情况下的行为","你要设计容错和恢复逻辑","你要排查生产环境的异常问题"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","src/orchestrator/","src/core/"],"tab":"参考","group":"运行模型参考","group_path":["运行模型参考"],"url":"/docs/zh-CN/concepts/boundary-handling/","headings":[{"id":"section-1","level":1,"text":"边界处理"},{"id":"section-2","level":2,"text":"1. 上下文超限处理"},{"id":"section-3","level":3,"text":"1.1 什么是上下文超限"},{"id":"section-4","level":3,"text":"1.2 处理策略"},{"id":"section-5","level":3,"text":"1.3 压缩层级"},{"id":"section-6","level":3,"text":"1.4 关键设计约束"},{"id":"section-7","level":2,"text":"2. 网络中断处理"},{"id":"section-8","level":3,"text":"2.1 WebSocket 连接中断"},{"id":"section-9","level":4,"text":"客户端侧行为"},{"id":"section-10","level":4,"text":"服务端侧行为"},{"id":"section-11","level":3,"text":"2.2 SSE 连接中断"},{"id":"section-12","level":3,"text":"2.3 模型 API 调用失败"},{"id":"section-13","level":2,"text":"3. 工具执行失败处理"},{"id":"section-14","level":3,"text":"3.1 工具失败分类"},{"id":"section-15","level":3,"text":"3.2 工具结果防爆机制"},{"id":"section-16","level":4,"text":"Layer 1: 执行层预算"},{"id":"section-17","level":4,"text":"Layer 2: 输出裁剪策略"},{"id":"section-18","level":4,"text":"Layer 3: 信号反馈"},{"id":"section-19","level":3,"text":"3.3 原子写入策略"},{"id":"section-20","level":2,"text":"4. 会话与线程异常处理"},{"id":"section-21","level":3,"text":"4.1 会话状态机"},{"id":"section-22","level":3,"text":"4.2 异常状态恢复"},{"id":"section-23","level":3,"text":"4.3 线程状态同步"},{"id":"section-24","level":2,"text":"5. 并发与排队处理"},{"id":"section-25","level":3,"text":"5.1 主线程排队"},{"id":"section-26","level":3,"text":"5.2 队列配置"},{"id":"section-27","level":3,"text":"5.3 优先级策略"},{"id":"section-28","level":2,"text":"6. 数据一致性保证"},{"id":"section-29","level":3,"text":"6.1 数据库事务"},{"id":"section-30","level":3,"text":"6.2 幂等性设计"},{"id":"section-31","level":3,"text":"6.3 最终一致性"},{"id":"section-32","level":2,"text":"7. 资源泄漏防护"},{"id":"section-33","level":3,"text":"7.1 超时机制"},{"id":"section-34","level":3,"text":"7.2 连接池管理"},{"id":"section-35","level":3,"text":"7.3 内存保护"},{"id":"section-36","level":2,"text":"8. 可观测性与调试"},{"id":"section-37","level":3,"text":"8.1 错误分类"},{"id":"section-38","level":3,"text":"8.2 关键事件记录"},{"id":"section-39","level":3,"text":"8.3 日志分级"},{"id":"section-40","level":2,"text":"9. 常见边界场景速查"},{"id":"section-41","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/swarm","next_slug":"zh-CN/help/index","markdown":"# 边界处理\n\nwunder 的设计目标之一是**在各种边界和异常情况下保持系统稳定运行**，而不是简单崩溃。\n\n这一页详细说明系统在各类边界场景下的处理策略。\n\n---\n\n## 1. 上下文超限处理\n\n### 1.1 什么是上下文超限\n\n当会话历史 + 当前请求 + 工具结果等内容的总 token 数超过模型的上下文窗口限制时，就会触发上下文超限。\n\n### 1.2 处理策略\n\nwunder 采用**渐进式上下文压缩**策略，而不是简单截断：\n\n```\n完整上下文 → 压缩策略1 → 压缩策略2 → ... → 适配模型窗口\n```\n\n### 1.3 压缩层级\n\n| 压缩层级 | 策略 | 损失程度 | 适用场景 |\n|---------|------|---------|---------|\n| **Level 0** | 保留完整上下文 | 无 | 上下文充足时 |\n| **Level 1** | 移除工具中间结果摘要 | 低 | 工具结果可以重新获取 |\n| **Level 2** | 摘要化历史消息 | 中 | 保留语义，损失细节 |\n| **Level 3** | 移除早期轮次 | 高 | 仅保留最近 N 轮 |\n| **Level 4** | 仅保留 system prompt + 当前请求 | 极高 | 紧急降级 |\n\n### 1.4 关键设计约束\n\n- **线程冻结原则**：即使上下文压缩，system prompt 也保持不变（首次确定后冻结）\n- **记忆隔离**：长期记忆只在线程初始化时注入一次，不参与动态压缩\n- **可观测性**：每次压缩都会记录 `context_compaction` 事件，包含压缩策略和损失评估\n\n---\n\n## 2. 网络中断处理\n\n### 2.1 WebSocket 连接中断\n\n#### 客户端侧行为\n\n| 阶段 | 行为 |\n|------|------|\n| **连接断开** | 立即显示\"连接断开\"提示，启动自动重连 |\n| **重连中** | 显示重连进度，指数退避（1s, 2s, 4s, 8s, 16s, 最大 32s） |\n| **重连成功** | 发送 `resume` 请求，获取错过的事件 |\n| **重连失败** | 超过最大重试次数后，提示手动刷新 |\n\n#### 服务端侧行为\n\n```\n连接断开 → 保持会话状态 300s → 超时后清理内存状态（但保留数据库记录）\n              ↓\n         缓存未推送的事件\n              ↓\n         客户端重连时补发\n```\n\n### 2.2 SSE 连接中断\n\nSSE 作为 WebSocket 的兜底方案，处理逻辑类似：\n\n- 自动重连（浏览器原生支持）\n- 通过 `Last-Event-ID` 恢复事件流\n- 服务端保留最近 1000 条事件用于恢复\n\n### 2.3 模型 API 调用失败\n\n| 失败类型 | 重试策略 | 降级方案 |\n|---------|---------|---------|\n| **网络超时** | 重试 3 次，指数退避 | 提示用户稍后重试 |\n| **速率限制** | 等待 `retry-after` 头，最长等待 60s | 进入队列排队 |\n| **认证失败** | 立即失败，不重试 | 提示管理员检查配置 |\n| **模型错误** | 重试 1 次（如果是临时错误） | 切换到备用模型（如果配置） |\n| **上下文超限** | 不重试，触发压缩逻辑 | 自动压缩后重试 |\n\n---\n\n## 3. 工具执行失败处理\n\n### 3.1 工具失败分类\n\n| 失败类别 | 说明 | 可重试 |\n|---------|------|--------|\n| **参数错误** | 工具参数验证失败 | ❌ 需要模型修正参数 |\n| **权限拒绝** | 工具不在白名单或审批被拒 | ❌ 需要用户授权 |\n| **临时错误** | 文件锁、网络波动等 | ✅ 自动重试 |\n| **系统错误** | 工具执行引擎异常 | ✅ 有限重试 |\n\n### 3.2 工具结果防爆机制\n\n为了防止工具输出过大导致上下文超限，wunder 实现了**三层防护**：\n\n```\n工具执行 → Layer 1: 执行层预算裁剪 → Layer 2: MCP 二次压缩 → Layer 3: 入模前最终检查\n```\n\n#### Layer 1: 执行层预算\n\n```rust\n// 执行命令工具的预算参数\nbudget: {\n  time_budget_ms: 60000,      // 最大执行时间\n  output_budget_bytes: 4194304, // 最大输出字节（4MB）\n  max_commands: 200            // 最大命令数\n}\n```\n\n#### Layer 2: 输出裁剪策略\n\n| 输出大小 | 处理方式 |\n|---------|---------|\n| ≤ 预算 | 完整返回 |\n| 预算 < 大小 ≤ 2×预算 | 保留头部 50% + 尾部 50% |\n| > 2×预算 | 保留头部 25% + 尾部 25% + 省略中间 |\n\n#### Layer 3: 信号反馈\n\n裁剪后的结果会附带元数据：\n\n```json\n{\n  \"output\": \"...裁剪后的内容...\",\n  \"output_meta\": {\n    \"truncated\": true,\n    \"original_size_bytes\": 8388608,\n    \"returned_size_bytes\": 4194304,\n    \"continuation_required\": true\n  }\n}\n```\n\n模型可以根据这些信号决定是否：\n- 缩小查询范围\n- 分页获取结果\n- 接受当前信息继续\n\n### 3.3 原子写入策略\n\n涉及文件写入的工具（`写入文件`、`应用补丁`）采用**临时文件 + 原子替换**策略：\n\n```\n1. 写入临时文件：file.tmp\n2. fsync 确保数据落盘\n3. 原子重命名：file.tmp → file\n4. 如果失败，删除临时文件，保留原文件\n```\n\n这确保了：\n- ✅ 不会出现半写入的文件\n- ✅ 并发写入不会互相破坏\n- ✅ 失败时可以回滚\n\n---\n\n## 4. 会话与线程异常处理\n\n### 4.1 会话状态机\n\nwunder 的会话有明确的状态转换：\n\n```\nidle → running → waiting_approval → waiting_user_input → idle\n  ↓        ↓\nerror  cancelled\n```\n\n### 4.2 异常状态恢复\n\n| 异常状态 | 触发条件 | 恢复策略 |\n|---------|---------|---------|\n| **`system_error`** | 未捕获的系统异常 | 记录错误日志，会话重置为 idle |\n| **`cancelled`** | 用户主动取消 | 立即停止执行，清理资源 |\n| **`timeout`** | 执行超过配置时间 | 停止执行，返回部分结果（如果有） |\n| **`approval_pending`** | 等待用户审批 | 暂停执行，等待用户决定 |\n\n### 4.3 线程状态同步\n\n通过 `thread_status` 事件实时同步线程状态：\n\n```json\n{\n  \"event\": \"thread_status\",\n  \"status\": \"running\", // running, waiting_approval, waiting_user_input, idle, system_error\n  \"session_id\": \"xxx\",\n  \"timestamp\": 1234567890\n}\n```\n\n---\n\n## 5. 并发与排队处理\n\n### 5.1 主线程排队\n\n每个 `user_id + agent_id` 只有一条主线程，忙时新请求进入队列：\n\n```\n新请求 → 主线程空闲？→ 是 → 立即执行\n              ↓ 否\n         进入 agent_tasks 队列\n              ↓\n         主线程空闲后依次执行\n```\n\n### 5.2 队列配置\n\n| 配置项 | 说明 | 默认值 |\n|-------|------|--------|\n| `max_queue_size` | 最大队列长度 | 100 |\n| `queue_timeout_s` | 排队超时时间 | 3600 |\n| `max_concurrent_sessions` | 最大并发会话数 | 10 |\n\n### 5.3 优先级策略\n\n队列中的任务按以下优先级排序：\n1. 管理员请求（最高）\n2. 带 `priority: high` 的请求\n3. 普通请求\n4. 带 `priority: low` 的请求\n\n---\n\n## 6. 数据一致性保证\n\n### 6.1 数据库事务\n\n所有涉及多个表的操作都使用数据库事务：\n\n```rust\n// 伪代码示例\nbegin_transaction();\ntry {\n  update_chat_session();\n  insert_message();\n  update_agent_thread();\n  commit();\n} catch {\n  rollback();\n  throw;\n}\n```\n\n### 6.2 幂等性设计\n\n| 接口 | 幂等键 | 说明 |\n|------|--------|------|\n| `/wunder/chat/messages` | `client_msg_id` | 重复消息不会重复处理 |\n| 渠道 Webhook | `message_id` | 重复推送不会重复处理 |\n| 工具调用 | `tool_call_id` | 重复调用不会重复执行 |\n\n### 6.3 最终一致性\n\n对于异步操作（如渠道消息投递），采用**outbox 模式**保证最终一致性：\n\n```\n1. 业务操作 + outbox 记录写入（同一事务）\n2. 后台 worker 从 outbox 读取\n3. 执行外部操作\n4. 成功后标记 outbox 为完成\n5. 失败则重试（带指数退避）\n```\n\n---\n\n## 7. 资源泄漏防护\n\n### 7.1 超时机制\n\n| 资源类型 | 超时配置 | 清理行为 |\n|---------|---------|---------|\n| 工具执行 | `tool_timeout_s` | 终止进程，释放资源 |\n| 模型调用 | `llm_timeout_s` | 取消请求，释放连接 |\n| WebSocket 连接 | `ws_idle_timeout_s` | 关闭空闲连接 |\n| 临时文件 | `temp_dir_ttl_h` | 定期清理过期文件 |\n\n### 7.2 连接池管理\n\n- 数据库连接：使用连接池，自动回收空闲连接\n- HTTP 客户端：连接复用，限制最大并发数\n- WebSocket：限制单用户最大连接数\n\n### 7.3 内存保护\n\n- 工具输出限制：防止单个工具返回过大结果\n- 上下文压缩：自动控制内存占用\n- 会话历史裁剪：数据库层面限制历史消息数\n\n---\n\n## 8. 可观测性与调试\n\n### 8.1 错误分类\n\n所有错误都携带结构化的 `error_meta`：\n\n```json\n{\n  \"error\": \"操作失败\",\n  \"error_meta\": {\n    \"category\": \"tool_execution\",\n    \"severity\": \"error\",\n    \"retryable\": true,\n    \"retry_after_ms\": 5000,\n    \"source_stage\": \"tool_call\",\n    \"recovery_action\": \"retry_tool\"\n  }\n}\n```\n\n### 8.2 关键事件记录\n\n| 事件 | 记录内容 | 用途 |\n|------|---------|------|\n| `context_compaction` | 压缩策略、压缩比 | 优化上下文管理 |\n| `tool_failed` | 工具名、错误类型、重试建议 | 工具调试 |\n| `queue_position` | 当前位置、预计等待时间 | 用户体验 |\n| `recovery_attempt` | 恢复策略、结果 | 稳定性分析 |\n\n### 8.3 日志分级\n\n| 级别 | 使用场景 |\n|------|---------|\n| `ERROR` | 系统异常、需要人工干预 |\n| `WARN` | 边界情况、自动恢复但需关注 |\n| `INFO` | 正常流程、关键节点 |\n| `DEBUG` | 详细调试信息 |\n\n---\n\n## 9. 常见边界场景速查\n\n| 场景 | 预期行为 | 参考章节 |\n|------|---------|---------|\n| 会话历史太长 | 自动压缩上下文 | 1. 上下文超限处理 |\n| WebSocket 断开 | 自动重连 + 事件补发 | 2. 网络中断处理 |\n| 工具输出太大 | 裁剪 + 信号反馈 | 3.2 工具结果防爆机制 |\n| 写入文件时崩溃 | 原子写入，不破坏原文件 | 3.3 原子写入策略 |\n| 主线程忙 | 新请求排队 | 5.1 主线程排队 |\n| 网络波动 | 指数退避重试 | 2.3 模型 API 调用失败 |\n| 数据库操作失败 | 事务回滚 | 6.1 数据库事务 |\n\n---\n\n## 延伸阅读\n\n- [流式执行](/docs/zh-CN/concepts/streaming/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n- [监控与 Benchmark](/docs/zh-CN/ops/benchmark-and-observability/)\n","source_path":"使用说明书/zh-CN/concepts/boundary-handling.md"}</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能体循环 | wunder 使用说明书</title>
+  <meta name="description" content="智能体循环解释了 Wunder 为什么要把线程当作一等运行单元，以及为什么执行主链路必须稳定、可恢复、可收敛。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-agent-loop","language":"zh-CN","title":"智能体循环","summary":"智能体循环解释了 Wunder 为什么要把线程当作一等运行单元，以及为什么执行主链路必须稳定、可恢复、可收敛。","updated_at":"2026-04-10","read_when":["你想理解线程为什么是 Wunder 的一等运行单元","你在接入、排障或设计工具时需要判断执行链路落点"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-agent-loop/","headings":[{"id":"section-1","level":1,"text":"智能体循环"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：线程要比“当前回答”更重要"},{"id":"section-8","level":3,"text":"重点二：动作必须回到同一条链上"},{"id":"section-9","level":3,"text":"重点三：终态不是一个 UI 感觉，而是系统事实"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/index","next_slug":"zh-CN/concepts/core-tools","markdown":"# 智能体循环\n\n智能体循环是 Wunder 的主链路。它真正解决的不是“模型能不能回答”，而是“线程能不能把一次任务稳定推进到终态”。\n\n![智能体循环图：输入进入线程、模型判断、工具动作、状态收敛、事件投影构成系统主链路](/docs/assets/manual/core-agent-loop.svg)\n\n## 先给结论\n\n- Wunder 的基本执行单位不是单次模型调用，而是一条持续运行的线程。\n- 一轮执行是否健康，关键看它能否在线程里完成“判断、行动、观察、继续、收敛”。\n- 前端看到的是执行投影，真正的执行真相始终在线程主链路里。\n\n## 为什么它必须单列为核心\n\n如果没有智能体循环这个核心，Wunder 会直接退化成一个“每次请求临时拼上下文、临时调模型、临时给结果”的系统。那会带来三个后果：\n\n- 无法稳定表达一轮执行走到哪一步，因为执行状态不再有固定落点。\n- 工具调用、审批等待、恢复续跑都会变成外挂逻辑，难以治理。\n- 前端、渠道、监控各自维护一套状态判断，系统口径会越来越乱。\n\n## 这个核心真正保护什么\n\n- 它保护线程语义。线程不是 UI 标签，而是 prompt、记忆、上下文和状态的共同边界。\n- 它保护执行顺序。模型调用、工具调用、等待态和终态必须进入同一条事实链。\n- 它保护恢复能力。断线、失败、等待审批之后，系统能否继续跑，取决于主链路是否稳定。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 线程语义必须稳定 | 不能因为展示层、调试逻辑或临时兼容分支把主链路改坏 |\n| 终态必须收敛 | 一轮执行要明确落到 `completed/failed/cancelled/rejected` 这类终态 |\n| 恢复必须继续在线程里发生 | 断线续跑、等待审批、后台唤醒都不能跳出线程主语义 |\n| 投影不能改写真相 | 前端状态只是快照和投影，不是后端线程真相 |\n\n## 设计重点\n\n### 重点一：线程要比“当前回答”更重要\n\n用户看到的是这一轮回复，但系统真正要维护的是这条线程以后还能不能继续可靠工作。\n\n### 重点二：动作必须回到同一条链上\n\n模型调用、工具 observation、审批等待、会话让出、后台回流，这些动作看起来分散，实际都必须落回线程主链路。否则状态机会被拆碎。\n\n### 重点三：终态不是一个 UI 感觉，而是系统事实\n\n一轮是否结束，不能靠“页面好像不动了”来判断，而要靠明确终态事件和运行态收敛。\n\n## 最容易搞错的点\n\n- 线程不是会话的别名。会话承载交互历史，线程承载执行状态和运行语义。\n- 流式输出不是循环本身，流式只是循环对外的连续投影。\n- 蜂群、子智能体、定时任务都可以触发执行，但都不能替代线程主语义。\n\n## 和其他核心的边界\n\n- 和 [实时性](/docs/zh-CN/concepts/core-realtime/) 的区别：实时性讲“怎么把线程变化送出去”，智能体循环讲“线程内部怎么稳定推进”。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：稳定性讲“失败怎么兜”，智能体循环讲“主链路如何组织”。\n- 和 [记忆](/docs/zh-CN/concepts/core-memory/) 的区别：记忆讲“线程初始化时带什么”，智能体循环讲“线程之后怎么持续跑”。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [流式执行](/docs/zh-CN/concepts/streaming/)\n- [运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/)\n","source_path":"使用说明书/zh-CN/concepts/core-agent-loop.md"}</script>
+</body>
+</html>

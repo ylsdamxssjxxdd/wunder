@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>蜂群 | wunder 使用说明书</title>
+  <meta name="description" content="蜂群核心解释 Wunder 如何把多智能体协作建成正式系统能力，而不是把并行任务临时塞进一个大线程里。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-swarm","language":"zh-CN","title":"蜂群","summary":"蜂群核心解释 Wunder 如何把多智能体协作建成正式系统能力，而不是把并行任务临时塞进一个大线程里。","updated_at":"2026-04-10","read_when":["你在设计多智能体协作","你需要区分蜂群、子智能体和普通线程链路"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-swarm/","headings":[{"id":"section-1","level":1,"text":"蜂群"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：蜂群管理的是“已有智能体”"},{"id":"section-8","level":3,"text":"重点二：子智能体和蜂群不是同一件事"},{"id":"section-9","level":3,"text":"重点三：协作质量取决于边界清晰，不取决于工蜂数量"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-tools","next_slug":"zh-CN/concepts/core-context-compression","markdown":"# 蜂群\n\n蜂群不是“多开几个聊天窗口”或者“并行跑几个请求”这么简单。它是 Wunder 对多智能体协作关系的正式建模。\n\n![蜂群结构图：母蜂主线程调度多个工蜂线程，工蜂结果再汇回母蜂](/docs/assets/manual/core-swarm.svg)\n\n## 先给结论\n\n- 蜂群的重点不是并行，而是协作关系、职责边界和结果归并。\n- 工蜂必须拥有干净线程，否则所谓协作只是把脏上下文复制扩散。\n- 母蜂负责编排，工蜂负责执行，这个职责分离不能模糊。\n\n## 为什么它必须单列为核心\n\n如果没有蜂群这个核心，多智能体协作通常会退化成两种糟糕形态：\n\n- 把所有角色硬塞进一个线程，让一个模型“扮演很多人”。\n- 靠外围脚本临时派发请求，但没有父子关系、状态同步和结果归并。\n\n这两种做法都无法稳定表达“谁在做什么、谁负责什么、结果怎么回主链路”。\n\n## 这个核心真正保护什么\n\n- 保护协作边界：母蜂和工蜂职责分离，避免上下文和责任互相污染。\n- 保护结果归并：工蜂结果必须重新进入母蜂主链路，而不是散落在外部。\n- 保护过程可见：协作不是黑盒批处理，而是持续可观察的执行结构。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 母蜂只做编排，不吞掉所有执行 | 保持任务拆解和结果归并清晰 |\n| 工蜂默认新建线程 | 保持上下文干净，不把旧任务残留带进来 |\n| 协作关系必须持续可见 | 让状态同步、工作流和复盘都有依据 |\n| 结果最终回主线程 | 保证主智能体的一等现实状态不丢失 |\n\n## 设计重点\n\n### 重点一：蜂群管理的是“已有智能体”\n\n蜂群强调的是调度已经存在的工蜂。它不是临时再造一个执行碎片，而是调用现成角色进入协作。\n\n### 重点二：子智能体和蜂群不是同一件事\n\n子智能体更像当前线程的临时分叉；蜂群更像当前智能体调度其他正式工蜂。两者都能分工，但系统语义不同。\n\n### 重点三：协作质量取决于边界清晰，不取决于工蜂数量\n\n工蜂越多，如果拆解不清、归并不清、状态不可见，协作反而更乱。\n\n## 最容易搞错的点\n\n- 子智能体不等于蜂群。蜂群强调编排语义、节点状态和结果归并。\n- “并行”不等于“高效”。拆解粒度过粗或过细都会拉低收益。\n- 工蜂线程必须干净，否则上下文污染会直接削弱协作质量。\n\n## 和其他核心的边界\n\n- 和 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) 的区别：智能体循环是单线程主链路，蜂群是多线程协作结构。\n- 和 [实时性](/docs/zh-CN/concepts/core-realtime/) 的区别：实时性解决协作状态怎么对外同步，蜂群解决协作关系怎么建模。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：稳定性负责控制工蜂失败的扩散，蜂群负责定义工蜂为什么会存在。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [蜂群协作](/docs/zh-CN/concepts/swarm/)\n- [子智能体控制](/docs/zh-CN/tools/subagent-control/)\n- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)\n","source_path":"使用说明书/zh-CN/concepts/core-swarm.md"}</script>
+</body>
+</html>

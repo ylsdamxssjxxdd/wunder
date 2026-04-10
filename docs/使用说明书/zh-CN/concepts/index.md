@@ -1,21 +1,45 @@
 ---
 title: 核心概览
-summary: 用 `docs/总体设计.md` 的 11 个核心快速建立 Wunder 的整体运行模型；细分机制和旧概念页统一转入参考部分。
+summary: 11 个核心不是 11 个功能点，而是 Wunder 为了长期运行、多人并发和多入口接入而主动建立的系统骨架。
 read_when:
   - 你第一次系统性理解 Wunder
   - 你准备做接入、运维或工具开发，需要统一视角
   - 你已经会用 Wunder，但想理解它为什么这样设计
 source_docs:
   - docs/总体设计.md
-  - docs/系统介绍.md
-  - docs/设计方案.md
 ---
 
 # 核心概览
 
-理解 Wunder，先不要把注意力分散到零碎术语。先抓住 `docs/总体设计.md` 定义的 11 个核心，再去看接口、工具和界面，整体会清楚很多。
+理解 Wunder，先不要先背术语、接口和页面名称。先抓住 11 个核心，因为它们定义的不是“系统里有什么模块”，而是“系统必须守住哪些稳定边界”。
 
-旧的概念细页没有删除，而是归入 [参考概览](/docs/zh-CN/reference/)。这页只负责建立系统主骨架。
+旧的概念细页没有删除，而是归入 [参考概览](/docs/zh-CN/reference/) 的“运行模型参考”。这页负责建立系统主骨架，并把你带到 11 个核心细页。
+
+![Wunder 的 11 个核心分层图：执行内核、接入与治理、交付保障三层结构](/docs/assets/manual/core-overview-map.svg)
+
+## 先记住四条总判断
+
+- Wunder 不是以“单次回答”为中心，而是以“线程能否长期稳定运行”为中心。
+- Wunder 不是把能力散落在模型提示词里，而是尽量把能力收口成工具、事件和治理约束。
+- Wunder 不是只做一个聊天入口，而是要让 server、desktop、cli 和渠道共享同一套内核。
+- Wunder 不是先做功能再补治理，而是默认按多用户并发、长会话和高风险工具链来设计。
+
+## 为什么这 11 个是核心，而不是普通功能
+
+| 判断维度 | 如果没有独立成核心，会发生什么 |
+|------|------|
+| 执行链路 | 系统会退化成“一问一答”，线程语义无法稳定收敛 |
+| 能力组织 | 工具、记忆、蜂群、渠道会各自为政，模型和前端都很难消费 |
+| 治理边界 | 多用户、权限、定时任务和外部接入会在后期互相污染 |
+| 运维与复盘 | 只能看到“结果不对”，看不到“为什么不对、卡在哪、如何回放” |
+
+## 11 个核心如何分层
+
+| 层级 | 核心 | 真正要解决的问题 |
+|------|------|------|
+| 执行内核 | 智能体循环、工具、蜂群、上下文压缩、记忆 | 让线程能持续跑、能调能力、能协作、能控制上下文、能利用长期资料 |
+| 接入与治理 | 渠道、定时任务、多用户管理 | 让不同入口、后台任务和多用户边界共享同一套系统口径 |
+| 交付保障 | 实时性、稳定性、可观测性 | 让用户看得见、系统扛得住、管理员能复盘 |
 
 ## 11 个核心一览
 
@@ -33,82 +57,28 @@ source_docs:
 | 稳定性 | 让系统在长会话、高并发、多工具下依然能跑 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[故障排查](/docs/zh-CN/help/troubleshooting/) |
 | 可观测性 | 让系统能解释发生了什么、为什么、怎么复盘 | [流式事件参考](/docs/zh-CN/reference/stream-events/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/) |
 
-## 1. 智能体循环
+## 11 个核心细页
 
-- 设计目标：让智能体稳定执行连续回合，而不是每次请求都像一次孤立问答。
-- 核心能力：线程状态机、模型调用、工具调用、重试治理、终态收敛、恢复续跑。
-- 关键约束：线程语义必须稳定，不能因为展示层或临时逻辑破坏运行时主链路。
-- 延伸参考：[会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)、[流式执行](/docs/zh-CN/concepts/streaming/)、[运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/)
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-agent-loop/"><strong>智能体循环</strong><span>看线程状态机、终态收敛与恢复续跑。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-tools/"><strong>工具</strong><span>看工具描述、结构化参数与结果约束。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-swarm/"><strong>蜂群</strong><span>看母蜂、工蜂和协作边界。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-context-compression/"><strong>上下文压缩</strong><span>看长会话压缩、摘要回注与可追溯性。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-memory/"><strong>记忆</strong><span>看线程初始化注入与冻结约束。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-channels/"><strong>渠道</strong><span>看多入口共核与接入面边界。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>看周期执行、后台治理与记录追踪。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多用户管理</strong><span>看租户、权限、配额和治理面板。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-realtime/"><strong>实时性</strong><span>看事件流、快照补偿和断线恢复。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-stability/"><strong>稳定性</strong><span>看错误隔离、重试、恢复和回归验收。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-observability/"><strong>可观测性</strong><span>看事实流、回放、画像与指标口径。</span></a>
+</div>
 
-## 2. 工具
+## 建议阅读顺序
 
-- 设计目标：让模型更容易正确调用能力，并可靠消费结果。
-- 核心能力：清晰工具描述、结构化参数、统一结果截断、工具工作流展示、失败反馈。
-- 关键约束：对大模型来说一切皆工具；工具返回必须精简明确；工具事实与展示投影必须分离。
-- 延伸参考：[工具体系](/docs/zh-CN/concepts/tools/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)、[工具总览](/docs/zh-CN/tools/)
-
-## 3. 蜂群
-
-- 设计目标：支持母蜂调度多个工蜂完成协作任务，并把结果汇回主线程。
-- 核心能力：任务拆解、工蜂派发、节点状态同步、汇总结果、父子会话关联。
-- 关键约束：母蜂与工蜂职责分离；不能把蜂群误当普通子智能体链路；协作过程必须持续可见。
-- 延伸参考：[蜂群协作](/docs/zh-CN/concepts/swarm/)、[子智能体控制](/docs/zh-CN/tools/subagent-control/)、[蜂群工具](/docs/zh-CN/tools/agent-swarm/)
-
-## 4. 上下文压缩
-
-- 设计目标：在长会话中控制上下文规模，同时保留有效信息。
-- 核心能力：手动压缩、自动压缩、溢出恢复、压缩摘要回注、压缩前后对比与回放。
-- 关键约束：压缩结果必须可追溯；不能伪造事实；压缩过程与终态要可观测。
-- 延伸参考：[边界处理](/docs/zh-CN/concepts/boundary-handling/)、[额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/)、[流式事件参考](/docs/zh-CN/reference/stream-events/)
-
-## 5. 记忆
-
-- 设计目标：支持长会话和长期资料利用，但不污染线程核心认知。
-- 核心能力：线程初始化记忆注入、知识库、工作区文件、长期资料读取。
-- 关键约束：长期记忆只允许在线程初始化注入一次；线程首次确定后的 `system prompt` 必须冻结。
-- 延伸参考：[长期记忆](/docs/zh-CN/concepts/memory/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)、[工作区与容器](/docs/zh-CN/concepts/workspaces/)
-
-## 6. 渠道
-
-- 设计目标：支持多入口接入同一运行时能力。
-- 核心能力：HTTP、WebSocket、Desktop、CLI、第三方渠道、网关适配。
-- 关键约束：多入口共核，只允许接入面差异，不允许演化成多套独立系统。
-- 延伸参考：[系统架构](/docs/zh-CN/concepts/architecture/)、[接入概览](/docs/zh-CN/integration/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
-
-## 7. 定时任务
-
-- 设计目标：支持系统级周期执行与后台治理。
-- 核心能力：定时触发、计划任务、后台巡检、自动维护、异步执行链路。
-- 关键约束：定时任务必须与在线线程语义区分；失败重试和执行记录要可追踪。
-- 延伸参考：[计划任务工具](/docs/zh-CN/tools/schedule-task/)、[部署与运行](/docs/zh-CN/ops/deployment/)、[运维概览](/docs/zh-CN/ops/)
-
-## 8. 多用户管理
-
-- 设计目标：支持组织、用户、租户和权限治理。
-- 核心能力：用户体系、单位与租户隔离、权限控制、资源配额、管理后台。
-- 关键约束：默认按多用户并发设计；数据隔离、权限边界和治理能力不能后补。
-- 延伸参考：[Server 部署](/docs/zh-CN/start/server/)、[认证与安全](/docs/zh-CN/ops/auth-and-security/)、[管理端面板索引](/docs/zh-CN/reference/admin-panels/)
-
-## 9. 实时性
-
-- 设计目标：让前端和外部系统及时感知线程与任务变化。
-- 核心能力：WebSocket 事件流、快照补偿、增量同步、断线重连、回放恢复。
-- 关键约束：前端消费事件流但不定义后端真相；实时展示允许投影但不能篡改状态语义。
-- 延伸参考：[流式执行](/docs/zh-CN/concepts/streaming/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)、[流式事件参考](/docs/zh-CN/reference/stream-events/)
-
-## 10. 稳定性
-
-- 设计目标：让系统在长会话、高并发、多工具、多入口场景下持续可运行。
-- 核心能力：错误隔离、超时与重试、恢复续跑、资源治理、线程终态收敛、回归验收。
-- 关键约束：稳定性依赖程序结构保障，不能只靠 prompt 和人工操作；必须优先控制高风险链路的故障扩散。
-- 延伸参考：[边界处理](/docs/zh-CN/concepts/boundary-handling/)、[故障排查](/docs/zh-CN/help/troubleshooting/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)
-
-## 11. 可观测性
-
-- 设计目标：让系统能解释“发生了什么、为什么、如何复盘”。
-- 核心能力：线程事实流、时间线回放、管理员画像、吞吐评测、调试导出。
-- 关键约束：区分事实层、回放层、画像层；区分请求、结果、观察结果；指标口径统一。
-- 延伸参考：[流式事件参考](/docs/zh-CN/reference/stream-events/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)、[管理端面板索引](/docs/zh-CN/reference/admin-panels/)
+- 如果你在做接入：先看 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/)、[渠道](/docs/zh-CN/concepts/core-channels/)、[实时性](/docs/zh-CN/concepts/core-realtime/)。
+- 如果你在做工具或智能体能力：先看 [工具](/docs/zh-CN/concepts/core-tools/)、[上下文压缩](/docs/zh-CN/concepts/core-context-compression/)、[记忆](/docs/zh-CN/concepts/core-memory/)。
+- 如果你在做管理员侧或上线治理：先看 [多用户管理](/docs/zh-CN/concepts/core-multi-user-management/)、[稳定性](/docs/zh-CN/concepts/core-stability/)、[可观测性](/docs/zh-CN/concepts/core-observability/)。
+- 如果你在做协作与自动化：先看 [蜂群](/docs/zh-CN/concepts/core-swarm/) 和 [定时任务](/docs/zh-CN/concepts/core-scheduled-tasks/)。
 
 ## 总体原则
 
@@ -121,7 +91,8 @@ source_docs:
 
 ## 下一步怎么读
 
-- 想继续看拆开的运行模型细节：去 [参考概览](/docs/zh-CN/reference/) 的“运行模型参考”。
+- 想逐个看 11 个核心：直接从上面的卡片进入细页。
+- 想继续看原先按主题拆开的运行模型细节：去 [参考概览](/docs/zh-CN/reference/) 的“运行模型参考”。
 - 想直接接入系统：去 [接入概览](/docs/zh-CN/integration/)。
 - 想理解工具层：去 [工具总览](/docs/zh-CN/tools/)。
 - 想排障和看约束落地：去 [运维概览](/docs/zh-CN/ops/) 和 [故障排查](/docs/zh-CN/help/troubleshooting/)。

@@ -1,0 +1,37 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='720' viewBox='0 0 1200 720'>
+<style>
+  .title { font: 700 38px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .subtitle { font: 400 18px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #63707A; }
+  .eyebrow { font: 700 14px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; letter-spacing: 1px; }
+  .badge { font: 700 13px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .card-title { font: 700 24px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .card-body { font: 400 16px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .small { font: 400 14px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #63707A; }
+  .center-title { font: 700 26px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .center-body { font: 400 16px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .ribbon { font: 700 17px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #21313A; }
+  .tag { font: 700 12px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #FFFDF9; letter-spacing: 0.5px; }
+  .flow { stroke: #21313A; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+  .flow-soft { stroke: #63707A; stroke-width: 2.6; fill: none; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow-soft); }
+  .dash { stroke-dasharray: 8 8; }
+</style>
+<defs>
+  <linearGradient id='bg-grad' x1='0' y1='0' x2='0' y2='1'>
+    <stop offset='0%' stop-color='#FBF5EE'/>
+    <stop offset='100%' stop-color='#F1E7DA'/>
+  </linearGradient>
+  <filter id='shadow' x='-10%' y='-10%' width='120%' height='120%'>
+    <feDropShadow dx='0' dy='10' stdDeviation='12' flood-color='#B39C82' flood-opacity='0.16'/>
+  </filter>
+  <pattern id='grid' width='40' height='40' patternUnits='userSpaceOnUse'>
+    <path d='M 40 0 L 0 0 0 40' fill='none' stroke='#E8DCCD' stroke-width='1'/>
+  </pattern>
+  <marker id='arrow' markerWidth='11' markerHeight='11' refX='8.5' refY='5.5' orient='auto'>
+    <path d='M0,0 L11,5.5 L0,11 z' fill='#21313A'/>
+  </marker>
+  <marker id='arrow-soft' markerWidth='10' markerHeight='10' refX='8' refY='5' orient='auto'>
+    <path d='M0,0 L10,5 L0,10 z' fill='#63707A'/>
+  </marker>
+</defs>
+<rect x='0' y='0' width='1200' height='720' fill='url(#bg-grad)'/><rect x='0' y='0' width='1200' height='720' fill='url(#grid)' opacity='0.45'/><ellipse cx='150' cy='90' rx='200' ry='110' fill='#FFF7E8' opacity='0.8'/><ellipse cx='1050' cy='620' rx='240' ry='140' fill='#F7EEE3' opacity='0.7'/><ellipse cx='980' cy='120' rx='190' ry='90' fill='#E8F4F0' opacity='0.45'/><rect x='60' y='42' width='160' height='34' rx='17' ry='17' fill='#F2E6D7'/><text x='140.0' y='63.0' class='eyebrow' text-anchor='middle' fill='#21313A'>核心 11 · 交付保障</text><text x='60' y='122' class='title' text-anchor='start'><tspan x='60' dy='0'>可观测性要把“发生了什么”拆成事实、回放、画像三层</tspan></text><text x='60' y='166' class='subtitle' text-anchor='start'><tspan x='60' dy='0'>如果把它们混成一锅日志，系统就既不能准确复盘，也不能稳定出报表，更无法沉淀统一口径。</tspan></text><rect x='970' y='48' width='170' height='30' rx='15' ry='15' fill='#23313B'/><text x='1055.0' y='67.0' class='tag' text-anchor='middle' fill='#FFFDF9'>WUNDER CORE MAP</text><rect x='90' y='220' width='1020' height='332' rx='38' ry='38' fill='#FFFDF9' stroke='#D7C5AF' stroke-width='2.2' filter='url(#shadow)'/><rect x='126' y='428' width='948' height='94' rx='28' ry='28' fill='#FFF5E7' stroke='#E4C391' stroke-width='2'/><rect x='152' y='448' width='92' height='28' rx='14' ry='14' fill='#D68A2B'/><text x='198.0' y='466.0' class='tag' text-anchor='middle' fill='#FFFDF9'>事实层</text><text x='270' y='474' class='card-body' text-anchor='start'><tspan x='270' dy='0'>线程事实流、真实事件顺序、请求与 observation 是最底层真相。</tspan></text><rect x='186' y='314' width='828' height='84' rx='26' ry='26' fill='#EDF8F4' stroke='#9BCDBD' stroke-width='2'/><rect x='212' y='334' width='92' height='28' rx='14' ry='14' fill='#2F8B73'/><text x='258.0' y='352.0' class='tag' text-anchor='middle' fill='#FFFDF9'>回放层</text><text x='330' y='360' class='card-body' text-anchor='start'><tspan x='330' dy='0'>时间线重建、监控明细、导出与调试都基于事实层重放，而不是手工拼故事。</tspan></text><rect x='256' y='230' width='688' height='56' rx='22' ry='22' fill='#FDF0EA' stroke='#E7B4A0' stroke-width='2'/><rect x='282' y='244' width='92' height='28' rx='14' ry='14' fill='#C96D4C'/><text x='328.0' y='262.0' class='tag' text-anchor='middle' fill='#FFFDF9'>画像层</text><text x='400' y='266' class='card-body' text-anchor='start'><tspan x='400' dy='0'>管理员面板、tool usage、throughput 与 benchmark 要共享同一指</tspan><tspan x='400' dy='23'>标口径。</tspan></text><path class='flow' d='M600,428 L600,398'/><path class='flow' d='M600,314 L600,286'/><rect x='60' y='634' width='1080' height='56' rx='22' ry='22' fill='#FFFDF9' stroke='#D7C5AF' stroke-width='2' filter='url(#shadow)'/><rect x='78' y='646' width='96' height='30' rx='15' ry='15' fill='#21313B'/><text x='126.0' y='665.0' class='tag' text-anchor='middle' fill='#FFFDF9'>核心结论</text><text x='194' y='670' class='ribbon' text-anchor='start'><tspan x='194' dy='0'>可观测性的难点不在监控页数量，而在全链路口径统一。事实准了，回放和画像才不会各说各话。</tspan></text></svg>

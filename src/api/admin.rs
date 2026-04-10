@@ -4740,18 +4740,16 @@ async fn admin_user_accounts_list(
                 .as_ref()
                 .and_then(|unit_id| unit_map.get(unit_id));
             let profile = UserStore::to_profile_with_unit(&user, unit);
+            let token_status = UserStore::effective_token_balance_status(
+                &user,
+                unit.map(|item| item.level),
+                Some(today.as_str()),
+            );
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
             let (presence_online, presence_last_seen) = presence_map
                 .get(profile.id.as_str())
                 .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
                 .unwrap_or((false, None));
-            let quota_total = user.daily_quota.max(0);
-            let quota_used = if user.daily_quota_date.as_deref() == Some(today.as_str()) {
-                user.daily_quota_used.max(0)
-            } else {
-                0
-            };
-            let quota_remaining = (quota_total - quota_used).max(0);
             let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
             if let Value::Object(ref mut map) = value {
                 map.insert("active_sessions".to_string(), json!(active_count));
@@ -4760,10 +4758,37 @@ async fn admin_user_accounts_list(
                     json!(presence_online || active_count > 0),
                 );
                 map.insert("last_seen_at".to_string(), json!(presence_last_seen));
-                map.insert("daily_quota".to_string(), json!(quota_total));
-                map.insert("daily_quota_used".to_string(), json!(quota_used));
-                map.insert("daily_quota_remaining".to_string(), json!(quota_remaining));
-                map.insert("daily_quota_date".to_string(), json!(today));
+                map.insert("token_balance".to_string(), json!(token_status.balance));
+                map.insert(
+                    "token_granted_total".to_string(),
+                    json!(token_status.granted_total),
+                );
+                map.insert(
+                    "token_used_total".to_string(),
+                    json!(token_status.used_total),
+                );
+                map.insert(
+                    "daily_token_grant".to_string(),
+                    json!(token_status.daily_grant),
+                );
+                map.insert(
+                    "last_token_grant_date".to_string(),
+                    json!(token_status.last_grant_date),
+                );
+                // Legacy aliases for existing admin clients during migration.
+                map.insert("daily_quota".to_string(), json!(token_status.granted_total));
+                map.insert(
+                    "daily_quota_used".to_string(),
+                    json!(token_status.used_total),
+                );
+                map.insert(
+                    "daily_quota_remaining".to_string(),
+                    json!(token_status.balance),
+                );
+                map.insert(
+                    "daily_quota_date".to_string(),
+                    json!(token_status.last_grant_date),
+                );
             }
             value
         })
@@ -4890,7 +4915,7 @@ async fn admin_user_accounts_seed(
     let mut next_seed_serial = max_seed_serial.saturating_add(1).max(1);
     let mut records = Vec::with_capacity(capacity);
     for unit in &scoped_units {
-        let daily_quota = UserStore::default_daily_quota_by_level(Some(unit.level));
+        let token_grant = UserStore::default_daily_token_grant_by_level(Some(unit.level));
         for _ in 0..per_unit {
             let username = loop {
                 let candidate = format!("{DEFAULT_TEST_USER_PREFIX}_{next_seed_serial}");
@@ -4914,9 +4939,10 @@ async fn admin_user_accounts_seed(
                 status: "active".to_string(),
                 access_level: access_level.clone(),
                 unit_id: Some(unit.unit_id.clone()),
-                daily_quota,
-                daily_quota_used: 0,
-                daily_quota_date: None,
+                token_balance: token_grant,
+                token_granted_total: token_grant,
+                token_used_total: 0,
+                last_token_grant_date: Some(UserStore::today_string()),
                 experience_total: 0,
                 is_demo: true,
                 created_at: now,
@@ -5088,11 +5114,6 @@ async fn admin_user_accounts_update(
     let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     ensure_user_scope(&actor, &record)?;
     let unit_map = build_unit_map(&units);
-    let previous_level = record
-        .unit_id
-        .as_ref()
-        .and_then(|unit_id| unit_map.get(unit_id))
-        .map(|unit| unit.level);
     if let Some(email) = payload.email {
         record.email = normalize_user_email(Some(email));
     }
@@ -5119,23 +5140,14 @@ async fn admin_user_accounts_update(
             }
         }
         if next_unit_id != record.unit_id {
-            let previous_default = UserStore::default_daily_quota_by_level(previous_level);
             record.unit_id = next_unit_id;
-            let next_level = record
-                .unit_id
-                .as_ref()
-                .and_then(|unit_id| unit_map.get(unit_id))
-                .map(|unit| unit.level);
-            if payload.daily_quota.is_none() && record.daily_quota == previous_default {
-                record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
-            }
         }
     }
     if let Some(roles) = payload.roles {
         record.roles = normalize_user_roles(roles);
     }
-    if let Some(daily_quota) = payload.daily_quota {
-        record.daily_quota = daily_quota.max(0);
+    if let Some(token_balance) = payload.token_balance {
+        record.token_balance = token_balance.max(0);
     }
     record.updated_at = now_ts();
     state
@@ -7121,7 +7133,7 @@ struct UserAccountUpdateRequest {
     #[serde(default)]
     roles: Option<Vec<String>>,
     #[serde(default)]
-    daily_quota: Option<i64>,
+    token_balance: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

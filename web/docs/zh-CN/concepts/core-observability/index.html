@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>可观测性 | wunder 使用说明书</title>
+  <meta name="description" content="可观测性核心解释 Wunder 如何把“发生了什么、为什么、如何复盘”拆成事实层、回放层和画像层三套明确语义。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-observability","language":"zh-CN","title":"可观测性","summary":"可观测性核心解释 Wunder 如何把“发生了什么、为什么、如何复盘”拆成事实层、回放层和画像层三套明确语义。","updated_at":"2026-04-10","read_when":["你在做排障、回放、评测或管理员画像","你想建立统一指标和事件口径"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-observability/","headings":[{"id":"section-1","level":1,"text":"可观测性"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：先看事实，再看解释，再看画像"},{"id":"section-8","level":3,"text":"重点二：可观测性要服务两类人"},{"id":"section-9","level":3,"text":"重点三：benchmark、throughput、monitor 不是一回事"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-stability","next_slug":"zh-CN/tools/index","markdown":"# 可观测性\n\n如果系统只能运行、不能解释，它就很难真正可维护。Wunder 把可观测性单列为核心，是因为排障、回放、画像和评测本身就是正式系统能力，不是附属工具。\n\n![可观测性图：事实层、回放层、画像层三层分工](/docs/assets/manual/core-observability.svg)\n\n## 先给结论\n\n- 可观测性不是“多打一堆日志”，而是把系统解释能力做成有分层的结构。\n- 事实、回放、画像必须分层，否则前端看到的图、管理员看到的统计、底层真实事件会互相污染。\n- 指标口径统一，比再多做一个监控页更重要。\n\n## 为什么它必须单列为核心\n\n如果没有可观测性这个核心，系统通常会陷入两种低效状态：\n\n- 出了问题只能靠猜，知道“不对”，不知道“哪一步开始不对”。\n- 数据很多但口径混乱，前端、管理员页、日志和压测报告都在说不同语言。\n\nWunder 单列可观测性，是为了让“解释系统行为”成为一等能力，而不是临时应急手段。\n\n## 这个核心真正保护什么\n\n- 保护事实清晰度：先知道真正发生了什么。\n- 保护复盘能力：不仅能看当前状态，还能按时间线重建过程。\n- 保护治理效率：管理员看到的是可行动的画像，而不是一堆原始噪声。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 必须区分事实层、回放层、画像层 | 防止监控、回放和仪表盘互相污染 |\n| 必须区分请求、结果、观察结果 | 避免把输入、输出和工具 observation 混成一个统计口径 |\n| 指标口径要统一 | 不同页面和渠道看到的同一指标必须可对齐 |\n| 画像不能代替事实 | 管理员页看到的是整理后的视角，不是底层原始真相 |\n\n## 设计重点\n\n### 重点一：先看事实，再看解释，再看画像\n\n一个成熟系统不应该直接从管理员图表反推底层真相，而应该能从事实层一路追到画像层。\n\n### 重点二：可观测性要服务两类人\n\n- 对开发和运维：回答“为什么出错、卡在哪、怎么复盘”。\n- 对管理员：回答“哪里是热点、哪里是风险、哪里该治理”。\n\n### 重点三：benchmark、throughput、monitor 不是一回事\n\n它们都属于可观测能力，但关注点不同：\n\n- `monitor` 看线程事实与运行细节。\n- `throughput` 看系统承压。\n- `benchmark` 看能力质量和回归。\n\n## 最容易搞错的点\n\n- “日志很多”不等于“可观测性好”。\n- 管理员面板看到的是画像，不一定是底层事实的原始形态。\n- 没有统一口径的指标越多，排障越容易失真。\n\n## 和其他核心的边界\n\n- 和 [实时性](/docs/zh-CN/concepts/core-realtime/) 的区别：实时性关注在线同步，可观测性关注解释和复盘。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：稳定性负责让系统少出事，可观测性负责出事后能看懂。\n- 和 [多用户管理](/docs/zh-CN/concepts/core-multi-user-management/) 的区别：多用户管理定义切分边界，可观测性在这些边界上形成画像。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n","source_path":"使用说明书/zh-CN/concepts/core-observability.md"}</script>
+</body>
+</html>

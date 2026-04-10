@@ -1,78 +1,108 @@
 ---
 title: 渠道工具
-summary: `渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。
+summary: `channel_tool` 的联系人查询、发信与同步/异步回执结构。
 read_when:
-  - 你要让模型主动发渠道消息
-  - 你在区分渠道工具和渠道 Webhook / 管理端渠道治理
+  - 你要列外部渠道联系人或发送渠道消息
 source_docs:
-  - docs/API文档.md
   - src/services/tools/channel_tool.rs
-  - docs/设计方案.md
+updated_at: 2026-04-10
 ---
 
 # 渠道工具
 
-`渠道工具` 让模型直接操作渠道侧联系人和消息发送。
-
-## 当前动作
+`channel_tool` 主要有两个动作：
 
 - `list_contacts`
 - `send_message`
 
 ## `list_contacts`
 
-适合：
+### 最小参数
 
-- 查联系人
-- 查可用账号
-- 按关键字找目标会话或目标用户
+```json
+{
+  "action": "list_contacts",
+  "channel": "xmpp",
+  "account_id": "acc_xxx",
+  "keyword": "alice"
+}
+```
 
-常见参数：
+### 成功返回
 
-- `channel`
-- `account_id`
-- `keyword`
-- `offset`
-- `limit`
-- `refresh`
+```json
+{
+  "ok": true,
+  "action": "list_contacts",
+  "state": "completed",
+  "summary": "Listed 12 contacts.",
+  "data": {
+    "action": "list_contacts",
+    "items": [ ... ],
+    "total": 12,
+    "offset": 0,
+    "limit": 20,
+    "warnings": [],
+    "resolved_scope": {
+      "source": "session",
+      "channel": "xmpp",
+      "account_id": "acc_xxx"
+    }
+  }
+}
+```
 
 ## `send_message`
 
-适合：
+### 最小参数
 
-- 向某个渠道用户或群组发消息
-- 带附件发消息
-- 在需要时等待投递结果
+```json
+{
+  "action": "send_message",
+  "to": "alice@example.com",
+  "peer_kind": "user",
+  "content": "你好",
+  "wait": true
+}
+```
 
-常见参数：
+### `wait=true` 时
 
-- `channel`
-- `account_id`
-- `to`
-- `peer_kind`
-- `thread_id`
-- `text`
-- `content`
-- `attachments`
-- `wait`
-- `wait_timeout_s`
+更接近同步投递完成：
 
-## 它和渠道 Webhook 的区别
+```json
+{
+  "ok": true,
+  "action": "send_message",
+  "state": "completed",
+  "summary": "Sent channel message.",
+  "data": {
+    "delivery": { ... },
+    "resolved": { ... }
+  }
+}
+```
 
-可以这样记：
+### `wait=false` 时
 
-- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)：接收入站
-- `渠道工具`：模型侧主动发出站
+更接近已入发件箱：
 
-两者属于同一渠道系统，但方向不同。
+```json
+{
+  "ok": true,
+  "action": "send_message",
+  "state": "accepted",
+  "summary": "Queued channel message for delivery.",
+  "data": {
+    "outbox_id": "out_xxx",
+    "status": "pending",
+    "resolved": { ... }
+  },
+  "next_step_hint": "..."
+}
+```
 
-## 实施建议
+## 重点
 
-- `渠道工具` 当前重点是联系人发现和发送消息。
-- 它属于模型侧出站工具，不等于管理员侧渠道治理接口。
-- 真正排查渠道故障时，还要一起看渠道运行态和 outbox。
-
-## 延伸阅读
-
-- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)
-- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)
+- 正文统一用 `content`
+- `wait` 决定你拿到的是“已送达结果”还是“已排队结果”

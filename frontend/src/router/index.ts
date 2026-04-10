@@ -23,6 +23,7 @@ const AdminUsersView = () => import('@/views/AdminUsersView.vue');
 const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
 const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vue');
+const ChatCompactionE2EHarnessView = () => import('@/views/dev/ChatCompactionE2EHarnessView.vue');
 
 const USER_LOGIN_PATH = '/login';
 const EMBED_AUTH_QUERY_KEYS = new Set([
@@ -187,6 +188,11 @@ const routes: RouteRecordRaw[] = [
           path: '/__e2e/beeroom-harness',
           name: 'beeroom-e2e-harness',
           component: BeeroomE2EHarnessView
+        },
+        {
+          path: '/__e2e/chat-compaction-harness',
+          name: 'chat-compaction-e2e-harness',
+          component: ChatCompactionE2EHarnessView
         }
       ] satisfies RouteRecordRaw[])
     : []),

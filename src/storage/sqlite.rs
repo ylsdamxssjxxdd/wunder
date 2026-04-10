@@ -16,14 +16,14 @@ use crate::storage::{
     OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
+    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
+    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
     UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
     UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
     VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{Local, Utc};
 use parking_lot::Mutex;
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{
@@ -434,7 +434,60 @@ impl SqliteStorage {
         })
     }
 
-    fn ensure_user_account_quota_columns(&self, _conn: &Connection) -> Result<()> {
+    fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "user_accounts")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns.contains("token_balance") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("token_granted_total") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN token_granted_total INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("token_used_total") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN token_used_total INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("last_token_grant_date") {
+            conn.execute(
+                "ALTER TABLE user_accounts ADD COLUMN last_token_grant_date TEXT",
+                [],
+            )?;
+        }
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        let today_ref = today.as_str();
+        conn.execute(
+            "UPDATE user_accounts
+             SET token_balance = CASE
+                     WHEN COALESCE(token_balance, 0) > 0 THEN token_balance
+                     WHEN COALESCE(daily_quota_date, '') = ? THEN MAX(COALESCE(daily_quota, 0) - COALESCE(daily_quota_used, 0), 0)
+                     ELSE MAX(COALESCE(daily_quota, 0), 0)
+                 END,
+                 token_granted_total = CASE
+                     WHEN COALESCE(token_granted_total, 0) > 0 THEN token_granted_total
+                     ELSE MAX(COALESCE(daily_quota, 0), 0)
+                 END,
+                 token_used_total = CASE
+                     WHEN COALESCE(token_used_total, 0) > 0 THEN token_used_total
+                     WHEN COALESCE(daily_quota_date, '') = ? THEN MAX(COALESCE(daily_quota_used, 0), 0)
+                     ELSE 0
+                 END,
+                 last_token_grant_date = COALESCE(last_token_grant_date, daily_quota_date)
+             WHERE token_balance = 0
+                OR token_granted_total = 0
+                OR token_used_total = 0
+                OR last_token_grant_date IS NULL",
+            params![today_ref, today_ref],
+        )?;
         Ok(())
     }
 
@@ -1010,9 +1063,10 @@ impl StorageBackend for SqliteStorage {
               status TEXT NOT NULL,
               access_level TEXT NOT NULL,
               unit_id TEXT,
-              daily_quota INTEGER NOT NULL DEFAULT 10000,
-              daily_quota_used INTEGER NOT NULL DEFAULT 0,
-              daily_quota_date TEXT,
+              token_balance INTEGER NOT NULL DEFAULT 0,
+              token_granted_total INTEGER NOT NULL DEFAULT 0,
+              token_used_total INTEGER NOT NULL DEFAULT 0,
+              last_token_grant_date TEXT,
               experience_total INTEGER NOT NULL DEFAULT 0,
               is_demo INTEGER NOT NULL DEFAULT 0,
               created_at REAL NOT NULL,
@@ -4213,11 +4267,12 @@ impl StorageBackend for SqliteStorage {
         let roles = Self::string_list_to_json(&record.roles);
         conn.execute(
             "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-             daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
              roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
-             daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
+             token_balance = excluded.token_balance, token_granted_total = excluded.token_granted_total, token_used_total = excluded.token_used_total, \
+             last_token_grant_date = excluded.last_token_grant_date, \
              experience_total = excluded.experience_total, \
              is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
             params![
@@ -4229,9 +4284,10 @@ impl StorageBackend for SqliteStorage {
                 record.status,
                 record.access_level,
                 record.unit_id,
-                record.daily_quota,
-                record.daily_quota_used,
-                record.daily_quota_date,
+                record.token_balance,
+                record.token_granted_total,
+                record.token_used_total,
+                record.last_token_grant_date,
                 record.experience_total,
                 if record.is_demo { 1 } else { 0 },
                 record.created_at,
@@ -4251,7 +4307,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE user_id = ?",
                 params![cleaned],
                 |row| {
@@ -4264,14 +4320,15 @@ impl StorageBackend for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        daily_quota_date: row.get(10)?,
-                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
-                        is_demo: row.get::<_, i64>(12)? != 0,
-                        created_at: row.get(13)?,
-                        updated_at: row.get(14)?,
-                        last_login_at: row.get(15)?,
+                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_token_grant_date: row.get(11)?,
+                        experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(13)? != 0,
+                        created_at: row.get(14)?,
+                        updated_at: row.get(15)?,
+                        last_login_at: row.get(16)?,
                     })
                 },
             )
@@ -4288,7 +4345,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE username = ?",
                 params![cleaned],
                 |row| {
@@ -4301,14 +4358,15 @@ impl StorageBackend for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        daily_quota_date: row.get(10)?,
-                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
-                        is_demo: row.get::<_, i64>(12)? != 0,
-                        created_at: row.get(13)?,
-                        updated_at: row.get(14)?,
-                        last_login_at: row.get(15)?,
+                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_token_grant_date: row.get(11)?,
+                        experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(13)? != 0,
+                        created_at: row.get(14)?,
+                        updated_at: row.get(15)?,
+                        last_login_at: row.get(16)?,
                     })
                 },
             )
@@ -4325,7 +4383,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+                "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
                  experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts WHERE email = ?",
                 params![cleaned],
                 |row| {
@@ -4338,14 +4396,15 @@ impl StorageBackend for SqliteStorage {
                         status: row.get(5)?,
                         access_level: row.get(6)?,
                         unit_id: row.get(7)?,
-                        daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                        daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                        daily_quota_date: row.get(10)?,
-                        experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
-                        is_demo: row.get::<_, i64>(12)? != 0,
-                        created_at: row.get(13)?,
-                        updated_at: row.get(14)?,
-                        last_login_at: row.get(15)?,
+                        token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                        token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                        token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                        last_token_grant_date: row.get(11)?,
+                        experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
+                        is_demo: row.get::<_, i64>(13)? != 0,
+                        created_at: row.get(14)?,
+                        updated_at: row.get(15)?,
+                        last_login_at: row.get(16)?,
                     })
                 },
             )
@@ -4393,7 +4452,7 @@ impl StorageBackend for SqliteStorage {
             })?;
 
         let mut sql = String::from(
-            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, daily_quota, daily_quota_used, daily_quota_date, \
+            "SELECT user_id, username, email, password_hash, roles, status, access_level, unit_id, token_balance, token_granted_total, token_used_total, last_token_grant_date, \
              experience_total, is_demo, created_at, updated_at, last_login_at FROM user_accounts",
         );
         if !conditions.is_empty() {
@@ -4418,27 +4477,46 @@ impl StorageBackend for SqliteStorage {
                     status: row.get(5)?,
                     access_level: row.get(6)?,
                     unit_id: row.get(7)?,
-                    daily_quota: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
-                    daily_quota_used: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
-                    daily_quota_date: row.get(10)?,
-                    experience_total: row.get::<_, Option<i64>>(11)?.unwrap_or(0),
-                    is_demo: row.get::<_, i64>(12)? != 0,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
-                    last_login_at: row.get(15)?,
+                    token_balance: row.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                    token_granted_total: row.get::<_, Option<i64>>(9)?.unwrap_or(0),
+                    token_used_total: row.get::<_, Option<i64>>(10)?.unwrap_or(0),
+                    last_token_grant_date: row.get(11)?,
+                    experience_total: row.get::<_, Option<i64>>(12)?.unwrap_or(0),
+                    is_demo: row.get::<_, i64>(13)? != 0,
+                    created_at: row.get(14)?,
+                    updated_at: row.get(15)?,
+                    last_login_at: row.get(16)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAccountRecord>, _>>()?;
         Ok((rows, total))
     }
 
-    fn add_user_experience(&self, user_id: &str, delta: i64, updated_at: f64) -> Result<i64> {
+    fn add_user_experience(
+        &self,
+        user_id: &str,
+        delta: i64,
+        updated_at: f64,
+    ) -> Result<UserExperienceUpdateResult> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
-            return Ok(0);
+            return Ok(UserExperienceUpdateResult {
+                previous_total: 0,
+                current_total: 0,
+            });
         }
         let conn = self.open()?;
+        let previous_total = conn
+            .query_row(
+                "SELECT experience_total FROM user_accounts WHERE user_id = ?",
+                params![cleaned],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .optional()?
+            .flatten()
+            .unwrap_or(0)
+            .max(0);
         let safe_delta = delta.max(0);
         if safe_delta > 0 {
             conn.execute(
@@ -4457,7 +4535,10 @@ impl StorageBackend for SqliteStorage {
             .optional()?
             .flatten()
             .unwrap_or(0);
-        Ok(total.max(0))
+        Ok(UserExperienceUpdateResult {
+            previous_total,
+            current_total: total.max(0),
+        })
     }
 
     fn delete_user_account(&self, user_id: &str) -> Result<i64> {
@@ -4568,11 +4649,12 @@ impl StorageBackend for SqliteStorage {
             let roles = Self::string_list_to_json(&record.roles);
             tx.execute(
                 "INSERT INTO user_accounts (user_id, username, email, password_hash, roles, status, access_level, unit_id, \
-                 daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 token_balance, token_granted_total, token_used_total, last_token_grant_date, experience_total, is_demo, created_at, updated_at, last_login_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
                  ON CONFLICT(user_id) DO UPDATE SET username = excluded.username, email = excluded.email, password_hash = excluded.password_hash, \
                  roles = excluded.roles, status = excluded.status, access_level = excluded.access_level, unit_id = excluded.unit_id, \
-                 daily_quota = excluded.daily_quota, daily_quota_used = excluded.daily_quota_used, daily_quota_date = excluded.daily_quota_date, \
+                 token_balance = excluded.token_balance, token_granted_total = excluded.token_granted_total, token_used_total = excluded.token_used_total, \
+                 last_token_grant_date = excluded.last_token_grant_date, \
                  experience_total = excluded.experience_total, \
                  is_demo = excluded.is_demo, created_at = excluded.created_at, updated_at = excluded.updated_at, last_login_at = excluded.last_login_at",
                 params![
@@ -4584,9 +4666,10 @@ impl StorageBackend for SqliteStorage {
                     record.status,
                     record.access_level,
                     record.unit_id,
-                    record.daily_quota,
-                    record.daily_quota_used,
-                    record.daily_quota_date,
+                    record.token_balance,
+                    record.token_granted_total,
+                    record.token_used_total,
+                    record.last_token_grant_date,
                     record.experience_total,
                     if record.is_demo { 1 } else { 0 },
                     record.created_at,
@@ -9663,7 +9746,12 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
-    fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>> {
+    fn prepare_user_token_balance(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
         self.ensure_initialized()?;
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
@@ -9677,47 +9765,413 @@ impl StorageBackend for SqliteStorage {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row = tx
             .query_row(
-                "SELECT daily_quota, daily_quota_used, daily_quota_date FROM user_accounts WHERE user_id = ?",
+                "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date FROM user_accounts WHERE user_id = ?",
                 params![cleaned],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
                         row.get::<_, i64>(1)?,
-                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((daily_quota, daily_used, daily_date)) = row else {
+        let Some((raw_balance, raw_granted_total, raw_used_total, raw_last_grant_date)) = row
+        else {
             tx.commit()?;
             return Ok(None);
         };
-        let safe_quota = daily_quota.max(0);
-        let mut used = daily_used.max(0);
-        let date_match = daily_date.as_deref() == Some(today);
-        if !date_match {
-            used = 0;
-        }
-        let mut allowed = false;
-        if safe_quota > 0 && used < safe_quota {
-            allowed = true;
-            used += 1;
-        }
-        let should_update = allowed || !date_match;
-        if should_update {
+        let mut balance = raw_balance.max(0);
+        let mut granted_total = raw_granted_total.max(0);
+        let used_total = raw_used_total.max(0);
+        let mut last_grant_date = raw_last_grant_date;
+        let safe_daily_grant = daily_grant.max(0);
+        let should_grant = safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today);
+        if should_grant {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
             tx.execute(
-                "UPDATE user_accounts SET daily_quota_used = ?, daily_quota_date = ? WHERE user_id = ?",
-                params![used, today, cleaned],
+                "UPDATE user_accounts
+                 SET token_balance = ?, token_granted_total = ?, last_token_grant_date = ?, updated_at = ?
+                 WHERE user_id = ?",
+                params![balance, granted_total, last_grant_date, Self::now_ts(), cleaned],
             )?;
         }
         tx.commit()?;
-        let remaining = (safe_quota - used).max(0);
-        Ok(Some(UserQuotaStatus {
-            daily_quota: safe_quota,
-            used,
-            remaining,
-            date: today.to_string(),
-            allowed,
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens: 0,
         }))
+    }
+
+    fn consume_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let today = today.trim();
+        if today.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let row = tx
+            .query_row(
+                "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date FROM user_accounts WHERE user_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((raw_balance, raw_granted_total, raw_used_total, raw_last_grant_date)) = row
+        else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let safe_daily_grant = daily_grant.max(0);
+        let mut balance = raw_balance.max(0);
+        let mut granted_total = raw_granted_total.max(0);
+        let mut used_total = raw_used_total.max(0);
+        let mut last_grant_date = raw_last_grant_date;
+        if safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today) {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
+        }
+        let safe_amount = amount.max(0);
+        let charged = balance.min(safe_amount);
+        let overspent_tokens = safe_amount.saturating_sub(charged);
+        balance = balance.saturating_sub(charged);
+        used_total = used_total.saturating_add(safe_amount);
+        tx.execute(
+            "UPDATE user_accounts
+             SET token_balance = ?, token_granted_total = ?, token_used_total = ?, last_token_grant_date = ?, updated_at = ?
+             WHERE user_id = ?",
+            params![
+                balance,
+                granted_total,
+                used_total,
+                last_grant_date,
+                Self::now_ts(),
+                cleaned
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens,
+        }))
+    }
+
+    fn grant_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+        updated_at: f64,
+    ) -> Result<Option<UserTokenBalanceStatus>> {
+        self.ensure_initialized()?;
+        let cleaned = user_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let today = today.trim();
+        if today.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let row = tx
+            .query_row(
+                "SELECT token_balance, token_granted_total, token_used_total, last_token_grant_date FROM user_accounts WHERE user_id = ?",
+                params![cleaned],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((raw_balance, raw_granted_total, raw_used_total, raw_last_grant_date)) = row
+        else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let safe_daily_grant = daily_grant.max(0);
+        let mut balance = raw_balance.max(0);
+        let mut granted_total = raw_granted_total.max(0);
+        let used_total = raw_used_total.max(0);
+        let mut last_grant_date = raw_last_grant_date;
+        if safe_daily_grant > 0 && last_grant_date.as_deref() != Some(today) {
+            balance = balance.saturating_add(safe_daily_grant);
+            granted_total = granted_total.saturating_add(safe_daily_grant);
+            last_grant_date = Some(today.to_string());
+        }
+        let safe_amount = amount.max(0);
+        if safe_amount > 0 {
+            balance = balance.saturating_add(safe_amount);
+            granted_total = granted_total.saturating_add(safe_amount);
+            tx.execute(
+                "UPDATE user_accounts
+                 SET token_balance = ?, token_granted_total = ?, last_token_grant_date = ?, updated_at = ?
+                 WHERE user_id = ?",
+                params![balance, granted_total, last_grant_date, updated_at, cleaned],
+            )?;
+        } else if safe_daily_grant > 0 && last_grant_date.as_deref() == Some(today) {
+            tx.execute(
+                "UPDATE user_accounts
+                 SET token_balance = ?, token_granted_total = ?, last_token_grant_date = ?, updated_at = ?
+                 WHERE user_id = ?",
+                params![balance, granted_total, last_grant_date, updated_at, cleaned],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Some(UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total,
+            daily_grant: safe_daily_grant,
+            last_grant_date,
+            allowed: balance > 0,
+            overspent_tokens: 0,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SqliteStorage;
+    use crate::storage::{StorageBackend, UserAccountRecord};
+    use chrono::Local;
+    use rusqlite::{params, Connection};
+    use tempfile::tempdir;
+
+    fn sample_user(
+        user_id: &str,
+        token_balance: i64,
+        token_granted_total: i64,
+        token_used_total: i64,
+        last_token_grant_date: Option<&str>,
+    ) -> UserAccountRecord {
+        UserAccountRecord {
+            user_id: user_id.to_string(),
+            username: user_id.to_string(),
+            email: None,
+            password_hash: "hash".to_string(),
+            roles: vec!["user".to_string()],
+            status: "active".to_string(),
+            access_level: "A".to_string(),
+            unit_id: None,
+            token_balance,
+            token_granted_total,
+            token_used_total,
+            last_token_grant_date: last_token_grant_date.map(str::to_string),
+            experience_total: 0,
+            is_demo: false,
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_login_at: None,
+        }
+    }
+
+    #[test]
+    fn legacy_daily_quota_rows_migrate_to_token_account_fields() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("legacy-user-accounts.db");
+        let conn = Connection::open(&db_path).expect("open sqlite");
+        conn.execute_batch(
+            "CREATE TABLE user_accounts (
+                user_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT,
+                password_hash TEXT NOT NULL,
+                roles TEXT NOT NULL,
+                status TEXT NOT NULL,
+                access_level TEXT NOT NULL,
+                unit_id TEXT,
+                daily_quota INTEGER NOT NULL DEFAULT 0,
+                daily_quota_used INTEGER NOT NULL DEFAULT 0,
+                daily_quota_date TEXT,
+                experience_total INTEGER NOT NULL DEFAULT 0,
+                is_demo INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                last_login_at REAL
+            );",
+        )
+        .expect("create legacy user_accounts");
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        conn.execute(
+            "INSERT INTO user_accounts (
+                user_id, username, email, password_hash, roles, status, access_level, unit_id,
+                daily_quota, daily_quota_used, daily_quota_date, experience_total, is_demo,
+                created_at, updated_at, last_login_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                "alice",
+                "alice",
+                Option::<String>::None,
+                "hash",
+                "[\"user\"]",
+                "active",
+                "A",
+                Option::<String>::None,
+                10_000_i64,
+                2_500_i64,
+                today,
+                0_i64,
+                0_i64,
+                1.0_f64,
+                1.0_f64,
+                Option::<f64>::None,
+            ],
+        )
+        .expect("insert legacy row");
+        drop(conn);
+
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.token_balance, 7_500);
+        assert_eq!(account.token_granted_total, 10_000);
+        assert_eq!(account.token_used_total, 2_500);
+        assert_eq!(
+            account.last_token_grant_date.as_deref(),
+            Some(today.as_str())
+        );
+    }
+
+    #[test]
+    fn prepare_user_token_balance_grants_once_per_day() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("prepare-user-tokens.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("alice", 5, 15, 2, Some("2026-04-09")))
+            .expect("insert user");
+
+        let first = storage
+            .prepare_user_token_balance("alice", "2026-04-10", 100)
+            .expect("prepare first")
+            .expect("status");
+        assert_eq!(first.balance, 105);
+        assert_eq!(first.granted_total, 115);
+        assert_eq!(first.used_total, 2);
+        assert_eq!(first.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(first.allowed);
+
+        let second = storage
+            .prepare_user_token_balance("alice", "2026-04-10", 100)
+            .expect("prepare second")
+            .expect("status");
+        assert_eq!(second.balance, 105);
+        assert_eq!(second.granted_total, 115);
+        assert_eq!(second.used_total, 2);
+        assert_eq!(second.last_grant_date.as_deref(), Some("2026-04-10"));
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.token_balance, 105);
+        assert_eq!(account.token_granted_total, 115);
+        assert_eq!(account.token_used_total, 2);
+    }
+
+    #[test]
+    fn consume_user_tokens_deducts_usage_and_reports_overspend() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("consume-user-tokens.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("alice", 50, 50, 10, Some("2026-04-09")))
+            .expect("insert user");
+
+        let status = storage
+            .consume_user_tokens("alice", "2026-04-10", 100, 180)
+            .expect("consume tokens")
+            .expect("status");
+        assert_eq!(status.balance, 0);
+        assert_eq!(status.granted_total, 150);
+        assert_eq!(status.used_total, 190);
+        assert_eq!(status.daily_grant, 100);
+        assert_eq!(status.overspent_tokens, 30);
+        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(!status.allowed);
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.token_balance, 0);
+        assert_eq!(account.token_granted_total, 150);
+        assert_eq!(account.token_used_total, 190);
+        assert_eq!(account.last_token_grant_date.as_deref(), Some("2026-04-10"));
+    }
+
+    #[test]
+    fn grant_user_tokens_updates_balance_and_granted_total() {
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("grant-user-tokens.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("initialize storage");
+        storage
+            .upsert_user_account(&sample_user("alice", 7, 20, 3, Some("2026-04-09")))
+            .expect("insert user");
+
+        let status = storage
+            .grant_user_tokens("alice", "2026-04-10", 100, 30, 123.0)
+            .expect("grant tokens")
+            .expect("status");
+        assert_eq!(status.balance, 137);
+        assert_eq!(status.granted_total, 150);
+        assert_eq!(status.used_total, 3);
+        assert_eq!(status.daily_grant, 100);
+        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(status.allowed);
+
+        let account = storage
+            .get_user_account("alice")
+            .expect("load user")
+            .expect("user exists");
+        assert_eq!(account.token_balance, 137);
+        assert_eq!(account.token_granted_total, 150);
+        assert_eq!(account.token_used_total, 3);
+        assert_eq!(account.last_token_grant_date.as_deref(), Some("2026-04-10"));
     }
 }

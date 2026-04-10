@@ -1,133 +1,45 @@
 ---
 title: 读图工具
-summary: 读图工具让模型能分析本地图片，把图片以多模态消息形式注入到后续模型调用里，与读取文件分工明确。
+summary: `read_image` 的用途与返回结构。
 read_when:
-  - 你要让模型看本地图片
-  - 你要区分读取文件和读图工具的边界
+  - 你要把本地图片送入当前模型上下文
 source_docs:
   - src/services/tools/read_image_tool.rs
-  - src/services/tools/catalog.rs
+updated_at: 2026-04-10
 ---
 
 # 读图工具
 
-多模态图片分析工具，让模型能看懂本地图片。
+`read_image` 做的事很简单：  
+把本地图片准备好，并提示系统在后续上下文里附上一条图片消息。
 
----
-
-## 功能说明
-
-`读图工具` 校验本地图片路径后，把图片以多模态消息形式注入到后续模型调用里。
-
-**别名**：
-- `read_image`
-- `view_image`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `path` | string | ✅ | 图片文件路径 |
-| `prompt` | string | ❌ | 附带给多模态模型的说明文字 |
-
----
-
-## 使用示例
-
-### 简单读图
+## 最小参数
 
 ```json
 {
-  "path": "screenshot.png"
+  "path": "screenshots/demo.png"
 }
 ```
 
-### 带提示词
+## 成功返回
 
 ```json
 {
-  "path": "design.png",
-  "prompt": "分析这个界面设计，指出可以改进的地方"
+  "ok": true,
+  "action": "read_image",
+  "state": "completed",
+  "summary": "Prepared image screenshots/demo.png for model inspection.",
+  "data": {
+    "path": "screenshots/demo.png",
+    "resolved_path": "C:/.../screenshots/demo.png",
+    "mime_type": "image/png",
+    "size_bytes": 182233,
+    "prompt": "Inspect the attached image carefully..."
+  }
 }
 ```
 
-### 分析错误截图
+## 重点
 
-```json
-{
-  "path": "error.png",
-  "prompt": "解释这个错误信息是什么意思"
-}
-```
-
----
-
-## 处理流程
-
-1. 解析并校验路径
-2. 校验文件存在且是文件
-3. 校验大小上限
-4. 识别图片 MIME 类型
-5. 生成后续消息里的 `image_url`
-
----
-
-## 支持的图片格式
-
-- PNG
-- JPEG
-- GIF
-- WebP
-- BMP
-- TIFF
-- AVIF
-
----
-
-## 与读取文件的对比
-
-| 特性 | 读图工具 | [读取文件](/docs/zh-CN/tools/workspace-files/) |
-|------|----------|--------------------------------|
-| 目标 | 图片文件 | 纯文本文件 |
-| 输入 | 图片路径 | 文本文件路径 |
-| 输出 | 多模态消息 | 文本内容 |
-| 推荐使用 | 分析图片 | 读取代码、文档 |
-
----
-
-## 适用场景
-
-✅ **适合使用读图工具**：
-- 让模型解释截图
-- 让模型分析设计图或错误弹窗
-- 让模型看本地生成的图片产物
-
-❌ **不适合使用读图工具**：
-- 读取文本文件 → 用 `读取文件`
-- 读取二进制文件（非图片）→ 不支持
-
----
-
-## 注意事项
-
-1. **路径限制**：
-   - path 指向工作区或允许读取根目录里的图片文件
-   - 不能读取任意路径的图片
-
-2. **大小限制**：
-   - 当前实现会限制图片大小
-   - 避免把超大二进制直接塞进上下文
-
-3. **核心功能**：
-   - 不是返回像素内容
-   - 而是构造后续多模态消息
-
----
-
-## 延伸阅读
-
-- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
-- [浏览器](/docs/zh-CN/tools/browser/)
-- [桌面控制](/docs/zh-CN/tools/desktop-control/)
+- 真正的图片内容通常会在这次工具调用之后，以额外 user message 的形式进上下文
+- 所以这个工具结果本身不是图像分析结论，只是“图片已准备好”

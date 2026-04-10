@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记忆 | wunder 使用说明书</title>
+  <meta name="description" content="记忆核心解释 Wunder 为什么坚持“线程初始化注入一次、后续保持冻结”，并把长期资料利用与线程认知稳定性分开治理。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-memory","language":"zh-CN","title":"记忆","summary":"记忆核心解释 Wunder 为什么坚持“线程初始化注入一次、后续保持冻结”，并把长期资料利用与线程认知稳定性分开治理。","updated_at":"2026-04-10","read_when":["你在设计长期记忆、知识库或资料注入策略","你想理解 prompt 冻结和记忆注入的关系"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-memory/","headings":[{"id":"section-1","level":1,"text":"记忆"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：记忆的价值不是“记得多”，而是“记得稳”"},{"id":"section-8","level":3,"text":"重点二：初始化注入与运行期检索必须分层"},{"id":"section-9","level":3,"text":"重点三：工作区、知识库、记忆片段不是同一个东西"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-context-compression","next_slug":"zh-CN/concepts/core-channels","markdown":"# 记忆\n\nWunder 允许长期资料参与执行，但前提是不能破坏线程的一等现实状态。记忆设计的重点从来不是“尽可能多塞资料”，而是“怎么让资料进入线程又不让线程漂移”。\n\n![记忆图：线程初始化时构造 prompt 并注入一次记忆，运行期通过 recall 补充而不重写底座](/docs/assets/manual/core-memory.svg)\n\n## 先给结论\n\n- 记忆不是每轮动态改写 prompt，而是线程初始化时的长期资料铺底。\n- 记忆和 recall 必须分开看：前者是底座，后者是运行期补取。\n- 线程一旦开始运行，记忆系统就不能反过来不断重写它的认知边界。\n\n## 为什么它必须单列为核心\n\n如果没有“记忆”这个核心，长期资料通常会落入两种坏做法：\n\n- 每轮都往 prompt 里拼，越跑越漂。\n- 把 recall 结果当永久底座写回，导致线程认知边界失控。\n\nWunder 单列记忆核心，就是为了把“长期事实怎么进入线程”从普通上下文拼接里分离出来。\n\n## 这个核心真正保护什么\n\n- 保护线程稳定性：避免提示词和长期资料在运行中不断漂移。\n- 保护长期资料利用质量：让知识库、工作区资料和记忆片段各司其职。\n- 保护缓存与复盘能力：能明确回答“这条线程是基于什么底座启动的”。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 长期记忆只在线程初始化注入一次 | 防止运行中不断漂移 |\n| `system prompt` 首次确定后冻结 | 保持线程认知底座和缓存稳定 |\n| recall 不等于重写底座 | 运行期补取资料不应改写线程主设定 |\n| 记忆要结构化而不是一大段散文 | 便于命中、替换、失效和追踪 |\n\n## 设计重点\n\n### 重点一：记忆的价值不是“记得多”，而是“记得稳”\n\n对一个长期运行系统来说，稳定的认知边界比临时多塞一点资料更重要。\n\n### 重点二：初始化注入与运行期检索必须分层\n\n线程启动时应该带着清晰的长期背景进入；后续如果还需要更多资料，应通过 recall 或工具检索补取，而不是回头改底座。\n\n### 重点三：工作区、知识库、记忆片段不是同一个东西\n\n它们都能提供资料，但职责不同：\n\n- 工作区更接近当前任务现场。\n- 知识库更接近长期文档来源。\n- 记忆更接近对长期事实的结构化沉淀。\n\n## 最容易搞错的点\n\n- 长期记忆不是每轮都再次注入。\n- 记忆不是万能兜底，错误记忆和过度注入一样会污染执行。\n- 知识库、工作区文件、结构化记忆都能提供资料，但职责并不相同。\n\n## 和其他核心的边界\n\n- 和 [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) 的区别：压缩治理近场历史，记忆治理远场长期资料。\n- 和 [工具](/docs/zh-CN/concepts/core-tools/) 的区别：工具可以暴露 recall 能力，但记忆核心定义的是时机与边界。\n- 和 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) 的区别：循环定义线程怎么跑，记忆定义线程起跑时带什么。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n","source_path":"使用说明书/zh-CN/concepts/core-memory.md"}</script>
+</body>
+</html>

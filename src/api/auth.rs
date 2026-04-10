@@ -5,7 +5,7 @@ use crate::services::external as external_service;
 use crate::services::user_access::filter_user_agents_by_access;
 use crate::services::work_state_reset::reset_user_work_state;
 use crate::state::AppState;
-use crate::storage::{OrgUnitRecord, UserAccountRecord, UserAgentRecord};
+use crate::storage::{ChatSessionRecord, OrgUnitRecord, UserAccountRecord, UserAgentRecord};
 use crate::user_store::{build_default_agent_record_from_storage, UserStore};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -13,6 +13,7 @@ use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use chrono::{Duration, Local, TimeZone};
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -23,6 +24,7 @@ use std::sync::Arc;
 #[cfg(test)]
 const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = external_service::DEFAULT_EXTERNAL_LAUNCH_PASSWORD;
 const USER_PROFILE_RUNTIME_RECORD_LIMIT: i64 = 5000;
+const USER_PROFILE_SESSION_TREND_DAYS: i64 = 7;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -232,7 +234,7 @@ async fn register(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, localize_register_error(&err)))?;
-    let profile = build_user_profile(&state, &session.user)?;
+    let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
 
@@ -252,7 +254,7 @@ async fn login(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
-    let profile = build_user_profile(&state, &session.user)?;
+    let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
 
@@ -346,7 +348,7 @@ async fn login_demo(
         .user_store
         .demo_login(payload.demo_id.as_deref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let profile = build_user_profile(&state, &session.user)?;
+    let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
 
@@ -386,7 +388,7 @@ async fn external_login(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let profile = build_user_profile(&state, &session.user)?;
+    let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(json!({
         "data": {
             "access_token": session.token.token,
@@ -467,7 +469,7 @@ async fn external_exchange(
         .get_user_by_id(&record.user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "user not found".to_string()))?;
-    let profile = build_user_profile(&state, &user)?;
+    let profile = build_user_profile_value(&state, &user)?;
     Ok(Json(json!({
         "data": {
             "access_token": record.token,
@@ -581,7 +583,7 @@ async fn external_token_launch(
     let target_agent =
         resolve_external_token_login_target(&state, &session.user, payload.agent_name.as_deref())
             .await?;
-    let profile = build_user_profile(&state, &session.user)?;
+    let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(json!({
         "data": {
             "access_token": session.token.token,
@@ -775,11 +777,6 @@ async fn update_me(
                 .list_org_units()
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             let unit_map = build_unit_map(&units);
-            let previous_level = record
-                .unit_id
-                .as_ref()
-                .and_then(|value| unit_map.get(value))
-                .map(|unit| unit.level);
             if let Some(next_unit_id) = next_unit_id.as_deref() {
                 if !unit_map.contains_key(next_unit_id) {
                     return Err(error_response(
@@ -789,16 +786,7 @@ async fn update_me(
                 }
             }
             if next_unit_id != record.unit_id {
-                let previous_default = UserStore::default_daily_quota_by_level(previous_level);
                 record.unit_id = next_unit_id;
-                let next_level = record
-                    .unit_id
-                    .as_ref()
-                    .and_then(|value| unit_map.get(value))
-                    .map(|unit| unit.level);
-                if record.daily_quota == previous_default {
-                    record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
-                }
                 changed = true;
             }
         }
@@ -925,7 +913,7 @@ async fn list_org_units(
     Ok(Json(json!({ "data": { "items": items, "tree": tree } })))
 }
 
-fn auth_response(profile: crate::user_store::UserProfile, token: String) -> serde_json::Value {
+fn auth_response(profile: Value, token: String) -> serde_json::Value {
     json!({
         "data": {
             "access_token": token,
@@ -966,9 +954,33 @@ fn build_user_profile_value(
     let mut payload = serde_json::to_value(profile)
         .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     if let Value::Object(ref mut map) = payload {
+        let token_balance = map
+            .get("token_balance")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let token_granted_total = map
+            .get("token_granted_total")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let token_used_total = map
+            .get("token_used_total")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let last_token_grant_date = map
+            .get("last_token_grant_date")
+            .cloned()
+            .unwrap_or(Value::Null);
+        map.insert("daily_quota".to_string(), json!(token_granted_total));
+        map.insert("daily_quota_used".to_string(), json!(token_used_total));
+        map.insert("daily_quota_remaining".to_string(), json!(token_balance));
+        map.insert("daily_quota_date".to_string(), last_token_grant_date);
         map.insert(
             "usage_summary".to_string(),
             build_user_usage_summary(state, &user.user_id),
+        );
+        map.insert(
+            "session_summary".to_string(),
+            build_user_session_summary(state, &user.user_id),
         );
     }
     Ok(payload)
@@ -1009,6 +1021,100 @@ fn build_user_usage_summary(state: &Arc<AppState>, user_id: &str) -> Value {
         "consumed_tokens": consumed_tokens.max(0),
         "tool_calls": tool_calls,
     })
+}
+
+fn build_user_session_summary(state: &Arc<AppState>, user_id: &str) -> Value {
+    match state
+        .user_store
+        .list_chat_sessions_by_status(user_id, None, None, Some("active"), 0, 0)
+    {
+        Ok((sessions, total)) => summarize_user_session_records(&sessions, total),
+        Err(_) => summarize_user_session_records(&[], 0),
+    }
+}
+
+fn summarize_user_session_records(records: &[ChatSessionRecord], total: i64) -> Value {
+    let today = Local::now().date_naive();
+    let mut ordered_days = Vec::new();
+    let mut trend_counts = BTreeMap::new();
+    for days_ago in (0..USER_PROFILE_SESSION_TREND_DAYS).rev() {
+        let day = today - Duration::days(days_ago);
+        let key = day.format("%Y-%m-%d").to_string();
+        ordered_days.push(key.clone());
+        trend_counts.insert(key, 0_i64);
+    }
+
+    let mut last_active_at = 0.0_f64;
+    let mut sessions_last_7d = 0_i64;
+    for record in records {
+        let ts = session_activity_timestamp(record);
+        if ts > last_active_at {
+            last_active_at = ts;
+        }
+        let Some(day_key) = format_session_day_key(ts) else {
+            continue;
+        };
+        let Some(entry) = trend_counts.get_mut(&day_key) else {
+            continue;
+        };
+        *entry = entry.saturating_add(1);
+        sessions_last_7d = sessions_last_7d.saturating_add(1);
+    }
+
+    let trend_last_7d = ordered_days
+        .into_iter()
+        .map(|date| {
+            json!({
+                "date": date,
+                "count": trend_counts.get(&date).copied().unwrap_or(0),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "total_sessions": total.max(0),
+        "sessions_last_7d": sessions_last_7d.max(0),
+        "trend_last_7d": trend_last_7d,
+        "last_active_at": if last_active_at > 0.0 {
+            Value::String(format_profile_ts(last_active_at))
+        } else {
+            Value::Null
+        },
+    })
+}
+
+fn session_activity_timestamp(record: &ChatSessionRecord) -> f64 {
+    if record.last_message_at > 0.0 {
+        record.last_message_at
+    } else if record.updated_at > 0.0 {
+        record.updated_at
+    } else {
+        record.created_at.max(0.0)
+    }
+}
+
+fn format_session_day_key(ts: f64) -> Option<String> {
+    if ts <= 0.0 {
+        return None;
+    }
+    local_datetime_from_timestamp(ts).map(|dt| dt.format("%Y-%m-%d").to_string())
+}
+
+fn format_profile_ts(ts: f64) -> String {
+    local_datetime_from_timestamp(ts)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default()
+}
+
+fn local_datetime_from_timestamp(ts: f64) -> Option<chrono::DateTime<Local>> {
+    if !ts.is_finite() || ts <= 0.0 {
+        return None;
+    }
+    let seconds = ts.floor() as i64;
+    let nanos = ((ts - seconds as f64).max(0.0) * 1_000_000_000.0).round() as u32;
+    Local
+        .timestamp_opt(seconds, nanos.min(999_999_999))
+        .single()
 }
 
 fn parse_usage_total_tokens(data: &Value) -> i64 {
@@ -1656,14 +1762,15 @@ mod tests {
         localize_update_profile_error_message, normalize_avatar_color, normalize_avatar_icon,
         normalize_theme_mode, normalize_theme_palette, provision_external_launch_session,
         resolve_external_embed_target_agent_name,
-        resolve_external_token_login_target_from_candidates, validate_external_embed_jwt,
-        DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
+        resolve_external_token_login_target_from_candidates, summarize_user_session_records,
+        validate_external_embed_jwt, DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
     use crate::services::user_store::UserStore;
-    use crate::storage::{SqliteStorage, StorageBackend, UserAgentRecord};
+    use crate::storage::{ChatSessionRecord, SqliteStorage, StorageBackend, UserAgentRecord};
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     use hmac::{Hmac, Mac};
+    use serde_json::Value;
     use sha2::Sha256;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1710,6 +1817,29 @@ mod tests {
             created_at: updated_at,
             updated_at,
             preset_binding: None,
+        }
+    }
+
+    fn sample_session(
+        session_id: &str,
+        created_at: f64,
+        updated_at: f64,
+        last_message_at: f64,
+    ) -> ChatSessionRecord {
+        ChatSessionRecord {
+            session_id: session_id.to_string(),
+            user_id: "u1".to_string(),
+            title: session_id.to_string(),
+            status: "active".to_string(),
+            created_at,
+            updated_at,
+            last_message_at,
+            agent_id: None,
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
         }
     }
 
@@ -1767,6 +1897,73 @@ mod tests {
             .expect_err("jwt should fail when user mismatches");
 
         assert_eq!(error.to_string(), "jwt user mismatch");
+    }
+
+    #[test]
+    fn summarize_user_session_records_returns_full_counts_and_trend() {
+        let now = chrono::Local::now();
+        let today = now.date_naive();
+        let current_day = today.and_hms_opt(12, 0, 0).expect("midday");
+        let prior_day = (today - chrono::Duration::days(2))
+            .and_hms_opt(18, 30, 0)
+            .expect("prior day");
+        let old_day = (today - chrono::Duration::days(12))
+            .and_hms_opt(9, 0, 0)
+            .expect("old day");
+
+        let sessions = vec![
+            sample_session(
+                "s_today",
+                current_day
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .expect("today ts")
+                    .timestamp() as f64,
+                0.0,
+                0.0,
+            ),
+            sample_session(
+                "s_prior",
+                0.0,
+                prior_day
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .expect("prior ts")
+                    .timestamp() as f64,
+                0.0,
+            ),
+            sample_session(
+                "s_old",
+                0.0,
+                0.0,
+                old_day
+                    .and_local_timezone(chrono::Local)
+                    .single()
+                    .expect("old ts")
+                    .timestamp() as f64,
+            ),
+        ];
+
+        let summary = summarize_user_session_records(&sessions, 123);
+        assert_eq!(
+            summary.get("total_sessions").and_then(Value::as_i64),
+            Some(123)
+        );
+        assert_eq!(
+            summary.get("sessions_last_7d").and_then(Value::as_i64),
+            Some(2)
+        );
+        assert!(summary
+            .get("last_active_at")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty()));
+        assert_eq!(
+            summary
+                .get("trend_last_7d")
+                .and_then(Value::as_array)
+                .map(|items| items.len()),
+            Some(7)
+        );
     }
 
     #[test]

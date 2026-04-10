@@ -1,146 +1,94 @@
 ---
 title: 会话线程控制
-summary: 会话线程控制负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具。
+summary: `thread_control` 的动作、线程关系与返回结构。
 read_when:
-  - 你要管理线程树、主线程和派生会话
-  - 你要区分线程结构控制和多智能体协作
+  - 你要创建、切换、归档或设置主线程
 source_docs:
   - src/services/tools/thread_control_tool.rs
-  - src/services/tools/catalog.rs
+updated_at: 2026-04-10
 ---
 
 # 会话线程控制
 
-管理会话线程树的正式工具。
+`thread_control` 管的是当前用户与智能体的会话线程，而不是子智能体运行控制。
 
----
+## 主要动作
 
-## 功能说明
+- `list`
+- `info`
+- `create`
+- `switch`
+- `back`
+- `update_title`
+- `archive`
+- `restore`
+- `set_main`
 
-会话树不是「前端自己记一下当前对话是哪个」，而是正式工具能力。
+## 返回骨架
 
-**别名**：
-- `thread_control`
-- `session_control`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `action` | string | ✅ | 要执行的动作 |
-| 其他参数 | - | ❌ | 根据 action 不同而不同 |
-
----
-
-## 支持的动作
-
-| 动作 | 说明 | 附加参数 |
-|------|------|----------|
-| `list` | 列出所有线程 | - |
-| `info` | 获取线程信息 | `thread_id` |
-| `create` | 创建新线程 | `title`, `parent_id` |
-| `switch` | 切换到线程 | `thread_id` |
-| `back` | 返回父线程 | - |
-| `update_title` | 更新线程标题 | `thread_id`, `title` |
-| `archive` | 归档线程 | `thread_id` |
-| `restore` | 恢复线程 | `thread_id` |
-| `set_main` | 设为主线程 | `thread_id` |
-
----
-
-## 使用示例
-
-### 列出所有线程
+它成功时统一是：
 
 ```json
 {
-  "action": "list"
-}
-```
-
-### 创建子线程
-
-```json
-{
+  "ok": true,
   "action": "create",
-  "title": "重构任务分支",
-  "parent_id": "main-thread-123"
+  "state": "completed",
+  "summary": "Created a new thread.",
+  "data": { ... }
 }
 ```
 
-### 切换线程
+有些动作还会附带 `next_step_hint`。
+
+## `list`
+
+典型返回：
 
 ```json
 {
-  "action": "switch",
-  "thread_id": "thread-456"
+  "ok": true,
+  "action": "list",
+  "state": "completed",
+  "summary": "Listed 5 threads.",
+  "data": {
+    "scope": "branch",
+    "status": "active",
+    "items": [
+      {
+        "id": "sess_xxx",
+        "title": "工具文档更新",
+        "status": "active",
+        "created_at": "2026-04-10T10:00:00+08:00",
+        "updated_at": "2026-04-10T10:03:00+08:00",
+        "last_message_at": "2026-04-10T10:03:00+08:00",
+        "agent_id": "agent_docs",
+        "parent_session_id": null,
+        "spawn_label": null,
+        "is_main": true,
+        "runtime_status": "idle"
+      }
+    ]
+  }
 }
 ```
 
-### 设为主线程
+## `create`
 
-```json
-{
-  "action": "set_main",
-  "thread_id": "thread-456"
-}
-```
+重点不只是新建，还可以：
 
----
+- `switch`
+- `set_main`
 
-## 真正改变什么
+也就是新建后是否立刻切过去、是否设置为主线程。
 
-它不是简单的聊天接口包装，而是直接改变：
+## `set_main`
 
-- 线程结构
-- 会话归属
-- 主线程映射
+这个动作很重要。它会把某个会话线程绑定为当前智能体的一等现实主线程。
 
----
+## 和 `subagent_control` 的区别
 
-## 与其他协作工具的区别
+- `thread_control`：管会话线程本身
+- `subagent_control`：管临时派生的子智能体运行
 
-| 工具 | 说明 | 适用场景 |
-|------|------|----------|
-| 会话线程控制 | 线程树和主线程管理 | 把哪条线程设为当前主线 |
-| [子智能体控制](/docs/zh-CN/tools/subagent-control/) | 单个子会话运行 | 把任务扔给另一个智能体去跑 |
-| [智能体蜂群](/docs/zh-CN/tools/agent-swarm/) | 多智能体并发协作 | 并行派发多个智能体 |
-
----
-
-## 适用场景
-
-✅ **适合使用会话线程控制**：
-- 新建子线程进行分支探索
-- 在线程树里切换上下文
-- 返回父线程继续之前的工作
-- 归档或恢复历史线程
-- 把某条线程设为主线程
-
----
-
-## 注意事项
-
-1. **不只是切对话**：
-   - 线程控制是会话树工具
-   - 会影响系统对主线程的映射
-
-2. **set_main 的影响**：
-   - 会改变系统对主线程的映射
-   - 影响后续的会话归属
-
-3. **工具分工**：
-   - 子会话和蜂群协作是相关但独立的另外两类工具
-   - 注意区分使用场景
-
----
-
-## 延伸阅读
-
-- [子智能体控制](/docs/zh-CN/tools/subagent-control/)
-- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
-- [蜂群协作](/docs/zh-CN/concepts/swarm/)
-- [聊天会话](/docs/zh-CN/integration/chat-sessions/)
+如果你想管理主线程、分支线程、归档状态，用 `thread_control`。  
+如果你想等子智能体跑完、打断它、看它历史，用 `subagent_control`。

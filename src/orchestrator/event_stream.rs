@@ -150,6 +150,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "llm_output_delta"
             | "llm_output"
             | "context_usage"
+            | "token_balance"
             | "quota_usage"
             | "round_usage"
             | "team_start"

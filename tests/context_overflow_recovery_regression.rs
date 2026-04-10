@@ -929,16 +929,16 @@ async fn manual_compaction_keeps_first_and_recent_two_turns() {
 async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_baseline() {
     let context = build_test_context_with_compaction_and_mock_limit(
         "mindie_auto_loop_edge_turns",
-        12_000,
+        8_000,
         Some("keep"),
-        12_000,
+        8_000,
     )
     .await;
     let session_id = create_test_session(&context, "Auto loop compaction edge turns").await;
 
-    run_pressure_rounds(&context, &session_id, 4, 260).await;
+    run_pressure_rounds(&context, &session_id, 4, 100).await;
     trigger_manual_compaction_and_wait(&context, &session_id).await;
-    run_pressure_rounds(&context, &session_id, 2, 260).await;
+    run_pressure_rounds(&context, &session_id, 3, 100).await;
 
     let (status, payload) = send_json(
         &context.app,
@@ -946,7 +946,7 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
         Method::POST,
         &format!("/wunder/chat/sessions/{session_id}/messages"),
         Some(json!({
-            "content": build_pressure_question(7, 260),
+            "content": build_pressure_question(8, 100),
             "stream": false
         })),
     )
@@ -975,8 +975,8 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
         &[
             "[mindie-overflow-regression] round=1",
             "[mindie-overflow-regression] round=2",
-            "[mindie-overflow-regression] round=5",
             "[mindie-overflow-regression] round=6",
+            "[mindie-overflow-regression] round=7",
         ],
     );
 
@@ -984,7 +984,7 @@ async fn auto_loop_compaction_keeps_first_and_recent_two_turns_after_manual_base
     assert_request_uses_replacement_history(
         &request_messages,
         &replacement_history,
-        "[mindie-overflow-regression] round=7",
+        "[mindie-overflow-regression] round=8",
     );
     assert_compaction_history_is_semantically_clean(
         &request_messages[1..request_messages.len().saturating_sub(1)],

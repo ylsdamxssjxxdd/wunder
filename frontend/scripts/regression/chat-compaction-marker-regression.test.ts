@@ -169,3 +169,77 @@ test('manual compaction divider still shows running before a terminal snapshot e
 
   assert.equal(status, 'running');
 });
+
+test('auto loop compaction with chinese tool name is still recognized as compaction', () => {
+  const items = [
+    {
+      status: 'completed',
+      toolName: '\u4e0a\u4e0b\u6587\u538b\u7f29',
+      detail: JSON.stringify({
+        status: 'done',
+        trigger_mode: 'auto_loop',
+        user_round: 5
+      })
+    }
+  ];
+
+  const snapshot = resolveLatestCompactionSnapshot(items);
+
+  assert.equal(snapshot?.eventType, 'compaction');
+  assert.equal(snapshot?.status, 'completed');
+});
+
+test('completed auto loop compaction divider stays completed while session is busy with a new turn', () => {
+  const items = [
+    {
+      eventType: 'compaction',
+      status: 'completed',
+      toolName: 'context_compaction',
+      detail: JSON.stringify({
+        status: 'done',
+        trigger_mode: 'auto_loop',
+        user_round: 5,
+        projected_request_tokens: 18888,
+        projected_request_tokens_after: 6222
+      })
+    }
+  ];
+
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  const status = resolveCompactionDividerStatus({
+    snapshot,
+    runningFromWorkflowItems: isCompactionRunningFromWorkflowItems(items),
+    manualMarker: false,
+    isStreaming: false,
+    sessionBusy: true
+  });
+
+  assert.equal(status, 'completed');
+});
+
+test('overflow recovery compaction divider shows running before terminal snapshot exists', () => {
+  const items = [
+    {
+      eventType: 'compaction_progress',
+      status: 'loading',
+      toolName: 'context_compaction',
+      detail: JSON.stringify({
+        status: 'loading',
+        stage: 'compacting',
+        trigger_mode: 'overflow_recovery',
+        user_round: 6
+      })
+    }
+  ];
+
+  const snapshot = resolveLatestCompactionSnapshot(items);
+  const status = resolveCompactionDividerStatus({
+    snapshot,
+    runningFromWorkflowItems: isCompactionRunningFromWorkflowItems(items),
+    manualMarker: false,
+    isStreaming: false,
+    sessionBusy: true
+  });
+
+  assert.equal(status, 'running');
+});

@@ -2,6 +2,8 @@
   <div
     v-if="status"
     :class="['message-compaction-divider', `is-${status}`]"
+    data-testid="chat-compaction-divider"
+    :data-compaction-status="status"
     role="separator"
     :aria-live="status === 'running' ? 'polite' : 'off'"
     :title="tooltipText || undefined"

@@ -1,60 +1,53 @@
 ---
 title: 节点调用
-summary: `节点调用` 是 Wunder 的底层节点桥接工具，既能列出可用节点，也能把具体命令和参数发到指定节点执行。
+summary: 网关节点列表与命令调用。
 read_when:
-  - 你要理解节点桥接能力
-  - 你要区分节点调用和浏览器/桌面控制的边界
+  - 你要列出可用节点或向指定节点发送命令
 source_docs:
-  - src/services/tools/catalog.rs
   - src/services/tools.rs
+updated_at: 2026-04-10
 ---
 
 # 节点调用
 
-`节点调用` 是更底层的系统桥接工具。
-
-如果说浏览器和桌面控制是面向具体交互动作，那么节点调用更像“把命令发给指定节点”。
-
-## 核心动作
+`node_invoke` 主要两个动作：
 
 - `list`
 - `invoke`
 
-同时它也兼容一种简写方式：
+## `list`
 
-- 直接给 `node_id + command`
+```json
+{
+  "ok": true,
+  "action": "list",
+  "state": "completed",
+  "summary": "Listed 6 gateway nodes.",
+  "data": {
+    "state_version": 42,
+    "count": 6,
+    "nodes": [ ... ]
+  }
+}
+```
 
-## 常用参数
+## `invoke`
 
-- `action`
-- `node_id`
-- `command`
-- `args`
-- `timeout_s`
-- `metadata`
+```json
+{
+  "ok": true,
+  "action": "invoke",
+  "state": "completed",
+  "summary": "Invoked command ping on node node_a.",
+  "data": {
+    "node_id": "node_a",
+    "command": "ping",
+    "result": { ... }
+  }
+}
+```
 
-## 它适合什么
+## 重点
 
-- 列出系统当前可用节点
-- 把命令发送给某个指定节点
-- 做更底层的节点级桥接调用
-
-## 和浏览器、桌面控制的区别
-
-- [浏览器](/docs/zh-CN/tools/browser/) 面向网页交互。
-- [桌面控制](/docs/zh-CN/tools/desktop-control/) 面向桌面动作。
-- `节点调用` 面向底层节点命令。
-
-如果你已经有更明确的浏览器或桌面动作，不必先走节点调用。
-
-## 实施建议
-
-- `节点调用` 更底层，也更通用。
-- 最常见动作是 `list` 和 `invoke`。
-- 它更像系统桥接层，不是普通用户第一优先工具。
-
-## 延伸阅读
-
-- [浏览器](/docs/zh-CN/tools/browser/)
-- [桌面控制](/docs/zh-CN/tools/desktop-control/)
-- [管理端界面](/docs/zh-CN/surfaces/web-admin/)
+- 先 `list` 再 `invoke`
+- 真正的命令执行结果在 `data.result`

@@ -114,8 +114,8 @@
                 <div class="profile-stat-value">{{ quotaRemainingText }}</div>
               </div>
               <div class="profile-metric-item">
-                <div class="profile-stat-label">{{ t('profile.metrics.quotaToday') }}</div>
-                <div class="profile-stat-value">{{ quotaTotalText }}</div>
+                <div class="profile-stat-label">{{ t('profile.quota.dailyGrant') }}</div>
+                <div class="profile-stat-value">{{ dailyTokenGrantText }}</div>
               </div>
             </div>
           </div>
@@ -266,10 +266,13 @@ const conversationMessages = computed(() =>
 const assistantMessages = computed(() =>
   conversationMessages.value.filter((message) => message.role === 'assistant')
 );
-const sessionCount = computed(() => chatStore.sessions.length);
 const usageSummary = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
   return (user.usage_summary || user.usageSummary || null) as Record<string, unknown> | null;
+});
+const sessionSummary = computed(() => {
+  const user = (authStore.user || {}) as Record<string, unknown>;
+  return (user.session_summary || user.sessionSummary || null) as Record<string, unknown> | null;
 });
 const levelSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
@@ -345,6 +348,12 @@ const tokenUsageTotal = computed(() =>
     }, 0);
   })()
 );
+
+const sessionCount = computed(() => {
+  const total = Number(sessionSummary.value?.total_sessions ?? sessionSummary.value?.totalSessions);
+  if (Number.isFinite(total) && total >= 0) return total;
+  return chatStore.sessions.length;
+});
 
 const openProfileEditor = () => {
   editForm.username = authStore.user?.username || '';
@@ -471,19 +480,31 @@ const resolveTodayString = () => {
 
 const accountQuotaSnapshot = computed(() => {
   const user = authStore.user || {};
-  const daily = parseQuotaNumber(user.daily_quota ?? user.dailyQuota);
-  const rawUsed = parseQuotaNumber(user.daily_quota_used ?? user.dailyQuotaUsed);
-  const date = normalizeQuotaDate(user.daily_quota_date ?? user.dailyQuotaDate ?? '');
-  const today = resolveTodayString();
-  const used = date && date === today ? rawUsed : 0;
-  if (daily === null && used === null && !date) return null;
-  const remaining =
-    Number.isFinite(daily) && Number.isFinite(used) ? Math.max(daily - used, 0) : null;
+  const daily = parseQuotaNumber(
+    user.token_granted_total ?? user.tokenGrantedTotal ?? user.daily_quota ?? user.dailyQuota
+  );
+  const used = parseQuotaNumber(
+    user.token_used_total ?? user.tokenUsedTotal ?? user.daily_quota_used ?? user.dailyQuotaUsed
+  );
+  const remaining = parseQuotaNumber(
+    user.token_balance
+      ?? user.tokenBalance
+      ?? user.daily_quota_remaining
+      ?? user.dailyQuotaRemaining
+  );
+  const date = normalizeQuotaDate(
+    user.last_token_grant_date ?? user.lastTokenGrantDate ?? user.daily_quota_date ?? user.dailyQuotaDate ?? ''
+  );
+  const dailyGrant = parseQuotaNumber(
+    user.daily_token_grant ?? user.dailyTokenGrant ?? user.token_daily_grant ?? user.tokenDailyGrant
+  );
+  if (daily === null && used === null && remaining === null && !date && dailyGrant === null) return null;
   return {
     daily,
     used,
     remaining,
-    date: date || today
+    date: date || resolveTodayString(),
+    dailyGrant
   };
 });
 
@@ -700,7 +721,12 @@ const quotaTotalText = computed(() =>
   Number.isFinite(quotaTotal.value) ? formatNumber(quotaTotal.value) : '-'
 );
 
-const recentSessionCount = computed(() => {
+const dailyTokenGrantText = computed(() => {
+  const grant = latestQuotaSnapshot.value?.dailyGrant;
+  return Number.isFinite(grant) ? formatNumber(grant) : '-';
+});
+
+const fallbackRecentSessionCount = () => {
   const now = Date.now();
   const cutoff = now - 7 * 24 * 60 * 60 * 1000;
   return chatStore.sessions.filter((session) => {
@@ -710,9 +736,21 @@ const recentSessionCount = computed(() => {
     const time = parsed.getTime();
     return Number.isFinite(time) && time >= cutoff;
   }).length;
+};
+
+const recentSessionCount = computed(() => {
+  const total = Number(
+    sessionSummary.value?.sessions_last_7d ?? sessionSummary.value?.sessionsLast7d
+  );
+  if (Number.isFinite(total) && total >= 0) return total;
+  return fallbackRecentSessionCount();
 });
 
 const lastActiveTime = computed(() => {
+  const summaryValue = sessionSummary.value?.last_active_at ?? sessionSummary.value?.lastActiveAt;
+  if (summaryValue) {
+    return formatTime(summaryValue);
+  }
   const latest = chatStore.sessions[0];
   if (!latest) return '-';
   return formatTime(latest.updated_at || latest.created_at);

@@ -1,78 +1,85 @@
 ---
-title: 休眠等待
-summary: 同步等待指定时间，用于等待外部条件就绪。
+title: 睡眠与让出
+summary: `sleep` 与 `sessions_yield` 的语义区别。
 read_when:
-  - 你需要等待外部操作完成
-  - 你想控制执行节奏
+  - 你要等待一段时间，或暂时让出当前轮次控制权
 source_docs:
   - src/services/tools/sleep_tool.rs
-  - src/services/tools/catalog.rs
+  - src/services/tools/sessions_yield_tool.rs
+updated_at: 2026-04-10
 ---
 
-# 休眠等待
+# 睡眠与让出
 
-同步等待指定时间，用于等待外部条件就绪。
+这里其实有两个不同工具：
 
----
-
-## 工具说明
-
-`休眠等待` 用于：
-- 等待外部操作完成（如文件下载、编译）
-- 控制执行节奏
-- 避免过快重试
-
-**别名**：
 - `sleep`
-- `sleep_wait`
-- `sleep_pause`
+- `sessions_yield`
 
----
+它们不要混用。
 
-## 参数说明
+## `sleep`
 
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `seconds` | number | ✅ | 等待秒数，最小 0.001 秒 |
-| `reason` | string | ❌ | 等待原因说明 |
-
----
-
-## 使用示例
-
-### 简单等待
+### 最小参数
 
 ```json
 {
-  "seconds": 5,
-  "reason": "等待文件下载完成"
+  "seconds": 1.5
 }
 ```
 
-### 短时间等待
+### 成功返回
 
 ```json
 {
-  "seconds": 0.5,
-  "reason": "等待页面加载"
+  "ok": true,
+  "action": "sleep",
+  "state": "completed",
+  "summary": "Slept for 1.5 seconds.",
+  "data": {
+    "requested_seconds": 1.5,
+    "elapsed_ms": 1502,
+    "reason": null
+  }
 }
 ```
 
----
+它表示：**当前轮次里真的阻塞等待了一段时间。**
 
-## 与定时任务的区别
+## `sessions_yield`
 
-| 特性 | 休眠等待 | 定时任务 |
-|------|----------|----------|
-| 执行方式 | 同步阻塞 | 异步调度 |
-| 适用场景 | 等待外部条件 | 定时巡检、周期任务 |
-| 会话影响 | 占用当前会话 | 不阻塞当前会话 |
-| 持久化 | 不持久化 | 持久化到数据库 |
+### 最小参数
 
----
+```json
+{
+  "message": "已提交任务，等待外部结果"
+}
+```
 
-## 注意事项
+### 成功返回
 
-- `休眠等待` 是**同步阻塞**的，会占用当前会话
-- 长时间等待建议使用 `定时任务`
-- 最小等待时间是 0.001 秒（1 毫秒）
+```json
+{
+  "ok": true,
+  "action": "sessions_yield",
+  "state": "yielded",
+  "summary": "Yielded the current turn and is waiting.",
+  "data": {
+    "status": "yielded",
+    "message": "已提交任务，等待外部结果"
+  },
+  "meta": {
+    "turn_control": {
+      "kind": "yield",
+      "message": "已提交任务，等待外部结果"
+    }
+  }
+}
+```
+
+它表示：**当前轮次让出控制权，不是最终回复。**
+
+## 怎么选
+
+- 只是轮询间隔：`sleep`
+- 需要明确告诉系统“这轮先停在这里”：`sessions_yield`

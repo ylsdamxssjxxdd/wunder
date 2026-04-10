@@ -1,149 +1,136 @@
 ---
 title: 应用补丁
-summary: 应用补丁是做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定、更安全。
+summary: `apply_patch` 的精确编辑语义、成功返回和 patch 失败码。
 read_when:
-  - 你要跨多个文件做精确编辑
-  - 你在调试补丁格式为什么没被正确应用
+  - 你要做小范围、可审查、可回放的精确修改
 source_docs:
   - src/services/tools/apply_patch_tool.rs
-  - src/services/tools/catalog.rs
+  - src/services/tools/tool_apply_patch.lark
+updated_at: 2026-04-10
 ---
 
 # 应用补丁
 
-多文件、多位置结构化编辑的主力工具。
+`apply_patch` 是当前最适合做“少量文件、少量块、明确上下文”的编辑工具。
 
----
+它的定位很明确：
 
-## 功能说明
+- 不是整文件写入工具
+- 不是命令执行工具
+- 是结构化、小步、可验证的精确修改工具
 
-`应用补丁` 适合多文件和多位置修改场景，采用临时文件 + rename 策略保证原子写入。
+## 输入不是 JSON patch，而是 grammar 文本
 
-**别名**：
-- `apply_patch`
-
----
-
-## 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `input` | string | ✅ | 完整补丁文本 |
-| `dry_run` | boolean | ❌ | 预演模式，不实际写入 |
-
----
-
-## 补丁格式
-
-### 基本结构
+最小示例：
 
 ```text
 *** Begin Patch
 *** Update File: src/main.rs
 @@
--    println!("Hello");
-+    println!("Hello, world!");
+-fn old() {}
++fn new() {}
 *** End Patch
 ```
 
-### 多文件修改
+模型侧常用参数只有两个：
 
-```text
-*** Begin Patch
-*** Update File: src/main.rs
-@@
--    println!("Hello");
-+    println!("Hello, world!");
-*** Update File: src/utils.rs
-@@
--const VERSION = "1.0";
-+const VERSION = "2.0";
-*** End Patch
-```
+- `input`
+- `dry_run`
 
-### 同一文件多位置修改
-
-```text
-*** Begin Patch
-*** Update File: src/main.rs
-@@
--fn greet() {
-+fn greet(name: &str) {
-@@
--    println!("Hello");
-+    println!("Hello, {}!", name);
-*** End Patch
-```
-
----
-
-## 使用示例
-
-### 单文件修改
+## 成功返回
 
 ```json
 {
-  "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-fn main() {\n+fn main() {\n+    println!(\"Starting...\");\n*** End Patch",
-  "dry_run": false
+  "ok": true,
+  "action": "apply_patch",
+  "state": "completed",
+  "summary": "Applied patch touching 2 files.",
+  "data": {
+    "changed_files": 2,
+    "added": 1,
+    "updated": 1,
+    "deleted": 0,
+    "moved": 0,
+    "hunks_applied": 3,
+    "files": [
+      {
+        "action": "update",
+        "path": "src/main.rs",
+        "to_path": null,
+        "hunks": 1
+      }
+    ],
+    "lsp": [
+      {
+        "path": "C:/.../src/main.rs",
+        "state": {
+          "enabled": true,
+          "matched": true,
+          "touched": true
+        }
+      }
+    ]
+  }
 }
 ```
 
-### 预演模式
+## `dry_run`
 
 ```json
 {
-  "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-const DEBUG = true;\n+const DEBUG = false;\n*** End Patch",
-  "dry_run": true
+  "ok": true,
+  "action": "apply_patch",
+  "state": "dry_run",
+  "summary": "Validated patch touching 2 files without applying it.",
+  "data": {
+    "dry_run": true,
+    "changed_files": 2,
+    "added": 1,
+    "updated": 1,
+    "deleted": 0,
+    "moved": 0,
+    "hunks_applied": 3,
+    "files": [ ... ],
+    "lsp": []
+  }
 }
 ```
 
----
+## 失败返回
 
-## 为什么用补丁而不是写入文件
+`apply_patch` 失败时虽然也会落到统一失败骨架，但错误码比普通文件工具更细：
 
-| 特性 | 应用补丁 | 写入文件 |
-|------|----------|----------|
-| 多文件修改 | ✅ 单个工具调用 | ❌ 需要多次调用 |
-| 多位置修改 | ✅ 单个工具调用 | ❌ 需要多次调用 |
-| 原子性 | ✅ 全成功或全失败 | ⚠️ 单个文件原子 |
-| 上下文定位 | ✅ 基于上下文匹配 | ❌ 全量替换 |
-| 代码审查 | ✅ 更易审查 | ⚠️ 全量对比 |
+- `PATCH_LIMIT_INPUT_TOO_LARGE`
+- `PATCH_FORMAT_EMPTY_PATCH`
+- `PATCH_LIMIT_TOO_MANY_FILE_OPS`
+- `PATCH_LIMIT_TOO_MANY_CHUNKS`
+- `PATCH_RUNTIME_TASK_FAILED`
 
----
+此外还会有解析、路径越界、目标冲突、上下文不匹配等 patch 级错误。
 
-## dry_run 的用途
+## 什么时候用它，什么时候别用它
 
-1. **验证补丁语法**：检查补丁格式是否正确
-2. **验证目标文件**：确认目标文件存在且可匹配
-3. **预览修改**：查看会改动哪些文件，再决定是否落盘
+适合：
 
----
+- 改几行代码
+- 增加一个小函数
+- 调整几个独立文件
 
-## 常见误区
+不适合：
 
-### 把它当普通文本替换
-❌ 补丁依赖上下文定位，不是单纯的全局替换字符串。
+- 整文件重写
+- 大批量生成文档或资源
+- 需要先运行脚本再产出结果的修改
 
-### 补丁写得太松
-⚠️ 上下文过少时，命中位置会更脆弱，建议提供足够的上下文。
+这些场景分别考虑：
 
-### 单文件全量生成还用补丁
-❌ 如果是简单新文件，直接用 `写入文件` 更干净。
+- 整文件重写：`write_file`
+- 先跑命令：`execute_command`
 
----
+## 与 `write_file` 的区别
 
-## 注意事项
+- `apply_patch`：保留上下文，便于审查
+- `write_file`：直接覆盖最终内容
 
-1. **原子写入**：采用临时文件 + rename 策略
-2. **上下文匹配**：补丁需要足够的上下文来准确定位
-3. **dry_run 推荐**：复杂修改先用 dry_run 预览
-4. **工具选型**：
-   - 多位置、多文件修改 → 应用补丁
-   - 单文件全量覆盖 → 写入文件
-
----
-
-## 延伸阅读
-
-- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
-- [执行命令](/docs/zh-CN/tools/exec/)
+如果你已经知道“整个文件的新内容就应该是什么”，用 `write_file` 更直接。  
+如果你只想做精确改动，`apply_patch` 更稳。

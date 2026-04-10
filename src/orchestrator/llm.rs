@@ -88,35 +88,86 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
 }
 
 impl Orchestrator {
-    pub(super) async fn consume_user_quota(
+    fn resolve_user_daily_token_grant(&self, user_id: &str) -> Result<i64, OrchestratorError> {
+        let user = self
+            .storage
+            .get_user_account(user_id)
+            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+        let unit_level = user
+            .as_ref()
+            .and_then(|record| record.unit_id.as_deref())
+            .and_then(|unit_id| {
+                self.storage
+                    .get_org_unit(unit_id)
+                    .ok()
+                    .flatten()
+                    .map(|unit| unit.level)
+            });
+        Ok(UserStore::default_daily_token_grant_by_level(unit_level))
+    }
+
+    pub(super) async fn ensure_user_token_balance(
         &self,
         user_id: &str,
-        emitter: &EventEmitter,
-        round_info: RoundInfo,
-        emit_quota_events: bool,
+        _emitter: &EventEmitter,
+        _round_info: RoundInfo,
+        _emit_quota_events: bool,
     ) -> Result<(), OrchestratorError> {
         let today = UserStore::today_string();
+        let daily_grant = self.resolve_user_daily_token_grant(user_id)?;
         let status = self
             .storage
-            .consume_user_quota(user_id, &today)
+            .prepare_user_token_balance(user_id, &today, daily_grant)
             .map_err(|err| OrchestratorError::internal(err.to_string()))?;
         let Some(status) = status else {
             return Ok(());
         };
         if !status.allowed {
-            return Err(OrchestratorError::user_quota_exceeded(status));
+            return Err(OrchestratorError::user_token_insufficient(status));
         }
+        Ok(())
+    }
+
+    pub(super) async fn consume_user_tokens(
+        &self,
+        user_id: &str,
+        consumed_tokens: i64,
+        emitter: &EventEmitter,
+        round_info: RoundInfo,
+        emit_quota_events: bool,
+    ) -> Result<(), OrchestratorError> {
+        let safe_consumed = consumed_tokens.max(0);
+        if safe_consumed <= 0 {
+            return Ok(());
+        }
+        let today = UserStore::today_string();
+        let daily_grant = self.resolve_user_daily_token_grant(user_id)?;
+        let status = self
+            .storage
+            .consume_user_tokens(user_id, &today, daily_grant, safe_consumed)
+            .map_err(|err| OrchestratorError::internal(err.to_string()))?;
+        let Some(status) = status else {
+            return Ok(());
+        };
         if emit_quota_events {
             let mut payload = json!({
-                "consumed": 1,
-                "daily_quota": status.daily_quota,
-                "used": status.used,
-                "remaining": status.remaining,
-                "date": status.date,
+                "consumed": safe_consumed,
+                "token_balance": status.balance,
+                "token_granted_total": status.granted_total,
+                "token_used_total": status.used_total,
+                "daily_token_grant": status.daily_grant,
+                "last_token_grant_date": status.last_grant_date,
+                "overspent_tokens": status.overspent_tokens,
+                // Legacy aliases kept for existing clients during migration.
+                "daily_quota": status.granted_total,
+                "used": status.used_total,
+                "remaining": status.balance,
+                "date": status.last_grant_date,
             });
             if let Value::Object(ref mut map) = payload {
                 round_info.insert_into(map);
             }
+            emitter.emit("token_balance", payload.clone()).await;
             emitter.emit("quota_usage", payload).await;
         }
         Ok(())
@@ -362,7 +413,7 @@ impl Orchestrator {
         }
 
         if !is_admin {
-            self.consume_user_quota(user_id, emitter, round_info, emit_quota_events)
+            self.ensure_user_token_balance(user_id, emitter, round_info, emit_quota_events)
                 .await?;
         }
 
@@ -540,6 +591,17 @@ impl Orchestrator {
                             round_speed.insert_into_map(map);
                         }
                         emitter.emit("token_usage", usage_payload).await;
+                    }
+                    if !is_admin {
+                        let consumed_tokens = usage.total.min(i64::MAX as u64) as i64;
+                        self.consume_user_tokens(
+                            user_id,
+                            consumed_tokens,
+                            emitter,
+                            round_info,
+                            emit_quota_events,
+                        )
+                        .await?;
                     }
                     return Ok((content, reasoning, usage, tool_calls, round_speed));
                 }

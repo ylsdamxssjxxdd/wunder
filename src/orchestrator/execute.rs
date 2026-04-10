@@ -3154,7 +3154,9 @@ async fn emit_approval_resolved_event(
 pub(super) fn turn_terminal_status_for_error(err: &OrchestratorError) -> &'static str {
     match err.code() {
         "CANCELLED" => "cancelled",
-        "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "INVALID_REQUEST" => "rejected",
+        "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "USER_TOKEN_INSUFFICIENT" | "INVALID_REQUEST" => {
+            "rejected"
+        }
         _ => "failed",
     }
 }

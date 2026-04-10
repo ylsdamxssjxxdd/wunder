@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-10T09:00:13.101808+00:00",
+  "generated_at": "2026-04-10T11:45:03.541068+00:00",
   "site": {
     "name": "wunder 使用说明书",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -85,82 +85,83 @@
             ]
           },
           {
-            "tab": "概念",
+            "tab": "核心",
             "entry_url": "/docs/zh-CN/concepts/",
             "groups": [
               {
-                "group": "概览",
+                "group": "11个核心",
                 "pages": [
                   {
                     "slug": "zh-CN/concepts/index",
-                    "title": "概念概览",
-                    "summary": "先建立 Wunder 的基础运行模型，再阅读接口和工具细节，会明显降低接入与排障成本。",
+                    "title": "核心概览",
+                    "summary": "11 个核心不是 11 个功能点，而是 Wunder 为了长期运行、多人并发和多入口接入而主动建立的系统骨架。",
                     "url": "/docs/zh-CN/concepts/"
-                  }
-                ]
-              },
-              {
-                "group": "核心概念",
-                "pages": [
-                  {
-                    "slug": "zh-CN/concepts/architecture",
-                    "title": "系统架构",
-                    "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
-                    "url": "/docs/zh-CN/concepts/architecture/"
                   },
                   {
-                    "slug": "zh-CN/concepts/workspaces",
-                    "title": "工作区与容器",
-                    "summary": "Wunder 的文件隔离不是“一个当前目录”，而是按 `user_id + container_id` 分层组织的持久化工作区。",
-                    "url": "/docs/zh-CN/concepts/workspaces/"
+                    "slug": "zh-CN/concepts/core-agent-loop",
+                    "title": "智能体循环",
+                    "summary": "智能体循环解释了 Wunder 为什么要把线程当作一等运行单元，以及为什么执行主链路必须稳定、可恢复、可收敛。",
+                    "url": "/docs/zh-CN/concepts/core-agent-loop/"
                   },
                   {
-                    "slug": "zh-CN/concepts/sessions-and-rounds",
-                    "title": "会话与轮次",
-                    "summary": "wunder 将对话拆分为会话、线程、用户轮次与模型轮次。",
-                    "url": "/docs/zh-CN/concepts/sessions-and-rounds/"
+                    "slug": "zh-CN/concepts/core-tools",
+                    "title": "工具",
+                    "summary": "工具核心解释了 Wunder 为什么要把能力统一收口成工具，以及为什么工具必须同时面向模型调用、执行治理和前端展示。",
+                    "url": "/docs/zh-CN/concepts/core-tools/"
                   },
                   {
-                    "slug": "zh-CN/concepts/streaming",
-                    "title": "流式执行",
-                    "summary": "Wunder 的流式不是简单的字符流，而是把线程执行、工具调用和终态一起暴露出来。",
-                    "url": "/docs/zh-CN/concepts/streaming/"
+                    "slug": "zh-CN/concepts/core-swarm",
+                    "title": "蜂群",
+                    "summary": "蜂群核心解释 Wunder 如何把多智能体协作建成正式系统能力，而不是把并行任务临时塞进一个大线程里。",
+                    "url": "/docs/zh-CN/concepts/core-swarm/"
                   },
                   {
-                    "slug": "zh-CN/concepts/presence-and-runtime",
-                    "title": "运行时与在线状态",
-                    "summary": "Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。",
-                    "url": "/docs/zh-CN/concepts/presence-and-runtime/"
+                    "slug": "zh-CN/concepts/core-context-compression",
+                    "title": "上下文压缩",
+                    "summary": "上下文压缩核心解释 Wunder 如何在长会话里主动治理上下文规模，并把“压缩”设计成可追溯、可观测、可复盘的正式行为。",
+                    "url": "/docs/zh-CN/concepts/core-context-compression/"
                   },
                   {
-                    "slug": "zh-CN/concepts/tools",
-                    "title": "工具体系",
-                    "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
-                    "url": "/docs/zh-CN/concepts/tools/"
+                    "slug": "zh-CN/concepts/core-memory",
+                    "title": "记忆",
+                    "summary": "记忆核心解释 Wunder 为什么坚持“线程初始化注入一次、后续保持冻结”，并把长期资料利用与线程认知稳定性分开治理。",
+                    "url": "/docs/zh-CN/concepts/core-memory/"
                   },
                   {
-                    "slug": "zh-CN/concepts/prompt-and-skills",
-                    "title": "提示词与技能",
-                    "summary": "Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。",
-                    "url": "/docs/zh-CN/concepts/prompt-and-skills/"
+                    "slug": "zh-CN/concepts/core-channels",
+                    "title": "渠道",
+                    "summary": "渠道核心解释 Wunder 为什么允许多入口接入，但绝不允许这些入口长成多套独立运行时。",
+                    "url": "/docs/zh-CN/concepts/core-channels/"
                   },
                   {
-                    "slug": "zh-CN/concepts/memory",
-                    "title": "长期记忆",
-                    "summary": "wunder 的长期记忆围绕线程冻结、单次注入与结构化记忆碎片设计。",
-                    "url": "/docs/zh-CN/concepts/memory/"
+                    "slug": "zh-CN/concepts/core-scheduled-tasks",
+                    "title": "定时任务",
+                    "summary": "定时任务核心解释 Wunder 为什么要把时间驱动的后台任务建成正式能力，而不是把它们丢给外部脚本临时处理。",
+                    "url": "/docs/zh-CN/concepts/core-scheduled-tasks/"
                   },
                   {
-                    "slug": "zh-CN/concepts/quota-and-token-usage",
-                    "title": "额度与 Token 占用",
-                    "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
-                    "url": "/docs/zh-CN/concepts/quota-and-token-usage/"
+                    "slug": "zh-CN/concepts/core-multi-user-management",
+                    "title": "多用户管理",
+                    "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和配额放进系统骨架，而不是后补。",
+                    "url": "/docs/zh-CN/concepts/core-multi-user-management/"
                   },
                   {
-                    "slug": "zh-CN/concepts/swarm",
-                    "title": "蜂群协作",
-                    "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
-                    "url": "/docs/zh-CN/concepts/swarm/"
+                    "slug": "zh-CN/concepts/core-realtime",
+                    "title": "实时性",
+                    "summary": "实时性核心解释 Wunder 为什么必须把线程变化持续投影给外部，并严格区分事件投影与后端真相。",
+                    "url": "/docs/zh-CN/concepts/core-realtime/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-stability",
+                    "title": "稳定性",
+                    "summary": "稳定性核心解释 Wunder 为什么必须用结构性治理来控制故障扩散，而不是把稳定性寄托在 prompt、好运气和人工盯盘上。",
+                    "url": "/docs/zh-CN/concepts/core-stability/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/core-observability",
+                    "title": "可观测性",
+                    "summary": "可观测性核心解释 Wunder 如何把“发生了什么、为什么、如何复盘”拆成事实层、回放层和画像层三套明确语义。",
+                    "url": "/docs/zh-CN/concepts/core-observability/"
                   }
                 ]
               }
@@ -176,7 +177,7 @@
                   {
                     "slug": "zh-CN/tools/index",
                     "title": "工具总览",
-                    "summary": "工具页解决的是「现在该用哪个工具」，而不是重复概念解释；按任务分组可最快命中正确工具链。",
+                    "summary": "当前 wunder 工具体系、统一返回骨架、状态语义、例外项与选型建议。",
                     "url": "/docs/zh-CN/tools/"
                   }
                 ]
@@ -186,44 +187,44 @@
                 "pages": [
                   {
                     "slug": "zh-CN/tools/workspace-files",
-                    "title": "文件与工作区工具",
-                    "summary": "文件与工作区工具是最常用的内置工具，覆盖列出文件、搜索内容、读取文件、写入文件四大核心功能。",
+                    "title": "工作区文件",
+                    "summary": "`list_files`、`search_content`、`read_file`、`write_file` 的最新参数与返回结构。",
                     "url": "/docs/zh-CN/tools/workspace-files/"
                   },
                   {
                     "slug": "zh-CN/tools/exec",
                     "title": "执行命令",
-                    "summary": "在工作区中执行系统命令，支持编译、测试、运行脚本，受安全策略和预算约束。",
+                    "summary": "`execute_command` 的预算、dry-run、输出守卫与返回结构。",
                     "url": "/docs/zh-CN/tools/exec/"
                   },
                   {
                     "slug": "zh-CN/tools/ptc",
-                    "title": "ptc (Python 程序化执行)",
-                    "summary": "ptc 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类先生成再运行的场景。",
+                    "title": "ptc",
+                    "summary": "Python 临时脚本执行工具的当前行为与返回结构。",
                     "url": "/docs/zh-CN/tools/ptc/"
                   },
                   {
                     "slug": "zh-CN/tools/apply-patch",
                     "title": "应用补丁",
-                    "summary": "应用补丁是做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定、更安全。",
+                    "summary": "`apply_patch` 的精确编辑语义、成功返回和 patch 失败码。",
                     "url": "/docs/zh-CN/tools/apply-patch/"
                   },
                   {
                     "slug": "zh-CN/tools/read-image",
                     "title": "读图工具",
-                    "summary": "读图工具让模型能分析本地图片，把图片以多模态消息形式注入到后续模型调用里，与读取文件分工明确。",
+                    "summary": "`read_image` 的用途与返回结构。",
                     "url": "/docs/zh-CN/tools/read-image/"
                   },
                   {
                     "slug": "zh-CN/tools/lsp",
                     "title": "LSP 查询",
-                    "summary": "LSP查询 面向代码语义导航，提供定义跳转、引用搜索、悬停说明、符号树和调用层级，与文本搜索分工明确。",
+                    "summary": "`lsp_query` 的操作类型、位置参数与返回结构。",
                     "url": "/docs/zh-CN/tools/lsp/"
                   },
                   {
                     "slug": "zh-CN/tools/skill-call",
                     "title": "技能调用",
-                    "summary": "技能调用会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。",
+                    "summary": "`skill_call` 如何把技能正文、根目录和文件树返回给模型。",
                     "url": "/docs/zh-CN/tools/skill-call/"
                   }
                 ]
@@ -234,19 +235,19 @@
                   {
                     "slug": "zh-CN/tools/web-fetch",
                     "title": "网页抓取",
-                    "summary": "web_fetch 适合读取网页正文，通过 HTTP/HTTPS 拉取页面，不维护浏览器会话，与浏览器工具分工明确。",
+                    "summary": "`web_fetch` 的直接抓取、浏览器回退与成功/失败返回。",
                     "url": "/docs/zh-CN/tools/web-fetch/"
                   },
                   {
                     "slug": "zh-CN/tools/browser",
                     "title": "浏览器",
-                    "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
+                    "summary": "浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。",
                     "url": "/docs/zh-CN/tools/browser/"
                   },
                   {
                     "slug": "zh-CN/tools/desktop-control",
                     "title": "桌面控制",
-                    "summary": "桌面控制器和桌面监视器提供完整的桌面自动化能力，基于坐标框执行桌面动作和截图观察。",
+                    "summary": "`desktop_controller` 与 `desktop_monitor` 的最新行为和返回结构。",
                     "url": "/docs/zh-CN/tools/desktop-control/"
                   }
                 ]
@@ -256,14 +257,14 @@
                 "pages": [
                   {
                     "slug": "zh-CN/tools/panels-and-a2ui",
-                    "title": "界面协同工具",
-                    "summary": "a2ui、计划面板、问询面板负责把模型执行过程变成前端可展示、可交互的界面状态，而不是只输出一段文本。",
+                    "title": "面板与 a2ui",
+                    "summary": "`a2ui`、`plan_update`、`question_panel` 的语义与返回。",
                     "url": "/docs/zh-CN/tools/panels-and-a2ui/"
                   },
                   {
                     "slug": "zh-CN/tools/schedule-task",
                     "title": "定时任务",
-                    "summary": "`定时任务` 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。",
+                    "summary": "`schedule_task` 的扁平参数、调度动作与压缩返回。",
                     "url": "/docs/zh-CN/tools/schedule-task/"
                   }
                 ]
@@ -274,31 +275,31 @@
                   {
                     "slug": "zh-CN/tools/thread-control",
                     "title": "会话线程控制",
-                    "summary": "会话线程控制负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具。",
+                    "summary": "`thread_control` 的动作、线程关系与返回结构。",
                     "url": "/docs/zh-CN/tools/thread-control/"
                   },
                   {
                     "slug": "zh-CN/tools/subagent-control",
                     "title": "子智能体控制",
-                    "summary": "子智能体控制面向单个子会话运行的发现、历史查看、发消息和派生，适合盯住一个子运行而不是大范围并发派发。",
+                    "summary": "`subagent_control` 的动作、等待语义、状态语义与返回结构。",
                     "url": "/docs/zh-CN/tools/subagent-control/"
                   },
                   {
                     "slug": "zh-CN/tools/agent-swarm",
                     "title": "智能体蜂群",
-                    "summary": "智能体蜂群面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。",
+                    "summary": "调度已存在智能体的多智能体协作工具。",
                     "url": "/docs/zh-CN/tools/agent-swarm/"
                   },
                   {
                     "slug": "zh-CN/tools/memory-manager",
                     "title": "记忆管理",
-                    "summary": "记忆管理是 Wunder 的结构化长期记忆工具，重点动作是 list、add、update、delete、clear 和 recall。",
+                    "summary": "`memory_manager` 的动作、记忆范围与返回结构。",
                     "url": "/docs/zh-CN/tools/memory-manager/"
                   },
                   {
                     "slug": "zh-CN/tools/channel",
                     "title": "渠道工具",
-                    "summary": "`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。",
+                    "summary": "`channel_tool` 的联系人查询、发信与同步/异步回执结构。",
                     "url": "/docs/zh-CN/tools/channel/"
                   }
                 ]
@@ -309,19 +310,19 @@
                   {
                     "slug": "zh-CN/tools/user-world",
                     "title": "用户世界工具",
-                    "summary": "`用户世界工具` 面向 Wunder 系统内的注册用户目录和站内消息发送，不等同于外部渠道消息工具。",
+                    "summary": "站内用户查询与站内消息投递。",
                     "url": "/docs/zh-CN/tools/user-world/"
                   },
                   {
                     "slug": "zh-CN/tools/a2a-tools",
                     "title": "A2A 工具",
-                    "summary": "Wunder 会把每个已启用的 A2A 服务暴露成 `a2a@服务名` 工具，再配合 `a2a观察`、`a2a等待` 做状态跟踪。",
+                    "summary": "`a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。",
                     "url": "/docs/zh-CN/tools/a2a-tools/"
                   },
                   {
                     "slug": "zh-CN/tools/node-invoke",
                     "title": "节点调用",
-                    "summary": "`节点调用` 是 Wunder 的底层节点桥接工具，既能列出可用节点，也能把具体命令和参数发到指定节点执行。",
+                    "summary": "网关节点列表与命令调用。",
                     "url": "/docs/zh-CN/tools/node-invoke/"
                   }
                 ]
@@ -523,7 +524,7 @@
                   {
                     "slug": "zh-CN/reference/index",
                     "title": "参考概览",
-                    "summary": "参考页提供稳定查表内容：接口索引、配置项、事件语义、工作区路由和管理面板映射。",
+                    "summary": "参考页提供稳定查表内容，也收纳按主题拆开的运行模型参考页，适合在核心总览之后深入细节。",
                     "url": "/docs/zh-CN/reference/"
                   }
                 ]
@@ -566,6 +567,77 @@
                     "title": "管理端面板索引",
                     "summary": "管理员侧前端不是单一调试页，而是一组分工明确的治理面板。",
                     "url": "/docs/zh-CN/reference/admin-panels/"
+                  }
+                ]
+              },
+              {
+                "group": "运行模型参考",
+                "pages": [
+                  {
+                    "slug": "zh-CN/concepts/architecture",
+                    "title": "系统架构",
+                    "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
+                    "url": "/docs/zh-CN/concepts/architecture/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/workspaces",
+                    "title": "工作区与容器",
+                    "summary": "Wunder 的文件隔离不是“一个当前目录”，而是按 `user_id + container_id` 分层组织的持久化工作区。",
+                    "url": "/docs/zh-CN/concepts/workspaces/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/sessions-and-rounds",
+                    "title": "会话与轮次",
+                    "summary": "wunder 将对话拆分为会话、线程、用户轮次与模型轮次。",
+                    "url": "/docs/zh-CN/concepts/sessions-and-rounds/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/streaming",
+                    "title": "流式执行",
+                    "summary": "Wunder 的流式不是简单的字符流，而是把线程执行、工具调用和终态一起暴露出来。",
+                    "url": "/docs/zh-CN/concepts/streaming/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/presence-and-runtime",
+                    "title": "运行时与在线状态",
+                    "summary": "Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。",
+                    "url": "/docs/zh-CN/concepts/presence-and-runtime/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/tools",
+                    "title": "工具体系",
+                    "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
+                    "url": "/docs/zh-CN/concepts/tools/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/prompt-and-skills",
+                    "title": "提示词与技能",
+                    "summary": "Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。",
+                    "url": "/docs/zh-CN/concepts/prompt-and-skills/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/memory",
+                    "title": "长期记忆",
+                    "summary": "wunder 的长期记忆围绕线程冻结、单次注入与结构化记忆碎片设计。",
+                    "url": "/docs/zh-CN/concepts/memory/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/quota-and-token-usage",
+                    "title": "额度与 Token 占用",
+                    "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
+                    "url": "/docs/zh-CN/concepts/quota-and-token-usage/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/swarm",
+                    "title": "蜂群协作",
+                    "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
+                    "url": "/docs/zh-CN/concepts/swarm/"
+                  },
+                  {
+                    "slug": "zh-CN/concepts/boundary-handling",
+                    "title": "边界处理",
+                    "summary": "wunder 在上下文超限、网络中断、工具失败、系统异常等边界场景下的处理策略与恢复机制。",
+                    "url": "/docs/zh-CN/concepts/boundary-handling/"
                   }
                 ]
               }
@@ -624,16 +696,17 @@
     "zh-CN/start/hubs",
     "zh-CN/start/docs-directory",
     "zh-CN/concepts/index",
-    "zh-CN/concepts/architecture",
-    "zh-CN/concepts/workspaces",
-    "zh-CN/concepts/sessions-and-rounds",
-    "zh-CN/concepts/streaming",
-    "zh-CN/concepts/presence-and-runtime",
-    "zh-CN/concepts/tools",
-    "zh-CN/concepts/prompt-and-skills",
-    "zh-CN/concepts/memory",
-    "zh-CN/concepts/quota-and-token-usage",
-    "zh-CN/concepts/swarm",
+    "zh-CN/concepts/core-agent-loop",
+    "zh-CN/concepts/core-tools",
+    "zh-CN/concepts/core-swarm",
+    "zh-CN/concepts/core-context-compression",
+    "zh-CN/concepts/core-memory",
+    "zh-CN/concepts/core-channels",
+    "zh-CN/concepts/core-scheduled-tasks",
+    "zh-CN/concepts/core-multi-user-management",
+    "zh-CN/concepts/core-realtime",
+    "zh-CN/concepts/core-stability",
+    "zh-CN/concepts/core-observability",
     "zh-CN/tools/index",
     "zh-CN/tools/workspace-files",
     "zh-CN/tools/exec",
@@ -684,6 +757,17 @@
     "zh-CN/reference/workspace-routing",
     "zh-CN/reference/prompt-templates",
     "zh-CN/reference/admin-panels",
+    "zh-CN/concepts/architecture",
+    "zh-CN/concepts/workspaces",
+    "zh-CN/concepts/sessions-and-rounds",
+    "zh-CN/concepts/streaming",
+    "zh-CN/concepts/presence-and-runtime",
+    "zh-CN/concepts/tools",
+    "zh-CN/concepts/prompt-and-skills",
+    "zh-CN/concepts/memory",
+    "zh-CN/concepts/quota-and-token-usage",
+    "zh-CN/concepts/swarm",
+    "zh-CN/concepts/boundary-handling",
     "zh-CN/help/index",
     "zh-CN/help/troubleshooting",
     "zh-CN/help/faq",
@@ -704,7 +788,7 @@
       "language": "zh-CN",
       "title": "wunder 心舰",
       "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；入口建议先按角色和目标分流，再进入具体文档。",
-      "updated_at": "2026-04-07",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你第一次了解 wunder",
         "你需要快速判断先看 desktop、server 还是 cli",
@@ -808,7 +892,7 @@
       "language": "zh-CN",
       "title": "快速开始",
       "summary": "用最短路径跑通 wunder 的第一条可用链路；默认推荐 desktop，其次按 server 或 cli 分流。",
-      "updated_at": "2026-04-04",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你第一次使用 wunder",
         "你需要在 10 分钟内跑通一个可验证结果"
@@ -1172,7 +1256,7 @@
       "language": "zh-CN",
       "title": "CLI 使用",
       "summary": "需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你想在终端中直接使用 wunder",
         "你更关注开发调试、脚本任务和工作区驱动执行"
@@ -1284,7 +1368,7 @@
       "language": "zh-CN",
       "title": "说明书总览",
       "summary": "按角色和任务快速定位使用说明书入口，避免在全站里盲搜。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你不确定先看哪一页",
         "你希望按角色快速进入正确文档路径"
@@ -1340,7 +1424,7 @@
       "language": "zh-CN",
       "title": "常用说明目录",
       "summary": "这是 wunder 使用说明书里最常用页面的精选目录。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你不想从左侧导航慢慢翻",
         "你只想先找到最常用的几篇文档"
@@ -1409,961 +1493,1036 @@
     "zh-CN/concepts/index": {
       "slug": "zh-CN/concepts/index",
       "language": "zh-CN",
-      "title": "概念概览",
-      "summary": "先建立 Wunder 的基础运行模型，再阅读接口和工具细节，会明显降低接入与排障成本。",
-      "updated_at": "2026-04-07",
+      "title": "核心概览",
+      "summary": "11 个核心不是 11 个功能点，而是 Wunder 为了长期运行、多人并发和多入口接入而主动建立的系统骨架。",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你第一次系统性理解 Wunder",
-        "你在接入或排障时遇到概念混淆"
+        "你准备做接入、运维或工具开发，需要统一视角",
+        "你已经会用 Wunder，但想理解它为什么这样设计"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md"
+        "docs/总体设计.md"
       ],
-      "tab": "概念",
-      "group": "概览",
+      "tab": "核心",
+      "group": "11个核心",
       "group_path": [
-        "概览"
+        "11个核心"
       ],
       "url": "/docs/zh-CN/concepts/",
       "headings": [
         {
           "id": "section-1",
           "level": 1,
-          "text": "概念概览"
+          "text": "核心概览"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "先建立四个锚点"
+          "text": "先记住四条总判断"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "核心关系图"
+          "text": "为什么这 11 个是核心，而不是普通功能"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "从一个请求看概念流转"
+          "text": "11 个核心如何分层"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "按问题找概念"
+          "text": "11 个核心一览"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "我在做接入开发"
+          "level": 2,
+          "text": "11 个核心细页"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "我在做文件与产物"
+          "level": 2,
+          "text": "建议阅读顺序"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "我在做治理与稳定性"
+          "level": 2,
+          "text": "总体原则"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "核心概念入口"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "常见误区澄清"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "下一步怎么读"
         }
       ],
       "prev_slug": "zh-CN/start/docs-directory",
-      "next_slug": "zh-CN/concepts/architecture",
+      "next_slug": "zh-CN/concepts/core-agent-loop",
       "source_path": "zh-CN/concepts/index.md",
       "output_path": "zh-CN/concepts/index.html"
     },
-    "zh-CN/concepts/architecture": {
-      "slug": "zh-CN/concepts/architecture",
+    "zh-CN/concepts/core-agent-loop": {
+      "slug": "zh-CN/concepts/core-agent-loop",
       "language": "zh-CN",
-      "title": "系统架构",
-      "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
-      "updated_at": "2026-04-02",
+      "title": "智能体循环",
+      "summary": "智能体循环解释了 Wunder 为什么要把线程当作一等运行单元，以及为什么执行主链路必须稳定、可恢复、可收敛。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解 wunder 的整体结构",
-        "你要知道 API、调度、工具、前端与存储之间如何协作"
+        "你想理解线程为什么是 Wunder 的一等运行单元",
+        "你在接入、排障或设计工具时需要判断执行链路落点"
       ],
       "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md"
+        "docs/总体设计.md"
       ],
-      "tab": "概念",
-      "group": "核心概念",
+      "tab": "核心",
+      "group": "11个核心",
       "group_path": [
-        "核心概念"
+        "11个核心"
       ],
-      "url": "/docs/zh-CN/concepts/architecture/",
+      "url": "/docs/zh-CN/concepts/core-agent-loop/",
       "headings": [
         {
           "id": "section-1",
           "level": 1,
-          "text": "系统架构"
+          "text": "智能体循环"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "顶层结构"
+          "text": "先给结论"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "接入层"
+          "text": "为什么它必须单列为核心"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "调度层"
+          "text": "这个核心真正保护什么"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "工具与能力层"
+          "text": "关键约束"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "存储与工作区层"
+          "text": "设计重点"
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "前端与桌面壳层"
+          "level": 3,
+          "text": "重点一：线程要比“当前回答”更重要"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "当前最重要的架构约束"
+          "level": 3,
+          "text": "重点二：动作必须回到同一条链上"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "图示"
+          "level": 3,
+          "text": "重点三：终态不是一个 UI 感觉，而是系统事实"
         },
         {
           "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
           "level": 2,
           "text": "延伸阅读"
         }
       ],
       "prev_slug": "zh-CN/concepts/index",
-      "next_slug": "zh-CN/concepts/workspaces",
-      "source_path": "zh-CN/concepts/architecture.md",
-      "output_path": "zh-CN/concepts/architecture/index.html"
+      "next_slug": "zh-CN/concepts/core-tools",
+      "source_path": "zh-CN/concepts/core-agent-loop.md",
+      "output_path": "zh-CN/concepts/core-agent-loop/index.html"
     },
-    "zh-CN/concepts/workspaces": {
-      "slug": "zh-CN/concepts/workspaces",
+    "zh-CN/concepts/core-tools": {
+      "slug": "zh-CN/concepts/core-tools",
       "language": "zh-CN",
-      "title": "工作区与容器",
-      "summary": "Wunder 的文件隔离不是“一个当前目录”，而是按 `user_id + container_id` 分层组织的持久化工作区。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你要理解文件为什么按用户和容器隔离",
-        "你要判断 `agent_id`、`container_id` 和工作区之间的关系"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/workspaces/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "工作区与容器"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "当前约定"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "containerid=0 不只是私有文件夹"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "containerid=110 用来做什么"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "agentid 和工作区是什么关系"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "对外路径长什么样"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "误解一：agentid 就等于工作区"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "误解二：所有文件都应该放在私有容器"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "误解三：本地模式下就没有容器概念"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/architecture",
-      "next_slug": "zh-CN/concepts/sessions-and-rounds",
-      "source_path": "zh-CN/concepts/workspaces.md",
-      "output_path": "zh-CN/concepts/workspaces/index.html"
-    },
-    "zh-CN/concepts/sessions-and-rounds": {
-      "slug": "zh-CN/concepts/sessions-and-rounds",
-      "language": "zh-CN",
-      "title": "会话与轮次",
-      "summary": "wunder 将对话拆分为会话、线程、用户轮次与模型轮次。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你要理解会话状态、事件流与统计口径",
-        "你要区分用户轮次、模型轮次与 token 占用"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/API文档.md"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/sessions-and-rounds/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "会话与轮次"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "会话是什么"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "线程是什么"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "用户轮次与模型轮次"
-        },
-        {
-          "id": "section-5",
-          "level": 3,
-          "text": "用户轮次"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "模型轮次"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "为什么这个区分重要"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "token 统计口径"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "流式事件与终结"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/workspaces",
-      "next_slug": "zh-CN/concepts/streaming",
-      "source_path": "zh-CN/concepts/sessions-and-rounds.md",
-      "output_path": "zh-CN/concepts/sessions-and-rounds/index.html"
-    },
-    "zh-CN/concepts/streaming": {
-      "slug": "zh-CN/concepts/streaming",
-      "language": "zh-CN",
-      "title": "流式执行",
-      "summary": "Wunder 的流式不是简单的字符流，而是把线程执行、工具调用和终态一起暴露出来。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你在接 SSE 或 WebSocket",
-        "你在给聊天界面设计状态机"
-      ],
-      "source_docs": [
-        "docs/API文档.md",
-        "docs/设计方案.md",
-        "src/api/chat.rs",
-        "src/api/core.rs"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/streaming/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "流式执行"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "本页重点"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "什么时候看"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "流式不是只有一种入口"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "你真正要关心的不是所有事件名"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "过程事件"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "状态事件"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "终态事件"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "客户端最容易犯的错"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "只看 final"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "只看 running"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "把 SSE 当成完整聊天协议"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/sessions-and-rounds",
-      "next_slug": "zh-CN/concepts/presence-and-runtime",
-      "source_path": "zh-CN/concepts/streaming.md",
-      "output_path": "zh-CN/concepts/streaming/index.html"
-    },
-    "zh-CN/concepts/presence-and-runtime": {
-      "slug": "zh-CN/concepts/presence-and-runtime",
-      "language": "zh-CN",
-      "title": "运行时与在线状态",
-      "summary": "Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你在做会话列表、状态徽标或运行面板",
-        "你在排查线程到底是卡住了还是已经结束"
-      ],
-      "source_docs": [
-        "docs/API文档.md",
-        "src/api/chat.rs",
-        "src/core/session_runtime.rs"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/presence-and-runtime/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "运行时与在线状态"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "本页重点"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "两层状态不要混"
-        },
-        {
-          "id": "section-4",
-          "level": 3,
-          "text": "线程事件状态"
-        },
-        {
-          "id": "section-5",
-          "level": 3,
-          "text": "会话运行时投影"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "为什么不能只保留一个 running"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "会话页最常见的状态判断"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "什么时候最容易用错"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "把“等待审批”当成“已经结束”"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "只在详情页读状态"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "把事件流和摘要状态混成一层"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/streaming",
-      "next_slug": "zh-CN/concepts/tools",
-      "source_path": "zh-CN/concepts/presence-and-runtime.md",
-      "output_path": "zh-CN/concepts/presence-and-runtime/index.html"
-    },
-    "zh-CN/concepts/tools": {
-      "slug": "zh-CN/concepts/tools",
-      "language": "zh-CN",
-      "title": "工具体系",
-      "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你要理解 wunder 的能力为什么不只是聊天",
-        "你要知道工具来源、边界与编排方式"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/API文档.md",
-        "docs/工具调用.md"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/tools/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "工具体系"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "本页重点"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "关键结论"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "工具从哪里来"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "内置工具先看什么"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "MCP 负责什么"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "Skills 负责什么"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "知识库和用户工具分别解决什么"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "为什么一定要统一工具体系"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/presence-and-runtime",
-      "next_slug": "zh-CN/concepts/prompt-and-skills",
-      "source_path": "zh-CN/concepts/tools.md",
-      "output_path": "zh-CN/concepts/tools/index.html"
-    },
-    "zh-CN/concepts/prompt-and-skills": {
-      "slug": "zh-CN/concepts/prompt-and-skills",
-      "language": "zh-CN",
-      "title": "提示词与技能",
-      "summary": "Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你要理解线程 system prompt 为什么会冻结",
-        "你要搞清楚技能、模板包和 skill_call 的关系"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/设计方案.md",
-        "docs/API文档.md",
-        "config/wunder-example.yaml"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/prompt-and-skills/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "提示词与技能"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "先分清两类东西"
-        },
-        {
-          "id": "section-3",
-          "level": 3,
-          "text": "系统提示词"
-        },
-        {
-          "id": "section-4",
-          "level": 3,
-          "text": "技能"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "为什么线程提示词必须冻结"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "提示词模板包怎么组织"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "改模板后什么时候生效"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "技能是什么"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "技能分层"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "skillcall 为什么重要"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "{{SKILLROOT}} 是干什么的"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "提示词、技能、记忆三者怎么配合"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "误解一：改提示词模板会立即改变当前线程"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "误解二：技能只是一个说明文档"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "误解三：记忆会每轮自动重写 system prompt"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/tools",
-      "next_slug": "zh-CN/concepts/memory",
-      "source_path": "zh-CN/concepts/prompt-and-skills.md",
-      "output_path": "zh-CN/concepts/prompt-and-skills/index.html"
-    },
-    "zh-CN/concepts/memory": {
-      "slug": "zh-CN/concepts/memory",
-      "language": "zh-CN",
-      "title": "长期记忆",
-      "summary": "wunder 的长期记忆围绕线程冻结、单次注入与结构化记忆碎片设计。",
-      "updated_at": "2026-04-02",
-      "read_when": [
-        "你要理解 wunder 的长期记忆为什么要强调冻结与单次注入",
-        "你要排查线程记忆与 system prompt 的关系"
-      ],
-      "source_docs": [
-        "docs/系统介绍.md",
-        "docs/API文档.md"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/memory/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "长期记忆"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "核心规则"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "为什么这样设计"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "记忆的形态"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "记忆与 recall"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "记忆与上下文压缩"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "理解这套机制时最容易犯的错"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/prompt-and-skills",
-      "next_slug": "zh-CN/concepts/quota-and-token-usage",
-      "source_path": "zh-CN/concepts/memory.md",
-      "output_path": "zh-CN/concepts/memory/index.html"
-    },
-    "zh-CN/concepts/quota-and-token-usage": {
-      "slug": "zh-CN/concepts/quota-and-token-usage",
-      "language": "zh-CN",
-      "title": "额度与 Token 占用",
-      "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
-      "updated_at": "2026-04-07",
-      "read_when": [
-        "你在看监控、额度或会话资源占用",
-        "你要理解为什么系统强调 round_usage.total_tokens 与 context 占用"
-      ],
-      "source_docs": [
-        "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md"
-      ],
-      "tab": "概念",
-      "group": "核心概念",
-      "group_path": [
-        "核心概念"
-      ],
-      "url": "/docs/zh-CN/concepts/quota-and-token-usage/",
-      "headings": [
-        {
-          "id": "section-1",
-          "level": 1,
-          "text": "额度与 Token 占用"
-        },
-        {
-          "id": "section-2",
-          "level": 2,
-          "text": "本页重点"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
-          "text": "Token 占用不是账单口径"
-        },
-        {
-          "id": "section-4",
-          "level": 2,
-          "text": "为什么要强调这个口径"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "当前最该看的字段"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "额度和 Token 占用不是一回事"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "延伸阅读"
-        }
-      ],
-      "prev_slug": "zh-CN/concepts/memory",
-      "next_slug": "zh-CN/concepts/swarm",
-      "source_path": "zh-CN/concepts/quota-and-token-usage.md",
-      "output_path": "zh-CN/concepts/quota-and-token-usage/index.html"
-    },
-    "zh-CN/concepts/swarm": {
-      "slug": "zh-CN/concepts/swarm",
-      "language": "zh-CN",
-      "title": "蜂群协作",
-      "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
+      "title": "工具",
+      "summary": "工具核心解释了 Wunder 为什么要把能力统一收口成工具，以及为什么工具必须同时面向模型调用、执行治理和前端展示。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解 wunder 的多智能体能力",
-        "你要区分母蜂、工蜂和子智能体"
+        "你在设计内置工具、MCP 或 Skills",
+        "你想理解工具返回为什么必须精简明确"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "frontend/src/components/beeroom/canvas/swarmCanvasModel.ts",
-        "frontend/src/components/beeroom/canvas/BeeroomSwarmNodeCard.vue"
+        "docs/总体设计.md"
       ],
-      "tab": "概念",
-      "group": "核心概念",
+      "tab": "核心",
+      "group": "11个核心",
       "group_path": [
-        "核心概念"
+        "11个核心"
       ],
-      "url": "/docs/zh-CN/concepts/swarm/",
+      "url": "/docs/zh-CN/concepts/core-tools/",
       "headings": [
         {
           "id": "section-1",
           "level": 1,
-          "text": "蜂群协作"
+          "text": "工具"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "蜂群解决什么问题"
+          "text": "先给结论"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "先分清三个角色"
+          "text": "为什么它必须单列为核心"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "母蜂"
+          "level": 2,
+          "text": "这个核心真正保护什么"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "工蜂"
+          "level": 2,
+          "text": "关键约束"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "子智能体"
+          "level": 2,
+          "text": "设计重点"
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "蜂群和子智能体控制有什么区别"
+          "level": 3,
+          "text": "重点一：Wunder 不是只让模型“会说”，而是让模型“会做”"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "工蜂为什么默认会新建线程"
+          "level": 3,
+          "text": "重点二：工具结果要先服务调度，再服务展示"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "主线程为什么重要"
+          "level": 3,
+          "text": "重点三：统一工具体系比“工具越多越好”更重要"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "当前前端怎么显示蜂群状态"
+          "text": "最容易搞错的点"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "现在工作流区域重点看什么"
+          "text": "和其他核心的边界"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "什么时候适合用蜂群"
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-agent-loop",
+      "next_slug": "zh-CN/concepts/core-swarm",
+      "source_path": "zh-CN/concepts/core-tools.md",
+      "output_path": "zh-CN/concepts/core-tools/index.html"
+    },
+    "zh-CN/concepts/core-swarm": {
+      "slug": "zh-CN/concepts/core-swarm",
+      "language": "zh-CN",
+      "title": "蜂群",
+      "summary": "蜂群核心解释 Wunder 如何把多智能体协作建成正式系统能力，而不是把并行任务临时塞进一个大线程里。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在设计多智能体协作",
+        "你需要区分蜂群、子智能体和普通线程链路"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-swarm/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "蜂群"
         },
         {
-          "id": "section-13",
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：蜂群管理的是“已有智能体”"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：子智能体和蜂群不是同一件事"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：协作质量取决于边界清晰，不取决于工蜂数量"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
           "level": 2,
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/concepts/quota-and-token-usage",
+      "prev_slug": "zh-CN/concepts/core-tools",
+      "next_slug": "zh-CN/concepts/core-context-compression",
+      "source_path": "zh-CN/concepts/core-swarm.md",
+      "output_path": "zh-CN/concepts/core-swarm/index.html"
+    },
+    "zh-CN/concepts/core-context-compression": {
+      "slug": "zh-CN/concepts/core-context-compression",
+      "language": "zh-CN",
+      "title": "上下文压缩",
+      "summary": "上下文压缩核心解释 Wunder 如何在长会话里主动治理上下文规模，并把“压缩”设计成可追溯、可观测、可复盘的正式行为。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在处理长会话或超长工具输出",
+        "你想理解压缩为什么不能只是简单摘要"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-context-compression/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "上下文压缩"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：压缩不是截断"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：压缩不是越早越好，也不是越晚越好"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：工具 observation 是压缩压力的高发区"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-swarm",
+      "next_slug": "zh-CN/concepts/core-memory",
+      "source_path": "zh-CN/concepts/core-context-compression.md",
+      "output_path": "zh-CN/concepts/core-context-compression/index.html"
+    },
+    "zh-CN/concepts/core-memory": {
+      "slug": "zh-CN/concepts/core-memory",
+      "language": "zh-CN",
+      "title": "记忆",
+      "summary": "记忆核心解释 Wunder 为什么坚持“线程初始化注入一次、后续保持冻结”，并把长期资料利用与线程认知稳定性分开治理。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在设计长期记忆、知识库或资料注入策略",
+        "你想理解 prompt 冻结和记忆注入的关系"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "记忆"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：记忆的价值不是“记得多”，而是“记得稳”"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：初始化注入与运行期检索必须分层"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：工作区、知识库、记忆片段不是同一个东西"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-context-compression",
+      "next_slug": "zh-CN/concepts/core-channels",
+      "source_path": "zh-CN/concepts/core-memory.md",
+      "output_path": "zh-CN/concepts/core-memory/index.html"
+    },
+    "zh-CN/concepts/core-channels": {
+      "slug": "zh-CN/concepts/core-channels",
+      "language": "zh-CN",
+      "title": "渠道",
+      "summary": "渠道核心解释 Wunder 为什么允许多入口接入，但绝不允许这些入口长成多套独立运行时。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在做多入口接入",
+        "你想判断某项能力应该放在内核还是接入层"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-channels/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "渠道"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：渠道多样化不能破坏线程语义"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：接入差异是“面”，不是“骨”"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：入口越多，统一口径越重要"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-memory",
+      "next_slug": "zh-CN/concepts/core-scheduled-tasks",
+      "source_path": "zh-CN/concepts/core-channels.md",
+      "output_path": "zh-CN/concepts/core-channels/index.html"
+    },
+    "zh-CN/concepts/core-scheduled-tasks": {
+      "slug": "zh-CN/concepts/core-scheduled-tasks",
+      "language": "zh-CN",
+      "title": "定时任务",
+      "summary": "定时任务核心解释 Wunder 为什么要把时间驱动的后台任务建成正式能力，而不是把它们丢给外部脚本临时处理。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在设计巡检、提醒、后台维护或延迟执行任务",
+        "你想区分在线线程和系统级异步任务"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-scheduled-tasks/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "定时任务"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：把“时间”收进系统，而不是放到系统外面"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：定时任务是后台执行链，而不是同步等待链"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：调度能力必须天然带执行记录"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-channels",
+      "next_slug": "zh-CN/concepts/core-multi-user-management",
+      "source_path": "zh-CN/concepts/core-scheduled-tasks.md",
+      "output_path": "zh-CN/concepts/core-scheduled-tasks/index.html"
+    },
+    "zh-CN/concepts/core-multi-user-management": {
+      "slug": "zh-CN/concepts/core-multi-user-management",
+      "language": "zh-CN",
+      "title": "多用户管理",
+      "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和配额放进系统骨架，而不是后补。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在部署 server 或设计管理员侧",
+        "你想理解多用户治理为什么不能后补"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-multi-user-management/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "多用户管理"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：身份和隔离是两层"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：多用户治理一定会下沉到运行时"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：管理员能力必须强，但不能模糊边界"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-scheduled-tasks",
+      "next_slug": "zh-CN/concepts/core-realtime",
+      "source_path": "zh-CN/concepts/core-multi-user-management.md",
+      "output_path": "zh-CN/concepts/core-multi-user-management/index.html"
+    },
+    "zh-CN/concepts/core-realtime": {
+      "slug": "zh-CN/concepts/core-realtime",
+      "language": "zh-CN",
+      "title": "实时性",
+      "summary": "实时性核心解释 Wunder 为什么必须把线程变化持续投影给外部，并严格区分事件投影与后端真相。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在做 WebSocket、流式输出或状态同步",
+        "你想理解事件流、快照补偿和断线恢复的边界"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-realtime/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "实时性"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：流式只是实时性的一部分"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：实时系统要能“接着看”，不是只能“从头看”"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：事件语义要为多端复用设计"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-multi-user-management",
+      "next_slug": "zh-CN/concepts/core-stability",
+      "source_path": "zh-CN/concepts/core-realtime.md",
+      "output_path": "zh-CN/concepts/core-realtime/index.html"
+    },
+    "zh-CN/concepts/core-stability": {
+      "slug": "zh-CN/concepts/core-stability",
+      "language": "zh-CN",
+      "title": "稳定性",
+      "summary": "稳定性核心解释 Wunder 为什么必须用结构性治理来控制故障扩散，而不是把稳定性寄托在 prompt、好运气和人工盯盘上。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在排障、压测或做高风险链路设计",
+        "你想判断某项容错能力应该落在哪一层"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-stability/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "稳定性"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：稳定性首先是“控扩散”"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：恢复链要和主链一样正式"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：资源治理是稳定性的组成部分"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-realtime",
+      "next_slug": "zh-CN/concepts/core-observability",
+      "source_path": "zh-CN/concepts/core-stability.md",
+      "output_path": "zh-CN/concepts/core-stability/index.html"
+    },
+    "zh-CN/concepts/core-observability": {
+      "slug": "zh-CN/concepts/core-observability",
+      "language": "zh-CN",
+      "title": "可观测性",
+      "summary": "可观测性核心解释 Wunder 如何把“发生了什么、为什么、如何复盘”拆成事实层、回放层和画像层三套明确语义。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你在做排障、回放、评测或管理员画像",
+        "你想建立统一指标和事件口径"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "核心",
+      "group": "11个核心",
+      "group_path": [
+        "11个核心"
+      ],
+      "url": "/docs/zh-CN/concepts/core-observability/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "可观测性"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先给结论"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么它必须单列为核心"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "这个核心真正保护什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "关键约束"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "设计重点"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "重点一：先看事实，再看解释，再看画像"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "重点二：可观测性要服务两类人"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "重点三：benchmark、throughput、monitor 不是一回事"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "和其他核心的边界"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/core-stability",
       "next_slug": "zh-CN/tools/index",
-      "source_path": "zh-CN/concepts/swarm.md",
-      "output_path": "zh-CN/concepts/swarm/index.html"
+      "source_path": "zh-CN/concepts/core-observability.md",
+      "output_path": "zh-CN/concepts/core-observability/index.html"
     },
     "zh-CN/tools/index": {
       "slug": "zh-CN/tools/index",
       "language": "zh-CN",
       "title": "工具总览",
-      "summary": "工具页解决的是「现在该用哪个工具」，而不是重复概念解释；按任务分组可最快命中正确工具链。",
-      "updated_at": "2026-04-02",
+      "summary": "当前 wunder 工具体系、统一返回骨架、状态语义、例外项与选型建议。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要查某个工具的动作、参数和适用场景",
-        "你想按任务选择最短工具链"
+        "你要先判断该用哪一类工具",
+        "你要理解工具最新的返回结构"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "docs/设计方案.md",
-        "docs/系统介绍.md",
-        "config/wunder-example.yaml",
-        "src/services/tools/catalog.rs"
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs",
+        "src/services/tools/tool_error.rs",
+        "docs/工具返回内容优化表.md"
       ],
       "tab": "工具",
       "group": "概览",
@@ -2380,90 +2539,130 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "实际实现的内置工具"
+          "text": "先记住这件事"
         },
         {
           "id": "section-3",
-          "level": 3,
-          "text": "1. 基础控制工具"
+          "level": 2,
+          "text": "统一成功返回"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "2. 文件与代码工具"
+          "text": "常见 state"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "3. 网页与桌面工具"
+          "level": 2,
+          "text": "统一失败返回"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "4. 协作与编排工具"
+          "level": 2,
+          "text": "不是完全统一骨架的例外"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "5. 系统桥接工具"
+          "text": "finalresponse"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "先做选型：按任务找工具"
+          "level": 3,
+          "text": "a2ui"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "工具生态四层模型"
+          "level": 3,
+          "text": "scheduletask"
         },
         {
           "id": "section-10",
-          "level": 2,
-          "text": "关键工具特性"
+          "level": 3,
+          "text": "browser"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "工具结果防爆机制"
+          "text": "webfetch"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "原子写入策略"
+          "text": "applypatch"
         },
         {
           "id": "section-13",
-          "level": 3,
-          "text": "dryrun 预演"
+          "level": 2,
+          "text": "现在的工具分层"
         },
         {
           "id": "section-14",
-          "level": 3,
-          "text": "预算控制"
+          "level": 2,
+          "text": "1. 基础收尾与前端协同"
         },
         {
           "id": "section-15",
-          "level": 3,
-          "text": "工具别名机制"
+          "level": 2,
+          "text": "2. 工作区与代码"
         },
         {
           "id": "section-16",
           "level": 2,
-          "text": "工具可见性规则"
+          "text": "3. Web 与桌面"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "常见误区澄清"
+          "text": "4. 线程、子智能体、蜂群"
         },
         {
           "id": "section-18",
           "level": 2,
+          "text": "5. 系统连接与记忆"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "选型建议"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "只读网页正文"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "要点击、输入、等页面动态渲染"
+        },
+        {
+          "id": "section-22",
+          "level": 3,
+          "text": "要看本地代码"
+        },
+        {
+          "id": "section-23",
+          "level": 3,
+          "text": "要改代码"
+        },
+        {
+          "id": "section-24",
+          "level": 3,
+          "text": "要做协作"
+        },
+        {
+          "id": "section-25",
+          "level": 2,
+          "text": "这次工具改版的重点变化"
+        },
+        {
+          "id": "section-26",
+          "level": 2,
           "text": "下一步"
         }
       ],
-      "prev_slug": "zh-CN/concepts/swarm",
+      "prev_slug": "zh-CN/concepts/core-observability",
       "next_slug": "zh-CN/tools/workspace-files",
       "source_path": "zh-CN/tools/index.md",
       "output_path": "zh-CN/tools/index.html"
@@ -2471,16 +2670,15 @@
     "zh-CN/tools/workspace-files": {
       "slug": "zh-CN/tools/workspace-files",
       "language": "zh-CN",
-      "title": "文件与工作区工具",
-      "summary": "文件与工作区工具是最常用的内置工具，覆盖列出文件、搜索内容、读取文件、写入文件四大核心功能。",
-      "updated_at": "2026-04-05",
+      "title": "工作区文件",
+      "summary": "`list_files`、`search_content`、`read_file`、`write_file` 的最新参数与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你需要在工作区中操作文件",
-        "你想了解文件工具的正确使用顺序"
+        "你要浏览工作区、搜索代码、读文件或写文件"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "docs/API文档.md"
+        "src/services/tools.rs",
+        "src/services/tools/search_content_tool.rs"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -2492,162 +2690,87 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "文件与工作区工具"
+          "text": "工作区文件"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "推荐智能体循环"
+          "text": "什么时候优先用它"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "列出文件"
+          "text": "listfiles"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "使用示例"
+          "level": 2,
+          "text": "searchcontent"
         },
         {
           "id": "section-7",
-          "level": 4,
-          "text": "列出根目录"
+          "level": 3,
+          "text": "最小参数"
         },
         {
           "id": "section-8",
-          "level": 4,
-          "text": "列出 src 目录"
+          "level": 3,
+          "text": "常用参数"
         },
         {
           "id": "section-9",
-          "level": 2,
-          "text": "搜索内容"
+          "level": 3,
+          "text": "成功返回"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "功能说明"
+          "level": 2,
+          "text": "readfile"
         },
         {
           "id": "section-11",
           "level": 3,
-          "text": "参数说明"
+          "text": "最小参数"
         },
         {
           "id": "section-12",
           "level": 3,
-          "text": "使用示例"
+          "text": "成功返回"
         },
         {
           "id": "section-13",
-          "level": 4,
-          "text": "简单搜索"
+          "level": 2,
+          "text": "writefile"
         },
         {
           "id": "section-14",
-          "level": 4,
-          "text": "推荐的 rg 风格搜索"
+          "level": 3,
+          "text": "最小参数"
         },
         {
           "id": "section-15",
-          "level": 4,
-          "text": "固定字符串模式"
+          "level": 3,
+          "text": "成功返回"
         },
         {
           "id": "section-16",
-          "level": 4,
-          "text": "按类型过滤并带上下文"
+          "level": 3,
+          "text": "什么时候不要用它"
         },
         {
           "id": "section-17",
           "level": 2,
-          "text": "读取文件"
-        },
-        {
-          "id": "section-18",
-          "level": 3,
-          "text": "功能说明"
-        },
-        {
-          "id": "section-19",
-          "level": 3,
-          "text": "参数说明"
-        },
-        {
-          "id": "section-20",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-21",
-          "level": 4,
-          "text": "读取整个文件"
-        },
-        {
-          "id": "section-22",
-          "level": 4,
-          "text": "读取指定行范围"
-        },
-        {
-          "id": "section-23",
-          "level": 4,
-          "text": "读取多个不连续范围"
-        },
-        {
-          "id": "section-24",
-          "level": 2,
-          "text": "写入文件"
-        },
-        {
-          "id": "section-25",
-          "level": 3,
-          "text": "功能说明"
-        },
-        {
-          "id": "section-26",
-          "level": 3,
-          "text": "参数说明"
-        },
-        {
-          "id": "section-27",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-28",
-          "level": 4,
-          "text": "创建新文件"
-        },
-        {
-          "id": "section-29",
-          "level": 4,
-          "text": "全量覆盖文件"
-        },
-        {
-          "id": "section-30",
-          "level": 2,
-          "text": "工具对比"
-        },
-        {
-          "id": "section-31",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-32",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "失败返回怎么读"
         }
       ],
       "prev_slug": "zh-CN/tools/index",
@@ -2659,15 +2782,13 @@
       "slug": "zh-CN/tools/exec",
       "language": "zh-CN",
       "title": "执行命令",
-      "summary": "在工作区中执行系统命令，支持编译、测试、运行脚本，受安全策略和预算约束。",
-      "updated_at": "2026-04-02",
+      "summary": "`execute_command` 的预算、dry-run、输出守卫与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你需要在工作区中运行命令",
-        "你想了解命令执行的安全边界"
+        "你要运行 shell 命令、编译、测试或调用现成 CLI"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "config/wunder-example.yaml"
+        "src/services/tools.rs"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -2684,82 +2805,37 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "常用参数"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "使用示例"
+          "text": "成功返回"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "简单命令"
+          "level": 2,
+          "text": "dryrun"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "指定工作目录"
+          "level": 2,
+          "text": "失败返回"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "带超时设置"
+          "level": 2,
+          "text": "特殊行为：误把 patch 文本传进来"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "预演模式"
-        },
-        {
-          "id": "section-9",
           "level": 2,
-          "text": "安全边界"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "与 ptc 的对比"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "常见场景"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "编译 Rust 项目"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "运行 Python 脚本"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "安装 npm 依赖"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "运行测试"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "什么时候别用它"
         }
       ],
       "prev_slug": "zh-CN/tools/workspace-files",
@@ -2770,16 +2846,15 @@
     "zh-CN/tools/ptc": {
       "slug": "zh-CN/tools/ptc",
       "language": "zh-CN",
-      "title": "ptc (Python 程序化执行)",
-      "summary": "ptc 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类先生成再运行的场景。",
-      "updated_at": "2026-04-02",
+      "title": "ptc",
+      "summary": "Python 临时脚本执行工具的当前行为与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解 ptc 和执行命令的分工",
-        "你要生成脚本产物而不是直接跑已有命令"
+        "你要用一段完整 Python 脚本完成局部任务"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs"
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -2791,57 +2866,27 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "ptc (Python 程序化执行)"
+          "text": "ptc"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "使用示例"
+          "text": "失败返回"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "生成图表"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "数据处理"
-        },
-        {
-          "id": "section-7",
           "level": 2,
-          "text": "与执行命令的对比"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "执行流程"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "使用边界"
         }
       ],
       "prev_slug": "zh-CN/tools/exec",
@@ -2853,15 +2898,14 @@
       "slug": "zh-CN/tools/apply-patch",
       "language": "zh-CN",
       "title": "应用补丁",
-      "summary": "应用补丁是做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定、更安全。",
-      "updated_at": "2026-04-02",
+      "summary": "`apply_patch` 的精确编辑语义、成功返回和 patch 失败码。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要跨多个文件做精确编辑",
-        "你在调试补丁格式为什么没被正确应用"
+        "你要做小范围、可审查、可回放的精确修改"
       ],
       "source_docs": [
         "src/services/tools/apply_patch_tool.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/tool_apply_patch.lark"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -2878,87 +2922,32 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "输入不是 JSON patch，而是 grammar 文本"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "补丁格式"
+          "text": "dryrun"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "基本结构"
+          "level": 2,
+          "text": "失败返回"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "多文件修改"
+          "level": 2,
+          "text": "什么时候用它，什么时候别用它"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "同一文件多位置修改"
-        },
-        {
-          "id": "section-8",
           "level": 2,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "单文件修改"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "预演模式"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "为什么用补丁而不是写入文件"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "dryrun 的用途"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "把它当普通文本替换"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "补丁写得太松"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "单文件全量生成还用补丁"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "与 writefile 的区别"
         }
       ],
       "prev_slug": "zh-CN/tools/ptc",
@@ -2970,15 +2959,13 @@
       "slug": "zh-CN/tools/read-image",
       "language": "zh-CN",
       "title": "读图工具",
-      "summary": "读图工具让模型能分析本地图片，把图片以多模态消息形式注入到后续模型调用里，与读取文件分工明确。",
-      "updated_at": "2026-04-02",
+      "summary": "`read_image` 的用途与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要让模型看本地图片",
-        "你要区分读取文件和读图工具的边界"
+        "你要把本地图片送入当前模型上下文"
       ],
       "source_docs": [
-        "src/services/tools/read_image_tool.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/read_image_tool.rs"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -2995,62 +2982,17 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-5",
-          "level": 3,
-          "text": "简单读图"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "带提示词"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "分析错误截图"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "处理流程"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "支持的图片格式"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "与读取文件的对比"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/apply-patch",
@@ -3062,14 +3004,12 @@
       "slug": "zh-CN/tools/lsp",
       "language": "zh-CN",
       "title": "LSP 查询",
-      "summary": "LSP查询 面向代码语义导航，提供定义跳转、引用搜索、悬停说明、符号树和调用层级，与文本搜索分工明确。",
-      "updated_at": "2026-04-02",
+      "summary": "`lsp_query` 的操作类型、位置参数与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要查定义、引用或调用关系",
-        "你要区分 LSP 查询和文本搜索的边界"
+        "你要查定义、引用、悬停、实现、调用层级或符号"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
         "src/services/tools.rs"
       ],
       "tab": "工具",
@@ -3087,72 +3027,27 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "支持的主要操作"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "支持的操作"
+          "text": "成功返回"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "使用示例"
+          "text": "注意点"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "查找定义"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "查找引用"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "查找符号"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "查看文件结构"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "查看调用层级"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "处理流程"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "与搜索内容的对比"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "什么时候别用它"
         }
       ],
       "prev_slug": "zh-CN/tools/read-image",
@@ -3164,15 +3059,13 @@
       "slug": "zh-CN/tools/skill-call",
       "language": "zh-CN",
       "title": "技能调用",
-      "summary": "技能调用会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。",
-      "updated_at": "2026-04-05",
+      "summary": "`skill_call` 如何把技能正文、根目录和文件树返回给模型。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解技能为什么不是只在提示词里露一个名字",
-        "你在排查 {{SKILL_ROOT}} 为什么会被替换"
+        "你要加载某个 `SKILL.md` 及其目录信息"
       ],
       "source_docs": [
-        "src/services/tools/skill_call.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools.rs"
       ],
       "tab": "工具",
       "group": "文件与代码",
@@ -3189,67 +3082,22 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "使用示例"
+          "text": "重点变化"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "返回内容"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "{{SKILLROOT}} 占位符"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "用途"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "替换规则"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "优势"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "为什么比只在 prompt 里写技能名更好"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "常见失败"
         }
       ],
       "prev_slug": "zh-CN/tools/lsp",
@@ -3261,15 +3109,13 @@
       "slug": "zh-CN/tools/web-fetch",
       "language": "zh-CN",
       "title": "网页抓取",
-      "summary": "web_fetch 适合读取网页正文，通过 HTTP/HTTPS 拉取页面，不维护浏览器会话，与浏览器工具分工明确。",
-      "updated_at": "2026-04-07",
+      "summary": "`web_fetch` 的直接抓取、浏览器回退与成功/失败返回。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要让模型读取网页正文",
-        "你不确定该用网页抓取还是浏览器"
+        "你要读取公开网页正文，而不是操控浏览器"
       ],
       "source_docs": [
-        "src/services/tools/web_fetch_tool.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/web_fetch_tool.rs"
       ],
       "tab": "工具",
       "group": "网页与桌面",
@@ -3286,67 +3132,32 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "使用示例"
+          "text": "重点字段"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "简单抓取"
+          "level": 2,
+          "text": "浏览器回退"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "指定提取模式"
+          "level": 2,
+          "text": "失败返回"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "限制输出长度"
-        },
-        {
-          "id": "section-8",
           "level": 2,
-          "text": "返回字段"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "处理流程"
-        },
-        {
-          "id": "section-10",
-          "level": 2,
-          "text": "与浏览器的对比"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "配置说明"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "什么时候别用它"
         }
       ],
       "prev_slug": "zh-CN/tools/skill-call",
@@ -3358,18 +3169,14 @@
       "slug": "zh-CN/tools/browser",
       "language": "zh-CN",
       "title": "浏览器",
-      "summary": "浏览器是交互型工具，用于操作浏览器运行时，支持会话、标签页、snapshot/ref/act、截图与读页。",
-      "updated_at": "2026-04-05",
+      "summary": "浏览器自动化工具的动作、返回特征与和 `web_fetch` 的分工。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你需要真实打开页面并持续交互",
-        "你需要通过 snapshot/ref 操作页面元素",
-        "你在评估 desktop、server、docker 中的浏览器自动化能力"
+        "你要打开网页、点击、输入、截图或读取动态页面"
       ],
       "source_docs": [
-        "src/services/browser/runtime.rs",
         "src/services/tools/browser_tool.rs",
-        "src/api/browser_control.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/browser/runtime.rs"
       ],
       "tab": "工具",
       "group": "网页与桌面",
@@ -3386,92 +3193,47 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "能力概览"
+          "text": "什么时候用它"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "关键设计"
+          "text": "常用动作"
         },
         {
           "id": "section-4",
-          "level": 3,
-          "text": "1. 会话与标签页"
+          "level": 2,
+          "text": "最小参数示例"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "2. snapshot/ref/act"
+          "level": 2,
+          "text": "返回结构怎么理解"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "3. legacy 兼容"
+          "text": "status"
         },
         {
           "id": "section-7",
-          "level": 2,
-          "text": "常用参数"
+          "level": 3,
+          "text": "stop"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "推荐智能体循环"
+          "level": 3,
+          "text": "screenshot"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "浏览和交互"
+          "text": "readpage / snapshot / navigate / tabs"
         },
         {
           "id": "section-10",
-          "level": 3,
-          "text": "多标签页"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "示例"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "打开页面并抓取快照"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "用 ref 点击元素"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "输入文本"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "管理标签页"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "配置"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "Docker 准备"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "与网页抓取的区别"
-        },
-        {
-          "id": "section-19",
-          "level": 2,
-          "text": "扩展接口"
+          "text": "与 webfetch 的区别"
         }
       ],
       "prev_slug": "zh-CN/tools/web-fetch",
@@ -3483,15 +3245,13 @@
       "slug": "zh-CN/tools/desktop-control",
       "language": "zh-CN",
       "title": "桌面控制",
-      "summary": "桌面控制器和桌面监视器提供完整的桌面自动化能力，基于坐标框执行桌面动作和截图观察。",
-      "updated_at": "2026-04-05",
+      "summary": "`desktop_controller` 与 `desktop_monitor` 的最新行为和返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要在 Desktop 模式下自动化桌面操作",
-        "你需要了解 bbox 坐标框的使用方法"
+        "你要控制本机桌面或观察桌面截图"
       ],
       "source_docs": [
-        "src/services/tools/desktop_control.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/desktop_control.rs"
       ],
       "tab": "工具",
       "group": "网页与桌面",
@@ -3508,87 +3268,42 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "桌面控制器"
+          "text": "desktopcontroller"
         },
         {
           "id": "section-3",
           "level": 3,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "支持的动作"
+          "level": 2,
+          "text": "desktopmonitor"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "使用示例"
+          "text": "最小参数"
         },
         {
           "id": "section-7",
-          "level": 4,
-          "text": "左键单击"
+          "level": 3,
+          "text": "成功返回"
         },
         {
           "id": "section-8",
-          "level": 4,
-          "text": "输入文本"
+          "level": 2,
+          "text": "注意点"
         },
         {
           "id": "section-9",
-          "level": 4,
-          "text": "按键操作"
-        },
-        {
-          "id": "section-10",
-          "level": 4,
-          "text": "拖拽操作"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "桌面监视器"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "功能说明"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "参数说明"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "完整智能体循环示例"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "打开记事本并输入文本"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "与浏览器的区别"
         }
       ],
       "prev_slug": "zh-CN/tools/browser",
@@ -3599,16 +3314,15 @@
     "zh-CN/tools/panels-and-a2ui": {
       "slug": "zh-CN/tools/panels-and-a2ui",
       "language": "zh-CN",
-      "title": "界面协同工具",
-      "summary": "a2ui、计划面板、问询面板负责把模型执行过程变成前端可展示、可交互的界面状态，而不是只输出一段文本。",
-      "updated_at": "2026-04-02",
+      "title": "面板与 a2ui",
+      "summary": "`a2ui`、`plan_update`、`question_panel` 的语义与返回。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解 Wunder 前端为什么能展示计划和问询分流",
-        "你要知道哪些工具专门用来驱动界面"
+        "你要更新前端计划面板、问询面板或发送结构化 UI 指令"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs"
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs"
       ],
       "tab": "工具",
       "group": "界面与自动化",
@@ -3620,87 +3334,47 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "界面协同工具"
+          "text": "面板与 a2ui"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "工具概览"
+          "text": "a2ui"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "a2ui"
+          "text": "planupdate"
         },
         {
           "id": "section-4",
           "level": 3,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-5",
           "level": 3,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "计划面板"
+          "text": "questionpanel"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "功能说明"
+          "text": "最小参数"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "参数说明"
+          "text": "成功返回"
         },
         {
           "id": "section-9",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-10",
           "level": 2,
-          "text": "问询面板"
-        },
-        {
-          "id": "section-11",
-          "level": 3,
-          "text": "功能说明"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "参数说明"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "与最终回复的区别"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/desktop-control",
@@ -3712,17 +3386,14 @@
       "slug": "zh-CN/tools/schedule-task",
       "language": "zh-CN",
       "title": "定时任务",
-      "summary": "`定时任务` 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。",
-      "updated_at": "2026-04-02",
+      "summary": "`schedule_task` 的扁平参数、调度动作与压缩返回。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要让 Wunder 延迟执行或周期执行任务",
-        "你要查 `定时任务` 工具和 `/wunder/cron/*` 接口的对应关系"
+        "你要新增、更新、查询或触发定时任务"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
         "src/services/tools/dispatch.rs",
-        "src/services/cron.rs",
-        "docs/API文档.md"
+        "src/services/cron.rs"
       ],
       "tab": "工具",
       "group": "界面与自动化",
@@ -3739,72 +3410,37 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "核心动作"
+          "text": "支持动作"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "常用参数"
+          "text": "推荐输入风格"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "它怎么运行"
+          "text": "成功返回"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "什么时候该用它"
+          "level": 3,
+          "text": "status"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "用循环定时任务实现“心跳式巡检”"
+          "level": 3,
+          "text": "add / update / get"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "推荐做法"
+          "text": "list"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "为什么推荐 isolated"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "这种方式适合什么"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "这种方式不等于专门 heartbeat"
-        },
-        {
-          "id": "section-11",
           "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "它不是 休眠等待"
-        },
-        {
-          "id": "section-13",
-          "level": 3,
-          "text": "scheduletext 和结构化 schedule"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-15",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/panels-and-a2ui",
@@ -3816,15 +3452,13 @@
       "slug": "zh-CN/tools/thread-control",
       "language": "zh-CN",
       "title": "会话线程控制",
-      "summary": "会话线程控制负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具。",
-      "updated_at": "2026-04-02",
+      "summary": "`thread_control` 的动作、线程关系与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要管理线程树、主线程和派生会话",
-        "你要区分线程结构控制和多智能体协作"
+        "你要创建、切换、归档或设置主线程"
       ],
       "source_docs": [
-        "src/services/tools/thread_control_tool.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/thread_control_tool.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -3841,67 +3475,32 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "主要动作"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "返回骨架"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "支持的动作"
+          "text": "list"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "使用示例"
+          "text": "create"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "列出所有线程"
+          "level": 2,
+          "text": "setmain"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "创建子线程"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "切换线程"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "设为主线程"
-        },
-        {
-          "id": "section-10",
           "level": 2,
-          "text": "真正改变什么"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "与其他协作工具的区别"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "和 subagentcontrol 的区别"
         }
       ],
       "prev_slug": "zh-CN/tools/schedule-task",
@@ -3913,15 +3512,13 @@
       "slug": "zh-CN/tools/subagent-control",
       "language": "zh-CN",
       "title": "子智能体控制",
-      "summary": "子智能体控制面向单个子会话运行的发现、历史查看、发消息和派生，适合盯住一个子运行而不是大范围并发派发。",
-      "updated_at": "2026-04-07",
+      "summary": "`subagent_control` 的动作、等待语义、状态语义与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要查看或操作某个子会话",
-        "你要区分子智能体控制和智能体蜂群"
+        "你要在当前会话内派生子智能体临时工作"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs"
+        "src/services/tools/subagent_control.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -3938,67 +3535,52 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "适用场景"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "主要动作"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "支持的动作"
+          "text": "spawn"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "使用示例"
+          "text": "list"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "列出子会话"
+          "level": 2,
+          "text": "history"
         },
         {
           "id": "section-7",
-          "level": 3,
-          "text": "查看子会话历史"
+          "level": 2,
+          "text": "status / wait"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "给子会话发消息"
+          "text": "status"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "派生新子会话"
+          "text": "wait"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "与其他协作工具的区别"
+          "text": "interrupt / close / resume"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "推荐路径"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点理解"
         }
       ],
       "prev_slug": "zh-CN/tools/thread-control",
@@ -4010,15 +3592,13 @@
       "slug": "zh-CN/tools/agent-swarm",
       "language": "zh-CN",
       "title": "智能体蜂群",
-      "summary": "智能体蜂群面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。",
+      "summary": "调度已存在智能体的多智能体协作工具。",
       "updated_at": "2026-04-10",
       "read_when": [
-        "你要同时调度多个智能体",
-        "你要查 `batch_send -> wait` 这条典型协作路径"
+        "你要调度当前用户已经拥有的其他正式智能体"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "src/services/tools/catalog.rs"
+        "src/services/tools.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -4035,87 +3615,27 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "先判断适不适合用它"
+          "text": "主要动作"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "支持的动作"
+          "text": "list"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "最常用路径"
+          "text": "spawn"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "send 的关键语义"
+          "text": "status"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "示例：单目标发送"
-        },
-        {
-          "id": "section-7",
           "level": 2,
-          "text": "batchsend 的关键语义"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "示例：批量派发"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "wait 怎么理解"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "示例：等待结果"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "spawn 什么时候用"
-        },
-        {
-          "id": "section-12",
-          "level": 3,
-          "text": "示例：继续派生"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "与子智能体控制的区别"
-        },
-        {
-          "id": "section-14",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "误区一：send 一定会复用老线程"
-        },
-        {
-          "id": "section-16",
-          "level": 3,
-          "text": "误区二：wait 的输入是会话标题"
-        },
-        {
-          "id": "section-17",
-          "level": 3,
-          "text": "误区三：蜂群和子智能体是一回事"
-        },
-        {
-          "id": "section-18",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "状态语义"
         }
       ],
       "prev_slug": "zh-CN/tools/subagent-control",
@@ -4127,15 +3647,13 @@
       "slug": "zh-CN/tools/memory-manager",
       "language": "zh-CN",
       "title": "记忆管理",
-      "summary": "记忆管理是 Wunder 的结构化长期记忆工具，重点动作是 list、add、update、delete、clear 和 recall。",
-      "updated_at": "2026-04-02",
+      "summary": "`memory_manager` 的动作、记忆范围与返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解模型如何主动检索和维护记忆碎片",
-        "你想知道 recall 为什么不会回写当前线程 prompt"
+        "你要增删改查长期记忆片段"
       ],
       "source_docs": [
-        "src/services/tools/memory_manager_tool.rs",
-        "src/services/tools/catalog.rs"
+        "src/services/tools/memory_manager_tool.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -4152,82 +3670,22 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "功能说明"
+          "text": "list"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "参数说明"
+          "text": "add"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "支持的动作"
+          "text": "recall"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "使用示例"
-        },
-        {
-          "id": "section-6",
-          "level": 3,
-          "text": "列出记忆"
-        },
-        {
-          "id": "section-7",
-          "level": 3,
-          "text": "添加记忆"
-        },
-        {
-          "id": "section-8",
-          "level": 3,
-          "text": "更新记忆"
-        },
-        {
-          "id": "section-9",
-          "level": 3,
-          "text": "删除记忆"
-        },
-        {
-          "id": "section-10",
-          "level": 3,
-          "text": "召回记忆"
-        },
-        {
-          "id": "section-11",
-          "level": 2,
-          "text": "recall 的定位"
-        },
-        {
-          "id": "section-12",
-          "level": 2,
-          "text": "适用场景"
-        },
-        {
-          "id": "section-13",
-          "level": 2,
-          "text": "常见误区"
-        },
-        {
-          "id": "section-14",
-          "level": 3,
-          "text": "把 recall 当成 prompt 重写"
-        },
-        {
-          "id": "section-15",
-          "level": 3,
-          "text": "把记忆工具当普通笔记工具"
-        },
-        {
-          "id": "section-16",
-          "level": 2,
-          "text": "注意事项"
-        },
-        {
-          "id": "section-17",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/agent-swarm",
@@ -4239,16 +3697,13 @@
       "slug": "zh-CN/tools/channel",
       "language": "zh-CN",
       "title": "渠道工具",
-      "summary": "`渠道工具` 是 Wunder 的模型侧渠道入口，当前重点能力是联系人发现和渠道消息发送。",
-      "updated_at": "2026-04-02",
+      "summary": "`channel_tool` 的联系人查询、发信与同步/异步回执结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要让模型主动发渠道消息",
-        "你在区分渠道工具和渠道 Webhook / 管理端渠道治理"
+        "你要列外部渠道联系人或发送渠道消息"
       ],
       "source_docs": [
-        "docs/API文档.md",
-        "src/services/tools/channel_tool.rs",
-        "docs/设计方案.md"
+        "src/services/tools/channel_tool.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -4265,32 +3720,42 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "当前动作"
-        },
-        {
-          "id": "section-3",
-          "level": 2,
           "text": "listcontacts"
         },
         {
+          "id": "section-3",
+          "level": 3,
+          "text": "最小参数"
+        },
+        {
           "id": "section-4",
-          "level": 2,
-          "text": "sendmessage"
+          "level": 3,
+          "text": "成功返回"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "它和渠道 Webhook 的区别"
+          "text": "sendmessage"
         },
         {
           "id": "section-6",
-          "level": 2,
-          "text": "实施建议"
+          "level": 3,
+          "text": "最小参数"
         },
         {
           "id": "section-7",
+          "level": 3,
+          "text": "wait=true 时"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "wait=false 时"
+        },
+        {
+          "id": "section-9",
           "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/memory-manager",
@@ -4302,16 +3767,13 @@
       "slug": "zh-CN/tools/user-world",
       "language": "zh-CN",
       "title": "用户世界工具",
-      "summary": "`用户世界工具` 面向 Wunder 系统内的注册用户目录和站内消息发送，不等同于外部渠道消息工具。",
-      "updated_at": "2026-04-02",
+      "summary": "站内用户查询与站内消息投递。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要在 Wunder 内部查用户或发站内消息",
-        "你要区分 `用户世界工具` 和 `渠道工具`"
+        "你要查站内用户，或给站内用户发送消息"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs",
-        "docs/API文档.md"
+        "src/services/tools.rs"
       ],
       "tab": "工具",
       "group": "系统桥接",
@@ -4328,42 +3790,17 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "核心动作"
+          "text": "listusers"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "常用参数"
-        },
-        {
-          "id": "section-4",
-          "level": 3,
-          "text": "listusers"
-        },
-        {
-          "id": "section-5",
-          "level": 3,
           "text": "sendmessage"
         },
         {
-          "id": "section-6",
+          "id": "section-4",
           "level": 2,
-          "text": "一个很实用的细节"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "和渠道工具的区别"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-9",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/channel",
@@ -4375,16 +3812,13 @@
       "slug": "zh-CN/tools/a2a-tools",
       "language": "zh-CN",
       "title": "A2A 工具",
-      "summary": "Wunder 会把每个已启用的 A2A 服务暴露成 `a2a@服务名` 工具，再配合 `a2a观察`、`a2a等待` 做状态跟踪。",
-      "updated_at": "2026-04-02",
+      "summary": "`a2a@service`、`a2a_observe`、`a2a_wait` 的当前返回结构。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要调用外部 A2A 服务",
-        "你要跟踪 A2A 任务的完成状态"
+        "你要调用外部 A2A 服务并跟踪任务状态"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
-        "src/services/tools.rs",
-        "docs/API文档.md"
+        "src/services/tools.rs"
       ],
       "tab": "工具",
       "group": "系统桥接",
@@ -4406,32 +3840,17 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "a2a观察"
+          "text": "a2aobserve"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "a2a等待"
+          "text": "a2await"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "推荐路径"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "和 MCP 的区别"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-8",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/user-world",
@@ -4443,14 +3862,12 @@
       "slug": "zh-CN/tools/node-invoke",
       "language": "zh-CN",
       "title": "节点调用",
-      "summary": "`节点调用` 是 Wunder 的底层节点桥接工具，既能列出可用节点，也能把具体命令和参数发到指定节点执行。",
-      "updated_at": "2026-04-02",
+      "summary": "网关节点列表与命令调用。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你要理解节点桥接能力",
-        "你要区分节点调用和浏览器/桌面控制的边界"
+        "你要列出可用节点或向指定节点发送命令"
       ],
       "source_docs": [
-        "src/services/tools/catalog.rs",
         "src/services/tools.rs"
       ],
       "tab": "工具",
@@ -4468,32 +3885,17 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "核心动作"
+          "text": "list"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "常用参数"
+          "text": "invoke"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "它适合什么"
-        },
-        {
-          "id": "section-5",
-          "level": 2,
-          "text": "和浏览器、桌面控制的区别"
-        },
-        {
-          "id": "section-6",
-          "level": 2,
-          "text": "实施建议"
-        },
-        {
-          "id": "section-7",
-          "level": 2,
-          "text": "延伸阅读"
+          "text": "重点"
         }
       ],
       "prev_slug": "zh-CN/tools/a2a-tools",
@@ -6373,8 +5775,8 @@
       "slug": "zh-CN/reference/index",
       "language": "zh-CN",
       "title": "参考概览",
-      "summary": "参考页提供稳定查表内容：接口索引、配置项、事件语义、工作区路由和管理面板映射。",
-      "updated_at": "2026-04-02",
+      "summary": "参考页提供稳定查表内容，也收纳按主题拆开的运行模型参考页，适合在核心总览之后深入细节。",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你需要字段级、事件级、配置级参考",
         "你已经知道问题在哪一层，想快速查标准答案"
@@ -6404,15 +5806,20 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "何时优先读参考页"
+          "text": "运行模型参考"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "常见误区"
+          "text": "何时优先读参考页"
         },
         {
           "id": "section-5",
+          "level": 2,
+          "text": "常见误区"
+        },
+        {
+          "id": "section-6",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6855,7 +6262,7 @@
       "language": "zh-CN",
       "title": "管理端面板索引",
       "summary": "管理员侧前端不是单一调试页，而是一组分工明确的治理面板。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你第一次使用管理员侧",
         "你想知道某个配置、监控或文档入口应该去哪看"
@@ -6939,9 +6346,1103 @@
         }
       ],
       "prev_slug": "zh-CN/reference/prompt-templates",
-      "next_slug": "zh-CN/help/index",
+      "next_slug": "zh-CN/concepts/architecture",
       "source_path": "zh-CN/reference/admin-panels.md",
       "output_path": "zh-CN/reference/admin-panels/index.html"
+    },
+    "zh-CN/concepts/architecture": {
+      "slug": "zh-CN/concepts/architecture",
+      "language": "zh-CN",
+      "title": "系统架构",
+      "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解 wunder 的整体结构",
+        "你要知道 API、调度、工具、前端与存储之间如何协作"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/architecture/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "系统架构"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "顶层结构"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "接入层"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "调度层"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "工具与能力层"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "存储与工作区层"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "前端与桌面壳层"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "当前最重要的架构约束"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "图示"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/reference/admin-panels",
+      "next_slug": "zh-CN/concepts/workspaces",
+      "source_path": "zh-CN/concepts/architecture.md",
+      "output_path": "zh-CN/concepts/architecture/index.html"
+    },
+    "zh-CN/concepts/workspaces": {
+      "slug": "zh-CN/concepts/workspaces",
+      "language": "zh-CN",
+      "title": "工作区与容器",
+      "summary": "Wunder 的文件隔离不是“一个当前目录”，而是按 `user_id + container_id` 分层组织的持久化工作区。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解文件为什么按用户和容器隔离",
+        "你要判断 `agent_id`、`container_id` 和工作区之间的关系"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/workspaces/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "工作区与容器"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "当前约定"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "containerid=0 不只是私有文件夹"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "containerid=110 用来做什么"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "agentid 和工作区是什么关系"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "对外路径长什么样"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "常见误区"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "误解一：agentid 就等于工作区"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "误解二：所有文件都应该放在私有容器"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "误解三：本地模式下就没有容器概念"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/architecture",
+      "next_slug": "zh-CN/concepts/sessions-and-rounds",
+      "source_path": "zh-CN/concepts/workspaces.md",
+      "output_path": "zh-CN/concepts/workspaces/index.html"
+    },
+    "zh-CN/concepts/sessions-and-rounds": {
+      "slug": "zh-CN/concepts/sessions-and-rounds",
+      "language": "zh-CN",
+      "title": "会话与轮次",
+      "summary": "wunder 将对话拆分为会话、线程、用户轮次与模型轮次。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解会话状态、事件流与统计口径",
+        "你要区分用户轮次、模型轮次与 token 占用"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/sessions-and-rounds/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "会话与轮次"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "会话是什么"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "线程是什么"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "用户轮次与模型轮次"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "用户轮次"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "模型轮次"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "为什么这个区分重要"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "token 统计口径"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "流式事件与终结"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/workspaces",
+      "next_slug": "zh-CN/concepts/streaming",
+      "source_path": "zh-CN/concepts/sessions-and-rounds.md",
+      "output_path": "zh-CN/concepts/sessions-and-rounds/index.html"
+    },
+    "zh-CN/concepts/streaming": {
+      "slug": "zh-CN/concepts/streaming",
+      "language": "zh-CN",
+      "title": "流式执行",
+      "summary": "Wunder 的流式不是简单的字符流，而是把线程执行、工具调用和终态一起暴露出来。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你在接 SSE 或 WebSocket",
+        "你在给聊天界面设计状态机"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "src/api/chat.rs",
+        "src/api/core.rs"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/streaming/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "流式执行"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "本页重点"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "什么时候看"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "流式不是只有一种入口"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "你真正要关心的不是所有事件名"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "过程事件"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "状态事件"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "终态事件"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "客户端最容易犯的错"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "只看 final"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "只看 running"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "把 SSE 当成完整聊天协议"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "实施建议"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/sessions-and-rounds",
+      "next_slug": "zh-CN/concepts/presence-and-runtime",
+      "source_path": "zh-CN/concepts/streaming.md",
+      "output_path": "zh-CN/concepts/streaming/index.html"
+    },
+    "zh-CN/concepts/presence-and-runtime": {
+      "slug": "zh-CN/concepts/presence-and-runtime",
+      "language": "zh-CN",
+      "title": "运行时与在线状态",
+      "summary": "Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你在做会话列表、状态徽标或运行面板",
+        "你在排查线程到底是卡住了还是已经结束"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "src/api/chat.rs",
+        "src/core/session_runtime.rs"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/presence-and-runtime/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "运行时与在线状态"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "本页重点"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "两层状态不要混"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "线程事件状态"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "会话运行时投影"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "为什么不能只保留一个 running"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "会话页最常见的状态判断"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "什么时候最容易用错"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "把“等待审批”当成“已经结束”"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "只在详情页读状态"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "把事件流和摘要状态混成一层"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "实施建议"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/streaming",
+      "next_slug": "zh-CN/concepts/tools",
+      "source_path": "zh-CN/concepts/presence-and-runtime.md",
+      "output_path": "zh-CN/concepts/presence-and-runtime/index.html"
+    },
+    "zh-CN/concepts/tools": {
+      "slug": "zh-CN/concepts/tools",
+      "language": "zh-CN",
+      "title": "工具体系",
+      "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解 wunder 的能力为什么不只是聊天",
+        "你要知道工具来源、边界与编排方式"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md",
+        "docs/工具调用.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/tools/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "工具体系"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "本页重点"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "关键结论"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "工具从哪里来"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "内置工具先看什么"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "MCP 负责什么"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Skills 负责什么"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "知识库和用户工具分别解决什么"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "为什么一定要统一工具体系"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "常见误区"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/presence-and-runtime",
+      "next_slug": "zh-CN/concepts/prompt-and-skills",
+      "source_path": "zh-CN/concepts/tools.md",
+      "output_path": "zh-CN/concepts/tools/index.html"
+    },
+    "zh-CN/concepts/prompt-and-skills": {
+      "slug": "zh-CN/concepts/prompt-and-skills",
+      "language": "zh-CN",
+      "title": "提示词与技能",
+      "summary": "Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解线程 system prompt 为什么会冻结",
+        "你要搞清楚技能、模板包和 skill_call 的关系"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md",
+        "config/wunder-example.yaml"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/prompt-and-skills/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "提示词与技能"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "先分清两类东西"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "系统提示词"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "技能"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "为什么线程提示词必须冻结"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "提示词模板包怎么组织"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "改模板后什么时候生效"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "技能是什么"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "技能分层"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "skillcall 为什么重要"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "{{SKILLROOT}} 是干什么的"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "提示词、技能、记忆三者怎么配合"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "常见误区"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "误解一：改提示词模板会立即改变当前线程"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "误解二：技能只是一个说明文档"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "误解三：记忆会每轮自动重写 system prompt"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/tools",
+      "next_slug": "zh-CN/concepts/memory",
+      "source_path": "zh-CN/concepts/prompt-and-skills.md",
+      "output_path": "zh-CN/concepts/prompt-and-skills/index.html"
+    },
+    "zh-CN/concepts/memory": {
+      "slug": "zh-CN/concepts/memory",
+      "language": "zh-CN",
+      "title": "长期记忆",
+      "summary": "wunder 的长期记忆围绕线程冻结、单次注入与结构化记忆碎片设计。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解 wunder 的长期记忆为什么要强调冻结与单次注入",
+        "你要排查线程记忆与 system prompt 的关系"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "长期记忆"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "核心规则"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "为什么这样设计"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "记忆的形态"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "记忆与 recall"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "记忆与上下文压缩"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "理解这套机制时最容易犯的错"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/prompt-and-skills",
+      "next_slug": "zh-CN/concepts/quota-and-token-usage",
+      "source_path": "zh-CN/concepts/memory.md",
+      "output_path": "zh-CN/concepts/memory/index.html"
+    },
+    "zh-CN/concepts/quota-and-token-usage": {
+      "slug": "zh-CN/concepts/quota-and-token-usage",
+      "language": "zh-CN",
+      "title": "额度与 Token 占用",
+      "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
+      "updated_at": "2026-04-07",
+      "read_when": [
+        "你在看监控、额度或会话资源占用",
+        "你要理解为什么系统强调 round_usage.total_tokens 与 context 占用"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/quota-and-token-usage/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "额度与 Token 占用"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "本页重点"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Token 占用不是账单口径"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "为什么要强调这个口径"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "当前最该看的字段"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "额度和 Token 占用不是一回事"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "适用场景"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "实施建议"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/memory",
+      "next_slug": "zh-CN/concepts/swarm",
+      "source_path": "zh-CN/concepts/quota-and-token-usage.md",
+      "output_path": "zh-CN/concepts/quota-and-token-usage/index.html"
+    },
+    "zh-CN/concepts/swarm": {
+      "slug": "zh-CN/concepts/swarm",
+      "language": "zh-CN",
+      "title": "蜂群协作",
+      "summary": "wunder 的蜂群能力用于多智能体协作，核心是母蜂编排、工蜂执行、必要时再派生子智能体。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你要理解 wunder 的多智能体能力",
+        "你要区分母蜂、工蜂和子智能体"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "frontend/src/components/beeroom/canvas/swarmCanvasModel.ts",
+        "frontend/src/components/beeroom/canvas/BeeroomSwarmNodeCard.vue"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/swarm/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "蜂群协作"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "蜂群解决什么问题"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "先分清三个角色"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "母蜂"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "工蜂"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "子智能体"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "蜂群和子智能体控制有什么区别"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "工蜂为什么默认会新建线程"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "主线程为什么重要"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "当前前端怎么显示蜂群状态"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "现在工作流区域重点看什么"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "什么时候适合用蜂群"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/quota-and-token-usage",
+      "next_slug": "zh-CN/concepts/boundary-handling",
+      "source_path": "zh-CN/concepts/swarm.md",
+      "output_path": "zh-CN/concepts/swarm/index.html"
+    },
+    "zh-CN/concepts/boundary-handling": {
+      "slug": "zh-CN/concepts/boundary-handling",
+      "language": "zh-CN",
+      "title": "边界处理",
+      "summary": "wunder 在上下文超限、网络中断、工具失败、系统异常等边界场景下的处理策略与恢复机制。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要理解系统在异常情况下的行为",
+        "你要设计容错和恢复逻辑",
+        "你要排查生产环境的异常问题"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "src/orchestrator/",
+        "src/core/"
+      ],
+      "tab": "参考",
+      "group": "运行模型参考",
+      "group_path": [
+        "运行模型参考"
+      ],
+      "url": "/docs/zh-CN/concepts/boundary-handling/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "边界处理"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "1. 上下文超限处理"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "1.1 什么是上下文超限"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "1.2 处理策略"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "1.3 压缩层级"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "1.4 关键设计约束"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "2. 网络中断处理"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "2.1 WebSocket 连接中断"
+        },
+        {
+          "id": "section-9",
+          "level": 4,
+          "text": "客户端侧行为"
+        },
+        {
+          "id": "section-10",
+          "level": 4,
+          "text": "服务端侧行为"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "2.2 SSE 连接中断"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "2.3 模型 API 调用失败"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "3. 工具执行失败处理"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "3.1 工具失败分类"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "3.2 工具结果防爆机制"
+        },
+        {
+          "id": "section-16",
+          "level": 4,
+          "text": "Layer 1: 执行层预算"
+        },
+        {
+          "id": "section-17",
+          "level": 4,
+          "text": "Layer 2: 输出裁剪策略"
+        },
+        {
+          "id": "section-18",
+          "level": 4,
+          "text": "Layer 3: 信号反馈"
+        },
+        {
+          "id": "section-19",
+          "level": 3,
+          "text": "3.3 原子写入策略"
+        },
+        {
+          "id": "section-20",
+          "level": 2,
+          "text": "4. 会话与线程异常处理"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "4.1 会话状态机"
+        },
+        {
+          "id": "section-22",
+          "level": 3,
+          "text": "4.2 异常状态恢复"
+        },
+        {
+          "id": "section-23",
+          "level": 3,
+          "text": "4.3 线程状态同步"
+        },
+        {
+          "id": "section-24",
+          "level": 2,
+          "text": "5. 并发与排队处理"
+        },
+        {
+          "id": "section-25",
+          "level": 3,
+          "text": "5.1 主线程排队"
+        },
+        {
+          "id": "section-26",
+          "level": 3,
+          "text": "5.2 队列配置"
+        },
+        {
+          "id": "section-27",
+          "level": 3,
+          "text": "5.3 优先级策略"
+        },
+        {
+          "id": "section-28",
+          "level": 2,
+          "text": "6. 数据一致性保证"
+        },
+        {
+          "id": "section-29",
+          "level": 3,
+          "text": "6.1 数据库事务"
+        },
+        {
+          "id": "section-30",
+          "level": 3,
+          "text": "6.2 幂等性设计"
+        },
+        {
+          "id": "section-31",
+          "level": 3,
+          "text": "6.3 最终一致性"
+        },
+        {
+          "id": "section-32",
+          "level": 2,
+          "text": "7. 资源泄漏防护"
+        },
+        {
+          "id": "section-33",
+          "level": 3,
+          "text": "7.1 超时机制"
+        },
+        {
+          "id": "section-34",
+          "level": 3,
+          "text": "7.2 连接池管理"
+        },
+        {
+          "id": "section-35",
+          "level": 3,
+          "text": "7.3 内存保护"
+        },
+        {
+          "id": "section-36",
+          "level": 2,
+          "text": "8. 可观测性与调试"
+        },
+        {
+          "id": "section-37",
+          "level": 3,
+          "text": "8.1 错误分类"
+        },
+        {
+          "id": "section-38",
+          "level": 3,
+          "text": "8.2 关键事件记录"
+        },
+        {
+          "id": "section-39",
+          "level": 3,
+          "text": "8.3 日志分级"
+        },
+        {
+          "id": "section-40",
+          "level": 2,
+          "text": "9. 常见边界场景速查"
+        },
+        {
+          "id": "section-41",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/concepts/swarm",
+      "next_slug": "zh-CN/help/index",
+      "source_path": "zh-CN/concepts/boundary-handling.md",
+      "output_path": "zh-CN/concepts/boundary-handling/index.html"
     },
     "zh-CN/help/index": {
       "slug": "zh-CN/help/index",
@@ -7011,7 +7512,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/reference/admin-panels",
+      "prev_slug": "zh-CN/concepts/boundary-handling",
       "next_slug": "zh-CN/help/troubleshooting",
       "source_path": "zh-CN/help/index.md",
       "output_path": "zh-CN/help/index.html"

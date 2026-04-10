@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工具 | wunder 使用说明书</title>
+  <meta name="description" content="工具核心解释了 Wunder 为什么要把能力统一收口成工具，以及为什么工具必须同时面向模型调用、执行治理和前端展示。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-tools","language":"zh-CN","title":"工具","summary":"工具核心解释了 Wunder 为什么要把能力统一收口成工具，以及为什么工具必须同时面向模型调用、执行治理和前端展示。","updated_at":"2026-04-10","read_when":["你在设计内置工具、MCP 或 Skills","你想理解工具返回为什么必须精简明确"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-tools/","headings":[{"id":"section-1","level":1,"text":"工具"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：Wunder 不是只让模型“会说”，而是让模型“会做”"},{"id":"section-8","level":3,"text":"重点二：工具结果要先服务调度，再服务展示"},{"id":"section-9","level":3,"text":"重点三：统一工具体系比“工具越多越好”更重要"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-agent-loop","next_slug":"zh-CN/concepts/core-swarm","markdown":"# 工具\n\nWunder 的重点不是“让模型回答得更像人”，而是“让模型能稳定调到正确能力并消费返回结果”。\n\n![工具分层图：工具规格、执行层、入模结果、展示投影四层关系](/docs/assets/manual/core-tools.svg)\n\n## 先给结论\n\n- 工具不是附加能力列表，而是系统给模型开放能力的统一接口。\n- 一个工具如果只对人类好读、但对模型难调用，它在 Wunder 里就是坏工具。\n- 工具设计必须同时考虑调用正确率、上下文成本、权限治理和前端工作流展示。\n\n## 为什么它必须单列为核心\n\n如果没有“工具”这个核心，Wunder 会出现两种退化：\n\n- 能力散落在提示词、隐式逻辑和临时接口里，模型不知道该怎么稳定调用。\n- 前端只能看到“模型说自己做了什么”，却看不到真正执行了什么。\n\nWunder 把能力统一成工具，本质是在统一三件事：模型心智、执行协议、展示协议。\n\n## 这个核心真正保护什么\n\n- 保护模型调用质量：参数和描述必须让模型少猜。\n- 保护执行治理：预算、权限、审批、失败反馈必须进入统一链路。\n- 保护前端可见性：工具工作流需要稳定地被展示、追踪和回放。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 描述必须清晰 | 降低模型误用和幻觉式调用 |\n| 参数必须结构化 | 让模型在调用时更像“填表”而不是“自由发挥” |\n| 返回必须精简明确 | 防止 observation 噪声反过来污染上下文 |\n| 事实与展示要分离 | UI 卡片是投影，不是工具真实执行结果 |\n\n## 设计重点\n\n### 重点一：Wunder 不是只让模型“会说”，而是让模型“会做”\n\n文件、命令、浏览器、桌面、用户世界、渠道、记忆管理，本质上都是执行能力，不该各走各的协议。\n\n### 重点二：工具结果要先服务调度，再服务展示\n\n一个返回几万字原始日志的工具，对用户看似信息丰富，但对模型通常是灾难。真正好的工具返回会优先交付：\n\n- 当前最关键的事实\n- 继续下一步所需的信号\n- 失败时可行动的提示\n\n### 重点三：统一工具体系比“工具越多越好”更重要\n\n内置工具、MCP、Skills、知识库、用户工具来源不同，但最终都要进入统一调度视角。否则权限、审计、检索和工作流展示都会散掉。\n\n## 最容易搞错的点\n\n- Skills 不是和工具平行的另一套世界，它们本质上是固化流程能力。\n- 工具越多不一定越好，描述模糊和边界重叠会直接拉低模型调用质量。\n- “能返回很多内容”不是优点，能被模型低成本消费才是。\n\n## 和其他核心的边界\n\n- 和 [智能体循环](/docs/zh-CN/concepts/core-agent-loop/) 的区别：智能体循环定义主链路，工具定义主链路里可被调用的能力。\n- 和 [上下文压缩](/docs/zh-CN/concepts/core-context-compression/) 的区别：压缩解决“结果太大怎么办”，工具解决“能力怎么暴露给模型”。\n- 和 [可观测性](/docs/zh-CN/concepts/core-observability/) 的区别：可观测性负责复盘工具轨迹，工具负责产生轨迹。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [工具总览](/docs/zh-CN/tools/)\n","source_path":"使用说明书/zh-CN/concepts/core-tools.md"}</script>
+</body>
+</html>

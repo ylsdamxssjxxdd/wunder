@@ -1,224 +1,104 @@
 ---
 title: 桌面控制
-summary: 桌面控制器和桌面监视器提供完整的桌面自动化能力，基于坐标框执行桌面动作和截图观察。
+summary: `desktop_controller` 与 `desktop_monitor` 的最新行为和返回结构。
 read_when:
-  - 你要在 Desktop 模式下自动化桌面操作
-  - 你需要了解 bbox 坐标框的使用方法
+  - 你要控制本机桌面或观察桌面截图
 source_docs:
   - src/services/tools/desktop_control.rs
-  - src/services/tools/catalog.rs
+updated_at: 2026-04-10
 ---
 
 # 桌面控制
 
-桌面自动化由两个核心工具组成：
-- **桌面控制器**：执行各种桌面动作
-- **桌面监视器**：观察桌面状态变化
+这一组工具是：
 
----
-
-## 桌面控制器
-
-### 功能说明
-
-基于 `bbox + action` 执行桌面操作，支持鼠标、键盘、拖拽等完整操作。
-
-**别名**：
 - `desktop_controller`
-- `desktop_control`
-- `desktop`
-
-### 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `bbox` | array | ✅ | 目标区域坐标，支持 2 或 4 个整数 |
-| `action` | string | ✅ | 要执行的动作 |
-| `description` | string | ✅ | 动作说明，用于日志和审计 |
-| `key` | string | ❌ | 按键名称（press_key 动作使用） |
-| `text` | string | ❌ | 要输入的文本（type_text 动作使用） |
-| `delay_ms` | integer | ❌ | 延迟毫秒数 |
-| `duration_ms` | integer | ❌ | 持续时间毫秒数 |
-| `scroll_steps` | integer | ❌ | 滚动步数 |
-| `to_bbox` | array | ❌ | 拖拽目标坐标（drag_drop 动作使用） |
-
-### 支持的动作
-
-| 动作 | 说明 | 必填附加参数 |
-|------|------|--------------|
-| `left_click` | 左键单击 | - |
-| `left_double_click` | 左键双击 | - |
-| `right_click` | 右键单击 | - |
-| `middle_click` | 中键单击 | - |
-| `left_hold` | 左键按住 | `duration_ms` |
-| `right_hold` | 右键按住 | `duration_ms` |
-| `middle_hold` | 中键按住 | `duration_ms` |
-| `left_release` | 左键释放 | - |
-| `right_release` | 右键释放 | - |
-| `middle_release` | 中键释放 | - |
-| `scroll_down` | 向下滚动 | `scroll_steps` |
-| `scroll_up` | 向上滚动 | `scroll_steps` |
-| `press_key` | 按键 | `key` |
-| `type_text` | 输入文本 | `text` |
-| `delay` | 延迟等待 | `delay_ms` |
-| `move_mouse` | 移动鼠标 | - |
-| `drag_drop` | 拖拽 | `to_bbox` |
-
-### 使用示例
-
-#### 左键单击
-```json
-{
-  "bbox": [100, 200, 300, 400],
-  "action": "left_click",
-  "description": "点击开始按钮"
-}
-```
-
-#### 输入文本
-```json
-{
-  "bbox": [500, 300],
-  "action": "type_text",
-  "text": "Hello World!",
-  "description": "在输入框中输入文本"
-}
-```
-
-#### 按键操作
-```json
-{
-  "bbox": [200, 150],
-  "action": "press_key",
-  "key": "enter",
-  "description": "按下回车键"
-}
-```
-
-#### 拖拽操作
-```json
-{
-  "bbox": [100, 100, 200, 200],
-  "action": "drag_drop",
-  "to_bbox": [300, 300, 400, 400],
-  "description": "拖拽文件到目标位置"
-}
-```
-
----
-
-## 桌面监视器
-
-### 功能说明
-
-等待指定时间后返回桌面截图，用于观察桌面状态变化。
-
-**别名**：
 - `desktop_monitor`
-- `desktop_screenshot`
 
-### 参数说明
+它们成功时走统一骨架，但 `data` 里会带截图路径、下载地址和 follow-up prompt。  
+随后系统还可能自动补一条带图片的后续 user message，供模型继续看图。
 
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `wait_ms` | integer | ✅ | 等待毫秒数，最大 30000 毫秒（30 秒） |
-| `note` | string | ❌ | 观察说明 |
+## `desktop_controller`
 
-### 使用示例
+### 最小参数
 
 ```json
 {
-  "wait_ms": 2000,
-  "note": "等待 2 秒后截图观察界面变化"
-}
-```
-
----
-
-## 完整智能体循环示例
-
-### 打开记事本并输入文本
-
-```json
-// 1. 先截图确认当前状态
-{
-  "wait_ms": 500,
-  "note": "初始状态观察"
-}
-
-// 2. 点击开始菜单
-{
-  "bbox": [50, 1050, 150, 1080],
+  "bbox": { "x": 100, "y": 100, "width": 80, "height": 40 },
   "action": "left_click",
-  "description": "点击开始菜单"
-}
-
-// 3. 等待菜单打开
-{
-  "wait_ms": 1000,
-  "note": "等待菜单打开"
-}
-
-// 4. 输入记事本
-{
-  "bbox": [100, 200],
-  "action": "type_text",
-  "text": "记事本",
-  "description": "搜索记事本"
-}
-
-// 5. 按回车打开
-{
-  "bbox": [150, 250],
-  "action": "press_key",
-  "key": "enter",
-  "description": "打开记事本"
-}
-
-// 6. 等待记事本打开
-{
-  "wait_ms": 2000,
-  "note": "等待记事本打开"
-}
-
-// 7. 在记事本中输入文本
-{
-  "bbox": [300, 300, 800, 600],
-  "action": "type_text",
-  "text": "Hello from wunder!",
-  "description": "在记事本中输入文本"
-}
-
-// 8. 截图确认结果
-{
-  "wait_ms": 1000,
-  "note": "确认操作完成观察"
+  "description": "点击保存按钮"
 }
 ```
 
----
+### 成功返回
 
-## 注意事项
+```json
+{
+  "ok": true,
+  "action": "desktop_controller",
+  "state": "completed",
+  "summary": "Completed desktop action left_click.",
+  "data": {
+    "action": "left_click",
+    "description": "点击保存按钮",
+    "center_norm": [640, 360],
+    "center_screen": [960, 540],
+    "normalized_width": 1280,
+    "normalized_height": 720,
+    "screen_width": 1920,
+    "screen_height": 1080,
+    "screenshot_path": "C:/.../desktop_controller/a.png",
+    "previous_screenshot_path": null,
+    "screenshot_download_url": "/wunder/temp_dir/download?...",
+    "screenshot_bytes": 182233,
+    "elapsed_ms": 742,
+    "followup_prompt": "..."
+  }
+}
+```
 
-1. **`bbox` 坐标格式说明：
-   - 4 个整数：`[x1, y1, x2, y2]` - 矩形区域
-   - 2 个整数：`[x, y]` - 点坐标
+## `desktop_monitor`
 
-2. **`description` 必须填写**：
-   - 桌面操作比文件工具更危险
-   - 便于日志、审计和后续排障
+### 最小参数
 
-3. **可见性限制**：
-   - 仅在 Desktop 模式下可用
-   - Server 和 CLI 模式不可用
+```json
+{
+  "wait_ms": 1000,
+  "note": "等页面稳定后再截图"
+}
+```
 
-4. **安全提示**：
-   - 操作前先用 `桌面监视器` 确认状态
-   - 操作后再次确认结果
+### 成功返回
 
----
+```json
+{
+  "ok": true,
+  "action": "desktop_monitor",
+  "state": "completed",
+  "summary": "Captured a desktop screenshot for inspection.",
+  "data": {
+    "wait_ms": 1000,
+    "normalized_width": 1280,
+    "normalized_height": 720,
+    "screen_width": 1920,
+    "screen_height": 1080,
+    "screenshot_path": "C:/.../desktop_controller/b.png",
+    "previous_screenshot_path": "C:/.../desktop_controller/a.png",
+    "screenshot_download_url": "/wunder/temp_dir/download?...",
+    "screenshot_bytes": 191002,
+    "followup_prompt": "...",
+    "note": "等页面稳定后再截图"
+  }
+}
+```
 
-## 延伸阅读
+## 注意点
 
-- [浏览器](/docs/zh-CN/tools/browser/)
-- [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)
+- 这是本机桌面，不是网页 DOM
+- 每次动作后都会尽量回传新截图
+- 前后截图可能一起进入后续多模态判断
+
+## 与浏览器的区别
+
+- 网页 DOM 级操作：用 [浏览器](/docs/zh-CN/tools/browser/)
+- 整个桌面与原生应用操作：用桌面控制

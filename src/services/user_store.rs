@@ -8,8 +8,8 @@ use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
     SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenRecord,
-    UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenBalanceStatus,
+    UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -27,10 +27,11 @@ const TOKEN_TOUCH_MIN_INTERVAL_S: f64 = 30.0;
 const TOKEN_TOUCH_CACHE_MAX_ITEMS: usize = 4096;
 const DEFAULT_ADMIN_USER_ID: &str = "admin";
 const DEFAULT_ADMIN_PASSWORD: &str = "admin";
-const DEFAULT_DAILY_QUOTA_L1: i64 = 10_000;
-const DEFAULT_DAILY_QUOTA_L2: i64 = 5_000;
-const DEFAULT_DAILY_QUOTA_L3: i64 = 1_000;
-const DEFAULT_DAILY_QUOTA_L4: i64 = 100;
+const DEFAULT_DAILY_TOKEN_GRANT_L1: i64 = 100_000_000;
+const DEFAULT_DAILY_TOKEN_GRANT_L2: i64 = 50_000_000;
+const DEFAULT_DAILY_TOKEN_GRANT_L3: i64 = 10_000_000;
+const DEFAULT_DAILY_TOKEN_GRANT_L4: i64 = 1_000_000;
+pub const DEFAULT_LEVEL_UP_TOKEN_REWARD: i64 = 1_000_000;
 const DEFAULT_HIVE_NAME: &str = "默认蜂群";
 const DEFAULT_HIVE_DESCRIPTION: &str = "系统默认蜂群，用于承载初始智能体应用。";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
@@ -58,9 +59,11 @@ pub struct UserProfile {
     pub access_level: String,
     pub unit_id: Option<String>,
     pub unit: Option<UserUnitProfile>,
-    pub daily_quota: i64,
-    pub daily_quota_used: i64,
-    pub daily_quota_date: Option<String>,
+    pub token_balance: i64,
+    pub token_granted_total: i64,
+    pub token_used_total: i64,
+    pub daily_token_grant: i64,
+    pub last_token_grant_date: Option<String>,
     pub level: i64,
     pub max_level: i64,
     pub experience_total: i64,
@@ -161,12 +164,12 @@ impl UserStore {
         }
     }
 
-    pub fn default_daily_quota_by_level(level: Option<i32>) -> i64 {
+    pub fn default_daily_token_grant_by_level(level: Option<i32>) -> i64 {
         match level.unwrap_or(1) {
-            2 => DEFAULT_DAILY_QUOTA_L2,
-            3 => DEFAULT_DAILY_QUOTA_L3,
-            4 => DEFAULT_DAILY_QUOTA_L4,
-            _ => DEFAULT_DAILY_QUOTA_L1,
+            2 => DEFAULT_DAILY_TOKEN_GRANT_L2,
+            3 => DEFAULT_DAILY_TOKEN_GRANT_L3,
+            4 => DEFAULT_DAILY_TOKEN_GRANT_L4,
+            _ => DEFAULT_DAILY_TOKEN_GRANT_L1,
         }
     }
 
@@ -216,6 +219,10 @@ impl UserStore {
             path_name: unit.path_name.clone(),
             level: unit.level,
         });
+        let daily_token_grant =
+            Self::default_daily_token_grant_by_level(unit.map(|item| item.level));
+        let token_status =
+            Self::effective_token_balance_status(user, unit.map(|item| item.level), None);
         UserProfile {
             id: user.user_id.clone(),
             username: user.username.clone(),
@@ -225,9 +232,11 @@ impl UserStore {
             access_level: user.access_level.clone(),
             unit_id: user.unit_id.clone(),
             unit: unit_profile,
-            daily_quota: user.daily_quota,
-            daily_quota_used: user.daily_quota_used,
-            daily_quota_date: user.daily_quota_date.clone(),
+            token_balance: token_status.balance,
+            token_granted_total: token_status.granted_total,
+            token_used_total: token_status.used_total,
+            daily_token_grant,
+            last_token_grant_date: token_status.last_grant_date,
             level: level_snapshot.level,
             max_level: level_snapshot.max_level,
             experience_total: level_snapshot.experience_total,
@@ -370,9 +379,10 @@ impl UserStore {
             status: status.trim().to_string(),
             access_level: access_level.clone(),
             unit_id,
-            daily_quota: Self::default_daily_quota_by_level(unit_level),
-            daily_quota_used: 0,
-            daily_quota_date: None,
+            token_balance: Self::default_daily_token_grant_by_level(unit_level),
+            token_granted_total: Self::default_daily_token_grant_by_level(unit_level),
+            token_used_total: 0,
+            last_token_grant_date: Some(Self::today_string()),
             experience_total: 0,
             is_demo,
             created_at: now,
@@ -408,6 +418,50 @@ impl UserStore {
         self.storage.upsert_user_account(record)
     }
 
+    pub fn effective_token_balance_status(
+        user: &UserAccountRecord,
+        unit_level: Option<i32>,
+        today: Option<&str>,
+    ) -> UserTokenBalanceStatus {
+        if Self::is_admin(user) {
+            return UserTokenBalanceStatus {
+                balance: i64::MAX,
+                granted_total: user.token_granted_total.max(0),
+                used_total: user.token_used_total.max(0),
+                daily_grant: 0,
+                last_grant_date: user.last_token_grant_date.clone(),
+                allowed: true,
+                overspent_tokens: 0,
+            };
+        }
+        let today = today
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(Self::today_string);
+        let daily_grant = Self::default_daily_token_grant_by_level(unit_level).max(0);
+        let pending_grant =
+            if daily_grant > 0 && user.last_token_grant_date.as_deref() != Some(today.as_str()) {
+                daily_grant
+            } else {
+                0
+            };
+        let balance = user.token_balance.max(0).saturating_add(pending_grant);
+        let granted_total = user
+            .token_granted_total
+            .max(0)
+            .saturating_add(pending_grant);
+        UserTokenBalanceStatus {
+            balance,
+            granted_total,
+            used_total: user.token_used_total.max(0),
+            daily_grant,
+            last_grant_date: Some(today),
+            allowed: balance > 0,
+            overspent_tokens: 0,
+        }
+    }
+
     pub fn add_experience(&self, user_id: &str, delta: i64) -> Result<i64> {
         let cleaned = user_id.trim();
         if cleaned.is_empty() {
@@ -422,7 +476,9 @@ impl UserStore {
                 .unwrap_or(0);
             return Ok(current);
         }
-        self.storage.add_user_experience(cleaned, delta, now_ts())
+        self.storage
+            .add_user_experience(cleaned, delta, now_ts())
+            .map(|result| result.current_total)
     }
 
     pub fn upsert_users(&self, records: &[UserAccountRecord]) -> Result<()> {
@@ -1058,7 +1114,9 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::UserStore;
-    use crate::storage::{HiveRecord, SqliteStorage, StorageBackend, DEFAULT_HIVE_ID};
+    use crate::storage::{
+        HiveRecord, SqliteStorage, StorageBackend, UserAccountRecord, DEFAULT_HIVE_ID,
+    };
     use serde_json::json;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -1327,5 +1385,68 @@ mod tests {
 
         assert_eq!(deleted, 1);
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn effective_token_balance_status_applies_pending_daily_grant_for_non_admin() {
+        let user = UserAccountRecord {
+            user_id: "alice".to_string(),
+            username: "alice".to_string(),
+            email: None,
+            password_hash: "hash".to_string(),
+            roles: vec!["user".to_string()],
+            status: "active".to_string(),
+            access_level: "A".to_string(),
+            unit_id: Some("unit-l2".to_string()),
+            token_balance: 5,
+            token_granted_total: 20,
+            token_used_total: 7,
+            last_token_grant_date: Some("2026-04-09".to_string()),
+            experience_total: 0,
+            is_demo: false,
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_login_at: None,
+        };
+
+        let status = UserStore::effective_token_balance_status(&user, Some(2), Some("2026-04-10"));
+
+        assert_eq!(status.daily_grant, 50_000_000);
+        assert_eq!(status.balance, 50_000_005);
+        assert_eq!(status.granted_total, 50_000_020);
+        assert_eq!(status.used_total, 7);
+        assert_eq!(status.last_grant_date.as_deref(), Some("2026-04-10"));
+        assert!(status.allowed);
+    }
+
+    #[test]
+    fn effective_token_balance_status_is_unbounded_for_admins() {
+        let user = UserAccountRecord {
+            user_id: "admin-user".to_string(),
+            username: "admin-user".to_string(),
+            email: None,
+            password_hash: "hash".to_string(),
+            roles: vec!["admin".to_string()],
+            status: "active".to_string(),
+            access_level: "A".to_string(),
+            unit_id: None,
+            token_balance: 0,
+            token_granted_total: 12,
+            token_used_total: 4,
+            last_token_grant_date: None,
+            experience_total: 0,
+            is_demo: false,
+            created_at: 1.0,
+            updated_at: 1.0,
+            last_login_at: None,
+        };
+
+        let status = UserStore::effective_token_balance_status(&user, None, Some("2026-04-10"));
+
+        assert_eq!(status.balance, i64::MAX);
+        assert_eq!(status.granted_total, 12);
+        assert_eq!(status.used_total, 4);
+        assert_eq!(status.daily_grant, 0);
+        assert!(status.allowed);
     }
 }

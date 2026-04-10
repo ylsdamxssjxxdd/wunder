@@ -79,9 +79,10 @@ pub struct UserAccountRecord {
     pub status: String,
     pub access_level: String,
     pub unit_id: Option<String>,
-    pub daily_quota: i64,
-    pub daily_quota_used: i64,
-    pub daily_quota_date: Option<String>,
+    pub token_balance: i64,
+    pub token_granted_total: i64,
+    pub token_used_total: i64,
+    pub last_token_grant_date: Option<String>,
     pub experience_total: i64,
     pub is_demo: bool,
     pub created_at: f64,
@@ -104,12 +105,20 @@ pub struct OrgUnitRecord {
 }
 
 #[derive(Debug, Clone)]
-pub struct UserQuotaStatus {
-    pub daily_quota: i64,
-    pub used: i64,
-    pub remaining: i64,
-    pub date: String,
+pub struct UserTokenBalanceStatus {
+    pub balance: i64,
+    pub granted_total: i64,
+    pub used_total: i64,
+    pub daily_grant: i64,
+    pub last_grant_date: Option<String>,
     pub allowed: bool,
+    pub overspent_tokens: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserExperienceUpdateResult {
+    pub previous_total: i64,
+    pub current_total: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -1148,7 +1157,12 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserAccountRecord>, i64)>;
-    fn add_user_experience(&self, user_id: &str, delta: i64, updated_at: f64) -> Result<i64>;
+    fn add_user_experience(
+        &self,
+        user_id: &str,
+        delta: i64,
+        updated_at: f64,
+    ) -> Result<UserExperienceUpdateResult>;
     fn delete_user_account(&self, user_id: &str) -> Result<i64>;
 
     fn list_org_units(&self) -> Result<Vec<OrgUnitRecord>>;
@@ -1583,7 +1597,27 @@ pub trait StorageBackend: Send + Sync {
     fn list_team_tasks(&self, team_run_id: &str) -> Result<Vec<TeamTaskRecord>>;
     fn get_team_task(&self, task_id: &str) -> Result<Option<TeamTaskRecord>>;
 
-    fn consume_user_quota(&self, user_id: &str, today: &str) -> Result<Option<UserQuotaStatus>>;
+    fn prepare_user_token_balance(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>>;
+    fn consume_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+    ) -> Result<Option<UserTokenBalanceStatus>>;
+    fn grant_user_tokens(
+        &self,
+        user_id: &str,
+        today: &str,
+        daily_grant: i64,
+        amount: i64,
+        updated_at: f64,
+    ) -> Result<Option<UserTokenBalanceStatus>>;
 }
 
 // Helper for sorting monitor session records by updated_time.

@@ -21,10 +21,6 @@
           </div>
         </article>
         <article class="messenger-agent-runtime-card">
-          <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.quota') }}</div>
-          <div class="messenger-agent-runtime-value">{{ formatNumber(summary.quota_consumed) }}</div>
-        </article>
-        <article class="messenger-agent-runtime-card">
           <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.tools') }}</div>
           <div class="messenger-agent-runtime-value">{{ formatNumber(summary.tool_calls) }}</div>
         </article>
@@ -99,7 +95,6 @@ type RuntimeDailyRecord = {
   runtime_seconds: number;
   billed_tokens: number;
   consumed_tokens?: number;
-  quota_consumed: number;
   tool_calls: number;
 };
 
@@ -120,7 +115,6 @@ type RuntimeSummary = {
   runtime_seconds: number;
   billed_tokens: number;
   consumed_tokens?: number;
-  quota_consumed: number;
   tool_calls: number;
 };
 
@@ -281,7 +275,6 @@ const dailyRows = computed<RuntimeDailyRecord[]>(() => {
     runtime_seconds: toSafeNumber(item?.runtime_seconds),
     billed_tokens: Math.max(0, toSafeNumber(item?.consumed_tokens ?? item?.billed_tokens)),
     consumed_tokens: Math.max(0, toSafeNumber(item?.consumed_tokens ?? item?.billed_tokens)),
-    quota_consumed: Math.max(0, toSafeNumber(item?.quota_consumed)),
     tool_calls: Math.max(0, toSafeNumber(item?.tool_calls))
   }));
 });
@@ -301,7 +294,6 @@ const summary = computed<RuntimeSummary>(() => {
       runtime_seconds: Math.max(0, toSafeNumber(source.runtime_seconds)),
       billed_tokens: Math.max(0, toSafeNumber(source.consumed_tokens ?? source.billed_tokens)),
       consumed_tokens: Math.max(0, toSafeNumber(source.consumed_tokens ?? source.billed_tokens)),
-      quota_consumed: Math.max(0, toSafeNumber(source.quota_consumed)),
       tool_calls: Math.max(0, toSafeNumber(source.tool_calls))
     };
   }
@@ -310,10 +302,9 @@ const summary = computed<RuntimeSummary>(() => {
       runtime_seconds: acc.runtime_seconds + item.runtime_seconds,
       billed_tokens: acc.billed_tokens + item.billed_tokens,
       consumed_tokens: (acc.consumed_tokens || 0) + (item.consumed_tokens || 0),
-      quota_consumed: acc.quota_consumed + item.quota_consumed,
       tool_calls: acc.tool_calls + item.tool_calls
     }),
-    { runtime_seconds: 0, billed_tokens: 0, consumed_tokens: 0, quota_consumed: 0, tool_calls: 0 }
+    { runtime_seconds: 0, billed_tokens: 0, consumed_tokens: 0, tool_calls: 0 }
   );
 });
 
@@ -587,7 +578,6 @@ function resolveChartPalette() {
         tooltipBorder: '#374151',
         runtime: '#60a5fa',
         tokens: '#a78bfa',
-        quota: '#34d399',
         tools: '#f59e0b'
       }
     : {
@@ -598,7 +588,6 @@ function resolveChartPalette() {
         tooltipBorder: '#dbe1ea',
         runtime: '#2563eb',
         tokens: '#7c3aed',
-        quota: '#059669',
         tools: '#d97706'
       };
 }
@@ -671,16 +660,14 @@ function renderTrendChart() {
   const dates = dailyRows.value.map((item) => String(item.date || '').slice(5));
   const runtimeMinutes = dailyRows.value.map((item) => Number((item.runtime_seconds / 60).toFixed(2)));
   const billedTokens = dailyRows.value.map((item) => item.billed_tokens);
-  const quotaConsumed = dailyRows.value.map((item) => item.quota_consumed);
   const toolCalls = dailyRows.value.map((item) => item.tool_calls);
   const runtimeSeriesName = t('messenger.agent.runtime.series.runtime');
   const tokenSeriesName = t('messenger.agent.runtime.series.tokens');
-  const quotaSeriesName = t('messenger.agent.runtime.series.quota');
   const toolSeriesName = t('messenger.agent.runtime.series.tools');
   trendChart.setOption(
     {
       animation: false,
-      color: [palette.runtime, palette.tokens, palette.quota, palette.tools],
+      color: [palette.runtime, palette.tokens, palette.tools],
       tooltip: {
         trigger: 'axis',
         backgroundColor: palette.tooltipBg,
@@ -692,11 +679,10 @@ function renderTrendChart() {
         top: 0,
         textStyle: { color: palette.text },
         selectedMode: 'single',
-        data: [runtimeSeriesName, tokenSeriesName, quotaSeriesName, toolSeriesName],
+        data: [runtimeSeriesName, tokenSeriesName, toolSeriesName],
         selected: {
           [runtimeSeriesName]: false,
           [tokenSeriesName]: true,
-          [quotaSeriesName]: false,
           [toolSeriesName]: false
         }
       },
@@ -729,13 +715,6 @@ function renderTrendChart() {
           smooth: true,
           symbolSize: 6,
           data: billedTokens
-        },
-        {
-          name: quotaSeriesName,
-          type: 'line',
-          smooth: true,
-          symbolSize: 6,
-          data: quotaConsumed
         },
         {
           name: toolSeriesName,

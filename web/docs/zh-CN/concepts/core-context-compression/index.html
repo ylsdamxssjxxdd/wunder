@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>上下文压缩 | wunder 使用说明书</title>
+  <meta name="description" content="上下文压缩核心解释 Wunder 如何在长会话里主动治理上下文规模，并把“压缩”设计成可追溯、可观测、可复盘的正式行为。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/core-context-compression","language":"zh-CN","title":"上下文压缩","summary":"上下文压缩核心解释 Wunder 如何在长会话里主动治理上下文规模，并把“压缩”设计成可追溯、可观测、可复盘的正式行为。","updated_at":"2026-04-10","read_when":["你在处理长会话或超长工具输出","你想理解压缩为什么不能只是简单摘要"],"source_docs":["docs/总体设计.md"],"tab":"核心","group":"11个核心","group_path":["11个核心"],"url":"/docs/zh-CN/concepts/core-context-compression/","headings":[{"id":"section-1","level":1,"text":"上下文压缩"},{"id":"section-2","level":2,"text":"先给结论"},{"id":"section-3","level":2,"text":"为什么它必须单列为核心"},{"id":"section-4","level":2,"text":"这个核心真正保护什么"},{"id":"section-5","level":2,"text":"关键约束"},{"id":"section-6","level":2,"text":"设计重点"},{"id":"section-7","level":3,"text":"重点一：压缩不是截断"},{"id":"section-8","level":3,"text":"重点二：压缩不是越早越好，也不是越晚越好"},{"id":"section-9","level":3,"text":"重点三：工具 observation 是压缩压力的高发区"},{"id":"section-10","level":2,"text":"最容易搞错的点"},{"id":"section-11","level":2,"text":"和其他核心的边界"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/concepts/core-swarm","next_slug":"zh-CN/concepts/core-memory","markdown":"# 上下文压缩\n\n长会话不是例外，而是 Wunder 在真实运行里必然遇到的常态。上下文压缩不是锦上添花，而是保证线程能继续工作的关键机制。\n\n![上下文压缩图：完整上下文经过多级压缩后重新进入窗口，并保留观测证据](/docs/assets/manual/core-context-compression.svg)\n\n## 先给结论\n\n- 压缩不是“删一点历史”，而是系统主动重组上下文。\n- 只要系统支持长会话，压缩就不能是临时补丁，必须是正式核心。\n- 压缩的质量不仅影响成本，更直接影响线程还能不能继续保持语义连续。\n\n## 为什么它必须单列为核心\n\n如果没有上下文压缩，长会话最终只能走三条坏路：\n\n- 直接超限失败。\n- 粗暴截断，导致线程失忆。\n- 人工控制长度，把系统复杂度转嫁给用户和接入方。\n\nWunder 把压缩列为核心，等于承认“长会话治理本身就是系统职责”。\n\n## 这个核心真正保护什么\n\n- 保护线程连续性：不让会话因为上下文过重直接断掉。\n- 保护有效事实：保留当前继续执行真正需要的信息。\n- 保护可复盘性：让压缩前后差异能够被检查，而不是变成黑盒。\n\n## 关键约束\n\n| 约束 | 作用 |\n|------|------|\n| 压缩不能伪造事实 | 只能重组已有内容，不能补写不存在的事实 |\n| 压缩必须可追溯 | 要能回答删了什么、保留了什么、损失了什么 |\n| 压缩必须可观测 | 需要留下事件、层级和结果，而不是静默发生 |\n| 压缩不能破坏线程冻结约束 | 压缩历史不等于重写线程底座 |\n\n## 设计重点\n\n### 重点一：压缩不是截断\n\n截断只是在内容太多时硬砍；压缩则是在做信息重排，目标是让线程仍然能工作。\n\n### 重点二：压缩不是越早越好，也不是越晚越好\n\n压太早，会丢掉本来还需要的细节；压太晚，又会让线程直接撞到窗口边界。真正的设计重点是预算治理和渐进层级。\n\n### 重点三：工具 observation 是压缩压力的高发区\n\n长日志、大网页、批量搜索、复合工具结果，都会让上下文迅速膨胀。所以压缩和工具设计必须联动考虑。\n\n## 最容易搞错的点\n\n- 压缩不等于截断。截断只是丢内容，压缩要求保留结构化有效信息。\n- 压缩不是记忆系统的替代品，长期资料应走专门的记忆和知识链路。\n- 只看“有没有超限”不够，还要看压缩是否改变了任务可执行性。\n\n## 和其他核心的边界\n\n- 和 [记忆](/docs/zh-CN/concepts/core-memory/) 的区别：记忆负责长期资料入口，压缩负责当前线程历史治理。\n- 和 [稳定性](/docs/zh-CN/concepts/core-stability/) 的区别：稳定性关心“超限后怎么兜”，压缩关心“如何主动避免撞线”。\n- 和 [可观测性](/docs/zh-CN/concepts/core-observability/) 的区别：可观测性记录压缩发生了什么，压缩决定到底怎么压。\n\n## 延伸阅读\n\n- [核心概览](/docs/zh-CN/concepts/)\n- [边界处理](/docs/zh-CN/concepts/boundary-handling/)\n- [额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n","source_path":"使用说明书/zh-CN/concepts/core-context-compression.md"}</script>
+</body>
+</html>

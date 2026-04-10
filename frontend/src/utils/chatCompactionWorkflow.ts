@@ -1,5 +1,8 @@
 type UnknownObject = Record<string, unknown>;
 
+const CONTEXT_CN = '\u4e0a\u4e0b\u6587';
+const COMPACTION_CN = '\u538b\u7f29';
+
 export type WorkflowCompactionSnapshot = {
   eventType: 'compaction_progress' | 'compaction';
   status: 'pending' | 'loading' | 'completed' | 'failed' | 'cancelled';
@@ -56,9 +59,9 @@ const isCompactionToolName = (value: unknown): boolean => {
   const text = String(value || '').trim().toLowerCase();
   if (!text) return false;
   if (text === 'context_compaction' || text === 'context_compact') return true;
-  if (text === 'compaction' || text === '上下文压缩') return true;
+  if (text === 'compaction' || text === `${CONTEXT_CN}${COMPACTION_CN}`) return true;
   if (text.includes('context') && text.includes('compact')) return true;
-  return text.includes('上下文') && text.includes('压缩');
+  return text.includes(CONTEXT_CN) && text.includes(COMPACTION_CN);
 };
 
 export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompactionSnapshot | null => {

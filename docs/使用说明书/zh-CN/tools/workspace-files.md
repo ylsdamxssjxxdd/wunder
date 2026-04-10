@@ -1,279 +1,268 @@
 ---
-title: 文件与工作区工具
-summary: 文件与工作区工具是最常用的内置工具，覆盖列出文件、搜索内容、读取文件、写入文件四大核心功能。
+title: 工作区文件
+summary: `list_files`、`search_content`、`read_file`、`write_file` 的最新参数与返回结构。
 read_when:
-  - 你需要在工作区中操作文件
-  - 你想了解文件工具的正确使用顺序
+  - 你要浏览工作区、搜索代码、读文件或写文件
 source_docs:
-  - src/services/tools/catalog.rs
-  - docs/API文档.md
+  - src/services/tools.rs
+  - src/services/tools/search_content_tool.rs
+updated_at: 2026-04-10
 ---
 
-# 文件与工作区工具
+# 工作区文件
 
-这是最常用的一组内置工具，包含：
-- **列出文件**：浏览目录结构
-- **搜索内容**：在文件中搜索
-- **读取文件**：读取文件内容
-- **写入文件**：创建或覆盖文件
+这一页覆盖四个最常用的本地工具：
 
----
-
-## 推荐智能体循环
-
-使用文件工具的推荐顺序：
-1. **先列目录** → 了解文件结构
-2. **再搜索** → 定位目标内容
-3. **然后读取** → 查看具体内容
-4. **最后写入** → 进行修改
-
-这套顺序比直接读取整个文件更稳定，也更省上下文。
-
----
-
-## 列出文件
-
-### 功能说明
-
-浏览目录结构，查看文件树。
-
-**别名**：
 - `list_files`
+- `search_content`
+- `read_file`
+- `write_file`
 
-### 参数说明
+它们都已经走统一成功/失败骨架。
 
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `path` | string | ❌ | 目标路径，默认为工作区根目录 |
-| `max_depth` | integer | ❌ | 最大遍历深度，默认 3 |
-| `file_pattern` | string | ❌ | 文件匹配模式 |
+## 什么时候优先用它
 
-### 使用示例
+- 先看目录：`list_files`
+- 先定位关键词：`search_content`
+- 已经知道路径，读具体片段：`read_file`
+- 整文件创建或覆盖：`write_file`
 
-#### 列出根目录
+## `list_files`
+
+### 最小参数
+
 ```json
 {
   "path": ".",
-  "max_depth": 2
+  "max_depth": 2,
+  "limit": 200
 }
 ```
 
-#### 列出 src 目录
+### 成功返回
+
 ```json
 {
+  "ok": true,
+  "action": "list_files",
+  "state": "completed",
+  "summary": "Listed 120 entries from frontend/src.",
+  "data": {
+    "path": "frontend/src",
+    "items": ["views/", "components/", "main.ts"],
+    "offset": 0,
+    "limit": 200,
+    "returned": 120,
+    "has_more": false,
+    "next_offset": null,
+    "next_cursor": null,
+    "max_depth": 2
+  }
+}
+```
+
+重点字段：
+
+- `items`：目录项列表，目录会带 `/`
+- `next_cursor`：目录很多时继续翻页用
+- `has_more`：是否还有下一页
+
+## `search_content`
+
+### 最小参数
+
+```json
+{
+  "query": "spawn_agent",
   "path": "src",
-  "max_depth": 3
+  "max_matches": 50
 }
 ```
 
----
+### 常用参数
 
-## 搜索内容
+- `query` / `pattern`
+- `path`
+- `file_pattern`
+- `query_mode`
+- `context_before`
+- `context_after`
+- `max_matches`
+- `max_files`
+- `max_candidates`
+- `budget`
+- `dry_run`
 
-### 功能说明
+### 成功返回
 
-在工作区中按关键词搜索代码、配置或日志。
-
-推荐按 `rg` 的思路组织搜索参数：
-- 用 `path` 先缩小目录范围
-- 用 `pattern`/`query` 写字面量或正则
-- 用 `glob`/`file_pattern`/`type` 过滤文件
-- 用 `context` 或 `-A`/`-B`/`-C` 请求上下文
-
-**别名**：
-- `search_content`
-
-### 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `query` | string | ❌ | 主查询输入；默认按 `literal` 匹配。若多词精确短语无结果，工具可能自动回退为按词检索 |
-| `pattern` | string | ❌ | 推荐的 `rg` 风格输入；仅传 `pattern` 且未显式设置 `query_mode`/`-F` 时，默认按 `regex` 处理 |
-| `path` | string | ❌ | 搜索路径，默认为工作区根目录 |
-| `file_pattern` | string | ❌ | 文件匹配模式，如 `*.rs` |
-| `glob` | string | ❌ | 推荐的 `rg` 风格别名，等价于 `file_pattern` |
-| `type` | string/array | ❌ | 常见类型快捷过滤，如 `rust`、`rs`、`ts`、`tsx`、`js`、`py`、`md` |
-| `query_mode` | string | ❌ | 搜索模式：`literal`/`regex`。省略时，`query` 默认按 `literal`，`pattern` 默认按 `regex` |
-| `regex` | boolean | ❌ | `true` 等价于 `query_mode=regex` |
-| `fixed_strings` / `-F` | boolean | ❌ | 强制按字面量匹配，等价于 `query_mode=literal` |
-| `case_sensitive` | boolean | ❌ | 是否区分大小写，默认 false |
-| `ignore_case` / `-i` | boolean | ❌ | `rg` 风格别名，`true` 表示忽略大小写 |
-| `max_depth` | integer | ❌ | 最大搜索深度，默认 5 |
-| `max_files` | integer | ❌ | 最大文件数 |
-| `max_matches` | integer | ❌ | 最大匹配数 |
-| `max_count` / `head_limit` | integer | ❌ | `rg` 风格别名，等价于 `max_matches` |
-| `context` / `-C` | integer | ❌ | 同时设置前后上下文行数 |
-| `context_before` | integer | ❌ | 匹配前显示行数 |
-| `context_after` | integer | ❌ | 匹配后显示行数 |
-| `-B` | integer | ❌ | `rg` 风格别名，等价于 `context_before` |
-| `-A` | integer | ❌ | `rg` 风格别名，等价于 `context_after` |
-| `dry_run` | boolean | ❌ | 预演模式 |
-| `time_budget_ms` | integer | ❌ | 时间预算（毫秒） |
-| `output_budget_bytes` | integer | ❌ | 输出预算（字节） |
-
-补充说明：
-- `query` 适合自然语言或固定短语检索，优先保证精确度；必要时才自动做按词回退。
-- `pattern` 更适合 `rg`/正则心智模型；若需要固定字符串语义，请显式传 `-F` 或 `query_mode=literal`。
-- 返回结果会优先按相关性排序，并在 `summary`/`meta.search` 中提供实际采用的策略、尝试过的查询计划和下一步提示。
-
-### 使用示例
-
-#### 简单搜索
 ```json
 {
-  "query": "fn main",
-  "file_pattern": "*.rs"
+  "ok": true,
+  "action": "search_content",
+  "state": "completed",
+  "summary": "Found 8 hits in 3 files.",
+  "data": {
+    "query": "spawn_agent",
+    "query_used": "spawn_agent",
+    "path": "src",
+    "query_mode": "literal",
+    "matched_file_count": 3,
+    "returned_match_count": 8,
+    "truncated": false,
+    "truncation_reasons": [],
+    "elapsed_ms": 132,
+    "hits": [
+      {
+        "path": "services/tools/subagent_control.rs",
+        "line": 240,
+        "content": "spawn(context, args).await",
+        "segments": [
+          { "text": "spawn", "matched": true }
+        ],
+        "matched_terms": ["spawn_agent"],
+        "before": [],
+        "after": []
+      }
+    ]
+  }
 }
 ```
 
-#### 推荐的 rg 风格搜索
+重点字段：
+
+- `hits`：真正给模型读的搜索命中
+- `truncated` / `truncation_reasons`：结果被预算截断时必须看
+- `dry_run` 时会返回搜索计划而不是命中结果
+
+## `read_file`
+
+### 最小参数
+
 ```json
 {
-  "pattern": "turn_terminal|event title|resolve.*title",
-  "path": "src",
-  "glob": "*.rs",
-  "context": 2,
-  "max_count": 50
-}
-```
-
-#### 固定字符串模式
-```json
-{
-  "pattern": "foo.bar",
-  "-F": true,
-  "glob": "*.rs"
-}
-```
-
-#### 按类型过滤并带上下文
-```json
-{
-  "pattern": "execute_tool",
-  "type": "rust",
-  "-B": 3,
-  "-A": 5
-}
-```
-
----
-
-## 读取文件
-
-### 功能说明
-
-读取文件内容，支持切片读取，不鼓励大文件整段读取。
-
-**别名**：
-- `read_file`
-
-### 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `path` | string | ✅ | 文件路径 |
-| `start_line` | integer | ❌ | 起始行号 |
-| `end_line` | integer | ❌ | 结束行号 |
-| `line_ranges` | array | ❌ | 行范围数组 |
-| `mode` | string | ❌ | 读取模式：`full`/`indentation` |
-
-### 使用示例
-
-#### 读取整个文件
-```json
-{
-  "path": "src/main.rs"
-}
-```
-
-#### 读取指定行范围
-```json
-{
-  "path": "src/main.rs",
+  "path": "src/services/tools.rs",
   "start_line": 1,
-  "end_line": 50
+  "end_line": 120
 }
 ```
 
-#### 读取多个不连续范围
+也支持批量：
+
 ```json
 {
-  "path": "src/main.rs",
-  "line_ranges": [[1, 20], [50, 100]]
+  "files": [
+    {
+      "path": "src/services/tools.rs",
+      "line_ranges": [[1, 120]]
+    }
+  ]
 }
 ```
 
----
+### 成功返回
 
-## 写入文件
-
-### 功能说明
-
-创建新文件或全量覆盖现有文件。
-
-**别名**：
-- `write_file`
-
-### 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `path` | string | ✅ | 文件路径 |
-| `content` | string | ✅ | 文件内容 |
-| `dry_run` | boolean | ❌ | 预演模式 |
-
-### 使用示例
-
-#### 创建新文件
 ```json
 {
-  "path": "src/hello.rs",
-  "content": "fn main() {\n    println!(\"Hello, world!\");\n}\n"
+  "ok": true,
+  "action": "read_file",
+  "state": "completed",
+  "summary": "Read 1 files.",
+  "data": {
+    "content": ">>> src/services/tools.rs\n1: use ...",
+    "files": [
+      {
+        "path": "src/services/tools.rs",
+        "mode": "slice",
+        "requested_ranges": [[1, 120]],
+        "loaded_ranges": [[1, 120]],
+        "read_lines": 120,
+        "total_lines": 3000,
+        "complete": false,
+        "truncated_by_size": false,
+        "used_default_range": false
+      }
+    ],
+    "dry_run": false,
+    "requested_files": 1,
+    "processed_files": 1,
+    "budget_file_limit_hit": false,
+    "timeout_hit": false,
+    "output_budget_hit": false,
+    "output_budget_omitted_bytes": 0,
+    "content_bytes_before_budget": 4096,
+    "budget": {
+      "time_budget_ms": null,
+      "output_budget_bytes": null,
+      "max_files": null
+    },
+    "continuation_required": true,
+    "continuation_hint": "..."
+  }
 }
 ```
 
-#### 全量覆盖文件
+重点字段：
+
+- `content`：拼好的可直接阅读文本
+- `files`：每个文件的摘要
+- `continuation_required`：默认窗口不够或预算截断时会出现
+
+## `write_file`
+
+### 最小参数
+
 ```json
 {
-  "path": "config.yaml",
-  "content": "server:\n  port: 8080\n"
+  "path": "docs/demo.md",
+  "content": "# Demo"
 }
 ```
 
----
+### 成功返回
 
-## 工具对比
+```json
+{
+  "ok": true,
+  "action": "write_file",
+  "state": "completed",
+  "summary": "Created file docs/demo.md.",
+  "data": {
+    "path": "docs/demo.md",
+    "bytes": 7,
+    "dry_run": false,
+    "existed": false,
+    "previous_bytes": 0,
+    "target": "C:/.../docs/demo.md",
+    "lsp": {
+      "enabled": true,
+      "matched": true,
+      "touched": true,
+      "diagnostics": null,
+      "error": null
+    }
+  }
+}
+```
 
-| 场景 | 推荐工具 | 说明 |
-|------|----------|------|
-| 单文件全量替换 | 写入文件 | 适用于新文件或短文件 |
-| 多位置精确编辑 | [应用补丁](/docs/zh-CN/tools/apply-patch/) | 结构化修改，更安全 |
-| 查找关键词 | 搜索内容 | 快速定位，省上下文 |
-| 浏览目录 | 列出文件 | 了解文件结构 |
-| 读取局部内容 | 读取文件 | 切片读取，不浪费 |
+### 什么时候不要用它
 
----
+- 小范围精确修改代码，不要用 `write_file`，改用 [应用补丁](/docs/zh-CN/tools/apply-patch/)
+- 要执行脚本、跑构建，不要用它，改用 [执行命令](/docs/zh-CN/tools/exec/)
 
-## 注意事项
+## 失败返回怎么读
 
-1. **原子写入**：
-   - `写入文件` 采用临时文件 + rename 策略
-   - 降低异常中断与并发覆盖风险
+这四个工具失败时都优先看：
 
-2. **预算控制**：
-   - `搜索内容` 支持预算参数
-   - 避免大搜索拖慢系统
+- `error_meta.code`
+- `error_meta.hint`
+- `data`
 
-3. **工具选型**：
-   - 单文件全量替换用 `写入文件`
-   - 多位置编辑用 `应用补丁`
-   - 不要混用
+常见错误码：
 
----
-
-## 延伸阅读
-
-- [应用补丁](/docs/zh-CN/tools/apply-patch/)
-- [LSP查询](/docs/zh-CN/tools/lsp/)
-- [执行命令](/docs/zh-CN/tools/exec/)
-- [工作区 API](/docs/zh-CN/integration/workspace-api/)
+- `TOOL_LIST_PATH_NOT_FOUND`
+- `TOOL_SEARCH_INVALID_ARGS`
+- `TOOL_SEARCH_PATH_NOT_FOUND`
+- `TOOL_READ_NOT_FOUND`
+- `TOOL_READ_BINARY_FILE`
+- `TOOL_WRITE_PATH_REQUIRED`
+- `TOOL_WRITE_FAILED`
