@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Read Image | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The purpose and return structure of `read_image`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/read-image","language":"en","title":"Read Image","summary":"The purpose and return structure of `read_image`.","updated_at":"2026-04-10","read_when":["You need to send a local image into the current model context"],"source_docs":["src/services/tools/read_image_tool.rs"],"tab":"Tools","group":"Files and Code","group_path":["Files and Code"],"url":"/docs/en/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"Read Image"},{"id":"section-2","level":2,"text":"Minimum arguments"},{"id":"section-3","level":2,"text":"Success result"},{"id":"section-4","level":2,"text":"Key point"}],"prev_slug":"en/tools/apply-patch","next_slug":"en/tools/lsp","markdown":"# Read Image\n\n`read_image` does one simple thing:  \nit prepares a local image and prompts the system to append that image into the upcoming context as an additional message.\n\n## Minimum arguments\n\n```json\n{\n  \"path\": \"screenshots/demo.png\"\n}\n```\n\n## Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"read_image\",\n  \"state\": \"completed\",\n  \"summary\": \"Prepared image screenshots/demo.png for model inspection.\",\n  \"data\": {\n    \"path\": \"screenshots/demo.png\",\n    \"resolved_path\": \"C:/.../screenshots/demo.png\",\n    \"mime_type\": \"image/png\",\n    \"size_bytes\": 182233,\n    \"prompt\": \"Inspect the attached image carefully...\"\n  }\n}\n```\n\n## Key point\n\n- The actual image content usually enters the conversation after this tool call as an extra user message\n- So the tool result itself is not an image-analysis conclusion. It only means the image has been prepared for inspection\n","source_path":"使用说明书/en/tools/read-image.md"}</script>
+</body>
+</html>

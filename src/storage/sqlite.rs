@@ -439,6 +439,9 @@ impl SqliteStorage {
         if columns.is_empty() {
             return Ok(());
         }
+        let has_legacy_daily_quota = columns.contains("daily_quota");
+        let has_legacy_daily_quota_used = columns.contains("daily_quota_used");
+        let has_legacy_daily_quota_date = columns.contains("daily_quota_date");
         if !columns.contains("token_balance") {
             conn.execute(
                 "ALTER TABLE user_accounts ADD COLUMN token_balance INTEGER NOT NULL DEFAULT 0",
@@ -462,6 +465,9 @@ impl SqliteStorage {
                 "ALTER TABLE user_accounts ADD COLUMN last_token_grant_date TEXT",
                 [],
             )?;
+        }
+        if !(has_legacy_daily_quota && has_legacy_daily_quota_used && has_legacy_daily_quota_date) {
+            return Ok(());
         }
         let today = Local::now().format("%Y-%m-%d").to_string();
         let today_ref = today.as_str();

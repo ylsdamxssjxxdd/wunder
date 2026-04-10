@@ -1,4 +1,3 @@
-from math import cos, pi, sin
 from pathlib import Path
 
 
@@ -111,6 +110,10 @@ def char_units(ch: str) -> float:
     return 0.62
 
 
+def text_units(text: str) -> float:
+    return sum(char_units(ch) for ch in text)
+
+
 def wrap_text(text: str, max_units: float) -> list[str]:
     chunks: list[str] = []
     for raw in text.split("\n"):
@@ -148,6 +151,7 @@ def text_block(
     font_size: int,
     anchor: str = "start",
     line_height: int | None = None,
+    style: str | None = None,
 ) -> str:
     lines = content if isinstance(content, list) else wrap_text(content, max(4.0, width / (font_size * 0.95)))
     if line_height is None:
@@ -156,7 +160,12 @@ def text_block(
     for index, line in enumerate(lines):
         dy = "0" if index == 0 else str(line_height)
         spans.append(f"<tspan x='{x}' dy='{dy}'>{esc(line)}</tspan>")
-    return f"<text x='{x}' y='{y}' class='{cls}' text-anchor='{anchor}'>{''.join(spans)}</text>"
+    style_attr = f" style='{style}'" if style else ""
+    return f"<text x='{x}' y='{y}' class='{cls}' text-anchor='{anchor}'{style_attr}>{''.join(spans)}</text>"
+
+
+def auto_pill_width(label: str, font_size: int = 13, min_w: int = 78, pad: int = 28) -> int:
+    return max(min_w, int(text_units(label) * font_size * 0.98 + pad))
 
 
 def pill(x: int, y: int, w: int, h: int, label: str, fill: str, cls: str = "badge", text_fill: str | None = None) -> str:
@@ -165,6 +174,21 @@ def pill(x: int, y: int, w: int, h: int, label: str, fill: str, cls: str = "badg
         f"<rect x='{x}' y='{y}' width='{w}' height='{h}' rx='{h // 2}' ry='{h // 2}' fill='{fill}'/>"
         f"<text x='{x + w / 2:.1f}' y='{y + h / 2 + 4:.1f}' class='{cls}' text-anchor='middle' fill='{fill_attr}'>{esc(label)}</text>"
     )
+
+
+def pill_auto(
+    x: int,
+    y: int,
+    label: str,
+    fill: str,
+    cls: str = "badge",
+    text_fill: str | None = None,
+    h: int = 30,
+    font_size: int = 13,
+    min_w: int = 78,
+    pad: int = 28,
+) -> str:
+    return pill(x, y, auto_pill_width(label, font_size, min_w, pad), h, label, fill, cls, text_fill)
 
 
 def glow(cx: int, cy: int, rx: int, ry: int, fill: str, opacity: float) -> str:
@@ -185,7 +209,7 @@ def page_header(index: str, group: str, title: str, subtitle: str) -> str:
     title_lines = wrap_text(title, max(8.0, 910 / (38 * 0.95)))
     subtitle_y = 122 + (len(title_lines) - 1) * 44 + 44
     return (
-        pill(60, 42, 160, 34, f"核心 {index} · {group}", "#F2E6D7", "eyebrow")
+        pill_auto(60, 42, f"核心 {index} · {group}", "#F2E6D7", "eyebrow", h=34, font_size=14, min_w=172, pad=34)
         + text_block(60, 122, title_lines, 910, "title", 38, line_height=44)
         + text_block(60, subtitle_y, subtitle, 940, "subtitle", 18, line_height=28)
         + pill(970, 48, 170, 30, "WUNDER CORE MAP", "#23313B", "tag", WHITE)
@@ -195,7 +219,7 @@ def page_header(index: str, group: str, title: str, subtitle: str) -> str:
 def conclusion(text: str) -> str:
     return (
         f"<rect x='60' y='634' width='1080' height='56' rx='22' ry='22' fill='{WHITE}' stroke='{LINE}' stroke-width='2' filter='url(#shadow)'/>"
-        + pill(78, 646, 96, 30, "核心结论", "#21313B", "tag", WHITE)
+        + pill_auto(78, 646, "核心结论", "#21313B", "tag", WHITE, h=30, font_size=12, min_w=96, pad=30)
         + text_block(194, 670, text, 920, "ribbon", 17)
     )
 
@@ -213,10 +237,59 @@ def card(
 ) -> str:
     palette = TONES[tone]
     compact = h <= 150
-    title_line_height = 28 if compact else 30
-    body_line_height = 22 if compact else 24
-    title_y = y + (52 if compact else 58)
-    body_y_base = y + (58 if compact else 72)
+    tag_w = auto_pill_width(tag, 12, 78, 28) if tag else 0
+    title_top = y + (50 if compact else 58)
+    content_bottom = y + h - 26
+    title_gap = 10 if compact else 14
+    item_gap = 6 if compact else 10
+    title_sizes = []
+    for size in [title_size, title_size - 2, title_size - 4, 20, 18]:
+        if size >= 18 and size not in title_sizes:
+            title_sizes.append(size)
+    body_sizes = [16, 15, 14, 13]
+    layout = None
+    for title_px in title_sizes:
+        title_line_height = max(24, int(title_px * 1.18))
+        title_width = w - 48 - (tag_w + 18 if tag else 0)
+        title_lines = wrap_text(title, max(4.0, title_width / (title_px * 0.98)))
+        for body_px in body_sizes:
+            body_line_height = max(20, int(body_px * 1.45))
+            cursor = title_top + len(title_lines) * title_line_height + title_gap
+            if isinstance(body, list):
+                ok = True
+                wrapped_items: list[list[str]] = []
+                for item in body:
+                    wrapped = wrap_text(item, max(4.0, (w - 72) / (body_px * 0.98)))
+                    wrapped_items.append(wrapped)
+                    cursor += len(wrapped) * body_line_height + item_gap
+                    if cursor > content_bottom:
+                        ok = False
+                        break
+                if ok:
+                    layout = (title_px, body_px, title_line_height, body_line_height, title_lines, wrapped_items)
+                    break
+            else:
+                wrapped_body = wrap_text(body, max(4.0, (w - 48) / (body_px * 0.98)))
+                cursor += len(wrapped_body) * body_line_height
+                if cursor <= content_bottom:
+                    layout = (title_px, body_px, title_line_height, body_line_height, title_lines, wrapped_body)
+                    break
+        if layout:
+            break
+    if layout is None:
+        title_px = 18
+        body_px = 13
+        title_line_height = 24
+        body_line_height = 20
+        title_width = w - 48 - (tag_w + 18 if tag else 0)
+        title_lines = wrap_text(title, max(4.0, title_width / (title_px * 0.98)))
+        if isinstance(body, list):
+            wrapped_items = [wrap_text(item, max(4.0, (w - 72) / (body_px * 0.98))) for item in body]
+            layout = (title_px, body_px, title_line_height, body_line_height, title_lines, wrapped_items)
+        else:
+            wrapped_body = wrap_text(body, max(4.0, (w - 48) / (body_px * 0.98)))
+            layout = (title_px, body_px, title_line_height, body_line_height, title_lines, wrapped_body)
+    title_px, body_px, title_line_height, body_line_height, title_lines, wrapped_body = layout
     parts = [
         f"<g filter='url(#shadow)'>"
         f"<rect x='{x}' y='{y}' width='{w}' height='{h}' rx='28' ry='28' fill='{palette['panel']}' stroke='{palette['stroke']}' stroke-width='2.2'/>"
@@ -225,21 +298,51 @@ def card(
         f"</g>"
     ]
     if tag:
-        tag_w = max(78, int(len(tag) * 14 + 28))
         parts.append(pill(x + w - tag_w - 22, y + 24, tag_w, 28, tag, palette["accent"], "tag", WHITE))
-    title_lines = wrap_text(title, max(4.0, (w - 56) / (title_size * 0.95)))
-    parts.append(text_block(x + 24, title_y, title_lines, w - 48, "card-title", title_size, line_height=title_line_height))
+    parts.append(
+        text_block(
+            x + 24,
+            title_top,
+            title_lines,
+            w - 48,
+            "card-title",
+            title_px,
+            line_height=title_line_height,
+            style=f"font-size:{title_px}px",
+        )
+    )
     title_h = len(title_lines) * title_line_height
-    body_y = body_y_base + title_h
+    body_y = title_top + title_h + title_gap
     if isinstance(body, list):
         cursor = body_y
-        for item in body:
-            wrapped = wrap_text(item, max(4.0, (w - 78) / (16 * 0.95)))
+        for item in wrapped_body:
             parts.append(f"<circle cx='{x + 34}' cy='{cursor - 6}' r='4.5' fill='{palette['accent']}'/>")
-            parts.append(text_block(x + 48, cursor, wrapped, w - 72, "card-body", 16, line_height=body_line_height))
-            cursor += len(wrapped) * body_line_height + (8 if compact else 10)
+            parts.append(
+                text_block(
+                    x + 48,
+                    cursor,
+                    item,
+                    w - 72,
+                    "card-body",
+                    body_px,
+                    line_height=body_line_height,
+                    style=f"font-size:{body_px}px",
+                )
+            )
+            cursor += len(item) * body_line_height + item_gap
     else:
-        parts.append(text_block(x + 24, body_y, body, w - 48, "card-body", 16, line_height=body_line_height))
+        parts.append(
+            text_block(
+                x + 24,
+                body_y,
+                wrapped_body,
+                w - 48,
+                "card-body",
+                body_px,
+                line_height=body_line_height,
+                style=f"font-size:{body_px}px",
+            )
+        )
     return "".join(parts)
 
 
@@ -276,7 +379,7 @@ def tag_stack(x: int, y: int, labels: list[str], tone: str, per_row: int = 2) ->
     py = y
     count = 0
     for label in labels:
-        width = max(86, int(sum(char_units(ch) for ch in label) * 12 + 28))
+        width = auto_pill_width(label, 13, 90, 34)
         if count == per_row:
             count = 0
             px = x
@@ -296,7 +399,7 @@ save(
     [
         page_header("00", "总览", "Wunder 的 11 个核心不是功能清单，而是一套统一运行结构", "先看三层骨架，再进入细页。执行内核决定系统能不能跑，接入治理决定能不能扩，交付保障决定能不能长期用。"),
         f"<rect x='60' y='214' width='1080' height='72' rx='26' ry='26' fill='{WHITE}' stroke='{LINE}' stroke-width='2' filter='url(#shadow)'/>",
-        pill(82, 234, 128, 30, "阅读顺序", "#23313B", "tag", WHITE),
+        pill_auto(82, 234, "阅读顺序", "#23313B", "tag", WHITE, h=30, font_size=12, min_w=110, pad=28),
         text_block(232, 259, "先建立执行内核，再处理入口与治理，最后补齐实时、稳定与可观测能力。", 860, "ribbon", 17),
         card(60, 314, 320, 286, "执行内核", ["智能体循环是主链路。", "工具把能力变成可调度对象。", "蜂群、压缩、记忆都围绕线程一致性服务。"], "amber", "01-05"),
         tag_stack(86, 500, ["智能体循环", "工具", "蜂群", "上下文压缩", "记忆"], "amber", 3),
@@ -340,7 +443,7 @@ save(
         line_arrow(750, 300, 820, 278),
         line_arrow(750, 416, 820, 444),
         f"<rect x='390' y='540' width='730' height='56' rx='22' ry='22' fill='{WHITE}' stroke='{LINE}' stroke-width='2'/>",
-        pill(412, 553, 116, 28, "统一协议", "#2F8B73", "tag", WHITE),
+        pill_auto(412, 553, "统一协议", "#2F8B73", "tag", WHITE, h=28, font_size=12, min_w=104, pad=28),
         text_block(552, 576, "模型调用、执行层治理、前端投影必须基于同一份工具事实，而不是各写各的解释。", 540, "small", 14),
         conclusion("工具不是插件堆砌，而是把能力压成一种系统能调度、能约束、能解释的公共对象。"),
     ],
@@ -377,14 +480,14 @@ save(
         card(424, 330, 250, 110, "Level 2", "把可合并历史整理成摘要。", "sky", "摘要"),
         card(458, 456, 216, 110, "Level 3 / 4", "丢弃早期轮次或进入紧急降级。", "coral", "强压缩"),
         card(756, 250, 280, 160, "可继续执行的窗口", ["目标不是“更短”，而是“还能正确判断与继续执行”。"], "slate", "目标"),
-        card(1008, 228, 132, 242, "观测轨", "记录事件\n标注损失\n支持复盘", "teal", "审计", 20),
+        card(984, 228, 156, 242, "观测轨", "记录事件\n标注损失\n支持复盘", "teal", "审计", 20),
         line_arrow(324, 388, 388, 260),
         line_arrow(324, 388, 424, 386),
         line_arrow(324, 388, 458, 512),
         line_arrow(674, 260, 756, 302),
         line_arrow(674, 386, 756, 332),
         line_arrow(674, 512, 756, 362),
-        line_arrow(1036, 330, 1008, 330, True),
+        line_arrow(1036, 330, 984, 330, True),
         conclusion("压缩的成功标准不是字数下降，而是线程还能继续跑、损失还能被解释、事实没有被篡改。"),
     ],
 )
@@ -394,7 +497,7 @@ save(
     [
         page_header("05", "执行内核", "记忆的关键不是“放更多内容”，而是保护线程认知底座", "长期记忆只允许在线程初始化时注入一次。运行中可以 recall，但不能反复改写 system prompt。"),
         f"<rect x='70' y='520' width='1060' height='94' rx='32' ry='32' fill='{TONES['slate']['panel']}' stroke='{TONES['slate']['stroke']}' stroke-width='2.2' filter='url(#shadow)'/>",
-        pill(96, 548, 146, 30, "冻结底座", TONES["slate"]["accent"], "tag", WHITE),
+        pill_auto(96, 548, "冻结底座", TONES["slate"]["accent"], "tag", WHITE, h=30, font_size=12, min_w=112, pad=28),
         text_block(268, 574, "线程初始化后，prompt 语义不再漂移。这样模型缓存稳定、行为稳定、历史线程也不会被新模板反写。", 822, "ribbon", 17),
         card(88, 218, 250, 190, "初始化注入", ["构造 system prompt。", "只在这一刻注入长期记忆。"], "amber", "一次性"),
         center_disc(600, 322, 96, "冻结边界", "后续轮次\n不重写底座", "teal"),
@@ -431,19 +534,19 @@ save(
     [
         page_header("07", "接入与治理", "定时任务把系统时间轴正式纳入能力边界", "它不是 sleep 的放大版，而是拥有规则、唤醒、执行、记录和治理语义的后台运行链。"),
         f"<path class='flow-soft' d='M110,222 L1090,222'/>",
-        pill(118, 202, 110, 28, "at / every", "#F2E6D7"),
-        pill(248, 202, 98, 28, "cron", "#F2E6D7"),
-        pill(366, 202, 98, 28, "enable", "#F2E6D7"),
+        pill_auto(118, 202, "at / every", "#F2E6D7", h=28, font_size=13, min_w=110, pad=30),
+        pill_auto(248, 202, "cron", "#F2E6D7", h=28, font_size=13, min_w=82, pad=28),
+        pill_auto(346, 202, "enable", "#F2E6D7", h=28, font_size=13, min_w=92, pad=28),
         card(76, 270, 248, 206, "调度规则", ["定义下一次执行时间。", "决定是否启用、暂停或删除。"], "amber", "规则"),
         card(392, 242, 284, 262, "调度器", ["轮询时间点。", "唤醒待跑任务。", "选择进入后台执行的对象。"], "teal", "主控"),
         card(744, 236, 212, 130, "主会话", "挂回主线程语义。", "sky", "执行"),
         card(744, 384, 212, 156, "隔离会话", "隔离线程运行，避免污染在线上下文。", "coral", "执行"),
-        card(990, 278, 150, 190, "执行记录", ["next_run。", "last_status。", "运行日志与失败原因。"], "slate", "留痕"),
+        card(970, 278, 170, 214, "执行记录", ["下次执行时间。", "最近运行状态。", "运行日志与失败原因。"], "slate", "留痕"),
         line_arrow(324, 372, 392, 372),
         line_arrow(676, 322, 744, 300),
         line_arrow(676, 424, 744, 462),
-        line_arrow(956, 300, 990, 332),
-        line_arrow(956, 444, 990, 414),
+        line_arrow(956, 300, 970, 332),
+        line_arrow(956, 444, 970, 414),
         conclusion("定时任务是系统级后台能力。只有把时间、执行语义和留痕统一起来，它才不是一段脆弱脚本。"),
     ],
 )
@@ -472,7 +575,7 @@ save(
         card(84, 254, 238, 228, "线程事实", ["运行态变化。", "工具调用。", "终态收敛。"], "amber", "真相源"),
         card(388, 202, 334, 188, "事件流", "WebSocket / SSE 负责增量投影，thread_status、增量输出与工作流都从事实流派生。", "teal", "投影层"),
         f"<rect x='388' y='412' width='334' height='122' rx='28' ry='28' fill='{TONES['teal']['soft']}' stroke='{TONES['teal']['stroke']}' stroke-width='2.2' filter='url(#shadow)'/>",
-        pill(414, 432, 126, 28, "恢复机制", TONES["teal"]["accent"], "tag", WHITE),
+        pill_auto(414, 432, "恢复机制", TONES["teal"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=108, pad=28),
         text_block(414, 482, "resume、快照补偿、断线重连要把客户端重新拉回当前线程事实。", 270, "card-body", 16),
         card(796, 214, 160, 132, "列表页", ["看状态变化。"], "sky", "客户端"),
         card(980, 214, 160, 132, "详情页", ["看工作流与细节。"], "coral", "客户端"),
@@ -493,10 +596,10 @@ save(
         card(72, 244, 230, 258, "风险源", ["模型超时。", "工具失败。", "网络抖动。", "并发积压。"], "coral", "输入"),
         f"<rect x='366' y='204' width='394' height='338' rx='42' ry='42' fill='{WHITE}' stroke='{TONES['slate']['stroke']}' stroke-width='2.4' filter='url(#shadow)'/>",
         f"<rect x='398' y='236' width='330' height='122' rx='28' ry='28' fill='{TONES['slate']['panel']}' stroke='{TONES['slate']['stroke']}' stroke-width='2'/>",
-        pill(424, 256, 114, 28, "隔离与治理", TONES["slate"]["accent"], "tag", WHITE),
+        pill_auto(424, 256, "隔离与治理", TONES["slate"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=114, pad=28),
         text_block(424, 308, "超时、队列、资源预算把风险限制在边界内。", 270, "card-body", 16),
         f"<rect x='398' y='382' width='330' height='122' rx='28' ry='28' fill='{TONES['teal']['panel']}' stroke='{TONES['teal']['stroke']}' stroke-width='2'/>",
-        pill(424, 402, 98, 28, "恢复链路", TONES["teal"]["accent"], "tag", WHITE),
+        pill_auto(424, 402, "恢复链路", TONES["teal"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=98, pad=28),
         text_block(424, 454, "续跑、补发、原子写入、事务与 outbox 负责把任务重新带回收敛面。", 272, "card-body", 16),
         card(834, 258, 292, 230, "结果", ["故障不会一路级联。", "任务可以落回终态。", "问题还能被回归验证。"], "amber", "收敛"),
         line_arrow(302, 374, 366, 374),
@@ -511,13 +614,13 @@ save(
         page_header("11", "交付保障", "可观测性要把“发生了什么”拆成事实、回放、画像三层", "如果把它们混成一锅日志，系统就既不能准确复盘，也不能稳定出报表，更无法沉淀统一口径。"),
         f"<rect x='90' y='220' width='1020' height='332' rx='38' ry='38' fill='{WHITE}' stroke='{LINE}' stroke-width='2.2' filter='url(#shadow)'/>",
         f"<rect x='126' y='428' width='948' height='94' rx='28' ry='28' fill='{TONES['amber']['panel']}' stroke='{TONES['amber']['stroke']}' stroke-width='2'/>",
-        pill(152, 448, 92, 28, "事实层", TONES["amber"]["accent"], "tag", WHITE),
+        pill_auto(152, 448, "事实层", TONES["amber"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=92, pad=28),
         text_block(270, 474, "线程事实流、真实事件顺序、请求与 observation 是最底层真相。", 760, "card-body", 16),
         f"<rect x='186' y='314' width='828' height='84' rx='26' ry='26' fill='{TONES['teal']['panel']}' stroke='{TONES['teal']['stroke']}' stroke-width='2'/>",
-        pill(212, 334, 92, 28, "回放层", TONES["teal"]["accent"], "tag", WHITE),
+        pill_auto(212, 334, "回放层", TONES["teal"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=92, pad=28),
         text_block(330, 360, "时间线重建、监控明细、导出与调试都基于事实层重放，而不是手工拼故事。", 640, "card-body", 16),
         f"<rect x='256' y='230' width='688' height='56' rx='22' ry='22' fill='{TONES['coral']['panel']}' stroke='{TONES['coral']['stroke']}' stroke-width='2'/>",
-        pill(282, 244, 92, 28, "画像层", TONES["coral"]["accent"], "tag", WHITE),
+        pill_auto(282, 244, "画像层", TONES["coral"]["accent"], "tag", WHITE, h=28, font_size=12, min_w=92, pad=28),
         text_block(400, 266, "管理员面板、tool usage、throughput 与 benchmark 要共享同一指标口径。", 500, "card-body", 16),
         line_arrow(600, 428, 600, 398),
         line_arrow(600, 314, 600, 286),

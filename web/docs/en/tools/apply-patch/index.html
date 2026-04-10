@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Apply Patch | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/apply-patch","language":"en","title":"Apply Patch","summary":"The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.","updated_at":"2026-04-10","read_when":["You need a small, reviewable, replayable, and precise edit"],"source_docs":["src/services/tools/apply_patch_tool.rs","src/services/tools/tool_apply_patch.lark"],"tab":"Tools","group":"Files and Code","group_path":["Files and Code"],"url":"/docs/en/tools/apply-patch/","headings":[{"id":"section-1","level":1,"text":"Apply Patch"},{"id":"section-2","level":2,"text":"The input is grammar text, not JSON Patch"},{"id":"section-3","level":2,"text":"Success result"},{"id":"section-4","level":2,"text":"dryrun"},{"id":"section-5","level":2,"text":"Failure results"},{"id":"section-6","level":2,"text":"When to use it and when not to"},{"id":"section-7","level":2,"text":"Difference from writefile"}],"prev_slug":"en/tools/ptc","next_slug":"en/tools/read-image","markdown":"# Apply Patch\n\n`apply_patch` is currently the best tool for edits that involve a small number of files, a small number of hunks, and explicit surrounding context.\n\nIts role is narrow by design:\n\n- it is not a whole-file writing tool\n- it is not a command execution tool\n- it is a structured, incremental, and verifiable tool for precise edits\n\n## The input is grammar text, not JSON Patch\n\nMinimum example:\n\n```text\n*** Begin Patch\n*** Update File: src/main.rs\n@@\n-fn old() {}\n+fn new() {}\n*** End Patch\n```\n\nFrom the model side, the only common inputs are:\n\n- `input`\n- `dry_run`\n\n## Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"apply_patch\",\n  \"state\": \"completed\",\n  \"summary\": \"Applied patch touching 2 files.\",\n  \"data\": {\n    \"changed_files\": 2,\n    \"added\": 1,\n    \"updated\": 1,\n    \"deleted\": 0,\n    \"moved\": 0,\n    \"hunks_applied\": 3,\n    \"files\": [\n      {\n        \"action\": \"update\",\n        \"path\": \"src/main.rs\",\n        \"to_path\": null,\n        \"hunks\": 1\n      }\n    ],\n    \"lsp\": [\n      {\n        \"path\": \"C:/.../src/main.rs\",\n        \"state\": {\n          \"enabled\": true,\n          \"matched\": true,\n          \"touched\": true\n        }\n      }\n    ]\n  }\n}\n```\n\n## `dry_run`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"apply_patch\",\n  \"state\": \"dry_run\",\n  \"summary\": \"Validated patch touching 2 files without applying it.\",\n  \"data\": {\n    \"dry_run\": true,\n    \"changed_files\": 2,\n    \"added\": 1,\n    \"updated\": 1,\n    \"deleted\": 0,\n    \"moved\": 0,\n    \"hunks_applied\": 3,\n    \"files\": [ ... ],\n    \"lsp\": []\n  }\n}\n```\n\n## Failure results\n\n`apply_patch` still uses the unified failure envelope, but its error codes are more specific than those of general file tools:\n\n- `PATCH_LIMIT_INPUT_TOO_LARGE`\n- `PATCH_FORMAT_EMPTY_PATCH`\n- `PATCH_LIMIT_TOO_MANY_FILE_OPS`\n- `PATCH_LIMIT_TOO_MANY_CHUNKS`\n- `PATCH_RUNTIME_TASK_FAILED`\n\nIt can also emit parsing errors, path-escape errors, target conflicts, and context-mismatch errors that are specific to patch application.\n\n## When to use it and when not to\n\nGood fit:\n\n- changing a few lines of code\n- adding a small helper function\n- adjusting a few independent files\n\nPoor fit:\n\n- rewriting a whole file\n- generating a large amount of documentation or assets\n- edits that require running a script before the final content is known\n\nFor those cases, consider:\n\n- whole-file replacement: `write_file`\n- command-first workflows: `execute_command`\n\n## Difference from `write_file`\n\n- `apply_patch`: preserves context and is easier to review\n- `write_file`: writes the final content directly\n\nIf you already know exactly what the entire new file should be, `write_file` is more direct.  \nIf you only need a precise change, `apply_patch` is safer.\n","source_path":"使用说明书/en/tools/apply-patch.md"}</script>
+</body>
+</html>

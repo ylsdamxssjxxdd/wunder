@@ -4473,7 +4473,7 @@
             <div id="userAccountSettingsUser" class="muted">-</div>
           </div>
           <div class="form-row">
-            <label for="userAccountQuotaInput" data-i18n="userAccounts.modal.settings.quota.label">每日额度</label>
+            <label for="userAccountQuotaInput" data-i18n="userAccounts.modal.settings.quota.label">Token 余额</label>
             <div class="form-row-inline">
               <input id="userAccountQuotaInput" type="number" min="0" step="1" />
               <button id="userAccountQuotaSave" class="secondary btn-with-icon" type="button">
@@ -4482,6 +4482,26 @@
             </div>
             <div id="userAccountQuotaMeta" class="muted" data-i18n="userAccounts.modal.settings.quota.meta">
               今日已用 0 / 剩余 0（总额 0）
+            </div>
+            <div id="userAccountQuotaHint" class="muted" data-i18n="userAccounts.modal.settings.quota.hint">
+              直接保存会覆盖当前余额，不会新增发放记录。
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="userAccountTokenAdjustInput" data-i18n="userAccounts.modal.settings.tokenAdjust.label">
+              发放 / 扣除 Token
+            </label>
+            <div class="form-row-inline">
+              <input id="userAccountTokenAdjustInput" type="number" min="1" step="1" />
+              <button id="userAccountTokenGrantBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-coins"></i><span data-i18n="userAccounts.modal.settings.tokenAdjust.grant">发放</span>
+              </button>
+              <button id="userAccountTokenDeductBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-minus-circle"></i><span data-i18n="userAccounts.modal.settings.tokenAdjust.deduct">扣除</span>
+              </button>
+            </div>
+            <div id="userAccountTokenAdjustHint" class="muted" data-i18n="userAccounts.modal.settings.tokenAdjust.hint">
+              发放会增加累计获得，扣除会减少余额并计入累计消耗。
             </div>
           </div>
           <div class="form-row">

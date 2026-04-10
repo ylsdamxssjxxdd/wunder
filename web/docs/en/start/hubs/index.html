@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manual Hubs | wunder Manual / 使用说明书</title>
+  <meta name="description" content="Jump to the right part of the manual by role and task instead of searching the whole site blindly.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/hubs","language":"en","title":"Manual Hubs","summary":"Jump to the right part of the manual by role and task instead of searching the whole site blindly.","updated_at":"2026-04-10","read_when":["You are not sure which page to read first","You want the fastest route into the correct documentation path for your role"],"source_docs":["docs/wunder补全文档落地方案.md"],"tab":"Getting Started","group":"Navigation","group_path":["Navigation"],"url":"/docs/en/start/hubs/","headings":[{"id":"section-1","level":1,"text":"Manual Hubs"},{"id":"section-2","level":2,"text":"I am a regular user"},{"id":"section-3","level":2,"text":"I am an administrator"},{"id":"section-4","level":2,"text":"I am a developer or integrator"},{"id":"section-5","level":2,"text":"I am troubleshooting"},{"id":"section-6","level":2,"text":"Further reading"}],"prev_slug":"en/start/cli","next_slug":"en/start/docs-directory","markdown":"# Manual Hubs\n\nThis is a navigation page. It does not repeat the system theory.\n\nIts goal is simple: **take each role straight to pages they can act on.**\n\n## I am a regular user\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/en/start/quickstart/\">\n    <strong>Quickstart<\/strong>\n    <span>Get it running first, then fill in the mental model.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/desktop/\">\n    <strong>Desktop Guide<\/strong>\n    <span>The main recommended path for daily use.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/frontend/\">\n    <strong>Frontend Surface<\/strong>\n    <span>How chat, tools, and workspace areas work together.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/help/faq/\">\n    <strong>FAQ<\/strong>\n    <span>Clear the most common misunderstandings first.<\/span>\n  <\/a>\n<\/div>\n\n## I am an administrator\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/en/start/server/\">\n    <strong>Server Deployment<\/strong>\n    <span>The entry point for multi-tenant governance.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/surfaces/web-admin/\">\n    <strong>Admin Surface<\/strong>\n    <span>Panels for models, tools, users, and channels.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/ops/deployment/\">\n    <strong>Deployment and Operations<\/strong>\n    <span>The key checks before and after going live.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/ops/auth-and-security/\">\n    <strong>Authentication and Security<\/strong>\n    <span>Tokens, auth, sandbox boundaries, and approval policy.<\/span>\n  <\/a>\n<\/div>\n\n## I am a developer or integrator\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/en/start/cli/\">\n    <strong>CLI Usage<\/strong>\n    <span>The entry point for scripting, debugging, and automation.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/concepts/\">\n    <strong>Core Concepts<\/strong>\n    <span>Capture the main model first, then go deeper.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/integration/\">\n    <strong>Integration Overview<\/strong>\n    <span>Choose the right integration layer first.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/tools/\">\n    <strong>Tools Overview<\/strong>\n    <span>Select tools by task and reduce trial and error.<\/span>\n  <\/a>\n<\/div>\n\n## I am troubleshooting\n\n- [Help Center](/docs/en/help/)\n- [Troubleshooting](/docs/en/help/troubleshooting/)\n- [Streaming Events Reference](/docs/en/reference/stream-events/)\n- [Configuration Reference](/docs/en/reference/config/)\n\n## Further reading\n\n- [Frequently Used Pages](/docs/en/start/docs-directory/)\n- [API Index](/docs/en/reference/api-index/)\n","source_path":"使用说明书/en/start/hubs.md"}</script>
+</body>
+</html>

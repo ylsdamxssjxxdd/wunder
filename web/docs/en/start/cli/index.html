@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI Usage | wunder Manual / 使用说明书</title>
+  <meta name="description" content="Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/cli","language":"en","title":"CLI Usage","summary":"Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.","updated_at":"2026-04-10","read_when":["You want to use wunder directly from a terminal","You care more about debugging, scripting tasks, and workspace-driven execution"],"source_docs":["docs/系统介绍.md","docs/设计方案.md"],"tab":"Getting Started","group":"Onboarding","group_path":["Onboarding"],"url":"/docs/en/start/cli/","headings":[{"id":"section-1","level":1,"text":"CLI Usage"},{"id":"section-2","level":2,"text":"When to choose CLI"},{"id":"section-3","level":2,"text":"What CLI is"},{"id":"section-4","level":3,"text":"Core CLI capabilities"},{"id":"section-5","level":2,"text":"Five steps to get started"},{"id":"section-6","level":3,"text":"1. Install CLI"},{"id":"section-7","level":3,"text":"2. Configure a model"},{"id":"section-8","level":3,"text":"3. Start interactive mode"},{"id":"section-9","level":3,"text":"4. Launch the first task"},{"id":"section-10","level":3,"text":"5. Explore built-in commands"},{"id":"section-11","level":2,"text":"CLI-specific strengths"},{"id":"section-12","level":3,"text":"TUI mode"},{"id":"section-13","level":3,"text":"Session management"},{"id":"section-14","level":3,"text":"Scripting and automation"},{"id":"section-15","level":3,"text":"Workspace-driven execution"},{"id":"section-16","level":2,"text":"Common questions"},{"id":"section-17","level":2,"text":"Next"}],"prev_slug":"en/start/server","next_slug":"en/start/hubs","markdown":"# CLI Usage\n\nIf you mainly work in a terminal, start here.\n\n`wunder-cli` is wunder's command-line runtime form. It is designed for developers, local tasks, scriptable workflows, and workspace-driven execution.\n\n---\n\n## When to choose CLI\n\n| Scenario | Choose CLI |\n|------|--------|\n| Programming work or file-processing tasks | ✅ |\n| Watching events, tool calls, and artifacts in the terminal | ✅ |\n| Scripts, CI, batch jobs, or automation | ✅ |\n| JSONL event streams or TUI interaction | ✅ |\n| Daily end-user use without touching a terminal | ❌ Choose Desktop |\n\n---\n\n## What CLI is\n\nCLI is not \"Desktop with fewer features.\" It is a **terminal-first independent runtime form**:\n\n```text\n┌─────────────────────────────────────┐\n│     wunder-cli                      │\n│  ┌───────────────────────────────┐ │\n│  │  Optional TUI interface       │ │\n│  │  - Codex-like terminal flow   │ │\n│  │  - real-time event stream     │ │\n│  └───────────────────────────────┘ │\n│  ↓ command-line driven             │\n│  ┌───────────────────────────────┐ │\n│  │  Rust core engine             │ │\n│  │  - orchestrator               │ │\n│  │  - toolchain                  │ │\n│  │  - current dir as workspace   │ │\n│  └───────────────────────────────┘ │\n└─────────────────────────────────────┘\n```\n\n### Core CLI capabilities\n\n- complete agent orchestration and toolchain\n- TUI interaction with a Codex-like flow\n- JSONL output for pipes and automation\n- session management with `fork`, `compact`, and `resume`\n- channel integration such as Feishu, WeChat, QQ, and XMPP\n- debugging utilities including `debug-config` and `statusline`\n\n---\n\n## Five steps to get started\n\n### 1. Install CLI\n\n**Build from source, requires Rust 1.70+**\n```bash\ngit clone <repo-url>\ncd wunder\ncargo build --release\n```\n\nAfter the build, the executable is in `./target/release/wunder-cli`.\n\n### 2. Configure a model\n\nCreate or edit `~/.wunder/config.yaml`:\n\n```yaml\nllm:\n  models:\n    - name: gpt-4o\n      api_key: your-api-key\n      endpoint: https://api.openai.com/v1\n      max_context: 128000\n      max_rounds: 20\n```\n\n### 3. Start interactive mode\n\n```bash\ncd my-project\nwunder-cli\n```\n\nYou will see something like:\n\n```text\nwunder-cli v0.1.0\nWorkspace: /path/to/my-project\nType /help for commands\n>\n```\n\n### 4. Launch the first task\n\n```text\n> Help me list the files in the current directory\n```\n\nYou will see:\n\n- model reasoning\n- a file-listing tool call\n- the returned file list\n- the final answer\n\n### 5. Explore built-in commands\n\nTry these:\n\n| Command | Meaning |\n|------|------|\n| `/help` | show all available commands |\n| `/fork` | fork the current session |\n| `/compact` | compress session history |\n| `/resume <id>` | resume a previous session |\n| `/debug-config` | show the active configuration |\n| `/statusline` | show runtime status |\n\n---\n\n## CLI-specific strengths\n\n### TUI mode\n\nStart with `--tui`:\n\n```bash\nwunder-cli --tui\n```\n\nThis gives you a Codex-like terminal experience:\n\n- left: session list\n- center: chat area\n- right: tool calls and status\n- bottom: input box\n\n### Session management\n\n```text\n> /fork\n> /compact\n> /resume abc123\n> /list\n```\n\n### Scripting and automation\n\n**Single-shot execution**\n```bash\nwunder-cli --execute \"Help me write a Hello World program\"\n```\n\n**JSONL output for pipes**\n```bash\nwunder-cli --jsonl --execute \"List files\" | jq .\n```\n\n**Read the task from a file**\n```bash\nwunder-cli --file task.txt\n```\n\n### Workspace-driven execution\n\nBy default, CLI uses the **current directory** as its workspace:\n\n```bash\ncd my-project\nwunder-cli\n```\n\nYou can also specify one explicitly:\n\n```bash\nwunder-cli --workspace /path/to/workspace\n```\n\n---\n\n## Common questions\n\n**Q: Does CLI need network access?**  \nA: Model calls do, but many tool operations can stay local.\n\n**Q: Can it work with Desktop or Server?**  \nA: Yes. All three forms share the same core engine and use compatible workspace conventions.\n\n**Q: How should I use it in CI/CD?**  \nA: Use `--execute` together with `--jsonl` for script-friendly integration.\n\n**Q: Where is session data stored?**  \nA: By default in `~/.wunder/sessions/`, and this can be changed by configuration.\n\n---\n\n## Next\n\n- Want the full tool catalog? -> [Tools Overview](/docs/en/tools/)\n- Need integration patterns? -> [Integration Overview](/docs/en/integration/)\n- Hit a problem? -> [Troubleshooting](/docs/en/help/troubleshooting/)\n- Want the core system model? -> [Core Concepts](/docs/en/concepts/)\n","source_path":"使用说明书/en/start/cli.md"}</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sessions and Rounds | wunder Manual / 使用说明书</title>
+  <meta name="description" content="wunder splits a conversation into sessions, threads, user rounds, and model rounds.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/sessions-and-rounds","language":"en","title":"Sessions and Rounds","summary":"wunder splits a conversation into sessions, threads, user rounds, and model rounds.","updated_at":"2026-04-10","read_when":["You need to understand session state, event streams, and counting conventions","You need to distinguish user rounds, model rounds, and token occupancy"],"source_docs":["docs/系统介绍.md","docs/API文档.md"],"tab":"Reference","group":"Runtime Model Reference","group_path":["Runtime Model Reference"],"url":"/docs/en/concepts/sessions-and-rounds/","headings":[{"id":"section-1","level":1,"text":"Sessions and Rounds"},{"id":"section-2","level":2,"text":"What is a session?"},{"id":"section-3","level":2,"text":"What is a thread?"},{"id":"section-4","level":2,"text":"User rounds and model rounds"},{"id":"section-5","level":3,"text":"User rounds"},{"id":"section-6","level":3,"text":"Model rounds"},{"id":"section-7","level":2,"text":"Why this distinction matters"},{"id":"section-8","level":2,"text":"Token statistics"},{"id":"section-9","level":2,"text":"Streaming events and termination"},{"id":"section-10","level":2,"text":"Further reading"}],"prev_slug":"en/concepts/workspaces","next_slug":"en/concepts/streaming","markdown":"# Sessions and Rounds\n\nwunder does not treat a conversation as a single request. It treats it as a continuously evolving session.\n\n## What is a session?\n\nA session usually contains:\n\n- user input\n- model responses\n- tool calls\n- intermediate events\n- the final result\n\nFor complex work, one session may last for many turns and include multiple model calls and tool invocations.\n\n## What is a thread?\n\nA thread is the higher-level structure that organizes a session.\n\nThe current system requires:\n\n- an agent thread's system prompt must be frozen after it is first determined\n- long-term memory may only be injected once during thread initialization\n- later rounds continue reusing the same thread context\n\nSo a thread is not just a UI label. It is the actual boundary for stability and context consistency.\n\n## User rounds and model rounds\n\nwunder explicitly splits rounds into two layers.\n\n### User rounds\n\nEach message sent by the user counts as one user round.\n\nThis represents a clear business-input boundary.\n\n### Model rounds\n\nEach action executed by the model counts as one model round.\n\nActions include:\n\n- one model call\n- one tool call\n- one final reply\n\nSo one user round usually contains multiple model rounds.\n\n## Why this distinction matters\n\nIf you do not separate the two kinds of rounds, these questions blur together:\n\n- how many times did the user actually ask something\n- how many steps did the model take to answer that one question\n- at which step did a tool explosion happen\n- where should current speed, latency, and token statistics be attached\n\nOnce user rounds and model rounds are separated, timelines, replay, alerts, and billing-related conventions become much clearer.\n\n## Token statistics\n\nwunder records token occupancy, meaning how many tokens the current context actually occupies.\n\nIt is not:\n\n- the total billing cost of a platform\n- a simple sum of every provider-side billing field\n\nWhen you inspect the chat UI, debugging UI, or replay data, you should first read token counts as **current thread context load**.\n\n## Streaming events and termination\n\nDuring one user round, the event stream usually shows:\n\n- input arrival\n- model start\n- tool calls and observations\n- incremental output\n- a termination event\n\nWhether execution truly finished should be judged by termination semantics, not just by whether any streaming text appeared.\n\nIf you are integrating or troubleshooting, at minimum keep these separate:\n\n- whether the session is still alive\n- whether the current thread runtime is still active\n- whether the current round has already emitted a terminating event\n\n## Further reading\n\n- [Streaming Execution](/docs/en/concepts/streaming/)\n- [Presence and Runtime](/docs/en/concepts/presence-and-runtime/)\n- [Streaming Events Reference](/docs/en/reference/stream-events/)\n- [wunder API](/docs/en/integration/wunder-api/)\n","source_path":"使用说明书/en/concepts/sessions-and-rounds.md"}</script>
+</body>
+</html>

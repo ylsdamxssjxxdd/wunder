@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Guide | wunder Manual / 使用说明书</title>
+  <meta name="description" content="If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/desktop","language":"en","title":"Desktop Guide","summary":"If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.","updated_at":"2026-04-10","read_when":["You want to start using wunder immediately","You care more about the desktop workstation than deploying a full server stack"],"source_docs":["docs/API文档.md","frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue","frontend/src/components/messenger/MessengerSettingsPanel.vue"],"tab":"Getting Started","group":"Onboarding","group_path":["Onboarding"],"url":"/docs/en/start/desktop/","headings":[{"id":"section-1","level":1,"text":"Desktop Guide"},{"id":"section-2","level":2,"text":"When to choose Desktop"},{"id":"section-3","level":2,"text":"What Desktop is"},{"id":"section-4","level":2,"text":"What you see after launch"},{"id":"section-5","level":2,"text":"Five steps to get started"},{"id":"section-6","level":3,"text":"1. Download and install"},{"id":"section-7","level":3,"text":"2. First launch"},{"id":"section-8","level":3,"text":"3. Configure a model"},{"id":"section-9","level":3,"text":"4. Set up your account details"},{"id":"section-10","level":3,"text":"5. Start the first conversation"},{"id":"section-11","level":2,"text":"Two interaction constraints you will hit quickly"},{"id":"section-12","level":3,"text":"You cannot create a new thread while one is still running"},{"id":"section-13","level":3,"text":"Active swarms keep a visible highlight"},{"id":"section-14","level":2,"text":"Recovery entry in System Settings"},{"id":"section-15","level":2,"text":"Extra input capabilities in local mode"},{"id":"section-16","level":2,"text":"When in doubt, open the manual"},{"id":"section-17","level":2,"text":"Next"}],"prev_slug":"en/start/quickstart","next_slug":"en/start/server","markdown":"# Desktop Guide\n\nIf you want to start using wunder right away, do not deploy server first. Start with `wunder-desktop`.\n\nIt is built for individual users and local-first scenarios, and opens directly into a full agent workstation.\n\n## When to choose Desktop\n\n| Scenario | Choose Desktop |\n|------|-----------|\n| You want to start now without deploying services first | ✅ |\n| You need local files, windows, and browser capabilities | ✅ |\n| You prefer a graphical interface | ✅ |\n| You may connect to a remote backend later, but need something running now | ✅ |\n| You need multi-user governance and an admin backend | ❌ Choose Server |\n\n## What Desktop is\n\nDesktop is not a simplified Server. It is an independent local-first runtime form:\n\n```text\nwunder-desktop\n  ├─ User frontend (chat, profile, swarm, settings)\n  ├─ Local bridge (screenshots, recording, desktop environment capabilities)\n  └─ Rust core engine (orchestration, tools, workspace)\n```\n\n## What you see after launch\n\nDesktop still uses the unified three-column layout:\n\n- left: navigation\n- center: conversations, agents, swarms, and resources\n- right: chat area, workflows, profile pages, and settings\n\nIt is not only a chat window. It also includes:\n\n- conversations between users and agents\n- workspace and file management\n- swarm collaboration and multi-agent workflows\n- system settings and local runtime preferences\n- your profile and account settings\n\n## Five steps to get started\n\n### 1. Download and install\n\n- Download the installer for your operating system from Releases\n\n### 2. First launch\n\nOn first launch, Desktop automatically:\n\n- creates the local working directory `WUNDER_WORK/`\n- creates the configuration directory `WUNDER_TEMPD/`\n- prepares built-in skills and runtime resources\n\n### 3. Configure a model\n\nGo to `System Settings` and configure:\n\n- API key\n- endpoint\n- model name\n\nBefore saving, it is best to click `Test Connection` once.\n\n### 4. Set up your account details\n\nIf this is your own account, it is worth handling these items early:\n\n- on the login page, confirm whether you need to register or reset the password\n- go to `My Profile -> Edit Profile` to update the username or email\n- if this will be a long-lived account, set a new login password as well\n\nPassword reset from the login page only requires:\n\n- username\n- email\n- new password\n\nChanging the password after login still requires the current password for verification.\n\n### 5. Start the first conversation\n\nGo back to chat and enter:\n\n```text\nHelp me list the files in the current working directory\n```\n\nYou will see:\n\n- the model starts executing\n- the tool workflow appears step by step\n- the final reply lands in the chat area\n\n## Two interaction constraints you will hit quickly\n\n### You cannot create a new thread while one is still running\n\nWhile the current agent is still running, the `New Thread` button is disabled.\n\nThis avoids state conflicts between the active main thread and a newly created thread. The correct flow is:\n\n- wait for the run to finish\n- or stop the current session first, then create a new thread\n\n### Active swarms keep a visible highlight\n\nIf a swarm is still active:\n\n- its item in the center column keeps a pulsing highlight\n- the queen, workers, and subagent nodes on the canvas keep their workflow traces\n\n## Recovery entry in System Settings\n\nIf conversations, swarms, or the workspace end up in a bad runtime state, use `One-click Reset Working State` in `System Settings`.\n\nIt will:\n\n- stop running sessions and tasks\n- terminate active swarm runs\n- rebuild the main thread for the default agent and user agents\n- clean working-state directories\n\nIt will not delete long-lived user assets such as:\n\n- `global`\n- `skills`\n- `knowledge`\n\n## Extra input capabilities in local mode\n\nWhen Desktop is running in local mode, the chat area usually also shows:\n\n- a microphone button\n- a screenshot button\n\nWhether these buttons are available depends on local machine permissions and desktop bridge capabilities.\n\n## When in doubt, open the manual\n\nDesktop already includes a built-in manual entry:\n\n- go to `More` in the left column\n- select `Help Manual` in the center column\n- the right column opens the docs site directly\n\n## Next\n\n- To understand the UI layout, see [Frontend Surface](/docs/en/surfaces/frontend/)\n- To understand local-mode boundaries, see [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)\n- To understand swarm collaboration, see [Swarm Collaboration](/docs/en/concepts/swarm/)\n- If something goes wrong, see [Troubleshooting](/docs/en/help/troubleshooting/)\n","source_path":"使用说明书/en/start/desktop.md"}</script>
+</body>
+</html>

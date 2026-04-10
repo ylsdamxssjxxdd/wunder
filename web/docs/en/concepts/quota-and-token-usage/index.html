@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Token Balance and Usage | wunder Manual / 使用说明书</title>
+  <meta name="description" content="Wunder uses a token balance as the user&#x27;s spendable currency, and token usage as the runtime view of context load.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/concepts/quota-and-token-usage","language":"en","title":"Token Balance and Usage","summary":"Wunder uses a token balance as the user's spendable currency, and token usage as the runtime view of context load.","updated_at":"2026-04-10","read_when":["You need to understand token balance, daily grants, or runtime token usage"],"source_docs":["docs/使用说明书/zh-CN/concepts/quota-and-token-usage.md"],"tab":"Reference","group":"Runtime Model Reference","group_path":["Runtime Model Reference"],"url":"/docs/en/concepts/quota-and-token-usage/","headings":[{"id":"section-1","level":1,"text":"Token Balance and Usage"},{"id":"section-2","level":2,"text":"Token balance"},{"id":"section-3","level":2,"text":"Token usage"}],"prev_slug":"en/concepts/memory","next_slug":"en/concepts/swarm","markdown":"# Token Balance and Usage\n\nWunder separates two concepts that are often mixed together:\n\n- `token_balance`: the user's spendable token currency balance\n- token usage: the runtime measure of context occupancy and request consumption\n\n## Token balance\n\nThe token account is the governance and settlement layer for a user:\n\n- Level 1 / 2 / 3 / 4 users receive `100M / 50M / 10M / 1M` tokens per day\n- Daily grants accumulate into `token_balance`\n- Real model usage deducts the actual `total_tokens`\n- Level-up rewards are also credited into the same token account\n\n## Token usage\n\nRuntime token usage is mainly for observation:\n\n- `round_usage.total_tokens`: authoritative view of actual context occupancy after a request\n- `request_consumed_tokens`: explicit alias for per-request consumption\n- `consumed_tokens`: aggregated total consumption in summary APIs\n\nDo not treat runtime token usage, account balance, and provider billing as the same thing.\n\nFor the full Chinese explanation, see:\n\n- [Token Balance and Usage (Simplified Chinese)](/docs/zh-CN/concepts/quota-and-token-usage/)\n","source_path":"使用说明书/en/concepts/quota-and-token-usage.md"}</script>
+</body>
+</html>

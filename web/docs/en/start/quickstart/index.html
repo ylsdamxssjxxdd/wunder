@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quickstart | wunder Manual / 使用说明书</title>
+  <meta name="description" content="Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/start/quickstart","language":"en","title":"Quickstart","summary":"Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.","updated_at":"2026-04-10","read_when":["You are using wunder for the first time","You need a verifiable result within about ten minutes"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"Getting Started","group":"Onboarding","group_path":["Onboarding"],"url":"/docs/en/start/quickstart/","headings":[{"id":"section-1","level":1,"text":"Quickstart"},{"id":"section-2","level":2,"text":"Step 1: pick the right path"},{"id":"section-3","level":2,"text":"Shortest path: Desktop"},{"id":"section-4","level":3,"text":"Five steps"},{"id":"section-5","level":3,"text":"Desktop-specific strengths"},{"id":"section-6","level":2,"text":"Team path: Server"},{"id":"section-7","level":3,"text":"Before you start"},{"id":"section-8","level":3,"text":"Three-step deployment"},{"id":"section-9","level":3,"text":"Core server capabilities"},{"id":"section-10","level":2,"text":"Developer path: CLI"},{"id":"section-11","level":3,"text":"Install and run"},{"id":"section-12","level":3,"text":"First session"},{"id":"section-13","level":3,"text":"CLI-specific strengths"},{"id":"section-14","level":2,"text":"Validation checklist"},{"id":"section-15","level":2,"text":"Next"}],"prev_slug":"en/index","next_slug":"en/start/desktop","markdown":"# Quickstart\n\nThis page has one job: **help you get the first working wunder flow up and running in ten minutes.**\n\n## Step 1: pick the right path\n\n| Your situation | Recommended path | Why |\n|----------|----------|----------|\n| I just want to start using it now | [Desktop Guide](/docs/en/start/desktop/) | Lowest barrier, ready to use immediately |\n| I need team collaboration and administration | [Server Deployment](/docs/en/start/server/) | Multi-user, permissions, centralized governance |\n| I am a developer and need automation | [CLI Usage](/docs/en/start/cli/) | Terminal-driven, scriptable, pipeline-friendly |\n\n---\n\n## Shortest path: Desktop\n\nBest for: individual users, local demos, and a desktop workstation\n\n### Five steps\n\n1. **Download and install**\n   - Go to Releases and download the `wunder-desktop` package for your system\n   - Install it or unzip it, then launch it\n\n2. **Configure a model**\n   - Open `System Settings` -> `Model Configuration`\n   - Fill in your API key and endpoint\n   - Save and test the connection\n\n3. **Start the first conversation**\n   - Go back to the chat screen\n   - Enter: `Help me list the files in the current directory`\n   - Press Enter\n\n4. **Watch the execution**\n   - You will see:\n     - model reasoning\n     - tool calls such as file listing\n     - intermediate results\n     - the final reply\n\n5. **Validate success**\n   - If you can see the full execution flow and the final result, the core path is working\n\n### Desktop-specific strengths\n\n- **Local first**: runs locally by default, but can also connect to a remote gateway\n- **Desktop control**: can operate local windows, files, and browsers\n- **Persistent workspace**: files are not auto-cleaned after 24 hours\n- **Agent-visible configuration**: agent settings and prompts can be edited directly\n\n---\n\n## Team path: Server\n\nBest for: multi-user collaboration, organizational governance, and unified access\n\n### Before you start\n\n- Docker and Docker Compose, preferably\n- A PostgreSQL database, or the one included in compose\n- At least 4 GB of free memory\n\n### Three-step deployment\n\n1. **Get the code**\n   ```bash\n   git clone <repo-url>\n   cd wunder\n   ```\n\n2. **Start the services**\n   ```bash\n   # x86\n   docker-compose -f docker-compose-x86.yml up -d\n\n   # ARM\n   docker-compose -f docker-compose-arm.yml up -d\n   ```\n\n3. **Open the system**\n   - User frontend: `http://localhost:18002`\n   - Admin UI and docs: `http://localhost:18000`\n   - Frontend dev service, only for direct integration debugging: `http://localhost:18001`\n   - Default admin account: `admin / admin`\n\n### Core server capabilities\n\n- **Multi-tenancy**: hierarchical governance for users, units, and permissions\n- **Unified interfaces**: `/wunder`, `/wunder/chat/*`, and `/a2a`\n- **Channel integration**: Feishu, WeChat, QQ, XMPP, and more\n- **Observability**: monitoring, benchmarking, and capability evaluation\n\n---\n\n## Developer path: CLI\n\nBest for: developers, automation scripts, and terminal-driven tasks\n\n### Install and run\n\n```bash\n# build, requires Rust\ncargo build --release\n\n# run\n./target/release/wunder-cli\n```\n\n### First session\n\n```bash\n# start the interactive mode\nwunder-cli\n\n# enter a task\n> Help me write a Hello World Python script\n```\n\n### CLI-specific strengths\n\n- **TUI interface**: a terminal experience similar to Codex\n- **Session management**: `/fork`, `/compact`, and `/resume`\n- **Debugging tools**: `/debug-config` and `/statusline`\n- **JSONL output**: easier to use in pipes and automation\n\n---\n\n## Validation checklist\n\nNo matter which path you choose, confirm these points:\n\n- [ ] You can submit one execution request successfully\n- [ ] You can see the streaming process, including intermediate steps and tool calls\n- [ ] You receive the final result\n- [ ] You know which document to read next\n\n---\n\n## Next\n\n- Want the runtime model? -> [Core Concepts](/docs/en/concepts/)\n- Need to integrate wunder into your own system? -> [Integration Overview](/docs/en/integration/)\n- Hit a problem? -> [Troubleshooting](/docs/en/help/troubleshooting/)\n- Want the full tool set? -> [Tools Overview](/docs/en/tools/)\n","source_path":"使用说明书/en/start/quickstart.md"}</script>
+</body>
+</html>

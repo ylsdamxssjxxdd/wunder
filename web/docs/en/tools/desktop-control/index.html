@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop Control | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The latest behavior and return structures of `desktop_controller` and `desktop_monitor`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/desktop-control","language":"en","title":"Desktop Control","summary":"The latest behavior and return structures of `desktop_controller` and `desktop_monitor`.","updated_at":"2026-04-10","read_when":["You need to control the local desktop or inspect desktop screenshots"],"source_docs":["src/services/tools/desktop_control.rs"],"tab":"Tools","group":"Web and Desktop","group_path":["Web and Desktop"],"url":"/docs/en/tools/desktop-control/","headings":[{"id":"section-1","level":1,"text":"Desktop Control"},{"id":"section-2","level":2,"text":"desktopcontroller"},{"id":"section-3","level":3,"text":"Minimum arguments"},{"id":"section-4","level":3,"text":"Success result"},{"id":"section-5","level":2,"text":"desktopmonitor"},{"id":"section-6","level":3,"text":"Minimum arguments"},{"id":"section-7","level":3,"text":"Success result"},{"id":"section-8","level":2,"text":"Notes"},{"id":"section-9","level":2,"text":"Difference from the browser tool"}],"prev_slug":"en/tools/browser","next_slug":"en/tools/panels-and-a2ui","markdown":"# Desktop Control\n\nThis tool group contains:\n\n- `desktop_controller`\n- `desktop_monitor`\n\nThey use the unified success envelope, but `data` includes screenshot paths, download URLs, and follow-up prompts.  \nAfter a call completes, the system may also append a follow-up user message with the captured image so the model can continue with multimodal inspection.\n\n## `desktop_controller`\n\n### Minimum arguments\n\n```json\n{\n  \"bbox\": { \"x\": 100, \"y\": 100, \"width\": 80, \"height\": 40 },\n  \"action\": \"left_click\",\n  \"description\": \"Click the Save button\"\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"desktop_controller\",\n  \"state\": \"completed\",\n  \"summary\": \"Completed desktop action left_click.\",\n  \"data\": {\n    \"action\": \"left_click\",\n    \"description\": \"Click the Save button\",\n    \"center_norm\": [640, 360],\n    \"center_screen\": [960, 540],\n    \"normalized_width\": 1280,\n    \"normalized_height\": 720,\n    \"screen_width\": 1920,\n    \"screen_height\": 1080,\n    \"screenshot_path\": \"C:/.../desktop_controller/a.png\",\n    \"previous_screenshot_path\": null,\n    \"screenshot_download_url\": \"/wunder/temp_dir/download?...\",\n    \"screenshot_bytes\": 182233,\n    \"elapsed_ms\": 742,\n    \"followup_prompt\": \"...\"\n  }\n}\n```\n\n## `desktop_monitor`\n\n### Minimum arguments\n\n```json\n{\n  \"wait_ms\": 1000,\n  \"note\": \"Wait for the page to settle before capturing\"\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"desktop_monitor\",\n  \"state\": \"completed\",\n  \"summary\": \"Captured a desktop screenshot for inspection.\",\n  \"data\": {\n    \"wait_ms\": 1000,\n    \"normalized_width\": 1280,\n    \"normalized_height\": 720,\n    \"screen_width\": 1920,\n    \"screen_height\": 1080,\n    \"screenshot_path\": \"C:/.../desktop_controller/b.png\",\n    \"previous_screenshot_path\": \"C:/.../desktop_controller/a.png\",\n    \"screenshot_download_url\": \"/wunder/temp_dir/download?...\",\n    \"screenshot_bytes\": 191002,\n    \"followup_prompt\": \"...\",\n    \"note\": \"Wait for the page to settle before capturing\"\n  }\n}\n```\n\n## Notes\n\n- This operates on the local desktop, not the webpage DOM\n- After each action, the tool tries to return a fresh screenshot\n- Previous and current screenshots may both enter the next multimodal reasoning step\n\n## Difference from the browser tool\n\n- For webpage DOM-level operations, use [Browser](/docs/en/tools/browser/)\n- For the full desktop and native apps, use desktop control\n","source_path":"使用说明书/en/tools/desktop-control.md"}</script>
+</body>
+</html>

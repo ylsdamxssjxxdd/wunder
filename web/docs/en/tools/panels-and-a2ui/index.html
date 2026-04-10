@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panels and a2ui | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The semantics and return structures of `a2ui`, `plan_update`, and `question_panel`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/panels-and-a2ui","language":"en","title":"Panels and a2ui","summary":"The semantics and return structures of `a2ui`, `plan_update`, and `question_panel`.","updated_at":"2026-04-10","read_when":["You need to update the frontend plan panel, open a question panel, or send structured UI instructions"],"source_docs":["src/services/tools.rs","src/services/tools/catalog.rs"],"tab":"Tools","group":"UI and Automation","group_path":["UI and Automation"],"url":"/docs/en/tools/panels-and-a2ui/","headings":[{"id":"section-1","level":1,"text":"Panels and a2ui"},{"id":"section-2","level":2,"text":"a2ui"},{"id":"section-3","level":2,"text":"planupdate"},{"id":"section-4","level":3,"text":"Minimum arguments"},{"id":"section-5","level":3,"text":"Success result"},{"id":"section-6","level":2,"text":"questionpanel"},{"id":"section-7","level":3,"text":"Minimum arguments"},{"id":"section-8","level":3,"text":"Success result"},{"id":"section-9","level":2,"text":"Key points"}],"prev_slug":"en/tools/desktop-control","next_slug":"en/tools/schedule-task","markdown":"# Panels and a2ui\n\nThere are three things on this page:\n\n- `a2ui`\n- `plan_update`\n- `question_panel`\n\n`a2ui` is an exception in the return format. The other two already use the unified success envelope.\n\n## `a2ui`\n\nThis tool sends structured UI instructions directly to the frontend, so its return shape stays very thin:\n\n```json\n{\n  \"uid\": \"surface_xxx\",\n  \"a2ui\": [\n    {\n      \"beginRendering\": {}\n    }\n  ],\n  \"content\": \"optional text\"\n}\n```\n\nRecommended message shapes:\n\n- `beginRendering`\n- `surfaceUpdate`\n- `dataModelUpdate`\n- `deleteSurface`\n\n## `plan_update`\n\n### Minimum arguments\n\n```json\n{\n  \"plan\": [\n    { \"step\": \"Analyze the code\", \"status\": \"completed\" },\n    { \"step\": \"Update the docs\", \"status\": \"in_progress\" }\n  ]\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"plan_update\",\n  \"state\": \"completed\",\n  \"summary\": \"Updated the execution plan.\",\n  \"data\": {\n    \"status\": \"ok\"\n  }\n}\n```\n\n## `question_panel`\n\n### Minimum arguments\n\n```json\n{\n  \"question\": \"Choose how to proceed\",\n  \"routes\": [\n    {\n      \"label\": \"Conservative fix\",\n      \"description\": \"Start with the smallest safe repair\",\n      \"recommended\": true\n    }\n  ],\n  \"multiple\": false\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"question_panel\",\n  \"state\": \"awaiting_input\",\n  \"summary\": \"Opened a question panel and is waiting for user input.\",\n  \"data\": {\n    \"question\": \"Choose how to proceed\",\n    \"routes\": [\n      {\n        \"label\": \"Conservative fix\",\n        \"description\": \"Start with the smallest safe repair\",\n        \"recommended\": true\n      }\n    ],\n    \"multiple\": false\n  }\n}\n```\n\n## Key points\n\n- `plan_update` only updates the display. It is not a task executor.\n- `question_panel` succeeding does not mean the task is done. It only means the system entered `awaiting_input`.\n- `a2ui` is the lower-level option and should be used when you already know the exact frontend structure to send\n","source_path":"使用说明书/en/tools/panels-and-a2ui.md"}</script>
+</body>
+</html>

@@ -38,7 +38,7 @@ source_docs:
   <a class="docs-card" href="/docs/zh-CN/concepts/tools/"><strong>工具体系</strong><span>内置工具、MCP、Skills 的统一视角。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/prompt-and-skills/"><strong>提示词与技能</strong><span>线程冻结、技能挂载和生效边界。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/memory/"><strong>长期记忆</strong><span>记忆注入、提炼与召回约束。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/quota-and-token-usage/"><strong>额度与 Token 占用</strong><span>成本、配额与上下文预算。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/quota-and-token-usage/"><strong>Token 账户与占用</strong><span>余额、消耗与上下文负载的区别。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/swarm/"><strong>蜂群协作</strong><span>母蜂、工蜂和结果归并。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/boundary-handling/"><strong>边界处理</strong><span>超限、故障和恢复路径。</span></a>
 </div>

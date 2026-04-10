@@ -1,16 +1,16 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-10T11:45:03.541068+00:00",
+  "generated_at": "2026-04-10T23:16:19.601499+00:00",
   "site": {
-    "name": "wunder 使用说明书",
-    "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
+    "name": "wunder Manual / 使用说明书",
+    "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "home_url": "/docs/",
     "logo_url": "/docs/assets/eva01-head.svg",
     "header_links": [
       {
-        "label": "控制台",
+        "label": "Console / 控制台",
         "url": "/"
       }
     ]
@@ -142,7 +142,7 @@
                   {
                     "slug": "zh-CN/concepts/core-multi-user-management",
                     "title": "多用户管理",
-                    "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和配额放进系统骨架，而不是后补。",
+                    "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和 Token 账户治理放进系统骨架，而不是后补。",
                     "url": "/docs/zh-CN/concepts/core-multi-user-management/"
                   },
                   {
@@ -623,8 +623,8 @@
                   },
                   {
                     "slug": "zh-CN/concepts/quota-and-token-usage",
-                    "title": "额度与 Token 占用",
-                    "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
+                    "title": "Token 账户与占用",
+                    "summary": "Wunder 用 Token 账户管理用户可支配余额，用 Token 占用观察上下文负载；这两者相关，但不是一回事。",
                     "url": "/docs/zh-CN/concepts/quota-and-token-usage/"
                   },
                   {
@@ -678,6 +678,674 @@
                     "title": "术语表",
                     "summary": "这页用于快速统一 Wunder 文档里的核心术语，避免把 user、session、thread、container、agent 混成一个概念。",
                     "url": "/docs/zh-CN/help/glossary/"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "en",
+        "label": "English",
+        "tabs": [
+          {
+            "tab": "Getting Started",
+            "entry_url": "/docs/en/",
+            "groups": [
+              {
+                "group": "Home",
+                "pages": [
+                  {
+                    "slug": "en/index",
+                    "title": "wunder",
+                    "summary": "wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.",
+                    "url": "/docs/en/"
+                  }
+                ]
+              },
+              {
+                "group": "Onboarding",
+                "pages": [
+                  {
+                    "slug": "en/start/quickstart",
+                    "title": "Quickstart",
+                    "summary": "Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.",
+                    "url": "/docs/en/start/quickstart/"
+                  },
+                  {
+                    "slug": "en/start/desktop",
+                    "title": "Desktop Guide",
+                    "summary": "If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.",
+                    "url": "/docs/en/start/desktop/"
+                  },
+                  {
+                    "slug": "en/start/server",
+                    "title": "Server Deployment",
+                    "summary": "Start with `wunder-server` only when you need multi-user governance, a unified access layer, and an admin backend.",
+                    "url": "/docs/en/start/server/"
+                  },
+                  {
+                    "slug": "en/start/cli",
+                    "title": "CLI Usage",
+                    "summary": "Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.",
+                    "url": "/docs/en/start/cli/"
+                  }
+                ]
+              },
+              {
+                "group": "Navigation",
+                "pages": [
+                  {
+                    "slug": "en/start/hubs",
+                    "title": "Manual Hubs",
+                    "summary": "Jump to the right part of the manual by role and task instead of searching the whole site blindly.",
+                    "url": "/docs/en/start/hubs/"
+                  },
+                  {
+                    "slug": "en/start/docs-directory",
+                    "title": "Frequently Used Pages",
+                    "summary": "A curated directory of the most frequently used pages in the wunder manual.",
+                    "url": "/docs/en/start/docs-directory/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Core",
+            "entry_url": "/docs/en/concepts/",
+            "groups": [
+              {
+                "group": "11 Core Ideas",
+                "pages": [
+                  {
+                    "slug": "en/concepts/index",
+                    "title": "Core Concepts",
+                    "summary": "The eleven core concepts are not eleven feature bullets. They are the structural boundaries wunder establishes for long-running threads, concurrent users, and multiple entry surfaces.",
+                    "url": "/docs/en/concepts/"
+                  },
+                  {
+                    "slug": "en/concepts/core-agent-loop",
+                    "title": "Core Agent Loop",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-agent-loop/"
+                  },
+                  {
+                    "slug": "en/concepts/core-tools",
+                    "title": "Core Tools",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-tools/"
+                  },
+                  {
+                    "slug": "en/concepts/core-swarm",
+                    "title": "Core Swarm",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-swarm/"
+                  },
+                  {
+                    "slug": "en/concepts/core-context-compression",
+                    "title": "Core Context Compression",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-context-compression/"
+                  },
+                  {
+                    "slug": "en/concepts/core-memory",
+                    "title": "Core Memory",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-memory/"
+                  },
+                  {
+                    "slug": "en/concepts/core-channels",
+                    "title": "Core Channels",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-channels/"
+                  },
+                  {
+                    "slug": "en/concepts/core-scheduled-tasks",
+                    "title": "Core Scheduled Tasks",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-scheduled-tasks/"
+                  },
+                  {
+                    "slug": "en/concepts/core-multi-user-management",
+                    "title": "Core Multi-user Management",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-multi-user-management/"
+                  },
+                  {
+                    "slug": "en/concepts/core-realtime",
+                    "title": "Core Realtime",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-realtime/"
+                  },
+                  {
+                    "slug": "en/concepts/core-stability",
+                    "title": "Core Stability",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-stability/"
+                  },
+                  {
+                    "slug": "en/concepts/core-observability",
+                    "title": "Core Observability",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/core-observability/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Tools",
+            "entry_url": "/docs/en/tools/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/tools/index",
+                    "title": "Tools Overview",
+                    "summary": "The current wunder tool system, the unified result envelope, state semantics, notable exceptions, and tool-selection guidance.",
+                    "url": "/docs/en/tools/"
+                  }
+                ]
+              },
+              {
+                "group": "Files and Code",
+                "pages": [
+                  {
+                    "slug": "en/tools/workspace-files",
+                    "title": "Workspace Files",
+                    "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.",
+                    "url": "/docs/en/tools/workspace-files/"
+                  },
+                  {
+                    "slug": "en/tools/exec",
+                    "title": "Execute Command",
+                    "summary": "The budgets, dry-run behavior, output guards, and return structure of `execute_command`.",
+                    "url": "/docs/en/tools/exec/"
+                  },
+                  {
+                    "slug": "en/tools/ptc",
+                    "title": "ptc",
+                    "summary": "The current behavior and return structure of the temporary Python script execution tool.",
+                    "url": "/docs/en/tools/ptc/"
+                  },
+                  {
+                    "slug": "en/tools/apply-patch",
+                    "title": "Apply Patch",
+                    "summary": "The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.",
+                    "url": "/docs/en/tools/apply-patch/"
+                  },
+                  {
+                    "slug": "en/tools/read-image",
+                    "title": "Read Image",
+                    "summary": "The purpose and return structure of `read_image`.",
+                    "url": "/docs/en/tools/read-image/"
+                  },
+                  {
+                    "slug": "en/tools/lsp",
+                    "title": "LSP Query",
+                    "summary": "The operation types, position arguments, and return structure of `lsp_query`.",
+                    "url": "/docs/en/tools/lsp/"
+                  },
+                  {
+                    "slug": "en/tools/skill-call",
+                    "title": "Skill Call",
+                    "summary": "How `skill_call` returns the skill body, root directory, and file tree to the model.",
+                    "url": "/docs/en/tools/skill-call/"
+                  }
+                ]
+              },
+              {
+                "group": "Web and Desktop",
+                "pages": [
+                  {
+                    "slug": "en/tools/web-fetch",
+                    "title": "Web Fetch",
+                    "summary": "Direct fetch, browser fallback, and success or failure results for `web_fetch`.",
+                    "url": "/docs/en/tools/web-fetch/"
+                  },
+                  {
+                    "slug": "en/tools/browser",
+                    "title": "Browser",
+                    "summary": "The actions, return characteristics, and division of labor between browser automation and `web_fetch`.",
+                    "url": "/docs/en/tools/browser/"
+                  },
+                  {
+                    "slug": "en/tools/desktop-control",
+                    "title": "Desktop Control",
+                    "summary": "The latest behavior and return structures of `desktop_controller` and `desktop_monitor`.",
+                    "url": "/docs/en/tools/desktop-control/"
+                  }
+                ]
+              },
+              {
+                "group": "UI and Automation",
+                "pages": [
+                  {
+                    "slug": "en/tools/panels-and-a2ui",
+                    "title": "Panels and a2ui",
+                    "summary": "The semantics and return structures of `a2ui`, `plan_update`, and `question_panel`.",
+                    "url": "/docs/en/tools/panels-and-a2ui/"
+                  },
+                  {
+                    "slug": "en/tools/schedule-task",
+                    "title": "Schedule Task",
+                    "summary": "The flat input style, scheduling actions, and compact return shape of `schedule_task`.",
+                    "url": "/docs/en/tools/schedule-task/"
+                  }
+                ]
+              },
+              {
+                "group": "Sessions and Collaboration",
+                "pages": [
+                  {
+                    "slug": "en/tools/thread-control",
+                    "title": "Thread Control",
+                    "summary": "The actions, thread relationships, and return structure of `thread_control`.",
+                    "url": "/docs/en/tools/thread-control/"
+                  },
+                  {
+                    "slug": "en/tools/subagent-control",
+                    "title": "Subagent Control",
+                    "summary": "The actions, waiting semantics, state semantics, and return structure of `subagent_control`.",
+                    "url": "/docs/en/tools/subagent-control/"
+                  },
+                  {
+                    "slug": "en/tools/agent-swarm",
+                    "title": "Agent Swarm",
+                    "summary": "The multi-agent collaboration tool for dispatching agents that already exist.",
+                    "url": "/docs/en/tools/agent-swarm/"
+                  },
+                  {
+                    "slug": "en/tools/memory-manager",
+                    "title": "Memory Manager",
+                    "summary": "The actions, memory scopes, and return structure of `memory_manager`.",
+                    "url": "/docs/en/tools/memory-manager/"
+                  },
+                  {
+                    "slug": "en/tools/channel",
+                    "title": "Channel Tool",
+                    "summary": "The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.",
+                    "url": "/docs/en/tools/channel/"
+                  }
+                ]
+              },
+              {
+                "group": "System Bridges",
+                "pages": [
+                  {
+                    "slug": "en/tools/user-world",
+                    "title": "User World",
+                    "summary": "Internal user lookup and in-product message delivery.",
+                    "url": "/docs/en/tools/user-world/"
+                  },
+                  {
+                    "slug": "en/tools/a2a-tools",
+                    "title": "A2A Tools",
+                    "summary": "The current return structures of `a2a@service`, `a2a_observe`, and `a2a_wait`.",
+                    "url": "/docs/en/tools/a2a-tools/"
+                  },
+                  {
+                    "slug": "en/tools/node-invoke",
+                    "title": "Node Invoke",
+                    "summary": "Gateway node listing and command invocation.",
+                    "url": "/docs/en/tools/node-invoke/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations",
+            "entry_url": "/docs/en/integration/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/integration/index",
+                    "title": "Overview",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/"
+                  }
+                ]
+              },
+              {
+                "group": "Core Interfaces",
+                "pages": [
+                  {
+                    "slug": "en/integration/wunder-api",
+                    "title": "wunder API",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/wunder-api/"
+                  },
+                  {
+                    "slug": "en/integration/chat-ws",
+                    "title": "Chat WebSocket",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/chat-ws/"
+                  },
+                  {
+                    "slug": "en/integration/chat-sessions",
+                    "title": "Chat Sessions",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/chat-sessions/"
+                  },
+                  {
+                    "slug": "en/integration/workspace-api",
+                    "title": "Workspace API",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/workspace-api/"
+                  },
+                  {
+                    "slug": "en/integration/temp-dir",
+                    "title": "Temp Directory",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/temp-dir/"
+                  }
+                ]
+              },
+              {
+                "group": "Extended Integrations",
+                "pages": [
+                  {
+                    "slug": "en/integration/user-world",
+                    "title": "User World",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/user-world/"
+                  },
+                  {
+                    "slug": "en/integration/channel-webhook",
+                    "title": "Channel Webhook",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/channel-webhook/"
+                  },
+                  {
+                    "slug": "en/integration/external-login",
+                    "title": "External Login",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/external-login/"
+                  },
+                  {
+                    "slug": "en/integration/a2a",
+                    "title": "A2A",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/a2a/"
+                  },
+                  {
+                    "slug": "en/integration/mcp-endpoint",
+                    "title": "MCP Endpoint",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/integration/mcp-endpoint/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Surfaces",
+            "entry_url": "/docs/en/surfaces/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/surfaces/index",
+                    "title": "Overview",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/surfaces/"
+                  }
+                ]
+              },
+              {
+                "group": "Frontend and Desktop",
+                "pages": [
+                  {
+                    "slug": "en/surfaces/frontend",
+                    "title": "Frontend",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/surfaces/frontend/"
+                  },
+                  {
+                    "slug": "en/surfaces/web-admin",
+                    "title": "Web Admin",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/surfaces/web-admin/"
+                  },
+                  {
+                    "slug": "en/surfaces/desktop-ui",
+                    "title": "Desktop UI",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/surfaces/desktop-ui/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Operations",
+            "entry_url": "/docs/en/ops/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/ops/index",
+                    "title": "Overview",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/"
+                  }
+                ]
+              },
+              {
+                "group": "Deployment and Operations",
+                "pages": [
+                  {
+                    "slug": "en/ops/deployment",
+                    "title": "Deployment",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/deployment/"
+                  },
+                  {
+                    "slug": "en/ops/data-and-storage",
+                    "title": "Data and Storage",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/data-and-storage/"
+                  },
+                  {
+                    "slug": "en/ops/desktop-local-mode",
+                    "title": "Desktop Local Mode",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/desktop-local-mode/"
+                  },
+                  {
+                    "slug": "en/ops/auth-and-security",
+                    "title": "Auth and Security",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/auth-and-security/"
+                  },
+                  {
+                    "slug": "en/ops/benchmark-and-observability",
+                    "title": "Benchmark and Observability",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/benchmark-and-observability/"
+                  },
+                  {
+                    "slug": "en/ops/channel-runtime",
+                    "title": "Channel Runtime",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/ops/channel-runtime/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "entry_url": "/docs/en/reference/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/reference/index",
+                    "title": "Overview",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/"
+                  }
+                ]
+              },
+              {
+                "group": "System Reference",
+                "pages": [
+                  {
+                    "slug": "en/reference/api-index",
+                    "title": "API Index",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/api-index/"
+                  },
+                  {
+                    "slug": "en/reference/config",
+                    "title": "Configuration",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/config/"
+                  },
+                  {
+                    "slug": "en/reference/stream-events",
+                    "title": "Stream Events",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/stream-events/"
+                  },
+                  {
+                    "slug": "en/reference/workspace-routing",
+                    "title": "Workspace Routing",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/workspace-routing/"
+                  },
+                  {
+                    "slug": "en/reference/prompt-templates",
+                    "title": "Prompt Templates",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/prompt-templates/"
+                  },
+                  {
+                    "slug": "en/reference/admin-panels",
+                    "title": "Admin Panels",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/reference/admin-panels/"
+                  }
+                ]
+              },
+              {
+                "group": "Runtime Model Reference",
+                "pages": [
+                  {
+                    "slug": "en/concepts/architecture",
+                    "title": "Architecture",
+                    "summary": "wunder uses one unified orchestration kernel to support three runtime forms: server, cli, and desktop.",
+                    "url": "/docs/en/concepts/architecture/"
+                  },
+                  {
+                    "slug": "en/concepts/workspaces",
+                    "title": "Workspaces",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/workspaces/"
+                  },
+                  {
+                    "slug": "en/concepts/sessions-and-rounds",
+                    "title": "Sessions and Rounds",
+                    "summary": "wunder splits a conversation into sessions, threads, user rounds, and model rounds.",
+                    "url": "/docs/en/concepts/sessions-and-rounds/"
+                  },
+                  {
+                    "slug": "en/concepts/streaming",
+                    "title": "Streaming",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/streaming/"
+                  },
+                  {
+                    "slug": "en/concepts/presence-and-runtime",
+                    "title": "Presence and Runtime",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/presence-and-runtime/"
+                  },
+                  {
+                    "slug": "en/concepts/tools",
+                    "title": "Tool System",
+                    "summary": "wunder is not built around \"the model answers.\" It is built around \"the model selects and orchestrates tools to finish work.\"",
+                    "url": "/docs/en/concepts/tools/"
+                  },
+                  {
+                    "slug": "en/concepts/prompt-and-skills",
+                    "title": "Prompts and Skills",
+                    "summary": "wunder treats system prompts and skills as governed runtime objects rather than temporary text scattered across the codebase.",
+                    "url": "/docs/en/concepts/prompt-and-skills/"
+                  },
+                  {
+                    "slug": "en/concepts/memory",
+                    "title": "Long-term Memory",
+                    "summary": "wunder's long-term memory design revolves around thread freezing, one-time injection, and structured memory fragments.",
+                    "url": "/docs/en/concepts/memory/"
+                  },
+                  {
+                    "slug": "en/concepts/quota-and-token-usage",
+                    "title": "Token Balance and Usage",
+                    "summary": "Wunder uses a token balance as the user's spendable currency, and token usage as the runtime view of context load.",
+                    "url": "/docs/en/concepts/quota-and-token-usage/"
+                  },
+                  {
+                    "slug": "en/concepts/swarm",
+                    "title": "Swarm Collaboration",
+                    "summary": "wunder's swarm capability is for multi-agent collaboration, centered on queen orchestration, worker execution, and subagents only when needed.",
+                    "url": "/docs/en/concepts/swarm/"
+                  },
+                  {
+                    "slug": "en/concepts/boundary-handling",
+                    "title": "Boundary Handling",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/concepts/boundary-handling/"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Help",
+            "entry_url": "/docs/en/help/",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  {
+                    "slug": "en/help/index",
+                    "title": "Overview",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/help/"
+                  }
+                ]
+              },
+              {
+                "group": "Help",
+                "pages": [
+                  {
+                    "slug": "en/help/troubleshooting",
+                    "title": "Troubleshooting",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/help/troubleshooting/"
+                  },
+                  {
+                    "slug": "en/help/faq",
+                    "title": "FAQ",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/help/faq/"
+                  },
+                  {
+                    "slug": "en/help/glossary",
+                    "title": "Glossary",
+                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "url": "/docs/en/help/glossary/"
                   }
                 ]
               }
@@ -771,7 +1439,91 @@
     "zh-CN/help/index",
     "zh-CN/help/troubleshooting",
     "zh-CN/help/faq",
-    "zh-CN/help/glossary"
+    "zh-CN/help/glossary",
+    "en/index",
+    "en/start/quickstart",
+    "en/start/desktop",
+    "en/start/server",
+    "en/start/cli",
+    "en/start/hubs",
+    "en/start/docs-directory",
+    "en/concepts/index",
+    "en/concepts/core-agent-loop",
+    "en/concepts/core-tools",
+    "en/concepts/core-swarm",
+    "en/concepts/core-context-compression",
+    "en/concepts/core-memory",
+    "en/concepts/core-channels",
+    "en/concepts/core-scheduled-tasks",
+    "en/concepts/core-multi-user-management",
+    "en/concepts/core-realtime",
+    "en/concepts/core-stability",
+    "en/concepts/core-observability",
+    "en/tools/index",
+    "en/tools/workspace-files",
+    "en/tools/exec",
+    "en/tools/ptc",
+    "en/tools/apply-patch",
+    "en/tools/read-image",
+    "en/tools/lsp",
+    "en/tools/skill-call",
+    "en/tools/web-fetch",
+    "en/tools/browser",
+    "en/tools/desktop-control",
+    "en/tools/panels-and-a2ui",
+    "en/tools/schedule-task",
+    "en/tools/thread-control",
+    "en/tools/subagent-control",
+    "en/tools/agent-swarm",
+    "en/tools/memory-manager",
+    "en/tools/channel",
+    "en/tools/user-world",
+    "en/tools/a2a-tools",
+    "en/tools/node-invoke",
+    "en/integration/index",
+    "en/integration/wunder-api",
+    "en/integration/chat-ws",
+    "en/integration/chat-sessions",
+    "en/integration/workspace-api",
+    "en/integration/temp-dir",
+    "en/integration/user-world",
+    "en/integration/channel-webhook",
+    "en/integration/external-login",
+    "en/integration/a2a",
+    "en/integration/mcp-endpoint",
+    "en/surfaces/index",
+    "en/surfaces/frontend",
+    "en/surfaces/web-admin",
+    "en/surfaces/desktop-ui",
+    "en/ops/index",
+    "en/ops/deployment",
+    "en/ops/data-and-storage",
+    "en/ops/desktop-local-mode",
+    "en/ops/auth-and-security",
+    "en/ops/benchmark-and-observability",
+    "en/ops/channel-runtime",
+    "en/reference/index",
+    "en/reference/api-index",
+    "en/reference/config",
+    "en/reference/stream-events",
+    "en/reference/workspace-routing",
+    "en/reference/prompt-templates",
+    "en/reference/admin-panels",
+    "en/concepts/architecture",
+    "en/concepts/workspaces",
+    "en/concepts/sessions-and-rounds",
+    "en/concepts/streaming",
+    "en/concepts/presence-and-runtime",
+    "en/concepts/tools",
+    "en/concepts/prompt-and-skills",
+    "en/concepts/memory",
+    "en/concepts/quota-and-token-usage",
+    "en/concepts/swarm",
+    "en/concepts/boundary-handling",
+    "en/help/index",
+    "en/help/troubleshooting",
+    "en/help/faq",
+    "en/help/glossary"
   ],
   "generated_paths": [
     "index.html",
@@ -780,7 +1532,8 @@
     "manifest.json",
     "search.json",
     "assets",
-    "zh-CN"
+    "zh-CN",
+    "en"
   ],
   "pages": {
     "zh-CN/index": {
@@ -1108,7 +1861,7 @@
       "language": "zh-CN",
       "title": "Server 部署",
       "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
-      "updated_at": "2026-04-07",
+      "updated_at": "2026-04-10",
       "read_when": [
         "你要部署 server 形态",
         "你需要多用户、组织治理和对外接入能力"
@@ -2168,7 +2921,7 @@
       "slug": "zh-CN/concepts/core-multi-user-management",
       "language": "zh-CN",
       "title": "多用户管理",
-      "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和配额放进系统骨架，而不是后补。",
+      "summary": "多用户管理核心解释 Wunder 为什么必须从一开始就把组织、用户、权限和 Token 账户治理放进系统骨架，而不是后补。",
       "updated_at": "2026-04-10",
       "read_when": [
         "你在部署 server 或设计管理员侧",
@@ -4981,7 +5734,7 @@
       "language": "zh-CN",
       "title": "管理端界面",
       "summary": "管理端前端位于 `web/`，承担模型、工具、用户、渠道与运行治理。",
-      "updated_at": "2026-04-02",
+      "updated_at": "2026-04-11",
       "read_when": [
         "你要理解管理员和系统维护者看到的界面",
         "你要知道管理端和用户前端的职责边界"
@@ -5026,15 +5779,20 @@
         {
           "id": "section-6",
           "level": 2,
-          "text": "使用说明书和管理端的关系"
+          "text": "用户管理里的 Token 账务"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "什么时候优先看管理端文档"
+          "text": "使用说明书和管理端的关系"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "什么时候优先看管理端文档"
+        },
+        {
+          "id": "section-9",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6262,7 +7020,7 @@
       "language": "zh-CN",
       "title": "管理端面板索引",
       "summary": "管理员侧前端不是单一调试页，而是一组分工明确的治理面板。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-11",
       "read_when": [
         "你第一次使用管理员侧",
         "你想知道某个配置、监控或文档入口应该去哪看"
@@ -6291,56 +7049,61 @@
         },
         {
           "id": "section-3",
-          "level": 2,
-          "text": "智能体分组"
+          "level": 3,
+          "text": "用户管理补充"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "调试分组"
+          "text": "智能体分组"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "文档分组"
+          "text": "调试分组"
         },
         {
           "id": "section-6",
-          "level": 3,
-          "text": "使用说明书"
+          "level": 2,
+          "text": "文档分组"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "接口"
+          "text": "使用说明书"
         },
         {
           "id": "section-8",
+          "level": 3,
+          "text": "接口"
+        },
+        {
+          "id": "section-9",
           "level": 2,
           "text": "不同人最常用什么"
         },
         {
-          "id": "section-9",
+          "id": "section-10",
           "level": 3,
           "text": "管理员"
         },
         {
-          "id": "section-10",
+          "id": "section-11",
           "level": 3,
           "text": "开发者"
         },
         {
-          "id": "section-11",
+          "id": "section-12",
           "level": 3,
           "text": "交付或培训人员"
         },
         {
-          "id": "section-12",
+          "id": "section-13",
           "level": 2,
           "text": "一个实用建议"
         },
         {
-          "id": "section-13",
+          "id": "section-14",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -7046,12 +7809,12 @@
     "zh-CN/concepts/quota-and-token-usage": {
       "slug": "zh-CN/concepts/quota-and-token-usage",
       "language": "zh-CN",
-      "title": "额度与 Token 占用",
-      "summary": "Wunder 里的 token 统计重点是上下文占用，而不是直接等同于账单消耗。",
-      "updated_at": "2026-04-07",
+      "title": "Token 账户与占用",
+      "summary": "Wunder 用 Token 账户管理用户可支配余额，用 Token 占用观察上下文负载；这两者相关，但不是一回事。",
+      "updated_at": "2026-04-10",
       "read_when": [
-        "你在看监控、额度或会话资源占用",
-        "你要理解为什么系统强调 round_usage.total_tokens 与 context 占用"
+        "你在看 Token 余额、每日发放或会话资源占用",
+        "你要理解为什么系统强调 round_usage.total_tokens 与上下文占用"
       ],
       "source_docs": [
         "docs/API文档.md",
@@ -7068,7 +7831,7 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "额度与 Token 占用"
+          "text": "Token 账户与占用"
         },
         {
           "id": "section-2",
@@ -7078,35 +7841,40 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "Token 占用不是账单口径"
+          "text": "Token 账户是什么"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "为什么要强调这个口径"
+          "text": "Token 占用是什么"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "当前最该看的字段"
+          "text": "为什么要强调这个口径"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "额度和 Token 占用不是一回事"
+          "text": "当前最该看的字段"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "适用场景"
+          "text": "Token 账户和 Token 占用不是一回事"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "实施建议"
+          "text": "适用场景"
         },
         {
           "id": "section-9",
+          "level": 2,
+          "text": "实施建议"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -7853,9 +8621,4174 @@
         }
       ],
       "prev_slug": "zh-CN/help/faq",
-      "next_slug": null,
+      "next_slug": "en/index",
       "source_path": "zh-CN/help/glossary.md",
       "output_path": "zh-CN/help/glossary/index.html"
+    },
+    "en/index": {
+      "slug": "en/index",
+      "language": "en",
+      "title": "wunder",
+      "summary": "wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You are learning wunder for the first time",
+        "You need to decide whether to start with desktop, server, or cli",
+        "You need an entry point for integration, operations, or tool documentation"
+      ],
+      "source_docs": [
+        "README.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Home",
+      "group_path": [
+        "Home"
+      ],
+      "url": "/docs/en/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "wunder"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What is wunder?"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "What can it do?"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "System structure in one minute"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Pick the path for your role"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Core capabilities at a glance"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Five capability dimensions"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Technical highlights"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "The easiest mistakes to make"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Quick navigation"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "First time here?"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Want the mental model first?"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Need integration guidance?"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Hit a problem?"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "zh-CN/help/glossary",
+      "next_slug": "en/start/quickstart",
+      "source_path": "en/index.md",
+      "output_path": "en/index.html"
+    },
+    "en/start/quickstart": {
+      "slug": "en/start/quickstart",
+      "language": "en",
+      "title": "Quickstart",
+      "summary": "Run your first usable wunder flow with the shortest path. Desktop is the default recommendation, followed by server or cli depending on your role.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You are using wunder for the first time",
+        "You need a verifiable result within about ten minutes"
+      ],
+      "source_docs": [
+        "README.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Onboarding",
+      "group_path": [
+        "Onboarding"
+      ],
+      "url": "/docs/en/start/quickstart/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Quickstart"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Step 1: pick the right path"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Shortest path: Desktop"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Five steps"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Desktop-specific strengths"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Team path: Server"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Before you start"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Three-step deployment"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Core server capabilities"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Developer path: CLI"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Install and run"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "First session"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "CLI-specific strengths"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Validation checklist"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Next"
+        }
+      ],
+      "prev_slug": "en/index",
+      "next_slug": "en/start/desktop",
+      "source_path": "en/start/quickstart.md",
+      "output_path": "en/start/quickstart/index.html"
+    },
+    "en/start/desktop": {
+      "slug": "en/start/desktop",
+      "language": "en",
+      "title": "Desktop Guide",
+      "summary": "If your first goal is simply to start using wunder, begin with desktop. It is the default entry point for individual and local-first use.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You want to start using wunder immediately",
+        "You care more about the desktop workstation than deploying a full server stack"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue",
+        "frontend/src/components/messenger/MessengerSettingsPanel.vue"
+      ],
+      "tab": "Getting Started",
+      "group": "Onboarding",
+      "group_path": [
+        "Onboarding"
+      ],
+      "url": "/docs/en/start/desktop/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Desktop Guide"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to choose Desktop"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "What Desktop is"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What you see after launch"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Five steps to get started"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "1. Download and install"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "2. First launch"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "3. Configure a model"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "4. Set up your account details"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "5. Start the first conversation"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Two interaction constraints you will hit quickly"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "You cannot create a new thread while one is still running"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Active swarms keep a visible highlight"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Recovery entry in System Settings"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Extra input capabilities in local mode"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "When in doubt, open the manual"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Next"
+        }
+      ],
+      "prev_slug": "en/start/quickstart",
+      "next_slug": "en/start/server",
+      "source_path": "en/start/desktop.md",
+      "output_path": "en/start/desktop/index.html"
+    },
+    "en/start/server": {
+      "slug": "en/start/server",
+      "language": "en",
+      "title": "Server Deployment",
+      "summary": "Start with `wunder-server` only when you need multi-user governance, a unified access layer, and an admin backend.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to deploy the server runtime form",
+        "You need multi-user, organizational governance, and external integration capabilities"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Onboarding",
+      "group_path": [
+        "Onboarding"
+      ],
+      "url": "/docs/en/start/server/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Server Deployment"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When do you need Server?"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Server architecture overview"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "What Server is responsible for"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Preparation before deployment"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Hardware requirements"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Software dependencies"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Database choice"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Docker Compose deployment"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "1. Get the code"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "2. Configure environment variables, optional"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "3. Start the services"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "4. Wait for startup"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "5. Access the system"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Key configuration points"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "Configuration file"
+        },
+        {
+          "id": "section-17",
+          "level": 3,
+          "text": "Persistent data"
+        },
+        {
+          "id": "section-18",
+          "level": 3,
+          "text": "Service logs"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "External access planning"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "Paths to expose"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "Key constraints"
+        },
+        {
+          "id": "section-22",
+          "level": 2,
+          "text": "Production checklist"
+        },
+        {
+          "id": "section-23",
+          "level": 2,
+          "text": "Common questions"
+        },
+        {
+          "id": "section-24",
+          "level": 2,
+          "text": "Next"
+        }
+      ],
+      "prev_slug": "en/start/desktop",
+      "next_slug": "en/start/cli",
+      "source_path": "en/start/server.md",
+      "output_path": "en/start/server/index.html"
+    },
+    "en/start/cli": {
+      "slug": "en/start/cli",
+      "language": "en",
+      "title": "CLI Usage",
+      "summary": "Read this page when you need terminal execution, scripted integration, or developer-oriented debugging through `wunder-cli`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You want to use wunder directly from a terminal",
+        "You care more about debugging, scripting tasks, and workspace-driven execution"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Onboarding",
+      "group_path": [
+        "Onboarding"
+      ],
+      "url": "/docs/en/start/cli/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "CLI Usage"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to choose CLI"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "What CLI is"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Core CLI capabilities"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Five steps to get started"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "1. Install CLI"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "2. Configure a model"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "3. Start interactive mode"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "4. Launch the first task"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "5. Explore built-in commands"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "CLI-specific strengths"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "TUI mode"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Session management"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Scripting and automation"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Workspace-driven execution"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "Common questions"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Next"
+        }
+      ],
+      "prev_slug": "en/start/server",
+      "next_slug": "en/start/hubs",
+      "source_path": "en/start/cli.md",
+      "output_path": "en/start/cli/index.html"
+    },
+    "en/start/hubs": {
+      "slug": "en/start/hubs",
+      "language": "en",
+      "title": "Manual Hubs",
+      "summary": "Jump to the right part of the manual by role and task instead of searching the whole site blindly.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You are not sure which page to read first",
+        "You want the fastest route into the correct documentation path for your role"
+      ],
+      "source_docs": [
+        "docs/wunder补全文档落地方案.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Navigation",
+      "group_path": [
+        "Navigation"
+      ],
+      "url": "/docs/en/start/hubs/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Manual Hubs"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "I am a regular user"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "I am an administrator"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "I am a developer or integrator"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "I am troubleshooting"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/start/cli",
+      "next_slug": "en/start/docs-directory",
+      "source_path": "en/start/hubs.md",
+      "output_path": "en/start/hubs/index.html"
+    },
+    "en/start/docs-directory": {
+      "slug": "en/start/docs-directory",
+      "language": "en",
+      "title": "Frequently Used Pages",
+      "summary": "A curated directory of the most frequently used pages in the wunder manual.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You do not want to browse the left navigation slowly",
+        "You only want the most useful documents first"
+      ],
+      "source_docs": [
+        "docs/wunder补全文档落地方案.md"
+      ],
+      "tab": "Getting Started",
+      "group": "Navigation",
+      "group_path": [
+        "Navigation"
+      ],
+      "url": "/docs/en/start/docs-directory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Frequently Used Pages"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "If you only read three pages"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "First-time use"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Understanding the system"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Integration work"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Interface surfaces"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Deployment, governance, and troubleshooting"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "One practical rule"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/start/hubs",
+      "next_slug": "en/concepts/index",
+      "source_path": "en/start/docs-directory.md",
+      "output_path": "en/start/docs-directory/index.html"
+    },
+    "en/concepts/index": {
+      "slug": "en/concepts/index",
+      "language": "en",
+      "title": "Core Concepts",
+      "summary": "The eleven core concepts are not eleven feature bullets. They are the structural boundaries wunder establishes for long-running threads, concurrent users, and multiple entry surfaces.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You are trying to understand wunder systematically for the first time",
+        "You are preparing for integration, operations, or tool development and need one shared perspective",
+        "You already know how to use wunder, but want to understand why it is designed this way"
+      ],
+      "source_docs": [
+        "docs/总体设计.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Concepts"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "First remember these four judgments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why these eleven are core rather than ordinary features"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "How the eleven core concepts are layered"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "The eleven core concepts at a glance"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Dedicated pages for the eleven core concepts"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Suggested reading order"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Overall principles"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "What to read next"
+        }
+      ],
+      "prev_slug": "en/start/docs-directory",
+      "next_slug": "en/concepts/core-agent-loop",
+      "source_path": "en/concepts/index.md",
+      "output_path": "en/concepts/index.html"
+    },
+    "en/concepts/core-agent-loop": {
+      "slug": "en/concepts/core-agent-loop",
+      "language": "en",
+      "title": "Core Agent Loop",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-agent-loop.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-agent-loop/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Agent Loop"
+        }
+      ],
+      "prev_slug": "en/concepts/index",
+      "next_slug": "en/concepts/core-tools",
+      "source_path": "en/concepts/core-agent-loop.md",
+      "output_path": "en/concepts/core-agent-loop/index.html"
+    },
+    "en/concepts/core-tools": {
+      "slug": "en/concepts/core-tools",
+      "language": "en",
+      "title": "Core Tools",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-tools.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-tools/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Tools"
+        }
+      ],
+      "prev_slug": "en/concepts/core-agent-loop",
+      "next_slug": "en/concepts/core-swarm",
+      "source_path": "en/concepts/core-tools.md",
+      "output_path": "en/concepts/core-tools/index.html"
+    },
+    "en/concepts/core-swarm": {
+      "slug": "en/concepts/core-swarm",
+      "language": "en",
+      "title": "Core Swarm",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-swarm.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-swarm/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Swarm"
+        }
+      ],
+      "prev_slug": "en/concepts/core-tools",
+      "next_slug": "en/concepts/core-context-compression",
+      "source_path": "en/concepts/core-swarm.md",
+      "output_path": "en/concepts/core-swarm/index.html"
+    },
+    "en/concepts/core-context-compression": {
+      "slug": "en/concepts/core-context-compression",
+      "language": "en",
+      "title": "Core Context Compression",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-context-compression.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-context-compression/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Context Compression"
+        }
+      ],
+      "prev_slug": "en/concepts/core-swarm",
+      "next_slug": "en/concepts/core-memory",
+      "source_path": "en/concepts/core-context-compression.md",
+      "output_path": "en/concepts/core-context-compression/index.html"
+    },
+    "en/concepts/core-memory": {
+      "slug": "en/concepts/core-memory",
+      "language": "en",
+      "title": "Core Memory",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-memory.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Memory"
+        }
+      ],
+      "prev_slug": "en/concepts/core-context-compression",
+      "next_slug": "en/concepts/core-channels",
+      "source_path": "en/concepts/core-memory.md",
+      "output_path": "en/concepts/core-memory/index.html"
+    },
+    "en/concepts/core-channels": {
+      "slug": "en/concepts/core-channels",
+      "language": "en",
+      "title": "Core Channels",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-channels.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-channels/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Channels"
+        }
+      ],
+      "prev_slug": "en/concepts/core-memory",
+      "next_slug": "en/concepts/core-scheduled-tasks",
+      "source_path": "en/concepts/core-channels.md",
+      "output_path": "en/concepts/core-channels/index.html"
+    },
+    "en/concepts/core-scheduled-tasks": {
+      "slug": "en/concepts/core-scheduled-tasks",
+      "language": "en",
+      "title": "Core Scheduled Tasks",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-scheduled-tasks.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-scheduled-tasks/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Scheduled Tasks"
+        }
+      ],
+      "prev_slug": "en/concepts/core-channels",
+      "next_slug": "en/concepts/core-multi-user-management",
+      "source_path": "en/concepts/core-scheduled-tasks.md",
+      "output_path": "en/concepts/core-scheduled-tasks/index.html"
+    },
+    "en/concepts/core-multi-user-management": {
+      "slug": "en/concepts/core-multi-user-management",
+      "language": "en",
+      "title": "Core Multi-user Management",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-multi-user-management.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-multi-user-management/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Multi-user Management"
+        }
+      ],
+      "prev_slug": "en/concepts/core-scheduled-tasks",
+      "next_slug": "en/concepts/core-realtime",
+      "source_path": "en/concepts/core-multi-user-management.md",
+      "output_path": "en/concepts/core-multi-user-management/index.html"
+    },
+    "en/concepts/core-realtime": {
+      "slug": "en/concepts/core-realtime",
+      "language": "en",
+      "title": "Core Realtime",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-realtime.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-realtime/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Realtime"
+        }
+      ],
+      "prev_slug": "en/concepts/core-multi-user-management",
+      "next_slug": "en/concepts/core-stability",
+      "source_path": "en/concepts/core-realtime.md",
+      "output_path": "en/concepts/core-realtime/index.html"
+    },
+    "en/concepts/core-stability": {
+      "slug": "en/concepts/core-stability",
+      "language": "en",
+      "title": "Core Stability",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-stability.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-stability/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Stability"
+        }
+      ],
+      "prev_slug": "en/concepts/core-realtime",
+      "next_slug": "en/concepts/core-observability",
+      "source_path": "en/concepts/core-stability.md",
+      "output_path": "en/concepts/core-stability/index.html"
+    },
+    "en/concepts/core-observability": {
+      "slug": "en/concepts/core-observability",
+      "language": "en",
+      "title": "Core Observability",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/core-observability.md"
+      ],
+      "tab": "Core",
+      "group": "11 Core Ideas",
+      "group_path": [
+        "11 Core Ideas"
+      ],
+      "url": "/docs/en/concepts/core-observability/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Core Observability"
+        }
+      ],
+      "prev_slug": "en/concepts/core-stability",
+      "next_slug": "en/tools/index",
+      "source_path": "en/concepts/core-observability.md",
+      "output_path": "en/concepts/core-observability/index.html"
+    },
+    "en/tools/index": {
+      "slug": "en/tools/index",
+      "language": "en",
+      "title": "Tools Overview",
+      "summary": "The current wunder tool system, the unified result envelope, state semantics, notable exceptions, and tool-selection guidance.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to decide which category of tool to use first",
+        "You need to understand the latest tool result structure"
+      ],
+      "source_docs": [
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs",
+        "src/services/tools/tool_error.rs",
+        "docs/工具返回内容优化表.md"
+      ],
+      "tab": "Tools",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/tools/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Tools Overview"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Start with this rule"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Unified success shape"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Common state values"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Unified failure shape"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Important exceptions to the unified envelope"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "finalresponse"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "a2ui"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "scheduletask"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "browser"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "webfetch"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "applypatch"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Current tool groups"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "1. Turn finishing and frontend coordination"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "2. Workspace and code"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "3. Web and desktop"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "4. Threads, subagents, and swarms"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "5. System links and memory"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "Selection guidance"
+        },
+        {
+          "id": "section-20",
+          "level": 3,
+          "text": "Read the main content of a public webpage"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "Click, type, or wait for dynamic rendering"
+        },
+        {
+          "id": "section-22",
+          "level": 3,
+          "text": "Inspect local code"
+        },
+        {
+          "id": "section-23",
+          "level": 3,
+          "text": "Edit code"
+        },
+        {
+          "id": "section-24",
+          "level": 3,
+          "text": "Coordinate multiple workers"
+        },
+        {
+          "id": "section-25",
+          "level": 2,
+          "text": "What changed in this tool redesign"
+        },
+        {
+          "id": "section-26",
+          "level": 2,
+          "text": "Next"
+        }
+      ],
+      "prev_slug": "en/concepts/core-observability",
+      "next_slug": "en/tools/workspace-files",
+      "source_path": "en/tools/index.md",
+      "output_path": "en/tools/index.html"
+    },
+    "en/tools/workspace-files": {
+      "slug": "en/tools/workspace-files",
+      "language": "en",
+      "title": "Workspace Files",
+      "summary": "The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to browse the workspace, search code, read files, or write files"
+      ],
+      "source_docs": [
+        "src/services/tools.rs",
+        "src/services/tools/search_content_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/workspace-files/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Workspace Files"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to prefer them"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "listfiles"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "searchcontent"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Common arguments"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "readfile"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "writefile"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "When not to use it"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "How to read failures"
+        }
+      ],
+      "prev_slug": "en/tools/index",
+      "next_slug": "en/tools/exec",
+      "source_path": "en/tools/workspace-files.md",
+      "output_path": "en/tools/workspace-files/index.html"
+    },
+    "en/tools/exec": {
+      "slug": "en/tools/exec",
+      "language": "en",
+      "title": "Execute Command",
+      "summary": "The budgets, dry-run behavior, output guards, and return structure of `execute_command`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to run shell commands, compile, test, or invoke an existing CLI"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/exec/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Execute Command"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Common arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "dryrun"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Failure results"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Special behavior: patch text sent by mistake"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "When not to use it"
+        }
+      ],
+      "prev_slug": "en/tools/workspace-files",
+      "next_slug": "en/tools/ptc",
+      "source_path": "en/tools/exec.md",
+      "output_path": "en/tools/exec/index.html"
+    },
+    "en/tools/ptc": {
+      "slug": "en/tools/ptc",
+      "language": "en",
+      "title": "ptc",
+      "summary": "The current behavior and return structure of the temporary Python script execution tool.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need a complete Python snippet to finish a local task"
+      ],
+      "source_docs": [
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/ptc/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "ptc"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Failure results"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Usage boundary"
+        }
+      ],
+      "prev_slug": "en/tools/exec",
+      "next_slug": "en/tools/apply-patch",
+      "source_path": "en/tools/ptc.md",
+      "output_path": "en/tools/ptc/index.html"
+    },
+    "en/tools/apply-patch": {
+      "slug": "en/tools/apply-patch",
+      "language": "en",
+      "title": "Apply Patch",
+      "summary": "The precise editing semantics, success result, and patch-specific failure codes of `apply_patch`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need a small, reviewable, replayable, and precise edit"
+      ],
+      "source_docs": [
+        "src/services/tools/apply_patch_tool.rs",
+        "src/services/tools/tool_apply_patch.lark"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/apply-patch/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Apply Patch"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "The input is grammar text, not JSON Patch"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "dryrun"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Failure results"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "When to use it and when not to"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Difference from writefile"
+        }
+      ],
+      "prev_slug": "en/tools/ptc",
+      "next_slug": "en/tools/read-image",
+      "source_path": "en/tools/apply-patch.md",
+      "output_path": "en/tools/apply-patch/index.html"
+    },
+    "en/tools/read-image": {
+      "slug": "en/tools/read-image",
+      "language": "en",
+      "title": "Read Image",
+      "summary": "The purpose and return structure of `read_image`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to send a local image into the current model context"
+      ],
+      "source_docs": [
+        "src/services/tools/read_image_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/read-image/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Read Image"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Key point"
+        }
+      ],
+      "prev_slug": "en/tools/apply-patch",
+      "next_slug": "en/tools/lsp",
+      "source_path": "en/tools/read-image.md",
+      "output_path": "en/tools/read-image/index.html"
+    },
+    "en/tools/lsp": {
+      "slug": "en/tools/lsp",
+      "language": "en",
+      "title": "LSP Query",
+      "summary": "The operation types, position arguments, and return structure of `lsp_query`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need definitions, references, hover info, implementations, call hierarchies, or symbols"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/lsp/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "LSP Query"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Main supported operations"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Notes"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "When not to use it"
+        }
+      ],
+      "prev_slug": "en/tools/read-image",
+      "next_slug": "en/tools/skill-call",
+      "source_path": "en/tools/lsp.md",
+      "output_path": "en/tools/lsp/index.html"
+    },
+    "en/tools/skill-call": {
+      "slug": "en/tools/skill-call",
+      "language": "en",
+      "title": "Skill Call",
+      "summary": "How `skill_call` returns the skill body, root directory, and file tree to the model.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to load a `SKILL.md` file and its directory context"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "Files and Code",
+      "group_path": [
+        "Files and Code"
+      ],
+      "url": "/docs/en/tools/skill-call/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Skill Call"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Key changes"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Common failures"
+        }
+      ],
+      "prev_slug": "en/tools/lsp",
+      "next_slug": "en/tools/web-fetch",
+      "source_path": "en/tools/skill-call.md",
+      "output_path": "en/tools/skill-call/index.html"
+    },
+    "en/tools/web-fetch": {
+      "slug": "en/tools/web-fetch",
+      "language": "en",
+      "title": "Web Fetch",
+      "summary": "Direct fetch, browser fallback, and success or failure results for `web_fetch`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to read public webpage content rather than drive a browser"
+      ],
+      "source_docs": [
+        "src/services/tools/web_fetch_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Web and Desktop",
+      "group_path": [
+        "Web and Desktop"
+      ],
+      "url": "/docs/en/tools/web-fetch/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Web Fetch"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Success result"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Important fields"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Browser fallback"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Failure results"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "When not to use it"
+        }
+      ],
+      "prev_slug": "en/tools/skill-call",
+      "next_slug": "en/tools/browser",
+      "source_path": "en/tools/web-fetch.md",
+      "output_path": "en/tools/web-fetch/index.html"
+    },
+    "en/tools/browser": {
+      "slug": "en/tools/browser",
+      "language": "en",
+      "title": "Browser",
+      "summary": "The actions, return characteristics, and division of labor between browser automation and `web_fetch`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to open a webpage, click, type, take screenshots, or read dynamic pages"
+      ],
+      "source_docs": [
+        "src/services/tools/browser_tool.rs",
+        "src/services/browser/runtime.rs"
+      ],
+      "tab": "Tools",
+      "group": "Web and Desktop",
+      "group_path": [
+        "Web and Desktop"
+      ],
+      "url": "/docs/en/tools/browser/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Browser"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to use it"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Common actions"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Minimum argument examples"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "How to read its result shape"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "status"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "stop"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "screenshot"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "readpage, snapshot, navigate, tabs"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Difference from webfetch"
+        }
+      ],
+      "prev_slug": "en/tools/web-fetch",
+      "next_slug": "en/tools/desktop-control",
+      "source_path": "en/tools/browser.md",
+      "output_path": "en/tools/browser/index.html"
+    },
+    "en/tools/desktop-control": {
+      "slug": "en/tools/desktop-control",
+      "language": "en",
+      "title": "Desktop Control",
+      "summary": "The latest behavior and return structures of `desktop_controller` and `desktop_monitor`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to control the local desktop or inspect desktop screenshots"
+      ],
+      "source_docs": [
+        "src/services/tools/desktop_control.rs"
+      ],
+      "tab": "Tools",
+      "group": "Web and Desktop",
+      "group_path": [
+        "Web and Desktop"
+      ],
+      "url": "/docs/en/tools/desktop-control/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Desktop Control"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "desktopcontroller"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "desktopmonitor"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Notes"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Difference from the browser tool"
+        }
+      ],
+      "prev_slug": "en/tools/browser",
+      "next_slug": "en/tools/panels-and-a2ui",
+      "source_path": "en/tools/desktop-control.md",
+      "output_path": "en/tools/desktop-control/index.html"
+    },
+    "en/tools/panels-and-a2ui": {
+      "slug": "en/tools/panels-and-a2ui",
+      "language": "en",
+      "title": "Panels and a2ui",
+      "summary": "The semantics and return structures of `a2ui`, `plan_update`, and `question_panel`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to update the frontend plan panel, open a question panel, or send structured UI instructions"
+      ],
+      "source_docs": [
+        "src/services/tools.rs",
+        "src/services/tools/catalog.rs"
+      ],
+      "tab": "Tools",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/en/tools/panels-and-a2ui/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Panels and a2ui"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "a2ui"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "planupdate"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "questionpanel"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/desktop-control",
+      "next_slug": "en/tools/schedule-task",
+      "source_path": "en/tools/panels-and-a2ui.md",
+      "output_path": "en/tools/panels-and-a2ui/index.html"
+    },
+    "en/tools/schedule-task": {
+      "slug": "en/tools/schedule-task",
+      "language": "en",
+      "title": "Schedule Task",
+      "summary": "The flat input style, scheduling actions, and compact return shape of `schedule_task`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to create, update, inspect, or trigger scheduled jobs"
+      ],
+      "source_docs": [
+        "src/services/tools/dispatch.rs",
+        "src/services/cron.rs"
+      ],
+      "tab": "Tools",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/en/tools/schedule-task/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Schedule Task"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Supported actions"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Recommended input style"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Success results"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "status"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "add, update, and get"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "list"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/panels-and-a2ui",
+      "next_slug": "en/tools/thread-control",
+      "source_path": "en/tools/schedule-task.md",
+      "output_path": "en/tools/schedule-task/index.html"
+    },
+    "en/tools/thread-control": {
+      "slug": "en/tools/thread-control",
+      "language": "en",
+      "title": "Thread Control",
+      "summary": "The actions, thread relationships, and return structure of `thread_control`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to create, switch, archive, restore, or assign the main thread"
+      ],
+      "source_docs": [
+        "src/services/tools/thread_control_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/thread-control/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Thread Control"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Main actions"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Return envelope"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "list"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "create"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "setmain"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Difference from subagentcontrol"
+        }
+      ],
+      "prev_slug": "en/tools/schedule-task",
+      "next_slug": "en/tools/subagent-control",
+      "source_path": "en/tools/thread-control.md",
+      "output_path": "en/tools/thread-control/index.html"
+    },
+    "en/tools/subagent-control": {
+      "slug": "en/tools/subagent-control",
+      "language": "en",
+      "title": "Subagent Control",
+      "summary": "The actions, waiting semantics, state semantics, and return structure of `subagent_control`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to spawn temporary child agents inside the current session"
+      ],
+      "source_docs": [
+        "src/services/tools/subagent_control.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/subagent-control/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Subagent Control"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When it fits"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Main actions"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "spawn"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "list"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "history"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "status and wait"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "status"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "wait"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "interrupt, close, and resume"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Key interpretation"
+        }
+      ],
+      "prev_slug": "en/tools/thread-control",
+      "next_slug": "en/tools/agent-swarm",
+      "source_path": "en/tools/subagent-control.md",
+      "output_path": "en/tools/subagent-control/index.html"
+    },
+    "en/tools/agent-swarm": {
+      "slug": "en/tools/agent-swarm",
+      "language": "en",
+      "title": "Agent Swarm",
+      "summary": "The multi-agent collaboration tool for dispatching agents that already exist.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to dispatch other formal agents the current user already owns"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/agent-swarm/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Agent Swarm"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Main actions"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "list"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "spawn"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "status"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "State semantics"
+        }
+      ],
+      "prev_slug": "en/tools/subagent-control",
+      "next_slug": "en/tools/memory-manager",
+      "source_path": "en/tools/agent-swarm.md",
+      "output_path": "en/tools/agent-swarm/index.html"
+    },
+    "en/tools/memory-manager": {
+      "slug": "en/tools/memory-manager",
+      "language": "en",
+      "title": "Memory Manager",
+      "summary": "The actions, memory scopes, and return structure of `memory_manager`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to add, remove, update, list, or recall long-term memory entries"
+      ],
+      "source_docs": [
+        "src/services/tools/memory_manager_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/memory-manager/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Memory Manager"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "list"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "add"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "recall"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/agent-swarm",
+      "next_slug": "en/tools/channel",
+      "source_path": "en/tools/memory-manager.md",
+      "output_path": "en/tools/memory-manager/index.html"
+    },
+    "en/tools/channel": {
+      "slug": "en/tools/channel",
+      "language": "en",
+      "title": "Channel Tool",
+      "summary": "The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to list external channel contacts or send a channel message"
+      ],
+      "source_docs": [
+        "src/services/tools/channel_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/channel/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Channel Tool"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "listcontacts"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "sendmessage"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "With wait=true"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "With wait=false"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/memory-manager",
+      "next_slug": "en/tools/user-world",
+      "source_path": "en/tools/channel.md",
+      "output_path": "en/tools/channel/index.html"
+    },
+    "en/tools/user-world": {
+      "slug": "en/tools/user-world",
+      "language": "en",
+      "title": "User World",
+      "summary": "Internal user lookup and in-product message delivery.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to query users inside wunder, or send a message to them"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "System Bridges",
+      "group_path": [
+        "System Bridges"
+      ],
+      "url": "/docs/en/tools/user-world/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "User World"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "listusers"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "sendmessage"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/channel",
+      "next_slug": "en/tools/a2a-tools",
+      "source_path": "en/tools/user-world.md",
+      "output_path": "en/tools/user-world/index.html"
+    },
+    "en/tools/a2a-tools": {
+      "slug": "en/tools/a2a-tools",
+      "language": "en",
+      "title": "A2A Tools",
+      "summary": "The current return structures of `a2a@service`, `a2a_observe`, and `a2a_wait`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to call an external A2A service and track task status"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "System Bridges",
+      "group_path": [
+        "System Bridges"
+      ],
+      "url": "/docs/en/tools/a2a-tools/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "A2A Tools"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "a2a@service-name"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "a2aobserve"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "a2await"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/user-world",
+      "next_slug": "en/tools/node-invoke",
+      "source_path": "en/tools/a2a-tools.md",
+      "output_path": "en/tools/a2a-tools/index.html"
+    },
+    "en/tools/node-invoke": {
+      "slug": "en/tools/node-invoke",
+      "language": "en",
+      "title": "Node Invoke",
+      "summary": "Gateway node listing and command invocation.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to list available nodes or send a command to a specific node"
+      ],
+      "source_docs": [
+        "src/services/tools.rs"
+      ],
+      "tab": "Tools",
+      "group": "System Bridges",
+      "group_path": [
+        "System Bridges"
+      ],
+      "url": "/docs/en/tools/node-invoke/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Node Invoke"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "list"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "invoke"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/a2a-tools",
+      "next_slug": "en/integration/index",
+      "source_path": "en/tools/node-invoke.md",
+      "output_path": "en/tools/node-invoke/index.html"
+    },
+    "en/integration/index": {
+      "slug": "en/integration/index",
+      "language": "en",
+      "title": "Overview",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/index.md"
+      ],
+      "tab": "Integrations",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/integration/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Overview"
+        }
+      ],
+      "prev_slug": "en/tools/node-invoke",
+      "next_slug": "en/integration/wunder-api",
+      "source_path": "en/integration/index.md",
+      "output_path": "en/integration/index.html"
+    },
+    "en/integration/wunder-api": {
+      "slug": "en/integration/wunder-api",
+      "language": "en",
+      "title": "wunder API",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/wunder-api.md"
+      ],
+      "tab": "Integrations",
+      "group": "Core Interfaces",
+      "group_path": [
+        "Core Interfaces"
+      ],
+      "url": "/docs/en/integration/wunder-api/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "wunder API"
+        }
+      ],
+      "prev_slug": "en/integration/index",
+      "next_slug": "en/integration/chat-ws",
+      "source_path": "en/integration/wunder-api.md",
+      "output_path": "en/integration/wunder-api/index.html"
+    },
+    "en/integration/chat-ws": {
+      "slug": "en/integration/chat-ws",
+      "language": "en",
+      "title": "Chat WebSocket",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/chat-ws.md"
+      ],
+      "tab": "Integrations",
+      "group": "Core Interfaces",
+      "group_path": [
+        "Core Interfaces"
+      ],
+      "url": "/docs/en/integration/chat-ws/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Chat WebSocket"
+        }
+      ],
+      "prev_slug": "en/integration/wunder-api",
+      "next_slug": "en/integration/chat-sessions",
+      "source_path": "en/integration/chat-ws.md",
+      "output_path": "en/integration/chat-ws/index.html"
+    },
+    "en/integration/chat-sessions": {
+      "slug": "en/integration/chat-sessions",
+      "language": "en",
+      "title": "Chat Sessions",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/chat-sessions.md"
+      ],
+      "tab": "Integrations",
+      "group": "Core Interfaces",
+      "group_path": [
+        "Core Interfaces"
+      ],
+      "url": "/docs/en/integration/chat-sessions/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Chat Sessions"
+        }
+      ],
+      "prev_slug": "en/integration/chat-ws",
+      "next_slug": "en/integration/workspace-api",
+      "source_path": "en/integration/chat-sessions.md",
+      "output_path": "en/integration/chat-sessions/index.html"
+    },
+    "en/integration/workspace-api": {
+      "slug": "en/integration/workspace-api",
+      "language": "en",
+      "title": "Workspace API",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/workspace-api.md"
+      ],
+      "tab": "Integrations",
+      "group": "Core Interfaces",
+      "group_path": [
+        "Core Interfaces"
+      ],
+      "url": "/docs/en/integration/workspace-api/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Workspace API"
+        }
+      ],
+      "prev_slug": "en/integration/chat-sessions",
+      "next_slug": "en/integration/temp-dir",
+      "source_path": "en/integration/workspace-api.md",
+      "output_path": "en/integration/workspace-api/index.html"
+    },
+    "en/integration/temp-dir": {
+      "slug": "en/integration/temp-dir",
+      "language": "en",
+      "title": "Temp Directory",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/temp-dir.md"
+      ],
+      "tab": "Integrations",
+      "group": "Core Interfaces",
+      "group_path": [
+        "Core Interfaces"
+      ],
+      "url": "/docs/en/integration/temp-dir/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Temp Directory"
+        }
+      ],
+      "prev_slug": "en/integration/workspace-api",
+      "next_slug": "en/integration/user-world",
+      "source_path": "en/integration/temp-dir.md",
+      "output_path": "en/integration/temp-dir/index.html"
+    },
+    "en/integration/user-world": {
+      "slug": "en/integration/user-world",
+      "language": "en",
+      "title": "User World",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/user-world.md"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/user-world/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "User World"
+        }
+      ],
+      "prev_slug": "en/integration/temp-dir",
+      "next_slug": "en/integration/channel-webhook",
+      "source_path": "en/integration/user-world.md",
+      "output_path": "en/integration/user-world/index.html"
+    },
+    "en/integration/channel-webhook": {
+      "slug": "en/integration/channel-webhook",
+      "language": "en",
+      "title": "Channel Webhook",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/channel-webhook.md"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/channel-webhook/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Channel Webhook"
+        }
+      ],
+      "prev_slug": "en/integration/user-world",
+      "next_slug": "en/integration/external-login",
+      "source_path": "en/integration/channel-webhook.md",
+      "output_path": "en/integration/channel-webhook/index.html"
+    },
+    "en/integration/external-login": {
+      "slug": "en/integration/external-login",
+      "language": "en",
+      "title": "External Login",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/external-login.md"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/external-login/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "External Login"
+        }
+      ],
+      "prev_slug": "en/integration/channel-webhook",
+      "next_slug": "en/integration/a2a",
+      "source_path": "en/integration/external-login.md",
+      "output_path": "en/integration/external-login/index.html"
+    },
+    "en/integration/a2a": {
+      "slug": "en/integration/a2a",
+      "language": "en",
+      "title": "A2A",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/a2a.md"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/a2a/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "A2A"
+        }
+      ],
+      "prev_slug": "en/integration/external-login",
+      "next_slug": "en/integration/mcp-endpoint",
+      "source_path": "en/integration/a2a.md",
+      "output_path": "en/integration/a2a/index.html"
+    },
+    "en/integration/mcp-endpoint": {
+      "slug": "en/integration/mcp-endpoint",
+      "language": "en",
+      "title": "MCP Endpoint",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/integration/mcp-endpoint.md"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/mcp-endpoint/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "MCP Endpoint"
+        }
+      ],
+      "prev_slug": "en/integration/a2a",
+      "next_slug": "en/surfaces/index",
+      "source_path": "en/integration/mcp-endpoint.md",
+      "output_path": "en/integration/mcp-endpoint/index.html"
+    },
+    "en/surfaces/index": {
+      "slug": "en/surfaces/index",
+      "language": "en",
+      "title": "Overview",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/surfaces/index.md"
+      ],
+      "tab": "Surfaces",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/surfaces/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Overview"
+        }
+      ],
+      "prev_slug": "en/integration/mcp-endpoint",
+      "next_slug": "en/surfaces/frontend",
+      "source_path": "en/surfaces/index.md",
+      "output_path": "en/surfaces/index.html"
+    },
+    "en/surfaces/frontend": {
+      "slug": "en/surfaces/frontend",
+      "language": "en",
+      "title": "Frontend",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/surfaces/frontend.md"
+      ],
+      "tab": "Surfaces",
+      "group": "Frontend and Desktop",
+      "group_path": [
+        "Frontend and Desktop"
+      ],
+      "url": "/docs/en/surfaces/frontend/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Frontend"
+        }
+      ],
+      "prev_slug": "en/surfaces/index",
+      "next_slug": "en/surfaces/web-admin",
+      "source_path": "en/surfaces/frontend.md",
+      "output_path": "en/surfaces/frontend/index.html"
+    },
+    "en/surfaces/web-admin": {
+      "slug": "en/surfaces/web-admin",
+      "language": "en",
+      "title": "Web Admin",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/surfaces/web-admin.md"
+      ],
+      "tab": "Surfaces",
+      "group": "Frontend and Desktop",
+      "group_path": [
+        "Frontend and Desktop"
+      ],
+      "url": "/docs/en/surfaces/web-admin/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Web Admin"
+        }
+      ],
+      "prev_slug": "en/surfaces/frontend",
+      "next_slug": "en/surfaces/desktop-ui",
+      "source_path": "en/surfaces/web-admin.md",
+      "output_path": "en/surfaces/web-admin/index.html"
+    },
+    "en/surfaces/desktop-ui": {
+      "slug": "en/surfaces/desktop-ui",
+      "language": "en",
+      "title": "Desktop UI",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/surfaces/desktop-ui.md"
+      ],
+      "tab": "Surfaces",
+      "group": "Frontend and Desktop",
+      "group_path": [
+        "Frontend and Desktop"
+      ],
+      "url": "/docs/en/surfaces/desktop-ui/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Desktop UI"
+        }
+      ],
+      "prev_slug": "en/surfaces/web-admin",
+      "next_slug": "en/ops/index",
+      "source_path": "en/surfaces/desktop-ui.md",
+      "output_path": "en/surfaces/desktop-ui/index.html"
+    },
+    "en/ops/index": {
+      "slug": "en/ops/index",
+      "language": "en",
+      "title": "Overview",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/index.md"
+      ],
+      "tab": "Operations",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/ops/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Overview"
+        }
+      ],
+      "prev_slug": "en/surfaces/desktop-ui",
+      "next_slug": "en/ops/deployment",
+      "source_path": "en/ops/index.md",
+      "output_path": "en/ops/index.html"
+    },
+    "en/ops/deployment": {
+      "slug": "en/ops/deployment",
+      "language": "en",
+      "title": "Deployment",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/deployment.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/deployment/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Deployment"
+        }
+      ],
+      "prev_slug": "en/ops/index",
+      "next_slug": "en/ops/data-and-storage",
+      "source_path": "en/ops/deployment.md",
+      "output_path": "en/ops/deployment/index.html"
+    },
+    "en/ops/data-and-storage": {
+      "slug": "en/ops/data-and-storage",
+      "language": "en",
+      "title": "Data and Storage",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/data-and-storage.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/data-and-storage/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Data and Storage"
+        }
+      ],
+      "prev_slug": "en/ops/deployment",
+      "next_slug": "en/ops/desktop-local-mode",
+      "source_path": "en/ops/data-and-storage.md",
+      "output_path": "en/ops/data-and-storage/index.html"
+    },
+    "en/ops/desktop-local-mode": {
+      "slug": "en/ops/desktop-local-mode",
+      "language": "en",
+      "title": "Desktop Local Mode",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/desktop-local-mode.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/desktop-local-mode/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Desktop Local Mode"
+        }
+      ],
+      "prev_slug": "en/ops/data-and-storage",
+      "next_slug": "en/ops/auth-and-security",
+      "source_path": "en/ops/desktop-local-mode.md",
+      "output_path": "en/ops/desktop-local-mode/index.html"
+    },
+    "en/ops/auth-and-security": {
+      "slug": "en/ops/auth-and-security",
+      "language": "en",
+      "title": "Auth and Security",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/auth-and-security.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/auth-and-security/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Auth and Security"
+        }
+      ],
+      "prev_slug": "en/ops/desktop-local-mode",
+      "next_slug": "en/ops/benchmark-and-observability",
+      "source_path": "en/ops/auth-and-security.md",
+      "output_path": "en/ops/auth-and-security/index.html"
+    },
+    "en/ops/benchmark-and-observability": {
+      "slug": "en/ops/benchmark-and-observability",
+      "language": "en",
+      "title": "Benchmark and Observability",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/benchmark-and-observability.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/benchmark-and-observability/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Benchmark and Observability"
+        }
+      ],
+      "prev_slug": "en/ops/auth-and-security",
+      "next_slug": "en/ops/channel-runtime",
+      "source_path": "en/ops/benchmark-and-observability.md",
+      "output_path": "en/ops/benchmark-and-observability/index.html"
+    },
+    "en/ops/channel-runtime": {
+      "slug": "en/ops/channel-runtime",
+      "language": "en",
+      "title": "Channel Runtime",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/ops/channel-runtime.md"
+      ],
+      "tab": "Operations",
+      "group": "Deployment and Operations",
+      "group_path": [
+        "Deployment and Operations"
+      ],
+      "url": "/docs/en/ops/channel-runtime/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Channel Runtime"
+        }
+      ],
+      "prev_slug": "en/ops/benchmark-and-observability",
+      "next_slug": "en/reference/index",
+      "source_path": "en/ops/channel-runtime.md",
+      "output_path": "en/ops/channel-runtime/index.html"
+    },
+    "en/reference/index": {
+      "slug": "en/reference/index",
+      "language": "en",
+      "title": "Overview",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/index.md"
+      ],
+      "tab": "Reference",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/reference/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Overview"
+        }
+      ],
+      "prev_slug": "en/ops/channel-runtime",
+      "next_slug": "en/reference/api-index",
+      "source_path": "en/reference/index.md",
+      "output_path": "en/reference/index.html"
+    },
+    "en/reference/api-index": {
+      "slug": "en/reference/api-index",
+      "language": "en",
+      "title": "API Index",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/api-index.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/api-index/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "API Index"
+        }
+      ],
+      "prev_slug": "en/reference/index",
+      "next_slug": "en/reference/config",
+      "source_path": "en/reference/api-index.md",
+      "output_path": "en/reference/api-index/index.html"
+    },
+    "en/reference/config": {
+      "slug": "en/reference/config",
+      "language": "en",
+      "title": "Configuration",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/config.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/config/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Configuration"
+        }
+      ],
+      "prev_slug": "en/reference/api-index",
+      "next_slug": "en/reference/stream-events",
+      "source_path": "en/reference/config.md",
+      "output_path": "en/reference/config/index.html"
+    },
+    "en/reference/stream-events": {
+      "slug": "en/reference/stream-events",
+      "language": "en",
+      "title": "Stream Events",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/stream-events.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/stream-events/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Stream Events"
+        }
+      ],
+      "prev_slug": "en/reference/config",
+      "next_slug": "en/reference/workspace-routing",
+      "source_path": "en/reference/stream-events.md",
+      "output_path": "en/reference/stream-events/index.html"
+    },
+    "en/reference/workspace-routing": {
+      "slug": "en/reference/workspace-routing",
+      "language": "en",
+      "title": "Workspace Routing",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/workspace-routing.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/workspace-routing/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Workspace Routing"
+        }
+      ],
+      "prev_slug": "en/reference/stream-events",
+      "next_slug": "en/reference/prompt-templates",
+      "source_path": "en/reference/workspace-routing.md",
+      "output_path": "en/reference/workspace-routing/index.html"
+    },
+    "en/reference/prompt-templates": {
+      "slug": "en/reference/prompt-templates",
+      "language": "en",
+      "title": "Prompt Templates",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/prompt-templates.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/prompt-templates/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Prompt Templates"
+        }
+      ],
+      "prev_slug": "en/reference/workspace-routing",
+      "next_slug": "en/reference/admin-panels",
+      "source_path": "en/reference/prompt-templates.md",
+      "output_path": "en/reference/prompt-templates/index.html"
+    },
+    "en/reference/admin-panels": {
+      "slug": "en/reference/admin-panels",
+      "language": "en",
+      "title": "Admin Panels",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/reference/admin-panels.md"
+      ],
+      "tab": "Reference",
+      "group": "System Reference",
+      "group_path": [
+        "System Reference"
+      ],
+      "url": "/docs/en/reference/admin-panels/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Admin Panels"
+        }
+      ],
+      "prev_slug": "en/reference/prompt-templates",
+      "next_slug": "en/concepts/architecture",
+      "source_path": "en/reference/admin-panels.md",
+      "output_path": "en/reference/admin-panels/index.html"
+    },
+    "en/concepts/architecture": {
+      "slug": "en/concepts/architecture",
+      "language": "en",
+      "title": "Architecture",
+      "summary": "wunder uses one unified orchestration kernel to support three runtime forms: server, cli, and desktop.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You want to understand wunder as a whole system",
+        "You need to see how APIs, orchestration, tools, frontends, and storage cooperate"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/architecture/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Architecture"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Top-level structure"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Access layer"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Orchestration layer"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Tools and capability layer"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Storage and workspace layer"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Frontend and desktop-shell layer"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "The most important architectural constraints right now"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Diagram"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/reference/admin-panels",
+      "next_slug": "en/concepts/workspaces",
+      "source_path": "en/concepts/architecture.md",
+      "output_path": "en/concepts/architecture/index.html"
+    },
+    "en/concepts/workspaces": {
+      "slug": "en/concepts/workspaces",
+      "language": "en",
+      "title": "Workspaces",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/workspaces.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/workspaces/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Workspaces"
+        }
+      ],
+      "prev_slug": "en/concepts/architecture",
+      "next_slug": "en/concepts/sessions-and-rounds",
+      "source_path": "en/concepts/workspaces.md",
+      "output_path": "en/concepts/workspaces/index.html"
+    },
+    "en/concepts/sessions-and-rounds": {
+      "slug": "en/concepts/sessions-and-rounds",
+      "language": "en",
+      "title": "Sessions and Rounds",
+      "summary": "wunder splits a conversation into sessions, threads, user rounds, and model rounds.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand session state, event streams, and counting conventions",
+        "You need to distinguish user rounds, model rounds, and token occupancy"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/sessions-and-rounds/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Sessions and Rounds"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What is a session?"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "What is a thread?"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "User rounds and model rounds"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "User rounds"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Model rounds"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Why this distinction matters"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Token statistics"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Streaming events and termination"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/concepts/workspaces",
+      "next_slug": "en/concepts/streaming",
+      "source_path": "en/concepts/sessions-and-rounds.md",
+      "output_path": "en/concepts/sessions-and-rounds/index.html"
+    },
+    "en/concepts/streaming": {
+      "slug": "en/concepts/streaming",
+      "language": "en",
+      "title": "Streaming",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/streaming.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/streaming/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Streaming"
+        }
+      ],
+      "prev_slug": "en/concepts/sessions-and-rounds",
+      "next_slug": "en/concepts/presence-and-runtime",
+      "source_path": "en/concepts/streaming.md",
+      "output_path": "en/concepts/streaming/index.html"
+    },
+    "en/concepts/presence-and-runtime": {
+      "slug": "en/concepts/presence-and-runtime",
+      "language": "en",
+      "title": "Presence and Runtime",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/presence-and-runtime.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/presence-and-runtime/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Presence and Runtime"
+        }
+      ],
+      "prev_slug": "en/concepts/streaming",
+      "next_slug": "en/concepts/tools",
+      "source_path": "en/concepts/presence-and-runtime.md",
+      "output_path": "en/concepts/presence-and-runtime/index.html"
+    },
+    "en/concepts/tools": {
+      "slug": "en/concepts/tools",
+      "language": "en",
+      "title": "Tool System",
+      "summary": "wunder is not built around \"the model answers.\" It is built around \"the model selects and orchestrates tools to finish work.\"",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand why wunder is more than chat",
+        "You need to understand tool sources, boundaries, and orchestration"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md",
+        "docs/工具调用.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/tools/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Tool System"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Focus of this page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Key conclusions"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Where tools come from"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "What built-in tools cover first"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What MCP is for"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "What Skills are for"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "What knowledge bases and user tools solve"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Why the tool system must be unified"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common misunderstandings"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/concepts/presence-and-runtime",
+      "next_slug": "en/concepts/prompt-and-skills",
+      "source_path": "en/concepts/tools.md",
+      "output_path": "en/concepts/tools/index.html"
+    },
+    "en/concepts/prompt-and-skills": {
+      "slug": "en/concepts/prompt-and-skills",
+      "language": "en",
+      "title": "Prompts and Skills",
+      "summary": "wunder treats system prompts and skills as governed runtime objects rather than temporary text scattered across the codebase.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand why a thread's system prompt is frozen",
+        "You need to understand the relationship between Skills, template packs, and `skill_call`"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md",
+        "config/wunder-example.yaml"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/prompt-and-skills/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Prompts and Skills"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "First separate the two categories"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "System prompts"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Skills"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Why the thread prompt must be frozen"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "How prompt template packs are organized"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "When prompt changes take effect"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "What a Skill is"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Skill layers"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Why skillcall matters"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "What {{SKILLROOT}} is for"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "How prompts, skills, and memory work together"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Common misunderstandings"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Misunderstanding 1: changing the prompt template changes the current thread immediately"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "Misunderstanding 2: a Skill is just a documentation file"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "Misunderstanding 3: memory rewrites the system prompt every round"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/concepts/tools",
+      "next_slug": "en/concepts/memory",
+      "source_path": "en/concepts/prompt-and-skills.md",
+      "output_path": "en/concepts/prompt-and-skills/index.html"
+    },
+    "en/concepts/memory": {
+      "slug": "en/concepts/memory",
+      "language": "en",
+      "title": "Long-term Memory",
+      "summary": "wunder's long-term memory design revolves around thread freezing, one-time injection, and structured memory fragments.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand why long-term memory emphasizes freezing and one-time injection",
+        "You need to troubleshoot the relationship between thread memory and the system prompt"
+      ],
+      "source_docs": [
+        "docs/系统介绍.md",
+        "docs/API文档.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/memory/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Long-term Memory"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Core rules"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why it is designed this way"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What memory looks like"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Memory and recall"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Memory and context compression"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "The easiest mistakes to make here"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/concepts/prompt-and-skills",
+      "next_slug": "en/concepts/quota-and-token-usage",
+      "source_path": "en/concepts/memory.md",
+      "output_path": "en/concepts/memory/index.html"
+    },
+    "en/concepts/quota-and-token-usage": {
+      "slug": "en/concepts/quota-and-token-usage",
+      "language": "en",
+      "title": "Token Balance and Usage",
+      "summary": "Wunder uses a token balance as the user's spendable currency, and token usage as the runtime view of context load.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand token balance, daily grants, or runtime token usage"
+      ],
+      "source_docs": [
+        "docs/使用说明书/zh-CN/concepts/quota-and-token-usage.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/quota-and-token-usage/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Token Balance and Usage"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Token balance"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Token usage"
+        }
+      ],
+      "prev_slug": "en/concepts/memory",
+      "next_slug": "en/concepts/swarm",
+      "source_path": "en/concepts/quota-and-token-usage.md",
+      "output_path": "en/concepts/quota-and-token-usage/index.html"
+    },
+    "en/concepts/swarm": {
+      "slug": "en/concepts/swarm",
+      "language": "en",
+      "title": "Swarm Collaboration",
+      "summary": "wunder's swarm capability is for multi-agent collaboration, centered on queen orchestration, worker execution, and subagents only when needed.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand wunder's multi-agent model",
+        "You need to distinguish queens, workers, and subagents"
+      ],
+      "source_docs": [
+        "docs/API文档.md",
+        "frontend/src/components/beeroom/canvas/swarmCanvasModel.ts",
+        "frontend/src/components/beeroom/canvas/BeeroomSwarmNodeCard.vue"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/swarm/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Swarm Collaboration"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What problem a swarm solves"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "First distinguish the three roles"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Queen"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Worker"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Subagent"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Difference from subagent control"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Why workers start in a new thread by default"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Why the main thread matters"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "How the frontend displays swarm state right now"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "What the workflow area emphasizes now"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "When to use a swarm"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further reading"
+        }
+      ],
+      "prev_slug": "en/concepts/quota-and-token-usage",
+      "next_slug": "en/concepts/boundary-handling",
+      "source_path": "en/concepts/swarm.md",
+      "output_path": "en/concepts/swarm/index.html"
+    },
+    "en/concepts/boundary-handling": {
+      "slug": "en/concepts/boundary-handling",
+      "language": "en",
+      "title": "Boundary Handling",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/concepts/boundary-handling.md"
+      ],
+      "tab": "Reference",
+      "group": "Runtime Model Reference",
+      "group_path": [
+        "Runtime Model Reference"
+      ],
+      "url": "/docs/en/concepts/boundary-handling/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Boundary Handling"
+        }
+      ],
+      "prev_slug": "en/concepts/swarm",
+      "next_slug": "en/help/index",
+      "source_path": "en/concepts/boundary-handling.md",
+      "output_path": "en/concepts/boundary-handling/index.html"
+    },
+    "en/help/index": {
+      "slug": "en/help/index",
+      "language": "en",
+      "title": "Overview",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/help/index.md"
+      ],
+      "tab": "Help",
+      "group": "Overview",
+      "group_path": [
+        "Overview"
+      ],
+      "url": "/docs/en/help/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Overview"
+        }
+      ],
+      "prev_slug": "en/concepts/boundary-handling",
+      "next_slug": "en/help/troubleshooting",
+      "source_path": "en/help/index.md",
+      "output_path": "en/help/index.html"
+    },
+    "en/help/troubleshooting": {
+      "slug": "en/help/troubleshooting",
+      "language": "en",
+      "title": "Troubleshooting",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/help/troubleshooting.md"
+      ],
+      "tab": "Help",
+      "group": "Help",
+      "group_path": [
+        "Help"
+      ],
+      "url": "/docs/en/help/troubleshooting/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Troubleshooting"
+        }
+      ],
+      "prev_slug": "en/help/index",
+      "next_slug": "en/help/faq",
+      "source_path": "en/help/troubleshooting.md",
+      "output_path": "en/help/troubleshooting/index.html"
+    },
+    "en/help/faq": {
+      "slug": "en/help/faq",
+      "language": "en",
+      "title": "FAQ",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/help/faq.md"
+      ],
+      "tab": "Help",
+      "group": "Help",
+      "group_path": [
+        "Help"
+      ],
+      "url": "/docs/en/help/faq/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "FAQ"
+        }
+      ],
+      "prev_slug": "en/help/troubleshooting",
+      "next_slug": "en/help/glossary",
+      "source_path": "en/help/faq.md",
+      "output_path": "en/help/faq/index.html"
+    },
+    "en/help/glossary": {
+      "slug": "en/help/glossary",
+      "language": "en",
+      "title": "Glossary",
+      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need the English entry for this topic right now"
+      ],
+      "source_docs": [
+        "docs/?????/zh-CN/help/glossary.md"
+      ],
+      "tab": "Help",
+      "group": "Help",
+      "group_path": [
+        "Help"
+      ],
+      "url": "/docs/en/help/glossary/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Glossary"
+        }
+      ],
+      "prev_slug": "en/help/faq",
+      "next_slug": null,
+      "source_path": "en/help/glossary.md",
+      "output_path": "en/help/glossary/index.html"
     }
   }
 }

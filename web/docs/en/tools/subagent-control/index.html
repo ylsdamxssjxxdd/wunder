@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Subagent Control | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The actions, waiting semantics, state semantics, and return structure of `subagent_control`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/subagent-control","language":"en","title":"Subagent Control","summary":"The actions, waiting semantics, state semantics, and return structure of `subagent_control`.","updated_at":"2026-04-10","read_when":["You need to spawn temporary child agents inside the current session"],"source_docs":["src/services/tools/subagent_control.rs"],"tab":"Tools","group":"Sessions and Collaboration","group_path":["Sessions and Collaboration"],"url":"/docs/en/tools/subagent-control/","headings":[{"id":"section-1","level":1,"text":"Subagent Control"},{"id":"section-2","level":2,"text":"When it fits"},{"id":"section-3","level":2,"text":"Main actions"},{"id":"section-4","level":2,"text":"spawn"},{"id":"section-5","level":2,"text":"list"},{"id":"section-6","level":2,"text":"history"},{"id":"section-7","level":2,"text":"status and wait"},{"id":"section-8","level":3,"text":"status"},{"id":"section-9","level":3,"text":"wait"},{"id":"section-10","level":2,"text":"interrupt, close, and resume"},{"id":"section-11","level":2,"text":"Key interpretation"}],"prev_slug":"en/tools/thread-control","next_slug":"en/tools/agent-swarm","markdown":"# Subagent Control\n\n`subagent_control` is now a clear multi-action tool rather than the older simple \"spawn a child thread\" interface.\n\n## When it fits\n\nGood fit:\n\n- temporarily spawning child agents inside the current main-agent session\n- inspecting, waiting for, interrupting, closing, or resuming those child runs\n- performing one or more rounds of delegated collaboration\n\nNot a fit:\n\n- dispatching other formal agents that already belong to the user  \nThat belongs to [Agent Swarm](/docs/en/tools/agent-swarm/)\n\n## Main actions\n\n- `list`\n- `history`\n- `send`\n- `spawn`\n- `batch_spawn`\n- `status`\n- `wait`\n- `interrupt`\n- `close`\n- `resume`\n\n## `spawn`\n\nThis action starts a new child-agent run.\n\nA typical result is \"accepted but not finished\":\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"spawn\",\n  \"state\": \"accepted\",\n  \"summary\": \"Spawned child run ...\",\n  \"data\": {\n    \"run_id\": \"run_xxx\",\n    \"session_id\": \"sess_xxx\",\n    \"status\": \"accepted\"\n  },\n  \"next_step_hint\": \"Use subagent_control.wait/status/history before treating unfinished child runs as complete.\"\n}\n```\n\n## `list`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list\",\n  \"state\": \"completed\",\n  \"summary\": \"Found 3 child sessions.\",\n  \"data\": {\n    \"total\": 3,\n    \"items\": [\n      {\n        \"dispatch_id\": \"dispatch_xxx\",\n        \"run_id\": \"run_xxx\",\n        \"session_id\": \"sess_xxx\",\n        \"status\": \"running\",\n        \"terminal\": false,\n        \"failed\": false,\n        \"agent_id\": \"worker-a\",\n        \"label\": \"Research materials\",\n        \"elapsed_s\": 12.3,\n        \"result_preview\": null,\n        \"error\": null\n      }\n    ]\n  }\n}\n```\n\n## `history`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"history\",\n  \"state\": \"completed\",\n  \"summary\": \"Loaded 18 messages from child session history.\",\n  \"data\": {\n    \"session_id\": \"sess_xxx\",\n    \"messages\": [ ... ]\n  }\n}\n```\n\n## `status` and `wait`\n\nThese are the two most important actions.\n\n### `status`\n\nSnapshot only, without blocking:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"status\",\n  \"state\": \"running\",\n  \"summary\": \"1 child runs are still active.\",\n  \"data\": {\n    \"status\": \"running\",\n    \"items\": [ ... ],\n    \"selected_items\": [ ... ]\n  }\n}\n```\n\n### `wait`\n\nThis action polls and waits. Depending on what happens, `state` may become:\n\n- `completed`\n- `running`\n- `timeout`\n- `partial`\n\nIt often includes:\n\n```json\n{\n  \"next_step_hint\": \"Use subagent_control.wait/status/history before treating unfinished child runs as complete.\"\n}\n```\n\n## `interrupt`, `close`, and `resume`\n\nThese actions focus on which child sessions were updated:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"interrupt\",\n  \"state\": \"completed\",\n  \"summary\": \"interrupt updated 1 child sessions.\",\n  \"data\": {\n    \"updated_total\": 1,\n    \"items\": [\n      {\n        \"session_id\": \"sess_xxx\",\n        \"status\": \"cancelling\"\n      }\n    ]\n  }\n}\n```\n\n## Key interpretation\n\n- `accepted` does not mean completed\n- `status` is for snapshots\n- `wait` is for convergence\n- if `next_step_hint` exists, the system is explicitly telling you to follow up rather than wrap up\n","source_path":"使用说明书/en/tools/subagent-control.md"}</script>
+</body>
+</html>

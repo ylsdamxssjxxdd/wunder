@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LSP Query | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The operation types, position arguments, and return structure of `lsp_query`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/lsp","language":"en","title":"LSP Query","summary":"The operation types, position arguments, and return structure of `lsp_query`.","updated_at":"2026-04-10","read_when":["You need definitions, references, hover info, implementations, call hierarchies, or symbols"],"source_docs":["src/services/tools.rs"],"tab":"Tools","group":"Files and Code","group_path":["Files and Code"],"url":"/docs/en/tools/lsp/","headings":[{"id":"section-1","level":1,"text":"LSP Query"},{"id":"section-2","level":2,"text":"Minimum arguments"},{"id":"section-3","level":2,"text":"Main supported operations"},{"id":"section-4","level":2,"text":"Success result"},{"id":"section-5","level":2,"text":"Notes"},{"id":"section-6","level":2,"text":"When not to use it"}],"prev_slug":"en/tools/read-image","next_slug":"en/tools/skill-call","markdown":"# LSP Query\n\n`lsp_query` is not a file-reading tool. It is a symbol-level query tool.  \nThe correct order is usually:\n\n1. use file tools to locate the path first\n2. then use `lsp_query` for definitions or references\n\n## Minimum arguments\n\nDefinition lookup:\n\n```json\n{\n  \"operation\": \"definition\",\n  \"path\": \"src/services/tools.rs\",\n  \"line\": 120,\n  \"character\": 18\n}\n```\n\nWorkspace symbol lookup:\n\n```json\n{\n  \"operation\": \"workspaceSymbol\",\n  \"path\": \"src/services/tools.rs\",\n  \"query\": \"build_model_tool_success\"\n}\n```\n\n## Main supported operations\n\n- `definition`\n- `references`\n- `hover`\n- `documentSymbol`\n- `workspaceSymbol`\n- `implementation`\n- `callHierarchy`\n\nThese operations require a position:\n\n- `definition`\n- `references`\n- `hover`\n- `implementation`\n- `callHierarchy`\n\n## Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"lsp_query\",\n  \"state\": \"completed\",\n  \"summary\": \"Ran LSP definition on src/services/tools.rs across 2 servers.\",\n  \"data\": {\n    \"operation\": \"definition\",\n    \"path\": \"src/services/tools.rs\",\n    \"results\": [\n      {\n        \"server_id\": \"rust-analyzer\",\n        \"server_name\": \"rust-analyzer\",\n        \"result\": [ ... ]\n      }\n    ],\n    \"server_count\": 2\n  }\n}\n```\n\nIf no LSP server returned anything, the result may also include:\n\n```json\n{\n  \"next_step_hint\": \"No LSP servers returned a result for this file...\"\n}\n```\n\n## Notes\n\n- `line` and `character` are 1-based in tool input\n- they are converted to 0-based positions before the actual LSP request\n- `path` must point to a real file\n\n## When not to use it\n\n- If you only need file content, use [Workspace Files](/docs/en/tools/workspace-files/)\n- If you only need full-text search, use `search_content` from [Workspace Files](/docs/en/tools/workspace-files/)\n","source_path":"使用说明书/en/tools/lsp.md"}</script>
+</body>
+</html>

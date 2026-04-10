@@ -90,6 +90,11 @@ const ensureUserAccountElements = () => {
     "userAccountQuotaInput",
     "userAccountQuotaSave",
     "userAccountQuotaMeta",
+    "userAccountQuotaHint",
+    "userAccountTokenAdjustInput",
+    "userAccountTokenGrantBtn",
+    "userAccountTokenDeductBtn",
+    "userAccountTokenAdjustHint",
     "userAccountSettingsPasswordInput",
     "userAccountSettingsPasswordSave",
     "userAccountSettingsUnitSelect",
@@ -357,6 +362,20 @@ const openModal = (modal) => {
 const closeModal = (modal) => {
   if (!modal) return;
   modal.classList.remove("active");
+};
+
+const extractResponseMessage = async (response, fallback) => {
+  try {
+    const payload = await response.json();
+    return (
+      payload?.error?.message ||
+      payload?.message ||
+      payload?.detail?.message ||
+      fallback
+    );
+  } catch {
+    return fallback;
+  }
 };
 
 const getUserAccountSearchKeyword = () => String(state.userAccounts.search || "").trim();
@@ -678,11 +697,43 @@ const requestCleanupTestUsers = async () => {
 let settingsTarget = null;
 let toolSaveTimer = null;
 
-const resolveRoleSelection = (roles) => {
-  if (Array.isArray(roles) && (roles.includes("admin") || roles.includes("super_admin"))) {
-    return "admin";
+const isAdminRole = (roles) =>
+  Array.isArray(roles) && (roles.includes("admin") || roles.includes("super_admin"));
+
+const resolveRoleSelection = (roles) => (isAdminRole(roles) ? "admin" : "user");
+
+const userUsesTokenBalance = (user) => !isAdminRole(user?.roles);
+
+const syncTokenControls = (user) => {
+  const enabled = userUsesTokenBalance(user);
+  const title = enabled ? "" : t("userAccounts.modal.settings.tokenControls.disabledTitle");
+  [
+    elements.userAccountQuotaInput,
+    elements.userAccountQuotaSave,
+    elements.userAccountTokenAdjustInput,
+    elements.userAccountTokenGrantBtn,
+    elements.userAccountTokenDeductBtn,
+  ].forEach((node) => {
+    if (!node) {
+      return;
+    }
+    node.disabled = !enabled;
+    node.title = title;
+  });
+  if (elements.userAccountQuotaHint) {
+    elements.userAccountQuotaHint.textContent = t(
+      enabled
+        ? "userAccounts.modal.settings.quota.hint"
+        : "userAccounts.modal.settings.quota.adminHint"
+    );
   }
-  return "user";
+  if (elements.userAccountTokenAdjustHint) {
+    elements.userAccountTokenAdjustHint.textContent = t(
+      enabled
+        ? "userAccounts.modal.settings.tokenAdjust.hint"
+        : "userAccounts.modal.settings.tokenAdjust.adminHint"
+    );
+  }
 };
 
 const syncSettingsTarget = (user) => {
@@ -693,9 +744,11 @@ const syncSettingsTarget = (user) => {
   elements.userAccountSettingsUser.textContent = user.username || user.id || "-";
   elements.userAccountQuotaInput.value = Number.isFinite(user.token_balance) ? user.token_balance : "";
   elements.userAccountQuotaMeta.textContent = formatQuotaMeta(user);
+  elements.userAccountTokenAdjustInput.value = "";
   elements.userAccountSettingsPasswordInput.value = "";
   syncUnitSelect(elements.userAccountSettingsUnitSelect, user.unit_id || "");
   elements.userAccountSettingsRolesInput.value = resolveRoleSelection(user.roles);
+  syncTokenControls(user);
 };
 
 const refreshSettingsTarget = () => {
@@ -740,6 +793,10 @@ const saveQuota = async () => {
   if (!settingsTarget?.id) {
     return;
   }
+  if (!userUsesTokenBalance(settingsTarget)) {
+    notify(t("userAccounts.toast.tokenAdminDisabled"), "warn");
+    return;
+  }
   const raw = Number(elements.userAccountQuotaInput.value);
   if (!Number.isFinite(raw) || raw < 0) {
     notify(t("userAccounts.toast.quotaInvalid"), "warn");
@@ -748,6 +805,50 @@ const saveQuota = async () => {
   const ok = await updateUserAccount(settingsTarget.id, { token_balance: Math.floor(raw) });
   if (ok) {
     refreshSettingsTarget();
+  }
+};
+
+const adjustUserTokens = async (action) => {
+  if (!settingsTarget?.id) {
+    return;
+  }
+  if (!userUsesTokenBalance(settingsTarget)) {
+    notify(t("userAccounts.toast.tokenAdminDisabled"), "warn");
+    return;
+  }
+  const raw = Number(elements.userAccountTokenAdjustInput.value);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    notify(t("userAccounts.toast.tokenAdjustInvalid"), "warn");
+    return;
+  }
+  const amount = Math.floor(raw);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/${encodeURIComponent(settingsTarget.id)}/token_adjustment`;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, amount }),
+    });
+    if (!response.ok) {
+      const message = await extractResponseMessage(
+        response,
+        t("common.requestFailed", { status: response.status })
+      );
+      notify(t("userAccounts.toast.tokenAdjustFailed", { message }), "error");
+      return;
+    }
+    elements.userAccountTokenAdjustInput.value = "";
+    await loadUserAccounts();
+    refreshSettingsTarget();
+    notify(
+      action === "grant"
+        ? t("userAccounts.toast.tokenGrantSuccess", { amount })
+        : t("userAccounts.toast.tokenDeductSuccess", { amount }),
+      "success"
+    );
+  } catch (error) {
+    notify(t("userAccounts.toast.tokenAdjustFailed", { message: error.message }), "error");
   }
 };
 
@@ -1000,6 +1101,8 @@ export const initUserAccountsPanel = () => {
   elements.userAccountSettingsClose?.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountSettingsCancel.addEventListener("click", () => closeModal(elements.userAccountSettingsModal));
   elements.userAccountQuotaSave.addEventListener("click", saveQuota);
+  elements.userAccountTokenGrantBtn.addEventListener("click", () => adjustUserTokens("grant"));
+  elements.userAccountTokenDeductBtn.addEventListener("click", () => adjustUserTokens("deduct"));
   elements.userAccountSettingsPasswordSave.addEventListener("click", submitPasswordReset);
   elements.userAccountSettingsUnitSave.addEventListener("click", saveUnit);
   elements.userAccountSettingsRolesSave.addEventListener("click", saveRoles);

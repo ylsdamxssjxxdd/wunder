@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wunder | wunder Manual / 使用说明书</title>
+  <meta name="description" content="wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/index","language":"en","title":"wunder","summary":"wunder is an agent orchestration system that unifies three runtime forms: server, cli, and desktop. Start by choosing the path that matches your role and goal.","updated_at":"2026-04-10","read_when":["You are learning wunder for the first time","You need to decide whether to start with desktop, server, or cli","You need an entry point for integration, operations, or tool documentation"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"Getting Started","group":"Home","group_path":["Home"],"url":"/docs/en/","headings":[{"id":"section-1","level":1,"text":"wunder"},{"id":"section-2","level":2,"text":"What is wunder?"},{"id":"section-3","level":2,"text":"What can it do?"},{"id":"section-4","level":2,"text":"System structure in one minute"},{"id":"section-5","level":2,"text":"Pick the path for your role"},{"id":"section-6","level":2,"text":"Core capabilities at a glance"},{"id":"section-7","level":3,"text":"Five capability dimensions"},{"id":"section-8","level":3,"text":"Technical highlights"},{"id":"section-9","level":2,"text":"The easiest mistakes to make"},{"id":"section-10","level":2,"text":"Quick navigation"},{"id":"section-11","level":3,"text":"First time here?"},{"id":"section-12","level":3,"text":"Want the mental model first?"},{"id":"section-13","level":3,"text":"Need integration guidance?"},{"id":"section-14","level":3,"text":"Hit a problem?"},{"id":"section-15","level":2,"text":"Further reading"}],"prev_slug":"zh-CN/help/glossary","next_slug":"en/start/quickstart","markdown":"# wunder\n\n<p class=\"docs-eyebrow\">Agent Orchestration Kernel | server / cli / desktop<\/p>\n\n## What is wunder?\n\nwunder is an **agent system that executes real tasks**. You give it a goal, and it can break the work down, call tools, coordinate in parallel, and deliver a result.\n\nIt is not just a chatbot. It is a **programmable agent execution engine** with three runtime forms:\n\n| Form | Best for | Core value |\n|------|----------|------------|\n| **Desktop** | Individual users | A local agent workstation that works out of the box |\n| **Server** | Teams and organizations | Multi-tenant governance, unified access, and permission control |\n| **CLI** | Developers and automation | Terminal-driven workflows, scripting, and pipeline integration |\n\n## What can it do?\n\nThink of it as an AI work team:\n\n- **Files and code**: read files, edit code, run commands, refactor projects\n- **Office automation**: organize documents, generate reports, process tables, draft meeting notes\n- **Multi-agent collaboration**: one agent researches, one drafts, one reviews, all in parallel\n- **Ongoing tasks**: scheduled inspections, recurring reminders, and cross-channel message handling\n- **System integration**: connect MCP and external systems, then turn workflows into reusable Skills\n\n## System structure in one minute\n\n![wunder system structure: the layered relationship from wunder to users, swarms, agents, and threads](/docs/assets/manual/08-hierarchy-structure.svg)\n\nHold on to this main line:\n\n```text\nwunder\n  └─ User (resource-isolation boundary)\n      └─ Swarm (collaboration unit)\n          └─ Agent (execution role)\n              └─ Thread (continuous context and runtime state carrier)\n```\n\nIn one sentence: **a request first lands in the user domain, then the swarm orchestrates agents, and execution continues inside threads.**\n\n## Pick the path for your role\n\n<div class=\"docs-card-grid\">\n  <a class=\"docs-card\" href=\"/docs/en/start/desktop/\">\n    <strong>Individual User<\/strong>\n    <span>Start with desktop and get running in five minutes.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/server/\">\n    <strong>Team Admin<\/strong>\n    <span>Deploy server and manage users, units, and permissions centrally.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/start/cli/\">\n    <strong>Developer<\/strong>\n    <span>Use the CLI for scripting, debugging, and automation.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/integration/\">\n    <strong>Integrator<\/strong>\n    <span>Embed wunder into your own system through its public interfaces.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/ops/\">\n    <strong>Operator<\/strong>\n    <span>Focus on deployment, monitoring, and performance tuning.<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/en/tools/\">\n    <strong>Tool Builder<\/strong>\n    <span>Explore built-in tools, MCP, and Skills.<\/span>\n  <\/a>\n<\/div>\n\n## Core capabilities at a glance\n\n### Five capability dimensions\n\n| Dimension | What it means |\n|------|------|\n| **Form convergence** | desktop, server, and cli share the same core engine |\n| **Tenant governance** | multi-user, unit trees, token-account governance, and permission control |\n| **Agent collaboration** | swarm-based division of labor, parallel execution, and result merging |\n| **Tool ecosystem** | built-in tools, MCP, Skills, and knowledge bases |\n| **Open interfaces** | WebSocket and SSE streaming, RESTful APIs, and the A2A standard |\n\n### Technical highlights\n\n- **Streaming first**: WebSocket by default, SSE as fallback, with reconnect support\n- **Thread freezing**: the system prompt is locked after first initialization to preserve caching\n- **Long-term memory**: structured memory fragments with manual and automatic refinement\n- **Context compression**: smart summaries plus budget control for long-running conversations\n- **Atomic writes**: file writes use temp-file plus rename strategies\n- **Tool blowup protection**: layered clipping and budget controls to avoid context explosions\n\n## The easiest mistakes to make\n\nBefore going deeper, clear up these common misconceptions:\n\n| Misconception | Correct understanding |\n|------|----------|\n| The `user_id` for `/wunder` must belong to a registered user | It does not. It can be any virtual identifier |\n| Token stats are the same as billing cost | No. Current context occupancy is shown in `round_usage.total_tokens`; total consumption is the sum across requests |\n| Every thread rewrites the system prompt every turn | No. It is **frozen** after first initialization |\n| Long-term memory is injected every turn | No. It is injected **once at thread initialization** |\n\n## Quick navigation\n\n### First time here?\n\nStart with [Quickstart](/docs/en/start/quickstart/) and get the first working flow running in about ten minutes.\n\n### Want the mental model first?\n\nStart with [Core Concepts](/docs/en/concepts/) and build the system model before diving deeper.\n\n### Need integration guidance?\n\nGo to [Integration Overview](/docs/en/integration/) and choose the access path that fits your system.\n\n### Hit a problem?\n\nSee [Troubleshooting](/docs/en/help/troubleshooting/) or [FAQ](/docs/en/help/faq/).\n\n## Further reading\n\n- [Manual Hubs](/docs/en/start/hubs/)\n- [API Index](/docs/en/reference/api-index/)\n- [System Introduction](/docs/系统介绍.md)\n- [Design Plan](/docs/设计方案.md)\n","source_path":"使用说明书/en/index.md"}</script>
+</body>
+</html>

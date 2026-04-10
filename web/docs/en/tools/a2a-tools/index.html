@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A2A Tools | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The current return structures of `a2a@service`, `a2a_observe`, and `a2a_wait`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/a2a-tools","language":"en","title":"A2A Tools","summary":"The current return structures of `a2a@service`, `a2a_observe`, and `a2a_wait`.","updated_at":"2026-04-10","read_when":["You need to call an external A2A service and track task status"],"source_docs":["src/services/tools.rs"],"tab":"Tools","group":"System Bridges","group_path":["System Bridges"],"url":"/docs/en/tools/a2a-tools/","headings":[{"id":"section-1","level":1,"text":"A2A Tools"},{"id":"section-2","level":2,"text":"a2a@service-name"},{"id":"section-3","level":2,"text":"a2aobserve"},{"id":"section-4","level":2,"text":"a2await"},{"id":"section-5","level":2,"text":"Key points"}],"prev_slug":"en/tools/user-world","next_slug":"en/tools/node-invoke","markdown":"# A2A Tools\n\nA2A is currently a small tool group:\n\n- `a2a@service-name`\n- `a2a_observe`\n- `a2a_wait`\n\n## `a2a@service-name`\n\nThis submits a task and usually returns an accepted state:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_send\",\n  \"state\": \"accepted\",\n  \"summary\": \"Submitted task task_xxx to A2A service helper.\",\n  \"data\": {\n    \"endpoint\": \"https://a2a.example.com\",\n    \"service_name\": \"helper\",\n    \"task_id\": \"task_xxx\",\n    \"context_id\": \"ctx_xxx\",\n    \"status\": \"submitted\",\n    \"answer\": null\n  }\n}\n```\n\n## `a2a_observe`\n\nThis checks the current snapshot:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_observe\",\n  \"state\": \"running\",\n  \"summary\": \"Observed 2 A2A tasks; 1 still pending.\",\n  \"data\": {\n    \"tasks\": [ ... ],\n    \"pending\": [ ... ],\n    \"pending_total\": 1,\n    \"timeout\": false\n  }\n}\n```\n\n## `a2a_wait`\n\nThis waits for a period of time until completion or timeout:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"a2a_wait\",\n  \"state\": \"running\",\n  \"summary\": \"Observed 2 A2A tasks; 1 still pending.\",\n  \"data\": {\n    \"tasks\": [ ... ],\n    \"pending\": [ ... ],\n    \"pending_total\": 1,\n    \"elapsed_s\": 1.25,\n    \"timeout\": true\n  },\n  \"next_step_hint\": \"Call a2a_wait again or inspect the pending tasks before assuming the A2A workflow is complete.\"\n}\n```\n\n## Key points\n\n- `a2a@service-name` starts the work\n- `a2a_observe` checks the snapshot\n- `a2a_wait` performs the waiting loop\n","source_path":"使用说明书/en/tools/a2a-tools.md"}</script>
+</body>
+</html>

@@ -1,13 +1,13 @@
 {
   "site": {
-    "name": "wunder 使用说明书",
-    "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
+    "name": "wunder Manual / 使用说明书",
+    "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
     "logo": "/docs/assets/eva01-head.svg",
     "header_links": [
       {
-        "label": "控制台",
+        "label": "Console / 控制台",
         "url": "/"
       }
     ]
@@ -248,6 +248,246 @@
                   "zh-CN/help/troubleshooting",
                   "zh-CN/help/faq",
                   "zh-CN/help/glossary"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "en",
+        "label": "English",
+        "tabs": [
+          {
+            "tab": "Getting Started",
+            "groups": [
+              {
+                "group": "Home",
+                "pages": [
+                  "en/index"
+                ]
+              },
+              {
+                "group": "Onboarding",
+                "pages": [
+                  "en/start/quickstart",
+                  "en/start/desktop",
+                  "en/start/server",
+                  "en/start/cli"
+                ]
+              },
+              {
+                "group": "Navigation",
+                "pages": [
+                  "en/start/hubs",
+                  "en/start/docs-directory"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Core",
+            "groups": [
+              {
+                "group": "11 Core Ideas",
+                "pages": [
+                  "en/concepts/index",
+                  "en/concepts/core-agent-loop",
+                  "en/concepts/core-tools",
+                  "en/concepts/core-swarm",
+                  "en/concepts/core-context-compression",
+                  "en/concepts/core-memory",
+                  "en/concepts/core-channels",
+                  "en/concepts/core-scheduled-tasks",
+                  "en/concepts/core-multi-user-management",
+                  "en/concepts/core-realtime",
+                  "en/concepts/core-stability",
+                  "en/concepts/core-observability"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Tools",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/tools/index"
+                ]
+              },
+              {
+                "group": "Files and Code",
+                "pages": [
+                  "en/tools/workspace-files",
+                  "en/tools/exec",
+                  "en/tools/ptc",
+                  "en/tools/apply-patch",
+                  "en/tools/read-image",
+                  "en/tools/lsp",
+                  "en/tools/skill-call"
+                ]
+              },
+              {
+                "group": "Web and Desktop",
+                "pages": [
+                  "en/tools/web-fetch",
+                  "en/tools/browser",
+                  "en/tools/desktop-control"
+                ]
+              },
+              {
+                "group": "UI and Automation",
+                "pages": [
+                  "en/tools/panels-and-a2ui",
+                  "en/tools/schedule-task"
+                ]
+              },
+              {
+                "group": "Sessions and Collaboration",
+                "pages": [
+                  "en/tools/thread-control",
+                  "en/tools/subagent-control",
+                  "en/tools/agent-swarm",
+                  "en/tools/memory-manager",
+                  "en/tools/channel"
+                ]
+              },
+              {
+                "group": "System Bridges",
+                "pages": [
+                  "en/tools/user-world",
+                  "en/tools/a2a-tools",
+                  "en/tools/node-invoke"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Integrations",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/integration/index"
+                ]
+              },
+              {
+                "group": "Core Interfaces",
+                "pages": [
+                  "en/integration/wunder-api",
+                  "en/integration/chat-ws",
+                  "en/integration/chat-sessions",
+                  "en/integration/workspace-api",
+                  "en/integration/temp-dir"
+                ]
+              },
+              {
+                "group": "Extended Integrations",
+                "pages": [
+                  "en/integration/user-world",
+                  "en/integration/channel-webhook",
+                  "en/integration/external-login",
+                  "en/integration/a2a",
+                  "en/integration/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Surfaces",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/surfaces/index"
+                ]
+              },
+              {
+                "group": "Frontend and Desktop",
+                "pages": [
+                  "en/surfaces/frontend",
+                  "en/surfaces/web-admin",
+                  "en/surfaces/desktop-ui"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Operations",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/ops/index"
+                ]
+              },
+              {
+                "group": "Deployment and Operations",
+                "pages": [
+                  "en/ops/deployment",
+                  "en/ops/data-and-storage",
+                  "en/ops/desktop-local-mode",
+                  "en/ops/auth-and-security",
+                  "en/ops/benchmark-and-observability",
+                  "en/ops/channel-runtime"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/reference/index"
+                ]
+              },
+              {
+                "group": "System Reference",
+                "pages": [
+                  "en/reference/api-index",
+                  "en/reference/config",
+                  "en/reference/stream-events",
+                  "en/reference/workspace-routing",
+                  "en/reference/prompt-templates",
+                  "en/reference/admin-panels"
+                ]
+              },
+              {
+                "group": "Runtime Model Reference",
+                "pages": [
+                  "en/concepts/architecture",
+                  "en/concepts/workspaces",
+                  "en/concepts/sessions-and-rounds",
+                  "en/concepts/streaming",
+                  "en/concepts/presence-and-runtime",
+                  "en/concepts/tools",
+                  "en/concepts/prompt-and-skills",
+                  "en/concepts/memory",
+                  "en/concepts/quota-and-token-usage",
+                  "en/concepts/swarm",
+                  "en/concepts/boundary-handling"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Help",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "en/help/index"
+                ]
+              },
+              {
+                "group": "Help",
+                "pages": [
+                  "en/help/troubleshooting",
+                  "en/help/faq",
+                  "en/help/glossary"
                 ]
               }
             ]

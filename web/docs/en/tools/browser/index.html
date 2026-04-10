@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The actions, return characteristics, and division of labor between browser automation and `web_fetch`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/browser","language":"en","title":"Browser","summary":"The actions, return characteristics, and division of labor between browser automation and `web_fetch`.","updated_at":"2026-04-10","read_when":["You need to open a webpage, click, type, take screenshots, or read dynamic pages"],"source_docs":["src/services/tools/browser_tool.rs","src/services/browser/runtime.rs"],"tab":"Tools","group":"Web and Desktop","group_path":["Web and Desktop"],"url":"/docs/en/tools/browser/","headings":[{"id":"section-1","level":1,"text":"Browser"},{"id":"section-2","level":2,"text":"When to use it"},{"id":"section-3","level":2,"text":"Common actions"},{"id":"section-4","level":2,"text":"Minimum argument examples"},{"id":"section-5","level":2,"text":"How to read its result shape"},{"id":"section-6","level":3,"text":"status"},{"id":"section-7","level":3,"text":"stop"},{"id":"section-8","level":3,"text":"screenshot"},{"id":"section-9","level":3,"text":"readpage, snapshot, navigate, tabs"},{"id":"section-10","level":2,"text":"Difference from webfetch"}],"prev_slug":"en/tools/web-fetch","next_slug":"en/tools/desktop-control","markdown":"# Browser\n\nThe most important property of the browser tool is this: **successful results mainly forward the browser-runtime payload instead of wrapping everything in a unified `summary/data` shell.**\n\nDo not assume every browser action will look exactly like the standard tool envelope.\n\n## When to use it\n\n- the page is dynamically rendered\n- you need to click, type, press keys, or wait\n- you need browser screenshots\n- `web_fetch` cannot extract meaningful content\n\n## Common actions\n\n- `status`\n- `profiles`\n- `start`\n- `stop`\n- `tabs`\n- `open`\n- `focus`\n- `close`\n- `navigate`\n- `snapshot`\n- `act`\n- `screenshot`\n- `read_page`\n- shortcut actions: `click`, `type`, `press`, `hover`, `wait`\n\n## Minimum argument examples\n\nNavigate:\n\n```json\n{\n  \"action\": \"navigate\",\n  \"browser_session_id\": \"sess_xxx\",\n  \"url\": \"https://example.com\"\n}\n```\n\nRead the page:\n\n```json\n{\n  \"action\": \"read_page\",\n  \"browser_session_id\": \"sess_xxx\",\n  \"max_chars\": 12000\n}\n```\n\n## How to read its result shape\n\n### `status`\n\nThis looks more like a runtime status snapshot:\n\n```json\n{\n  \"ok\": true,\n  \"enabled\": true,\n  \"tool_visible\": true,\n  \"default_profile\": \"default\",\n  \"profiles\": [\"default\"],\n  \"limits\": { ... },\n  \"playwright\": { ... },\n  \"docker\": { ... },\n  \"control\": { ... },\n  \"sessions\": [\"sess_xxx\"]\n}\n```\n\n### `stop`\n\n```json\n{\n  \"ok\": true,\n  \"closed\": true,\n  \"browser_session_id\": \"sess_xxx\"\n}\n```\n\n### `screenshot`\n\nThe tool converts the bridge-layer `image_base64` into a real file and then returns download metadata. Typical fields include:\n\n```json\n{\n  \"ok\": true,\n  \"filename\": \"browser_xxx.png\",\n  \"download_url\": \"/wunder/temp_dir/download?...\",\n  \"...\": \"other browser runtime fields\"\n}\n```\n\n### `read_page`, `snapshot`, `navigate`, `tabs`\n\nThe exact fields are defined by the browser bridge. In practice, they usually include at least `ok: true` plus action-specific data.\n\n## Difference from `web_fetch`\n\n- `web_fetch`: prefer this for lower-cost reading of static page content\n- `browser`: prefer this for interaction, dynamic rendering, and automation\n\nIf you only need the main content of a public webpage, start with [Web Fetch](/docs/en/tools/web-fetch/).  \nOnly switch to the browser when the page depends on frontend rendering, verification steps, or real interaction.\n","source_path":"使用说明书/en/tools/browser.md"}</script>
+</body>
+</html>

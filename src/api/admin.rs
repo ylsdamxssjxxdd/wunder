@@ -345,6 +345,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_user_accounts_reset_password),
         )
         .route(
+            "/wunder/admin/user_accounts/{user_id}/token_adjustment",
+            post(admin_user_accounts_token_adjustment),
+        )
+        .route(
             "/wunder/admin/user_accounts/{user_id}/tool_access",
             get(admin_user_accounts_tool_access_get).put(admin_user_accounts_tool_access_update),
         )
@@ -5203,6 +5207,99 @@ async fn admin_user_accounts_reset_password(
     ))
 }
 
+async fn admin_user_accounts_token_adjustment(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    AxumPath(user_id): AxumPath<String>,
+    Json(payload): Json<UserAccountTokenAdjustmentRequest>,
+) -> Result<Json<Value>, Response> {
+    let cleaned = user_id.trim();
+    if cleaned.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.user_id_required"),
+        ));
+    }
+    let amount = payload.amount.max(0);
+    if amount <= 0 {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "token amount must be greater than 0".to_string(),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    ensure_user_scope(&actor, &record)?;
+    if UserStore::is_admin(&record) {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "admin users do not use token balance limits".to_string(),
+        ));
+    }
+    let today = UserStore::today_string();
+    let unit = record
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| units.iter().find(|item| item.unit_id == *unit_id));
+    let daily_grant = UserStore::default_daily_token_grant_by_level(unit.map(|item| item.level));
+    let action = payload.action.trim().to_ascii_lowercase();
+    match action.as_str() {
+        "grant" => {
+            state
+                .storage
+                .grant_user_tokens(cleaned, today.as_str(), daily_grant, amount, now_ts())
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        "deduct" => {
+            let token_status = UserStore::effective_token_balance_status(
+                &record,
+                unit.map(|item| item.level),
+                Some(today.as_str()),
+            );
+            if amount > token_status.balance {
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    i18n::t("error.user_token_insufficient"),
+                ));
+            }
+            state
+                .storage
+                .consume_user_tokens(cleaned, today.as_str(), daily_grant, amount)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        _ => {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid token adjustment action".to_string(),
+            ));
+        }
+    }
+    let updated = state
+        .user_store
+        .get_user_by_id(cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.user_not_found")))?;
+    let updated_unit = updated
+        .unit_id
+        .as_ref()
+        .and_then(|unit_id| units.iter().find(|item| item.unit_id == *unit_id));
+    Ok(Json(json!({
+        "data": UserStore::to_profile_with_unit(&updated, updated_unit),
+        "adjustment": {
+            "action": action,
+            "amount": amount,
+        }
+    })))
+}
+
 async fn admin_user_accounts_tool_access_get(
     State(state): State<Arc<AppState>>,
     headers: AxumHeaderMap,
@@ -7139,6 +7236,12 @@ struct UserAccountUpdateRequest {
 #[derive(Debug, Deserialize)]
 struct UserAccountPasswordResetRequest {
     password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAccountTokenAdjustmentRequest {
+    action: String,
+    amount: i64,
 }
 
 #[derive(Debug, Deserialize)]

@@ -48,11 +48,11 @@ source_docs:
 | 智能体循环 | 让线程稳定完成一轮又一轮“思考、行动、观察、继续” | [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)、[流式执行](/docs/zh-CN/concepts/streaming/) |
 | 工具 | 让模型可靠调用能力，而不是只会生成文本 | [工具体系](/docs/zh-CN/concepts/tools/)、[提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) |
 | 蜂群 | 让母蜂调度工蜂并行协作，而不是把一切塞进单线程 | [蜂群协作](/docs/zh-CN/concepts/swarm/) |
-| 上下文压缩 | 让长会话继续跑下去，同时保留有效信息 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/) |
+| 上下文压缩 | 让长会话继续跑下去，同时保留有效信息 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[Token 账户与占用](/docs/zh-CN/concepts/quota-and-token-usage/) |
 | 记忆 | 让长期资料可用，但不污染线程核心认知 | [长期记忆](/docs/zh-CN/concepts/memory/)、[工作区与容器](/docs/zh-CN/concepts/workspaces/) |
 | 渠道 | 让 server、desktop、cli 和第三方入口共享同一内核 | [系统架构](/docs/zh-CN/concepts/architecture/)、[接入概览](/docs/zh-CN/integration/) |
 | 定时任务 | 让周期执行和后台治理进入统一系统能力 | [计划任务工具](/docs/zh-CN/tools/schedule-task/)、[运维概览](/docs/zh-CN/ops/) |
-| 多用户管理 | 让组织、租户、权限和配额成为一等能力 | [Server 部署](/docs/zh-CN/start/server/)、[认证与安全](/docs/zh-CN/ops/auth-and-security/) |
+| 多用户管理 | 让组织、租户、权限和 Token 账户治理成为一等能力 | [Server 部署](/docs/zh-CN/start/server/)、[认证与安全](/docs/zh-CN/ops/auth-and-security/) |
 | 实时性 | 让前端和外部系统持续感知线程与任务变化 | [流式事件参考](/docs/zh-CN/reference/stream-events/)、[聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) |
 | 稳定性 | 让系统在长会话、高并发、多工具下依然能跑 | [边界处理](/docs/zh-CN/concepts/boundary-handling/)、[故障排查](/docs/zh-CN/help/troubleshooting/) |
 | 可观测性 | 让系统能解释发生了什么、为什么、怎么复盘 | [流式事件参考](/docs/zh-CN/reference/stream-events/)、[性能与可观测性](/docs/zh-CN/ops/benchmark-and-observability/) |
@@ -67,7 +67,7 @@ source_docs:
   <a class="docs-card" href="/docs/zh-CN/concepts/core-memory/"><strong>记忆</strong><span>看线程初始化注入与冻结约束。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-channels/"><strong>渠道</strong><span>看多入口共核与接入面边界。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-scheduled-tasks/"><strong>定时任务</strong><span>看周期执行、后台治理与记录追踪。</span></a>
-  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多用户管理</strong><span>看租户、权限、配额和治理面板。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/core-multi-user-management/"><strong>多用户管理</strong><span>看租户、权限、Token 账户和治理面板。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-realtime/"><strong>实时性</strong><span>看事件流、快照补偿和断线恢复。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-stability/"><strong>稳定性</strong><span>看错误隔离、重试、恢复和回归验收。</span></a>
   <a class="docs-card" href="/docs/zh-CN/concepts/core-observability/"><strong>可观测性</strong><span>看事实流、回放、画像与指标口径。</span></a>

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Channel Tool | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/channel","language":"en","title":"Channel Tool","summary":"The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.","updated_at":"2026-04-10","read_when":["You need to list external channel contacts or send a channel message"],"source_docs":["src/services/tools/channel_tool.rs"],"tab":"Tools","group":"Sessions and Collaboration","group_path":["Sessions and Collaboration"],"url":"/docs/en/tools/channel/","headings":[{"id":"section-1","level":1,"text":"Channel Tool"},{"id":"section-2","level":2,"text":"listcontacts"},{"id":"section-3","level":3,"text":"Minimum arguments"},{"id":"section-4","level":3,"text":"Success result"},{"id":"section-5","level":2,"text":"sendmessage"},{"id":"section-6","level":3,"text":"Minimum arguments"},{"id":"section-7","level":3,"text":"With wait=true"},{"id":"section-8","level":3,"text":"With wait=false"},{"id":"section-9","level":2,"text":"Key points"}],"prev_slug":"en/tools/memory-manager","next_slug":"en/tools/user-world","markdown":"# Channel Tool\n\n`channel_tool` mainly has two actions:\n\n- `list_contacts`\n- `send_message`\n\n## `list_contacts`\n\n### Minimum arguments\n\n```json\n{\n  \"action\": \"list_contacts\",\n  \"channel\": \"xmpp\",\n  \"account_id\": \"acc_xxx\",\n  \"keyword\": \"alice\"\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list_contacts\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 12 contacts.\",\n  \"data\": {\n    \"action\": \"list_contacts\",\n    \"items\": [ ... ],\n    \"total\": 12,\n    \"offset\": 0,\n    \"limit\": 20,\n    \"warnings\": [],\n    \"resolved_scope\": {\n      \"source\": \"session\",\n      \"channel\": \"xmpp\",\n      \"account_id\": \"acc_xxx\"\n    }\n  }\n}\n```\n\n## `send_message`\n\n### Minimum arguments\n\n```json\n{\n  \"action\": \"send_message\",\n  \"to\": \"alice@example.com\",\n  \"peer_kind\": \"user\",\n  \"content\": \"Hello\",\n  \"wait\": true\n}\n```\n\n### With `wait=true`\n\nThis is closer to a synchronous delivery result:\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"send_message\",\n  \"state\": \"completed\",\n  \"summary\": \"Sent channel message.\",\n  \"data\": {\n    \"delivery\": { ... },\n    \"resolved\": { ... }\n  }\n}\n```\n\n### With `wait=false`\n\nThis is closer to \"queued in outbox\":\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"send_message\",\n  \"state\": \"accepted\",\n  \"summary\": \"Queued channel message for delivery.\",\n  \"data\": {\n    \"outbox_id\": \"out_xxx\",\n    \"status\": \"pending\",\n    \"resolved\": { ... }\n  },\n  \"next_step_hint\": \"...\"\n}\n```\n\n## Key points\n\n- The message body is always `content`\n- `wait` determines whether you receive a final delivery result or only a queued-delivery result\n","source_path":"使用说明书/en/tools/channel.md"}</script>
+</body>
+</html>

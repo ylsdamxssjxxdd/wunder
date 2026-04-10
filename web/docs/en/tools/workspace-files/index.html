@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workspace Files | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/workspace-files","language":"en","title":"Workspace Files","summary":"The latest arguments and return structures for `list_files`, `search_content`, `read_file`, and `write_file`.","updated_at":"2026-04-10","read_when":["You need to browse the workspace, search code, read files, or write files"],"source_docs":["src/services/tools.rs","src/services/tools/search_content_tool.rs"],"tab":"Tools","group":"Files and Code","group_path":["Files and Code"],"url":"/docs/en/tools/workspace-files/","headings":[{"id":"section-1","level":1,"text":"Workspace Files"},{"id":"section-2","level":2,"text":"When to prefer them"},{"id":"section-3","level":2,"text":"listfiles"},{"id":"section-4","level":3,"text":"Minimum arguments"},{"id":"section-5","level":3,"text":"Success result"},{"id":"section-6","level":2,"text":"searchcontent"},{"id":"section-7","level":3,"text":"Minimum arguments"},{"id":"section-8","level":3,"text":"Common arguments"},{"id":"section-9","level":3,"text":"Success result"},{"id":"section-10","level":2,"text":"readfile"},{"id":"section-11","level":3,"text":"Minimum arguments"},{"id":"section-12","level":3,"text":"Success result"},{"id":"section-13","level":2,"text":"writefile"},{"id":"section-14","level":3,"text":"Minimum arguments"},{"id":"section-15","level":3,"text":"Success result"},{"id":"section-16","level":3,"text":"When not to use it"},{"id":"section-17","level":2,"text":"How to read failures"}],"prev_slug":"en/tools/index","next_slug":"en/tools/exec","markdown":"# Workspace Files\n\nThis page covers the four most commonly used local tools:\n\n- `list_files`\n- `search_content`\n- `read_file`\n- `write_file`\n\nAll four now use the unified success and failure envelope.\n\n## When to prefer them\n\n- To inspect a directory first: `list_files`\n- To locate a keyword first: `search_content`\n- To read a known path and a specific range: `read_file`\n- To create or overwrite a whole file: `write_file`\n\n## `list_files`\n\n### Minimum arguments\n\n```json\n{\n  \"path\": \".\",\n  \"max_depth\": 2,\n  \"limit\": 200\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list_files\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 120 entries from frontend/src.\",\n  \"data\": {\n    \"path\": \"frontend/src\",\n    \"items\": [\"views/\", \"components/\", \"main.ts\"],\n    \"offset\": 0,\n    \"limit\": 200,\n    \"returned\": 120,\n    \"has_more\": false,\n    \"next_offset\": null,\n    \"next_cursor\": null,\n    \"max_depth\": 2\n  }\n}\n```\n\nImportant fields:\n\n- `items`: the directory entries, with `/` appended to directories\n- `next_cursor`: used to continue pagination when a directory is large\n- `has_more`: whether another page exists\n\n## `search_content`\n\n### Minimum arguments\n\n```json\n{\n  \"query\": \"spawn_agent\",\n  \"path\": \"src\",\n  \"max_matches\": 50\n}\n```\n\n### Common arguments\n\n- `query` / `pattern`\n- `path`\n- `file_pattern`\n- `query_mode`\n- `context_before`\n- `context_after`\n- `max_matches`\n- `max_files`\n- `max_candidates`\n- `budget`\n- `dry_run`\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"search_content\",\n  \"state\": \"completed\",\n  \"summary\": \"Found 8 hits in 3 files.\",\n  \"data\": {\n    \"query\": \"spawn_agent\",\n    \"query_used\": \"spawn_agent\",\n    \"path\": \"src\",\n    \"query_mode\": \"literal\",\n    \"matched_file_count\": 3,\n    \"returned_match_count\": 8,\n    \"truncated\": false,\n    \"truncation_reasons\": [],\n    \"elapsed_ms\": 132,\n    \"hits\": [\n      {\n        \"path\": \"services/tools/subagent_control.rs\",\n        \"line\": 240,\n        \"content\": \"spawn(context, args).await\",\n        \"segments\": [\n          { \"text\": \"spawn\", \"matched\": true }\n        ],\n        \"matched_terms\": [\"spawn_agent\"],\n        \"before\": [],\n        \"after\": []\n      }\n    ]\n  }\n}\n```\n\nImportant fields:\n\n- `hits`: the actual search matches meant for the model to read\n- `truncated` and `truncation_reasons`: mandatory to inspect when the result was cut by budget\n- in `dry_run` mode, the tool returns the search plan rather than real matches\n\n## `read_file`\n\n### Minimum arguments\n\n```json\n{\n  \"path\": \"src/services/tools.rs\",\n  \"start_line\": 1,\n  \"end_line\": 120\n}\n```\n\nBatch mode is also supported:\n\n```json\n{\n  \"files\": [\n    {\n      \"path\": \"src/services/tools.rs\",\n      \"line_ranges\": [[1, 120]]\n    }\n  ]\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"read_file\",\n  \"state\": \"completed\",\n  \"summary\": \"Read 1 files.\",\n  \"data\": {\n    \"content\": \">>> src/services/tools.rs\\n1: use ...\",\n    \"files\": [\n      {\n        \"path\": \"src/services/tools.rs\",\n        \"mode\": \"slice\",\n        \"requested_ranges\": [[1, 120]],\n        \"loaded_ranges\": [[1, 120]],\n        \"read_lines\": 120,\n        \"total_lines\": 3000,\n        \"complete\": false,\n        \"truncated_by_size\": false,\n        \"used_default_range\": false\n      }\n    ],\n    \"dry_run\": false,\n    \"requested_files\": 1,\n    \"processed_files\": 1,\n    \"budget_file_limit_hit\": false,\n    \"timeout_hit\": false,\n    \"output_budget_hit\": false,\n    \"output_budget_omitted_bytes\": 0,\n    \"content_bytes_before_budget\": 4096,\n    \"budget\": {\n      \"time_budget_ms\": null,\n      \"output_budget_bytes\": null,\n      \"max_files\": null\n    },\n    \"continuation_required\": true,\n    \"continuation_hint\": \"...\"\n  }\n}\n```\n\nImportant fields:\n\n- `content`: the assembled text block ready to read directly\n- `files`: the per-file summary\n- `continuation_required`: appears when the default window was not enough or output was truncated by budget\n\n## `write_file`\n\n### Minimum arguments\n\n```json\n{\n  \"path\": \"docs/demo.md\",\n  \"content\": \"# Demo\"\n}\n```\n\n### Success result\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"write_file\",\n  \"state\": \"completed\",\n  \"summary\": \"Created file docs/demo.md.\",\n  \"data\": {\n    \"path\": \"docs/demo.md\",\n    \"bytes\": 7,\n    \"dry_run\": false,\n    \"existed\": false,\n    \"previous_bytes\": 0,\n    \"target\": \"C:/.../docs/demo.md\",\n    \"lsp\": {\n      \"enabled\": true,\n      \"matched\": true,\n      \"touched\": true,\n      \"diagnostics\": null,\n      \"error\": null\n    }\n  }\n}\n```\n\n### When not to use it\n\n- Do not use `write_file` for small, precise code edits. Use [Apply Patch](/docs/en/tools/apply-patch/) instead.\n- Do not use it to run scripts or builds. Use [Execute Command](/docs/en/tools/exec/) instead.\n\n## How to read failures\n\nFor all four tools, inspect these first on failure:\n\n- `error_meta.code`\n- `error_meta.hint`\n- `data`\n\nCommon error codes:\n\n- `TOOL_LIST_PATH_NOT_FOUND`\n- `TOOL_SEARCH_INVALID_ARGS`\n- `TOOL_SEARCH_PATH_NOT_FOUND`\n- `TOOL_READ_NOT_FOUND`\n- `TOOL_READ_BINARY_FILE`\n- `TOOL_WRITE_PATH_REQUIRED`\n- `TOOL_WRITE_FAILED`\n","source_path":"使用说明书/en/tools/workspace-files.md"}</script>
+</body>
+</html>

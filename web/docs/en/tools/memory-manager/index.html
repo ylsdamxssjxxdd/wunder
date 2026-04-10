@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory Manager | wunder Manual / 使用说明书</title>
+  <meta name="description" content="The actions, memory scopes, and return structure of `memory_manager`.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/memory-manager","language":"en","title":"Memory Manager","summary":"The actions, memory scopes, and return structure of `memory_manager`.","updated_at":"2026-04-10","read_when":["You need to add, remove, update, list, or recall long-term memory entries"],"source_docs":["src/services/tools/memory_manager_tool.rs"],"tab":"Tools","group":"Sessions and Collaboration","group_path":["Sessions and Collaboration"],"url":"/docs/en/tools/memory-manager/","headings":[{"id":"section-1","level":1,"text":"Memory Manager"},{"id":"section-2","level":2,"text":"list"},{"id":"section-3","level":2,"text":"add"},{"id":"section-4","level":2,"text":"recall"},{"id":"section-5","level":2,"text":"Key points"}],"prev_slug":"en/tools/agent-swarm","next_slug":"en/tools/channel","markdown":"# Memory Manager\n\n`memory_manager` now fully uses the standard success envelope.  \nIts main actions are:\n\n- `list`\n- `recall`\n- `add`\n- `update`\n- `delete`\n- `clear`\n\n## `list`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 3 memory entries.\",\n  \"data\": {\n    \"count\": 3,\n    \"items\": [\n      {\n        \"memory_id\": \"mem_xxx\",\n        \"title\": \"User preference\",\n        \"summary\": \"Prefers concise answers\",\n        \"content\": \"The user prefers concise answers\",\n        \"category\": \"tool-note\",\n        \"tags\": [\"preference\"],\n        \"status\": \"active\",\n        \"updated_at\": 1760000000\n      }\n    ],\n    \"agent_id\": \"agent_docs\"\n  }\n}\n```\n\n## `add`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"add\",\n  \"state\": \"completed\",\n  \"summary\": \"Saved a memory entry.\",\n  \"data\": {\n    \"memory_id\": \"mem_xxx\",\n    \"saved\": true,\n    \"agent_id\": \"agent_docs\"\n  },\n  \"next_step_hint\": \"...\"\n}\n```\n\n## `recall`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"recall\",\n  \"state\": \"completed\",\n  \"summary\": \"Recalled 2 memory entries.\",\n  \"data\": {\n    \"query\": \"user preference\",\n    \"count\": 2,\n    \"items\": [\n      {\n        \"memory_id\": \"mem_xxx\",\n        \"title\": \"User preference\",\n        \"summary\": \"Prefers concise answers\",\n        \"content\": \"The user prefers concise answers\",\n        \"category\": \"tool-note\",\n        \"tags\": [\"preference\"],\n        \"status\": \"active\",\n        \"updated_at\": 1760000000,\n        \"why\": \"matched user preference; in title/summary\"\n      }\n    ],\n    \"agent_id\": \"agent_docs\"\n  }\n}\n```\n\n## Key points\n\n- `agent_id` is injected directly into `data`\n- `recall` is primarily for bringing relevant memory into the current context\n- some successful calls include `next_step_hint`, often to remind you that the effect only applies to new sessions or only changes recall semantics for the current session\n","source_path":"使用说明书/en/tools/memory-manager.md"}</script>
+</body>
+</html>
