@@ -3,7 +3,9 @@ use super::thread_runtime::ThreadRuntimeStatus;
 use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
-const COMPACTION_RETAINED_INTERACTION_TURN_COUNT: usize = 2;
+const COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE: usize = 2;
+const COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE: usize =
+    COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE * 2;
 const COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS: i64 = 8_192;
 const COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS: i64 = 16_384;
 const COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS: i64 = 1_024;
@@ -673,7 +675,7 @@ impl Orchestrator {
         };
         let retained_segments = collect_retained_interaction_segments_with_indexes_for_compaction(
             &source_messages,
-            COMPACTION_RETAINED_INTERACTION_TURN_COUNT,
+            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
             COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
@@ -927,12 +929,20 @@ impl Orchestrator {
             )),
         );
         compaction_payload_map.insert(
-            "retained_head_turn_count".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_TURN_COUNT),
+            "retained_head_block_count_target".to_string(),
+            json!(COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE),
         );
         compaction_payload_map.insert(
-            "retained_tail_turn_count".to_string(),
-            json!(COMPACTION_RETAINED_INTERACTION_TURN_COUNT),
+            "retained_tail_block_count_target".to_string(),
+            json!(COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE),
+        );
+        compaction_payload_map.insert(
+            "retained_head_exchange_count_target".to_string(),
+            json!(COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE),
+        );
+        compaction_payload_map.insert(
+            "retained_tail_exchange_count_target".to_string(),
+            json!(COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE),
         );
         compaction_payload_map.insert(
             "summary_tokens".to_string(),
@@ -4181,7 +4191,7 @@ mod tests {
 
         let retained = collect_retained_interaction_messages_for_compaction(
             &messages,
-            2,
+            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
             COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
@@ -4195,6 +4205,10 @@ mod tests {
             vec![
                 "round-1 user".to_string(),
                 "round-1 assistant".to_string(),
+                "round-2 user".to_string(),
+                "round-2 assistant".to_string(),
+                "round-4 user".to_string(),
+                "round-4 assistant".to_string(),
                 "round-5 user".to_string(),
                 "round-5 assistant".to_string(),
             ]
@@ -4221,7 +4235,7 @@ mod tests {
 
         let retained = collect_retained_interaction_messages_for_compaction(
             &messages,
-            2,
+            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
             COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
@@ -4241,6 +4255,8 @@ mod tests {
                 "assistant".to_string(),
                 "user".to_string(),
                 "assistant".to_string(),
+                "user".to_string(),
+                "assistant".to_string(),
             ]
         );
         assert_eq!(
@@ -4248,6 +4264,8 @@ mod tests {
             vec![
                 "[SWARM_CONTEXT]\nolder task".to_string(),
                 "older answer".to_string(),
+                "current question".to_string(),
+                "searching current task".to_string(),
                 "Tool observation (search_content): success\n11 hits".to_string(),
                 "reading current task files".to_string(),
             ]
@@ -4324,7 +4342,7 @@ mod tests {
 
         let (head, tail) = collect_retained_interaction_segments_for_compaction(
             &messages,
-            2,
+            COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE,
             COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS,
             COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS,
         );
@@ -4340,7 +4358,12 @@ mod tests {
 
         assert_eq!(
             head_contents,
-            vec!["round-1 user".to_string(), "round-1 assistant".to_string(),]
+            vec![
+                "round-1 user".to_string(),
+                "round-1 assistant".to_string(),
+                "round-2 user".to_string(),
+                "round-2 assistant".to_string(),
+            ]
         );
         assert_eq!(
             tail_contents,

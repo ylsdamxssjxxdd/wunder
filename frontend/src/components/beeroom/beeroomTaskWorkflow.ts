@@ -945,12 +945,15 @@ export const buildSessionWorkflowItems = (
     .map((event, index) => mapSessionEventToWorkflowItem(event, index, t))
     .filter((item): item is BeeroomWorkflowItem => Boolean(item));
 
+const isNodeWorkflowToolItem = (item: BeeroomWorkflowItem): boolean =>
+  item.isTool === true || item.eventType === 'tool_call' || item.eventType === 'tool_result';
+
 export const buildNodeWorkflowHtml = (
   items: BeeroomWorkflowItem[],
   title: string,
   tone: BeeroomWorkflowTone = 'pending'
 ): string => {
-  const toolItems = items.filter((item) => item.eventType === 'tool_call');
+  const toolItems = items.filter((item) => isNodeWorkflowToolItem(item));
   const lines = toolItems.length
     ? toolItems
         .slice()
@@ -979,7 +982,7 @@ export const buildNodeWorkflowPreviewLines = (
   items: BeeroomWorkflowItem[],
   options: { includeEventFallback?: boolean } = {}
 ): BeeroomNodeWorkflowLine[] => {
-  const toolItems = items.filter((item) => item.eventType === 'tool_call');
+  const toolItems = items.filter((item) => isNodeWorkflowToolItem(item));
   const fallbackItems = items.filter((item) => item.eventType !== 'llm_request');
   const source =
     toolItems.length > 0
@@ -989,7 +992,7 @@ export const buildNodeWorkflowPreviewLines = (
         : [];
 
   return source.slice().map((item, index) => {
-    const isToolLine = item.eventType === 'tool_call';
+    const isToolLine = isNodeWorkflowToolItem(item);
     const parts = isToolLine ? resolveNodeWorkflowLineParts(item) : resolveNodeWorkflowEventLineParts(item);
     return {
       key: `${item.id || item.eventType || 'workflow'}:${index}`,

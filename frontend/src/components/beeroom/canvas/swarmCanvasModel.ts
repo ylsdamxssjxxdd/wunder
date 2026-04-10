@@ -556,7 +556,8 @@ const buildSubagentWorkflowLines = (
 ): BeeroomNodeWorkflowLine[] => {
   // Subagent workflow items are hydrated lazily and remain structurally compatible here.
   const workflowLines = buildNodeWorkflowPreviewLines(
-    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[]
+    (Array.isArray(item.workflowItems) ? item.workflowItems : []) as BeeroomWorkflowItem[],
+    { includeEventFallback: true }
   );
   return workflowLines.length > 0 ? workflowLines : buildSubagentSummaryLines(item, visualState, t);
 };
@@ -947,7 +948,12 @@ export const buildBeeroomSwarmProjection = (options: {
     runtimeTargetNode.status = previewStatus;
     runtimeTargetNode.statusLabel = statusLabel;
     runtimeTargetNode.workflowTone = resolveDispatchPreviewTone(previewStatus);
-    runtimeTargetNode.workflowLines = buildDispatchPreviewLines(runtimeDispatch, statusLabel, options.t);
+    // Keep the mother's real workflow tool trace visible when it already exists.
+    // Dispatch preview lines are only a coarse fallback and should not replace
+    // the mother node's tool-driven workflow surface.
+    if (runtimeTargetNode.role !== 'mother' || runtimeTargetNode.workflowLines.length === 0) {
+      runtimeTargetNode.workflowLines = buildDispatchPreviewLines(runtimeDispatch, statusLabel, options.t);
+    }
     const targetMeta = nodeMetaMap.get(runtimeTargetNode.id);
     if (targetMeta) {
       targetMeta.status = previewStatus;

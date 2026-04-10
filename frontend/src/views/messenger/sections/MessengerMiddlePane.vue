@@ -366,7 +366,10 @@
         v-for="group in filteredBeeroomGroups"
         :key="group.group_id"
         class="messenger-list-item messenger-agent-item messenger-swarm-item"
-        :class="{ active: selectedBeeroomGroupId === String(group.group_id || '') }"
+        :class="{
+          active: selectedBeeroomGroupId === String(group.group_id || ''),
+          'is-running': isBeeroomGroupRunning(group)
+        }"
         role="button"
         tabindex="0"
         @click="selectBeeroomGroup(group)"
@@ -1134,6 +1137,39 @@ const displayedMixedConversations = computed(() => {
   }
   return [buildGuidedDefaultConversation()];
 });
+
+const HOT_BEEROOM_MISSION_STATUSES = new Set([
+  'queued',
+  'running',
+  'awaiting_idle',
+  'pending',
+  'resuming',
+  'merging'
+]);
+
+const isHotBeeroomMissionStatus = (value: unknown): boolean =>
+  HOT_BEEROOM_MISSION_STATUSES.has(String(value || '').trim().toLowerCase());
+
+function normalizeBeeroomGroupId(group: Record<string, any> | null | undefined): string {
+  return String(group?.group_id || group?.hive_id || '').trim();
+}
+
+function isBeeroomGroupRunning(group: Record<string, any> | null | undefined): boolean {
+  if (Number(group?.running_mission_total || 0) > 0) {
+    return true;
+  }
+  if (isHotBeeroomMissionStatus(group?.latest_mission?.completion_status || group?.latest_mission?.status)) {
+    return true;
+  }
+  const groupId = normalizeBeeroomGroupId(group);
+  if (!groupId || groupId !== String(selectedBeeroomGroupId || '').trim()) {
+    return false;
+  }
+  const activeMissions = Array.isArray(beeroomStore.activeMissions) ? beeroomStore.activeMissions : [];
+  return activeMissions.some((mission) =>
+    isHotBeeroomMissionStatus(mission?.completion_status || mission?.status)
+  );
+}
 
 const selectedAgentIdSet = computed(() => new Set(selectedAgentIds.value));
 const deletableSelectedAgentIds = computed(() =>

@@ -9,7 +9,8 @@
         'is-mother': node.role === 'mother',
         'is-selected': node.selected,
         'is-condensed': condensed,
-        'is-revealing': !!reveal
+        'is-revealing': !!reveal,
+        'is-live-activity': hasLiveActivity
       }
     ]"
     :aria-label="`${node.name} ${node.roleLabel} ${node.statusLabel}`"
@@ -128,9 +129,11 @@ const cardStyle = computed(() => {
   return {
     '--node-accent': props.node.accentColor,
     '--node-accent-rgb': accentRgb,
-    '--node-activity-glow': `rgba(${accentRgb}, 0.18)`,
-    '--node-activity-border': `rgba(${accentRgb}, 0.42)`,
-    '--node-activity-border-soft': `rgba(${accentRgb}, 0.12)`,
+    '--node-activity-glow': `rgba(${accentRgb}, 0.22)`,
+    '--node-activity-border': `rgba(${accentRgb}, 0.56)`,
+    '--node-activity-border-soft': `rgba(${accentRgb}, 0.18)`,
+    '--node-activity-halo-strong': `rgba(${accentRgb}, 0.3)`,
+    '--node-activity-shadow-soft': `rgba(${accentRgb}, 0.14)`,
     '--node-intro-x': `${Math.round(props.reveal?.offsetX || 0)}px`,
     '--node-intro-y': `${Math.round(props.reveal?.offsetY || 0)}px`,
     '--node-intro-delay': `${Math.max(0, Number(props.reveal?.order || 0)) * 70}ms`,
@@ -139,9 +142,14 @@ const cardStyle = computed(() => {
   };
 });
 
-const visibleWorkflowLines = computed(() =>
-  (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : [])
-);
+const visibleWorkflowLines = computed(() => (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : []));
+const hasLiveActivity = computed(() => {
+  const normalizedStatus = String(props.node.status || '').trim().toLowerCase();
+  if (normalizedStatus === 'running' || normalizedStatus === 'queued' || normalizedStatus === 'awaiting_idle') {
+    return true;
+  }
+  return props.node.role === 'subagent' && props.node.emphasis === 'active';
+});
 
 const workflowContainerRef = ref<HTMLElement | null>(null);
 const workflowStepsRef = ref<HTMLElement | null>(null);
@@ -156,9 +164,7 @@ const workflowLineSignature = computed(() =>
     .join('||')
 );
 
-const shouldFollowWorkflowTail = computed(
-  () => props.node.workflowTone === 'loading' || props.node.workflowTone === 'pending'
-);
+const shouldFollowWorkflowTail = computed(() => visibleWorkflowLines.value.length > 0);
 
 const scrollWorkflowToBottom = () => {
   const element = workflowContainerRef.value;
@@ -279,6 +285,8 @@ onBeforeUnmount(() => {
   --node-activity-glow: rgba(0, 0, 0, 0);
   --node-activity-border: rgba(255, 255, 255, 0);
   --node-activity-border-soft: rgba(255, 255, 255, 0);
+  --node-activity-halo-strong: rgba(255, 255, 255, 0);
+  --node-activity-shadow-soft: rgba(255, 255, 255, 0);
   position: absolute;
   display: flex;
   flex-direction: column;
@@ -300,8 +308,8 @@ onBeforeUnmount(() => {
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
   transition:
-    border-color 0.42s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.72s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.56s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 1.2s cubic-bezier(0.22, 1, 0.36, 1),
     transform 0.22s ease;
 }
 
@@ -328,10 +336,10 @@ onBeforeUnmount(() => {
   transform: scale(0.992);
   pointer-events: none;
   transition:
-    opacity 0.56s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.72s cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 0.56s cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 0.72s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 1.05s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 1.2s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.9s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 1.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .beeroom-node-card:hover,
@@ -373,20 +381,20 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 16px rgba(2, 6, 23, 0.1);
 }
 
-.beeroom-node-card.is-running,
-.beeroom-node-card.is-queued,
-.beeroom-node-card.is-awaiting_idle {
+.beeroom-node-card.is-live-activity {
   box-shadow:
-    0 0 0 1px rgba(var(--node-accent-rgb), 0.08),
-    0 14px 28px rgba(var(--node-accent-rgb), 0.16),
-    0 0 22px var(--node-activity-glow);
+    0 0 0 1px rgba(var(--node-accent-rgb), 0.14),
+    0 16px 30px var(--node-activity-shadow-soft),
+    0 0 28px var(--node-activity-glow);
 }
 
-.beeroom-node-card.is-running::after,
-.beeroom-node-card.is-queued::after,
-.beeroom-node-card.is-awaiting_idle::after {
-  opacity: 0.72;
-  animation: beeroom-node-border-breathe 2.6s cubic-bezier(0.33, 0, 0.2, 1) infinite;
+.beeroom-node-card.is-live-activity::after {
+  opacity: 0.88;
+  animation: beeroom-node-border-breathe 2.15s cubic-bezier(0.33, 0, 0.2, 1) infinite;
+}
+
+.beeroom-node-card.is-live-activity .beeroom-node-status-dot {
+  animation: beeroom-node-status-pulse 1.75s ease-in-out infinite;
 }
 
 .beeroom-node-card:active {
@@ -789,20 +797,42 @@ onBeforeUnmount(() => {
 @keyframes beeroom-node-border-breathe {
   0%,
   100% {
-    opacity: 0.28;
-    transform: scale(0.992);
+    opacity: 0.42;
+    transform: scale(0.991);
+    border-color: var(--node-activity-border);
+    box-shadow:
+      0 0 0 1px var(--node-activity-border-soft),
+      0 0 16px rgba(var(--node-accent-rgb), 0.16);
   }
 
   50% {
-    opacity: 0.84;
+    opacity: 1;
+    transform: scale(1.006);
+    border-color: rgba(var(--node-accent-rgb), 0.82);
+    box-shadow:
+      0 0 0 1px rgba(var(--node-accent-rgb), 0.3),
+      0 0 26px var(--node-activity-halo-strong);
+  }
+}
+
+@keyframes beeroom-node-status-pulse {
+  0%,
+  100% {
     transform: scale(1);
+    box-shadow: 0 0 0 2px rgba(var(--node-accent-rgb), 0.16);
+  }
+
+  50% {
+    transform: scale(1.18);
+    box-shadow:
+      0 0 0 2px rgba(var(--node-accent-rgb), 0.2),
+      0 0 12px rgba(var(--node-accent-rgb), 0.28);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .beeroom-node-card.is-running::after,
-  .beeroom-node-card.is-queued::after,
-  .beeroom-node-card.is-awaiting_idle::after {
+  .beeroom-node-card.is-live-activity::after,
+  .beeroom-node-card.is-live-activity .beeroom-node-status-dot {
     animation: none;
   }
 }
