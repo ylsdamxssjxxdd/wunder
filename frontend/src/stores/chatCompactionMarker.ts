@@ -319,6 +319,36 @@ const isLikelySameCompactionMarker = (
   return false;
 };
 
+export const shouldPreserveTerminalCompactionMarkerState = (
+  terminalMessage: ChatMessage | null | undefined,
+  runningSnapshot: ChatMessage | null | undefined
+): boolean => isManualCompactionConflict(
+  terminalMessage as ChatMessage,
+  runningSnapshot as ChatMessage
+);
+
+export const isSupersededRunningManualCompactionMarker = (
+  runningMarker: ChatMessage | null | undefined,
+  messages: ChatMessage[] | null | undefined
+): boolean => {
+  if (!isRunningManualCompactionMarker(runningMarker)) {
+    return false;
+  }
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return false;
+  }
+  return messages.some((message) => {
+    if (isManualCompactionConflict(message, runningMarker)) {
+      return true;
+    }
+    return (
+      isCompactionMarkerAssistantMessage(message) &&
+      !isStreamingAssistantMessage(message) &&
+      isLikelySameCompactionMarker(message, runningMarker)
+    );
+  });
+};
+
 export const mergeCompactionMarkersIntoMessages = (
   remoteMessages: ChatMessage[] | null | undefined,
   cachedMessages: ChatMessage[] | null | undefined

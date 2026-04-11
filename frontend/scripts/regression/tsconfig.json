@@ -74,6 +74,7 @@
     "./message-viewport-runtime-regression.test.ts",
     "./compaction-ui-regression.test.ts",
     "./tool-workflow-regression.test.ts",
-    "./tool-workflow-command-regression.test.ts"
+    "./tool-workflow-command-regression.test.ts",
+    "./prompt-tooling-preview-regression.test.ts"
   ]
 }

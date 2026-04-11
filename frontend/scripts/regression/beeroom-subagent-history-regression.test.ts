@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   collectBeeroomHistoricalSubagentItems,
   mergeBeeroomMissionSubagentItems,
+  shouldIgnoreBeeroomMissionSubagentItem,
   type BeeroomMissionSubagentItem,
   type BeeroomSessionEventRecord
 } from '../../src/components/beeroom/beeroomMissionSubagentState';
@@ -145,4 +146,49 @@ test('live active child state is not overwritten by older historical terminal sn
   assert.equal(merged[0]?.status, 'running');
   assert.equal(merged[0]?.terminal, false);
   assert.equal(merged[0]?.updatedTime, 200);
+});
+
+test('target-not-found ghost items are ignored instead of becoming a second derived child', () => {
+  const merged = mergeBeeroomMissionSubagentItems(
+    [
+      buildSubagent({
+        key: 'run_real',
+        sessionId: 'sess_real',
+        runId: 'run_real',
+        runKind: 'subagent',
+        requestedBy: 'subagent_control',
+        status: 'success',
+        terminal: true,
+        updatedTime: 200,
+        summary: 'real child finished'
+      })
+    ],
+    [
+      buildSubagent({
+        key: 'run_ghost',
+        sessionId: ' ',
+        runId: 'run_ghost',
+        runKind: ' ',
+        requestedBy: ' ',
+        status: 'not_found',
+        failed: true,
+        terminal: true,
+        updatedTime: 190,
+        summary: 'run not found'
+      })
+    ]
+  );
+
+  assert.equal(
+    shouldIgnoreBeeroomMissionSubagentItem({
+      sessionId: '',
+      runKind: '',
+      requestedBy: '',
+      status: 'not_found'
+    } as BeeroomMissionSubagentItem),
+    true
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.sessionId, 'sess_real');
+  assert.equal(merged[0]?.runId, 'run_real');
 });

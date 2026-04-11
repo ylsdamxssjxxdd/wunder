@@ -96,7 +96,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   {
     keywords: ['skill', 'skills', 'prompt', 'workflow', 'template', 'agent preset', 'preset'],
-    icon: 'fa-wand-magic-sparkles',
+    icon: 'fa-book-open',
     tone: 'skill'
   },
   { keywords: ['knowledge', 'rag', 'vector', 'embedding', 'document', 'kb'], icon: 'fa-book', tone: 'knowledge' },
@@ -177,7 +177,7 @@ const resolvePreferredTone = (kind: AbilityKind, group: unknown, source: unknown
 const resolveDefaultIcon = (tone: AbilityVisualTone): string => {
   switch (tone) {
     case 'skill':
-      return 'fa-wand-magic-sparkles';
+      return 'fa-book-open';
     case 'mcp':
       return 'fa-plug';
     case 'knowledge':
@@ -254,14 +254,8 @@ const findAbilityRule = (input: AbilityVisualInput): AbilityRule | null => {
 export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMeta => {
   const kind = resolveAbilityKind(input.kind, input.group || input.source);
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
-  if (kind === 'skill') {
-    return {
-      icon: resolveDefaultIcon('skill'),
-      tone: preferredTone || 'skill'
-    };
-  }
   const matchedRule = findAbilityRule(input);
-  const tone = preferredTone || matchedRule?.tone || 'general';
+  const tone = preferredTone || matchedRule?.tone || (kind === 'skill' ? 'skill' : 'general');
 
   return {
     icon: matchedRule?.icon || resolveContextualDefaultIcon(input, tone),

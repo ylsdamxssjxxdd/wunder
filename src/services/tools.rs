@@ -105,7 +105,7 @@ use futures::stream::{self, StreamExt};
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Deserializer};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use skill_call::render_skill_markdown_for_model;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -138,7 +138,10 @@ use command_output_guard::{
     STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
 };
 use command_sessions::{CommandSessionLaunchMode, CommandSessionStream, CommandSessionTracker};
-use tool_error::{build_failed_tool_result, ToolErrorMeta};
+use tool_error::{
+    build_execute_command_failure_data, build_execute_command_failure_message,
+    build_failed_tool_result, ToolErrorMeta,
+};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
 const MAX_READ_LINES: usize = 2000;
@@ -6756,21 +6759,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             }
             context.workspace.mark_tree_dirty(context.workspace_id);
             return Ok(build_failed_tool_result(
-                i18n::t_with_params(
-                    "tool.exec.command_failed",
-                    &HashMap::from([("detail".to_string(), detail)]),
+                build_execute_command_failure_message(&results, true),
+                build_execute_command_failure_data(
+                    &results,
+                    guarded_total_commands,
+                    guarded_truncated_commands > 0,
+                    guarded_omitted_bytes,
+                    true,
                 ),
-                json!({
-                    "results": compact_command_results_for_model(&results),
-                    "output_guard": {
-                        "truncated": guarded_truncated_commands > 0,
-                        "commands": guarded_total_commands,
-                        "truncated_commands": guarded_truncated_commands,
-                        "total_bytes": guarded_total_bytes,
-                        "omitted_bytes": guarded_omitted_bytes,
-                        "effective_total_bytes": effective_output_budget_bytes,
-                    }
-                }),
                 ToolErrorMeta::new(
                     "TOOL_EXEC_TIMEOUT",
                     Some(
@@ -6786,18 +6782,14 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         if run.returncode != 0 {
             context.workspace.mark_tree_dirty(context.workspace_id);
             return Ok(build_failed_tool_result(
-                i18n::t("tool.exec.failed"),
-                json!({
-                    "results": compact_command_results_for_model(&results),
-                    "output_guard": {
-                        "truncated": guarded_truncated_commands > 0,
-                        "commands": guarded_total_commands,
-                        "truncated_commands": guarded_truncated_commands,
-                        "total_bytes": guarded_total_bytes,
-                        "omitted_bytes": guarded_omitted_bytes,
-                        "effective_total_bytes": effective_output_budget_bytes,
-                    }
-                }),
+                build_execute_command_failure_message(&results, false),
+                build_execute_command_failure_data(
+                    &results,
+                    guarded_total_commands,
+                    guarded_truncated_commands > 0,
+                    guarded_omitted_bytes,
+                    false,
+                ),
                 ToolErrorMeta::new(
                     "TOOL_EXEC_NON_ZERO_EXIT",
                     Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
@@ -7310,7 +7302,6 @@ enum ReadFailureKind {
 #[derive(Clone, Debug)]
 struct ReadFailure {
     kind: ReadFailureKind,
-    detail: String,
 }
 
 #[derive(Clone, Debug)]
@@ -7926,7 +7917,6 @@ fn read_files_inner(
                     outputs.push(format!(">>> {}\n{}", raw_path, message));
                     failures.push(ReadFailure {
                         kind: ReadFailureKind::PathInvalid,
-                        detail: format!("{raw_path}: {message}"),
                     });
                     if let Value::Object(ref mut map) = summary {
                         map.insert("error".to_string(), Value::String(message));
@@ -7950,7 +7940,6 @@ fn read_files_inner(
             outputs.push(format!(">>> {}\n{}", raw_path, message));
             failures.push(ReadFailure {
                 kind: ReadFailureKind::NotFound,
-                detail: format!("{raw_path}: {message}"),
             });
             if let Value::Object(ref mut map) = summary {
                 map.insert("exists".to_string(), Value::Bool(false));
@@ -8006,7 +7995,6 @@ fn read_files_inner(
                 outputs.push(format!(">>> {}\n{}", raw_path, message));
                 failures.push(ReadFailure {
                     kind: ReadFailureKind::Binary,
-                    detail: format!("{raw_path}: {message}"),
                 });
                 summaries.push(summary);
                 continue;
@@ -8178,13 +8166,18 @@ fn read_files_inner(
     }
     if successful_reads == 0 && !failures.is_empty() {
         let (code, hint) = classify_read_failure(&failures);
-        let error = failures
+        let failure_files = summaries
+            .iter()
+            .zip(failures.iter())
+            .map(|(summary, failure)| compact_read_failure_for_model(summary, failure))
+            .collect::<Vec<_>>();
+        let error = failure_files
             .first()
-            .map(|failure| failure.detail.clone())
+            .map(summarize_read_failure_for_model)
             .unwrap_or_else(|| i18n::t("tool.read.empty_result"));
         return Ok(build_failed_tool_result(
             error,
-            data,
+            build_read_failure_data(&failure_files),
             ToolErrorMeta::new(code, Some(hint), false, None),
             false,
         ));
@@ -8200,6 +8193,106 @@ fn read_files_inner(
         data,
         continuation_required.then(|| i18n::t("tool.read.continuation_hint")),
     ))
+}
+
+fn build_read_failure_data(failures: &[Value]) -> Value {
+    match failures {
+        [] => json!({}),
+        [single] => single.clone(),
+        many => json!({
+            "failed_count": many.len(),
+            "failures": many,
+        }),
+    }
+}
+
+fn compact_read_failure_for_model(summary: &Value, failure: &ReadFailure) -> Value {
+    let mut map = Map::new();
+    if let Some(path) = summary
+        .get("path")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        map.insert("path".to_string(), path);
+    }
+    match failure.kind {
+        ReadFailureKind::PathInvalid => {
+            map.insert(
+                "reason".to_string(),
+                Value::String("path_invalid".to_string()),
+            );
+        }
+        ReadFailureKind::NotFound => {
+            map.insert("reason".to_string(), Value::String("not_found".to_string()));
+        }
+        ReadFailureKind::Binary => {
+            map.insert("reason".to_string(), Value::String("binary".to_string()));
+            if let Some(kind) = summary
+                .get("kind")
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                map.insert("kind".to_string(), kind);
+            }
+            if let Some(mime_type) = summary
+                .get("mime_type")
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                map.insert("mime_type".to_string(), mime_type);
+            }
+            if let Some(size_bytes) = summary
+                .get("size_bytes")
+                .cloned()
+                .filter(|value| !value.is_null())
+            {
+                map.insert("size_bytes".to_string(), size_bytes);
+            }
+            if summary
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind == "image")
+            {
+                map.insert(
+                    "suggested_tool".to_string(),
+                    Value::String(read_image_tool::TOOL_READ_IMAGE.to_string()),
+                );
+            }
+        }
+    }
+    Value::Object(map)
+}
+
+fn summarize_read_failure_for_model(failure: &Value) -> String {
+    let path = failure
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("目标文件");
+    match failure
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "path_invalid" => format!("{path} 路径无效或超出工作区。"),
+        "not_found" => format!("{path} 不存在。"),
+        "binary" => {
+            if failure
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind == "image")
+            {
+                format!(
+                    "{path} 是图片，请改用{}。",
+                    read_image_tool::TOOL_READ_IMAGE
+                )
+            } else {
+                format!("{path} 是二进制文件，读取文件仅支持纯文本。")
+            }
+        }
+        _ => format!("{path} 无法读取。"),
+    }
 }
 
 fn classify_read_failure(failures: &[ReadFailure]) -> (&'static str, String) {
@@ -10097,6 +10190,78 @@ mod tests {
             value.pointer("/error_meta/code").and_then(Value::as_str),
             Some("TOOL_READ_NOT_FOUND")
         );
+        assert_eq!(
+            value.pointer("/data/path").and_then(Value::as_str),
+            Some("missing.txt")
+        );
+        assert_eq!(
+            value.pointer("/data/reason").and_then(Value::as_str),
+            Some("not_found")
+        );
+        assert!(value.pointer("/data/content").is_none());
+    }
+
+    #[test]
+    fn read_files_inner_returns_compact_binary_failure() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("read-files-binary.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+
+        let user_root = workspace_root.join("admin");
+        std::fs::create_dir_all(&user_root).expect("create user root");
+        let file_path = user_root.join("heart.png");
+        std::fs::write(&file_path, b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR").expect("write png");
+
+        let value = read_files_inner(
+            &workspace,
+            "admin",
+            &[],
+            vec![ReadFileSpec {
+                path: "heart.png".to_string(),
+                requested_ranges: vec![(1, 20)],
+                ranges: vec![(1, 20)],
+                used_default_range: false,
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
+            }],
+            ReadBudget::default(),
+            false,
+            1,
+            false,
+        )
+        .expect("read files result");
+
+        assert_eq!(value.get("ok").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            value.pointer("/error_meta/code").and_then(Value::as_str),
+            Some("TOOL_READ_BINARY_FILE")
+        );
+        assert_eq!(
+            value.pointer("/data/path").and_then(Value::as_str),
+            Some("heart.png")
+        );
+        assert_eq!(
+            value.pointer("/data/kind").and_then(Value::as_str),
+            Some("image")
+        );
+        assert_eq!(
+            value.pointer("/data/mime_type").and_then(Value::as_str),
+            Some("image/png")
+        );
+        assert_eq!(
+            value
+                .pointer("/data/suggested_tool")
+                .and_then(Value::as_str),
+            Some(read_image_tool::TOOL_READ_IMAGE)
+        );
+        assert!(value.pointer("/data/content").is_none());
     }
 
     #[test]

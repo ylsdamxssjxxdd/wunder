@@ -5,6 +5,7 @@
         v-for="item in items"
         :key="item.key"
         class="prompt-tooling-preview-item"
+        :class="`prompt-tooling-preview-item--${resolveItemTone(item)}`"
         :title="buildItemTitle(item)"
         role="listitem"
       >
@@ -12,8 +13,9 @@
           :name="item.name"
           :description="item.description"
           :hint="item.protocolName"
-          kind="tool"
-          :source="item.protocolName || item.name"
+          :kind="item.kind"
+          :group="item.group"
+          :source="item.source"
           size="xs"
         />
         <div class="prompt-tooling-preview-copy">
@@ -37,6 +39,7 @@
 
 <script setup lang="ts">
 import AbilityIconBadge from '@/components/common/AbilityIconBadge.vue';
+import { resolveAbilityVisual, type AbilityVisualTone } from '@/utils/abilityVisuals';
 import type { PromptToolingPreviewItem } from '@/utils/promptToolingPreview';
 
 withDefaults(
@@ -52,6 +55,16 @@ withDefaults(
 
 const showProtocolName = (item: PromptToolingPreviewItem): boolean =>
   Boolean(item.protocolName && item.protocolName !== item.name);
+
+const resolveItemTone = (item: PromptToolingPreviewItem): AbilityVisualTone =>
+  resolveAbilityVisual({
+    name: item.name,
+    description: item.description,
+    hint: item.protocolName,
+    kind: item.kind,
+    group: item.group,
+    source: item.source
+  }).tone;
 
 const buildItemTitle = (item: PromptToolingPreviewItem): string =>
   [item.name, showProtocolName(item) ? item.protocolName : '', item.description]
@@ -81,6 +94,46 @@ const buildItemTitle = (item: PromptToolingPreviewItem): string =>
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: rgba(148, 163, 184, 0.08);
+}
+
+.prompt-tooling-preview-item--skill {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.prompt-tooling-preview-item--mcp {
+  border-color: rgba(14, 165, 233, 0.24);
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.prompt-tooling-preview-item--knowledge {
+  border-color: rgba(16, 185, 129, 0.24);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.prompt-tooling-preview-item--shared {
+  border-color: rgba(139, 92, 246, 0.24);
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.prompt-tooling-preview-item--automation {
+  border-color: rgba(99, 102, 241, 0.24);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.prompt-tooling-preview-item--search {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.prompt-tooling-preview-item--file {
+  border-color: rgba(59, 130, 246, 0.24);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.prompt-tooling-preview-item--terminal {
+  border-color: rgba(51, 65, 85, 0.24);
+  background: rgba(51, 65, 85, 0.08);
 }
 
 .prompt-tooling-preview-copy {

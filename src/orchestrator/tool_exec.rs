@@ -1484,6 +1484,153 @@ fn compact_public_preflight(meta: &Value) -> Option<Value> {
     Some(Value::Object(compacted))
 }
 
+fn compact_failure_observation_payload(map: &mut Map<String, Value>) -> bool {
+    let ok = map.get("ok").and_then(Value::as_bool).unwrap_or(true);
+    if ok {
+        return false;
+    }
+    let raw_data = map.get("data").cloned().unwrap_or(Value::Null);
+    let error = build_compact_failure_error_message(
+        map.get("error").and_then(Value::as_str).unwrap_or(""),
+        &raw_data,
+    );
+    map.remove("data");
+    map.remove("preflight");
+    map.remove("duration_ms");
+    map.remove("sandbox");
+    map.remove("truncated");
+    map.remove("observation_output_chars");
+    map.remove("truncation_reasons");
+    map.remove("continuation_required");
+    map.remove("continuation_hint");
+    if !error.is_empty() {
+        map.insert("error".to_string(), Value::String(error));
+    }
+    true
+}
+
+fn build_compact_failure_error_message(error: &str, data: &Value) -> String {
+    let mut fragments = Vec::new();
+    push_compact_error_fragment(&mut fragments, error);
+    if let Some(detail) = extract_compact_failure_detail(data) {
+        push_compact_error_fragment(&mut fragments, &detail);
+    }
+    fragments.join(" ")
+}
+
+fn push_compact_error_fragment(fragments: &mut Vec<String>, candidate: &str) {
+    let cleaned = candidate
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        return;
+    }
+    let normalized = normalize_error_fragment(&cleaned);
+    if fragments
+        .iter()
+        .any(|existing| normalize_error_fragment(existing) == normalized)
+    {
+        return;
+    }
+    fragments.push(cleaned);
+}
+
+fn normalize_error_fragment(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn extract_compact_failure_detail(data: &Value) -> Option<String> {
+    let map = data.as_object()?;
+    if let Some(preflight) = map.get("preflight").and_then(Value::as_object) {
+        if let Some(message) = extract_preflight_diagnostic_message(preflight) {
+            return Some(message);
+        }
+    }
+    if let Some(detail) = extract_execute_command_failure_detail(map) {
+        return Some(detail);
+    }
+    if let Some(message) = map
+        .get("detail")
+        .or_else(|| map.get("message"))
+        .or_else(|| map.get("content"))
+        .and_then(Value::as_str)
+    {
+        return Some(message.trim().to_string());
+    }
+    let meta = map.get("error_meta").and_then(Value::as_object)?;
+    meta.get("hint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn extract_preflight_diagnostic_message(preflight: &Map<String, Value>) -> Option<String> {
+    if let Some(items) = preflight.get("diagnostics").and_then(Value::as_array) {
+        for item in items {
+            if let Some(message) = extract_diagnostic_message(item) {
+                return Some(message);
+            }
+        }
+    }
+    let diagnostics_jsonl = preflight.get("diagnostics_jsonl").and_then(Value::as_str)?;
+    for line in diagnostics_jsonl.lines() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(line) {
+            if let Some(message) = extract_diagnostic_message(&parsed) {
+                return Some(message);
+            }
+        }
+    }
+    None
+}
+
+fn extract_diagnostic_message(value: &Value) -> Option<String> {
+    let item = value.as_object()?;
+    item.get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            item.get("hint")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|hint| !hint.is_empty())
+                .map(ToString::to_string)
+        })
+}
+
+fn extract_execute_command_failure_detail(map: &Map<String, Value>) -> Option<String> {
+    let output = map
+        .get("stderr")
+        .or_else(|| map.get("stdout"))
+        .and_then(Value::as_str)?;
+    let detail = output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .unwrap_or("")
+        .trim();
+    if detail.is_empty() {
+        return None;
+    }
+    let detail = if detail.chars().count() > 200 {
+        let head = detail.chars().take(200).collect::<String>();
+        format!("{head}...")
+    } else {
+        detail.to_string()
+    };
+    Some(format!("stderr: {detail}"))
+}
+
 const OBSERVATION_MAX_CHARS: usize = 20_000;
 const OBSERVATION_HEAD_CHARS: usize = 10_000;
 const OBSERVATION_TAIL_CHARS: usize = 10_000;
@@ -1600,6 +1747,9 @@ fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
     let Some(map) = payload.as_object_mut() else {
         return;
     };
+    if compact_failure_observation_payload(map) {
+        return;
+    }
     let Some(raw_data) = map.get("data").cloned() else {
         return;
     };
@@ -2812,6 +2962,107 @@ mod tests {
                 .and_then(Value::as_array)
                 .map(|items| items.len()),
             Some(2)
+        );
+    }
+
+    #[test]
+    fn test_failed_observation_payload_drops_data_and_preflight_noise() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "tool": "ptc",
+                "preflight": {
+                    "status": "reject",
+                    "code": "PRECHECK_PYTHON_INDENTATION",
+                    "summary": "Script preflight blocked: non-standard Python indentation detected.",
+                    "diagnostics": [
+                        {
+                            "rule": "python.indent.non_standard",
+                            "severity": "error",
+                            "message": "Line 35 uses indentation width 11.",
+                            "hint": "Use consistent 4-space indentation or only tabs (not mixed)."
+                        }
+                    ]
+                },
+                "error_meta": {
+                    "code": "PRECHECK_PYTHON_INDENTATION",
+                    "hint": "Use consistent 4-space indentation or only tabs (not mixed).",
+                    "retryable": false,
+                    "retry_after_ms": null
+                }
+            }),
+            error: "Script preflight blocked: non-standard Python indentation detected."
+                .to_string(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "error_code": "PRECHECK_PYTHON_INDENTATION",
+                "error_retryable": false,
+                "preflight": {
+                    "status": "reject",
+                    "summary": "Script preflight blocked: non-standard Python indentation detected."
+                },
+                "duration_ms": 25
+            })),
+        };
+
+        let compacted = payload.to_compact_payload("ptc");
+        assert!(compacted.get("data").is_none());
+        assert!(compacted.get("preflight").is_none());
+        assert!(compacted.get("sandbox").is_none());
+        assert!(compacted.get("duration_ms").is_none());
+        assert_eq!(
+            compacted.get("error").and_then(Value::as_str),
+            Some(
+                "Script preflight blocked: non-standard Python indentation detected. Line 35 uses indentation width 11."
+            )
+        );
+        assert_eq!(
+            compacted.get("error_code").and_then(Value::as_str),
+            Some("PRECHECK_PYTHON_INDENTATION")
+        );
+        assert_eq!(
+            compacted.get("retryable").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_failed_execute_command_observation_uses_single_concise_error() {
+        let payload = ToolResultPayload {
+            ok: false,
+            data: json!({
+                "command": "python3 draw_heart.py",
+                "returncode": 1,
+                "stderr": "  File \"/tmp/draw_heart.py\", line 6\n    y = 13\nIndentationError: unindent does not match any outer indentation level\n",
+                "error_meta": {
+                    "code": "TOOL_EXEC_NON_ZERO_EXIT",
+                    "hint": "命令返回非 0，请先根据 stderr 修正后再重试。",
+                    "retryable": false,
+                    "retry_after_ms": null
+                }
+            }),
+            error: "命令退出码 1。".to_string(),
+            sandbox: true,
+            timestamp: Utc::now(),
+            meta: Some(json!({
+                "error_code": "TOOL_EXEC_NON_ZERO_EXIT",
+                "error_retryable": false,
+                "duration_ms": 105
+            })),
+        };
+
+        let compacted = payload.to_compact_payload("执行命令");
+        assert!(compacted.get("data").is_none());
+        assert_eq!(
+            compacted.get("error").and_then(Value::as_str),
+            Some(
+                "命令退出码 1。 stderr: IndentationError: unindent does not match any outer indentation level"
+            )
+        );
+        assert_eq!(
+            compacted.get("error_code").and_then(Value::as_str),
+            Some("TOOL_EXEC_NON_ZERO_EXIT")
         );
     }
 

@@ -204,7 +204,15 @@ const formatQuotaValue = (user) => {
   if (!Number.isFinite(balance)) {
     return "-";
   }
-  return String(Math.max(0, Math.floor(balance)));
+  return formatTokenDisplay(balance);
+};
+
+const formatTokenDisplay = (value) => {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "-";
+  }
+  return `${(Math.max(0, amount) / 1000).toFixed(1)}k`;
 };
 
 const formatQuotaMeta = (user) => {
@@ -215,7 +223,12 @@ const formatQuotaMeta = (user) => {
   const used = Number.isFinite(user.token_used_total) ? Math.max(0, Math.floor(user.token_used_total)) : 0;
   const granted = Number.isFinite(user.token_granted_total) ? Math.max(0, Math.floor(user.token_granted_total)) : 0;
   const daily = Number.isFinite(user.daily_token_grant) ? Math.max(0, Math.floor(user.daily_token_grant)) : 0;
-  return t("userAccounts.modal.settings.quota.meta", { balance, used, granted, daily });
+  return t("userAccounts.modal.settings.quota.meta", {
+    balance: formatTokenDisplay(balance),
+    used: formatTokenDisplay(used),
+    granted: formatTokenDisplay(granted),
+    daily: formatTokenDisplay(daily),
+  });
 };
 
 const formatOnlineStatus = (user) =>

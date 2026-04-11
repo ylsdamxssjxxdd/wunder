@@ -189,7 +189,6 @@ impl DesktopBridge {
             );
             println!("  (use --print-token to print full token)");
         }
-
     }
 
     pub async fn shutdown(&mut self) {

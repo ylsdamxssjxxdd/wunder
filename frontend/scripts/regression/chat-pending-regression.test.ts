@@ -7,6 +7,10 @@ import {
   findPendingAssistantMessage,
   stopPendingAssistantMessage
 } from '../../src/stores/chatPendingMessage';
+import {
+  isSupersededRunningManualCompactionMarker,
+  shouldPreserveTerminalCompactionMarkerState
+} from '../../src/stores/chatCompactionMarker';
 import { isSessionBusyFromSignals } from '../../src/utils/chatSessionRuntime';
 import { isCompactionRunningFromWorkflowItems, resolveLatestCompactionSnapshot } from '../../src/utils/chatCompactionWorkflow';
 
@@ -181,4 +185,86 @@ test('compaction progress with explicit completed status is not treated as runni
   assert.equal(snapshot?.status, 'completed');
   assert.equal(snapshot?.explicitStatus, true);
   assert.equal(isCompactionRunningFromWorkflowItems(items), false);
+});
+
+test('terminal manual compaction marker is not downgraded by a stale running snapshot', () => {
+  const terminal = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:02.000Z',
+    stream_round: 2,
+    workflowStreaming: false,
+    stream_incomplete: false,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction',
+        status: 'completed',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"done","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+  const running = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:00.000Z',
+    stream_round: 2,
+    workflowStreaming: true,
+    stream_incomplete: true,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"loading","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+
+  assert.equal(shouldPreserveTerminalCompactionMarkerState(terminal, running), true);
+});
+
+test('running manual compaction marker is suppressed once the terminal marker is already present', () => {
+  const terminal = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:02.000Z',
+    stream_round: 2,
+    workflowStreaming: false,
+    stream_incomplete: false,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction',
+        status: 'completed',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"done","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+  const running = {
+    role: 'assistant',
+    content: '',
+    created_at: '2026-04-10T10:00:00.000Z',
+    stream_round: 2,
+    workflowStreaming: true,
+    stream_incomplete: true,
+    manual_compaction_marker: true,
+    workflowItems: [
+      {
+        eventType: 'compaction_progress',
+        status: 'loading',
+        toolName: 'context_compaction',
+        toolCallId: 'compaction:manual:demo-2',
+        detail: '{"status":"loading","trigger_mode":"manual","user_round":2}'
+      }
+    ]
+  };
+
+  assert.equal(isSupersededRunningManualCompactionMarker(running, [terminal]), true);
 });

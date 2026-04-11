@@ -151,6 +151,13 @@ fn payload_dispatch_id(payload: &Value) -> Option<String> {
 }
 
 pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
+    suppress_auto_wake_from_wait_result_with_parent(result, None);
+}
+
+pub(crate) fn suppress_auto_wake_from_wait_result_with_parent(
+    result: &Value,
+    fallback_parent_session_id: Option<&str>,
+) {
     let payload = result
         .get("data")
         .filter(|value| value.is_object())
@@ -178,7 +185,11 @@ pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
     let Some(source) = source else {
         return;
     };
-    let Some(parent_session_id) = source.iter().find_map(payload_parent_session_id) else {
+    let Some(parent_session_id) = source
+        .iter()
+        .find_map(payload_parent_session_id)
+        .or_else(|| normalize_optional(fallback_parent_session_id))
+    else {
         return;
     };
     let dispatch_id = normalize_optional(payload.get("dispatch_id").and_then(Value::as_str))
@@ -188,6 +199,15 @@ pub(crate) fn suppress_auto_wake_from_wait_result(result: &Value) {
         if let Some(run_id) = payload_run_id(item) {
             mark_auto_wake_consumed(&parent_session_id, None, Some(&run_id));
         }
+    }
+    for run_id in payload
+        .get("run_ids")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        mark_auto_wake_consumed(&parent_session_id, None, Some(run_id));
     }
 }
 
@@ -1704,7 +1724,7 @@ fn mark_auto_wake_consumed(
     }
 }
 
-fn is_auto_wake_consumed(
+pub(crate) fn is_auto_wake_consumed(
     parent_session_id: &str,
     dispatch_id: Option<&str>,
     run_id: Option<&str>,
@@ -1744,7 +1764,7 @@ mod tests {
     use super::{
         encode_parent_turn_ref, is_auto_wake_consumed, list_parent_subagents_with_options,
         parent_session_blocks_auto_wake, suppress_auto_wake_from_wait_result,
-        ParentSubagentListOptions,
+        suppress_auto_wake_from_wait_result_with_parent, ParentSubagentListOptions,
     };
     use crate::storage::{ChatSessionRecord, SessionRunRecord, SqliteStorage, StorageBackend};
     use serde_json::{json, Value};
@@ -2317,6 +2337,25 @@ mod tests {
                 ]
             }
         }));
+        assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
+    }
+
+    #[test]
+    fn wait_result_can_use_fallback_parent_session_to_suppress_auto_wake() {
+        let parent_session_id = "sess_parent_wait_fallback";
+        let run_id = "run_wait_fallback";
+        suppress_auto_wake_from_wait_result_with_parent(
+            &json!({
+                "completion_reached": true,
+                "run_ids": [run_id],
+                "selected_items": [
+                    {
+                        "run_id": run_id,
+                    }
+                ]
+            }),
+            Some(parent_session_id),
+        );
         assert!(is_auto_wake_consumed(parent_session_id, None, Some(run_id)));
     }
 

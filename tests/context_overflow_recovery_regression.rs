@@ -591,6 +591,21 @@ fn assert_compaction_history_is_semantically_clean(messages: &[Value]) {
     }
 }
 
+fn assert_no_partial_compaction_prefix(messages: &[Value]) {
+    for message in messages {
+        let Some(content) = message.get("content").and_then(Value::as_str) else {
+            continue;
+        };
+        let trimmed = content.trim();
+        assert!(
+            trimmed.is_empty()
+                || !trimmed.starts_with("[上下文")
+                || HistoryManager::is_compaction_summary_item(message),
+            "request/history should not retain a broken partial compaction prefix: {trimmed}"
+        );
+    }
+}
+
 fn assert_replacement_history_keeps_edge_rounds(
     replacement_history: &[Value],
     expected_markers: &[&str],
@@ -922,6 +937,76 @@ async fn manual_compaction_keeps_first_and_recent_two_turns() {
             "[mindie-overflow-regression] round=5",
             "[mindie-overflow-regression] round=6",
         ],
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_compaction_low_budget_keeps_retained_edge_message_when_budget_allows() {
+    let context = build_test_context_with_compaction_and_mock_limit(
+        "mindie_manual_compaction_low_budget_edges",
+        32_768,
+        Some("keep"),
+        6_144,
+    )
+    .await;
+    let session_id = create_test_session(&context, "Manual compaction low budget edges").await;
+
+    run_pressure_rounds(&context, &session_id, 6, 420).await;
+    trigger_manual_compaction_and_wait(&context, &session_id).await;
+
+    let raw_history = context
+        .state
+        .workspace
+        .load_history(&context.user_id, &session_id, 0)
+        .expect("load raw history after compaction");
+    let replacement_history = latest_replacement_history_snapshot(&raw_history);
+    assert!(
+        replacement_history.len() > 1,
+        "low-budget compaction should keep at least one retained interaction beyond the summary"
+    );
+    assert_no_partial_compaction_prefix(&replacement_history);
+    assert_replacement_history_keeps_edge_rounds(
+        &replacement_history,
+        &["[mindie-overflow-regression] round=1"],
+    );
+
+    let (status, payload) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": build_pressure_question(7, 420),
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "follow-up round failed: {payload}");
+
+    let request_messages = latest_success_request_messages(&context);
+    assert!(
+        request_messages.len() > 3,
+        "next request should include retained interaction content in addition to system, summary, and current user"
+    );
+    assert_no_partial_compaction_prefix(&request_messages);
+    assert!(
+        request_messages.iter().any(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("[mindie-overflow-regression] round=1"))
+        }),
+        "next request should still carry the retained edge interaction when budget allows it"
+    );
+    let request_summary = request_messages
+        .iter()
+        .find(|message| HistoryManager::is_compaction_summary_item(message))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .expect("next request summary after low-budget compaction");
+    assert!(
+        summary_body(request_summary).chars().count() > 32,
+        "next request summary should remain readable after low-budget compaction: {request_summary}"
     );
 }
 

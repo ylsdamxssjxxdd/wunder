@@ -125,6 +125,16 @@ const compareParentTurnKeys = (left: BeeroomParentTurnKey, right: BeeroomParentT
 const buildSubagentIdentity = (item: Pick<BeeroomMissionSubagentItem, 'key' | 'sessionId' | 'runId'>) =>
   normalizeText(item.runId || item.sessionId || item.key);
 
+export const shouldIgnoreBeeroomMissionSubagentItem = (
+  item: Pick<BeeroomMissionSubagentItem, 'sessionId' | 'runKind' | 'requestedBy' | 'status'>
+) => {
+  const sessionId = normalizeText(item.sessionId);
+  const runKind = normalizeText(item.runKind).toLowerCase();
+  const requestedBy = normalizeText(item.requestedBy).toLowerCase();
+  const status = normalizeText(item.status).toLowerCase();
+  return !sessionId && status === 'not_found' && !runKind && !requestedBy;
+};
+
 const shouldPreferIncomingSubagent = (
   current: BeeroomMissionSubagentItem,
   incoming: BeeroomMissionSubagentItem
@@ -217,6 +227,9 @@ export const mergeBeeroomMissionSubagentItems = (
   const merged = new Map<string, BeeroomMissionSubagentItem>();
   sources.forEach((items) => {
     (Array.isArray(items) ? items : []).forEach((item) => {
+      if (shouldIgnoreBeeroomMissionSubagentItem(item)) {
+        return;
+      }
       const identity = buildSubagentIdentity(item);
       if (!identity) return;
       const current = merged.get(identity);

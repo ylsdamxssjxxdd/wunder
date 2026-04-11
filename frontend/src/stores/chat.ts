@@ -68,7 +68,9 @@ import {
 } from './chatWatchLifecycle';
 import {
   isCompactionMarkerAssistantMessage,
-  mergeCompactionMarkersIntoMessages
+  isSupersededRunningManualCompactionMarker,
+  mergeCompactionMarkersIntoMessages,
+  shouldPreserveTerminalCompactionMarkerState
 } from './chatCompactionMarker';
 import { replaceMessageArrayKeepingReference } from './chatMessageArraySync';
 import {
@@ -1727,6 +1729,10 @@ const mergeSnapshotAssistant = (target, snapshot) => {
       normalizeFlag(snapshot.workflowStreaming) ||
       normalizeFlag(snapshot.reasoningStreaming)
     );
+  const preserveTerminalCompactionState =
+    targetIsCompactionMarker &&
+    snapshotIsCompactionMarker &&
+    shouldPreserveTerminalCompactionMarkerState(target, snapshot);
   const hasWorkflowItems =
     Array.isArray(snapshot.workflowItems) && snapshot.workflowItems.length > 0;
   const shouldMergeContent =
@@ -1767,13 +1773,14 @@ const mergeSnapshotAssistant = (target, snapshot) => {
     target.reasoning = snapshot.reasoning;
   }
   if (shouldMergeFlags) {
-    target.reasoningStreaming =
-      normalizeFlag(snapshot.reasoningStreaming) ||
-      normalizeFlag(target.reasoningStreaming);
+    target.reasoningStreaming = preserveTerminalCompactionState
+      ? normalizeFlag(target.reasoningStreaming)
+      : normalizeFlag(snapshot.reasoningStreaming) || normalizeFlag(target.reasoningStreaming);
     if (hasWorkflowItems) {
       const targetHasItems =
         Array.isArray(target.workflowItems) && target.workflowItems.length > 0;
       const shouldPreferSnapshotWorkflowItems =
+        !preserveTerminalCompactionState &&
         snapshotPendingManualCompaction && isCompactionMarkerAssistantMessage(target);
       if (
         shouldPreferSnapshotWorkflowItems ||
@@ -1783,12 +1790,12 @@ const mergeSnapshotAssistant = (target, snapshot) => {
         target.workflowItems = snapshot.workflowItems;
       }
     }
-    target.workflowStreaming =
-      normalizeFlag(snapshot.workflowStreaming) ||
-      normalizeFlag(target.workflowStreaming);
-    target.stream_incomplete =
-      normalizeFlag(snapshot.stream_incomplete) ||
-      normalizeFlag(target.stream_incomplete);
+    target.workflowStreaming = preserveTerminalCompactionState
+      ? normalizeFlag(target.workflowStreaming)
+      : normalizeFlag(snapshot.workflowStreaming) || normalizeFlag(target.workflowStreaming);
+    target.stream_incomplete = preserveTerminalCompactionState
+      ? normalizeFlag(target.stream_incomplete)
+      : normalizeFlag(snapshot.stream_incomplete) || normalizeFlag(target.stream_incomplete);
     target.resume_available =
       normalizeFlag(snapshot.resume_available) ||
       normalizeFlag(target.resume_available);
@@ -4735,9 +4742,13 @@ const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages)
   });
   const livePendingAssistant = findPendingAssistantMessage(liveMessages);
   let appendedLivePending = false;
+  const suppressedLivePendingCompaction =
+    isCompactionMarkerAssistantMessage(livePendingAssistant) &&
+    isSupersededRunningManualCompactionMarker(livePendingAssistant, mergedMessages);
   if (
     isForegroundRealtimeAssistant(livePendingAssistant) &&
-    !matchedLiveAssistants.has(livePendingAssistant)
+    !matchedLiveAssistants.has(livePendingAssistant) &&
+    !suppressedLivePendingCompaction
   ) {
     mergedMessages.push(livePendingAssistant);
     appendedLivePending = true;
@@ -4748,6 +4759,7 @@ const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages)
       matchedLiveAssistantCount: matchedLiveAssistants.size,
       liveAssistantCount: liveAssistants.length,
       appendedLivePending,
+      suppressedLivePendingCompaction,
       pendingAssistantPreserved: Boolean(
         livePendingAssistant && mergedMessages.includes(livePendingAssistant)
       ),

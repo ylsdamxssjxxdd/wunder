@@ -28,7 +28,10 @@ use crate::services::tools::command_output_guard::{
     derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
     CommandOutputCollector, CommandOutputPolicy, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
 };
-use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
+use crate::services::tools::tool_error::{
+    build_execute_command_failure_data, build_execute_command_failure_message, with_error_meta,
+    ToolErrorMeta,
+};
 
 const DEFAULT_WORKSPACE_ROOT: &str = "/workspaces";
 const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
@@ -560,19 +563,13 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             return ToolResult {
                 ok: false,
                 data: with_error_meta(
-                    json!({
-                        "results": results,
-                        "meta": {
-                            "output_guard": {
-                                "truncated": guarded_truncated_commands > 0,
-                                "commands": guarded_total_commands,
-                                "truncated_commands": guarded_truncated_commands,
-                                "total_bytes": guarded_total_bytes,
-                                "omitted_bytes": guarded_omitted_bytes,
-                                "effective_total_bytes": effective_output_budget_bytes,
-                            }
-                        }
-                    }),
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        true,
+                    ),
                     ToolErrorMeta::new(
                         "TOOL_EXEC_TIMEOUT",
                         Some(
@@ -583,13 +580,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                         Some(500),
                     ),
                 ),
-                error: i18n::t_with_params(
-                    "tool.exec.command_failed",
-                    &std::collections::HashMap::from([(
-                        "detail".to_string(),
-                        format!("timeout after {timeout_s}s"),
-                    )]),
-                ),
+                error: build_execute_command_failure_message(&results, true),
             };
         }
 
@@ -597,19 +588,13 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             return ToolResult {
                 ok: false,
                 data: with_error_meta(
-                    json!({
-                        "results": results,
-                        "meta": {
-                            "output_guard": {
-                                "truncated": guarded_truncated_commands > 0,
-                                "commands": guarded_total_commands,
-                                "truncated_commands": guarded_truncated_commands,
-                                "total_bytes": guarded_total_bytes,
-                                "omitted_bytes": guarded_omitted_bytes,
-                                "effective_total_bytes": effective_output_budget_bytes,
-                            }
-                        }
-                    }),
+                    build_execute_command_failure_data(
+                        &results,
+                        guarded_total_commands,
+                        guarded_truncated_commands > 0,
+                        guarded_omitted_bytes,
+                        false,
+                    ),
                     ToolErrorMeta::new(
                         "TOOL_EXEC_NON_ZERO_EXIT",
                         Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
@@ -617,7 +602,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
                         None,
                     ),
                 ),
-                error: i18n::t("tool.exec.failed"),
+                error: build_execute_command_failure_message(&results, false),
             };
         }
     }

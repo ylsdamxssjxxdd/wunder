@@ -4,6 +4,7 @@ export type BeeroomProjectedSubagentLike = {
   runId?: string;
   runKind?: string;
   requestedBy?: string;
+  status?: string;
   workflowItems?: unknown[];
 };
 
@@ -39,6 +40,14 @@ export type BeeroomSwarmSubagentProjectionContext = {
 export type BeeroomSwarmSubagentProjectionDecision = {
   projectable: boolean;
   reason: string;
+};
+
+export const isBeeroomTargetNotFoundGhostSubagent = <T extends BeeroomProjectedSubagentLike>(item: T) => {
+  const sessionId = normalizeProjectedIdentity(item.sessionId);
+  const runKind = normalizeProjectedSubagentFlag(item.runKind);
+  const requestedBy = normalizeProjectedSubagentFlag(item.requestedBy);
+  const status = normalizeProjectedSubagentFlag(item.status);
+  return !sessionId && status === 'not_found' && !runKind && !requestedBy;
 };
 
 export const isBeeroomSwarmWorkerShadowItem = <T extends BeeroomProjectedSubagentLike>(item: T) => {
@@ -84,6 +93,12 @@ export const resolveBeeroomSwarmSubagentProjectionDecision = <T extends BeeroomP
   item: T,
   context?: Partial<BeeroomSwarmSubagentProjectionContext>
 ): BeeroomSwarmSubagentProjectionDecision => {
+  if (isBeeroomTargetNotFoundGhostSubagent(item)) {
+    return {
+      projectable: false,
+      reason: 'filtered:target_not_found_ghost'
+    };
+  }
   const sessionId = normalizeProjectedIdentity(item.sessionId);
   if (sessionId && context?.swarmTaskSessionIds?.has(sessionId)) {
     return {

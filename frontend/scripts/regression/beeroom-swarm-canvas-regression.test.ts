@@ -12,6 +12,7 @@ import { resolveBeeroomSwarmNodeStatus } from '../../src/components/beeroom/canv
 import {
   isBeeroomSwarmWorkerShadowItem,
   buildBeeroomSwarmSubagentProjectionContext,
+  isBeeroomTargetNotFoundGhostSubagent,
   resolveBeeroomSwarmWorkerShadowMatch,
   resolveProjectedWorkerSubagents,
   resolveBeeroomSwarmSubagentProjectionDecision,
@@ -167,6 +168,59 @@ test('canvas projection rejects swarm worker sessions from the generic subagent 
       })
     ),
     false
+  );
+});
+
+test('canvas projection rejects target-not-found ghost children created by mistyped wait run ids', () => {
+  const ghost = buildSubagent({
+    key: 'run_ghost',
+    sessionId: ' ',
+    runId: 'run_ghost',
+    runKind: ' ',
+    requestedBy: ' ',
+    status: 'not_found',
+    failed: true,
+    terminal: true
+  });
+
+  assert.equal(isBeeroomTargetNotFoundGhostSubagent(ghost), true);
+  assert.deepEqual(resolveBeeroomSwarmSubagentProjectionDecision(ghost), {
+    projectable: false,
+    reason: 'filtered:target_not_found_ghost'
+  });
+
+  const projected = resolveProjectedWorkerSubagents({
+    workerRole: 'worker',
+    workerNodeId: 'agent:worker-1',
+    runtimeTargetNodeId: '',
+    runtimeSubagents: [],
+    tasks: [
+      {
+        task_id: 'task-1',
+        agent_id: 'worker-1',
+        status: 'running',
+        updated_time: 20
+      }
+    ],
+    subagentsByTask: {
+      'task-1': [
+        buildSubagent({
+          key: 'run_real',
+          sessionId: 'sess_real',
+          runId: 'run_real',
+          runKind: 'subagent',
+          requestedBy: 'subagent_control',
+          status: 'success',
+          terminal: true
+        }),
+        ghost
+      ]
+    }
+  });
+
+  assert.deepEqual(
+    projected.map((item) => item.runId),
+    ['run_real']
   );
 });
 

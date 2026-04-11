@@ -3,6 +3,9 @@ export type PromptToolingPreviewItem = {
   name: string;
   description: string;
   protocolName: string;
+  kind: 'tool' | 'skill';
+  group: string;
+  source: string;
 };
 
 export type PromptToolingPreview = {
@@ -74,6 +77,77 @@ type ToolMeta = {
   protocolName: string;
 };
 
+type PromptToolingAbilityMeta = Pick<PromptToolingPreviewItem, 'kind' | 'group' | 'source'>;
+
+const SKILL_KEYWORDS = ['skill', 'skills', 'workflow', 'template', 'preset', 'agent preset', '技能'];
+const MCP_KEYWORDS = ['mcp', 'connector', 'integration', 'endpoint'];
+const KNOWLEDGE_KEYWORDS = [
+  'knowledge',
+  'knowledgebase',
+  'knowledge base',
+  'knowledge_base',
+  'rag',
+  'vector',
+  'embedding',
+  'document',
+  'kb',
+  '知识'
+];
+
+const matchesKeyword = (text: string, keywords: string[]): boolean => {
+  const lowerText = text.toLowerCase();
+  const normalizedText = normalizeKey(text);
+  return keywords.some((keyword) => {
+    const lowerKeyword = keyword.toLowerCase();
+    if (lowerText.includes(lowerKeyword)) {
+      return true;
+    }
+    const normalizedKeyword = normalizeKey(lowerKeyword);
+    return Boolean(normalizedKeyword && normalizedText.includes(normalizedKeyword));
+  });
+};
+
+export const inferPromptToolingAbilityMeta = (value: {
+  name?: unknown;
+  description?: unknown;
+  protocolName?: unknown;
+}): PromptToolingAbilityMeta => {
+  const name = cleanText(value.name);
+  const description = cleanText(value.description);
+  const protocolName = cleanText(value.protocolName);
+  const text = [name, description, protocolName].filter(Boolean).join(' ');
+
+  if (protocolName.includes('@') || matchesKeyword(text, MCP_KEYWORDS)) {
+    return {
+      kind: 'tool',
+      group: 'mcp',
+      source: 'mcp'
+    };
+  }
+
+  if (matchesKeyword(text, KNOWLEDGE_KEYWORDS)) {
+    return {
+      kind: 'tool',
+      group: 'knowledge',
+      source: 'knowledge'
+    };
+  }
+
+  if (matchesKeyword(text, SKILL_KEYWORDS)) {
+    return {
+      kind: 'skill',
+      group: 'skills',
+      source: 'skills'
+    };
+  }
+
+  return {
+    kind: 'tool',
+    group: '',
+    source: protocolName || name
+  };
+};
+
 const extractLlmToolMeta = (value: unknown): ToolMeta | null => {
   const tool = asRecord(value);
   const type = cleanText(tool.type).toLowerCase();
@@ -140,11 +214,19 @@ const buildPromptToolingItems = (tooling: Record<string, unknown>): PromptToolin
     if (uniqueKey) {
       used.add(uniqueKey);
     }
+    const meta = inferPromptToolingAbilityMeta({
+      name,
+      description: tool?.description,
+      protocolName
+    });
     items.push({
       key: `${uniqueKey || 'tool'}-${items.length}`,
       name,
       description: cleanText(tool?.description),
-      protocolName
+      protocolName,
+      kind: meta.kind,
+      group: meta.group,
+      source: meta.source
     });
   };
 

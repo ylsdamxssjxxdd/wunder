@@ -8,7 +8,7 @@ const COMPACTION_RETAINED_INTERACTION_BLOCK_COUNT_PER_SIDE: usize =
     COMPACTION_RETAINED_INTERACTION_EXCHANGE_COUNT_PER_SIDE * 2;
 const COMPACTION_RETAINED_HEAD_INTERACTION_TOKENS: i64 = 8_192;
 const COMPACTION_RETAINED_TAIL_INTERACTION_TOKENS: i64 = 16_384;
-const COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS: i64 = 1_024;
+const COMPACTION_RETAINED_INTERACTION_MESSAGE_MAX_TOKENS: i64 = 5_120;
 const COMPACTION_RETAINED_INTERACTION_TURN_MAX_CHARS: usize = 20_000;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 const COMPACTION_INFLIGHT_CURRENT_USER_META_KEY: &str = "compaction_inflight_current_user";
@@ -19,6 +19,7 @@ const COMPACTION_TEXT_TRUNCATION_SUFFIX: &str = "...(truncated)";
 const COMPACTION_SUMMARY_MAX_CHARS: usize = 20_000;
 const COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS: usize = 8;
 const COMPACTION_DEBUG_PREVIEW_CHARS: usize = 240;
+const COMPACTION_MIN_RETAINED_INTERACTION_TOKENS: i64 = 128;
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -2122,7 +2123,24 @@ fn reduce_to_summary_priority_context(
         prioritized.push(system_message);
     }
     if let Some(summary_index) = summary_index {
+        prioritized.extend(
+            messages[..summary_index]
+                .iter()
+                .filter(|message| is_retained_interaction_message(message))
+                .cloned(),
+        );
         prioritized.push(messages[summary_index].clone());
+    }
+    if let Some(summary_index) = summary_index {
+        let tail_end = current_user_index.unwrap_or(messages.len());
+        if summary_index + 1 < tail_end {
+            prioritized.extend(
+                messages[summary_index + 1..tail_end]
+                    .iter()
+                    .filter(|message| is_retained_interaction_message(message))
+                    .cloned(),
+            );
+        }
     }
     if let Some(current_user_index) = current_user_index {
         if Some(current_user_index) != summary_index {
@@ -2168,9 +2186,10 @@ fn reduce_to_summary_priority_context(
                 .max(estimate_message_tokens(&messages[summary_index]));
             let remaining_for_summary =
                 (limit - (total_tokens - stats.summary_tokens_before)).max(1);
-            if let Some(trimmed) =
-                trim_message_to_fit_tokens(&messages[summary_index], remaining_for_summary)
-            {
+            if let Some(trimmed) = trim_compaction_summary_message_to_fit_tokens(
+                &messages[summary_index],
+                remaining_for_summary,
+            ) {
                 let trimmed_summary =
                     extract_guard_content_text(trimmed.get("content").unwrap_or(&Value::Null));
                 if !is_invalid_compaction_summary(&trimmed_summary) {
@@ -2182,6 +2201,95 @@ fn reduce_to_summary_priority_context(
             }
         }
     }
+
+    if total_tokens > limit {
+        rebalance_retained_interaction_context(messages, limit);
+        total_tokens = estimate_messages_tokens(messages);
+    }
+
+    if total_tokens > limit {
+        if tighten_retained_interaction_context(messages, limit) {
+            total_tokens = estimate_messages_tokens(messages);
+        }
+    }
+
+    if total_tokens > limit {
+        let current_user_index = locate_rebuilt_current_user_index(messages);
+        let summary_index = locate_compaction_summary_message_index(messages);
+        *messages = messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                if message.get("role").and_then(Value::as_str) == Some("system")
+                    || Some(index) == summary_index
+                    || Some(index) == current_user_index
+                {
+                    Some(message.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
+}
+
+fn trim_summary_to_preserve_retained_interaction_budget(
+    messages: &mut Vec<Value>,
+    limit: i64,
+    stats: &mut RebuiltContextGuardStats,
+) {
+    if messages.is_empty() || limit <= 0 {
+        return;
+    }
+
+    let retained_total_tokens = messages
+        .iter()
+        .filter(|message| is_retained_interaction_message(message))
+        .map(estimate_message_tokens)
+        .sum::<i64>();
+    if retained_total_tokens <= 0 {
+        return;
+    }
+
+    let total_tokens = estimate_messages_tokens(messages);
+    if total_tokens <= limit {
+        return;
+    }
+
+    let retained_floor = retained_total_tokens.min(COMPACTION_MIN_RETAINED_INTERACTION_TOKENS);
+    let reducible_retained_tokens = retained_total_tokens.saturating_sub(retained_floor);
+    let overflow = total_tokens - limit;
+    if overflow <= reducible_retained_tokens {
+        return;
+    }
+
+    let Some(summary_index) = locate_compaction_summary_message_index(messages) else {
+        return;
+    };
+    let summary_tokens_before = estimate_message_tokens(&messages[summary_index]);
+    if summary_tokens_before <= 1 {
+        return;
+    }
+
+    let required_summary_reduction = overflow - reducible_retained_tokens;
+    let target_tokens = summary_tokens_before
+        .saturating_sub(required_summary_reduction)
+        .max(1);
+    let Some(trimmed) =
+        trim_compaction_summary_message_to_fit_tokens(&messages[summary_index], target_tokens)
+    else {
+        return;
+    };
+    let trimmed_summary =
+        extract_guard_content_text(trimmed.get("content").unwrap_or(&Value::Null));
+    if is_invalid_compaction_summary(&trimmed_summary) {
+        return;
+    }
+
+    stats.summary_tokens_before = stats.summary_tokens_before.max(summary_tokens_before);
+    stats.summary_tokens_after = estimate_message_tokens(&trimmed);
+    stats.summary_trimmed |= stats.summary_tokens_after < stats.summary_tokens_before;
+    messages[summary_index] = trimmed;
 }
 
 fn rebalance_retained_interaction_context(messages: &mut Vec<Value>, limit: i64) {
@@ -2283,6 +2391,50 @@ fn rebalance_retained_interaction_context(messages: &mut Vec<Value>, limit: i64)
     *messages = rebuilt;
 }
 
+fn tighten_retained_interaction_context(messages: &mut Vec<Value>, limit: i64) -> bool {
+    if messages.is_empty() || limit <= 0 {
+        return false;
+    }
+
+    let mut changed = false;
+    loop {
+        let total_tokens = estimate_messages_tokens(messages);
+        if total_tokens <= limit {
+            break;
+        }
+        let overflow = total_tokens - limit;
+        let retained_candidate = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| is_retained_interaction_message(message))
+            .max_by_key(|(_, message)| estimate_message_tokens(message))
+            .map(|(index, message)| (index, estimate_message_tokens(message)));
+        let Some((index, retained_tokens)) = retained_candidate else {
+            break;
+        };
+        if retained_tokens <= 1 {
+            messages.remove(index);
+            changed = true;
+            continue;
+        }
+
+        let target_tokens =
+            (retained_tokens - overflow).clamp(1, retained_tokens.saturating_sub(1));
+        let trimmed = trim_message_to_fit_tokens(&messages[index], target_tokens);
+        let next_message =
+            trimmed.filter(|candidate| estimate_message_tokens(candidate) < retained_tokens);
+
+        if let Some(next_message) = next_message {
+            messages[index] = next_message;
+        } else {
+            messages.remove(index);
+        }
+        changed = true;
+    }
+
+    changed
+}
+
 fn apply_rebuilt_context_guard(
     messages: &mut Vec<Value>,
     limit: i64,
@@ -2306,9 +2458,10 @@ fn apply_rebuilt_context_guard(
             stats.summary_tokens_before = estimate_message_tokens(&messages[summary_index]);
             let remaining_for_summary =
                 (limit - (total_tokens - stats.summary_tokens_before)).max(1);
-            if let Some(trimmed) =
-                trim_message_to_fit_tokens(&messages[summary_index], remaining_for_summary)
-            {
+            if let Some(trimmed) = trim_compaction_summary_message_to_fit_tokens(
+                &messages[summary_index],
+                remaining_for_summary,
+            ) {
                 let trimmed_summary =
                     extract_guard_content_text(trimmed.get("content").unwrap_or(&Value::Null));
                 if !is_invalid_compaction_summary(&trimmed_summary) {
@@ -2356,6 +2509,17 @@ fn apply_rebuilt_context_guard(
     if total_tokens > limit {
         rebalance_retained_interaction_context(messages, limit);
         total_tokens = estimate_messages_tokens(messages);
+    }
+
+    if total_tokens > limit && prefer_preserving_summary {
+        trim_summary_to_preserve_retained_interaction_budget(messages, limit, &mut stats);
+        total_tokens = estimate_messages_tokens(messages);
+    }
+
+    if total_tokens > limit {
+        if tighten_retained_interaction_context(messages, limit) {
+            total_tokens = estimate_messages_tokens(messages);
+        }
     }
 
     if total_tokens > limit && !prefer_preserving_summary {
@@ -2414,9 +2578,10 @@ fn apply_rebuilt_context_guard(
                 .max(estimate_message_tokens(&messages[summary_index]));
             let remaining_for_summary =
                 (limit - (total_tokens - stats.summary_tokens_before)).max(1);
-            if let Some(trimmed) =
-                trim_message_to_fit_tokens(&messages[summary_index], remaining_for_summary)
-            {
+            if let Some(trimmed) = trim_compaction_summary_message_to_fit_tokens(
+                &messages[summary_index],
+                remaining_for_summary,
+            ) {
                 let trimmed_summary =
                     extract_guard_content_text(trimmed.get("content").unwrap_or(&Value::Null));
                 if !is_invalid_compaction_summary(&trimmed_summary) {
@@ -2435,19 +2600,31 @@ fn apply_rebuilt_context_guard(
             let last_tokens = estimate_message_tokens(&messages[last_index]);
             let current_user_index = locate_rebuilt_current_user_index(messages);
             let trimming_current_user = current_user_index == Some(last_index);
+            let trimming_summary =
+                locate_compaction_summary_message_index(messages) == Some(last_index);
             if trimming_current_user && stats.current_user_tokens_before == 0 {
                 stats.current_user_tokens_before = last_tokens;
             }
             let remaining_for_last = (limit - (total_tokens - last_tokens)).max(1);
-            if let Some(trimmed) =
+            let trimmed = if trimming_summary {
+                trim_compaction_summary_message_to_fit_tokens(
+                    &messages[last_index],
+                    remaining_for_last,
+                )
+            } else {
                 trim_message_to_fit_tokens(&messages[last_index], remaining_for_last)
-            {
+            };
+            if let Some(trimmed) = trimmed {
                 let trimmed_tokens = estimate_message_tokens(&trimmed);
                 if trimming_current_user {
                     stats.current_user_tokens_after = trimmed_tokens;
                     stats.current_user_trimmed |= trimmed_tokens < stats.current_user_tokens_before;
                 }
                 messages[last_index] = trimmed;
+                total_tokens = estimate_messages_tokens(messages);
+            } else if trimming_summary && last_tokens > remaining_for_last {
+                messages.remove(last_index);
+                stats.summary_removed = true;
                 total_tokens = estimate_messages_tokens(messages);
             }
         }
@@ -2464,11 +2641,22 @@ fn apply_rebuilt_context_guard(
         total_tokens = estimate_messages_tokens(messages);
         if total_tokens > limit {
             if let Some(last_index) = messages.len().checked_sub(1) {
-                if let Some(trimmed) =
+                let trimming_summary =
+                    locate_compaction_summary_message_index(messages) == Some(last_index);
+                let trimmed = if trimming_summary {
+                    trim_compaction_summary_message_to_fit_tokens(
+                        &messages[last_index],
+                        limit.max(1),
+                    )
+                } else {
                     trim_message_to_fit_tokens(&messages[last_index], limit.max(1))
-                {
+                };
+                if let Some(trimmed) = trimmed {
                     *messages = vec![trimmed];
                     total_tokens = estimate_messages_tokens(messages);
+                } else if trimming_summary {
+                    messages.clear();
+                    total_tokens = 0;
                 }
             }
         }
@@ -2516,6 +2704,61 @@ fn trim_message_to_fit_tokens(message: &Value, max_tokens: i64) -> Option<Value>
         target_tokens = next_target;
     }
     trimmed_message
+}
+
+fn trim_compaction_summary_message_to_fit_tokens(
+    message: &Value,
+    max_tokens: i64,
+) -> Option<Value> {
+    if max_tokens <= 0 || estimate_message_tokens(message) <= max_tokens {
+        return None;
+    }
+
+    let summary_text = extract_guard_content_text(message.get("content").unwrap_or(&Value::Null));
+    if !starts_with_compaction_prefix(&summary_text) {
+        return trim_message_to_fit_tokens(message, max_tokens);
+    }
+
+    let mut message_obj = message.as_object().cloned().unwrap_or_else(|| {
+        let mut fallback = serde_json::Map::new();
+        fallback.insert("role".to_string(), Value::String("user".to_string()));
+        fallback.insert("content".to_string(), Value::String(summary_text.clone()));
+        fallback
+    });
+
+    let prefix = i18n::t("history.compaction_prefix");
+    let minimum_chars = prefix
+        .chars()
+        .count()
+        .saturating_add(1)
+        .saturating_add(COMPACTION_MIN_SUMMARY_MEANINGFUL_CHARS);
+    let mut target_chars = ((max_tokens.max(1) as f64) * 4.0).ceil() as usize;
+    target_chars = target_chars.max(minimum_chars);
+
+    for _ in 0..4 {
+        let content = clamp_committed_compaction_summary(&summary_text, target_chars);
+        if is_invalid_compaction_summary(&content) {
+            return None;
+        }
+        message_obj.insert("content".to_string(), Value::String(content));
+        message_obj.remove("reasoning_content");
+        message_obj.remove("reasoning");
+        let candidate = Value::Object(message_obj.clone());
+        let cost = estimate_message_tokens(&candidate);
+        if cost <= max_tokens {
+            return Some(candidate);
+        }
+        let overflow_chars = ((cost - max_tokens).max(1) as f64 * 4.0).ceil() as usize;
+        let next_target = target_chars
+            .saturating_sub(overflow_chars)
+            .max(minimum_chars);
+        if next_target == target_chars {
+            break;
+        }
+        target_chars = next_target;
+    }
+
+    None
 }
 
 fn extract_guard_content_text(content: &Value) -> String {
@@ -3753,7 +3996,11 @@ fn resolve_force_compaction_limit(context_tokens: i64, configured_limit: i64) ->
     if configured_limit <= 0 {
         return COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS.max(1);
     }
-    let adaptive_limit = (context_tokens / 2).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    if configured_limit <= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS {
+        return configured_limit.max(1);
+    }
+    let adaptive_limit =
+        (context_tokens.saturating_mul(3) / 4).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
     adaptive_limit
         .clamp(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS, configured_limit)
         .max(1)
@@ -3943,6 +4190,12 @@ mod tests {
         assert!(configured > 0);
         assert!(forced > 0);
         assert!(forced <= configured);
+    }
+
+    #[test]
+    fn test_resolve_force_compaction_limit_handles_small_configured_limit() {
+        let forced = resolve_force_compaction_limit(4_000, 2_048);
+        assert_eq!(forced, 2_048);
     }
 
     #[test]
@@ -4181,6 +4434,205 @@ mod tests {
             "summary-first compaction should keep the committed summary in the rebuilt request"
         );
         assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_summary_first_keeps_trimmed_retained_interaction() {
+        let summary = format!(
+            "{}\n{}",
+            i18n::t("history.compaction_prefix"),
+            "Compressed earlier context. ".repeat(120)
+        );
+        let mut retained_user = json!({ "role": "user", "content": "round-1 user marker" });
+        mark_retained_interaction_message(&mut retained_user);
+        let mut retained_assistant = json!({
+            "role": "assistant",
+            "content": "round-1 assistant marker ".repeat(120)
+        });
+        mark_retained_interaction_message(&mut retained_assistant);
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt ".repeat(220) }),
+            retained_user,
+            retained_assistant,
+            json!({ "role": "user", "content": summary }),
+        ];
+        let limit = estimate_message_tokens(&messages[0])
+            + estimate_message_tokens(&messages[3])
+            + estimate_message_tokens(&messages[1])
+            + 24;
+
+        let stats = apply_rebuilt_context_guard(&mut messages, limit, true);
+
+        assert!(stats.applied);
+        assert!(
+            messages
+                .iter()
+                .any(|message| HistoryManager::is_compaction_summary_item(message)),
+            "summary-first compaction should keep the summary"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(is_retained_interaction_message),
+            "summary-first compaction should keep a trimmed retained interaction when budget still allows it"
+        );
+        assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_summary_first_trims_summary_to_keep_retained_budget() {
+        let summary = format!(
+            "{}\n{}",
+            i18n::t("history.compaction_prefix"),
+            "summary detail ".repeat(220)
+        );
+        let mut retained_user = json!({ "role": "user", "content": "round-1 user marker" });
+        mark_retained_interaction_message(&mut retained_user);
+        let mut retained_assistant = json!({
+            "role": "assistant",
+            "content": "round-1 assistant marker ".repeat(90)
+        });
+        mark_retained_interaction_message(&mut retained_assistant);
+        let current_user = json!({ "role": "user", "content": "current user marker" });
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt ".repeat(260) }),
+            retained_user,
+            retained_assistant,
+            json!({ "role": "user", "content": summary.clone() }),
+            current_user,
+        ];
+        let limit = estimate_messages_tokens(&messages) - estimate_message_tokens(&messages[2])
+            + COMPACTION_MIN_RETAINED_INTERACTION_TOKENS
+            - 16;
+
+        let stats = apply_rebuilt_context_guard(&mut messages, limit, true);
+
+        assert!(stats.applied);
+        assert!(
+            stats.summary_trimmed,
+            "summary-first guard should trim summary before sacrificing the entire retained window"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(is_retained_interaction_message),
+            "summary-first guard should keep some retained interaction content after trimming the summary"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| HistoryManager::is_compaction_summary_item(message)),
+            "summary-first guard should still keep the summary"
+        );
+        assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_never_keeps_partial_compaction_prefix() {
+        let summary = format!(
+            "{}\n{}",
+            i18n::t("history.compaction_prefix"),
+            "summary detail ".repeat(220)
+        );
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt ".repeat(260) }),
+            json!({ "role": "user", "content": summary }),
+        ];
+        let limit = estimate_message_tokens(&messages[0]) + 8;
+
+        let stats = apply_rebuilt_context_guard(&mut messages, limit, true);
+
+        assert!(stats.applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
+        assert!(
+            messages.iter().all(|message| {
+                let content = message.get("content").and_then(Value::as_str).unwrap_or("");
+                content.is_empty()
+                    || !content.starts_with("[上下文")
+                    || starts_with_compaction_prefix(content)
+            }),
+            "guard should not keep a broken partial compaction prefix"
+        );
+    }
+
+    #[test]
+    fn test_trim_compaction_summary_message_to_fit_tokens_preserves_prefix_shape() {
+        let summary = json!({
+            "role": "user",
+            "content": format!(
+                "{}\n{}",
+                i18n::t("history.compaction_prefix"),
+                "summary detail ".repeat(240)
+            )
+        });
+
+        let trimmed = trim_compaction_summary_message_to_fit_tokens(&summary, 24)
+            .expect("trimmed compaction summary");
+        let content = trimmed
+            .get("content")
+            .and_then(Value::as_str)
+            .expect("summary content");
+
+        assert!(
+            starts_with_compaction_prefix(content),
+            "trimmed compaction summary should keep a valid compaction prefix: {content}"
+        );
+        assert!(
+            !is_invalid_compaction_summary(content),
+            "trimmed compaction summary should remain a valid summary: {content}"
+        );
+        assert!(estimate_message_tokens(&trimmed) <= 24);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_summary_first_keeps_valid_summary_and_retained_window() {
+        let summary = format!(
+            "{}\n{}",
+            i18n::t("history.compaction_prefix"),
+            "summary detail ".repeat(260)
+        );
+        let mut retained_user = json!({ "role": "user", "content": "retained user anchor" });
+        mark_retained_interaction_message(&mut retained_user);
+        let mut retained_assistant = json!({
+            "role": "assistant",
+            "content": "retained assistant anchor ".repeat(100)
+        });
+        mark_retained_interaction_message(&mut retained_assistant);
+        let mut current_user = json!({ "role": "user", "content": "current follow-up request" });
+        mark_current_user_message_inflight(&mut current_user);
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt ".repeat(120) }),
+            retained_user,
+            retained_assistant,
+            json!({ "role": "user", "content": summary }),
+            current_user,
+        ];
+        let limit = estimate_messages_tokens(&messages).saturating_sub(1);
+
+        let stats = apply_rebuilt_context_guard(&mut messages, limit, true);
+
+        assert!(stats.applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
+        assert!(
+            messages.iter().any(is_retained_interaction_message),
+            "summary-first guard should keep retained interaction content in the rebuilt request"
+        );
+        let summary_message = messages
+            .iter()
+            .find(|message| HistoryManager::is_compaction_summary_item(message))
+            .expect("summary message");
+        let summary_text = summary_message
+            .get("content")
+            .and_then(Value::as_str)
+            .expect("summary text");
+        assert!(
+            starts_with_compaction_prefix(summary_text),
+            "summary-first guard should keep a valid compaction summary prefix: {summary_text}"
+        );
+        assert!(
+            !is_invalid_compaction_summary(summary_text),
+            "summary-first guard should keep a valid compaction summary body: {summary_text}"
+        );
     }
 
     #[test]
