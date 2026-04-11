@@ -775,7 +775,7 @@ import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.v
 import PromptToolingPreviewList from '@/components/chat/PromptToolingPreviewList.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
-import { getDesktopRuntime, isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { getDesktopRuntime, isDesktopModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -806,9 +806,9 @@ import {
 } from '@/utils/workspaceRefresh';
 import {
   isCompactionOnlyWorkflowItems,
-  isCompactionRunningFromWorkflowItems,
   resolveLatestCompactionSnapshot
 } from '@/utils/chatCompactionWorkflow';
+import { isAssistantMessageRunning } from '@/utils/assistantMessageRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -840,7 +840,7 @@ const currentUserUnitLabel = computed(() => {
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
 const desktopMode = computed(() => basePath.value === '/desktop');
-const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const desktopLocalMode = computed(() => isDesktopModeEnabled());
 const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
 const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
 const featureTransportText = computed(() =>
@@ -1640,13 +1640,7 @@ const markdownCache = new WeakMap();
 const AGENT_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】」』、]+)?$/;
 
-const isAssistantStreaming = (message) => {
-  if (!message || message.role !== 'assistant') return false;
-  if (Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete)) {
-    return true;
-  }
-  return isCompactionRunningFromWorkflowItems(message.workflowItems);
-};
+const isAssistantStreaming = (message) => isAssistantMessageRunning(message);
 
 const isCompactionMarkerMessage = (message): boolean => {
   if (!message || message.role !== 'assistant') return false;

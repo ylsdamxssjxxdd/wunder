@@ -1,4 +1,4 @@
-import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
+import { isAssistantMessageRunning } from './assistantMessageRuntime';
 
 type ChatMessage = Record<string, unknown>;
 export type ThreadRuntimeStatus =
@@ -57,15 +57,7 @@ export const didThreadRuntimeEnterBusyState = (
 };
 
 export const isAssistantRuntimeRunning = (message: ChatMessage | null | undefined): boolean => {
-  if (!message || message.role !== 'assistant') return false;
-  if (
-    normalizeFlag(message.stream_incomplete)
-    || normalizeFlag(message.workflowStreaming)
-    || normalizeFlag(message.reasoningStreaming)
-  ) {
-    return true;
-  }
-  return isCompactionRunningFromWorkflowItems(message.workflowItems);
+  return isAssistantMessageRunning(message);
 };
 
 export const hasRunningAssistantMessage = (

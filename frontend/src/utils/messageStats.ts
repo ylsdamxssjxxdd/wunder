@@ -1,5 +1,9 @@
 import { normalizeChatDurationSeconds } from './chatTiming';
 import { resolveAssistantFailureNotice } from './assistantFailureNotice';
+import {
+  hasAssistantPendingQuestion,
+  isAssistantMessageRunning
+} from './assistantMessageRuntime';
 import { isCompactionRunningFromWorkflowItems } from './chatCompactionWorkflow';
 
 export type MessageStatsEntry = {
@@ -103,9 +107,6 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     ? averageSpeed
     : null;
 };
-
-const isAssistantStreaming = (message: Record<string, any>): boolean =>
-  Boolean(message?.stream_incomplete || message?.workflowStreaming || message?.reasoningStreaming);
 
 const hasAssistantVisibleOutput = (message: Record<string, any>): boolean =>
   Boolean(String(message?.content || '').trim()) || Boolean(String(message?.reasoning || '').trim());
@@ -214,22 +215,11 @@ const findLastWorkflowItem = (
   return { item: null, index: -1 };
 };
 
-const hasPendingQuestionPanel = (message: Record<string, any>): boolean => {
-  const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
-  return (
-    panelStatus === 'pending' ||
-    Boolean(message?.pendingQuestion) ||
-    Boolean(message?.pending_question) ||
-    Boolean(message?.awaiting_confirmation) ||
-    Boolean(message?.requires_confirmation)
-  );
-};
-
 const hasAssistantActivitySignals = (message: Record<string, any> | null | undefined): boolean => {
   if (!message || message.role !== 'assistant' || message.isGreeting) return false;
   return Boolean(
-    hasPendingQuestionPanel(message) ||
-      isAssistantStreaming(message) ||
+    hasAssistantPendingQuestion(message) ||
+      isAssistantMessageRunning(message) ||
       message?.resume_available ||
       message?.slow_client ||
       parsePositiveInteger(message?.retry_attempt ?? message?.retryAttempt) ||
@@ -307,7 +297,7 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.error'), 'error');
   }
 
-  if (hasPendingQuestionPanel(message)) {
+  if (hasAssistantPendingQuestion(message)) {
     return buildStatusEntry(t('messenger.messageStatus.waitingInput'), 'warning', true);
   }
 
@@ -359,7 +349,7 @@ const resolveAssistantStatusEntry = (
       Number.isFinite(Number(message?.retry_next_attempt_at_ms ?? message?.retryNextAttemptAtMs)) ||
       normalizeWorkflowStatus(message?.retry_state ?? message?.retryState) === 'retrying'
   );
-  if (message?.resume_available && !isAssistantStreaming(message)) {
+  if (message?.resume_available && !isAssistantMessageRunning(message)) {
     return buildStatusEntry(t('messenger.messageStatus.resumable'), 'warning');
   }
   if (
@@ -378,7 +368,7 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
   }
   if (
-    (isAssistantStreaming(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
+    (isAssistantMessageRunning(message) || hasAssistantWaitingForCurrentOutput(message) || latestRequest.index >= 0) &&
     hasConversationCompactionRunning(message, allMessages)
   ) {
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);
@@ -386,7 +376,7 @@ const resolveAssistantStatusEntry = (
   if (latestActiveTool.index >= 0 && latestActiveTool.index >= latestOutput.index) {
     return buildStatusEntry(t('messenger.messageStatus.toolRunning'), 'running', true);
   }
-  if (isAssistantStreaming(message)) {
+  if (isAssistantMessageRunning(message)) {
     if (hasAssistantWaitingForCurrentOutput(message)) {
       return buildStatusEntry(t('messenger.messageStatus.requesting'), 'running', true);
     }
@@ -417,7 +407,7 @@ export const buildAssistantMessageStatsEntries = (
   const statusEntry = resolveAssistantStatusEntry(message, t, allMessages, nowMs);
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return statusEntry ? [statusEntry] : [];
-  if (isAssistantStreaming(message)) {
+  if (isAssistantMessageRunning(message)) {
     return statusEntry ? [statusEntry] : [];
   }
   const durationSeconds = resolveDurationSeconds(stats);
@@ -468,11 +458,13 @@ export const buildAssistantMessageStatsEntries = (
       ? explicitContextTokens
       : null) ??
     null;
+  const quotaConsumedTokens = Number(stats?.quotaConsumed ?? stats?.quota_consumed);
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
+  const hasQuota = Number.isFinite(quotaConsumedTokens) && quotaConsumedTokens > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls && !hasSpeed) {
+  if (!hasUsage && !hasQuota && !hasDuration && !hasToolCalls && !hasSpeed) {
     return statusEntry ? [statusEntry] : [];
   }
   const entries: MessageStatsEntry[] = [];
@@ -486,6 +478,12 @@ export const buildAssistantMessageStatsEntries = (
       key: 'contextTokens',
       label: t('chat.stats.contextTokens'),
       value: formatCount(contextTokens),
+      kind: 'metric'
+    },
+    {
+      key: 'quota',
+      label: t('chat.stats.quota'),
+      value: formatCount(quotaConsumedTokens),
       kind: 'metric'
     },
     { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' }

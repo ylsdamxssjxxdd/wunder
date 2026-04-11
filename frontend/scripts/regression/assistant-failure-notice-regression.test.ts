@@ -55,3 +55,25 @@ test('trims a trailing full error line from partial output even when the display
   assert.match(rendered, /Partial summary before the failure\./);
   assert.doesNotMatch(rendered, /request_id":"b6927b44-df96-4e6e-9b97-928561f69ab9"/);
 });
+
+test('hides failure notice while a compaction recovery is still running', () => {
+  const rendered = buildAssistantDisplayContent(
+    {
+      role: 'assistant',
+      content: '',
+      workflowItems: [
+        {
+          status: 'failed',
+          detail: 'upstream timeout'
+        },
+        {
+          eventType: 'compaction_progress',
+          status: 'loading'
+        }
+      ]
+    },
+    translate
+  );
+
+  assert.equal(rendered, '');
+});

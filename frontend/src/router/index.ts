@@ -3,7 +3,7 @@ import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router
 
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { resolveApiBase } from '@/config/runtime';
 import {
   buildDefaultAgentChatRoute,
@@ -24,6 +24,8 @@ const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
 const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 const BeeroomE2EHarnessView = () => import('@/views/dev/BeeroomE2EHarnessView.vue');
 const ChatCompactionE2EHarnessView = () => import('@/views/dev/ChatCompactionE2EHarnessView.vue');
+const ChatBubbleStressE2EHarnessView = () => import('@/views/dev/ChatBubbleStressE2EHarnessView.vue');
+const MessengerHeavyHistoryE2EHarnessView = () => import('@/views/dev/MessengerHeavyHistoryE2EHarnessView.vue');
 
 const USER_LOGIN_PATH = '/login';
 const EMBED_AUTH_QUERY_KEYS = new Set([
@@ -193,6 +195,16 @@ const routes: RouteRecordRaw[] = [
           path: '/__e2e/chat-compaction-harness',
           name: 'chat-compaction-e2e-harness',
           component: ChatCompactionE2EHarnessView
+        },
+        {
+          path: '/__e2e/chat-bubble-stress',
+          name: 'chat-bubble-stress-e2e-harness',
+          component: ChatBubbleStressE2EHarnessView
+        },
+        {
+          path: '/__e2e/messenger-heavy-history',
+          name: 'messenger-heavy-history-e2e-harness',
+          component: MessengerHeavyHistoryE2EHarnessView
         }
       ] satisfies RouteRecordRaw[])
     : []),
@@ -384,44 +396,23 @@ router.beforeEach(async (to) => {
   }
 
   if (desktopMode && !to.path.startsWith('/admin')) {
-    const remoteAuthMode = isDesktopRemoteAuthMode();
     if (forcedLogout && to.path === '/login') {
-      return true;
+      return buildDefaultAgentChatRoute({ desktop: true });
     }
 
-    if (remoteAuthMode && (to.path === '/login' || to.path === '/register')) {
-      if (!hasAccessToken()) {
-        return true;
-      }
-      if (!authStore.user) {
-        try {
-          await authStore.loadProfile();
-          return buildDefaultAgentChatRoute({ desktop: true });
-        } catch (error) {
-          if (isAuthRequiredError(error)) {
-            authStore.logout();
-          }
-          return true;
-        }
-      }
+    if (to.path === '/login' || to.path === '/register') {
       return buildDefaultAgentChatRoute({ desktop: true });
     }
 
     if (to.path.startsWith('/desktop')) {
-      if (remoteAuthMode && !hasAccessToken()) {
-        return USER_LOGIN_PATH;
-      }
       if (!authStore.user) {
         try {
           await authStore.loadProfile();
         } catch (error) {
-          if (remoteAuthMode && isAuthRequiredError(error)) {
+          if (isAuthRequiredError(error)) {
             authStore.logout();
-            return USER_LOGIN_PATH;
           }
-          if (!remoteAuthMode) {
-            // Ignore initial desktop profile load failures in local mode.
-          }
+          // Ignore initial desktop profile load failures in local desktop mode.
         }
       }
       return true;
@@ -434,11 +425,7 @@ router.beforeEach(async (to) => {
       return to.fullPath.replace(/^\/app\//, '/desktop/');
     }
     if (to.path === '/home' || to.path === '/portal') {
-      return remoteAuthMode && !hasAccessToken() ? USER_LOGIN_PATH : buildDefaultAgentChatRoute({ desktop: true });
-    }
-
-    if (remoteAuthMode && !hasAccessToken()) {
-      return USER_LOGIN_PATH;
+      return buildDefaultAgentChatRoute({ desktop: true });
     }
     return buildDefaultAgentChatRoute({ desktop: true });
   }

@@ -213,7 +213,7 @@ import { ElMessage } from 'element-plus';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -247,7 +247,7 @@ const unitLoading = ref(false);
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const canEditPassword = computed(() => !demoMode.value);
-const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const desktopLocalMode = computed(() => isDesktopModeEnabled());
 const userName = computed(() => authStore.user?.username || t('user.guest'));
 const userId = computed(() => authStore.user?.id || '-');
 const userUnitLabel = computed(() => {

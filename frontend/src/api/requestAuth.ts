@@ -1,4 +1,4 @@
-import { getDesktopRuntime, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { getDesktopRuntime } from '@/config/desktop';
 import { getDemoToken, isDemoMode } from '@/utils/demo';
 
 const readStoredAccessToken = (): string => {
@@ -17,10 +17,6 @@ export const resolveAccessToken = (): string => {
   const storedToken = readStoredAccessToken();
   if (storedToken) {
     return storedToken;
-  }
-
-  if (isDesktopRemoteAuthMode()) {
-    return '';
   }
 
   return String(getDesktopRuntime()?.token || '').trim();

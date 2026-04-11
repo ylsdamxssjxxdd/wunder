@@ -802,23 +802,6 @@
           </div>
         </div>
       </button>
-      <button
-        v-if="desktopMode"
-        class="messenger-list-item"
-        :class="{ active: settingsPanelMode === 'desktop-remote' }"
-        type="button"
-        @click="updateSettingsPanelMode('desktop-remote')"
-      >
-        <div class="messenger-list-avatar"><i class="fa-solid fa-server" aria-hidden="true"></i></div>
-        <div class="messenger-list-main">
-          <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ t('messenger.settings.desktopRemote') }}</span>
-          </div>
-          <div class="messenger-list-row">
-            <span class="messenger-list-preview">{{ t('messenger.settings.desktopRemoteHint') }}</span>
-          </div>
-        </div>
-      </button>
     </template>
   </div>
 

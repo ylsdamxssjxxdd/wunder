@@ -841,16 +841,13 @@
                 v-else-if="
                   desktopMode &&
                   (settingsPanelMode === 'desktop-models' ||
-                    settingsPanelMode === 'desktop-remote' ||
                     settingsPanelMode === 'desktop-lan')
                 "
                 class="messenger-chat-settings-scroll messenger-chat-settings-scroll--desktop-system"
               >
                 <DesktopSystemSettingsPanel
                   :panel="
-                    settingsPanelMode === 'desktop-remote'
-                      ? 'remote'
-                      : settingsPanelMode === 'desktop-lan'
+                    settingsPanelMode === 'desktop-lan'
                         ? 'lan'
                         : 'models'
                   "
@@ -1638,7 +1635,7 @@ import {
   resolveFileContainerLifecycleText,
   resolveFileWorkspaceEmptyText
 } from '@/views/messenger/fileWorkspacePresentation';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -1667,6 +1664,10 @@ import {
   buildAssistantDisplayContent,
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
+import {
+  normalizeAssistantMessageRuntimeState,
+  resolveAssistantMessageRuntimeState
+} from '@/utils/assistantMessageRuntime';
 import { hasRunningAssistantMessage } from '@/utils/chatSessionRuntime';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
@@ -1953,7 +1954,6 @@ type SettingsPanelMode =
   | 'prompts'
   | 'help-manual'
   | 'desktop-models'
-  | 'desktop-remote'
   | 'desktop-lan';
 
 const settingsPanelMode = ref<SettingsPanelMode>('general');
@@ -1988,9 +1988,6 @@ function resolveRouteSettingsPanelMode(
   }
   if (desktopEnabled && panelHint === 'desktop-lan') {
     return 'desktop-lan';
-  }
-  if (desktopEnabled && panelHint === 'desktop-remote') {
-    return 'desktop-remote';
   }
   return 'general';
 }
@@ -2364,10 +2361,8 @@ const getDesktopBridge = (): DesktopBridge | null => {
 };
 
 const desktopMode = computed(() => isDesktopModeEnabled());
-const desktopLocalMode = computed(() => desktopMode.value && !isDesktopRemoteAuthMode());
-const settingsLogoutDisabled = computed(
-  () => desktopMode.value && !isDesktopRemoteAuthMode()
-);
+const desktopLocalMode = computed(() => desktopMode.value);
+const settingsLogoutDisabled = computed(() => desktopMode.value);
 const debugToolsAvailable = computed(() => typeof getDesktopBridge()?.toggleDevTools === 'function');
 const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkForUpdates === 'function');
 const worldDesktopScreenshotSupported = computed(
@@ -4539,7 +4534,6 @@ const chatPanelTitle = computed(() => {
     if (settingsPanelMode.value === 'help-manual') return t('messenger.settings.helpManual');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llm');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.title');
-    if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.title');
   }
   return activeSectionTitle.value;
 });
@@ -4574,7 +4568,6 @@ const chatPanelSubtitle = computed(() => {
     if (settingsPanelMode.value === 'help-manual') return t('messenger.settings.helpManualHint');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llmHint');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.hint');
-    if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
   }
   return activeSectionSubtitle.value;
 });
@@ -5965,47 +5958,8 @@ const preloadTimelinePreview = async (sessionId: string) => {
 const hasCronTask = (agentId: unknown): boolean =>
   cronAgentIds.value.has(normalizeAgentId(agentId));
 
-const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState => {
-  const raw = String(state || '')
-    .trim()
-    .toLowerCase();
-  if (
-    pendingQuestion ||
-    raw === 'pending_question' ||
-    raw === 'pending-question' ||
-    raw === 'pending_confirm' ||
-    raw === 'pending-confirm' ||
-    raw === 'pending_confirmation' ||
-    raw === 'awaiting_confirmation' ||
-    raw === 'awaiting-confirmation' ||
-    raw === 'awaiting_approval' ||
-    raw === 'awaiting-approval' ||
-    raw === 'approval_pending' ||
-    raw === 'approval-pending' ||
-    raw === 'pending' ||
-    raw === 'waiting' ||
-    raw === 'queued' ||
-    raw === 'await_confirm' ||
-    raw === 'question' ||
-    raw === 'questioning' ||
-    raw === 'asking'
-  ) {
-    return 'pending';
-  }
-  if (
-    raw === 'running' ||
-    raw === 'executing' ||
-    raw === 'processing' ||
-    raw === 'cancelling'
-  ) {
-    return 'running';
-  }
-  if (raw === 'done' || raw === 'completed' || raw === 'finish' || raw === 'finished') return 'done';
-  if (raw === 'error' || raw === 'failed' || raw === 'timeout' || raw === 'aborted' || raw === 'terminated') {
-    return 'error';
-  }
-  return 'idle';
-};
+const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState =>
+  normalizeAssistantMessageRuntimeState(state, pendingQuestion) as AgentRuntimeState;
 
 const setRuntimeStateOverride = (agentId: unknown, state: AgentRuntimeState, ttlMs = 0) => {
   const key = normalizeAgentId(agentId);
@@ -6570,33 +6524,8 @@ const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean 
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
-  const questionPanelStatus = String(
-    ((message?.questionPanel as Record<string, unknown> | null)?.status || '')
-  )
-    .trim()
-    .toLowerCase();
-  const pendingQuestion =
-    questionPanelStatus === 'pending' ||
-    Boolean(message?.pending_question) ||
-    Boolean(message?.pendingQuestion) ||
-    Boolean(message?.awaiting_confirmation) ||
-    Boolean(message?.requires_confirmation);
-  if (pendingQuestion) return 'pending';
-  if (
-    Boolean(message?.stream_incomplete) ||
-    Boolean(message?.workflowStreaming) ||
-    Boolean(message?.reasoningStreaming)
-  ) {
-    return 'running';
-  }
-  if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
-    return 'running';
-  }
-  const messageState = normalizeRuntimeState(message?.state, pendingQuestion);
-  if (messageState === 'error') return 'error';
   if (resolveAssistantFailureNotice(message, t)) return 'error';
-  if (messageState !== 'idle') return messageState;
-  return 'done';
+  return resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
 };
 
 const shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean =>
@@ -7850,9 +7779,7 @@ const switchSection = (
           ? 'desktop-models'
           : desktopMode.value && panelHint === 'desktop-lan'
             ? 'desktop-lan'
-            : desktopMode.value && panelHint === 'desktop-remote'
-              ? 'desktop-remote'
-              : panelHint === 'profile'
+            : panelHint === 'profile'
                 ? 'profile'
                 : panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt'
                   ? 'prompts'
@@ -7923,8 +7850,7 @@ const activateSettingsPanel = (panelMode: string) => {
     nextPanelMode === 'prompts' ||
     nextPanelMode === 'help-manual' ||
     nextPanelMode === 'desktop-models' ||
-    nextPanelMode === 'desktop-lan' ||
-    nextPanelMode === 'desktop-remote'
+    nextPanelMode === 'desktop-lan'
       ? nextPanelMode
       : '';
   // Commit the overlay preview to the real section before updating the settings panel,
@@ -8126,8 +8052,7 @@ const normalizeSettingsPanelMode = (value: unknown): SettingsPanelMode => {
     normalized === 'prompts' ||
     normalized === 'help-manual' ||
     normalized === 'desktop-models' ||
-    normalized === 'desktop-lan' ||
-    normalized === 'desktop-remote'
+    normalized === 'desktop-lan'
   ) {
     return normalized;
   }

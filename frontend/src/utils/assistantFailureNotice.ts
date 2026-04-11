@@ -1,4 +1,5 @@
 import { formatStructuredErrorText } from './streamError';
+import { isAssistantMessageRunning } from './assistantMessageRuntime';
 
 type Translator = (key: string, named?: Record<string, unknown>) => string;
 type UnknownRecord = Record<string, unknown>;
@@ -38,9 +39,6 @@ const truncateText = (value: string, max = 220): string => {
 };
 
 const normalizeStatus = (value: unknown): string => String(value ?? '').trim().toLowerCase();
-
-const isAssistantStreaming = (message: UnknownRecord): boolean =>
-  Boolean(message?.stream_incomplete) || Boolean(message?.workflowStreaming) || Boolean(message?.reasoningStreaming);
 
 const resolveLatestTerminalWorkflowItem = (message: UnknownRecord): WorkflowTerminalItem | null => {
   const items = Array.isArray(message?.workflowItems) ? message.workflowItems : [];
@@ -169,7 +167,7 @@ export const resolveAssistantFailureNotice = (
   t: Translator
 ): AssistantFailureNotice | null => {
   if (String(message?.role || '') !== 'assistant') return null;
-  if (isAssistantStreaming(message)) return null;
+  if (isAssistantMessageRunning(message)) return null;
   const terminal = resolveLatestTerminalWorkflowItem(message);
   if (!terminal) return null;
   if (SUCCESS_STATUSES.has(terminal.status)) return null;

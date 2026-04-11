@@ -44,6 +44,12 @@ type ForegroundHydrationOptions = {
   forceHydration?: boolean;
 };
 
+type ForegroundLiveRetentionOptions = {
+  preserveWatcher?: boolean;
+  hydrateForegroundMessages?: boolean;
+  remoteRunning?: unknown;
+};
+
 type ActiveSessionPreserveOptions = {
   isSameActiveSession?: boolean;
   lifecycle?: unknown;
@@ -79,3 +85,10 @@ export const shouldApplyForegroundDetailHydration = (
   const lifecycle = normalizeStreamLifecyclePhase(options.lifecycle);
   return lifecycle !== 'sending' && lifecycle !== 'resuming';
 };
+
+export const shouldKeepForegroundLiveMessages = (
+  options: ForegroundLiveRetentionOptions
+): boolean =>
+  options.preserveWatcher === true &&
+  options.hydrateForegroundMessages !== true &&
+  options.remoteRunning === true;

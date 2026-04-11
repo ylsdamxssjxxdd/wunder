@@ -188,7 +188,7 @@ import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsFi
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import {
   buildAgentToolSections,
@@ -244,7 +244,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'submit']);
 const { t } = useI18n();
 const showApprovalModeSetting = computed(
-  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+  () => isDesktopModeEnabled()
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';

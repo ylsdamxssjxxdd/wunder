@@ -3,8 +3,6 @@ const DESKTOP_BOOTSTRAP_PATH = '/wunder/desktop/bootstrap';
 const DESKTOP_TOOL_CALL_MODE_KEY = 'wunder_desktop_tool_call_mode';
 const DESKTOP_USER_ID_KEY = 'wunder_desktop_user_id';
 const DESKTOP_LOCAL_TOKEN_KEY = 'wunder_desktop_local_token';
-const DESKTOP_REMOTE_API_BASE_KEY = 'wunder_desktop_remote_api_base';
-const DESKTOP_REMOTE_MODE_CHANGE_EVENT = 'wunder:desktop-remote-mode-change';
 
 export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call', 'freeform_call'] as const;
 
@@ -38,15 +36,6 @@ export type DesktopRuntime = {
   settings_path: string;
   repo_root: string;
   frontend_root?: string;
-  remote_enabled: boolean;
-  remote_connected: boolean;
-  remote_server_base_url: string;
-  remote_error?: string;
-};
-
-export type DesktopRemoteModeChangeDetail = {
-  remoteAuthMode: boolean;
-  remoteApiBase: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -90,85 +79,6 @@ const normalizeToolCallMode = (value: unknown): DesktopToolCallMode => {
   return 'function_call';
 };
 
-const normalizeRemoteApiBase = (raw: string): string => {
-  const cleaned = String(raw || '').trim();
-  if (!cleaned) {
-    return '';
-  }
-
-  const withScheme = /^https?:\/\//i.test(cleaned) ? cleaned : `http://${cleaned}`;
-  try {
-    const parsed = new URL(withScheme);
-    if (!/^https?:$/i.test(parsed.protocol)) {
-      return '';
-    }
-    let pathname = parsed.pathname.replace(/\/+$/, '');
-    if (!pathname || pathname === '/') {
-      pathname = '/wunder';
-    } else if (!pathname.endsWith('/wunder')) {
-      pathname = `${pathname}/wunder`;
-    }
-    parsed.pathname = pathname;
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return '';
-  }
-};
-
-const readRemoteApiBaseOverride = (): string => {
-  try {
-    return normalizeRemoteApiBase(localStorage.getItem(DESKTOP_REMOTE_API_BASE_KEY) || '');
-  } catch {
-    return '';
-  }
-};
-
-const getDesktopRemoteModeDetail = (): DesktopRemoteModeChangeDetail => {
-  const remoteApiBase = readRemoteApiBaseOverride();
-  return {
-    remoteAuthMode: Boolean(remoteApiBase),
-    remoteApiBase
-  };
-};
-
-const emitDesktopRemoteModeChange = (): DesktopRemoteModeChangeDetail => {
-  const detail = getDesktopRemoteModeDetail();
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(
-      new CustomEvent<DesktopRemoteModeChangeDetail>(DESKTOP_REMOTE_MODE_CHANGE_EVENT, {
-        detail
-      })
-    );
-  }
-  return detail;
-};
-
-const writeRemoteApiBaseOverride = (serverBaseUrl: string): string => {
-  const normalized = normalizeRemoteApiBase(serverBaseUrl);
-  try {
-    if (normalized) {
-      localStorage.setItem(DESKTOP_REMOTE_API_BASE_KEY, normalized);
-    } else {
-      localStorage.removeItem(DESKTOP_REMOTE_API_BASE_KEY);
-    }
-  } catch {
-    // ignore localStorage failures
-  }
-  emitDesktopRemoteModeChange();
-  return normalized;
-};
-
-const clearRemoteApiBaseOverrideInternal = (): void => {
-  try {
-    localStorage.removeItem(DESKTOP_REMOTE_API_BASE_KEY);
-  } catch {
-    // ignore localStorage failures
-  }
-  emitDesktopRemoteModeChange();
-};
-
 const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
   const source = asRecord(value);
   const mode = asString(source.mode).toLowerCase();
@@ -188,10 +98,7 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
     workspace_root: asString(source.workspace_root),
     temp_root: asString(source.temp_root),
     settings_path: asString(source.settings_path),
-    repo_root: asString(source.repo_root),
-    remote_enabled: Boolean(source.remote_enabled),
-    remote_connected: Boolean(source.remote_connected),
-    remote_server_base_url: asString(source.remote_server_base_url)
+    repo_root: asString(source.repo_root)
   };
   const runtimeProfile = asString(source.runtime_profile);
   if (runtimeProfile) {
@@ -200,10 +107,6 @@ const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
   const runtimeCapabilities = normalizeRuntimeCapabilities(source.runtime_capabilities);
   if (runtimeCapabilities) {
     runtime.runtime_capabilities = runtimeCapabilities;
-  }
-  const remoteError = asString(source.remote_error);
-  if (remoteError) {
-    runtime.remote_error = remoteError;
   }
   const frontendRoot = asString(source.frontend_root);
   if (frontendRoot) {
@@ -239,24 +142,13 @@ const syncDesktopIdentity = (runtime: DesktopRuntime | null): void => {
     if (runtime.user_id) {
       localStorage.setItem(DESKTOP_USER_ID_KEY, runtime.user_id);
     }
-
-    let remoteApiBase = readRemoteApiBaseOverride();
-    if (!remoteApiBase && runtime.remote_enabled && runtime.remote_connected) {
-      remoteApiBase = writeRemoteApiBaseOverride(runtime.api_base || runtime.remote_server_base_url);
+    try {
+      localStorage.removeItem('wunder_desktop_remote_api_base');
+    } catch {
+      // Ignore stale compatibility key cleanup failures.
     }
-
-    const remoteAuthMode = Boolean(remoteApiBase);
-
-    if (!remoteAuthMode) {
-      if (runtime.token) {
-        localStorage.setItem('access_token', runtime.token);
-      }
-      return;
-    }
-
-    const current = String(localStorage.getItem('access_token') || '').trim();
-    if (current && runtime.desktop_token && current === runtime.desktop_token) {
-      localStorage.removeItem('access_token');
+    if (runtime.token) {
+      localStorage.setItem('access_token', runtime.token);
     }
   } catch {
     // Ignore localStorage write failures (private mode or quota issues).
@@ -336,39 +228,7 @@ export const getDesktopRuntime = (): DesktopRuntime | null => {
   return runtimeCache;
 };
 
-export const setDesktopRemoteApiBaseOverride = (serverBaseUrl: string): string =>
-  writeRemoteApiBaseOverride(serverBaseUrl);
-
-export const clearDesktopRemoteApiBaseOverride = (): void => {
-  clearRemoteApiBaseOverrideInternal();
-};
-
-export const getDesktopRemoteApiBaseOverride = (): string => readRemoteApiBaseOverride();
-
-export const isDesktopRemoteAuthMode = (): boolean => Boolean(readRemoteApiBaseOverride());
-
-export const isDesktopLocalModeEnabled = (): boolean =>
-  isDesktopModeEnabled() && !isDesktopRemoteAuthMode();
-
-export const onDesktopRemoteModeChange = (
-  listener: (detail: DesktopRemoteModeChangeDetail) => void
-): (() => void) => {
-  if (typeof window === 'undefined') {
-    return () => undefined;
-  }
-  const handler = (event: Event) => {
-    const detail = (event as CustomEvent<DesktopRemoteModeChangeDetail>)?.detail;
-    if (detail && typeof detail === 'object') {
-      listener(detail);
-      return;
-    }
-    listener(getDesktopRemoteModeDetail());
-  };
-  window.addEventListener(DESKTOP_REMOTE_MODE_CHANGE_EVENT, handler as EventListener);
-  return () => {
-    window.removeEventListener(DESKTOP_REMOTE_MODE_CHANGE_EVENT, handler as EventListener);
-  };
-};
+export const isDesktopLocalModeEnabled = (): boolean => isDesktopModeEnabled();
 
 export const getDesktopLocalToken = (): string => {
   const runtime = getDesktopRuntime();

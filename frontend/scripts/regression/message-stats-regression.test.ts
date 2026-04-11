@@ -9,9 +9,19 @@ const createTranslator = () => {
     'chat.stats.duration': 'Duration',
     'chat.stats.speed': 'Speed',
     'chat.stats.contextTokens': 'Context',
+    'chat.stats.quota': 'Quota',
     'chat.stats.toolCalls': 'Tools',
     'messenger.messageStatus.compacting': 'Compacting',
-    'messenger.messageStatus.requesting': 'Requesting'
+    'messenger.messageStatus.requesting': 'Requesting',
+    'messenger.messageStatus.waitingInput': 'Waiting input',
+    'messenger.messageStatus.done': 'Done',
+    'messenger.messageStatus.error': 'Error',
+    'messenger.messageStatus.modelOutputting': 'Model outputting',
+    'messenger.messageStatus.running': 'Running',
+    'messenger.messageStatus.toolRunning': 'Tool running',
+    'messenger.messageStatus.queued': 'Queued',
+    'messenger.messageStatus.resumable': 'Resumable',
+    'messenger.messageStatus.retrying': 'Retrying'
   };
   return (key: string) => table[key] || key;
 };
@@ -159,6 +169,41 @@ test('message stats context supports explicit context_occupancy_tokens alias', (
   assert.equal(findEntryValue(entries, 'Context'), '6123');
 });
 
+test('message stats shows quota consumed tokens for the user round', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 4198,
+        roundUsage: {
+          input_tokens: 4027,
+          output_tokens: 171,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '4198');
+});
+
+test('message stats still shows quota consumed after an interrupted response', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: false,
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1536
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '1536');
+});
+
 test('message stats keeps backend average speed without frontend clamping', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
@@ -251,6 +296,53 @@ test('message stats prefers compacting when another assistant message is running
     [pendingAssistant, compactionAssistant]
   );
 
+  assert.equal(entries[0]?.value, 'Compacting');
+});
+
+test('message stats keeps waiting-input status ahead of stale running flags', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      questionPanel: {
+        status: 'pending'
+      },
+      stats: {
+        usage: {
+          total_tokens: 1200
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.value, 'Waiting input');
+});
+
+test('message stats suppresses completed metrics while compaction is still running', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      workflowItems: [
+        {
+          eventType: 'compaction_progress',
+          status: 'loading'
+        }
+      ],
+      stats: {
+        usage: {
+          total_tokens: 2048
+        },
+        decode_duration_s: 1.2
+      }
+    },
+    t
+  );
+
+  assert.equal(entries.length, 1);
   assert.equal(entries[0]?.value, 'Compacting');
 });
 

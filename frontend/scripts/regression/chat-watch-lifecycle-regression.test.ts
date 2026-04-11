@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   shouldForcePreserveWatcherForActiveSession,
   shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from '../../src/stores/chatWatchLifecycle';
 
@@ -116,6 +117,39 @@ test('foreground detail hydration can be forced for manual reconcile even during
       forceHydration: true
     }),
     true
+  );
+});
+
+test('foreground sync keeps live messages only while remote stream is still running', () => {
+  assert.equal(
+    shouldKeepForegroundLiveMessages({
+      preserveWatcher: true,
+      hydrateForegroundMessages: false,
+      remoteRunning: true
+    }),
+    true
+  );
+});
+
+test('foreground sync replaces stale live messages once remote stream is idle', () => {
+  assert.equal(
+    shouldKeepForegroundLiveMessages({
+      preserveWatcher: true,
+      hydrateForegroundMessages: false,
+      remoteRunning: false
+    }),
+    false
+  );
+});
+
+test('foreground sync does not keep live messages when hydrated foreground replacement is enabled', () => {
+  assert.equal(
+    shouldKeepForegroundLiveMessages({
+      preserveWatcher: true,
+      hydrateForegroundMessages: true,
+      remoteRunning: true
+    }),
+    false
   );
 });
 

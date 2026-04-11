@@ -50,10 +50,6 @@ pub struct DesktopRuntimeInfo {
     pub settings_path: String,
     pub repo_root: String,
     pub frontend_root: Option<String>,
-    pub remote_enabled: bool,
-    pub remote_connected: bool,
-    pub remote_server_base_url: String,
-    pub remote_error: Option<String>,
     pub lan_enabled: bool,
     pub lan_peer_id: String,
     pub lan_listen_host: String,
@@ -194,22 +190,6 @@ impl DesktopBridge {
             println!("  (use --print-token to print full token)");
         }
 
-        if self.runtime_info.remote_enabled {
-            if self.runtime_info.remote_connected {
-                println!(
-                    "- remote_gateway: connected ({})",
-                    self.runtime_info.remote_server_base_url
-                );
-            } else {
-                println!(
-                    "- remote_gateway: enabled but disconnected ({})",
-                    self.runtime_info.remote_server_base_url
-                );
-                if let Some(message) = self.runtime_info.remote_error.as_ref() {
-                    println!("- remote_error: {message}");
-                }
-            }
-        }
     }
 
     pub async fn shutdown(&mut self) {
@@ -229,33 +209,15 @@ fn build_runtime_info(
     api_base: &str,
     ws_base: &str,
 ) -> DesktopRuntimeInfo {
-    let mut effective_api_base = api_base.to_string();
-    let mut effective_ws_base = ws_base.to_string();
-    let mut effective_token = runtime.desktop_token.clone();
-
-    if runtime.remote_gateway.enabled {
-        if let Some(remote_api_base) = runtime.remote_api_base.as_ref() {
-            effective_api_base = remote_api_base.clone();
-        }
-        if let Some(remote_ws_base) = runtime.remote_ws_base.as_ref() {
-            effective_ws_base = remote_ws_base.clone();
-        }
-    }
-
-    let remote_connected = runtime.remote_api_base.is_some() && runtime.remote_ws_base.is_some();
-    if runtime.remote_gateway.enabled && remote_connected {
-        effective_token.clear();
-    }
-
     DesktopRuntimeInfo {
         mode: "desktop",
         runtime_profile: runtime.state.runtime_profile,
         runtime_capabilities: runtime.state.runtime_capabilities.clone(),
         bind_addr: bind_addr.to_string(),
         web_base: web_base.to_string(),
-        api_base: effective_api_base,
-        ws_base: effective_ws_base,
-        token: effective_token,
+        api_base: api_base.to_string(),
+        ws_base: ws_base.to_string(),
+        token: runtime.desktop_token.clone(),
         desktop_token: runtime.desktop_token.clone(),
         user_id: runtime.user_id.clone(),
         app_dir: runtime.app_dir.to_string_lossy().to_string(),
@@ -267,10 +229,6 @@ fn build_runtime_info(
             .frontend_root
             .as_ref()
             .map(|path| path.to_string_lossy().to_string()),
-        remote_enabled: runtime.remote_gateway.enabled,
-        remote_connected,
-        remote_server_base_url: runtime.remote_gateway.server_base_url.trim().to_string(),
-        remote_error: runtime.remote_error.clone(),
         lan_enabled: runtime.lan_mesh.enabled,
         lan_peer_id: runtime.lan_mesh.peer_id.trim().to_string(),
         lan_listen_host: runtime.lan_mesh.listen_host.trim().to_string(),
@@ -304,7 +262,7 @@ fn load_index_with_runtime(
     let runtime_json =
         serde_json::to_string(runtime_info).context("serialize desktop runtime payload failed")?;
     let script = format!(
-        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';const remoteAuthMode=Boolean(cfg.remote_enabled&&cfg.remote_connected);if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}if(!remoteAuthMode&&cfg.token){{localStorage.setItem('access_token',cfg.token);}}else if(remoteAuthMode&&localStorage.getItem('access_token')===localToken){{localStorage.removeItem('access_token');}}}}catch(_e){{}}}})();</script>"
+        "<script>(function(){{const cfg={runtime_json};window.__WUNDER_DESKTOP_RUNTIME__=cfg;try{{const localToken=cfg.desktop_token||cfg.token||'';if(localToken){{localStorage.setItem('wunder_desktop_local_token',localToken);localStorage.setItem('access_token',localToken);}}if(cfg.user_id){{localStorage.setItem('wunder_desktop_user_id',cfg.user_id);}}localStorage.removeItem('wunder_desktop_remote_api_base');}}catch(_e){{}}}})();</script>"
     );
     Ok(inject_script_before_head_end(&template, &script))
 }
@@ -476,10 +434,6 @@ async fn runtime_config_handler(
         "mode": state.runtime.mode,
         "runtime_profile": state.runtime.runtime_profile,
         "runtime_capabilities": &state.runtime.runtime_capabilities,
-        "remote_enabled": state.runtime.remote_enabled,
-        "remote_connected": state.runtime.remote_connected,
-        "remote_server_base_url": state.runtime.remote_server_base_url,
-        "remote_error": state.runtime.remote_error,
         "lan_enabled": state.runtime.lan_enabled,
         "lan_peer_id": state.runtime.lan_peer_id,
         "lan_listen_host": state.runtime.lan_listen_host,

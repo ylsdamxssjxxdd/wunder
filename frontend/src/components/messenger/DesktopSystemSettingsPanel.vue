@@ -321,39 +321,6 @@
   </section>
 
   <section
-    v-if="showRemotePanel"
-    class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
-  >
-    <div class="desktop-system-settings-section">
-      <div class="desktop-system-settings-status-line">
-        <span class="desktop-system-settings-remote-state" :class="{ connected: remoteConnected }">
-          {{
-            remoteConnected
-              ? t('desktop.system.remote.connected')
-              : t('desktop.system.remote.disconnected')
-          }}
-        </span>
-      </div>
-      <label class="desktop-system-settings-field">
-        <span class="desktop-system-settings-field-label">{{ t('desktop.system.remote.serverBaseUrl') }}</span>
-        <el-input
-          v-model="remoteServerBaseUrl"
-          :placeholder="t('desktop.system.remote.serverPlaceholder')"
-        />
-      </label>
-
-      <div class="desktop-system-settings-actions">
-        <el-button class="desktop-system-settings-btn desktop-system-settings-btn--primary" :loading="connectingRemote" @click="connectRemoteServer">
-          {{ t('desktop.system.remote.connect') }}
-        </el-button>
-        <el-button class="desktop-system-settings-btn" :disabled="!remoteConnected || connectingRemote" @click="disconnectRemoteServer">
-          {{ t('desktop.system.remote.disconnect') }}
-        </el-button>
-      </div>
-    </div>
-  </section>
-
-  <section
     v-if="showLanPanel"
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
   >
@@ -471,7 +438,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { useRouter } from 'vue-router';
 
 import {
   fetchDesktopSettings,
@@ -481,16 +447,8 @@ import {
   updateDesktopSettings,
   type DesktopLanMeshSettings,
   type DesktopLanPeer,
-  type DesktopResetWorkStateSummary,
-  type DesktopRemoteGatewaySettings
+  type DesktopResetWorkStateSummary
 } from '@/api/desktop';
-import {
-  clearDesktopRemoteApiBaseOverride,
-  getDesktopLocalToken,
-  getDesktopRemoteApiBaseOverride,
-  isDesktopRemoteAuthMode,
-  setDesktopRemoteApiBaseOverride
-} from '@/config/desktop';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
 import { useI18n } from '@/i18n';
 import DesktopRuntimePreferencesPanel from '@/components/messenger/DesktopRuntimePreferencesPanel.vue';
@@ -534,7 +492,7 @@ const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_mo
 
 const props = withDefaults(
   defineProps<{
-    panel?: 'system' | 'models' | 'remote' | 'lan' | 'all';
+    panel?: 'system' | 'models' | 'lan' | 'all';
   }>(),
   {
     panel: 'all'
@@ -545,20 +503,16 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const router = useRouter();
 const chatStore = useChatStore();
 
 const loading = ref(false);
 const savingModel = ref(false);
 const probingContext = ref(false);
-const connectingRemote = ref(false);
 const resettingWorkState = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
-const remoteServerBaseUrl = ref('');
-const remoteConnected = ref(false);
 const savingLan = ref(false);
 const loadingLanPeers = ref(false);
 const lanMeshEnabled = ref(false);
@@ -595,7 +549,6 @@ const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
 const showRuntimePanel = computed(() => props.panel === 'all' || props.panel === 'system');
 const showModelPanel = computed(() => props.panel === 'all' || props.panel === 'models');
-const showRemotePanel = computed(() => props.panel === 'all' || props.panel === 'remote');
 const showLanPanel = computed(() => props.panel === 'all' || props.panel === 'lan');
 
 type DesktopSettingsWaitingState = {
@@ -610,8 +563,6 @@ const desktopSettingsWaitingTargetName = computed(() => {
   switch (props.panel) {
     case 'models':
       return t('desktop.system.llm');
-    case 'remote':
-      return t('desktop.system.remote.title');
     case 'lan':
       return t('desktop.system.lan.title');
     case 'system':
@@ -1163,11 +1114,6 @@ const probeMaxContext = async () => {
   }
 };
 
-const refreshRemoteConnected = () => {
-  const override = getDesktopRemoteApiBaseOverride();
-  remoteConnected.value = isDesktopRemoteAuthMode() && Boolean(override);
-};
-
 const normalizeLineList = (value: string): string[] =>
   String(value || '')
     .split(/\r?\n/)
@@ -1224,9 +1170,7 @@ const applySettingsData = (
   );
 
   ensureSelectedModel(preferredSelection);
-  remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
-  refreshRemoteConnected();
 };
 
 const refreshLanPeers = async () => {
@@ -1372,79 +1316,6 @@ const saveModelSettings = async (): Promise<boolean> => {
   }
 };
 
-const connectRemoteServer = async () => {
-  const rawUrl = remoteServerBaseUrl.value.trim();
-  if (!rawUrl) {
-    ElMessage.warning(t('desktop.system.remote.serverRequired'));
-    return;
-  }
-
-  const normalizedApiBase = setDesktopRemoteApiBaseOverride(rawUrl);
-  if (!normalizedApiBase) {
-    ElMessage.warning(t('desktop.system.remote.serverInvalid'));
-    return;
-  }
-
-  connectingRemote.value = true;
-  try {
-    const payload: { remote_gateway: DesktopRemoteGatewaySettings } = {
-      remote_gateway: {
-        enabled: true,
-        server_base_url: rawUrl
-      }
-    };
-    await updateDesktopSettings(payload);
-
-    try {
-      localStorage.removeItem('access_token');
-    } catch {
-      // ignore localStorage failures
-    }
-
-    refreshRemoteConnected();
-    ElMessage.success(t('desktop.system.remote.connectSuccess'));
-    router.push('/login');
-  } catch (error) {
-    clearDesktopRemoteApiBaseOverride();
-    console.error(error);
-    ElMessage.error(t('desktop.system.remote.connectFailed'));
-  } finally {
-    connectingRemote.value = false;
-  }
-};
-
-const disconnectRemoteServer = async () => {
-  connectingRemote.value = true;
-  try {
-    await updateDesktopSettings({
-      remote_gateway: {
-        enabled: false,
-        server_base_url: ''
-      }
-    });
-
-    clearDesktopRemoteApiBaseOverride();
-    const localToken = getDesktopLocalToken();
-    if (localToken) {
-      try {
-        localStorage.setItem('access_token', localToken);
-      } catch {
-        // ignore localStorage failures
-      }
-    }
-
-    remoteServerBaseUrl.value = '';
-    refreshRemoteConnected();
-    ElMessage.success(t('desktop.system.remote.disconnectSuccess'));
-    router.push('/desktop/home');
-  } catch (error) {
-    console.error(error);
-    ElMessage.error(t('desktop.system.remote.disconnectFailed'));
-  } finally {
-    connectingRemote.value = false;
-  }
-};
-
 const resolveCurrentResetAgentId = (): string => {
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
   if (activeSessionId) {
@@ -1515,8 +1386,7 @@ const handleResetWorkState = async () => {
 };
 
 onMounted(() => {
-  refreshRemoteConnected();
-  if (showModelPanel.value || showRemotePanel.value || showLanPanel.value) {
+  if (showModelPanel.value || showLanPanel.value) {
     void loadSettings();
   }
 });

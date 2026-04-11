@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-10T23:16:19.601499+00:00",
+  "generated_at": "2026-04-11T03:30:58.743628+00:00",
   "site": {
     "name": "wunder Manual / 使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -449,7 +449,7 @@
                   {
                     "slug": "zh-CN/surfaces/desktop-ui",
                     "title": "Desktop 界面",
-                    "summary": "`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。",
+                    "summary": "`wunder-desktop` 是当前主交付形态，强调本地优先与桌面工作台。",
                     "url": "/docs/zh-CN/surfaces/desktop-ui/"
                   }
                 ]
@@ -5567,10 +5567,10 @@
       "language": "zh-CN",
       "title": "界面概览",
       "summary": "Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。",
-      "updated_at": "2026-04-05",
+      "updated_at": "2026-04-11",
       "read_when": [
         "你想快速分清用户端、管理端和 desktop 各自做什么",
-        "你在找某个功能应该去哪个界面看"
+        "你在找某一个功能应该去哪个界面看"
       ],
       "source_docs": [
         "docs/系统介绍.md",
@@ -5806,10 +5806,10 @@
       "slug": "zh-CN/surfaces/desktop-ui",
       "language": "zh-CN",
       "title": "Desktop 界面",
-      "summary": "`wunder-desktop` 是当前主交付形态，强调本地优先、桌面工作台与端云协同。",
-      "updated_at": "2026-04-05",
+      "summary": "`wunder-desktop` 是当前主交付形态，强调本地优先与桌面工作台。",
+      "updated_at": "2026-04-11",
       "read_when": [
-        "你要直接用 Wunder",
+        "你要直接使用 Wunder",
         "你要理解 desktop 为什么是当前产品重心"
       ],
       "source_docs": [
@@ -5857,7 +5857,7 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "什么时候再接远端"
+          "text": "如果需要服务端能力怎么办"
         },
         {
           "id": "section-8",
@@ -6171,7 +6171,7 @@
       "language": "zh-CN",
       "title": "Desktop 本地模式",
       "summary": "Desktop 本地模式不是缩小版 server，而是一套本地优先、持久目录优先的运行形态。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-11",
       "read_when": [
         "你主要使用 wunder-desktop",
         "你要判断本地模式和远端 server 模式分别适合什么"
@@ -6241,7 +6241,7 @@
         {
           "id": "section-11",
           "level": 2,
-          "text": "什么时候该切远端"
+          "text": "什么时候该改用 server"
         },
         {
           "id": "section-12",

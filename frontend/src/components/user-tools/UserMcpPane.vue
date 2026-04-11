@@ -283,7 +283,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserMcpServers, fetchUserMcpTools, saveUserMcpServers } from '@/api/userTools';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -328,7 +328,7 @@ const toolDetail = ref(null);
 
 const activeServer = computed(() => servers.value[selectedIndex.value] || null);
 const activeTools = computed(() => toolsByIndex.value[selectedIndex.value] || []);
-const isLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const isLocalMode = computed(() => isDesktopModeEnabled());
 const hasConnected = computed(() =>
   toolsByIndex.value.some((tools) => Array.isArray(tools) && tools.length > 0)
 );

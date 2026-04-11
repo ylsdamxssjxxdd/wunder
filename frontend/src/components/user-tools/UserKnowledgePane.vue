@@ -508,7 +508,7 @@ import {
   testUserKnowledge,
   uploadUserKnowledgeFile
 } from '@/api/userTools';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -755,7 +755,7 @@ const embedActionLabel = computed(() =>
 );
 const embedActionIcon = computed(() => (embeddingActive.value ? 'fa-spinner' : 'fa-cube'));
 const uploadIcon = computed(() => (uploadLoading.value ? 'fa-spinner' : 'fa-upload'));
-const isLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const isLocalMode = computed(() => isDesktopModeEnabled());
 const canBatchEmbed = computed(
   () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
 );

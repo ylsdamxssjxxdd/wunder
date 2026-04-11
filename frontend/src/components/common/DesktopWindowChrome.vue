@@ -58,7 +58,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
-import { isDesktopRemoteAuthMode, onDesktopRemoteModeChange } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 
 type DesktopWindowBridge = {
@@ -74,17 +73,7 @@ const windowMaximized = ref(false);
 const titleText = 'Wunder Desktop';
 const defaultLogoSrc = new URL('../../../../images/beeroom.png', import.meta.url).href;
 const logoSrc = ref(defaultLogoSrc);
-const runtimeMode = ref<'local' | 'hybrid'>('local');
-const runtimeModeText = computed(() =>
-  runtimeMode.value === 'hybrid'
-    ? t('desktop.chrome.runtimeHybrid')
-    : t('desktop.chrome.runtimeLocal')
-);
-let stopRuntimeModeListener: (() => void) | null = null;
-
-const refreshRuntimeMode = () => {
-  runtimeMode.value = isDesktopRemoteAuthMode() ? 'hybrid' : 'local';
-};
+const runtimeModeText = computed(() => t('desktop.chrome.runtimeLocal'));
 
 const getDesktopBridge = (): DesktopWindowBridge | null => {
   if (typeof window === 'undefined') return null;
@@ -158,25 +147,16 @@ const handleLogoError = () => {
 };
 
 const handleWindowResize = () => {
-  refreshRuntimeMode();
   void refreshMaximizedState();
 };
 
 onMounted(async () => {
-  refreshRuntimeMode();
-  stopRuntimeModeListener = onDesktopRemoteModeChange((detail) => {
-    runtimeMode.value = detail.remoteAuthMode ? 'hybrid' : 'local';
-  });
   await refreshMaximizedState();
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('focus', handleWindowResize);
 });
 
 onBeforeUnmount(() => {
-  if (stopRuntimeModeListener) {
-    stopRuntimeModeListener();
-    stopRuntimeModeListener = null;
-  }
   window.removeEventListener('resize', handleWindowResize);
   window.removeEventListener('focus', handleWindowResize);
 });

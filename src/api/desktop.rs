@@ -67,14 +67,6 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct DesktopRemoteGatewaySettings {
-    #[serde(default)]
-    enabled: bool,
-    #[serde(default)]
-    server_base_url: String,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DesktopSettingsFile {
     workspace_root: String,
@@ -90,8 +82,6 @@ struct DesktopSettingsFile {
     #[serde(default)]
     llm: Option<LlmConfig>,
     #[serde(default)]
-    remote_gateway: DesktopRemoteGatewaySettings,
-    #[serde(default)]
     lan_mesh: desktop_lan::DesktopLanMeshSettings,
     updated_at: f64,
 }
@@ -106,7 +96,6 @@ impl Default for DesktopSettingsFile {
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
             llm: None,
-            remote_gateway: DesktopRemoteGatewaySettings::default(),
             lan_mesh: desktop_lan::DesktopLanMeshSettings::default(),
             updated_at: now_ts(),
         }
@@ -156,8 +145,6 @@ struct DesktopSettingsUpdateRequest {
     language: Option<String>,
     #[serde(default)]
     llm: Option<LlmConfig>,
-    #[serde(default)]
-    remote_gateway: Option<DesktopRemoteGatewaySettings>,
     #[serde(default)]
     lan_mesh: Option<desktop_lan::DesktopLanMeshSettings>,
 }
@@ -734,9 +721,6 @@ async fn desktop_settings_update(
     if let Some(llm) = payload.llm.clone() {
         settings.llm = Some(llm);
     }
-    if let Some(remote_gateway) = payload.remote_gateway {
-        settings.remote_gateway = remote_gateway;
-    }
     if let Some(lan_mesh) = payload.lan_mesh {
         settings.lan_mesh = lan_mesh.normalized();
     } else {
@@ -788,6 +772,11 @@ async fn desktop_seed_start(
     State(_state): State<Arc<AppState>>,
     Json(payload): Json<DesktopSeedStartRequest>,
 ) -> Result<Json<Value>, Response> {
+    if desktop_server_sync_disabled() {
+        return Err(bad_request(
+            "desktop local mode no longer supports server sync".to_string(),
+        ));
+    }
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
     let user_id = resolve_desktop_user_id();
@@ -835,7 +824,7 @@ async fn desktop_seed_start(
     })?;
 
     let remote_candidate = if payload.remote_api_base.trim().is_empty() {
-        settings.remote_gateway.server_base_url.clone()
+        "".to_string()
     } else {
         payload.remote_api_base.clone()
     };
@@ -867,6 +856,11 @@ async fn desktop_seed_start(
 async fn desktop_seed_jobs(
     Query(query): Query<DesktopSeedJobsQuery>,
 ) -> Result<Json<Value>, Response> {
+    if desktop_server_sync_disabled() {
+        return Err(bad_request(
+            "desktop local mode no longer supports server sync".to_string(),
+        ));
+    }
     let limit = query
         .limit
         .unwrap_or(DEFAULT_SEED_QUERY_LIMIT)
@@ -883,6 +877,11 @@ async fn desktop_seed_jobs(
 }
 
 async fn desktop_seed_job_get(AxumPath(job_id): AxumPath<String>) -> Result<Json<Value>, Response> {
+    if desktop_server_sync_disabled() {
+        return Err(bad_request(
+            "desktop local mode no longer supports server sync".to_string(),
+        ));
+    }
     let job_id = job_id.trim().to_string();
     if job_id.is_empty() {
         return Err(bad_request("job_id is required".to_string()));
@@ -897,6 +896,11 @@ async fn desktop_seed_job_get(AxumPath(job_id): AxumPath<String>) -> Result<Json
 async fn desktop_seed_control(
     Json(payload): Json<DesktopSeedControlRequest>,
 ) -> Result<Json<Value>, Response> {
+    if desktop_server_sync_disabled() {
+        return Err(bad_request(
+            "desktop local mode no longer supports server sync".to_string(),
+        ));
+    }
     let job_id = payload.job_id.trim().to_string();
     let action = payload.action.trim().to_string();
     if job_id.is_empty() {
@@ -973,7 +977,6 @@ fn build_settings_payload(
         "language": language,
         "supported_languages": config.i18n.supported_languages,
         "llm": llm,
-        "remote_gateway": settings.remote_gateway,
         "lan_mesh": settings.lan_mesh,
         "updated_at": settings.updated_at,
     })
@@ -1260,6 +1263,10 @@ fn is_seed_job_terminal_status(status: &str) -> bool {
 
 fn is_seed_job_active_status(status: &str) -> bool {
     matches!(status, "running" | "paused")
+}
+
+fn desktop_server_sync_disabled() -> bool {
+    true
 }
 
 fn normalize_remote_api_base(raw: &str) -> Result<String, String> {

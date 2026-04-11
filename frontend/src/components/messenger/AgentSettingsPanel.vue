@@ -361,7 +361,7 @@ import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import AbilityTooltipCard from '@/components/common/AbilityTooltipCard.vue';
 import HoneycombWaitingOverlay from '@/components/common/HoneycombWaitingOverlay.vue';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
@@ -483,7 +483,7 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
 const desktopLocalMode = computed(
-  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+  () => isDesktopModeEnabled()
 );
 const showApprovalModeSetting = computed(
   () => desktopLocalMode.value

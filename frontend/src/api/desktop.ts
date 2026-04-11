@@ -16,11 +16,6 @@ export type DesktopContainerMount = {
   seed_status: string;
 };
 
-export type DesktopRemoteGatewaySettings = {
-  enabled: boolean;
-  server_base_url: string;
-};
-
 export type DesktopLanMeshSettings = {
   enabled: boolean;
   peer_id: string;
@@ -72,7 +67,6 @@ export type DesktopSettingsData = {
   language: string;
   supported_languages: string[];
   llm: DesktopLlmConfig;
-  remote_gateway: DesktopRemoteGatewaySettings;
   lan_mesh: DesktopLanMeshSettings;
   updated_at: number;
 };

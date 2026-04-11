@@ -145,7 +145,7 @@ import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue'
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
@@ -184,7 +184,7 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
 const showApprovalModeSetting = computed(
-  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+  () => isDesktopModeEnabled()
 );
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';

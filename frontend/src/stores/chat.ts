@@ -63,6 +63,7 @@ import {
   normalizeStreamLifecyclePhase,
   shouldForcePreserveWatcherForActiveSession,
   shouldApplyForegroundDetailHydration,
+  shouldKeepForegroundLiveMessages,
   shouldRestartWatchAfterInteractiveStream
 } from './chatWatchLifecycle';
 import {
@@ -4524,6 +4525,16 @@ const clearCompletedAssistantStreamingState = (
     message.reasoningStreaming = false;
     clearAssistantRetryState(message);
   });
+};
+
+const countAssistantStreamingMessages = (messages) => {
+  if (!Array.isArray(messages)) return 0;
+  return messages.reduce((count, message) => {
+    if (!message || message.role !== 'assistant') {
+      return count;
+    }
+    return count + (message.workflowStreaming || message.stream_incomplete || message.reasoningStreaming ? 1 : 0);
+  }, 0);
 };
 
 function buildRuntimeDebugSnapshot(runtime) {
@@ -10307,20 +10318,24 @@ export const useChatStore = defineStore('chat', {
         hasSendController: Boolean(runtime?.sendController),
         hasResumeController: Boolean(runtime?.resumeController)
       });
-      const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
+      const hasPendingAssistantAfterHydrationPreview = Boolean(findPendingAssistantMessage(nextMessages));
       chatDebugLog('chat.store.detail', 'foreground-sync-decision', {
         sessionId: targetSessionId,
         preserveWatcher,
         hydrateForegroundMessages,
         remoteRunning,
         activeSessionKey,
-        hasPendingAssistantAfterHydration,
+        hasPendingAssistantAfterHydration: hasPendingAssistantAfterHydrationPreview,
         cachedMessageCount: Array.isArray(finalCachedMessages) ? finalCachedMessages.length : 0,
         nextMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
         compactionRoundCount: compactionHydrationRounds.length,
         runtime: buildRuntimeDebugSnapshot(runtime)
       });
-      if (preserveWatcher && !hydrateForegroundMessages) {
+      if (shouldKeepForegroundLiveMessages({
+        preserveWatcher,
+        hydrateForegroundMessages,
+        remoteRunning
+      })) {
         const watchedMessages =
           getSessionMessages(targetSessionId) ||
           (activeSessionKey === targetSessionId ? this.messages : null);
@@ -10350,6 +10365,22 @@ export const useChatStore = defineStore('chat', {
         });
         nextMessages = replaceMessageArrayKeepingReference(watchedMessages, foregroundMerge.messages);
       }
+      if (!remoteRunning) {
+        const runningCountBeforeClear = countAssistantStreamingMessages(nextMessages);
+        clearCompletedAssistantStreamingState(nextMessages);
+        const runningCountAfterClear = countAssistantStreamingMessages(nextMessages);
+        if (runningCountBeforeClear !== runningCountAfterClear) {
+          chatDebugLog('chat.store.detail', 'idle-stream-state-cleared', {
+            sessionId: targetSessionId,
+            preserveWatcher,
+            hydrateForegroundMessages,
+            runningCountBeforeClear,
+            runningCountAfterClear,
+            messageCount: Array.isArray(nextMessages) ? nextMessages.length : 0
+          });
+        }
+      }
+      const hasPendingAssistantAfterHydration = Boolean(findPendingAssistantMessage(nextMessages));
       cacheSessionMessages(targetSessionId, nextMessages);
       updateRuntimeLastEventId(
         runtime,

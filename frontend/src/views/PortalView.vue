@@ -422,7 +422,7 @@ import AgentToolOptionLabel from '@/components/agent/AgentToolOptionLabel.vue';
 import WorkerCardImportWaitingOverlay from '@/components/agent/WorkerCardImportWaitingOverlay.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -454,7 +454,7 @@ const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
 const chatStore = useChatStore();
 const { t } = useI18n();
-const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const desktopLocalMode = computed(() => isDesktopModeEnabled());
 const showApprovalModeSetting = computed(() => desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   'full_auto';
