@@ -10368,14 +10368,35 @@ export const useChatStore = defineStore('chat', {
           watchedMessages,
           nextMessages
         );
+        const mergedWithCompactionMarkers = mergeCompactionMarkersIntoMessages(
+          foregroundMerge.messages,
+          watchedMessages
+        );
         chatDebugLog('chat.store.detail', 'foreground-sync-replace-live', {
           sessionId: targetSessionId,
           watchedMessageCount: Array.isArray(watchedMessages) ? watchedMessages.length : 0,
           hydratedMessageCount: Array.isArray(nextMessages) ? nextMessages.length : 0,
           compactionRoundCount: compactionHydrationRounds.length,
-          merge: foregroundMerge.debug
+          merge: {
+            ...foregroundMerge.debug,
+            markerMessageCountBefore:
+              Array.isArray(foregroundMerge.messages)
+                ? foregroundMerge.messages.filter((message) =>
+                    isCompactionMarkerAssistantMessage(message)
+                  ).length
+                : 0,
+            markerMessageCountAfter:
+              Array.isArray(mergedWithCompactionMarkers)
+                ? mergedWithCompactionMarkers.filter((message) =>
+                    isCompactionMarkerAssistantMessage(message)
+                  ).length
+                : 0
+          }
         });
-        nextMessages = replaceMessageArrayKeepingReference(watchedMessages, foregroundMerge.messages);
+        nextMessages = replaceMessageArrayKeepingReference(
+          watchedMessages,
+          mergedWithCompactionMarkers
+        );
       }
       if (!remoteRunning) {
         const runningCountBeforeClear = countAssistantStreamingMessages(nextMessages);

@@ -3747,6 +3747,14 @@ fn prepare_swarm_child_session(
     )?;
     let user_id = context.user_id.trim();
     if !user_id.is_empty() {
+        if let Some(ref child_agent_id) = prepared.child_agent_id {
+            bind_child_session_as_agent_main_thread(
+                context.storage.as_ref(),
+                user_id,
+                child_agent_id,
+                &prepared.child_session_id,
+            )?;
+        }
         if let Some(mut session) = context
             .storage
             .get_chat_session(user_id, &prepared.child_session_id)?
@@ -4276,28 +4284,6 @@ fn prepare_child_session(
         spawned_by: Some("model".to_string()),
     };
     context.storage.upsert_chat_session(&child_record)?;
-    // Bind the child session as the main thread for the child agent so that
-    // messages render on the worker bee's own chat page in the frontend.
-    if let Some(ref child_agent) = child_agent_id {
-        let existing_thread = context.storage.get_agent_thread(user_id, child_agent)?;
-        let thread_record = AgentThreadRecord {
-            thread_id: format!("thread_{child_session_id}"),
-            user_id: user_id.to_string(),
-            agent_id: child_agent.clone(),
-            session_id: child_session_id.clone(),
-            status: existing_thread
-                .as_ref()
-                .map(|r| r.status.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "idle".to_string()),
-            created_at: existing_thread
-                .as_ref()
-                .map(|r| r.created_at)
-                .unwrap_or(now),
-            updated_at: now,
-        };
-        context.storage.upsert_agent_thread(&thread_record)?;
-    }
     let run_metadata = build_prepared_child_run_metadata(
         context,
         cleaned_parent_session_id,
@@ -4345,6 +4331,43 @@ fn prepare_child_session(
         },
         run_metadata,
     })
+}
+
+fn bind_child_session_as_agent_main_thread(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    agent_id: &str,
+    child_session_id: &str,
+) -> Result<()> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_agent_id = agent_id.trim();
+    let cleaned_child_session_id = child_session_id.trim();
+    if cleaned_user_id.is_empty()
+        || cleaned_agent_id.is_empty()
+        || cleaned_child_session_id.is_empty()
+    {
+        return Ok(());
+    }
+    let now = now_ts();
+    let existing_thread = storage.get_agent_thread(cleaned_user_id, cleaned_agent_id)?;
+    let thread_record = AgentThreadRecord {
+        thread_id: format!("thread_{cleaned_child_session_id}"),
+        user_id: cleaned_user_id.to_string(),
+        agent_id: cleaned_agent_id.to_string(),
+        session_id: cleaned_child_session_id.to_string(),
+        status: existing_thread
+            .as_ref()
+            .map(|record| record.status.trim().to_string())
+            .filter(|status| !status.is_empty())
+            .unwrap_or_else(|| "idle".to_string()),
+        created_at: existing_thread
+            .as_ref()
+            .map(|record| record.created_at)
+            .unwrap_or(now),
+        updated_at: now,
+    };
+    storage.upsert_agent_thread(&thread_record)?;
+    Ok(())
 }
 
 fn resolve_effective_agent_model_name(
@@ -10776,6 +10799,271 @@ PATCH"#;
                 .spawned_by
                 .as_deref(),
             Some("agent_swarm")
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_child_session_does_not_rebind_parent_agent_main_thread_for_subagent_children()
+    {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("subagent-keep-parent-main-thread.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+        storage_backend
+            .upsert_agent_thread(&AgentThreadRecord {
+                thread_id: "thread_parent_main".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: parent_agent.agent_id.clone(),
+                session_id: parent_session.session_id.clone(),
+                status: "idle".to_string(),
+                created_at: 1.0,
+                updated_at: 1.0,
+            })
+            .expect("bind parent main thread");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some(parent_agent.agent_id.as_str()),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let prepared = prepare_child_session(
+            &context,
+            "sess_parent",
+            "delegate subagent task",
+            Some("temporary child".to_string()),
+            None,
+            None,
+            ChildSessionToolMode::InheritParentSession,
+        )
+        .expect("prepare child session");
+
+        assert_ne!(prepared.child_session_id, "sess_parent");
+        assert_eq!(
+            storage_backend
+                .get_agent_thread("alice", &parent_agent.agent_id)
+                .expect("get parent thread")
+                .expect("parent thread")
+                .session_id,
+            "sess_parent"
+        );
+        assert_eq!(
+            storage_backend
+                .get_chat_session("alice", &prepared.child_session_id)
+                .expect("load child session")
+                .expect("child session")
+                .parent_session_id
+                .as_deref(),
+            Some("sess_parent")
+        );
+        assert_eq!(
+            storage_backend
+                .get_chat_session("alice", &prepared.child_session_id)
+                .expect("reload child session")
+                .expect("child session")
+                .spawned_by
+                .as_deref(),
+            Some("model")
+        );
+    }
+
+    #[tokio::test]
+    async fn swarm_worker_subagent_child_does_not_steal_worker_main_thread() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir
+            .path()
+            .join("swarm-worker-subagent-keeps-worker-main-thread.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let worker_agent = sample_agent_record();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut mother_session = sample_chat_session_record(&parent_agent.agent_id);
+        mother_session.session_id = "sess_mother".to_string();
+        mother_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&mother_session)
+            .expect("upsert mother session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let mother_context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_mother",
+            workspace_id: "workspace-test",
+            agent_id: Some(parent_agent.agent_id.as_str()),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace: workspace.clone(),
+            lsp_manager: lsp_manager.clone(),
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let worker_prepared = prepare_swarm_child_session(
+            &mother_context,
+            "worker task",
+            Some("worker".to_string()),
+            &worker_agent.agent_id,
+        )
+        .expect("prepare worker session");
+
+        assert_eq!(
+            storage_backend
+                .get_agent_thread("alice", &worker_agent.agent_id)
+                .expect("get worker thread after swarm dispatch")
+                .expect("worker thread after swarm dispatch")
+                .session_id,
+            worker_prepared.child_session_id
+        );
+
+        let worker_context = ToolContext {
+            user_id: "alice",
+            session_id: worker_prepared.child_session_id.as_str(),
+            workspace_id: "workspace-test",
+            agent_id: Some(worker_agent.agent_id.as_str()),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let subagent_prepared = prepare_child_session(
+            &worker_context,
+            &worker_prepared.child_session_id,
+            "subagent task",
+            Some("temporary worker child".to_string()),
+            None,
+            None,
+            ChildSessionToolMode::InheritParentSession,
+        )
+        .expect("prepare subagent child session");
+
+        assert_ne!(
+            subagent_prepared.child_session_id,
+            worker_prepared.child_session_id
+        );
+        assert_eq!(
+            storage_backend
+                .get_agent_thread("alice", &worker_agent.agent_id)
+                .expect("get worker thread after subagent spawn")
+                .expect("worker thread after subagent spawn")
+                .session_id,
+            worker_prepared.child_session_id
+        );
+        assert_eq!(
+            storage_backend
+                .get_chat_session("alice", &subagent_prepared.child_session_id)
+                .expect("load subagent child session")
+                .expect("subagent child session")
+                .parent_session_id
+                .as_deref(),
+            Some(worker_prepared.child_session_id.as_str())
         );
     }
 

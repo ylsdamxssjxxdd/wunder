@@ -243,3 +243,97 @@ test('overflow recovery compaction divider shows running before terminal snapsho
 
   assert.equal(status, 'running');
 });
+
+test('foreground hydration restores completed manual compaction divider from watched messages', () => {
+  const watchedMessages = [
+    {
+      role: 'user',
+      content: '绘制一个爱心给我',
+      created_at: '2026-04-11T12:15:00.000Z'
+    },
+    {
+      role: 'assistant',
+      content: '我来为你绘制一个爱心。',
+      created_at: '2026-04-11T12:15:01.000Z'
+    },
+    {
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      created_at: '2026-04-11T12:15:06.708Z',
+      stream_round: 2,
+      workflowStreaming: false,
+      stream_incomplete: false,
+      manual_compaction_marker: true,
+      workflowItems: [
+        {
+          eventType: 'compaction',
+          status: 'completed',
+          toolName: 'context_compaction',
+          toolCallId: 'compaction:manual:1775909704662',
+          detail: JSON.stringify({
+            status: 'done',
+            trigger_mode: 'manual',
+            user_round: 2,
+            projected_request_tokens: 16249,
+            projected_request_tokens_after: 5670
+          })
+        }
+      ]
+    },
+    {
+      role: 'user',
+      content: '不错',
+      created_at: '2026-04-11T12:15:15.550Z'
+    },
+    {
+      role: 'assistant',
+      content: '',
+      reasoning: '',
+      created_at: '2026-04-11T12:15:15.563Z',
+      workflowStreaming: true,
+      stream_incomplete: true,
+      workflowItems: []
+    }
+  ];
+
+  const foregroundMergedMessages = [
+    {
+      role: 'user',
+      content: '绘制一个爱心给我',
+      created_at: '2026-04-11T12:15:00.000Z'
+    },
+    {
+      role: 'assistant',
+      content: '我来为你绘制一个爱心。',
+      created_at: '2026-04-11T12:15:01.000Z'
+    },
+    {
+      role: 'user',
+      content: '不错',
+      created_at: '2026-04-11T12:15:15.550Z'
+    },
+    {
+      role: 'assistant',
+      content: '接下来还需要我调整吗？',
+      reasoning: '等待用户确认是否继续调整图像。',
+      created_at: '2026-04-11T12:15:15.579Z',
+      stream_round: 3,
+      workflowStreaming: false,
+      stream_incomplete: false,
+      workflowItems: []
+    }
+  ];
+
+  const reconciled = mergeCompactionMarkersIntoMessages(
+    foregroundMergedMessages,
+    watchedMessages
+  );
+
+  assert.equal(reconciled.length, 5);
+  assert.equal(reconciled.filter((message) => message.manual_compaction_marker === true).length, 1);
+  assert.equal(reconciled[2]?.manual_compaction_marker, true);
+  assert.equal(reconciled[2]?.workflowItems?.[0]?.eventType, 'compaction');
+  assert.equal(reconciled[3]?.role, 'user');
+  assert.equal(reconciled[3]?.content, '不错');
+});
