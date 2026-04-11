@@ -110,36 +110,14 @@
         </div>
         <div class="messenger-profile-quota-card">
           <div class="messenger-profile-quota-head">
-            <span>{{ t('profile.metrics.quotaToday') }}</span>
-            <span>{{ quotaRemainingText }} / {{ quotaTotalText }}</span>
+            <span>{{ t('profile.quota.remaining') }}</span>
           </div>
-          <div class="messenger-profile-quota-ring-wrap">
-            <div class="messenger-profile-quota-ring-shell">
-              <svg class="messenger-profile-quota-ring-svg" viewBox="0 0 140 140" aria-hidden="true">
-                <path
-                  v-for="segment in quotaRingSegments"
-                  :key="`${segment.key}-outline`"
-                  class="messenger-profile-quota-ring-segment-outline"
-                  :d="segment.path"
-                />
-                <path
-                  v-for="segment in quotaRingSegments"
-                  :key="segment.key"
-                  class="messenger-profile-quota-ring-segment"
-                  :class="`messenger-profile-quota-ring-segment--${segment.tone}`"
-                  :d="segment.path"
-                />
-              </svg>
-              <div class="messenger-profile-quota-ring-inner">
-                <span class="messenger-profile-quota-ring-value">{{ quotaRemainingText }}</span>
-                <span class="messenger-profile-quota-ring-label">{{ t('profile.quota.remaining') }}</span>
-              </div>
-            </div>
+          <div class="messenger-profile-token-balance">
+            <div class="messenger-profile-token-balance-value">{{ quotaRemainingKText }}</div>
+            <div class="messenger-profile-token-balance-label">{{ t('profile.quota.balanceHint') }}</div>
           </div>
           <div class="messenger-profile-quota-meta">
-            <span>{{ t('profile.quota.used') }}: {{ quotaUsedText }}</span>
             <span>{{ t('profile.quota.remaining') }}: {{ quotaRemainingText }}</span>
-            <span>{{ t('profile.quota.dailyGrant') }}: {{ dailyTokenGrantText }}</span>
           </div>
         </div>
       </section>
@@ -924,113 +902,19 @@ const parseQuotaNumber = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const normalizeQuotaDate = (value: unknown): string => {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
-  const parsed = new Date(text);
-  if (Number.isNaN(parsed.getTime())) return '';
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
-};
-
-const resolveTodayString = (): string => {
-  const now = new Date();
-  const pad = (part: number) => String(part).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-};
-
 const quotaSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
-  const daily = parseQuotaNumber(
-    user.token_granted_total ?? user.tokenGrantedTotal ?? user.daily_quota ?? user.dailyQuota
-  );
-  const used = parseQuotaNumber(
-    user.token_used_total ?? user.tokenUsedTotal ?? user.daily_quota_used ?? user.dailyQuotaUsed
-  );
   const remaining = parseQuotaNumber(
     user.token_balance
       ?? user.tokenBalance
       ?? user.daily_quota_remaining
       ?? user.dailyQuotaRemaining
   );
-  const dailyGrant = parseQuotaNumber(
-    user.daily_token_grant ?? user.dailyTokenGrant ?? user.token_daily_grant ?? user.tokenDailyGrant
-  );
-  if (daily === null && used === null && remaining === null && dailyGrant === null) return null;
-  return { daily, used, remaining, dailyGrant };
+  if (remaining === null) return null;
+  return { remaining };
 });
 
-const quotaTotal = computed(() => quotaSnapshot.value?.daily ?? null);
-const quotaUsed = computed(() => quotaSnapshot.value?.used ?? 0);
 const quotaRemaining = computed(() => quotaSnapshot.value?.remaining ?? null);
-
-const quotaRemainingPercent = computed(() => {
-  if (!Number.isFinite(quotaTotal.value) || (quotaTotal.value as number) <= 0) return 0;
-  const total = quotaTotal.value as number;
-  const used = Number.isFinite(quotaUsed.value) ? (quotaUsed.value as number) : 0;
-  const remaining = Number.isFinite(quotaRemaining.value)
-    ? (quotaRemaining.value as number)
-    : Math.max(total - used, 0);
-  const percent = Math.max(0, Math.min(100, (remaining / total) * 100));
-  if (percent > 0 && percent < 1) return 1;
-  return Number(percent.toFixed(2));
-});
-
-type QuotaRingTone = 'danger' | 'warning' | 'safe';
-
-type QuotaRingSegment = {
-  key: string;
-  tone: QuotaRingTone;
-  path: string;
-};
-
-const QUOTA_RING_CENTER = 70;
-const QUOTA_RING_RADIUS = 48;
-const QUOTA_RING_START_DEG = 138;
-const QUOTA_RING_GAP_DEG = 7;
-
-const polarToCartesian = (centerX: number, centerY: number, radius: number, angleDeg: number) => {
-  const angleRad = ((angleDeg - 90) * Math.PI) / 180;
-  return {
-    x: centerX + radius * Math.cos(angleRad),
-    y: centerY + radius * Math.sin(angleRad)
-  };
-};
-
-const buildArcPath = (startDeg: number, endDeg: number): string => {
-  const start = polarToCartesian(QUOTA_RING_CENTER, QUOTA_RING_CENTER, QUOTA_RING_RADIUS, startDeg);
-  const end = polarToCartesian(QUOTA_RING_CENTER, QUOTA_RING_CENTER, QUOTA_RING_RADIUS, endDeg);
-  const largeArcFlag = endDeg - startDeg > 180 ? 1 : 0;
-  return `M ${start.x.toFixed(3)} ${start.y.toFixed(3)} A ${QUOTA_RING_RADIUS} ${QUOTA_RING_RADIUS} 0 ${largeArcFlag} 1 ${end.x.toFixed(3)} ${end.y.toFixed(3)}`;
-};
-
-const quotaRingSegments = computed<QuotaRingSegment[]>(() => {
-  const remainingRatio = Math.max(0, Math.min(quotaRemainingPercent.value / 100, 1));
-  const usedRatio = Math.max(0, 1 - remainingRatio);
-  const warningRatio = usedRatio <= 0 ? 0 : Math.min(Math.max(usedRatio * 0.38, 0.08), usedRatio);
-  const dangerRatio = Math.max(usedRatio - warningRatio, 0);
-  const segments: Array<{ key: string; tone: QuotaRingTone; ratio: number }> = [
-    { key: 'danger', tone: 'danger', ratio: dangerRatio },
-    { key: 'warning', tone: 'warning', ratio: warningRatio },
-    { key: 'safe', tone: 'safe', ratio: remainingRatio }
-  ];
-  let cursor = QUOTA_RING_START_DEG;
-  return segments
-    .filter((segment) => segment.ratio > 0.001)
-    .map((segment) => {
-      const spanDeg = segment.ratio * 360;
-      const startDeg = cursor + QUOTA_RING_GAP_DEG / 2;
-      const endDeg = cursor + Math.max(spanDeg - QUOTA_RING_GAP_DEG / 2, QUOTA_RING_GAP_DEG / 2);
-      cursor += spanDeg;
-      return {
-        key: segment.key,
-        tone: segment.tone,
-        path: buildArcPath(startDeg, endDeg)
-      };
-    });
-});
 
 const levelSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
@@ -1083,9 +967,7 @@ const levelProgressHint = computed(() => {
 });
 
 const quotaRemainingText = computed(() => formatNumber(quotaRemaining.value));
-const quotaUsedText = computed(() => formatNumber(quotaUsed.value));
-const quotaTotalText = computed(() => formatNumber(quotaTotal.value));
-const dailyTokenGrantText = computed(() => formatNumber(quotaSnapshot.value?.dailyGrant ?? null));
+const quotaRemainingKText = computed(() => formatKUnit(quotaRemaining.value));
 
 const formatTime = (value: unknown): string => {
   if (!value) return '-';
@@ -1099,6 +981,11 @@ const formatTime = (value: unknown): string => {
 
 const formatK = (value: number | null): string => {
   if (!Number.isFinite(value as number) || (value as number) <= 0) return '-';
+  return `${((value as number) / 1000).toFixed(1)}k`;
+};
+
+const formatKUnit = (value: number | null): string => {
+  if (!Number.isFinite(value as number) || (value as number) < 0) return '-';
   return `${((value as number) / 1000).toFixed(1)}k`;
 };
 
@@ -1179,93 +1066,35 @@ watch(
   font-size: 11px;
 }
 
-.messenger-profile-quota-ring-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 0 10px;
-}
-
-.messenger-profile-quota-ring-shell {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 168px;
-  height: 168px;
-}
-
-.messenger-profile-quota-ring-svg {
-  width: 168px;
-  height: 168px;
-  overflow: visible;
-}
-
-.messenger-profile-quota-ring-segment-outline,
-.messenger-profile-quota-ring-segment {
-  fill: none;
-  stroke-linecap: round;
-}
-
-.messenger-profile-quota-ring-segment-outline {
-  stroke: rgba(76, 85, 99, 0.82);
-  stroke-width: 22px;
-}
-
-.messenger-profile-quota-ring-segment {
-  stroke-width: 18px;
-}
-
-.messenger-profile-quota-ring-segment--danger {
-  stroke: #fb6a82;
-}
-
-.messenger-profile-quota-ring-segment--warning {
-  stroke: #ffc42f;
-}
-
-.messenger-profile-quota-ring-segment--safe {
-  stroke: #27c65a;
-}
-
-.messenger-profile-quota-ring-inner {
-  position: absolute;
-  inset: 37px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #ffffff, #f5f7fb);
-  color: #334155;
+.messenger-profile-token-balance {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 8px;
+  padding: 18px 16px 14px;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top, rgba(249, 115, 22, 0.12), transparent 58%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98));
   box-shadow:
-    inset 0 0 0 1px rgba(148, 163, 184, 0.2),
-    0 2px 10px rgba(15, 23, 42, 0.06);
+    inset 0 0 0 1px rgba(148, 163, 184, 0.16),
+    0 10px 24px rgba(15, 23, 42, 0.06);
 }
 
-.messenger-profile-quota-ring-inner::before {
-  content: '';
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  pointer-events: none;
-}
-
-.messenger-profile-quota-ring-value {
-  font-size: 20px;
-  font-weight: 700;
+.messenger-profile-token-balance-value {
+  font-size: 34px;
+  font-weight: 800;
   line-height: 1;
   letter-spacing: -0.03em;
   color: #243244;
 }
 
-.messenger-profile-quota-ring-label {
-  font-size: 11px;
-  line-height: 1;
+.messenger-profile-token-balance-label {
+  font-size: 12px;
+  line-height: 1.4;
   color: #7b8794;
-  letter-spacing: 0.04em;
+  text-align: center;
 }
 
 .messenger-username-dialog-body {

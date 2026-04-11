@@ -459,8 +459,20 @@ export const buildAssistantMessageStatsEntries = (
       : null) ??
     null;
   const quotaConsumedTokens = Number(stats?.quotaConsumed ?? stats?.quota_consumed);
+  const effectiveQuotaConsumedCandidates = [
+    Number.isFinite(quotaConsumedTokens) && quotaConsumedTokens > 0 ? quotaConsumedTokens : null,
+    Number.isFinite(roundUsageTotalTokens) && roundUsageTotalTokens > 0 ? roundUsageTotalTokens : null,
+    Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0 ? roundUsageInputTokens : null,
+    Number.isFinite(usageTotalTokens) && usageTotalTokens > 0 ? usageTotalTokens : null,
+    Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null
+  ].filter((value): value is number => Number.isFinite(value) && value > 0);
+  const effectiveQuotaConsumedTokens =
+    effectiveQuotaConsumedCandidates.length > 0
+      ? Math.max(...effectiveQuotaConsumedCandidates)
+      : null;
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
-  const hasQuota = Number.isFinite(quotaConsumedTokens) && quotaConsumedTokens > 0;
+  const hasQuota =
+    Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
@@ -483,7 +495,7 @@ export const buildAssistantMessageStatsEntries = (
     {
       key: 'quota',
       label: t('chat.stats.quota'),
-      value: formatCount(quotaConsumedTokens),
+      value: formatCount(effectiveQuotaConsumedTokens),
       kind: 'metric'
     },
     { key: 'toolCalls', label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls), kind: 'metric' }

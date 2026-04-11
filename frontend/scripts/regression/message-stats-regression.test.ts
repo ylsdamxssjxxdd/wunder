@@ -204,6 +204,25 @@ test('message stats still shows quota consumed after an interrupted response', (
   assert.equal(findEntryValue(entries, 'Quota'), '1536');
 });
 
+test('message stats falls back to user-round total tokens when quota event is missing', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          input_tokens: 3870,
+          output_tokens: 328,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Quota'), '4198');
+});
+
 test('message stats keeps backend average speed without frontend clamping', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

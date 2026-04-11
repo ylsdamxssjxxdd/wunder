@@ -158,6 +158,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const dispatchTargetAgentId = ref('');
   const dispatchTargetName = ref('');
   const dispatchTargetTone = ref<MissionChatMessage['tone']>('worker');
+  const dispatchLabelPreview = ref('');
   const dispatchRespondingApprovalId = ref('');
   const chatRealtimeCursor = ref(0);
   const chatMessagesClearedAfter = ref(0);
@@ -945,6 +946,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const resolveLatestVisibleUserPreview = () => {
+    const currentDispatchLabel = String(dispatchLabelPreview.value || '').trim();
+    if (currentDispatchLabel) {
+      return currentDispatchLabel;
+    }
     const hit = [...manualChatMessages.value]
       .reverse()
       .find((message) => message?.tone === 'user' && String(message.body || '').trim());
@@ -1564,6 +1569,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       last_message_at: nowIso
     };
     if (preview) {
+      nextSession.beeroom_dispatch_label = preview;
       nextSession.last_message_preview = preview;
       nextSession.last_user_message_preview = preview;
     }
@@ -2058,6 +2064,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const targetName = resolveAgentNameById(target.agentId);
     const now = Math.floor(Date.now() / 1000);
     const visibleBody = String(body || content).trim();
+    dispatchLabelPreview.value = visibleBody;
     const targetTone = target.role === 'mother' ? 'mother' : 'worker';
     const previousSessionId = String(dispatchSessionId.value || '').trim();
     const previousTargetAgentId = String(dispatchTargetAgentId.value || '').trim();
@@ -2183,6 +2190,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       }
       dispatchStreamController = null;
       composerSending.value = false;
+      dispatchLabelPreview.value = '';
     }
   };
 
@@ -2273,6 +2281,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       }
       dispatchStreamController = null;
       composerSending.value = false;
+      dispatchLabelPreview.value = '';
     }
   };
 

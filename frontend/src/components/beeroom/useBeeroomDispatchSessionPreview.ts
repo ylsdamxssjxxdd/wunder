@@ -22,6 +22,7 @@ import {
   normalizeBeeroomMissionSubagentItem
 } from '@/components/beeroom/beeroomMissionSubagentState';
 import { buildSessionWorkflowItems } from '@/components/beeroom/beeroomTaskWorkflow';
+import { useChatStore } from '@/stores/chat';
 import { chatDebugLog } from '@/utils/chatDebug';
 
 export type BeeroomDispatchSessionPreview = {
@@ -348,6 +349,17 @@ const resolveDispatchLabel = (events: SessionEventRecord[], summary: string): st
   return clipText(summary, 42);
 };
 
+const resolvePersistedDispatchLabel = (
+  sessionSummary: Record<string, unknown> | null | undefined,
+  sessionDetail: Record<string, unknown> | null | undefined
+): string =>
+  normalizeText(
+    sessionSummary?.beeroom_dispatch_label ??
+      sessionSummary?.last_user_message_preview ??
+      sessionDetail?.beeroom_dispatch_label ??
+      sessionDetail?.last_user_message_preview
+  );
+
 const buildSubagentIdentity = (item: Pick<BeeroomMissionSubagentItem, 'key' | 'sessionId' | 'runId'>) =>
   normalizeText(item.runId || item.sessionId || item.key);
 
@@ -512,6 +524,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
   clearedAfter: Ref<number>;
   t: TranslationFn;
 }) => {
+  const chatStore = useChatStore();
   const rawPreview = ref<BeeroomDispatchSessionPreview | null>(null);
   const stickySwarmWorkerShadowItems = ref<Record<string, BeeroomMissionSubagentItem>>({});
   const logDispatchPreview = (event: string, payload?: unknown) => {
@@ -610,6 +623,11 @@ export const useBeeroomDispatchSessionPreview = (options: {
 
       const eventsPayload = eventsResponse?.data?.data || {};
       const sessionDetail = sessionResponse?.data?.data || null;
+      const storedSessionSummary =
+        (Array.isArray(chatStore.sessions)
+          ? ((chatStore.sessions.find((item) => normalizeText(item?.id) === sessionId) ||
+              null) as Record<string, unknown> | null)
+          : null) || null;
       const events = flattenBeeroomSessionEventRounds(eventsPayload.rounds);
       const running = eventsPayload.running === true;
       const liveSubagents = (Array.isArray(subagentsResponse?.data?.data?.items)
@@ -646,6 +664,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
       const targetName = resolvedAgentName || requestedTargetName || targetAgentId;
 
       const summary = resolveSummaryFromEvents(events);
+      const persistedDispatchLabel = resolvePersistedDispatchLabel(storedSessionSummary, sessionDetail);
       const updatedTime = Math.max(
         ...events.map((event) => {
           const timestampMs = Number(event?.timestamp_ms ?? resolveEventPayload(event).timestamp_ms ?? 0);
@@ -677,7 +696,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
         targetName,
         status: previewStatus,
         summary,
-        dispatchLabel: resolveDispatchLabel(events, summary),
+        dispatchLabel: persistedDispatchLabel || resolveDispatchLabel(events, summary),
         updatedTime,
         subagents
       };

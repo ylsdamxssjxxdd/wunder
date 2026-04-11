@@ -342,9 +342,14 @@ const trimDispatchLabel = (value: unknown, max = 26) => {
   return `${text.slice(0, max)}...`;
 };
 
+const isGenericDispatchStrategyLabel = (value: unknown) => {
+  const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+  return normalized === 'direct_send' || normalized === 'batch_send';
+};
+
 const resolveDispatchTaskLabel = (mission: BeeroomMission | null, task: BeeroomMissionTask | null) => {
   const missionText = trimDispatchLabel(mission?.summary || mission?.strategy || '');
-  if (missionText) return missionText;
+  if (missionText && !isGenericDispatchStrategyLabel(missionText)) return missionText;
   const taskText = trimDispatchLabel(task?.result_summary || task?.error || '');
   if (taskText) return taskText;
   const taskId = String(task?.task_id || '').trim();
@@ -918,6 +923,10 @@ export const buildBeeroomSwarmProjection = (options: {
       const dispatchActive =
         ACTIVE_DISPATCH_STATUSES.has(latestStatus) || (memberMap.get(agentId)?.idle === false && agentTasks.length > 0);
       const targetNodeId = `agent:${agentId}`;
+      const runtimeDispatchLabel =
+        runtimeDispatch && String(runtimeDispatch.targetAgentId || '').trim() === agentId
+          ? trimDispatchLabel(runtimeDispatch.dispatchLabel || runtimeDispatch.summary, 18)
+          : '';
       const edgeSelected =
         Boolean(options.selectedNodeId) &&
         (options.selectedNodeId === motherNodeId || options.selectedNodeId === targetNodeId);
@@ -925,7 +934,7 @@ export const buildBeeroomSwarmProjection = (options: {
         id: `dispatch:${effectiveMotherAgentId}:${agentId}`,
         source: motherNodeId,
         target: targetNodeId,
-        label: dispatchActive ? resolveDispatchTaskLabel(mission, latestTask) : '',
+        label: dispatchActive ? runtimeDispatchLabel || resolveDispatchTaskLabel(mission, latestTask) : '',
         active: dispatchActive,
         selected: edgeSelected,
         kind: 'dispatch'
