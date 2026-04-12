@@ -391,7 +391,16 @@ const collectWorkspacePathHints = (...sources) => {
 
 const normalizeQuotaConsumed = (value) => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return normalizeStatsCount(value.consumed ?? value.used ?? value.count ?? 0);
+    return normalizeStatsCount(
+      value.request_consumed_tokens ??
+        value.requestConsumedTokens ??
+        value.consumed_tokens ??
+        value.consumedTokens ??
+        value.consumed ??
+        value.used ??
+        value.count ??
+        0
+    );
   }
   return normalizeStatsCount(value);
 };
@@ -876,7 +885,13 @@ const normalizeMessageStats = (stats) => {
         stats.averageSpeedRounds
     ),
     quotaConsumed: normalizeQuotaConsumed(
-      stats.quotaConsumed ?? stats.quota_consumed ?? stats.quota
+      stats.quotaConsumed ??
+        stats.quota_consumed ??
+        stats.request_consumed_tokens ??
+        stats.requestConsumedTokens ??
+        stats.consumed_tokens ??
+        stats.consumedTokens ??
+        stats.quota
     ),
     quotaSnapshot,
     contextTokens,
@@ -6936,31 +6951,53 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const updateQuotaUsage = (payload, roundNumber = null) => {
     if (!stats) return;
-    if (Number.isFinite(roundNumber) && !markQuotaRoundConsumed(roundNumber)) {
-      return;
-    }
     const rawIncrement =
-      payload && typeof payload === 'object' ? payload.consumed ?? payload.count ?? payload.used : null;
+      payload && typeof payload === 'object'
+        ? payload.request_consumed_tokens ??
+          payload.requestConsumedTokens ??
+          payload.consumed_tokens ??
+          payload.consumedTokens ??
+          payload.consumed ??
+          payload.count ??
+          payload.used
+        : null;
     const increment = normalizeStatsCount(rawIncrement);
-    const delta = increment > 0 ? increment : 1;
-    stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + delta;
+    if (increment > 0) {
+      if (Number.isFinite(roundNumber) && !markQuotaRoundConsumed(roundNumber)) {
+        return;
+      }
+      stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + increment;
+    }
     const snapshot = normalizeQuotaSnapshot(payload);
     if (snapshot) {
       stats.quotaSnapshot = snapshot;
     }
   };
 
-  const fallbackQuotaUsageFromRound = (roundNumber) => {
+  const fallbackQuotaUsageFromRound = (payload, roundNumber) => {
     if (!stats) return;
     if (Number.isFinite(roundNumber)) {
       if (!markQuotaRoundConsumed(roundNumber)) {
         return;
       }
-      stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + 1;
-      return;
     }
-    if (normalizeStatsCount(stats.quotaConsumed) <= 0) {
-      stats.quotaConsumed = 1;
+    const increment = normalizeStatsCount(
+      payload?.request_consumed_tokens ??
+        payload?.requestConsumedTokens ??
+        payload?.consumed_tokens ??
+        payload?.consumedTokens ??
+        payload?.consumed ??
+        payload?.used ??
+        payload?.count ??
+        payload?.usage?.total ??
+        payload?.usage?.total_tokens ??
+        payload?.usage?.totalTokens ??
+        payload?.total ??
+        payload?.total_tokens ??
+        payload?.totalTokens
+    );
+    if (increment > 0) {
+      stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + increment;
     }
   };
 
@@ -8889,7 +8926,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             includeInRoundAverage: false
           }
         );
-        fallbackQuotaUsageFromRound(round);
+        fallbackQuotaUsageFromRound(data ?? payload ?? {}, round);
         break;
       }
       case 'context_usage': {

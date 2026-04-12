@@ -476,6 +476,7 @@ impl MemoryAutoExtractService {
                 pinned: Some(false),
                 confirmed_by_user: Some(false),
                 invalidated: Some(false),
+                ..Default::default()
             },
         )?;
         Ok(CandidateApplyAction::Created(record))

@@ -42,6 +42,7 @@ import {
   resolvePreferredBeeroomDispatchSessionId,
   shouldFinishBeeroomTerminalHydration
 } from '@/components/beeroom/beeroomDispatchSessionPolicy';
+import { overlayBeeroomLiveDispatchLabel } from '@/components/beeroom/beeroomDispatchPreviewOverlay';
 import { useBeeroomDispatchSessionPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
 import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
 import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
@@ -213,7 +214,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     t: options.t
   });
 
-  const { subagentsByTask } = useBeeroomMissionSubagentPreview({
+  const { subagentsByTask, syncMissionSubagentState } = useBeeroomMissionSubagentPreview({
     mission: computed(() => options.mission.value || null),
     clearedAfter: chatMessagesClearedAfter,
     t: options.t
@@ -227,6 +228,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     clearedAfter: chatMessagesClearedAfter,
     t: options.t
   });
+  const effectiveDispatchPreview = computed(() =>
+    overlayBeeroomLiveDispatchLabel(dispatchPreview.value, {
+      currentSessionId: dispatchSessionId.value,
+      runtimeStatus: dispatchRuntimeStatus.value,
+      composerSending: composerSending.value,
+      dispatchLabelPreview: dispatchLabelPreview.value
+    })
+  );
 
   const swarmMemberAgentIds = computed(
     () =>
@@ -2866,7 +2875,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         forceWorkflowRefresh,
         forceImmediateReconcile
       });
-      void nextTick(() => syncMissionWorkflowState(forceWorkflowRefresh));
+      void nextTick(() => {
+        logBeeroomRuntime('chat-realtime:subagent-sync', {
+          groupId,
+          eventType: normalizedType,
+          force: forceWorkflowRefresh || forceImmediateReconcile
+        });
+        void syncMissionWorkflowState(forceWorkflowRefresh);
+        void syncMissionSubagentState(forceWorkflowRefresh || forceImmediateReconcile);
+      });
       if (normalizedType === 'team_start' || normalizedType === 'team_task_dispatch') {
         scheduleDispatchMessageRefresh(`team:${normalizedType}`, {
           hydrate: false,
@@ -2937,7 +2954,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchRuntimeStatus,
     dispatchRuntimeTone,
     dispatchSessionId,
-    dispatchPreview,
+    dispatchPreview: effectiveDispatchPreview,
     displayChatMessages,
     motherWorkflowItems,
     subagentsByTask,

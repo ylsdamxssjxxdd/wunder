@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { normalizeBeeroomActorName } from '../../src/components/beeroom/beeroomActorIdentity';
 import { resolveBeeroomDispatchPreviewStatus } from '../../src/components/beeroom/beeroomDispatchPreviewStatus';
+import { buildNodeWorkflowPreviewLines } from '../../src/components/beeroom/beeroomTaskWorkflow';
+import { shouldPollBeeroomTaskSubagents } from '../../src/components/beeroom/useBeeroomMissionSubagentPreview';
 import {
   buildBeeroomRuntimeRelayMessageSignature,
   mergeBeeroomRuntimeRelayMessages
@@ -651,6 +653,114 @@ test('worker node stays in running state while workflow tail still shows live ac
   });
 
   assert.equal(status, 'running');
+});
+
+test('node workflow preview collapses tool call and result pairs into a single row', () => {
+  const lines = buildNodeWorkflowPreviewLines([
+    {
+      id: 'workflow:tool_call:1',
+      title: '调用工具 search_workspace',
+      detail: JSON.stringify({
+        tool: 'search_workspace',
+        query: 'beeroom'
+      }),
+      status: 'loading',
+      isTool: true,
+      eventType: 'tool_call',
+      toolName: 'search_workspace',
+      toolCallId: 'call-1'
+    },
+    {
+      id: 'workflow:tool_result:2',
+      title: '工具结果 search_workspace',
+      detail: JSON.stringify({
+        tool: 'search_workspace',
+        query: 'beeroom',
+        result_summary: 'ok'
+      }),
+      status: 'completed',
+      isTool: true,
+      eventType: 'tool_result',
+      toolName: 'search_workspace',
+      toolCallId: 'call-1'
+    }
+  ] as never);
+
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0]?.main.includes('search'), true);
+  assert.equal(lines[0]?.detail.includes('beeroom'), true);
+});
+
+test('node workflow preview keeps only tool call rows when result events arrive separately later', () => {
+  const lines = buildNodeWorkflowPreviewLines([
+    {
+      id: 'workflow:tool_call:1',
+      title: '调用工具 search_workspace',
+      detail: JSON.stringify({
+        tool: 'search_workspace',
+        query: 'beeroom'
+      }),
+      status: 'loading',
+      isTool: true,
+      eventType: 'tool_call',
+      toolName: 'search_workspace',
+      toolCallId: 'call-2'
+    },
+    {
+      id: 'workflow:progress:2',
+      title: '进度',
+      detail: 'searching',
+      status: 'loading',
+      eventType: 'progress'
+    },
+    {
+      id: 'workflow:tool_result:3',
+      title: '工具结果 search_workspace',
+      detail: JSON.stringify({
+        tool: 'search_workspace',
+        result_summary: 'ok'
+      }),
+      status: 'completed',
+      isTool: true,
+      eventType: 'tool_result',
+      toolName: 'search_workspace',
+      toolCallId: 'call-2'
+    }
+  ] as never);
+
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0]?.main.includes('search'), true);
+});
+
+test('recent worker tasks keep polling for subagents even after leaving the active task statuses', () => {
+  assert.equal(
+    shouldPollBeeroomTaskSubagents(
+      {
+        task_id: 'task-recent',
+        agent_id: 'worker-1',
+        status: 'completed',
+        target_session_id: 'sess-worker',
+        updated_time: 995
+      } as never,
+      [],
+      1000
+    ),
+    true
+  );
+  assert.equal(
+    shouldPollBeeroomTaskSubagents(
+      {
+        task_id: 'task-old',
+        agent_id: 'worker-1',
+        status: 'completed',
+        target_session_id: 'sess-worker',
+        updated_time: 900
+      } as never,
+      [],
+      1000
+    ),
+    false
+  );
 });
 
 test('subagent failure does not automatically mark the parent dispatch preview as failed', () => {

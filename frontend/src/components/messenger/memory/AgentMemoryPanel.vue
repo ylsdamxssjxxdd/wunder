@@ -10,32 +10,12 @@
           {{ t('common.refresh') }}
         </button>
         <button
-          class="agent-memory-icon-btn"
+          class="agent-memory-btn"
           type="button"
-          :disabled="loading"
-          :title="t('messenger.memory.hitsTitle')"
-          :aria-label="t('messenger.memory.hitsTitle')"
-          @click="hitsDialogVisible = true"
+          :disabled="loading || saving || mutating || !items.length"
+          @click="openReplicateDialog"
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M10.5 4a6.5 6.5 0 1 0 4.07 11.57l3.93 3.93 1.41-1.41-3.93-3.93A6.5 6.5 0 0 0 10.5 4Zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Zm7.5 1h2v2h-2V7Zm-1 4h3v2h-3v-2Zm-2 4h5v2h-5v-2Z"
-            />
-          </svg>
-        </button>
-        <button
-          class="agent-memory-icon-btn"
-          type="button"
-          :disabled="loading"
-          :title="t('messenger.memory.jobsTitle')"
-          :aria-label="t('messenger.memory.jobsTitle')"
-          @click="jobsDialogVisible = true"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M7 3h10v3h3v14a2 2 0 0 1-2 2H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm8 1.5H7A1.5 1.5 0 0 0 5.5 6v13A1.5 1.5 0 0 0 7 20.5h11a.5.5 0 0 0 .5-.5V7.5H15V4.5Zm-6 5h6v1.75H9V9.5Zm0 4h6v1.75H9V13.5Zm0-8h4v1.75H9V5.5Z"
-            />
-          </svg>
+          {{ t('messenger.memory.replicate') }}
         </button>
         <button
           class="agent-memory-btn agent-memory-btn--primary"
@@ -49,16 +29,14 @@
     </div>
 
     <div class="agent-memory-filters">
-      <input v-model.trim="search" class="agent-memory-input agent-memory-search" :placeholder="t('messenger.memory.search')" />
-      <select v-model="statusFilter" class="agent-memory-select">
-        <option value="">{{ t('messenger.memory.filter.allStatus') }}</option>
-        <option value="active">{{ t('messenger.memory.status.active') }}</option>
-        <option value="superseded">{{ t('messenger.memory.status.superseded') }}</option>
-        <option value="invalidated">{{ t('messenger.memory.status.invalidated') }}</option>
-      </select>
-      <select v-model="categoryFilter" class="agent-memory-select">
-        <option value="">{{ t('messenger.memory.filter.allCategory') }}</option>
-        <option v-for="item in categories" :key="item" :value="item">{{ item }}</option>
+      <input
+        v-model.trim="search"
+        class="agent-memory-input agent-memory-search"
+        :placeholder="t('messenger.memory.search')"
+      />
+      <select v-model="tagFilter" class="agent-memory-select">
+        <option value="">{{ t('messenger.memory.filter.allTag') }}</option>
+        <option v-for="item in tags" :key="item" :value="item">{{ item }}</option>
       </select>
     </div>
 
@@ -70,10 +48,7 @@
         v-for="item in filteredItems"
         :key="item.memory_id"
         class="agent-memory-card"
-        :class="{
-          'agent-memory-card--invalidated': isItemInvalidated(item),
-          'agent-memory-card--superseded': isItemSuperseded(item)
-        }"
+        :class="{ 'agent-memory-card--superseded': isItemSuperseded(item) }"
         role="button"
         tabindex="0"
         @click="beginEdit(item.memory_id)"
@@ -82,12 +57,8 @@
       >
         <div class="agent-memory-card-topline">
           <div class="agent-memory-card-topline-chips">
-            <span v-if="item.pinned" class="agent-memory-chip agent-memory-chip--warn">{{ t('messenger.memory.pinTag') }}</span>
+            <span class="agent-memory-chip">{{ resolveMemoryTag(item) || '-' }}</span>
             <span v-if="isItemSuperseded(item)" class="agent-memory-chip">{{ t('messenger.memory.status.superseded') }}</span>
-            <span v-else-if="isItemInvalidated(item)" class="agent-memory-chip agent-memory-chip--danger">
-              {{ t('messenger.memory.invalidateTag') }}
-            </span>
-            <span class="agent-memory-chip">{{ item.category || '-' }}</span>
           </div>
           <span class="agent-memory-card-time">{{ formatFragmentTime(item.updated_at) }}</span>
         </div>
@@ -100,109 +71,64 @@
 
         <div class="agent-memory-card-summary">{{ getMemoryPreview(item) }}</div>
 
-        <div v-if="hasTaxonomy(item)" class="agent-memory-card-section-chips">
-          <span v-for="tag in previewList(item.tags, 2)" :key="`${item.memory_id}-tag-${tag}`" class="agent-memory-chip">
-            {{ tag }}
-          </span>
-          <span v-for="entity in previewList(item.entities, 2)" :key="`${item.memory_id}-entity-${entity}`" class="agent-memory-chip">
-            {{ entity }}
-          </span>
-          <span
-            v-if="remainingListCount(item.tags, 2) + remainingListCount(item.entities, 2)"
-            class="agent-memory-chip"
-          >
-            +{{ remainingListCount(item.tags, 2) + remainingListCount(item.entities, 2) }}
-          </span>
-        </div>
-
         <div class="agent-memory-card-meta">
           <span class="agent-memory-card-meta-item">{{ formatFragmentSource(item.source_type) }}</span>
-          <span class="agent-memory-card-meta-item">{{ t('messenger.memory.meta.hitCount', { count: Number(item.hit_count || 0) }) }}</span>
           <span v-if="describeItemRelation(item)" class="agent-memory-card-meta-item">{{ describeItemRelation(item) }}</span>
-        </div>
-
-        <div class="agent-memory-card-actions">
-          <button class="agent-memory-card-action" type="button" :disabled="mutating || saving" @click.stop="togglePinned(item)">
-            {{ item.pinned ? t('messenger.memory.action.unpin') : t('messenger.memory.action.pin') }}
-          </button>
-          <button
-            class="agent-memory-card-action"
-            type="button"
-            :disabled="mutating || saving"
-            @click.stop="toggleInvalidated(item)"
-          >
-            {{ isItemInvalidated(item) ? t('messenger.memory.action.restore') : t('messenger.memory.action.invalidate') }}
-          </button>
-          <button
-            class="agent-memory-card-action agent-memory-card-action--danger"
-            type="button"
-            :disabled="mutating || saving"
-            @click.stop="removeMemory(item.memory_id, item.title_l0)"
-          >
-            {{ t('common.delete') }}
-          </button>
         </div>
       </article>
     </div>
 
     <el-dialog
-      v-model="hitsDialogVisible"
-      :title="t('messenger.memory.hitsTitle')"
-      width="680px"
-      top="6vh"
+      v-model="replicateDialogVisible"
+      :title="t('messenger.memory.replicateTitle')"
+      width="560px"
+      top="8vh"
       append-to-body
       destroy-on-close
-      class="messenger-dialog agent-memory-dialog agent-memory-dialog--insight"
+      class="messenger-dialog agent-memory-dialog"
+      :close-on-click-modal="!replicateSaving"
+      :close-on-press-escape="!replicateSaving"
+      @closed="handleReplicateDialogClosed"
     >
-      <div v-if="!hits.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.hitsEmpty') }}</div>
-      <div v-else class="agent-memory-hit-list agent-memory-hit-list--dialog">
-        <article v-for="hit in hits" :key="hit.hit_id" class="agent-memory-hit-card">
-          <div class="agent-memory-hit-head">
-            <strong>{{ resolveHitTitle(hit.memory_id) }}</strong>
-            <span>{{ formatHitTime(hit.created_at) }}</span>
-          </div>
-          <div class="agent-memory-hit-reason">{{ formatHitReason(hit.reason_json) }}</div>
-          <div class="agent-memory-hit-score">{{ formatHitScoreLine(hit) }}</div>
-        </article>
-      </div>
-    </el-dialog>
+      <div class="agent-memory-dialog-body">
+        <div class="agent-memory-editor-hint">{{ t('messenger.memory.replicateHint') }}</div>
+        <div v-if="replicateErrorMessage" class="agent-memory-error agent-memory-error--dialog">
+          {{ replicateErrorMessage }}
+        </div>
 
-    <el-dialog
-      v-model="jobsDialogVisible"
-      :title="t('messenger.memory.jobsTitle')"
-      width="680px"
-      top="6vh"
-      append-to-body
-      destroy-on-close
-      class="messenger-dialog agent-memory-dialog agent-memory-dialog--insight"
-    >
-      <div class="agent-memory-auto-extract-panel">
-        <div class="agent-memory-auto-extract-copy">
-          <div class="agent-memory-auto-extract-title">{{ t('messenger.memory.autoExtract.title') }}</div>
-          <div class="agent-memory-auto-extract-hint">{{ t('messenger.memory.autoExtract.hint') }}</div>
+        <div class="agent-memory-field">
+          <label>{{ t('messenger.memory.replicateTarget') }}</label>
+          <select v-model="replicateTargetId" class="agent-memory-select" :disabled="replicateLoading || replicateSaving">
+            <option value="">{{ t('messenger.memory.replicatePlaceholder') }}</option>
+            <option v-for="target in replicateTargets" :key="target.id" :value="target.id">
+              {{ target.name }}
+            </option>
+          </select>
         </div>
-        <div class="agent-memory-auto-extract-switch">
-          <span class="agent-memory-auto-extract-label">{{ t('messenger.memory.autoExtract.enable') }}</span>
-          <el-switch
-            :model-value="autoExtractEnabled"
-            :loading="autoExtractSaving"
-            :disabled="loading || autoExtractSaving"
-            @change="handleAutoExtractChange"
-          />
+
+        <div v-if="replicateLoading" class="agent-memory-empty agent-memory-empty--compact">{{ t('common.loading') }}</div>
+        <div v-else-if="!replicateTargets.length" class="agent-memory-empty agent-memory-empty--compact">
+          {{ t('messenger.memory.replicateNoAgents') }}
         </div>
       </div>
-      <div class="agent-memory-dialog-divider"></div>
-      <div v-if="!jobs.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.jobsEmpty') }}</div>
-      <div v-else class="agent-memory-hit-list agent-memory-hit-list--dialog">
-        <article v-for="job in jobs" :key="job.job_id" class="agent-memory-hit-card">
-          <div class="agent-memory-hit-head">
-            <strong>{{ formatJobType(job.job_type) }}</strong>
-            <span class="agent-memory-chip" :class="formatJobStatusClass(job.status)">{{ formatJobStatus(job.status) }}</span>
+
+      <template #footer>
+        <div class="agent-memory-dialog-footer agent-memory-dialog-footer--end">
+          <div class="agent-memory-dialog-footer-actions">
+            <button class="agent-memory-btn" type="button" :disabled="replicateSaving" @click="replicateDialogVisible = false">
+              {{ t('common.cancel') }}
+            </button>
+            <button
+              class="agent-memory-btn agent-memory-btn--primary"
+              type="button"
+              :disabled="replicateSaving || replicateLoading || !replicateTargets.length"
+              @click="submitReplicate"
+            >
+              {{ replicateSaving ? t('common.loading') : t('messenger.memory.replicate') }}
+            </button>
           </div>
-          <div class="agent-memory-hit-reason">{{ formatJobSummary(job) }}</div>
-          <div class="agent-memory-hit-score">{{ formatJobMeta(job) }}</div>
-        </article>
-      </div>
+        </div>
+      </template>
     </el-dialog>
 
     <el-dialog
@@ -221,9 +147,7 @@
         <div v-if="currentEditingItem" class="agent-memory-meta-row">
           <span class="agent-memory-chip">{{ t('messenger.memory.meta.source') }}: {{ formatFragmentSource(currentEditingItem.source_type) }}</span>
           <span class="agent-memory-chip">{{ describeItemStatus(currentEditingItem) }}</span>
-          <span class="agent-memory-chip">{{ describeItemTier(currentEditingItem) }}</span>
           <span class="agent-memory-chip">{{ t('messenger.memory.meta.updatedAt') }}: {{ formatFragmentTime(currentEditingItem.updated_at) }}</span>
-          <span class="agent-memory-chip">{{ t('messenger.memory.meta.hitCount', { count: Number(currentEditingItem.hit_count || 0) }) }}</span>
         </div>
         <div v-if="currentEditingItem && describeItemRelation(currentEditingItem)" class="agent-memory-meta-row">
           <span class="agent-memory-chip">{{ describeItemRelation(currentEditingItem) }}</span>
@@ -236,7 +160,7 @@
 
         <div class="agent-memory-grid agent-memory-grid--editor">
           <div class="agent-memory-field agent-memory-field--full">
-            <label>{{ t('messenger.memory.field.title') }}</label>
+            <label>{{ t('messenger.memory.field.indexTitle') }}</label>
             <input
               v-model.trim="editor.title_l0"
               class="agent-memory-input"
@@ -244,40 +168,30 @@
             />
           </div>
           <div class="agent-memory-field agent-memory-field--full">
-            <label>{{ t('messenger.memory.field.summary') }}</label>
-            <textarea
-              v-model.trim="editor.summary_l1"
-              class="agent-memory-textarea"
-              rows="4"
-              :placeholder="t('messenger.memory.placeholder.summary')"
-            ></textarea>
-          </div>
-          <div class="agent-memory-field agent-memory-field--full">
-            <label>{{ t('messenger.memory.field.content') }}</label>
+            <label>{{ t('messenger.memory.field.contentDetail') }}</label>
             <textarea
               v-model.trim="editor.content_l2"
               class="agent-memory-textarea"
-              rows="8"
+              rows="9"
               :placeholder="t('messenger.memory.placeholder.content')"
             ></textarea>
           </div>
           <div class="agent-memory-field">
-            <label>{{ t('messenger.memory.field.category') }}</label>
-            <input v-model.trim="editor.category" class="agent-memory-input" />
+            <label>{{ t('messenger.memory.field.memoryTag') }}</label>
+            <input v-model.trim="editor.tag" class="agent-memory-input" />
           </div>
           <div class="agent-memory-field">
-            <label>{{ t('messenger.memory.field.tags') }}</label>
-            <input v-model.trim="editor.tagsText" class="agent-memory-input" :placeholder="t('messenger.memory.tagsPlaceholder')" />
+            <label>{{ t('messenger.memory.field.relatedMemoryId') }}</label>
+            <input
+              v-model.trim="editor.relatedMemoryId"
+              class="agent-memory-input"
+              :placeholder="t('messenger.memory.placeholder.relatedMemoryId')"
+            />
           </div>
           <div class="agent-memory-field">
-            <label>{{ t('messenger.memory.field.entities') }}</label>
-            <input v-model.trim="editor.entitiesText" class="agent-memory-input" :placeholder="t('messenger.memory.tagsPlaceholder')" />
+            <label>{{ t('messenger.memory.field.memoryTime') }}</label>
+            <input v-model="editor.validFromText" class="agent-memory-input" type="datetime-local" />
           </div>
-        </div>
-
-        <div class="agent-memory-toggle-row agent-memory-toggle-row--dialog">
-          <label><input v-model="editor.pinned" type="checkbox" /> {{ t('messenger.memory.pinTag') }}</label>
-          <label><input v-model="editor.invalidated" type="checkbox" /> {{ t('messenger.memory.invalidateTag') }}</label>
         </div>
       </div>
 
@@ -305,33 +219,30 @@
     </el-dialog>
   </div>
 </template>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import {
-  createAgentMemory,
-  deleteAgentMemory,
-  invalidateAgentMemory,
-  listAgentMemories,
-  pinAgentMemory,
-  updateAgentMemorySettings,
-  updateAgentMemory
-} from '@/api/memory';
+import { createAgentMemory, deleteAgentMemory, listAgentMemories, replicateAgentMemories, updateAgentMemory } from '@/api/memory';
 import { useI18n } from '@/i18n';
+import { useAgentStore } from '@/stores/agents';
 import { resolveApiError } from '@/utils/apiError';
+
 type MemoryItem = Record<string, any>;
-type MemoryHit = Record<string, any>;
-type MemoryJob = Record<string, any>;
+
 type EditorState = {
   title_l0: string;
-  summary_l1: string;
   content_l2: string;
-  category: string;
-  tagsText: string;
-  entitiesText: string;
-  pinned: boolean;
-  invalidated: boolean;
+  tag: string;
+  relatedMemoryId: string;
+  validFromText: string;
 };
+
+type MigrationTarget = {
+  id: string;
+  name: string;
+};
+
 const props = withDefaults(
   defineProps<{
     agentId: string;
@@ -341,47 +252,59 @@ const props = withDefaults(
     active: true
   }
 );
+
 const { t } = useI18n();
+const agentStore = useAgentStore();
 const isPanelActive = computed(() => props.active !== false);
 const loading = ref(false);
 const saving = ref(false);
 const mutating = ref(false);
+const replicateLoading = ref(false);
+const replicateSaving = ref(false);
 const errorMessage = ref('');
 const dialogErrorMessage = ref('');
+const replicateErrorMessage = ref('');
 const items = ref<MemoryItem[]>([]);
-const hits = ref<MemoryHit[]>([]);
-const jobs = ref<MemoryJob[]>([]);
 const search = ref('');
-const categoryFilter = ref('');
-const statusFilter = ref('');
+const tagFilter = ref('');
 const dialogVisible = ref(false);
-const hitsDialogVisible = ref(false);
-const jobsDialogVisible = ref(false);
-const autoExtractEnabled = ref(false);
-const autoExtractSaving = ref(false);
+const replicateDialogVisible = ref(false);
+const replicateTargetId = ref('');
 const editingId = ref('');
 const editor = ref<EditorState>(createEmptyEditor());
 const mounted = ref(false);
+
 let disposed = false;
 let requestToken = 0;
 let lastLoadedAgentKey = '';
+
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const requestAgentId = computed(() => normalizedAgentId.value || '__default__');
+const currentEditingItem = computed(() => items.value.find((item) => item.memory_id === editingId.value) || null);
+const dialogTitle = computed(() => (editingId.value ? `${t('common.edit')} - ${t('messenger.memory.title')}` : t('messenger.memory.new')));
+
+const tags = computed(() =>
+  [...new Set(items.value.map((item) => resolveMemoryTag(item)).filter(Boolean))]
+);
+
+const memoryTitleMap = computed(() => {
+  const entries = items.value.map((item) => [String(item.memory_id || '').trim(), String(item.title_l0 || '')] as const);
+  return new Map(entries.filter(([memoryId]) => Boolean(memoryId)));
+});
+
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase();
   return items.value
     .filter((item) => {
-      if (categoryFilter.value && item.category !== categoryFilter.value) return false;
-      if (statusFilter.value && String(item.status || '') !== statusFilter.value) return false;
+      if (tagFilter.value && resolveMemoryTag(item) !== tagFilter.value) return false;
       if (!query) return true;
       return [
+        item.memory_id,
         item.title_l0,
-        item.summary_l1,
         item.content_l2,
-        item.fact_key,
-        item.category,
-        ...(item.tags || []),
-        ...(item.entities || [])
+        resolveMemoryTag(item),
+        item.supersedes_memory_id,
+        item.superseded_by_memory_id
       ]
         .join(' ')
         .toLowerCase()
@@ -389,53 +312,55 @@ const filteredItems = computed(() => {
     })
     .slice()
     .sort((left, right) => {
-      const hitDiff = Number(right?.hit_count || 0) - Number(left?.hit_count || 0);
-      if (hitDiff !== 0) return hitDiff;
       const updatedDiff = Number(right?.updated_at || 0) - Number(left?.updated_at || 0);
       if (updatedDiff !== 0) return updatedDiff;
       return String(left?.memory_id || '').localeCompare(String(right?.memory_id || ''));
     });
 });
-const categories = computed(() => [...new Set(items.value.map((item) => String(item.category || '').trim()).filter(Boolean))]);
-const currentEditingItem = computed(() => items.value.find((item) => item.memory_id === editingId.value) || null);
-const dialogTitle = computed(() => (editingId.value ? `${t('common.edit')} - ${t('messenger.memory.title')}` : t('messenger.memory.new')));
-const memoryTitleMap = computed(() => {
-  const entries = items.value.map((item) => [String(item.memory_id || '').trim(), String(item.title_l0 || '')] as const);
-  return new Map(entries.filter(([memoryId]) => Boolean(memoryId)));
+
+const replicateTargets = computed<MigrationTarget[]>(() => {
+  const byId = new Map<string, MigrationTarget>();
+  const collect = (records: unknown[]) => {
+    records.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      const record = item as Record<string, unknown>;
+      const id = String(record.id || '').trim();
+      if (!id || id === '__default__' || id === requestAgentId.value) return;
+      byId.set(id, {
+        id,
+        name: String(record.name || id).trim() || id
+      });
+    });
+  };
+  collect(Array.isArray(agentStore.agents) ? agentStore.agents : []);
+  collect(Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []);
+  return Array.from(byId.values()).sort((left, right) => left.name.localeCompare(right.name));
 });
+
 function createEmptyEditor(): EditorState {
   return {
     title_l0: '',
-    summary_l1: '',
     content_l2: '',
-    category: 'tool-note',
-    tagsText: '',
-    entitiesText: '',
-    pinned: false,
-    invalidated: false
+    tag: 'tool-note',
+    relatedMemoryId: '',
+    validFromText: ''
   };
 }
+
 function isItemSuperseded(item: MemoryItem | null | undefined): boolean {
   return String(item?.status || '') === 'superseded' || Boolean(item?.superseded_by_memory_id);
 }
-function isItemInvalidated(item: MemoryItem | null | undefined): boolean {
-  return Boolean(item?.invalidated_at) || String(item?.status || '') === 'invalidated';
-}
+
 function describeItemStatus(item: MemoryItem | null | undefined): string {
-  if (isItemInvalidated(item)) return t('messenger.memory.status.invalidated');
   if (isItemSuperseded(item)) return t('messenger.memory.status.superseded');
   return t('messenger.memory.status.active');
 }
-function describeItemTier(item: MemoryItem | null | undefined): string {
-  const tier = String(item?.tier || '').trim() || 'working';
-  const key = `messenger.memory.tier.${tier}`;
-  const translated = t(key);
-  return translated === key ? tier : translated;
-}
+
 function resolveMemoryLabel(memoryId: unknown): string {
   const normalizedId = String(memoryId || '').trim();
   return String(memoryTitleMap.value.get(normalizedId) || normalizedId || t('messenger.memory.untitled'));
 }
+
 function describeItemRelation(item: MemoryItem | null | undefined): string {
   const supersededById = String(item?.superseded_by_memory_id || '').trim();
   if (supersededById) {
@@ -447,19 +372,7 @@ function describeItemRelation(item: MemoryItem | null | undefined): string {
   }
   return '';
 }
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item || '').trim()).filter(Boolean);
-}
-function previewList(value: unknown, limit = 3): string[] {
-  return normalizeStringList(value).slice(0, limit);
-}
-function remainingListCount(value: unknown, limit = 3): number {
-  return Math.max(normalizeStringList(value).length - limit, 0);
-}
-function hasTaxonomy(item: MemoryItem | null | undefined): boolean {
-  return previewList(item?.tags).length > 0 || previewList(item?.entities).length > 0;
-}
+
 function syncEditorFromItem(item: MemoryItem | null | undefined): void {
   if (!item) {
     editor.value = createEmptyEditor();
@@ -467,27 +380,21 @@ function syncEditorFromItem(item: MemoryItem | null | undefined): void {
   }
   editor.value = {
     title_l0: String(item.title_l0 || ''),
-    summary_l1: String(item.summary_l1 || ''),
     content_l2: String(item.content_l2 || ''),
-    category: String(item.category || 'tool-note'),
-    tagsText: normalizeStringList(item.tags).join(', '),
-    entitiesText: normalizeStringList(item.entities).join(', '),
-    pinned: Boolean(item.pinned),
-    invalidated: isItemInvalidated(item)
+    tag: resolveMemoryTag(item) || 'tool-note',
+    relatedMemoryId: String(item.supersedes_memory_id || ''),
+    validFromText: formatDateTimeLocalInput(item.valid_from)
   };
 }
+
 async function loadData(): Promise<void> {
   const token = ++requestToken;
   loading.value = true;
   errorMessage.value = '';
   try {
-    // Always include invalidated fragments so the card wall can review and restore them.
-    const memoryRes = await listAgentMemories(requestAgentId.value, { limit: 200, include_invalidated: true });
+    const memoryRes = await listAgentMemories(requestAgentId.value, { limit: 200 });
     if (disposed || token !== requestToken) return;
     items.value = Array.isArray(memoryRes?.data?.data?.items) ? memoryRes.data.data.items : [];
-    hits.value = Array.isArray(memoryRes?.data?.data?.recent_hits) ? memoryRes.data.data.recent_hits : [];
-    jobs.value = Array.isArray(memoryRes?.data?.data?.recent_jobs) ? memoryRes.data.data.recent_jobs : [];
-    autoExtractEnabled.value = Boolean(memoryRes?.data?.data?.settings?.auto_extract_enabled);
     lastLoadedAgentKey = requestAgentId.value;
     if (editingId.value) {
       syncEditorFromItem(items.value.find((item) => item.memory_id === editingId.value) || null);
@@ -499,6 +406,7 @@ async function loadData(): Promise<void> {
     if (!disposed && token === requestToken) loading.value = false;
   }
 }
+
 function startCreate(): void {
   errorMessage.value = '';
   dialogErrorMessage.value = '';
@@ -506,6 +414,7 @@ function startCreate(): void {
   editor.value = createEmptyEditor();
   dialogVisible.value = true;
 }
+
 function beginEdit(memoryId: string): void {
   errorMessage.value = '';
   dialogErrorMessage.value = '';
@@ -513,83 +422,76 @@ function beginEdit(memoryId: string): void {
   syncEditorFromItem(items.value.find((item) => item.memory_id === memoryId) || null);
   dialogVisible.value = true;
 }
+
 function handleDialogClosed(): void {
   dialogErrorMessage.value = '';
   saving.value = false;
   editingId.value = '';
   editor.value = createEmptyEditor();
 }
+
+function handleReplicateDialogClosed(): void {
+  replicateErrorMessage.value = '';
+  replicateSaving.value = false;
+  replicateTargetId.value = '';
+}
+
+function resolveMemoryTag(item: MemoryItem | null | undefined): string {
+  return String(item?.tag || item?.category || '').trim();
+}
+
 function getMemoryTitle(item: MemoryItem | null | undefined): string {
   return String(item?.title_l0 || t('messenger.memory.untitled'));
 }
+
 function getMemoryPreview(item: MemoryItem | null | undefined): string {
-  const title = getMemoryTitle(item);
-  const summary = String(item?.summary_l1 || '').trim();
-  const content = String(item?.content_l2 || '').trim();
-  if (summary && summary !== title) return summary;
-  if (content && content !== title) return content;
-  return title;
+  const content = String(item?.content_l2 || '').replace(/\s+/g, ' ').trim();
+  if (!content) return getMemoryTitle(item);
+  return content.length > 140 ? `${content.slice(0, 140)}...` : content;
 }
+
 function isActionCanceled(error: unknown): boolean {
   return error === 'cancel' || error === 'close' || error === 'dismiss';
 }
+
 function resolveRequestError(error: any, fallbackKey: string): string {
   return resolveApiError(error, t(fallbackKey)).message;
 }
-function splitTags(value: string): string[] {
-  return value
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
+
+function formatDateTimeLocalInput(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  const local = new Date(numeric * 1000 - new Date().getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
-async function handleAutoExtractChange(value: string | number | boolean): Promise<void> {
-  if (autoExtractSaving.value) return;
-  const nextValue = Boolean(value);
-  const previousValue = autoExtractEnabled.value;
-  autoExtractEnabled.value = nextValue;
-  errorMessage.value = '';
-  try {
-    autoExtractSaving.value = true;
-    const response = await updateAgentMemorySettings(requestAgentId.value, {
-      auto_extract_enabled: nextValue
-    });
-    if (disposed) return;
-    autoExtractEnabled.value = Boolean(response?.data?.data?.settings?.auto_extract_enabled);
-    ElMessage.success(t('messenger.memory.autoExtract.saveSuccess'));
-  } catch (error: any) {
-    autoExtractEnabled.value = previousValue;
-    const message = resolveRequestError(error, 'common.saveFailed');
-    errorMessage.value = message;
-    ElMessage.error(message);
-  } finally {
-    if (!disposed) autoExtractSaving.value = false;
-  }
+
+function parseDateTimeLocalInput(value: string): number | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const numeric = new Date(text).getTime();
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.floor(numeric / 1000);
 }
-function hasEditorContent(): boolean {
-  return [editor.value.title_l0, editor.value.summary_l1, editor.value.content_l2].some(
-    (value) => String(value || '').trim().length > 0
-  );
-}
+
 async function saveCurrent(): Promise<void> {
   if (saving.value) return;
   dialogErrorMessage.value = '';
   errorMessage.value = '';
-  if (!hasEditorContent()) {
+  if (!String(editor.value.content_l2 || '').trim()) {
     const message = t('error.content_required');
     dialogErrorMessage.value = message;
     ElMessage.warning(message);
     return;
   }
+
   const payload = {
-    title_l0: editor.value.title_l0,
-    summary_l1: editor.value.summary_l1,
-    content_l2: editor.value.content_l2,
-    category: editor.value.category,
-    tags: splitTags(editor.value.tagsText),
-    entities: splitTags(editor.value.entitiesText),
-    pinned: editor.value.pinned,
-    invalidated: editor.value.invalidated
+    title_l0: String(editor.value.title_l0 || '').trim() || undefined,
+    content_l2: String(editor.value.content_l2 || '').trim(),
+    tag: String(editor.value.tag || '').trim() || undefined,
+    supersedes_memory_id: String(editor.value.relatedMemoryId || '').trim() || undefined,
+    valid_from: parseDateTimeLocalInput(editor.value.validFromText)
   };
+
   saving.value = true;
   try {
     const response = editingId.value
@@ -608,6 +510,7 @@ async function saveCurrent(): Promise<void> {
     saving.value = false;
   }
 }
+
 async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
   if (mutating.value || saving.value || !memoryId) return;
   try {
@@ -633,51 +536,69 @@ async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
     mutating.value = false;
   }
 }
-async function togglePinned(item: MemoryItem): Promise<void> {
-  if (mutating.value || saving.value) return;
-  errorMessage.value = '';
-  try {
-    mutating.value = true;
-    await pinAgentMemory(requestAgentId.value, item.memory_id, !Boolean(item.pinned));
-    await loadData();
-    ElMessage.success(t('messenger.memory.updateSuccess'));
-  } catch (error: any) {
-    const message = resolveRequestError(error, 'common.saveFailed');
-    errorMessage.value = message;
-    ElMessage.error(message);
-  } finally {
-    mutating.value = false;
-  }
-}
-async function toggleInvalidated(item: MemoryItem): Promise<void> {
-  if (mutating.value || saving.value) return;
-  errorMessage.value = '';
-  try {
-    mutating.value = true;
-    await invalidateAgentMemory(requestAgentId.value, item.memory_id, !isItemInvalidated(item));
-    await loadData();
-    ElMessage.success(t('messenger.memory.updateSuccess'));
-  } catch (error: any) {
-    const message = resolveRequestError(error, 'common.saveFailed');
-    errorMessage.value = message;
-    ElMessage.error(message);
-  } finally {
-    mutating.value = false;
-  }
-}
+
 async function removeCurrent(): Promise<void> {
   if (!editingId.value) return;
   await removeMemory(editingId.value, getMemoryTitle(currentEditingItem.value));
 }
-function formatScore(value: unknown): string {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00';
+
+async function openReplicateDialog(): Promise<void> {
+  if (!items.value.length) {
+    ElMessage.warning(t('messenger.memory.replicateNoSource'));
+    return;
+  }
+  replicateErrorMessage.value = '';
+  replicateLoading.value = true;
+  try {
+    await agentStore.loadAgents();
+    replicateTargetId.value = replicateTargets.value[0]?.id || '';
+    replicateDialogVisible.value = true;
+  } catch (error: any) {
+    replicateErrorMessage.value = resolveRequestError(error, 'common.loadFailed');
+    ElMessage.error(replicateErrorMessage.value);
+  } finally {
+    replicateLoading.value = false;
+  }
 }
-function formatHitTime(value: unknown): string {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) return '-';
-  return new Date(numeric * 1000).toLocaleString();
+
+async function submitReplicate(): Promise<void> {
+  if (replicateSaving.value) return;
+  if (!replicateTargetId.value) {
+    const message = t('messenger.memory.replicateEmptyTarget');
+    replicateErrorMessage.value = message;
+    ElMessage.warning(message);
+    return;
+  }
+
+  const targetName =
+    replicateTargets.value.find((item) => item.id === replicateTargetId.value)?.name || replicateTargetId.value;
+
+  try {
+    await ElMessageBox.confirm(
+      t('messenger.memory.replicateConfirm', { name: targetName }),
+      t('common.notice'),
+      { type: 'warning' }
+    );
+    replicateSaving.value = true;
+    replicateErrorMessage.value = '';
+    errorMessage.value = '';
+    await replicateAgentMemories(requestAgentId.value, {
+      target_agent_id: replicateTargetId.value,
+      overwrite: true
+    });
+    replicateDialogVisible.value = false;
+    ElMessage.success(t('messenger.memory.replicateSuccess', { name: targetName }));
+  } catch (error: any) {
+    if (isActionCanceled(error)) return;
+    const message = resolveRequestError(error, 'common.saveFailed');
+    replicateErrorMessage.value = message;
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    replicateSaving.value = false;
+  }
 }
+
 function formatFragmentSource(value: unknown): string {
   const source = String(value || '').trim();
   if (!source) return 'manual';
@@ -686,93 +607,24 @@ function formatFragmentSource(value: unknown): string {
   const translated = t(key);
   return translated === key ? source.replace(/[-_]/g, ' ') : translated;
 }
+
 function formatFragmentTime(value: unknown): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '-';
   return new Date(numeric * 1000).toLocaleString();
 }
-function resolveHitTitle(memoryId: unknown): string {
-  return resolveMemoryLabel(memoryId);
-}
-function formatHitField(value: unknown): string {
-  const field = String(value || '').trim();
-  if (!field) return '';
-  const key = `messenger.memory.hitField.${field}`;
-  const translated = t(key);
-  return translated === key ? field : translated;
-}
-function formatHitReason(reason: any): string {
-  const terms = Array.isArray(reason?.matched_terms) ? reason.matched_terms.filter(Boolean).join(', ') : '';
-  const fields = Array.isArray(reason?.matched_fields)
-    ? reason.matched_fields.map((item: unknown) => formatHitField(item)).filter(Boolean).join(' / ')
-    : '';
-  if (terms && fields) {
-    return t('messenger.memory.hitMatchedWithFields', { fields, terms });
-  }
-  if (terms) {
-    return t('messenger.memory.hitMatched', { terms });
-  }
-  if (fields) {
-    return t('messenger.memory.hitMatchedFields', { fields });
-  }
-  if (reason?.pinned) {
-    return t('messenger.memory.hitPinned');
-  }
-  return t('messenger.memory.hitRecent');
-}
-function formatHitScoreLine(hit: MemoryHit): string {
-  const semantic = Number(hit?.semantic_score || 0);
-  if (semantic > 0) {
-    return t('messenger.memory.hitScoreHybrid', {
-      score: formatScore(hit?.final_score),
-      lexical: formatScore(hit?.lexical_score),
-      semantic: formatScore(hit?.semantic_score)
-    });
-  }
-  return t('messenger.memory.hitScore', {
-    score: formatScore(hit?.final_score),
-    lexical: formatScore(hit?.lexical_score)
-  });
-}
-function formatJobType(value: unknown): string {
-  const jobType = String(value || '').trim();
-  if (!jobType) return '-';
-  const key = `messenger.memory.jobType.${jobType.replace(/-/g, '_')}`;
-  const translated = t(key);
-  return translated === key ? jobType.replace(/[-_]/g, ' ') : translated;
-}
-function formatJobStatus(value: unknown): string {
-  const status = String(value || '').trim();
-  if (!status) return '-';
-  const key = `messenger.memory.jobStatus.${status.replace(/-/g, '_')}`;
-  const translated = t(key);
-  return translated === key ? status.replace(/[-_]/g, ' ') : translated;
-}
-function formatJobStatusClass(value: unknown): string {
-  const status = String(value || '').trim();
-  if (status === 'completed') return 'agent-memory-chip--success';
-  if (status === 'failed') return 'agent-memory-chip--danger';
-  if (status === 'running') return 'agent-memory-chip--warn';
-  return '';
-}
-function formatJobSummary(job: MemoryJob): string {
-  return String(job?.result_summary || job?.error_message || t('messenger.memory.jobSummaryEmpty'));
-}
-function formatJobMeta(job: MemoryJob): string {
-  return [
-    t('messenger.memory.jobSession', { sessionId: job?.session_id || '-' }),
-    t('messenger.memory.jobUpdatedAt', { time: formatFragmentTime(job?.updated_at) })
-  ].join(' ? ');
-}
+
 onMounted(() => {
   mounted.value = true;
   if (isPanelActive.value) {
     void loadData();
   }
 });
+
 onBeforeUnmount(() => {
   disposed = true;
 });
+
 watch(
   () => [requestAgentId.value, isPanelActive.value] as const,
   ([agentKey, active], previous) => {
@@ -781,183 +633,109 @@ watch(
     if (!wasActive && lastLoadedAgentKey === agentKey) return;
     if (agentKey === previous?.[0] && wasActive) return;
     dialogVisible.value = false;
-    hitsDialogVisible.value = false;
-    jobsDialogVisible.value = false;
+    replicateDialogVisible.value = false;
     dialogErrorMessage.value = '';
+    replicateErrorMessage.value = '';
     saving.value = false;
     mutating.value = false;
+    replicateSaving.value = false;
+    replicateLoading.value = false;
     editingId.value = '';
+    replicateTargetId.value = '';
     editor.value = createEmptyEditor();
     items.value = [];
-    hits.value = [];
-    jobs.value = [];
-    autoExtractEnabled.value = false;
-    autoExtractSaving.value = false;
     void loadData();
   }
 );
 </script>
+
 <style scoped>
 .agent-memory-panel {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+
 .agent-memory-toolbar,
 .agent-memory-card-head,
 .agent-memory-card-topline,
-.agent-memory-hit-head,
-.agent-memory-dialog-footer,
-.agent-memory-insight-head {
+.agent-memory-dialog-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
+
 .agent-memory-toolbar-actions,
 .agent-memory-card-topline-chips,
 .agent-memory-card-meta,
-.agent-memory-card-actions,
-.agent-memory-toggle-row,
 .agent-memory-meta-row,
-.agent-memory-dialog-footer-actions,
-.agent-memory-card-section-chips {
+.agent-memory-dialog-footer-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
 .agent-memory-title {
   font-size: 16px;
   font-weight: 700;
 }
+
 .agent-memory-subtitle,
-.agent-memory-hit-score,
 .agent-memory-card-time {
   color: var(--app-text-muted, #64748b);
   font-size: 12px;
 }
-.agent-memory-auto-extract-panel {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.22));
-  border-radius: 16px;
-  background: rgba(59, 130, 246, 0.04);
-}
-.agent-memory-auto-extract-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.agent-memory-auto-extract-title {
-  font-size: 14px;
-  font-weight: 700;
-}
-.agent-memory-auto-extract-hint,
-.agent-memory-auto-extract-label {
-  color: var(--app-text-muted, #64748b);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.agent-memory-auto-extract-switch {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-.agent-memory-dialog-divider {
-  height: 1px;
-  margin: 14px 0 16px;
-  background: var(--app-border-color, rgba(148, 163, 184, 0.16));
-}
-.agent-memory-icon-btn {
-  width: 40px;
-  height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
-}
-.agent-memory-icon-btn svg {
-  width: 18px;
-  height: 18px;
-  fill: currentColor;
-}
-.agent-memory-icon-btn:hover:not(:disabled) {
-  border-color: var(--app-primary-color, #3b82f6);
-  background: rgba(59, 130, 246, 0.08);
-}
-.agent-memory-icon-btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-.agent-memory-icon-btn:disabled {
-  opacity: 0.58;
-  cursor: not-allowed;
-}
+
 .agent-memory-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(180px, 0.7fr));
+  grid-template-columns: minmax(0, 1.6fr) minmax(180px, 0.7fr);
   gap: 12px;
 }
+
 .agent-memory-search {
   grid-column: 1 / 2;
 }
+
 .agent-memory-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
 }
-.agent-memory-insight-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-.agent-memory-insight-panel,
-.agent-memory-card,
-.agent-memory-hit-card {
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
-  background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
-  border-radius: 16px;
-}
-.agent-memory-insight-panel {
-  padding: 16px;
-}
+
 .agent-memory-card {
   padding: 12px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
+  background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
+  border-radius: 16px;
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
-.agent-memory-card--invalidated {
-  opacity: 0.86;
-}
+
 .agent-memory-card--superseded {
   border-style: dashed;
 }
+
 .agent-memory-card:hover {
   transform: translateY(-1px);
   border-color: var(--app-primary-color, #3b82f6);
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
 }
+
 .agent-memory-card:focus-visible {
   outline: 2px solid var(--app-primary-color, #3b82f6);
   outline-offset: 2px;
 }
+
 .agent-memory-card-topline,
 .agent-memory-card-head {
   align-items: flex-start;
 }
+
 .agent-memory-card-head-main {
   display: flex;
   align-items: center;
@@ -965,84 +743,44 @@ watch(
   flex-wrap: wrap;
   min-width: 0;
 }
+
 .agent-memory-card-title {
   font-weight: 700;
   line-height: 1.35;
   font-size: 14px;
 }
-.agent-memory-card-summary,
-.agent-memory-hit-reason {
+
+.agent-memory-card-summary {
   font-size: 12px;
   color: var(--app-text-color, #0f172a);
   line-height: 1.55;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
 .agent-memory-card-meta-item {
   color: var(--app-text-muted, #64748b);
   font-size: 11px;
 }
-.agent-memory-card-taxonomy {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.agent-memory-card-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.agent-memory-card-section-label {
-  font-size: 12px;
-  color: var(--app-text-muted, #64748b);
-}
-.agent-memory-card-actions {
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.16));
-}
-.agent-memory-card-action {
-  border: 0;
-  background: transparent;
-  color: var(--app-primary-color, #3b82f6);
-  padding: 4px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
-}
-.agent-memory-card-action:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.1);
-}
-.agent-memory-card-action:active:not(:disabled) {
-  transform: translateY(1px);
-}
-.agent-memory-card-action:disabled {
-  opacity: 0.52;
-  cursor: not-allowed;
-}
-.agent-memory-card-action--danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.12);
-}
-.agent-memory-card-action--danger,
-.agent-memory-btn--danger {
-  color: #b91c1c;
-}
+
 .agent-memory-field {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+
 .agent-memory-field--full {
   grid-column: 1 / -1;
 }
+
 .agent-memory-grid--editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
+
 .agent-memory-input,
 .agent-memory-select,
 .agent-memory-textarea {
@@ -1054,6 +792,7 @@ watch(
   padding: 10px 12px;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
 }
+
 .agent-memory-input:focus,
 .agent-memory-select:focus,
 .agent-memory-textarea:focus {
@@ -1061,9 +800,11 @@ watch(
   border-color: var(--app-primary-color, #3b82f6);
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
 }
+
 .agent-memory-textarea {
   resize: vertical;
 }
+
 .agent-memory-btn {
   border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
   background: transparent;
@@ -1074,27 +815,37 @@ watch(
   transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease,
     transform 0.16s ease, opacity 0.16s ease;
 }
+
 .agent-memory-btn:hover:not(:disabled) {
   border-color: var(--app-primary-color, #3b82f6);
   background: rgba(59, 130, 246, 0.08);
 }
+
 .agent-memory-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
+
 .agent-memory-btn:disabled {
   opacity: 0.58;
   cursor: not-allowed;
   box-shadow: none;
 }
+
 .agent-memory-btn--primary {
   background: var(--app-primary-color, #3b82f6);
   color: #fff;
   border-color: var(--app-primary-color, #3b82f6);
 }
+
 .agent-memory-btn--primary:hover:not(:disabled) {
   background: var(--app-primary-color, #3b82f6);
   box-shadow: 0 10px 22px rgba(59, 130, 246, 0.22);
 }
+
+.agent-memory-btn--danger {
+  color: #b91c1c;
+}
+
 .agent-memory-chip {
   display: inline-flex;
   align-items: center;
@@ -1103,24 +854,7 @@ watch(
   font-size: 12px;
   background: rgba(148, 163, 184, 0.12);
 }
-.agent-memory-chip--stat {
-  padding: 6px 10px;
-}
-.agent-memory-chip--mono {
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-}
-.agent-memory-chip--warn {
-  background: rgba(245, 158, 11, 0.16);
-  color: #b45309;
-}
-.agent-memory-chip--success {
-  background: rgba(34, 197, 94, 0.16);
-  color: #15803d;
-}
-.agent-memory-chip--danger {
-  background: rgba(239, 68, 68, 0.16);
-  color: #b91c1c;
-}
+
 .agent-memory-empty,
 .agent-memory-error {
   padding: 12px;
@@ -1128,31 +862,20 @@ watch(
   background: rgba(148, 163, 184, 0.08);
   color: var(--app-text-muted, #64748b);
 }
+
 .agent-memory-empty--compact {
   margin-top: 12px;
 }
+
 .agent-memory-error {
   background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
 }
+
 .agent-memory-error--dialog {
   margin-bottom: 4px;
 }
-.agent-memory-hit-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 14px;
-}
-.agent-memory-hit-list--dialog {
-  max-height: min(60vh, 640px);
-  overflow-y: auto;
-  margin-top: 0;
-  padding-right: 4px;
-}
-.agent-memory-hit-card {
-  padding: 12px;
-}
+
 .agent-memory-editor-hint {
   padding: 10px 12px;
   border-radius: 12px;
@@ -1161,6 +884,7 @@ watch(
   font-size: 12px;
   line-height: 1.6;
 }
+
 .agent-memory-dialog-body {
   display: flex;
   flex-direction: column;
@@ -1169,15 +893,18 @@ watch(
   overflow-y: auto;
   padding: 2px 4px 2px 0;
 }
-.agent-memory-toggle-row--dialog {
-  padding-top: 6px;
-}
+
 .agent-memory-dialog-footer {
   width: 100%;
   padding-top: 14px;
   border-top: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.18));
   align-items: flex-end;
 }
+
+.agent-memory-dialog-footer--end {
+  justify-content: flex-end;
+}
+
 :deep(.agent-memory-dialog.el-dialog) {
   width: min(720px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
@@ -1185,17 +912,21 @@ watch(
   margin: 24px auto 8px;
   overflow: hidden;
 }
+
 :deep(.agent-memory-dialog .el-dialog__body) {
   padding-top: 16px;
 }
+
 :deep(.agent-memory-dialog .el-dialog__footer) {
   padding-top: 0;
 }
+
 @media (max-width: 1100px) {
   .agent-memory-filters,
   .agent-memory-grid--editor {
     grid-template-columns: 1fr;
   }
+
   .agent-memory-search,
   .agent-memory-field--full {
     grid-column: auto;

@@ -5,7 +5,7 @@ read_when:
   - You need to dispatch other formal agents the current user already owns
 source_docs:
   - src/services/tools.rs
-updated_at: 2026-04-10
+updated_at: 2026-04-12
 ---
 
 # Agent Swarm
@@ -61,6 +61,14 @@ A typical result is an asynchronous accepted state:
   "next_step_hint": "Use agent_swarm.wait or status/history before treating the worker result as final."
 }
 ```
+
+## Thread strategy
+
+- The default is `threadStrategy=fresh_main_thread`: the worker starts from a clean new thread and that thread becomes its new main thread.
+- If you want the worker to keep writing into its long-lived main thread, use `threadStrategy=main_thread` or `reuseMainThread=true`.
+- `main_thread` means "reuse the worker's current main thread, or create and bind one first if it does not exist yet".
+- For `send` / `batch_send`, an explicit `sessionKey` still has the highest priority and pins the run to that exact thread.
+- `spawn` supports the same thread strategy arguments and forwards them to the underlying worker dispatch.
 
 ## `status`
 

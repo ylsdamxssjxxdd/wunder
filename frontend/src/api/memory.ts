@@ -31,13 +31,5 @@ export const updateAgentMemory = (agentId: ApiId, memoryId: ApiId, payload: ApiP
   api.patch(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}`, payload);
 export const deleteAgentMemory = (agentId: ApiId, memoryId: ApiId) =>
   api.delete(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}`);
-export const pinAgentMemory = (agentId: ApiId, memoryId: ApiId, value = true) =>
-  api.post(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}/pin`, { value });
-export const invalidateAgentMemory = (agentId: ApiId, memoryId: ApiId, value = true) =>
-  api.post(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}/invalidate`, { value });
-export const listAgentMemoryHits = (agentId: ApiId, params: QueryParams = {}) =>
-  api.get(`${buildAgentMemoryBasePath(agentId)}/memory-hits`, { params });
-export const getAgentMemorySettings = (agentId: ApiId, params: QueryParams = {}) =>
-  api.get(`${buildAgentMemoryBasePath(agentId)}/memory-settings`, { params });
-export const updateAgentMemorySettings = (agentId: ApiId, payload: ApiPayload) =>
-  api.post(`${buildAgentMemoryBasePath(agentId)}/memory-settings`, payload);
+export const replicateAgentMemories = (agentId: ApiId, payload: ApiPayload) =>
+  api.post(`${buildAgentMemoryBasePath(agentId)}/memories/replicate`, payload);

@@ -588,8 +588,12 @@
     "zh-CN": "[长期记忆]"
   },
   "memory.prompt_meta.more_hint": {
-    "en-US": "- If the injected memory below is not enough, continue with the memory manager tool via recall/list to search the remaining long-term memory.",
-    "zh-CN": "- 如果下方注入的记忆不足，请继续通过记忆管理工具 recall/list 检索剩余长期记忆。"
+    "en-US": "- If the injected indexes below are not enough, continue with memory_manager list/search to find more memory ids, then use get for the full detail.",
+    "zh-CN": "- 如果下方注入的索引还不够，请继续通过 memory_manager 的 list/search 查找更多 memory_id，再用 get 读取完整内容。"
+  },
+  "memory.prompt_meta.index_hint": {
+    "en-US": "- The injected items below are memory indexes only (memory_id + title). Use memory_manager get with a memory_id when you need the full detail.",
+    "zh-CN": "- 下方注入的是记忆索引（memory_id + 标题），不是完整内容。需要完整细节时，请使用 memory_manager get 并指定 memory_id。"
   },
   "memory.prompt_meta.summary": {
     "en-US": "- Available long-term memories: {total}. Injected now: {injected} (limit {limit}).",
@@ -1016,16 +1020,28 @@
     "zh-CN": "至少提供一条路线。"
   },
   "tool.memory_manager.invalid_action": {
-    "en-US": "Invalid memory action. Use list/add/update/delete/clear/recall.",
-    "zh-CN": "记忆动作无效，可用 list/add/update/delete/clear/recall。"
+    "en-US": "Invalid memory action. Use list/search/get/add/update/remove/clear.",
+    "zh-CN": "记忆动作无效，可用 list/search/get/add/update/remove/clear。"
+  },
+  "tool.memory_manager.memory_id_required": {
+    "en-US": "memory_id is required for get/update/remove.",
+    "zh-CN": "get/update/remove 必须提供 memory_id。"
+  },
+  "tool.memory_manager.not_found": {
+    "en-US": "Memory entry not found.",
+    "zh-CN": "未找到对应的记忆条目。"
   },
   "tool.memory_manager.note_new_sessions_only": {
-    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. In the current session, use recall first when the user corrects you, says the answer is wrong, or updates preferences/constraints, then decide whether add/update is needed.",
-    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话里，当用户纠错、指出你答错，或更新偏好/约束时，先调用 recall 校验，再决定是否 add/update。"
+    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. In the current session, use search first when the user corrects you, says the answer is wrong, or updates preferences/constraints, then use get for full detail before deciding whether add/update is needed.",
+    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话里，当用户纠错、指出你答错，或更新偏好/约束时，先用 search 查找候选记忆，再用 get 查看完整细节，然后再决定是否 add/update。"
   },
   "tool.memory_manager.note_recall_current_session": {
-    "en-US": "Recall reads the latest long-term memory in the current session without rewriting the thread's frozen system prompt. Trigger it proactively when confidence is low, details may be stale, or user feedback indicates mismatch.",
-    "zh-CN": "recall 会在当前会话中读取最新长期记忆，但不会改写该线程已冻结的系统提示词。置信度不足、信息可能过期、或用户反馈与当前回答不一致时，应主动触发 recall。"
+    "en-US": "Search reads the latest long-term memory indexes in the current session without rewriting the thread's frozen system prompt. Use get with a selected memory_id to read the full detail when confidence is low, details may be stale, or user feedback indicates mismatch.",
+    "zh-CN": "search 会在当前会话中读取最新长期记忆索引，但不会改写该线程已冻结的系统提示词。需要完整内容时，请继续使用 get 并指定 memory_id。"
+  },
+  "tool.memory_manager.note_get_full_detail": {
+    "en-US": "get returns the full stored detail for one memory_id. Prefer list/search first when you only need candidate indexes.",
+    "zh-CN": "get 会返回单条 memory_id 对应的完整记忆内容；如果你只是想浏览候选索引，优先使用 list/search。"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
@@ -2072,44 +2088,48 @@
     "zh-CN": "等待超时秒数（1-30）。"
   },
   "tool.spec.memory_manager.description": {
-    "en-US": "Manage the current agent's long-term memory (list/add/update/delete/clear/recall). Use recall when facts may be stale, confidence is low, or the user corrects you. Write only durable facts, preferences, constraints, reusable workflows, or persistent todos. For add/update, prefer structured fields: title = topic, summary = one-line conclusion, content = full detail.",
-    "zh-CN": "管理当前智能体的长期记忆（list/add/update/delete/clear/recall）。当事实可能过期、把握不足或用户纠正你时，优先先用 recall 校验。写入只用于稳定事实、长期偏好、约束、可复用流程或持续待办，不要写入临时工具输出。对 add/update，优先使用结构化写法：title 写主题，summary 写一句结论，content 写完整细节。"
+    "en-US": "Manage the current agent's long-term memory (list/search/get/add/update/remove/clear). The system prompt only receives compact memory indexes by id and title. Use list/search to find a memory_id, then use get for the full detail. For add/update, align to the compact structure: title = index title, content = full detail, tag = memory tag, related_memory_id = linked memory id when needed, memory_time = optional event/effective time.",
+    "zh-CN": "管理当前智能体的长期记忆（list/search/get/add/update/remove/clear）。系统提示词默认只注入短 memory_id + 标题索引。先用 list/search 找到 memory_id，再用 get 读取完整内容。对 add/update，请使用当前收敛结构：title 写索引标题，content 写完整细节，tag 写记忆标签，related_memory_id 按需填写关联记忆，memory_time 按需填写记忆时间。"
   },
   "tool.spec.memory_manager.args.action": {
-    "en-US": "Action: list/add/update/delete/clear/recall.",
-    "zh-CN": "动作类型：list/add/update/delete/clear/recall。"
+    "en-US": "Action: list/search/get/add/update/remove/clear.",
+    "zh-CN": "动作类型：list/search/get/add/update/remove/clear。"
   },
   "tool.spec.memory_manager.args.memory_id": {
-    "en-US": "Memory entry id (required for update/delete).",
-    "zh-CN": "记忆条目 ID（update/delete 必填）。"
+    "en-US": "Memory entry id (required for get/update/remove).",
+    "zh-CN": "记忆条目 ID（get/update/remove 必填）。"
   },
   "tool.spec.memory_manager.args.title": {
-    "en-US": "Optional memory title. Prefer a short topic like 'User name' or 'Reply language'.",
-    "zh-CN": "可选的记忆标题。建议写成简短主题，例如“用户姓名”或“回复语言”。"
-  },
-  "tool.spec.memory_manager.args.summary": {
-    "en-US": "Optional one-line summary. Prefer the key conclusion instead of repeating the full content.",
-    "zh-CN": "可选的一行摘要。建议写核心结论，而不是简单重复完整内容。"
+    "en-US": "Optional index title. Prefer a short topic like 'User name' or 'Reply language'.",
+    "zh-CN": "可选的索引标题。建议写成简短主题，例如“用户姓名”或“回复语言”。"
   },
   "tool.spec.memory_manager.args.content": {
-    "en-US": "Memory content (required for add/update; can also be reused as the recall query). Store the full durable detail here.",
-    "zh-CN": "记忆内容（add/update 必填；在 recall 时也可复用为检索词）。这里应写完整、可长期复用的细节。"
+    "en-US": "Memory content (required for add/update). Store the full durable detail here; this is not injected into the system prompt by default.",
+    "zh-CN": "记忆内容（add/update 必填）。这里存储完整、可长期复用的细节；默认不会直接注入系统提示词。"
+  },
+  "tool.spec.memory_manager.args.tag": {
+    "en-US": "Optional memory tag such as profile/preference/constraint/todo.",
+    "zh-CN": "可选的记忆标签，例如 profile/preference/constraint/todo。"
   },
   "tool.spec.memory_manager.args.category": {
-    "en-US": "Optional category such as profile/preference/constraint/todo.",
-    "zh-CN": "可选分类，例如 profile/preference/constraint/todo。"
+    "en-US": "Legacy alias of tag. Prefer tag in new calls.",
+    "zh-CN": "tag 的兼容别名。新调用请优先使用 tag。"
   },
-  "tool.spec.memory_manager.args.tags": {
-    "en-US": "Optional string tags to improve later retrieval.",
-    "zh-CN": "可选标签字符串列表，用于提升后续检索效果。"
+  "tool.spec.memory_manager.args.related_memory_id": {
+    "en-US": "Optional linked memory id. Use it when this memory supersedes or relates to another memory entry.",
+    "zh-CN": "可选的关联记忆 ID。当前条目需要关联或替代另一条记忆时再填写。"
+  },
+  "tool.spec.memory_manager.args.memory_time": {
+    "en-US": "Optional memory time in ISO 8601 or local datetime text, for example 2026-04-12T08:37:00+08:00.",
+    "zh-CN": "可选的记忆时间，支持 ISO 8601 或本地时间文本，例如 2026-04-12T08:37:00+08:00。"
   },
   "tool.spec.memory_manager.args.query": {
-    "en-US": "Recall query text. When omitted, returns pinned/confirmed/recent memory candidates.",
-    "zh-CN": "recall 检索词；省略时返回置顶/已确认/近期记忆候选。"
+    "en-US": "Search query text. Use it with action=search to find candidate memory ids by title or content.",
+    "zh-CN": "搜索词。配合 action=search 使用，用于按标题或内容查找候选 memory_id。"
   },
   "tool.spec.memory_manager.args.limit": {
-    "en-US": "Max number of entries for list/recall (list: 1-200, recall: internally capped to 30).",
-    "zh-CN": "list/recall 返回条目数量上限（list: 1-200；recall 内部最大为 30）。"
+    "en-US": "Max number of entries for list/search (list defaults to 30; search defaults to 10 and is internally capped to 30).",
+    "zh-CN": "list/search 返回条目数量上限（list 默认 30；search 默认 10，内部最大为 30）。"
   },
   "tool.spec.memory_manager.args.order": {
     "en-US": "List order: desc (latest first) or asc.",

@@ -5,7 +5,7 @@ read_when:
   - 你要调度当前用户已经拥有的其他正式智能体
 source_docs:
   - src/services/tools.rs
-updated_at: 2026-04-10
+updated_at: 2026-04-12
 ---
 
 # 智能体蜂群
@@ -61,6 +61,14 @@ updated_at: 2026-04-10
   "next_step_hint": "Use agent_swarm.wait or status/history before treating the worker result as final."
 }
 ```
+
+## 线程策略
+
+- 默认是 `threadStrategy=fresh_main_thread`：工蜂收到任务后会新建一个干净线程，并把它绑定成自己的新主线程。
+- 当你需要让工蜂继续在它自己的长期主线程里沉淀输出时，可以改用 `threadStrategy=main_thread`，或传 `reuseMainThread=true`。
+- `main_thread` 语义是：优先复用工蜂当前主线程；如果它还没有主线程，系统会先创建一个再派工。
+- `send` / `batch_send` 如果显式提供了 `sessionKey`，会优先使用那个指定线程；这时 `threadStrategy` 只作为补充信息，不再改变目标线程。
+- `spawn` 也支持同样的线程策略参数，本质上会把策略透传给底层派工。
 
 ## `status`
 

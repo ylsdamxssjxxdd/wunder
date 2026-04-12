@@ -223,6 +223,62 @@ test('message stats falls back to user-round total tokens when quota event is mi
   assert.equal(findEntryValue(entries, 'Quota'), '4198');
 });
 
+test('message stats sums explicit consumed tokens across assistant messages in the same user turn', () => {
+  const t = createTranslator();
+  const messages = [
+    {
+      role: 'user',
+      content: 'plan this task'
+    },
+    {
+      role: 'assistant',
+      content: 'first step',
+      stats: {
+        quotaConsumed: 1400,
+        roundUsage: {
+          total_tokens: 3200
+        }
+      }
+    },
+    {
+      role: 'assistant',
+      content: 'final answer',
+      stats: {
+        quotaConsumed: 2800,
+        roundUsage: {
+          total_tokens: 3600
+        }
+      }
+    }
+  ];
+
+  const entries = buildAssistantMessageStatsEntries(messages[2], t, messages);
+
+  assert.equal(findEntryValue(entries, 'Quota'), '4200');
+  assert.equal(findEntryValue(entries, 'Context'), '3600');
+});
+
+test('message stats ignores legacy round-marker quota placeholders when usage totals are present', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          total_tokens: 2048
+        },
+        usage: {
+          total_tokens: 2048
+        }
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '2048');
+});
+
 test('message stats keeps backend average speed without frontend clamping', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

@@ -1255,6 +1255,10 @@ struct RawSessionSpawnArgs {
     run_timeout_seconds: Option<f64>,
     #[serde(default)]
     cleanup: Option<String>,
+    #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
+    thread_strategy: Option<String>,
+    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
+    reuse_main_thread: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -1266,6 +1270,8 @@ struct SessionSpawnArgs {
     model: Option<String>,
     run_timeout_seconds: Option<f64>,
     cleanup: Option<String>,
+    thread_strategy: Option<String>,
+    reuse_main_thread: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for SessionSpawnArgs {
@@ -1287,6 +1293,8 @@ impl<'de> Deserialize<'de> for SessionSpawnArgs {
             model: raw.model,
             run_timeout_seconds: raw.run_timeout_seconds,
             cleanup: raw.cleanup,
+            thread_strategy: raw.thread_strategy,
+            reuse_main_thread: raw.reuse_main_thread,
         })
     }
 }
@@ -1578,6 +1586,10 @@ struct AgentSwarmSendArgs {
     )]
     session_key: Option<String>,
     message: String,
+    #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
+    thread_strategy: Option<String>,
+    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
+    reuse_main_thread: Option<bool>,
     #[serde(default, rename = "timeoutSeconds", alias = "timeout_seconds")]
     timeout_seconds: Option<f64>,
     #[serde(default)]
@@ -1602,6 +1614,10 @@ struct AgentSwarmBatchTaskArgs {
     session_key: Option<String>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
+    thread_strategy: Option<String>,
+    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
+    reuse_main_thread: Option<bool>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
@@ -1614,6 +1630,10 @@ struct AgentSwarmBatchSendArgs {
     tasks: Vec<AgentSwarmBatchTaskArgs>,
     #[serde(default)]
     message: Option<String>,
+    #[serde(default, rename = "threadStrategy", alias = "thread_strategy")]
+    thread_strategy: Option<String>,
+    #[serde(default, rename = "reuseMainThread", alias = "reuse_main_thread")]
+    reuse_main_thread: Option<bool>,
     #[serde(default)]
     label: Option<String>,
     #[serde(default, rename = "waitSeconds", alias = "wait_seconds")]
@@ -1670,9 +1690,56 @@ struct SwarmBatchDispatchTask {
     agent_name: String,
     session_id: String,
     created_session: bool,
+    thread_strategy: &'static str,
     tool_names: Vec<String>,
     model_name: Option<String>,
     agent_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwarmWorkerThreadStrategy {
+    FreshMainThread,
+    MainThread,
+}
+
+impl SwarmWorkerThreadStrategy {
+    fn as_tool_value(self) -> &'static str {
+        match self {
+            Self::FreshMainThread => "fresh_main_thread",
+            Self::MainThread => "main_thread",
+        }
+    }
+}
+
+fn parse_swarm_worker_thread_strategy(
+    thread_strategy: Option<&str>,
+    reuse_main_thread: Option<bool>,
+) -> Result<SwarmWorkerThreadStrategy> {
+    if reuse_main_thread.unwrap_or(false) {
+        return Ok(SwarmWorkerThreadStrategy::MainThread);
+    }
+    let normalized = thread_strategy
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase().replace('-', "_"))
+        .unwrap_or_default();
+    if normalized.is_empty()
+        || matches!(
+            normalized.as_str(),
+            "fresh_main_thread" | "new_main_thread" | "fresh" | "new_thread"
+        )
+    {
+        return Ok(SwarmWorkerThreadStrategy::FreshMainThread);
+    }
+    if matches!(
+        normalized.as_str(),
+        "main_thread" | "current_main_thread" | "reuse_main_thread" | "main"
+    ) {
+        return Ok(SwarmWorkerThreadStrategy::MainThread);
+    }
+    Err(anyhow!(
+        "invalid thread_strategy: {normalized}; expected fresh_main_thread or main_thread"
+    ))
 }
 
 fn resolve_swarm_batch_tool_names(
@@ -1773,6 +1840,7 @@ async fn dispatch_swarm_batch_task(
             "agent_id": task.agent_id,
             "agent_name": task.agent_name,
             "created_session": task.created_session,
+            "thread_strategy": task.thread_strategy,
         }),
     ))
 }
@@ -2201,6 +2269,26 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let requested_agent_id = normalize_optional_string(payload.agent_id);
     let requested_agent_name = normalize_optional_string(payload.agent_name);
+    let thread_strategy = match parse_swarm_worker_thread_strategy(
+        payload.thread_strategy.as_deref(),
+        payload.reuse_main_thread,
+    ) {
+        Ok(strategy) => strategy,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "send",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm send thread strategy is invalid: {err}"),
+                "threadStrategy 只支持 fresh_main_thread 或 main_thread；也可以改用 reuseMainThread=true。",
+                &[],
+                agent_swarm_send_example(),
+                args,
+                json!({
+                    "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                }),
+            ));
+        }
+    };
     let has_session_key = payload
         .session_key
         .as_deref()
@@ -2273,26 +2361,39 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             requested_agent_name.as_deref(),
         )?
         .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
-        // Swarm-dispatched workers must start from a clean thread unless the caller
-        // explicitly pins the run to an existing session_key.
-        let dispatch_preview = build_swarm_dispatch_message(
-            context.storage.as_ref(),
-            context.monitor.as_deref(),
-            user_id,
-            &swarm_hive_id,
-            current_agent_id.as_deref(),
-            context.session_id,
-            None,
-            None,
-            &message,
-        )?;
-        let prepared = prepare_swarm_child_session(
-            context,
-            &dispatch_preview,
-            payload.label.clone(),
-            &target_agent.agent_id,
-        )?;
-        (target_agent, prepared.child_session_id, true)
+        match thread_strategy {
+            SwarmWorkerThreadStrategy::MainThread => {
+                let (main_session, created_main_session) =
+                    crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                        context.storage.as_ref(),
+                        user_id,
+                        &target_agent,
+                    )?;
+                (target_agent, main_session.session_id, created_main_session)
+            }
+            SwarmWorkerThreadStrategy::FreshMainThread => {
+                // Swarm-dispatched workers must start from a clean thread unless the caller
+                // explicitly pins the run to an existing session_key or selects main_thread.
+                let dispatch_preview = build_swarm_dispatch_message(
+                    context.storage.as_ref(),
+                    context.monitor.as_deref(),
+                    user_id,
+                    &swarm_hive_id,
+                    current_agent_id.as_deref(),
+                    context.session_id,
+                    None,
+                    None,
+                    &message,
+                )?;
+                let prepared = prepare_swarm_child_session(
+                    context,
+                    &dispatch_preview,
+                    payload.label.clone(),
+                    &target_agent.agent_id,
+                )?;
+                (target_agent, prepared.child_session_id, true)
+            }
+        }
     };
     let target_agent_id = target_agent.agent_id.clone();
 
@@ -2453,7 +2554,13 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         reply,
         error_text,
         elapsed_s,
-        None,
+        Some(json!({
+            "thread_strategy": if has_session_key {
+                "session_key"
+            } else {
+                thread_strategy.as_tool_value()
+            }
+        })),
     ));
     /*
     let mut response = json!({
@@ -2558,6 +2665,26 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
 
     let shared_message = normalize_optional_string(payload.message.clone());
     let shared_label = normalize_optional_string(payload.label.clone());
+    let shared_thread_strategy = match parse_swarm_worker_thread_strategy(
+        payload.thread_strategy.as_deref(),
+        payload.reuse_main_thread,
+    ) {
+        Ok(strategy) => strategy,
+        Err(err) => {
+            return Ok(build_agent_swarm_args_failure(
+                "batch_send",
+                "TOOL_ARGS_INVALID",
+                format!("agent_swarm batch_send thread strategy is invalid: {err}"),
+                "threadStrategy 只支持 fresh_main_thread 或 main_thread；也可以改用 reuseMainThread=true。",
+                &[],
+                agent_swarm_batch_send_example(),
+                args,
+                json!({
+                    "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                }),
+            ));
+        }
+    };
     for (index, task) in payload.tasks.iter().enumerate() {
         let has_target = normalize_optional_string(task.agent_id.clone()).is_some()
             || normalize_optional_string(task.agent_name.clone()).is_some()
@@ -2657,6 +2784,35 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         let include_current = task.include_current.unwrap_or(default_include_current);
         let requested_agent_id = normalize_optional_string(task.agent_id);
         let requested_agent_name = normalize_optional_string(task.agent_name);
+        let task_thread_strategy = match if task.thread_strategy.is_some()
+            || task.reuse_main_thread.is_some()
+        {
+            parse_swarm_worker_thread_strategy(
+                task.thread_strategy.as_deref(),
+                task.reuse_main_thread,
+            )
+        } else {
+            Ok(shared_thread_strategy)
+        } {
+            Ok(strategy) => strategy,
+            Err(err) => {
+                return Ok(build_agent_swarm_args_failure(
+                    "batch_send",
+                    "TOOL_ARGS_INVALID",
+                    format!(
+                        "agent_swarm batch_send task[{index}] thread strategy is invalid: {err}"
+                    ),
+                    "每个 task 的 threadStrategy 只支持 fresh_main_thread 或 main_thread；也可以改用 reuseMainThread=true。",
+                    &[],
+                    agent_swarm_batch_send_example(),
+                    args,
+                    json!({
+                        "task_index": index,
+                        "allowed_thread_strategies": ["fresh_main_thread", "main_thread"]
+                    }),
+                ));
+            }
+        };
         let requested_session_id = task
             .session_key
             .map(|value| resolve_session_key(Some(value)))
@@ -2750,48 +2906,94 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             Some(&task_record.task_id),
             &message,
         )?;
-        let (session_id, created_session, tool_names, model_name, agent_prompt) =
-            if let Some(session_record) = session_record {
-                let tool_names = resolve_swarm_batch_tool_names(
-                    context,
-                    context.config,
-                    context.skills,
-                    &allowed_tools,
-                    user_id,
-                    &session_record,
-                    &agent_record,
-                );
-                let agent_prompt = {
-                    let prompt = agent_record.system_prompt.trim();
-                    if prompt.is_empty() {
-                        None
-                    } else {
-                        Some(prompt.to_string())
-                    }
-                };
-                let model_name = normalize_optional_string(agent_record.model_name.clone());
-                (
-                    session_record.session_id,
-                    false,
-                    tool_names,
-                    model_name,
-                    agent_prompt,
-                )
-            } else {
-                let prepared = prepare_swarm_child_session(
-                    context,
-                    &dispatch_message,
-                    label.clone(),
-                    &agent_record.agent_id,
-                )?;
-                (
-                    prepared.child_session_id,
-                    true,
-                    prepared.request.tool_names,
-                    prepared.model_name,
-                    prepared.request.agent_prompt,
-                )
+        let (
+            session_id,
+            created_session,
+            resolved_thread_strategy,
+            tool_names,
+            model_name,
+            agent_prompt,
+        ) = if let Some(session_record) = session_record {
+            let tool_names = resolve_swarm_batch_tool_names(
+                context,
+                context.config,
+                context.skills,
+                &allowed_tools,
+                user_id,
+                &session_record,
+                &agent_record,
+            );
+            let agent_prompt = {
+                let prompt = agent_record.system_prompt.trim();
+                if prompt.is_empty() {
+                    None
+                } else {
+                    Some(prompt.to_string())
+                }
             };
+            let model_name = normalize_optional_string(agent_record.model_name.clone());
+            (
+                session_record.session_id,
+                false,
+                "session_key",
+                tool_names,
+                model_name,
+                agent_prompt,
+            )
+        } else {
+            match task_thread_strategy {
+                SwarmWorkerThreadStrategy::MainThread => {
+                    let (main_session, created_main_session) =
+                        crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                            context.storage.as_ref(),
+                            user_id,
+                            &agent_record,
+                        )?;
+                    let tool_names = resolve_swarm_batch_tool_names(
+                        context,
+                        context.config,
+                        context.skills,
+                        &allowed_tools,
+                        user_id,
+                        &main_session,
+                        &agent_record,
+                    );
+                    let agent_prompt = {
+                        let prompt = agent_record.system_prompt.trim();
+                        if prompt.is_empty() {
+                            None
+                        } else {
+                            Some(prompt.to_string())
+                        }
+                    };
+                    let model_name = normalize_optional_string(agent_record.model_name.clone());
+                    (
+                        main_session.session_id,
+                        created_main_session,
+                        SwarmWorkerThreadStrategy::MainThread.as_tool_value(),
+                        tool_names,
+                        model_name,
+                        agent_prompt,
+                    )
+                }
+                SwarmWorkerThreadStrategy::FreshMainThread => {
+                    let prepared = prepare_swarm_child_session(
+                        context,
+                        &dispatch_message,
+                        label.clone(),
+                        &agent_record.agent_id,
+                    )?;
+                    (
+                        prepared.child_session_id,
+                        true,
+                        SwarmWorkerThreadStrategy::FreshMainThread.as_tool_value(),
+                        prepared.request.tool_names,
+                        prepared.model_name,
+                        prepared.request.agent_prompt,
+                    )
+                }
+            }
+        };
         task_record.target_session_id = Some(session_id.clone());
         task_record.spawned_session_id = created_session.then_some(session_id.clone());
         context.storage.upsert_team_task(&task_record)?;
@@ -2807,6 +3009,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             agent_name: agent_record.name,
             session_id,
             created_session,
+            thread_strategy: resolved_thread_strategy,
             tool_names,
             model_name,
             agent_prompt,
@@ -2888,6 +3091,10 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         .get("created_session")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
+                    "thread_strategy": result
+                        .get("thread_strategy")
+                        .cloned()
+                        .unwrap_or_else(|| json!(shared_thread_strategy.as_tool_value())),
                 });
                 if let Some(error) = result.get("error") {
                     if let Value::Object(ref mut map) = item {
@@ -3476,6 +3683,8 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
         model: _,
         run_timeout_seconds,
         cleanup: _,
+        thread_strategy,
+        reuse_main_thread,
     } = payload;
     if task.trim().is_empty() {
         return Ok(build_agent_swarm_args_failure(
@@ -3536,6 +3745,12 @@ async fn agent_swarm_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Va
                 "timeoutSeconds".to_string(),
                 json!(timeout_seconds.max(0.0)),
             );
+        }
+        if let Some(thread_strategy) = thread_strategy {
+            map.insert("threadStrategy".to_string(), json!(thread_strategy));
+        }
+        if let Some(reuse_main_thread) = reuse_main_thread {
+            map.insert("reuseMainThread".to_string(), json!(reuse_main_thread));
         }
         if let Some(hive_id) = swarm_hive_arg(args) {
             map.insert("hiveId".to_string(), json!(hive_id));
@@ -9903,6 +10118,25 @@ mod tests {
     }
 
     #[test]
+    fn session_spawn_args_accept_thread_strategy_aliases() {
+        let camel: SessionSpawnArgs = serde_json::from_value(json!({
+            "task": "hello child",
+            "threadStrategy": "main_thread",
+        }))
+        .expect("camel thread strategy should deserialize");
+        assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+
+        let snake: SessionSpawnArgs = serde_json::from_value(json!({
+            "task": "hello child",
+            "thread_strategy": "fresh_main_thread",
+            "reuse_main_thread": true,
+        }))
+        .expect("snake thread strategy should deserialize");
+        assert_eq!(snake.thread_strategy.as_deref(), Some("fresh_main_thread"));
+        assert_eq!(snake.reuse_main_thread, Some(true));
+    }
+
+    #[test]
     fn list_files_inner_supports_cursor_pagination() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("list-files-pagination.db");
@@ -11261,6 +11495,54 @@ PATCH"#;
     }
 
     #[test]
+    fn agent_swarm_send_args_accept_thread_strategy_aliases() {
+        let camel: AgentSwarmSendArgs = serde_json::from_value(json!({
+            "agent_name": "worker_a",
+            "message": "hello",
+            "threadStrategy": "main_thread",
+        }))
+        .expect("parse camel send args");
+        assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+
+        let snake: AgentSwarmSendArgs = serde_json::from_value(json!({
+            "agent_name": "worker_a",
+            "message": "hello",
+            "thread_strategy": "fresh_main_thread",
+            "reuse_main_thread": true,
+        }))
+        .expect("parse snake send args");
+        assert_eq!(snake.thread_strategy.as_deref(), Some("fresh_main_thread"));
+        assert_eq!(snake.reuse_main_thread, Some(true));
+    }
+
+    #[test]
+    fn agent_swarm_batch_send_args_accept_thread_strategy_aliases() {
+        let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
+            "threadStrategy": "main_thread",
+        }))
+        .expect("parse camel batch args");
+        assert_eq!(camel.thread_strategy.as_deref(), Some("main_thread"));
+
+        let snake: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{
+                "agent_id": "worker_a",
+                "message": "hello",
+                "thread_strategy": "fresh_main_thread",
+                "reuse_main_thread": true
+            }],
+            "reuse_main_thread": true,
+        }))
+        .expect("parse snake batch args");
+        assert_eq!(snake.reuse_main_thread, Some(true));
+        assert_eq!(
+            snake.tasks[0].thread_strategy.as_deref(),
+            Some("fresh_main_thread")
+        );
+        assert_eq!(snake.tasks[0].reuse_main_thread, Some(true));
+    }
+
+    #[test]
     fn agent_swarm_send_args_accept_canonical_session_id() {
         let payload: AgentSwarmSendArgs = serde_json::from_value(json!({
             "session_id": "sess_worker_demo",
@@ -11280,6 +11562,128 @@ PATCH"#;
         .expect("parse canonical wait args");
         assert_eq!(payload.run_ids, Some(vec!["run_demo_1".to_string()]));
         assert_eq!(payload.wait_seconds, Some(3.0));
+    }
+
+    #[test]
+    fn parse_swarm_worker_thread_strategy_supports_main_thread_option() {
+        assert_eq!(
+            parse_swarm_worker_thread_strategy(Some("main_thread"), None)
+                .expect("main_thread strategy"),
+            SwarmWorkerThreadStrategy::MainThread
+        );
+        assert_eq!(
+            parse_swarm_worker_thread_strategy(Some("fresh_main_thread"), None)
+                .expect("fresh_main_thread strategy"),
+            SwarmWorkerThreadStrategy::FreshMainThread
+        );
+        assert_eq!(
+            parse_swarm_worker_thread_strategy(None, Some(true)).expect("reuseMainThread strategy"),
+            SwarmWorkerThreadStrategy::MainThread
+        );
+    }
+
+    #[test]
+    fn parse_swarm_worker_thread_strategy_rejects_unknown_value() {
+        let err = parse_swarm_worker_thread_strategy(Some("reuse_previous"), None)
+            .expect_err("unknown strategy should fail");
+        assert!(err.to_string().contains("fresh_main_thread"));
+        assert!(err.to_string().contains("main_thread"));
+    }
+
+    #[tokio::test]
+    async fn swarm_main_thread_strategy_reuses_existing_worker_main_thread() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-main-thread-reuse.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let worker_agent = sample_agent_record();
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let mut worker_session = sample_chat_session_record(&worker_agent.agent_id);
+        worker_session.session_id = "sess_worker_main".to_string();
+        storage_backend
+            .upsert_chat_session(&worker_session)
+            .expect("upsert worker session");
+        storage_backend
+            .upsert_agent_thread(&AgentThreadRecord {
+                thread_id: "thread_worker_main".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: worker_agent.agent_id.clone(),
+                session_id: worker_session.session_id.clone(),
+                status: "idle".to_string(),
+                created_at: 1.0,
+                updated_at: 1.0,
+            })
+            .expect("bind worker main thread");
+
+        let (resolved, created) =
+            crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                storage_backend.as_ref(),
+                "alice",
+                &worker_agent,
+            )
+            .expect("resolve main session");
+
+        assert!(!created);
+        assert_eq!(resolved.session_id, worker_session.session_id);
+        assert_eq!(
+            storage_backend
+                .get_agent_thread("alice", &worker_agent.agent_id)
+                .expect("get agent thread")
+                .expect("agent thread")
+                .session_id,
+            worker_session.session_id
+        );
+    }
+
+    #[tokio::test]
+    async fn swarm_main_thread_strategy_creates_worker_main_thread_when_missing() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-main-thread-create.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let worker_agent = sample_agent_record();
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let (resolved, created) =
+            crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                storage_backend.as_ref(),
+                "alice",
+                &worker_agent,
+            )
+            .expect("create main session");
+
+        assert!(created);
+        assert_eq!(
+            resolved.agent_id.as_deref(),
+            Some(worker_agent.agent_id.as_str())
+        );
+        assert!(resolved.parent_session_id.is_none());
+        assert!(resolved.spawned_by.is_none());
+        assert_eq!(
+            storage_backend
+                .get_agent_thread("alice", &worker_agent.agent_id)
+                .expect("get agent thread")
+                .expect("agent thread")
+                .session_id,
+            resolved.session_id
+        );
+        assert_eq!(
+            storage_backend
+                .get_chat_session("alice", &resolved.session_id)
+                .expect("load created session")
+                .expect("created session")
+                .session_id,
+            resolved.session_id
+        );
     }
 
     #[tokio::test]

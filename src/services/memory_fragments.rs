@@ -50,6 +50,7 @@ const LIFECYCLE_PERIPHERAL_SCORE_THRESHOLD: f64 = 0.18;
 const LIFECYCLE_PERIPHERAL_AGE_DAYS: f64 = 60.0;
 const SENTENCE_STOP_CHARS: [char; 9] = ['。', '.', '，', ',', '！', '!', '？', '?', '\n'];
 const ELLIPSIS: char = '…';
+const MODEL_MEMORY_ID_LEN: usize = 8;
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryFragmentListOptions<'a> {
@@ -74,6 +75,8 @@ pub struct MemoryFragmentInput {
     pub fact_key: Option<String>,
     pub tags: Option<Vec<String>>,
     pub entities: Option<Vec<String>>,
+    pub supersedes_memory_id: Option<String>,
+    pub valid_from: Option<f64>,
     pub importance: Option<f64>,
     pub confidence: Option<f64>,
     pub tier: Option<String>,
@@ -268,13 +271,18 @@ impl MemoryFragmentStore {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| format!("memf_{}", Uuid::new_v4().simple()));
+            .unwrap_or_else(|| self.generate_memory_id(user_id, &scope));
         let title = normalize_text(input.title_l0.as_deref(), 120)
             .or_else(|| existing.as_ref().map(|item| item.title_l0.clone()))
             .unwrap_or_default();
-        let summary = normalize_text(input.summary_l1.as_deref(), 320)
-            .or_else(|| existing.as_ref().map(|item| item.summary_l1.clone()))
-            .unwrap_or_default();
+        let summary = if input.summary_l1.is_some() {
+            normalize_text(input.summary_l1.as_deref(), 320).unwrap_or_default()
+        } else {
+            existing
+                .as_ref()
+                .map(|item| item.summary_l1.clone())
+                .unwrap_or_default()
+        };
         let content = normalize_text(input.content_l2.as_deref(), 2_000)
             .or_else(|| existing.as_ref().map(|item| item.content_l2.clone()))
             .unwrap_or_else(|| summary.clone());
@@ -291,6 +299,17 @@ impl MemoryFragmentStore {
         let fact_key = normalize_text(input.fact_key.as_deref(), 80)
             .or_else(|| existing.as_ref().map(|item| item.fact_key.clone()))
             .unwrap_or_else(|| title_l0.clone());
+        let requested_supersedes = input.supersedes_memory_id.as_ref().map(|value| {
+            let cleaned = value.trim();
+            if cleaned.is_empty() || cleaned == memory_id {
+                None
+            } else {
+                Some(cleaned.to_string())
+            }
+        });
+        let requested_valid_from = input
+            .valid_from
+            .filter(|value| value.is_finite() && *value > 0.0);
         let invalidated = input.invalidated.unwrap_or(false);
         let mut record = existing.unwrap_or(MemoryFragmentRecord {
             memory_id,
@@ -342,6 +361,7 @@ impl MemoryFragmentStore {
             normalize_string_list(input.entities.unwrap_or_else(|| record.entities.clone()));
         record.importance = clamp01(input.importance.unwrap_or(record.importance));
         record.confidence = clamp01(input.confidence.unwrap_or(record.confidence));
+        record.valid_from = requested_valid_from.unwrap_or(record.valid_from);
         record.tier = requested_tier.unwrap_or_else(|| normalize_fragment_tier(Some(&record.tier)));
         record.status = if invalidated {
             STATUS_INVALIDATED.to_string()
@@ -350,13 +370,25 @@ impl MemoryFragmentStore {
         };
         record.pinned = input.pinned.unwrap_or(record.pinned);
         record.confirmed_by_user = input.confirmed_by_user.unwrap_or(record.confirmed_by_user);
+        if let Some(next_supersedes) = requested_supersedes.clone() {
+            record.supersedes_memory_id = next_supersedes;
+            record.superseded_by_memory_id = None;
+        }
         record.invalidated_at = if invalidated || record.status == STATUS_INVALIDATED {
             Some(now)
         } else {
             None
         };
         if is_create {
-            let supersede_targets = self.find_supersede_targets(user_id, &record.agent_id, &record);
+            let supersede_targets = if let Some(Some(target_id)) = requested_supersedes.clone() {
+                self.get_fragment(user_id, Some(&record.agent_id), &target_id)
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            } else if requested_supersedes == Some(None) {
+                Vec::new()
+            } else {
+                self.find_supersede_targets(user_id, &record.agent_id, &record)
+            };
             if let Some(target) = supersede_targets.first() {
                 record.supersedes_memory_id = Some(target.memory_id.clone());
                 record.superseded_by_memory_id = None;
@@ -370,6 +402,11 @@ impl MemoryFragmentStore {
         refresh_fragment_lifecycle_record(&mut record, now);
         record.updated_at = now;
         self.storage.upsert_memory_fragment(&record)?;
+        if let Some(Some(target_id)) = requested_supersedes {
+            if let Some(target) = self.get_fragment(user_id, Some(&record.agent_id), &target_id) {
+                self.mark_fragment_superseded(&record, vec![target], now)?;
+            }
+        }
         Ok(record)
     }
 
@@ -385,47 +422,6 @@ impl MemoryFragmentStore {
         };
         record.confirmed_by_user = confirmed;
         let now = now_ts();
-        refresh_fragment_lifecycle_record(&mut record, now);
-        record.updated_at = now;
-        self.storage.upsert_memory_fragment(&record)?;
-        Ok(Some(record))
-    }
-
-    pub fn set_pinned(
-        &self,
-        user_id: &str,
-        agent_id: Option<&str>,
-        memory_id: &str,
-        pinned: bool,
-    ) -> Result<Option<MemoryFragmentRecord>> {
-        let Some(mut record) = self.get_fragment(user_id, agent_id, memory_id) else {
-            return Ok(None);
-        };
-        record.pinned = pinned;
-        let now = now_ts();
-        refresh_fragment_lifecycle_record(&mut record, now);
-        record.updated_at = now;
-        self.storage.upsert_memory_fragment(&record)?;
-        Ok(Some(record))
-    }
-
-    pub fn set_invalidated(
-        &self,
-        user_id: &str,
-        agent_id: Option<&str>,
-        memory_id: &str,
-        invalidated: bool,
-    ) -> Result<Option<MemoryFragmentRecord>> {
-        let Some(mut record) = self.get_fragment(user_id, agent_id, memory_id) else {
-            return Ok(None);
-        };
-        let now = now_ts();
-        record.status = if invalidated {
-            STATUS_INVALIDATED.to_string()
-        } else {
-            STATUS_ACTIVE.to_string()
-        };
-        record.invalidated_at = if invalidated { Some(now) } else { None };
         refresh_fragment_lifecycle_record(&mut record, now);
         record.updated_at = now;
         self.storage.upsert_memory_fragment(&record)?;
@@ -489,6 +485,25 @@ impl MemoryFragmentStore {
         Ok(())
     }
 
+    fn generate_memory_id(&self, user_id: &str, agent_scope: &str) -> String {
+        for _ in 0..16 {
+            let candidate = Uuid::new_v4()
+                .simple()
+                .to_string()
+                .chars()
+                .take(MODEL_MEMORY_ID_LEN)
+                .collect::<String>()
+                .to_lowercase();
+            if self
+                .get_fragment(user_id, Some(agent_scope), &candidate)
+                .is_none()
+            {
+                return candidate;
+            }
+        }
+        compact_memory_id_for_model(&Uuid::new_v4().simple().to_string())
+    }
+
     fn repair_fragment_links_after_delete(
         &self,
         user_id: &str,
@@ -519,6 +534,7 @@ impl MemoryFragmentStore {
         }
     }
 
+    #[cfg(test)]
     pub fn list_hits(
         &self,
         user_id: &str,
@@ -823,6 +839,7 @@ impl MemoryFragmentStore {
         if !meta.trim().is_empty() {
             meta_lines.push(meta);
         }
+        meta_lines.push(i18n::t("memory.prompt_meta.index_hint"));
         if total_available > injected_count || injected_count == 0 {
             meta_lines.push(i18n::t("memory.prompt_meta.more_hint"));
         }
@@ -831,7 +848,7 @@ impl MemoryFragmentStore {
             .map(|hit| {
                 let fragment = &hit.fragment;
                 let timestamp = format_prompt_memory_timestamp(fragment.updated_at);
-                let content = build_prompt_memory_text(fragment);
+                let content = build_prompt_memory_index_text(fragment);
                 if fragment.pinned {
                     format!("- [{timestamp}] 【置顶】{content}")
                 } else {
@@ -1102,6 +1119,7 @@ fn build_recall_hit(
     })
 }
 
+#[allow(dead_code)]
 fn build_prompt_memory_text(fragment: &MemoryFragmentRecord) -> String {
     let title = fragment.title_l0.trim();
     let summary = fragment.summary_l1.trim();
@@ -1133,6 +1151,53 @@ fn build_prompt_memory_text(fragment: &MemoryFragmentRecord) -> String {
     };
 
     truncate_chars(&primary, 180)
+}
+
+fn build_prompt_memory_index_text(fragment: &MemoryFragmentRecord) -> String {
+    let title = fragment.title_l0.trim();
+    let summary = fragment.summary_l1.trim();
+    let primary = if !title.is_empty() {
+        title.to_string()
+    } else if !summary.is_empty() {
+        summary.to_string()
+    } else if !fragment.content_l2.trim().is_empty() {
+        truncate_chars(fragment.content_l2.trim(), 80)
+    } else {
+        "untitled memory".to_string()
+    };
+    let memory_id = compact_memory_id_for_model(&fragment.memory_id);
+    if memory_id.is_empty() {
+        truncate_chars(&primary, 180)
+    } else {
+        truncate_chars(&format!("{memory_id} | {primary}"), 180)
+    }
+}
+
+pub(crate) fn compact_memory_id_for_model(memory_id: &str) -> String {
+    let cleaned = memory_id.trim();
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    if cleaned.chars().count() <= MODEL_MEMORY_ID_LEN {
+        return cleaned.to_string();
+    }
+    let stripped = cleaned
+        .strip_prefix("mem_")
+        .or_else(|| cleaned.strip_prefix("memf_"))
+        .or_else(|| cleaned.strip_prefix("legacy::"))
+        .unwrap_or(cleaned);
+    let compact = stripped
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(MODEL_MEMORY_ID_LEN)
+        .collect::<String>()
+        .to_lowercase();
+    if compact.chars().count() == MODEL_MEMORY_ID_LEN {
+        return compact;
+    }
+    let mut hasher = DefaultHasher::new();
+    cleaned.hash(&mut hasher);
+    format!("{:08x}", (hasher.finish() & 0xffff_ffff) as u32)
 }
 
 fn format_prompt_memory_timestamp(value: f64) -> String {
@@ -1851,6 +1916,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy prompt block content expectation replaced by index-only injection"]
     fn build_prompt_block_is_compact_and_timestamped() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("memory-prompt-block.db");
@@ -1888,6 +1954,36 @@ mod tests {
         assert!(block.contains(&format!("[{expected_timestamp}]")));
         assert!(block.contains("项目长期偏好 Rust、Axum、SQLite。"));
         assert!(!block.contains("preference"));
+        assert!(!block.contains("matched"));
+    }
+
+    #[test]
+    fn build_prompt_block_injects_memory_id_and_title_only() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-prompt-block-index.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let store = MemoryFragmentStore::new(storage);
+
+        let mut fragment = sample_fragment();
+        fragment.updated_at = 1_700_000_000.0;
+        let block = store.build_prompt_block(
+            &[MemoryRecallHit {
+                fragment,
+                reason_json: serde_json::json!({ "matched_terms": ["rust"] }),
+                lexical_score: 0.8,
+                semantic_score: 0.0,
+                freshness_score: 0.9,
+                importance_score: 0.8,
+                final_score: 0.85,
+            }],
+            7,
+        );
+
+        assert!(block.contains("m1"));
+        assert!(block.contains("Rust"));
+        assert!(!block.contains("SQLite"));
         assert!(!block.contains("matched"));
     }
 

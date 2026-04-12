@@ -231,11 +231,11 @@
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send`/`batch_send` 在未显式传入 `sessionKey` 时会强制为目标工蜂新建线程，并将其绑定为该工蜂新的主线程，以保持工蜂上下文干净；仅在显式提供 `sessionKey` 时才复用指定线程。
+- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会为目标工蜂新建干净线程，并将其绑定为该工蜂新的主线程，以保持工蜂上下文干净；当显式传入 `threadStrategy=main_thread`（或 `reuseMainThread=true`）时，会改为复用工蜂当前主线程，若主线程不存在则先创建并绑定；`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
-- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`send`/`spawn` 支持 `agentId` 或 `agentName/name` 直达目标；`send` 需 `message` 且 `agentId/agentName/name/sessionKey` 四选一，`spawn` 需 `task` 且 `agentId/agentName/name` 三选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/agentName/name/sessionKey` 四选一）；`send`/`batch_send`/`spawn` 还支持 `threadStrategy=fresh_main_thread|main_thread`，也兼容 `reuseMainThread=true`。
 - `智能体蜂群` 的动态提示仅注入到工具描述本身，展示“工蜂名称 + 一句话描述”；已冻结线程的 system prompt 不会因工蜂变化而改写。
 - 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`；`batch_spawn` 会返回稳定 `dispatch_id` 并把父轮次引用写入每个子任务，便于后续在消息气泡内聚合展示。
@@ -2053,15 +2053,16 @@
 
 - 原 `/wunder/admin/memory/*` 管理端接口已下线，不再提供管理员侧记忆面板能力。
 - 当前推荐方式：通过结构化记忆碎片系统 + 可选内置工具 `记忆管理`（`memory_manager`）协同维护长期记忆。
-- 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词，如需读取最新记忆请通过 `memory_manager` 的 `recall` 动作主动检索。
-- `memory_manager` 建议主动触发时机：当模型置信度不足、信息疑似过期、用户指出“答错/记错”、或用户反馈导致偏好/约束变化时，先执行 `recall` 校验，再决定是否 `add/update`。
-- recall 目前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回会收敛为更适合模型消费的精简结构（如 `matched_terms`、`why`），以降低上下文开销。
-- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；记忆块会额外带上“当前可用总条数 / 本次注入条数 / 注入上限”摘要，并在必要时提示模型可继续通过 `memory_manager recall/list` 检索剩余记忆；`compaction` 事件会附带 `fresh_memory_injected`、`fresh_memory_count` 与 `fresh_memory_total_count` 字段。
-- 记忆碎片当前可见状态为 `active / superseded / invalidated`；其中 `superseded` 表示该碎片已被同 `fact_key` 的新版本替代，默认不会被 recall 返回，但仍会在列表接口与用户可视化卡片墙中展示。
-- recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
-- `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。
-- `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 recall 排序和提示词快照构建。
-- 自动记忆提炼改为按 `用户 + 智能体` 单独开关，默认关闭。只有在用户侧“记忆碎片 -> 最近提炼任务”弹窗中显式开启后，系统才会在每个用户轮次结束并发出 `final` 回复后异步尝试写入 `auto-turn` 记忆；提炼阶段走独立的大模型提示词 `config/prompts/{zh|en}/memory_auto_extract.txt`，而最终写入前仍由服务端执行去重、`fact_key` 版本替代与手工/置顶碎片保护。
+- 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词。自动注入内容只包含记忆索引 `memory_id | title`，不包含完整 `content`；如需读取最新或完整记忆，请通过 `memory_manager` 的 `list/search/get` 主动检索。
+- `memory_manager` 建议主动触发时机：当模型置信度不足、信息疑似过期、用户指出“答错/记错”、或用户反馈导致偏好/约束变化时，先执行 `search` 查找候选记忆，再根据 `memory_id` 执行 `get` 查看完整细节，最后再决定是否 `add/update`。
+- `search` 当前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回收敛为更适合模型消费的精简结构：`list` 默认返回最近 30 条索引，`search` 默认返回 10 条候选索引，`get` 再按 `memory_id` 读取完整正文。
+- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；该记忆块仍只注入 `memory_id | title` 索引。记忆块会额外带上“当前可用总条数 / 本次注入条数 / 注入上限”摘要，并在必要时提示模型可继续通过 `memory_manager list/search` 检索剩余记忆，再通过 `get` 读取完整内容；`compaction` 事件会附带 `fresh_memory_injected`、`fresh_memory_count` 与 `fresh_memory_total_count` 字段。
+- 记忆碎片当前用户侧主结构收敛为 `memory_id / title_l0 / content_l2 / tag / supersedes_memory_id / valid_from`；列表与详情接口默认不再对外暴露 `summary_l1 / tags / entities / pinned / invalidated_at` 等旧字段。服务端仍兼容旧入参别名 `category`，但新的前端与模型协议应统一使用 `tag`。
+- `status` 当前主要用于标识 `active / superseded` 等版本关系；用户侧前端已移除置顶、作废、已失效等交互入口。
+- `memory_manager` 的 `list/search/get/add/update/remove/clear` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。兼容别名 `recall -> search`、`delete -> remove` 会在工具层统一规范化。
+- 用户侧记忆面板支持“记忆复刻”：`POST /wunder/agents/{agent_id}/memories/replicate` 会先清空目标智能体记忆，再复制当前智能体全部记忆到目标智能体；源智能体记忆保持不变。旧路由 `/memories/migrate` 仅作兼容别名保留。
+- `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 `search` 排序和提示词快照构建。
+- 自动记忆提炼能力仍可通过独立设置接口控制，但“记忆碎片”面板已不再展示最近提炼任务、召回说明等附属视图，列表接口也不再捆绑返回这些附属数据。
 - 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`、`memory_preview_total_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中 `memory_preview_count` 表示当前提示词里实际注入的记忆条数，`memory_preview_total_count` 表示该记忆块生成时可用的长期记忆总数；新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。
 
 #### `GET /wunder/agents/{agent_id}/memory-settings`
@@ -2104,7 +2105,7 @@
 }
 ```
 
-- `GET /wunder/agents/{agent_id}/memories` 的响应体中也会附带同一份 `data.settings`，便于前端在记忆卡片页一次请求同时渲染列表、命中记录、提炼任务与设置开关。
+- `GET /wunder/agents/{agent_id}/memories` 现在只返回记忆列表、总数与类别集合，不再附带 `data.settings`、`recent_hits`、`recent_jobs`。
 
 ### 4.1.43 `/wunder/admin/throughput/start`
 

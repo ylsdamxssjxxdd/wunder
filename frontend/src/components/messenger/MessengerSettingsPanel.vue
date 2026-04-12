@@ -82,7 +82,7 @@
           </div>
           <div class="messenger-profile-stat-item">
             <div class="messenger-settings-hint">{{ t('profile.stats.totalTokens') }}</div>
-            <div class="messenger-settings-label">{{ formatK(tokenUsageTotal) }}</div>
+            <div class="messenger-settings-label">{{ tokenUsageTotalCompactText }}</div>
           </div>
           <div class="messenger-profile-stat-item">
             <div class="messenger-settings-hint">{{ t('profile.stats.lastActive') }}</div>
@@ -113,11 +113,17 @@
             <span>{{ t('profile.quota.remaining') }}</span>
           </div>
           <div class="messenger-profile-token-balance">
-            <div class="messenger-profile-token-balance-value">{{ quotaRemainingKText }}</div>
-            <div class="messenger-profile-token-balance-label">{{ t('profile.quota.balanceHint') }}</div>
+            <div class="messenger-profile-token-balance-main">
+              <span class="messenger-profile-token-balance-icon" aria-hidden="true">
+                <i class="fa-solid fa-coins"></i>
+              </span>
+              <div class="messenger-profile-token-balance-copy">
+                <div class="messenger-profile-token-balance-value">{{ quotaRemainingCompactText }}</div>
+              </div>
+            </div>
           </div>
           <div class="messenger-profile-quota-meta">
-            <span>{{ t('profile.quota.remaining') }}: {{ quotaRemainingText }}</span>
+            <span>{{ t('profile.quota.dailyGrant') }}: {{ dailyTokenGrantCompactText }}</span>
           </div>
         </div>
       </section>
@@ -910,11 +916,23 @@ const quotaSnapshot = computed(() => {
       ?? user.daily_quota_remaining
       ?? user.dailyQuotaRemaining
   );
-  if (remaining === null) return null;
-  return { remaining };
+  const dailyGrant = parseQuotaNumber(
+    user.daily_token_grant
+      ?? user.dailyTokenGrant
+      ?? user.token_daily_grant
+      ?? user.tokenDailyGrant
+      ?? user.daily_quota
+      ?? user.dailyQuota
+  );
+  if (remaining === null && dailyGrant === null) return null;
+  return {
+    remaining,
+    dailyGrant
+  };
 });
 
 const quotaRemaining = computed(() => quotaSnapshot.value?.remaining ?? null);
+const dailyTokenGrant = computed(() => quotaSnapshot.value?.dailyGrant ?? null);
 
 const levelSnapshot = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;
@@ -966,8 +984,11 @@ const levelProgressHint = computed(() => {
   });
 });
 
-const quotaRemainingText = computed(() => formatNumber(quotaRemaining.value));
-const quotaRemainingKText = computed(() => formatKUnit(quotaRemaining.value));
+const quotaRemainingCompactText = computed(() => formatCompactTokenUnit(quotaRemaining.value));
+const dailyTokenGrantCompactText = computed(() => formatCompactTokenUnit(dailyTokenGrant.value));
+const tokenUsageTotalCompactText = computed(() =>
+  formatCompactTokenUnit(tokenUsageTotal.value, { zeroAsDash: true })
+);
 
 const formatTime = (value: unknown): string => {
   if (!value) return '-';
@@ -979,14 +1000,21 @@ const formatTime = (value: unknown): string => {
   )}:${pad(parsed.getMinutes())}`;
 };
 
-const formatK = (value: number | null): string => {
-  if (!Number.isFinite(value as number) || (value as number) <= 0) return '-';
-  return `${((value as number) / 1000).toFixed(1)}k`;
-};
-
-const formatKUnit = (value: number | null): string => {
-  if (!Number.isFinite(value as number) || (value as number) < 0) return '-';
-  return `${((value as number) / 1000).toFixed(1)}k`;
+const formatCompactTokenUnit = (
+  value: number | null,
+  options: { zeroAsDash?: boolean } = {}
+): string => {
+  const { zeroAsDash = false } = options;
+  if (!Number.isFinite(value as number)) return '-';
+  const safeValue = Math.max(0, Number(value) || 0);
+  if (safeValue === 0 && zeroAsDash) return '-';
+  if (safeValue >= 1_000_000) {
+    return `${(safeValue / 1_000_000).toFixed(1)}M`;
+  }
+  if (safeValue >= 1_000) {
+    return `${(safeValue / 1_000).toFixed(1)}k`;
+  }
+  return formatNumber(safeValue);
 };
 
 const loadProfileStats = () => {
@@ -1067,34 +1095,45 @@ watch(
 }
 
 .messenger-profile-token-balance {
+  padding: 16px 16px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(217, 119, 6, 0.16);
+  background: #fff8ee;
+}
+
+.messenger-profile-token-balance-main {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.messenger-profile-token-balance-icon {
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 18px 16px 14px;
-  border-radius: 20px;
-  background:
-    radial-gradient(circle at top, rgba(249, 115, 22, 0.12), transparent 58%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.98));
-  box-shadow:
-    inset 0 0 0 1px rgba(148, 163, 184, 0.16),
-    0 10px 24px rgba(15, 23, 42, 0.06);
+  background: #f6e7b0;
+  color: #b7791f;
+  font-size: 18px;
+}
+
+.messenger-profile-token-balance-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
 }
 
 .messenger-profile-token-balance-value {
-  font-size: 34px;
+  font-size: 32px;
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.03em;
-  color: #243244;
-}
-
-.messenger-profile-token-balance-label {
-  font-size: 12px;
-  line-height: 1.4;
-  color: #7b8794;
-  text-align: center;
+  color: #273444;
 }
 
 .messenger-username-dialog-body {

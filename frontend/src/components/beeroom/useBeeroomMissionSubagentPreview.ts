@@ -36,6 +36,7 @@ type SessionWorkflowFetchMeta = {
 
 const SUBAGENT_POLL_INTERVAL_MS = 1400;
 const SUBAGENT_LIST_LIMIT = 64;
+const RECENT_TASK_SUBAGENT_POLL_GRACE_S = 18;
 
 const clipDebugText = (value: unknown, limit = 120) => {
   const text = String(value || '').trim().replace(/\s+/g, ' ');
@@ -144,6 +145,21 @@ const sameSubagentList = (
 
 const resolveTaskSessionId = (task: BeeroomMissionTask): string =>
   normalizeText(task.spawned_session_id || task.target_session_id);
+
+export const shouldPollBeeroomTaskSubagents = (
+  task: BeeroomMissionTask,
+  knownItems: BeeroomMissionSubagentItem[] = [],
+  nowSeconds = Math.floor(Date.now() / 1000)
+) => {
+  if (!resolveTaskSessionId(task)) return false;
+  if (isBeeroomTaskStatusActive(task.status)) return true;
+  if (knownItems.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
+    return true;
+  }
+  const updatedTime = Number(resolveBeeroomTaskMoment(task) || 0);
+  if (!updatedTime || !Number.isFinite(updatedTime)) return false;
+  return nowSeconds - updatedTime <= RECENT_TASK_SUBAGENT_POLL_GRACE_S;
+};
 
 const buildTaskRequestKey = (task: BeeroomMissionTask): string =>
   [
@@ -388,12 +404,13 @@ export const useBeeroomMissionSubagentPreview = (options: {
     const sessionId = resolveTaskSessionId(task);
     const requestKey = buildTaskRequestKey(task);
     const previous = fetchMeta.get(taskId);
-    const isActiveTask = isBeeroomTaskStatusActive(task.status);
+    const currentItems = rawSubagentsByTask.value[taskId] || [];
+    const shouldPollTask = shouldPollBeeroomTaskSubagents(task, currentItems);
 
     if (
       !force &&
       previous?.requestKey === requestKey &&
-      (!isActiveTask || Date.now() - previous.fetchedAt < SUBAGENT_POLL_INTERVAL_MS - 120)
+      (!shouldPollTask || Date.now() - previous.fetchedAt < SUBAGENT_POLL_INTERVAL_MS - 120)
     ) {
       return;
     }
@@ -503,11 +520,13 @@ export const useBeeroomMissionSubagentPreview = (options: {
   const scheduleSync = () => {
     clearSyncTimer();
     if (!mounted || disposed || typeof window === 'undefined') return;
-    const hasActiveTask = missionTasks.value.some((task) => isBeeroomTaskStatusActive(task.status));
+    const hasPollableTask = missionTasks.value.some((task) =>
+      shouldPollBeeroomTaskSubagents(task, rawSubagentsByTask.value[normalizeText(task.task_id)] || [])
+    );
     const hasActiveSubagent = Object.values(rawSubagentsByTask.value).some((items) =>
       items.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))
     );
-    if (!hasActiveTask && !hasActiveSubagent) return;
+    if (!hasPollableTask && !hasActiveSubagent) return;
     syncTimer = window.setTimeout(() => {
       syncTimer = null;
       if (disposed || !mounted) return;
@@ -559,6 +578,7 @@ export const useBeeroomMissionSubagentPreview = (options: {
   });
 
   return {
-    subagentsByTask: filteredSubagentsByTask
+    subagentsByTask: filteredSubagentsByTask,
+    syncMissionSubagentState
   };
 };

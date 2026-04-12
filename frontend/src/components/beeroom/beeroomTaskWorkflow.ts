@@ -948,12 +948,112 @@ export const buildSessionWorkflowItems = (
 const isNodeWorkflowToolItem = (item: BeeroomWorkflowItem): boolean =>
   item.isTool === true || item.eventType === 'tool_call' || item.eventType === 'tool_result';
 
+const buildNodeWorkflowLineFingerprint = (item: BeeroomWorkflowItem): string => {
+  const parts = resolveNodeWorkflowLineParts(item);
+  return [parts.main, parts.detail].join('|');
+};
+
+const shouldCollapseNodeWorkflowToolPair = (
+  current: BeeroomWorkflowItem,
+  next: BeeroomWorkflowItem
+): boolean => {
+  if (!isNodeWorkflowToolItem(current) || !isNodeWorkflowToolItem(next)) {
+    return false;
+  }
+  const currentType = normalizeText(current.eventType).toLowerCase();
+  const nextType = normalizeText(next.eventType).toLowerCase();
+  if (currentType === nextType) {
+    return false;
+  }
+  const pairTypes = new Set([currentType, nextType]);
+  if (!pairTypes.has('tool_call') || !pairTypes.has('tool_result')) {
+    return false;
+  }
+  const currentToolCallId = normalizeText(current.toolCallId);
+  const nextToolCallId = normalizeText(next.toolCallId);
+  if (currentToolCallId && nextToolCallId) {
+    return currentToolCallId === nextToolCallId;
+  }
+  return buildNodeWorkflowLineFingerprint(current) === buildNodeWorkflowLineFingerprint(next);
+};
+
+const collapseNodeWorkflowPreviewItems = (items: BeeroomWorkflowItem[]): BeeroomWorkflowItem[] => {
+  const collapsed: BeeroomWorkflowItem[] = [];
+  const buildItemFingerprint = (item: BeeroomWorkflowItem) =>
+    [
+      normalizeText(item.id),
+      normalizeText(item.eventType),
+      normalizeText(item.toolCallId),
+      normalizeText(item.toolName),
+      normalizeText(item.title),
+      normalizeText(item.detail),
+      normalizeText(item.status)
+    ].join('|');
+
+  for (let index = 0; index < items.length; index += 1) {
+    const current = items[index];
+    const next = items[index + 1];
+    if (next && shouldCollapseNodeWorkflowToolPair(current, next)) {
+      const callItem = normalizeText(current.eventType).toLowerCase() === 'tool_call' ? current : next;
+      const resultItem = callItem === current ? next : current;
+      collapsed.push({
+        ...callItem,
+        id: `${normalizeText(callItem.id || resultItem.id) || `workflow:tool:${index}`}:node-preview`,
+        status: resultItem.status || callItem.status,
+        toolCallId: callItem.toolCallId || resultItem.toolCallId,
+        toolName: callItem.toolName || resultItem.toolName,
+        detail: normalizeText(callItem.detail) ? callItem.detail : resultItem.detail
+      });
+      index += 1;
+      continue;
+    }
+    const previous = collapsed[collapsed.length - 1];
+    if (previous && buildItemFingerprint(previous) === buildItemFingerprint(current)) {
+      continue;
+    }
+    collapsed.push(current);
+  }
+
+  return collapsed;
+};
+
+const resolveNodeWorkflowToolIdentity = (item: BeeroomWorkflowItem): string =>
+  normalizeText(item.toolCallId || item.toolName || item.title).toLowerCase();
+
+const buildNodeWorkflowToolPreviewItems = (items: BeeroomWorkflowItem[]): BeeroomWorkflowItem[] => {
+  const collapsed = collapseNodeWorkflowPreviewItems(items.filter((item) => isNodeWorkflowToolItem(item)));
+  const callItems = collapsed.filter((item) => normalizeText(item.eventType).toLowerCase() === 'tool_call');
+  if (!callItems.length) {
+    return collapsed;
+  }
+  const latestResultByIdentity = new Map<string, BeeroomWorkflowItem>();
+  collapsed.forEach((item) => {
+    if (normalizeText(item.eventType).toLowerCase() !== 'tool_result') return;
+    const identity = resolveNodeWorkflowToolIdentity(item);
+    if (!identity) return;
+    latestResultByIdentity.set(identity, item);
+  });
+  return callItems.map((item) => {
+    const identity = resolveNodeWorkflowToolIdentity(item);
+    const matchedResult = identity ? latestResultByIdentity.get(identity) : null;
+    if (!matchedResult) {
+      return item;
+    }
+    return {
+      ...item,
+      status: matchedResult.status || item.status,
+      toolCallId: item.toolCallId || matchedResult.toolCallId,
+      toolName: item.toolName || matchedResult.toolName
+    };
+  });
+};
+
 export const buildNodeWorkflowHtml = (
   items: BeeroomWorkflowItem[],
   title: string,
   tone: BeeroomWorkflowTone = 'pending'
 ): string => {
-  const toolItems = items.filter((item) => isNodeWorkflowToolItem(item));
+  const toolItems = buildNodeWorkflowToolPreviewItems(items);
   const lines = toolItems.length
     ? toolItems
         .slice()
@@ -982,7 +1082,7 @@ export const buildNodeWorkflowPreviewLines = (
   items: BeeroomWorkflowItem[],
   options: { includeEventFallback?: boolean } = {}
 ): BeeroomNodeWorkflowLine[] => {
-  const toolItems = items.filter((item) => isNodeWorkflowToolItem(item));
+  const toolItems = buildNodeWorkflowToolPreviewItems(items);
   const fallbackItems = items.filter((item) => item.eventType !== 'llm_request');
   const source =
     toolItems.length > 0

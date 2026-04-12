@@ -40,6 +40,7 @@
     "../../src/views/messenger/chatRefreshRecovery.ts",
     "../../src/views/messenger/interactionBlocker.ts",
     "../../src/views/messenger/realtimePulse.ts",
+    "../../src/components/chat/workspacePanelRefreshPlanner.ts",
     "../../src/components/chat/toolWorkflowActionViews.ts",
     "../../src/components/chat/toolWorkflowRunModel.ts",
     "../../src/components/chat/toolWorkflowTypes.ts",
@@ -75,6 +76,7 @@
     "./compaction-ui-regression.test.ts",
     "./tool-workflow-regression.test.ts",
     "./tool-workflow-command-regression.test.ts",
-    "./prompt-tooling-preview-regression.test.ts"
+    "./prompt-tooling-preview-regression.test.ts",
+    "./workspace-panel-refresh-regression.test.ts"
   ]
 }

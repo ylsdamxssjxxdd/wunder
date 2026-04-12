@@ -254,6 +254,13 @@ import {
   uploadWunderWorkspace
 } from '@/api/workspace';
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import {
+  collectWorkspaceRefreshTargets,
+  findWorkspaceEntryByPath,
+  getWorkspaceParentPath,
+  shouldAcceptWorkspaceTreeVersion,
+  shouldWorkspacePreviewReload
+} from './workspacePanelRefreshPlanner';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
@@ -360,6 +367,7 @@ const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
+const WORKSPACE_SETTLE_REFRESH_DELAY_MS = 1400;
 const WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS = 6;
 const WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH = 3;
 
@@ -589,8 +597,8 @@ const singleSelectedEntry = computed(() => {
   if (state.selectedPaths.size !== 1) {
     return null;
   }
-  const [path] = Array.from(state.selectedPaths);
-  return findWorkspaceEntry(state.entries, path) || state.selected;
+  const path = String(Array.from(state.selectedPaths)[0] || '').trim();
+  return findWorkspaceEntryByPath(state.entries, path) || state.selected;
 });
 const contextMenuSelectionPaths = computed(() => {
   if (Array.isArray(state.contextMenu.selectionPaths) && state.contextMenu.selectionPaths.length) {
@@ -601,10 +609,10 @@ const contextMenuSelectionPaths = computed(() => {
 const contextMenuSingleEntry = computed(() => {
   if (contextMenuSelectionPaths.value.length === 1) {
     const [path] = contextMenuSelectionPaths.value;
-    return findWorkspaceEntry(state.entries, path) || state.selected;
+    return findWorkspaceEntryByPath(state.entries, path) || state.selected;
   }
   if (state.contextMenu.primaryPath) {
-    return findWorkspaceEntry(state.entries, state.contextMenu.primaryPath) || state.selected;
+    return findWorkspaceEntryByPath(state.entries, state.contextMenu.primaryPath) || state.selected;
   }
   return null;
 });
@@ -670,6 +678,10 @@ let autoRefreshPending = false;
 let autoRefreshForceFullReload = false;
 let autoRefreshTargetPaths = new Set<string>();
 let latestWorkspaceTreeVersion = 0;
+let pendingWorkspaceTreeVersion: number | null = null;
+let settleRefreshTimer = null;
+let settleRefreshPending = false;
+let settleRefreshPreviewPath = '';
 let stopWorkspaceRefreshListener = null;
 const workspacePanelRefreshSourceId = `workspace-panel-${Math.random().toString(36).slice(2, 10)}`;
 const workspaceThemeIconResolver = shallowRef<WorkspaceThemeIconResolver | null>(null);
@@ -686,14 +698,6 @@ const getWorkspaceExtension = (entry) => {
   const dotIndex = baseName.lastIndexOf('.');
   if (dotIndex === -1 || dotIndex === baseName.length - 1) return '';
   return baseName.slice(dotIndex + 1).toLowerCase();
-};
-
-const getWorkspaceParentPath = (path) => {
-  const normalized = normalizeWorkspacePath(path);
-  if (!normalized) return '';
-  const parts = normalized.split('/').filter(Boolean);
-  parts.pop();
-  return parts.join('/');
 };
 
 const normalizeWorkspaceEventPathValue = (value) => {
@@ -1002,27 +1006,15 @@ const endUploadProgress = () => {
   }
 };
 
-const findWorkspaceEntry = (entries, targetPath) => {
-  if (!Array.isArray(entries) || !targetPath) return null;
-  for (const entry of entries) {
-    if (entry.path === targetPath) return entry;
-    if (entry.children?.length) {
-      const found = findWorkspaceEntry(entry.children, targetPath);
-      if (found) return found;
-    }
-  }
-  return null;
-};
-
 const resolveWorkspaceEntryName = (path) => {
-  const entry = findWorkspaceEntry(state.entries, path);
+  const entry = findWorkspaceEntryByPath(state.entries, path);
   if (entry?.name) return entry.name;
   const fallback = String(path || '').split('/').pop();
   return fallback || t('common.unknown');
 };
 
 const attachWorkspaceChildren = (entries, targetPath, children) => {
-  const target = findWorkspaceEntry(entries, targetPath);
+  const target = findWorkspaceEntryByPath(entries, targetPath);
   if (!target || target.type !== 'dir') return false;
   target.children = Array.isArray(children) ? children : [];
   target.childrenLoaded = true;
@@ -1039,7 +1031,7 @@ const setWorkspaceSelection = (paths, primaryPath) => {
   state.selectedPaths = new Set(paths.filter(Boolean));
   state.selected =
     primaryPath && state.selectedPaths.has(primaryPath)
-      ? findWorkspaceEntry(state.entries, primaryPath)
+      ? findWorkspaceEntryByPath(state.entries, primaryPath)
       : null;
   if (primaryPath) {
     state.lastSelectedPath = primaryPath;
@@ -1055,7 +1047,7 @@ const toggleWorkspaceSelection = (path) => {
     }
   } else {
     state.selectedPaths.add(path);
-    state.selected = findWorkspaceEntry(state.entries, path);
+    state.selected = findWorkspaceEntryByPath(state.entries, path);
     state.lastSelectedPath = path;
   }
 };
@@ -1069,7 +1061,7 @@ const reconcileWorkspaceSelection = () => {
   }
   const nextSelectedPaths = new Set<string>();
   state.selectedPaths.forEach((path: string) => {
-    if (findWorkspaceEntry(state.entries, path)) {
+    if (findWorkspaceEntryByPath(state.entries, path)) {
       nextSelectedPaths.add(path);
     }
   });
@@ -1078,9 +1070,30 @@ const reconcileWorkspaceSelection = () => {
     state.lastSelectedPath && nextSelectedPaths.has(state.lastSelectedPath)
       ? state.lastSelectedPath
       : Array.from(nextSelectedPaths)[0] || '';
-  state.selected = preferredPath ? findWorkspaceEntry(state.entries, preferredPath) : null;
+  state.selected = preferredPath ? findWorkspaceEntryByPath(state.entries, preferredPath) : null;
   if (!preferredPath) {
     state.lastSelectedPath = '';
+  }
+};
+
+const syncWorkspacePreviewEntry = () => {
+  const previewPath = normalizeWorkspacePath(state.preview.entry?.path || '');
+  if (!previewPath) return;
+  const nextEntry = findWorkspaceEntryByPath(state.entries, previewPath);
+  if (nextEntry?.type === 'file') {
+    state.preview.entry = nextEntry;
+    return;
+  }
+  if (state.preview.visible) {
+    closePreview();
+  }
+};
+
+const commitWorkspaceTreeVersion = (nextVersion: number | null = pendingWorkspaceTreeVersion) => {
+  if (nextVersion === null) return;
+  latestWorkspaceTreeVersion = Math.max(latestWorkspaceTreeVersion, nextVersion);
+  if (pendingWorkspaceTreeVersion !== null && pendingWorkspaceTreeVersion <= latestWorkspaceTreeVersion) {
+    pendingWorkspaceTreeVersion = null;
   }
 };
 
@@ -1160,6 +1173,7 @@ const loadWorkspace = async ({
     }));
     const payload = data || {};
     const normalizedPath = normalizeWorkspacePath(payload.path ?? currentPath);
+    commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
     state.path = normalizedPath;
     const parentPath = getWorkspaceParentPath(normalizedPath);
     state.parent = parentPath ? parentPath : null;
@@ -1180,6 +1194,7 @@ const loadWorkspace = async ({
       state.expanded = filtered;
     }
     await hydrateExpandedEntries();
+    syncWorkspacePreviewEntry();
     await syncWorkspaceListViewport({ reset: true });
     return true;
   } catch (error) {
@@ -1215,9 +1230,11 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
       withAgentParams({ keyword, offset: 0, limit: 200 })
     );
     const payload = data || {};
+    commitWorkspaceTreeVersion(normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion));
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     state.searchMode = true;
     emitWorkspaceStats(state.entries);
+    syncWorkspacePreviewEntry();
     await syncWorkspaceListViewport({ reset: true });
     return true;
   } catch (error) {
@@ -1259,7 +1276,8 @@ const fetchWorkspaceDirectorySnapshot = async (path) => {
   }
   return {
     path: resolvedPath,
-    entries: Array.isArray(payload.entries) ? payload.entries : []
+    entries: Array.isArray(payload.entries) ? payload.entries : [],
+    treeVersion: normalizeWorkspaceTreeVersion(payload.tree_version ?? payload.treeVersion)
   };
 };
 
@@ -1273,6 +1291,7 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     state.parent = getWorkspaceParentPath(targetPath) || null;
     state.entries = snapshot.entries;
     emitWorkspaceStats(state.entries);
+    commitWorkspaceTreeVersion(snapshot.treeVersion);
     writeWorkspaceTreeCache(
       buildWorkspaceTreeCacheKey(
         normalizedAgentId.value,
@@ -1288,6 +1307,7 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     );
     reconcileWorkspaceSelection();
     await hydrateExpandedEntries();
+    syncWorkspacePreviewEntry();
     await syncWorkspaceListViewport();
     return true;
   }
@@ -1296,8 +1316,10 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     attachWorkspaceChildren(state.entries, targetPath, snapshot.entries) ||
     (sourcePath !== targetPath && attachWorkspaceChildren(state.entries, sourcePath, snapshot.entries));
   if (!attached) return false;
+  commitWorkspaceTreeVersion(snapshot.treeVersion);
   emitWorkspaceStats(state.entries);
   reconcileWorkspaceSelection();
+  syncWorkspacePreviewEntry();
   return true;
 };
 
@@ -1311,48 +1333,6 @@ const refreshWorkspacePathWithFallback = async (path) => {
   return reloadWorkspaceView();
 };
 
-// Convert raw workspace event paths to the minimal set of directory targets we can patch.
-const collectWorkspaceRefreshTargets = (paths = []) => {
-  const currentPath = normalizeWorkspacePath(state.path);
-  const targets = new Set<string>();
-
-  paths.forEach((item) => {
-    const normalized = normalizeWorkspaceEventPathValue(item);
-    if (!normalized) {
-      targets.add(currentPath);
-      return;
-    }
-    if (currentPath && (currentPath === normalized || currentPath.startsWith(`${normalized}/`))) {
-      targets.add(currentPath);
-      return;
-    }
-    if (
-      currentPath &&
-      normalized !== currentPath &&
-      !normalized.startsWith(`${currentPath}/`)
-    ) {
-      return;
-    }
-    const entry = findWorkspaceEntry(state.entries, normalized);
-    if (entry?.type === 'dir') {
-      targets.add(entry.path);
-      return;
-    }
-    const parentPath = getWorkspaceParentPath(normalized);
-    if (currentPath) {
-      targets.add(parentPath || currentPath);
-    } else {
-      targets.add(parentPath);
-    }
-  });
-
-  const deduped = Array.from(new Set(Array.from(targets).map((value) => normalizeWorkspacePath(value))));
-  if (deduped.length > WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS) {
-    return { targets: [], forceFullReload: true };
-  }
-  return { targets: deduped, forceFullReload: false };
-};
-
 const enqueueWorkspaceAutoRefreshTargets = (targets = []) => {
   if (autoRefreshForceFullReload) return;
   for (const target of targets) {
@@ -1363,6 +1343,44 @@ const enqueueWorkspaceAutoRefreshTargets = (targets = []) => {
       return;
     }
   }
+};
+
+const scheduleWorkspaceSettleRefresh = ({ previewPath = '' } = {}) => {
+  settleRefreshPending = true;
+  if (previewPath) {
+    settleRefreshPreviewPath = normalizeWorkspacePath(previewPath);
+  }
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer);
+  }
+  settleRefreshTimer = setTimeout(async () => {
+    settleRefreshTimer = null;
+    if (!settleRefreshPending) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
+    if (state.loading) {
+      scheduleWorkspaceSettleRefresh({ previewPath: settleRefreshPreviewPath });
+      return;
+    }
+    settleRefreshPending = false;
+    const previewPathToReload = settleRefreshPreviewPath;
+    settleRefreshPreviewPath = '';
+    const refreshStartAt = nowPerf();
+    const refreshed = await reloadWorkspaceView({ background: true });
+    if (refreshed && previewPathToReload) {
+      void openPreview(
+        findWorkspaceEntryByPath(state.entries, previewPathToReload) || state.preview.entry
+      );
+    }
+    chatPerf.count('workspace.panel.refresh', 1, {
+      mode: 'settle',
+      preview: previewPathToReload ? 1 : 0
+    });
+    chatPerf.recordDuration('workspace.panel.refresh.settle.ms', nowPerf() - refreshStartAt, {
+      preview: previewPathToReload ? 1 : 0
+    });
+  }, WORKSPACE_SETTLE_REFRESH_DELAY_MS);
 };
 
 const scheduleWorkspaceAutoRefresh = () => {
@@ -1399,6 +1417,7 @@ const scheduleWorkspaceAutoRefresh = () => {
         }
       }
       if (patched) {
+        commitWorkspaceTreeVersion();
         chatPerf.count('workspace.panel.refresh', 1, {
           mode: 'incremental',
           targets: incrementalTargets.length
@@ -1413,7 +1432,10 @@ const scheduleWorkspaceAutoRefresh = () => {
         targets: incrementalTargets.length
       });
     }
-    await reloadWorkspaceView({ background: true });
+    const reloaded = await reloadWorkspaceView({ background: true });
+    if (reloaded) {
+      commitWorkspaceTreeVersion();
+    }
     chatPerf.count('workspace.panel.refresh', 1, {
       mode: shouldFullReload ? 'full' : 'fallback-full',
       targets: incrementalTargets.length
@@ -1430,11 +1452,11 @@ const scheduleWorkspaceAutoRefreshByDetail = (detail: Record<string, unknown> = 
   const nextTreeVersion = normalizeWorkspaceTreeVersion(
     detail?.treeVersion ?? detail?.tree_version ?? detail?.version
   );
+  if (!shouldAcceptWorkspaceTreeVersion(nextTreeVersion, latestWorkspaceTreeVersion)) {
+    return false;
+  }
   if (nextTreeVersion !== null) {
-    if (nextTreeVersion <= latestWorkspaceTreeVersion) {
-      return;
-    }
-    latestWorkspaceTreeVersion = nextTreeVersion;
+    pendingWorkspaceTreeVersion = Math.max(pendingWorkspaceTreeVersion ?? 0, nextTreeVersion);
   }
   const changedPaths = normalizeWorkspaceEventPaths(detail);
   chatPerf.count('workspace.panel.refresh.event', 1, {
@@ -1445,27 +1467,34 @@ const scheduleWorkspaceAutoRefreshByDetail = (detail: Record<string, unknown> = 
     autoRefreshForceFullReload = true;
     autoRefreshTargetPaths = new Set<string>();
     scheduleWorkspaceAutoRefresh();
-    return;
+    return true;
   }
-  const { targets, forceFullReload } = collectWorkspaceRefreshTargets(changedPaths);
+  const { targets, forceFullReload } = collectWorkspaceRefreshTargets({
+    currentPath: state.path,
+    changedPaths,
+    entries: state.entries,
+    maxTargets: WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS
+  });
   if (forceFullReload) {
     autoRefreshForceFullReload = true;
     autoRefreshTargetPaths = new Set<string>();
     scheduleWorkspaceAutoRefresh();
-    return;
+    return true;
   }
   if (!targets.length) {
-    return;
+    return false;
   }
   enqueueWorkspaceAutoRefreshTargets(targets);
   scheduleWorkspaceAutoRefresh();
+  return true;
 };
 
 const hydrateExpandedEntries = async () => {
   const expandedPaths = Array.from(state.expanded);
   if (!expandedPaths.length) return;
-  for (const path of expandedPaths) {
-    const entry = findWorkspaceEntry(state.entries, path);
+  for (const rawPath of expandedPaths) {
+    const path = String(rawPath || '').trim();
+    const entry = findWorkspaceEntryByPath(state.entries, path);
     if (!entry || entry.type !== 'dir' || entry.childrenLoaded) {
       continue;
     }
@@ -2280,7 +2309,7 @@ const filterMoveTargets = (paths, targetDir) => {
   paths.forEach((path) => {
     const normalized = normalizeWorkspacePath(path);
     if (!normalized || normalized === targetDir) return;
-    const entry = findWorkspaceEntry(state.entries, normalized);
+    const entry = findWorkspaceEntryByPath(state.entries, normalized);
     if (entry?.type === 'dir' && (targetDir === normalized || targetDir.startsWith(`${normalized}/`))) {
       blocked = true;
       return;
@@ -2579,6 +2608,15 @@ const handleGlobalScroll = () => {
   closeContextMenu();
 };
 
+const handleDocumentVisibilityChange = () => {
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+    return;
+  }
+  if (settleRefreshPending && !settleRefreshTimer) {
+    scheduleWorkspaceSettleRefresh({ previewPath: settleRefreshPreviewPath });
+  }
+};
+
 onMounted(async () => {
   scheduleWorkspaceThemeIconWarmup();
   await loadWorkspace();
@@ -2594,10 +2632,19 @@ onMounted(async () => {
     const currentAgentId = normalizedAgentId.value;
     if (eventAgentId && eventAgentId !== currentAgentId) return;
     if (Number.isFinite(eventContainerId) && eventContainerId !== normalizedContainerId.value) return;
-    scheduleWorkspaceAutoRefreshByDetail(detail);
+    const changedPaths = normalizeWorkspaceEventPaths(detail);
+    const previewPath =
+      state.preview.visible && shouldWorkspacePreviewReload(state.preview.entry?.path || '', changedPaths)
+        ? String(state.preview.entry?.path || '').trim()
+        : '';
+    const scheduled = scheduleWorkspaceAutoRefreshByDetail(detail);
+    if (scheduled) {
+      scheduleWorkspaceSettleRefresh({ previewPath });
+    }
   });
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('scroll', handleGlobalScroll, true);
+  document.addEventListener('visibilitychange', handleDocumentVisibilityChange);
   window.addEventListener('resize', closeContextMenu);
 });
 
@@ -2649,12 +2696,17 @@ onBeforeUnmount(() => {
     clearTimeout(autoRefreshTimer);
     autoRefreshTimer = null;
   }
+  if (settleRefreshTimer) {
+    clearTimeout(settleRefreshTimer);
+    settleRefreshTimer = null;
+  }
   if (stopWorkspaceRefreshListener) {
     stopWorkspaceRefreshListener();
     stopWorkspaceRefreshListener = null;
   }
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('scroll', handleGlobalScroll, true);
+  document.removeEventListener('visibilitychange', handleDocumentVisibilityChange);
   window.removeEventListener('resize', closeContextMenu);
 });
 

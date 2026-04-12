@@ -1,100 +1,131 @@
 ---
 title: 记忆管理
-summary: `memory_manager` 的动作、记忆范围与返回结构。
+summary: 说明 `memory_manager` 的当前动作、精简结构，以及“短索引注入 + get 取全文”的使用方式。
 read_when:
-  - 你要增删改查长期记忆片段
+  - 你要新增、检索、读取、更新或删除长期记忆碎片
 source_docs:
   - src/services/tools/memory_manager_tool.rs
-updated_at: 2026-04-10
+  - src/services/memory_fragments.rs
+updated_at: 2026-04-12
 ---
 
 # 记忆管理
 
-`memory_manager` 已经统一到标准成功骨架。  
-主要动作：
+`memory_manager` 用于管理当前智能体在当前用户作用域下的长期记忆。
+
+当前标准动作：
 
 - `list`
-- `recall`
+- `search`
+- `get`
 - `add`
 - `update`
-- `delete`
+- `remove`
 - `clear`
+
+## 使用原则
+
+- system prompt 默认只注入短 `memory_id + title` 索引
+- 不会自动注入完整 `content`
+- 需要完整细节时，先用 `list/search` 找到 `memory_id`，再用 `get`
+- 模型侧 `memory_id` 尽量保持 8 个字符以内，方便搜索与定位
+- `add/update` 只使用当前核心字段：
+  - `title`
+  - `content`
+  - `tag`
+  - `related_memory_id`
+  - `memory_time`
 
 ## `list`
 
+返回最近记忆索引，默认 30 条。
+
 ```json
 {
-  "ok": true,
   "action": "list",
-  "state": "completed",
-  "summary": "Listed 3 memory entries.",
   "data": {
-    "count": 3,
+    "count": 1,
     "items": [
       {
-        "memory_id": "mem_xxx",
-        "title": "用户偏好",
-        "summary": "偏好简洁回答",
-        "content": "用户希望回答简洁",
-        "category": "tool-note",
-        "tags": ["preference"],
-        "status": "active",
-        "updated_at": 1760000000
+        "memory_id": "0695f345",
+        "title": "用户姓名",
+        "tag": "profile",
+        "updated_at": 1775957851
       }
-    ],
-    "agent_id": "agent_docs"
+    ]
   }
 }
 ```
 
-## `add`
+## `search`
+
+搜索标题或内容匹配项，默认 10 条。
 
 ```json
 {
-  "ok": true,
+  "action": "search",
+  "data": {
+    "query": "周华健",
+    "count": 1,
+    "items": [
+      {
+        "memory_id": "0695f345",
+        "title": "用户姓名",
+        "tag": "profile",
+        "snippet": "用户的名字是周华健。这是用户在对话开始时自我介绍提供的信息。",
+        "matched_in": ["content"],
+        "updated_at": 1775957851
+      }
+    ]
+  }
+}
+```
+
+## `get`
+
+按 `memory_id` 读取完整内容。
+
+```json
+{
+  "action": "get",
+  "data": {
+    "memory_id": "0695f345",
+    "item": {
+      "memory_id": "0695f345",
+      "title": "用户姓名",
+      "content": "用户的名字是周华健。这是用户在对话开始时自我介绍提供的信息。",
+      "tag": "profile",
+      "related_memory_id": null,
+      "memory_time": 1775957820,
+      "updated_at": 1775957851
+    }
+  }
+}
+```
+
+## 写入示例
+
+```json
+{
   "action": "add",
-  "state": "completed",
-  "summary": "Saved a memory entry.",
-  "data": {
-    "memory_id": "mem_xxx",
-    "saved": true,
-    "agent_id": "agent_docs"
-  },
-  "next_step_hint": "..."
+  "title": "用户姓名",
+  "content": "用户的名字是周华健。这是用户在对话开始时自我介绍提供的信息。",
+  "tag": "profile",
+  "memory_time": "2026-04-12T08:37:00+08:00"
 }
 ```
 
-## `recall`
+## 关键约束
 
-```json
-{
-  "ok": true,
-  "action": "recall",
-  "state": "completed",
-  "summary": "Recalled 2 memory entries.",
-  "data": {
-    "query": "用户偏好",
-    "count": 2,
-    "items": [
-      {
-        "memory_id": "mem_xxx",
-        "title": "用户偏好",
-        "summary": "偏好简洁回答",
-        "content": "用户希望回答简洁",
-        "category": "tool-note",
-        "tags": ["preference"],
-        "status": "active",
-        "updated_at": 1760000000,
-        "why": "matched 用户偏好; in title/summary"
-      }
-    ],
-    "agent_id": "agent_docs"
-  }
-}
-```
+以下旧字段不再作为推荐输入：
 
-## 重点
+- `summary`
+- `tags`
+- `entities`
+- `category`
 
-- 返回里会把 `agent_id` 直接补进 `data`
-- `recall` 更偏向“给当前上下文提供回忆”
-- 一些成功返回会带 `next_step_hint`，提醒只对新会话生效或只影响当前会话回忆语义
+实用规则：
+
+- `list/search` 是主检索动作
+- `get` 是唯一完整详情读取动作
+- 写入只影响后续新线程，不会回写已冻结线程的 system prompt

@@ -280,25 +280,21 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "记忆管理".to_string(),
-            description: localized_hint(
-                language,
-                "管理当前智能体的长期记忆：list/add/update/delete/clear/recall。拿不准、信息可能过期或用户刚纠正你时优先 recall；只有稳定事实、长期偏好、约束和可复用流程才写入。",
-                "Manage the current agent's long-term memory: list/add/update/delete/clear/recall. Prefer recall when confidence is low, facts may be stale, or the user just corrected you; only write stable facts, durable preferences, constraints, and reusable workflows.",
-            ),
+            description: t("tool.spec.memory_manager.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.memory_manager.args.action"),
-                        "enum": ["list", "add", "update", "delete", "clear", "recall"]
+                        "enum": ["list", "search", "get", "add", "update", "remove", "clear"]
                     },
                     "memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_id")},
                     "title": {"type": "string", "description": t("tool.spec.memory_manager.args.title")},
-                    "summary": {"type": "string", "description": t("tool.spec.memory_manager.args.summary")},
                     "content": {"type": "string", "description": t("tool.spec.memory_manager.args.content")},
-                    "category": {"type": "string", "description": t("tool.spec.memory_manager.args.category")},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.memory_manager.args.tags")},
+                    "tag": {"type": "string", "description": t("tool.spec.memory_manager.args.tag")},
+                    "related_memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.related_memory_id")},
+                    "memory_time": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_time")},
                     "query": {"type": "string", "description": t("tool.spec.memory_manager.args.query")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.memory_manager.args.limit")},
                     "order": {
@@ -2105,11 +2101,21 @@ mod tests {
             .find(|spec| spec.name == resolve_tool_name("memory_manage"))
             .expect("memory manage spec");
         assert!(memory_spec.description.contains("长期记忆"));
-        assert!(memory_spec.description.contains("优先 recall"));
+        assert!(memory_spec.description.contains("memory_id"));
+        assert!(memory_spec.description.contains("list/search"));
         assert_eq!(
             memory_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
         );
+        assert!(memory_spec.input_schema["properties"]["title"].is_object());
+        assert!(memory_spec.input_schema["properties"]["content"].is_object());
+        assert!(memory_spec.input_schema["properties"]["tag"].is_object());
+        assert!(memory_spec.input_schema["properties"]["related_memory_id"].is_object());
+        assert!(memory_spec.input_schema["properties"]["memory_time"].is_object());
+        assert!(memory_spec.input_schema["properties"]["category"].is_null());
+        assert!(memory_spec.input_schema["properties"]["summary"].is_null());
+        assert!(memory_spec.input_schema["properties"]["tags"].is_null());
+        assert!(memory_spec.input_schema["properties"]["entities"].is_null());
 
         let observe_spec = specs
             .iter()

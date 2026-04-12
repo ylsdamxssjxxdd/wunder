@@ -67,6 +67,102 @@ const parsePositiveInteger = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const resolveUsageConsumedTokens = (value: unknown): number | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, any>;
+  return (
+    parsePositiveInteger(record.total ?? record.total_tokens ?? record.totalTokens) ??
+    parsePositiveInteger(record.input ?? record.input_tokens ?? record.inputTokens)
+  );
+};
+
+const resolveQuotaConsumedValue = (value: unknown): number | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return parsePositiveInteger(value);
+  }
+  const record = value as Record<string, any>;
+  return (
+    parsePositiveInteger(
+      record.request_consumed_tokens ??
+        record.requestConsumedTokens ??
+        record.consumed_tokens ??
+        record.consumedTokens ??
+        record.consumed ??
+        record.used ??
+        record.count
+    ) ?? null
+  );
+};
+
+const resolveExplicitConsumedTokens = (source: Record<string, any> | null | undefined): number | null => {
+  if (!source || typeof source !== 'object') return null;
+  return (
+    parsePositiveInteger(
+      source.request_consumed_tokens ??
+        source.requestConsumedTokens ??
+        source.consumed_tokens ??
+        source.consumedTokens
+    ) ??
+    resolveQuotaConsumedValue(source.quotaConsumed ?? source.quota_consumed ?? source.quota)
+  );
+};
+
+const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
+  if (!stats || typeof stats !== 'object') return null;
+  return parsePositiveInteger(
+    stats.contextTokens ??
+      stats.contextOccupancyTokens ??
+      stats.context_occupancy_tokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      stats.context_usage?.context_tokens ??
+      stats.context_usage?.contextTokens
+  );
+};
+
+const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
+  if (!stats || typeof stats !== 'object') return null;
+  return (
+    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
+    resolveUsageConsumedTokens(stats.usage) ??
+    resolveExplicitContextTokens(stats)
+  );
+};
+
+const resolveAssistantTurnConsumedTokens = (
+  message: MessageLike,
+  allMessages?: MessageLike[] | null
+): number | null => {
+  if (!Array.isArray(allMessages) || allMessages.length === 0) return null;
+  const currentIndex = resolveMessageIndex(message, allMessages);
+  if (currentIndex < 0) return null;
+  let start = currentIndex;
+  while (start > 0) {
+    const previous = allMessages[start - 1];
+    if (previous?.role === 'user') break;
+    start -= 1;
+  }
+  let end = currentIndex + 1;
+  while (end < allMessages.length) {
+    const next = allMessages[end];
+    if (next?.role === 'user') break;
+    end += 1;
+  }
+  let total = 0;
+  let found = false;
+  for (let index = start; index < end; index += 1) {
+    const candidate = allMessages[index];
+    if (!candidate || candidate.role !== 'assistant' || candidate.isGreeting) continue;
+    const consumed =
+      resolveExplicitConsumedTokens(candidate?.stats as Record<string, any> | null | undefined) ??
+      resolveExplicitConsumedTokens(candidate);
+    if (consumed === null) continue;
+    total += consumed;
+    found = true;
+  }
+  return found ? total : null;
+};
+
 const normalizeDurationSeconds = (value: unknown): number | null => {
   return normalizeChatDurationSeconds(value);
 };
@@ -426,50 +522,26 @@ export const buildAssistantMessageStatsEntries = (
       stats?.round_usage?.input_tokens ??
       stats?.round_usage?.inputTokens
   );
-  const roundUsageTotalTokens = Number(
-    stats?.roundUsage?.total ??
-      stats?.roundUsage?.total_tokens ??
-      stats?.roundUsage?.totalTokens ??
-      stats?.round_usage?.total ??
-      stats?.round_usage?.total_tokens ??
-      stats?.round_usage?.totalTokens
-  );
-  const explicitContextTokens = Number(
-    stats?.contextTokens ??
-      stats?.contextOccupancyTokens ??
-      stats?.context_occupancy_tokens ??
-      stats?.context_tokens ??
-      stats?.context_tokens_total ??
-      stats?.context_usage?.context_tokens ??
-      stats?.context_usage?.contextTokens
-  );
-  const contextTokens =
-    (Number.isFinite(roundUsageTotalTokens) && roundUsageTotalTokens > 0
-      ? roundUsageTotalTokens
-      : null) ??
+  const contextTokens = resolveContextTokens(stats);
+  const aggregatedTurnConsumedTokens = resolveAssistantTurnConsumedTokens(message, allMessages);
+  const directConsumedTokens =
+    resolveExplicitConsumedTokens(stats) ?? resolveExplicitConsumedTokens(message);
+  const fallbackConsumedTokens =
+    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
     (Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0
       ? roundUsageInputTokens
       : null) ??
-    (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0
-      ? usageTotalTokens
-      : null) ??
-    (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null) ??
-    (Number.isFinite(explicitContextTokens) && explicitContextTokens > 0
-      ? explicitContextTokens
-      : null) ??
-    null;
-  const quotaConsumedTokens = Number(stats?.quotaConsumed ?? stats?.quota_consumed);
-  const effectiveQuotaConsumedCandidates = [
-    Number.isFinite(quotaConsumedTokens) && quotaConsumedTokens > 0 ? quotaConsumedTokens : null,
-    Number.isFinite(roundUsageTotalTokens) && roundUsageTotalTokens > 0 ? roundUsageTotalTokens : null,
-    Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0 ? roundUsageInputTokens : null,
-    Number.isFinite(usageTotalTokens) && usageTotalTokens > 0 ? usageTotalTokens : null,
-    Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null
-  ].filter((value): value is number => Number.isFinite(value) && value > 0);
-  const effectiveQuotaConsumedTokens =
-    effectiveQuotaConsumedCandidates.length > 0
-      ? Math.max(...effectiveQuotaConsumedCandidates)
-      : null;
+    resolveUsageConsumedTokens(stats.usage) ??
+    (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null);
+  const effectiveQuotaConsumedTokens = [
+    aggregatedTurnConsumedTokens,
+    directConsumedTokens,
+    fallbackConsumedTokens
+  ].reduce<number | null>(
+    (maxValue, candidate) =>
+      candidate !== null && (maxValue === null || candidate > maxValue) ? candidate : maxValue,
+    null
+  );
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasQuota =
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;

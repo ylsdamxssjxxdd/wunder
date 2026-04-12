@@ -6,7 +6,12 @@
     </div>
 
     <div v-else class="beeroom-canvas-layout">
-      <div class="beeroom-canvas-board" :class="{ 'chat-collapsed': chatCollapsed }">
+      <div
+        ref="boardRef"
+        class="beeroom-canvas-board"
+        :class="{ 'chat-collapsed': chatCollapsed, 'is-chat-resizing': isChatResizing }"
+        :style="boardStyle"
+      >
         <BeeroomSwarmCanvasPane
           class="beeroom-canvas-pane"
           :group="group"
@@ -22,6 +27,20 @@
           @open-agent="emit('open-agent', $event)"
           @toggle-fullscreen="toggleCanvasFullscreen"
         />
+
+        <div
+          v-if="showChatResizer"
+          class="beeroom-canvas-chat-resizer"
+          data-testid="beeroom-chat-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          :aria-label="t('beeroom.canvas.chatTitle')"
+          tabindex="0"
+          @pointerdown="handleChatResizePointerDown"
+          @dblclick.prevent="resetChatWidth"
+          @keydown.left.prevent="nudgeChatWidth(-24)"
+          @keydown.right.prevent="nudgeChatWidth(24)"
+        ></div>
 
         <BeeroomCanvasChatPanel
           :collapsed="chatCollapsed"
@@ -51,11 +70,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, toRef } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue';
 
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
+import {
+  getBeeroomMissionCanvasState,
+  mergeBeeroomMissionCanvasState
+} from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import BeeroomSwarmCanvasPane from '@/components/beeroom/canvas/BeeroomSwarmCanvasPane.vue';
-import { hasBeeroomSwarmNodes } from '@/components/beeroom/canvas/swarmCanvasModel';
+import { hasBeeroomSwarmNodes, resolveBeeroomSwarmScopeKey } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { useBeeroomMissionCanvasRuntime } from '@/components/beeroom/useBeeroomMissionCanvasRuntime';
 import { useI18n } from '@/i18n';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
@@ -75,7 +98,21 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const screenRef = ref<HTMLElement | null>(null);
+const boardRef = ref<HTMLElement | null>(null);
 const canvasFullscreen = ref(false);
+const boardWidth = ref(0);
+const chatWidth = ref(344);
+const isChatResizing = ref(false);
+
+const DEFAULT_CHAT_WIDTH = 344;
+const MIN_CHAT_WIDTH = 308;
+const MAX_CHAT_WIDTH = 680;
+const MOBILE_CHAT_BREAKPOINT = 900;
+
+let boardResizeObserver: ResizeObserver | null = null;
+let activeResizePointerId: number | null = null;
+let dragStartClientX = 0;
+let dragStartChatWidth = DEFAULT_CHAT_WIDTH;
 
 const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
@@ -124,6 +161,109 @@ const hasSwarmNodes = computed(() => {
   });
 });
 
+const missionCanvasScopeKey = computed(() =>
+  resolveBeeroomSwarmScopeKey({
+    missionId: props.mission?.mission_id,
+    teamRunId: props.mission?.team_run_id,
+    groupId: props.group?.group_id
+  })
+);
+
+const getChatWidthBounds = () => {
+  const currentBoardWidth = Math.max(0, Math.round(boardWidth.value || boardRef.value?.clientWidth || 0));
+  const maxWidth = Math.max(
+    MIN_CHAT_WIDTH,
+    Math.min(MAX_CHAT_WIDTH, currentBoardWidth > 0 ? currentBoardWidth - 280 : DEFAULT_CHAT_WIDTH)
+  );
+  return {
+    min: MIN_CHAT_WIDTH,
+    max: Math.max(MIN_CHAT_WIDTH, maxWidth)
+  };
+};
+
+const clampChatWidth = (value: number) => {
+  const bounds = getChatWidthBounds();
+  return Math.max(bounds.min, Math.min(bounds.max, Math.round(value || DEFAULT_CHAT_WIDTH)));
+};
+
+const isCompactLayout = computed(() => boardWidth.value > 0 && boardWidth.value <= MOBILE_CHAT_BREAKPOINT);
+
+const resolvedChatWidth = computed(() =>
+  isCompactLayout.value ? DEFAULT_CHAT_WIDTH : clampChatWidth(chatWidth.value || DEFAULT_CHAT_WIDTH)
+);
+
+const boardStyle = computed(() => ({
+  '--beeroom-chat-width': `${resolvedChatWidth.value}px`
+}));
+
+const showChatResizer = computed(() => !chatCollapsed.value && !isCompactLayout.value);
+
+const syncBoardWidth = () => {
+  const width = Math.round(boardRef.value?.getBoundingClientRect().width || boardRef.value?.clientWidth || 0);
+  if (width > 0) {
+    boardWidth.value = width;
+  }
+};
+
+const persistChatWidth = () => {
+  mergeBeeroomMissionCanvasState(missionCanvasScopeKey.value, {
+    chatWidth: resolvedChatWidth.value
+  });
+};
+
+const applyChatWidth = (value: number, options: { persist?: boolean } = {}) => {
+  const nextWidth = clampChatWidth(value);
+  if (nextWidth === chatWidth.value) {
+    if (options.persist) {
+      persistChatWidth();
+    }
+    return;
+  }
+  chatWidth.value = nextWidth;
+  if (options.persist) {
+    persistChatWidth();
+  }
+};
+
+const resetChatWidth = () => {
+  applyChatWidth(DEFAULT_CHAT_WIDTH, { persist: true });
+};
+
+const nudgeChatWidth = (delta: number) => {
+  applyChatWidth((chatWidth.value || resolvedChatWidth.value || DEFAULT_CHAT_WIDTH) + delta, {
+    persist: true
+  });
+};
+
+const stopChatResize = () => {
+  activeResizePointerId = null;
+  if (!isChatResizing.value) return;
+  isChatResizing.value = false;
+  persistChatWidth();
+};
+
+const handleChatResizePointerMove = (event: PointerEvent) => {
+  if (activeResizePointerId === null || event.pointerId !== activeResizePointerId) return;
+  applyChatWidth(dragStartChatWidth + (dragStartClientX - event.clientX));
+};
+
+const handleChatResizePointerUp = (event: PointerEvent) => {
+  if (activeResizePointerId === null || event.pointerId !== activeResizePointerId) return;
+  stopChatResize();
+};
+
+const handleChatResizePointerDown = (event: PointerEvent) => {
+  if (event.button !== 0 || !showChatResizer.value) return;
+  syncBoardWidth();
+  activeResizePointerId = event.pointerId;
+  dragStartClientX = event.clientX;
+  dragStartChatWidth = resolvedChatWidth.value;
+  isChatResizing.value = true;
+  const target = event.currentTarget as HTMLElement | null;
+  target?.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+};
+
 const refreshCanvasFullscreen = () => {
   if (typeof document === 'undefined') {
     canvasFullscreen.value = false;
@@ -157,15 +297,63 @@ const handleClearHistory = async () => {
 onMounted(() => {
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
+    window.addEventListener('pointermove', handleChatResizePointerMove);
+    window.addEventListener('pointerup', handleChatResizePointerUp);
+    window.addEventListener('pointercancel', handleChatResizePointerUp);
     refreshCanvasFullscreen();
+  }
+  syncBoardWidth();
+  if (typeof ResizeObserver !== 'undefined' && boardRef.value) {
+    boardResizeObserver = new ResizeObserver(() => {
+      syncBoardWidth();
+      if (!isCompactLayout.value) {
+        applyChatWidth(chatWidth.value || DEFAULT_CHAT_WIDTH);
+      }
+    });
+    boardResizeObserver.observe(boardRef.value);
   }
 });
 
 onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('fullscreenchange', refreshCanvasFullscreen);
+    window.removeEventListener('pointermove', handleChatResizePointerMove);
+    window.removeEventListener('pointerup', handleChatResizePointerUp);
+    window.removeEventListener('pointercancel', handleChatResizePointerUp);
   }
+  stopChatResize();
+  boardResizeObserver?.disconnect();
+  boardResizeObserver = null;
 });
+
+watch(
+  missionCanvasScopeKey,
+  (scopeKey) => {
+    const cached = getBeeroomMissionCanvasState(scopeKey);
+    chatWidth.value = clampChatWidth(Number(cached?.chatWidth || DEFAULT_CHAT_WIDTH));
+  },
+  { immediate: true }
+);
+
+watch(
+  () => boardWidth.value,
+  () => {
+    if (isCompactLayout.value) return;
+    const clamped = clampChatWidth(chatWidth.value || DEFAULT_CHAT_WIDTH);
+    if (clamped !== chatWidth.value) {
+      chatWidth.value = clamped;
+    }
+  }
+);
+
+watch(
+  () => [chatCollapsed.value, isCompactLayout.value] as const,
+  ([collapsed, compact]) => {
+    if (collapsed || compact) {
+      stopChatResize();
+    }
+  }
+);
 </script>
 
 <style scoped>
@@ -237,6 +425,13 @@ onBeforeUnmount(() => {
   transition: grid-template-columns var(--beeroom-motion-slow) var(--beeroom-ease-standard);
 }
 
+.beeroom-canvas-board.is-chat-resizing {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: col-resize;
+  transition: none;
+}
+
 .beeroom-canvas-board::before {
   display: none;
 }
@@ -265,6 +460,45 @@ onBeforeUnmount(() => {
 .beeroom-canvas-pane {
   min-width: 0;
   min-height: 0;
+}
+
+.beeroom-canvas-chat-resizer {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  right: calc(var(--beeroom-chat-width) - 7px);
+  width: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  z-index: 3;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.beeroom-canvas-chat-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, transparent, rgba(148, 163, 184, 0.46), transparent);
+  transition: background-color var(--beeroom-motion-normal) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-chat-resizer:hover::before,
+.beeroom-canvas-chat-resizer:focus-visible::before,
+.beeroom-canvas-board.is-chat-resizing .beeroom-canvas-chat-resizer::before {
+  background: linear-gradient(180deg, transparent, rgba(96, 165, 250, 0.74), transparent);
+}
+
+.beeroom-canvas-chat-resizer:focus-visible {
+  outline: none;
 }
 
 .beeroom-canvas-empty {
@@ -313,6 +547,10 @@ onBeforeUnmount(() => {
   }
 
   .beeroom-canvas-board::after {
+    display: none;
+  }
+
+  .beeroom-canvas-chat-resizer {
     display: none;
   }
 

@@ -142,6 +142,7 @@ export const NODE_WIDTH = 272;
 export const NODE_HEIGHT = 170;
 export const WORLD_PADDING = 96;
 export const ACTIVE_DISPATCH_STATUSES = new Set(['queued', 'running', 'awaiting_idle']);
+const TERMINAL_TASK_STATUSES = new Set(['completed', 'success', 'failed', 'cancelled']);
 
 const SUBAGENT_NODE_WIDTH = 224;
 const SUBAGENT_NODE_HEIGHT = 142;
@@ -347,10 +348,18 @@ const isGenericDispatchStrategyLabel = (value: unknown) => {
   return normalized === 'direct_send' || normalized === 'batch_send';
 };
 
-const resolveDispatchTaskLabel = (mission: BeeroomMission | null, task: BeeroomMissionTask | null) => {
+export const resolveBeeroomDispatchTaskLabel = (
+  mission: BeeroomMission | null,
+  task: BeeroomMissionTask | null,
+  options: { allowTerminalTaskFallback?: boolean } = {}
+) => {
   const missionText = trimDispatchLabel(mission?.summary || mission?.strategy || '');
   if (missionText && !isGenericDispatchStrategyLabel(missionText)) return missionText;
-  const taskText = trimDispatchLabel(task?.result_summary || task?.error || '');
+  const taskStatus = String(task?.status || '').trim().toLowerCase();
+  const taskText =
+    options.allowTerminalTaskFallback !== false && TERMINAL_TASK_STATUSES.has(taskStatus)
+      ? trimDispatchLabel(task?.result_summary || task?.error || '')
+      : '';
   if (taskText) return taskText;
   const taskId = String(task?.task_id || '').trim();
   return taskId ? `#${taskId.slice(0, 8)}` : '';
@@ -934,7 +943,11 @@ export const buildBeeroomSwarmProjection = (options: {
         id: `dispatch:${effectiveMotherAgentId}:${agentId}`,
         source: motherNodeId,
         target: targetNodeId,
-        label: dispatchActive ? runtimeDispatchLabel || resolveDispatchTaskLabel(mission, latestTask) : '',
+        label:
+          dispatchActive
+            ? runtimeDispatchLabel ||
+              resolveBeeroomDispatchTaskLabel(mission, latestTask, { allowTerminalTaskFallback: false })
+            : '',
         active: dispatchActive,
         selected: edgeSelected,
         kind: 'dispatch'

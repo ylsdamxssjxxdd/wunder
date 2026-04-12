@@ -53,7 +53,7 @@ fn memory_manager_action_is_read_only(args: &Value) -> bool {
         .filter(|value| !value.is_empty())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
-    matches!(action.as_str(), "list" | "recall")
+    matches!(action.as_str(), "list" | "get" | "search" | "recall")
 }
 
 fn external_tool_looks_read_only(canonical: &str) -> bool {
@@ -105,7 +105,11 @@ mod tests {
     fn memory_recall_is_parallel_but_memory_write_is_not() {
         assert!(tool_call_supports_parallel(
             "memory_manager",
-            &json!({ "action": "recall", "query": "Alice" }),
+            &json!({ "action": "search", "query": "Alice" }),
+        ));
+        assert!(tool_call_supports_parallel(
+            "memory_manager",
+            &json!({ "action": "get", "memory_id": "mem_1" }),
         ));
         assert!(!tool_call_supports_parallel(
             "memory_manager",

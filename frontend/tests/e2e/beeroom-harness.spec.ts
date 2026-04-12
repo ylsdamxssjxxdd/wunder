@@ -11,9 +11,35 @@ const getScrollSnapshot = async (page: Page) =>
     };
   });
 
+const getHarnessState = async (page: Page) => JSON.parse(await page.getByTestId('beeroom-e2e-state').innerText());
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/__e2e/beeroom-harness');
   await expect(page.getByTestId('beeroom-e2e-harness')).toBeVisible();
+});
+
+test('swarm worker keeps its own node and main session while a real subagent is projected separately', async ({
+  page
+}) => {
+  await page.getByTestId('scenario-real-subagent-running').click();
+
+  const workerNode = page.locator('[data-node-id="agent:worker-agent-1"]');
+  const subagentNode = page.locator('[data-node-id="subagent:sess_subagent_real"]');
+
+  await expect(workerNode).toBeVisible();
+  await expect(workerNode).toHaveAttribute('data-node-role', 'worker');
+  await expect(subagentNode).toBeVisible();
+  await expect(subagentNode).toHaveAttribute('data-node-role', 'subagent');
+
+  const state = await getHarnessState(page);
+  expect(state.dispatchPreview?.sessionId).toBe('sess_worker_main');
+  expect(state.dispatchPreview?.targetAgentId).toBe('worker-agent-1');
+  expect(state.dispatchPreview?.subagents).toEqual([
+    {
+      sessionId: 'sess_subagent_real',
+      status: 'running'
+    }
+  ]);
 });
 
 test('chat stream keeps manual scroll position when new messages arrive', async ({ page }) => {

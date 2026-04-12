@@ -2,12 +2,14 @@ use super::{build_model_tool_success_with_hint, context::ToolContext};
 use crate::i18n;
 use crate::memory::{build_agent_memory_owner, normalize_agent_memory_scope, MemoryStore};
 use crate::services::memory_fragments::{
-    MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,
+    compact_memory_id_for_model, MemoryFragmentInput, MemoryFragmentListOptions,
+    MemoryFragmentStore,
 };
+use crate::storage::MemoryFragmentRecord;
 use anyhow::{anyhow, Result};
+use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use uuid::Uuid;
 
 const MAX_MEMORY_RECALL_LIMIT: usize = 30;
 
@@ -25,11 +27,13 @@ struct MemoryManagerArgs {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
-    summary: Option<String>,
+    tag: Option<String>,
     #[serde(default)]
     category: Option<String>,
     #[serde(default)]
-    tags: Option<Vec<String>>,
+    related_memory_id: Option<String>,
+    #[serde(default)]
+    memory_time: Option<String>,
     #[serde(default)]
     query: Option<String>,
     #[serde(default)]
@@ -42,11 +46,12 @@ fn normalize_memory_manager_action(raw: &str) -> String {
     let cleaned = raw.trim().to_lowercase();
     match cleaned.as_str() {
         "list" => "list".to_string(),
+        "get" | "read" | "detail" => "get".to_string(),
         "add" | "create" | "append" => "add".to_string(),
         "update" | "upsert" => "update".to_string(),
-        "delete" | "remove" => "delete".to_string(),
+        "delete" | "remove" => "remove".to_string(),
         "clear" | "reset" => "clear".to_string(),
-        "recall" | "search" | "query" | "retrieve" => "recall".to_string(),
+        "recall" | "search" | "query" | "retrieve" => "search".to_string(),
         _ => String::new(),
     }
 }
@@ -63,13 +68,7 @@ fn normalize_memory_record_id(payload: &MemoryManagerArgs) -> String {
 }
 
 fn normalize_memory_content(payload: &MemoryManagerArgs) -> String {
-    payload
-        .content
-        .as_deref()
-        .or(payload.summary.as_deref())
-        .unwrap_or("")
-        .trim()
-        .to_string()
+    payload.content.as_deref().unwrap_or("").trim().to_string()
 }
 
 fn normalize_memory_query(payload: &MemoryManagerArgs) -> String {
@@ -77,7 +76,6 @@ fn normalize_memory_query(payload: &MemoryManagerArgs) -> String {
         .query
         .as_deref()
         .or(payload.content.as_deref())
-        .or(payload.summary.as_deref())
         .unwrap_or("")
         .trim()
         .to_string()
@@ -87,63 +85,73 @@ fn normalize_memory_title(payload: &MemoryManagerArgs) -> String {
     payload.title.as_deref().unwrap_or("").trim().to_string()
 }
 
-fn normalize_memory_summary(payload: &MemoryManagerArgs) -> String {
-    payload.summary.as_deref().unwrap_or("").trim().to_string()
-}
-
 fn normalize_memory_category(payload: &MemoryManagerArgs) -> Option<String> {
-    let cleaned = payload.category.as_deref().unwrap_or("").trim().to_string();
+    let cleaned = payload
+        .tag
+        .as_deref()
+        .or(payload.category.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-fn normalize_memory_tags(payload: &MemoryManagerArgs) -> Option<Vec<String>> {
-    let tags = payload
-        .tags
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect::<Vec<_>>();
-    (!tags.is_empty()).then_some(tags)
+fn normalize_related_memory_id(payload: &MemoryManagerArgs) -> Option<String> {
+    let cleaned = payload
+        .related_memory_id
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
 }
 
-fn derive_memory_title_and_summary(
-    title: &str,
-    summary: &str,
-    content: &str,
-) -> (Option<String>, Option<String>) {
+fn derive_memory_title(title: &str, content: &str) -> Option<String> {
     let clean_title = title.trim();
-    let clean_summary = summary.trim();
-    if !clean_title.is_empty() || !clean_summary.is_empty() {
-        return (
-            (!clean_title.is_empty()).then(|| clean_title.to_string()),
-            (!clean_summary.is_empty()).then(|| clean_summary.to_string()),
-        );
+    if !clean_title.is_empty() {
+        return Some(clean_title.to_string());
     }
 
     let clean_content = content.trim();
-    for separator in ['：', ':'] {
+    for separator in ['\u{FF1A}', ':'] {
         if let Some((left, right)) = clean_content.split_once(separator) {
             let candidate_title = left.trim();
-            let candidate_summary = right.trim();
             if !candidate_title.is_empty()
-                && !candidate_summary.is_empty()
+                && !right.trim().is_empty()
                 && candidate_title.chars().count() <= 48
             {
-                return (
-                    Some(candidate_title.to_string()),
-                    Some(candidate_summary.to_string()),
-                );
+                return Some(candidate_title.to_string());
             }
         }
     }
 
     if !clean_content.is_empty() && clean_content.chars().count() <= 80 {
-        return (Some(clean_content.to_string()), None);
+        return Some(clean_content.to_string());
     }
 
-    (None, None)
+    None
+}
+
+fn normalize_memory_time(payload: &MemoryManagerArgs) -> Option<f64> {
+    let cleaned = payload.memory_time.as_deref().unwrap_or("").trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    chrono::DateTime::parse_from_rfc3339(cleaned)
+        .map(|value| value.timestamp() as f64)
+        .ok()
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(cleaned, "%Y-%m-%d %H:%M:%S")
+                .ok()
+                .and_then(|value| Local.from_local_datetime(&value).single())
+                .map(|value| value.timestamp() as f64)
+        })
+        .or_else(|| {
+            NaiveDateTime::parse_from_str(cleaned, "%Y-%m-%d %H:%M")
+                .ok()
+                .and_then(|value| Local.from_local_datetime(&value).single())
+                .map(|value| value.timestamp() as f64)
+        })
 }
 
 fn build_memory_fact_key(category: Option<&str>, title: Option<&str>, memory_id: &str) -> String {
@@ -167,29 +175,136 @@ fn build_memory_fact_key(category: Option<&str>, title: Option<&str>, memory_id:
 }
 
 fn normalize_memory_list_limit(limit: Option<i64>) -> i64 {
-    limit.unwrap_or(50).clamp(1, 200)
+    limit.unwrap_or(30).clamp(1, 200)
 }
 
-fn normalize_memory_recall_limit(limit: Option<i64>) -> usize {
-    limit.unwrap_or(6).clamp(1, MAX_MEMORY_RECALL_LIMIT as i64) as usize
+fn normalize_memory_search_limit(limit: Option<i64>) -> usize {
+    limit.unwrap_or(10).clamp(1, MAX_MEMORY_RECALL_LIMIT as i64) as usize
 }
 
-fn compact_memory_item(item: Value) -> Value {
+fn build_memory_index_item(record: &MemoryFragmentRecord) -> Value {
     json!({
-        "memory_id": item.get("memory_id").cloned().unwrap_or(Value::Null),
-        "title": item.get("title").cloned().unwrap_or(Value::Null),
-        "summary": item.get("summary").cloned().unwrap_or(Value::Null),
-        "content": item.get("content").cloned().unwrap_or(Value::Null),
-        "category": item.get("category").cloned().unwrap_or(Value::Null),
-        "tags": item.get("tags").cloned().unwrap_or(Value::Null),
-        "status": item.get("status").cloned().unwrap_or(Value::Null),
-        "updated_at": item
-            .get("updated_at")
-            .cloned()
-            .or_else(|| item.get("updated_time_ts").cloned())
-            .unwrap_or(Value::Null),
-        "why": item.get("why").cloned().unwrap_or(Value::Null),
+        "memory_id": compact_memory_id_for_model(&record.memory_id),
+        "title": &record.title_l0,
+        "tag": &record.category,
+        "updated_at": record.updated_at,
     })
+}
+
+fn build_memory_detail_item(record: &MemoryFragmentRecord) -> Value {
+    json!({
+        "memory_id": compact_memory_id_for_model(&record.memory_id),
+        "title": &record.title_l0,
+        "content": &record.content_l2,
+        "tag": &record.category,
+        "related_memory_id": record.supersedes_memory_id.as_ref().map(|value| compact_memory_id_for_model(value)),
+        "memory_time": record.valid_from,
+        "updated_at": record.updated_at,
+    })
+}
+
+fn extract_matched_fields(reason: &Value) -> Vec<String> {
+    reason
+        .get("matched_fields")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .take(4)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn build_memory_search_snippet(fragment: &MemoryFragmentRecord) -> String {
+    let content = fragment.content_l2.trim();
+    if content.is_empty() {
+        return String::new();
+    }
+    let mut chars = content.chars();
+    let truncated = chars.by_ref().take(120).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn resolve_memory_record_id(
+    fragment_store: &MemoryFragmentStore,
+    user_id: &str,
+    agent_id: Option<&str>,
+    payload: &MemoryManagerArgs,
+) -> Result<String> {
+    resolve_memory_identifier_text(
+        fragment_store,
+        user_id,
+        agent_id,
+        &normalize_memory_record_id(payload),
+    )
+}
+
+fn resolve_memory_identifier_text(
+    fragment_store: &MemoryFragmentStore,
+    user_id: &str,
+    agent_id: Option<&str>,
+    requested: &str,
+) -> Result<String> {
+    let memory_id = requested.trim().to_string();
+    if memory_id.is_empty() {
+        return Ok(String::new());
+    }
+    if fragment_store
+        .get_fragment(user_id, agent_id, &memory_id)
+        .is_some()
+    {
+        return Ok(memory_id);
+    }
+    let candidates = fragment_store.list_fragments(
+        user_id,
+        agent_id,
+        MemoryFragmentListOptions {
+            include_invalidated: true,
+            limit: Some(200),
+            ..Default::default()
+        },
+    );
+    let mut matches = candidates
+        .into_iter()
+        .filter(|item| compact_memory_id_for_model(&item.memory_id) == memory_id)
+        .map(|item| item.memory_id)
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.dedup();
+    match matches.len() {
+        0 => Ok(memory_id),
+        1 => Ok(matches.remove(0)),
+        _ => Err(anyhow!(i18n::t("tool.memory_manager.not_found"))),
+    }
+}
+
+fn resolve_related_memory_record_id(
+    fragment_store: &MemoryFragmentStore,
+    user_id: &str,
+    agent_id: Option<&str>,
+    payload: &MemoryManagerArgs,
+) -> Result<Option<String>> {
+    let Some(requested) = normalize_related_memory_id(payload) else {
+        return Ok(None);
+    };
+    let resolved = resolve_memory_identifier_text(fragment_store, user_id, agent_id, &requested)?;
+    if resolved.is_empty()
+        || fragment_store
+            .get_fragment(user_id, agent_id, &resolved)
+            .is_none()
+    {
+        return Err(anyhow!(i18n::t("tool.memory_manager.not_found")));
+    }
+    Ok(Some(resolved))
 }
 
 fn build_memory_manager_success(
@@ -204,14 +319,15 @@ fn build_memory_manager_success(
             "Listed {} memory entries.",
             data.get("count").and_then(Value::as_u64).unwrap_or(0)
         ),
-        "recall" => format!(
-            "Recalled {} memory entries.",
+        "get" => "Loaded a memory entry.".to_string(),
+        "search" => format!(
+            "Found {} memory entries.",
             data.get("count").and_then(Value::as_u64).unwrap_or(0)
         ),
         "add" => "Saved a memory entry.".to_string(),
         "update" => "Updated a memory entry.".to_string(),
-        "delete" => format!(
-            "Deleted {} memory entries.",
+        "remove" => format!(
+            "Removed {} memory entries.",
             data.get("deleted").and_then(Value::as_i64).unwrap_or(0)
         ),
         "clear" => format!(
@@ -236,55 +352,6 @@ fn normalize_memory_order_desc(order: Option<&str>) -> bool {
         return true;
     }
     !matches!(cleaned.as_str(), "asc" | "ascending")
-}
-
-fn compact_recall_reason(reason: &Value, pinned: bool, query: &str) -> (Vec<String>, String) {
-    let matched_terms = reason
-        .get("matched_terms")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .take(3)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let matched_fields = reason
-        .get("matched_fields")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .take(2)
-                .collect::<Vec<_>>()
-                .join("/")
-        })
-        .unwrap_or_default();
-    let mut parts = Vec::new();
-    if !query.trim().is_empty() && !matched_terms.is_empty() {
-        parts.push(format!("matched {}", matched_terms.join(", ")));
-    }
-    if !query.trim().is_empty() && !matched_fields.is_empty() {
-        parts.push(format!("in {matched_fields}"));
-    }
-    if pinned {
-        parts.push("pinned".to_string());
-    }
-    if parts.is_empty() {
-        parts.push(if query.trim().is_empty() {
-            "recent memory".to_string()
-        } else {
-            "keyword recall".to_string()
-        });
-    }
-    (matched_terms, parts.join("; "))
 }
 
 fn clear_fragment_scope(
@@ -341,7 +408,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 context.agent_id,
                 MemoryFragmentListOptions {
                     query: payload.query.as_deref(),
-                    include_invalidated: true,
+                    include_invalidated: false,
                     limit: Some(limit),
                     ..Default::default()
                 },
@@ -350,29 +417,40 @@ pub(crate) async fn execute_memory_manager_tool(
                 records.reverse();
             }
             let items = records
-                .into_iter()
-                .map(|record| {
-                    json!({
-                        "memory_id": record.memory_id,
-                        "title": record.title_l0,
-                        "summary": record.summary_l1,
-                        "content": record.content_l2,
-                        "category": record.category,
-                        "source_type": record.source_type,
-                        "status": record.status,
-                        "created_time_ts": record.created_at,
-                        "updated_time_ts": record.updated_at,
-                    })
-                })
+                .iter()
+                .map(build_memory_index_item)
                 .collect::<Vec<_>>();
             build_memory_manager_success(
                 action.as_str(),
                 &agent_scope,
                 json!({
                     "count": items.len(),
-                    "items": items.into_iter().map(compact_memory_item).collect::<Vec<_>>(),
+                    "items": items,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
+            )
+        }
+        "get" => {
+            let memory_id = resolve_memory_record_id(
+                &fragment_store,
+                context.user_id,
+                context.agent_id,
+                &payload,
+            )?;
+            if memory_id.is_empty() {
+                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
+            }
+            let record = fragment_store
+                .get_fragment(context.user_id, context.agent_id, &memory_id)
+                .ok_or_else(|| anyhow!(i18n::t("tool.memory_manager.not_found")))?;
+            build_memory_manager_success(
+                action.as_str(),
+                &agent_scope,
+                json!({
+                    "memory_id": compact_memory_id_for_model(&record.memory_id),
+                    "item": build_memory_detail_item(&record),
+                }),
+                Some(i18n::t("tool.memory_manager.note_get_full_detail")),
             )
         }
         "add" => {
@@ -381,14 +459,20 @@ pub(crate) async fn execute_memory_manager_tool(
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
             let title = normalize_memory_title(&payload);
-            let summary = normalize_memory_summary(&payload);
             let category = normalize_memory_category(&payload);
-            let tags = normalize_memory_tags(&payload);
-            let (derived_title, derived_summary) =
-                derive_memory_title_and_summary(&title, &summary, &content);
+            let related_memory_id = resolve_related_memory_record_id(
+                &fragment_store,
+                context.user_id,
+                context.agent_id,
+                &payload,
+            )?;
+            let memory_time = normalize_memory_time(&payload);
+            let derived_title = derive_memory_title(&title, &content);
             let mut memory_id = normalize_memory_record_id(&payload);
             if memory_id.is_empty() {
-                memory_id = format!("mem_{}", Uuid::new_v4().simple());
+                memory_id = compact_memory_id_for_model(&uuid::Uuid::new_v4().simple().to_string());
+            } else if memory_id.chars().count() > 8 {
+                memory_id = compact_memory_id_for_model(&memory_id);
             }
             let fact_key = build_memory_fact_key(
                 category.as_deref(),
@@ -407,10 +491,10 @@ pub(crate) async fn execute_memory_manager_tool(
                         source_type: Some("memory_manager".to_string()),
                         category: Some(category.unwrap_or_else(|| "tool-note".to_string())),
                         title_l0: derived_title,
-                        summary_l1: derived_summary,
                         content_l2: Some(content),
                         fact_key: Some(fact_key),
-                        tags,
+                        supersedes_memory_id: related_memory_id,
+                        valid_from: memory_time,
                         pinned: Some(false),
                         invalidated: Some(false),
                         ..Default::default()
@@ -421,27 +505,36 @@ pub(crate) async fn execute_memory_manager_tool(
                 action.as_str(),
                 &agent_scope,
                 json!({
-                    "memory_id": saved_record.memory_id,
+                    "memory_id": compact_memory_id_for_model(&saved_record.memory_id),
                     "saved": true,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
             )
         }
         "update" => {
-            let memory_id = normalize_memory_record_id(&payload);
+            let memory_id = resolve_memory_record_id(
+                &fragment_store,
+                context.user_id,
+                context.agent_id,
+                &payload,
+            )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::t("error.content_required")));
+                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
             }
             let content = normalize_memory_content(&payload);
             if content.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
             let title = normalize_memory_title(&payload);
-            let summary = normalize_memory_summary(&payload);
             let category = normalize_memory_category(&payload);
-            let tags = normalize_memory_tags(&payload);
-            let (derived_title, derived_summary) =
-                derive_memory_title_and_summary(&title, &summary, &content);
+            let related_memory_id = resolve_related_memory_record_id(
+                &fragment_store,
+                context.user_id,
+                context.agent_id,
+                &payload,
+            )?;
+            let memory_time = normalize_memory_time(&payload);
+            let derived_title = derive_memory_title(&title, &content);
             let existing_fragment =
                 fragment_store.get_fragment(context.user_id, context.agent_id, &memory_id);
             let fact_key = build_memory_fact_key(
@@ -466,10 +559,10 @@ pub(crate) async fn execute_memory_manager_tool(
                         source_type: Some("memory_manager".to_string()),
                         category,
                         title_l0: derived_title,
-                        summary_l1: derived_summary,
                         content_l2: Some(content),
                         fact_key: Some(fact_key),
-                        tags,
+                        supersedes_memory_id: related_memory_id,
+                        valid_from: memory_time,
                         ..Default::default()
                     },
                 )
@@ -481,16 +574,21 @@ pub(crate) async fn execute_memory_manager_tool(
                 action.as_str(),
                 &agent_scope,
                 json!({
-                    "memory_id": updated_record.memory_id,
+                    "memory_id": compact_memory_id_for_model(&updated_record.memory_id),
                     "updated": true,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
             )
         }
-        "delete" => {
-            let memory_id = normalize_memory_record_id(&payload);
+        "remove" => {
+            let memory_id = resolve_memory_record_id(
+                &fragment_store,
+                context.user_id,
+                context.agent_id,
+                &payload,
+            )?;
             if memory_id.is_empty() {
-                return Err(anyhow!(i18n::t("error.content_required")));
+                return Err(anyhow!(i18n::t("tool.memory_manager.memory_id_required")));
             }
             let fragment_deleted =
                 fragment_store.delete_fragment(context.user_id, context.agent_id, &memory_id);
@@ -503,7 +601,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 action.as_str(),
                 &agent_scope,
                 json!({
-                    "memory_id": memory_id,
+                    "memory_id": compact_memory_id_for_model(&memory_id),
                     "deleted": deleted,
                 }),
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
@@ -523,9 +621,9 @@ pub(crate) async fn execute_memory_manager_tool(
                 Some(i18n::t("tool.memory_manager.note_new_sessions_only")),
             )
         }
-        "recall" => {
+        "search" => {
             let query = normalize_memory_query(&payload);
-            let recall_limit = normalize_memory_recall_limit(payload.limit);
+            let search_limit = normalize_memory_search_limit(payload.limit);
             let hits = fragment_store
                 .recall_for_prompt(
                     Some(context.config),
@@ -534,28 +632,21 @@ pub(crate) async fn execute_memory_manager_tool(
                     Some(context.session_id),
                     None,
                     (!query.is_empty()).then_some(query.as_str()),
-                    Some(recall_limit),
+                    Some(search_limit),
                 )
                 .await;
             let items = hits
                 .into_iter()
                 .map(|hit| {
+                    let matched_fields = extract_matched_fields(&hit.reason_json);
                     let fragment = hit.fragment;
-                    let (matched_terms, why) =
-                        compact_recall_reason(&hit.reason_json, fragment.pinned, &query);
                     json!({
-                        "memory_id": fragment.memory_id,
+                        "memory_id": compact_memory_id_for_model(&fragment.memory_id),
                         "title": fragment.title_l0,
-                        "summary": fragment.summary_l1,
-                        "content": fragment.content_l2,
-                        "category": fragment.category,
-                        "source_type": fragment.source_type,
-                        "tags": fragment.tags,
-                        "pinned": fragment.pinned,
-                        "status": fragment.status,
+                        "tag": fragment.category,
+                        "snippet": build_memory_search_snippet(&fragment),
+                        "matched_in": matched_fields,
                         "updated_at": fragment.updated_at,
-                        "matched_terms": matched_terms,
-                        "why": why,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -565,7 +656,7 @@ pub(crate) async fn execute_memory_manager_tool(
                 json!({
                     "query": query,
                     "count": items.len(),
-                    "items": items.into_iter().map(compact_memory_item).collect::<Vec<_>>(),
+                    "items": items,
                 }),
                 Some(i18n::t("tool.memory_manager.note_recall_current_session")),
             )
@@ -685,132 +776,149 @@ mod tests {
     }
 
     #[test]
-    fn normalize_action_supports_recall_aliases() {
-        assert_eq!(normalize_memory_manager_action("recall"), "recall");
-        assert_eq!(normalize_memory_manager_action("search"), "recall");
-        assert_eq!(normalize_memory_manager_action("query"), "recall");
-        assert_eq!(normalize_memory_manager_action("retrieve"), "recall");
+    fn normalize_action_supports_search_and_get_aliases() {
+        assert_eq!(normalize_memory_manager_action("search"), "search");
+        assert_eq!(normalize_memory_manager_action("recall"), "search");
+        assert_eq!(normalize_memory_manager_action("query"), "search");
+        assert_eq!(normalize_memory_manager_action("retrieve"), "search");
+        assert_eq!(normalize_memory_manager_action("get"), "get");
+        assert_eq!(normalize_memory_manager_action("read"), "get");
     }
 
     #[test]
-    fn normalize_recall_limit_clamps_range() {
-        assert_eq!(normalize_memory_recall_limit(None), 6);
-        assert_eq!(normalize_memory_recall_limit(Some(0)), 1);
-        assert_eq!(normalize_memory_recall_limit(Some(99)), 30);
+    fn normalize_search_limit_clamps_range() {
+        assert_eq!(normalize_memory_search_limit(None), 10);
+        assert_eq!(normalize_memory_search_limit(Some(0)), 1);
+        assert_eq!(normalize_memory_search_limit(Some(99)), 30);
     }
 
     #[test]
-    fn derive_memory_title_and_summary_prefers_structured_fields() {
+    fn derive_memory_title_prefers_explicit_or_prefix_title() {
         assert_eq!(
-            derive_memory_title_and_summary("用户姓名", "周华健", "用户姓名：周华健"),
-            (Some("用户姓名".to_string()), Some("周华健".to_string()))
+            derive_memory_title("User name", "User name: Zhou Huajian"),
+            Some("User name".to_string())
         );
         assert_eq!(
-            derive_memory_title_and_summary("", "", "用户姓名：周华健"),
-            (Some("用户姓名".to_string()), Some("周华健".to_string()))
+            derive_memory_title("", "User name: Zhou Huajian"),
+            Some("User name".to_string())
         );
     }
 
     #[tokio::test]
-    async fn memory_manager_tool_writes_visible_fragments() {
+    async fn memory_manager_tool_uses_index_list_search_and_get_detail() {
         let harness = TestHarness::new();
-        let context = harness.context("u1", "sess-1", Some("agent-demo"));
+        let context = harness.context("u1", "sess-idx", Some("agent-demo"));
 
         let add = execute_memory_manager_tool(
             &context,
             &json!({
                 "action": "add",
-                "memory_id": "pref-reply-language",
-                "content": "默认使用中文回答。"
+                "memory_id": "pref-reply-language-v2",
+                "title": "Reply language",
+                "content": "Reply in Chinese by default unless the user explicitly asks for another language.",
+                "tag": "response_preference"
             }),
         )
         .await
-        .expect("add memory");
+        .expect("add indexed memory");
         assert_eq!(
             add.pointer("/data/saved").and_then(Value::as_bool),
             Some(true)
         );
-
-        let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
-        let fragments = fragment_store.list_fragments(
-            "u1",
-            Some("agent-demo"),
-            MemoryFragmentListOptions::default(),
+        let compact_id = compact_memory_id_for_model("pref-reply-language-v2");
+        assert_eq!(
+            add.pointer("/data/memory_id").and_then(Value::as_str),
+            Some(compact_id.as_str())
         );
-        assert_eq!(fragments.len(), 1);
-        assert_eq!(fragments[0].memory_id, "pref-reply-language");
-        assert_eq!(fragments[0].source_type, "memory-manager");
-        assert_eq!(fragments[0].category, "tool-note");
-        assert_eq!(fragments[0].title_l0, "默认使用中文回答。");
 
         let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
             .await
-            .expect("list memory");
-        assert_eq!(
-            listed.pointer("/data/count").and_then(Value::as_u64),
-            Some(1)
-        );
-
-        let recalled = execute_memory_manager_tool(
-            &context,
-            &json!({
-                "action": "recall",
-                "query": "中文回答"
-            }),
-        )
-        .await
-        .expect("recall memory");
-        assert_eq!(
-            recalled.pointer("/data/count").and_then(Value::as_u64),
-            Some(1)
-        );
-        let recall_item = recalled
+            .expect("list indexed memory");
+        let list_item = listed
             .pointer("/data/items")
             .and_then(Value::as_array)
             .and_then(|items| items.first())
             .cloned()
-            .expect("recall item");
-        assert!(recall_item.get("score").is_none());
-        assert!(recall_item.get("lexical_score").is_none());
-        assert!(recall_item.get("reason").is_none());
-        assert!(recall_item.get("why").and_then(Value::as_str).is_some());
-
-        let updated = execute_memory_manager_tool(
-            &context,
-            &json!({
-                "action": "update",
-                "memory_id": "pref-reply-language",
-                "content": "默认使用简体中文回答。"
-            }),
-        )
-        .await
-        .expect("update memory");
+            .expect("list item");
         assert_eq!(
-            updated.pointer("/data/updated").and_then(Value::as_bool),
-            Some(true)
+            list_item.get("memory_id").and_then(Value::as_str),
+            Some(compact_id.as_str())
         );
+        assert_eq!(
+            list_item.get("title").and_then(Value::as_str),
+            Some("Reply language")
+        );
+        assert!(list_item.get("summary").is_none());
+        assert!(list_item.get("content").is_none());
+        assert!(list_item.get("status").is_none());
+        assert!(list_item.get("pinned").is_none());
 
-        let refreshed = fragment_store
-            .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
-            .expect("get updated fragment");
-        assert_eq!(refreshed.content_l2, "默认使用简体中文回答。");
-
-        let deleted = execute_memory_manager_tool(
+        let searched = execute_memory_manager_tool(
             &context,
             &json!({
-                "action": "delete",
-                "memory_id": "pref-reply-language"
+                "action": "search",
+                "query": "Chinese"
             }),
         )
         .await
-        .expect("delete memory");
+        .expect("search indexed memory");
+        let search_item = searched
+            .pointer("/data/items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .expect("search item");
         assert_eq!(
-            deleted.pointer("/data/deleted").and_then(Value::as_i64),
+            search_item.get("title").and_then(Value::as_str),
+            Some("Reply language")
+        );
+        assert!(search_item.get("snippet").and_then(Value::as_str).is_some());
+        assert!(search_item
+            .get("matched_in")
+            .and_then(Value::as_array)
+            .is_some());
+        assert!(search_item.get("content").is_none());
+        assert!(search_item.get("status").is_none());
+        assert!(search_item.get("pinned").is_none());
+        assert!(search_item.get("matched_terms").is_none());
+        assert!(search_item.get("why").is_none());
+
+        let loaded = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "get",
+                "memory_id": compact_id
+            }),
+        )
+        .await
+        .expect("get indexed memory");
+        assert_eq!(
+            loaded.pointer("/data/item/title").and_then(Value::as_str),
+            Some("Reply language")
+        );
+        assert_eq!(
+            loaded.pointer("/data/item/content").and_then(Value::as_str),
+            Some(
+                "Reply in Chinese by default unless the user explicitly asks for another language."
+            )
+        );
+        assert!(loaded.pointer("/data/item/status").is_none());
+        assert!(loaded.pointer("/data/item/pinned").is_none());
+        assert!(loaded.pointer("/data/item/source_type").is_none());
+
+        let removed = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "remove",
+                "memory_id": compact_id
+            }),
+        )
+        .await
+        .expect("remove indexed memory");
+        assert_eq!(
+            removed.pointer("/data/deleted").and_then(Value::as_i64),
             Some(1)
         );
-        assert!(fragment_store
-            .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
-            .is_none());
     }
 
     #[tokio::test]
@@ -836,6 +944,10 @@ mod tests {
             add.pointer("/data/agent_id").and_then(Value::as_str),
             Some("__default__")
         );
+        assert_eq!(
+            add.pointer("/data/memory_id").and_then(Value::as_str),
+            Some(compact_memory_id_for_model("pref-tone-default").as_str())
+        );
 
         let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
         let fragments = fragment_store.list_fragments(
@@ -844,58 +956,294 @@ mod tests {
             MemoryFragmentListOptions::default(),
         );
         assert_eq!(fragments.len(), 1);
-        assert_eq!(fragments[0].memory_id, "pref-tone-default");
+        assert_eq!(fragments[0].memory_id, "preftone");
         assert_eq!(fragments[0].agent_id, "__default__");
-
-        let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
-            .await
-            .expect("list default-scope memory");
-        assert_eq!(
-            listed.pointer("/data/count").and_then(Value::as_u64),
-            Some(1)
-        );
-        assert_eq!(
-            listed.pointer("/data/agent_id").and_then(Value::as_str),
-            Some("__default__")
-        );
     }
 
     #[tokio::test]
-    async fn memory_manager_tool_supports_structured_fields() {
+    async fn memory_manager_tool_supports_related_memory_and_time() {
         let harness = TestHarness::new();
         let context = harness.context("u1", "sess-3", Some("agent-demo"));
+
+        execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "add",
+                "memory_id": "profile-name",
+                "title": "User name",
+                "content": "The user's name is Zhou Huajian.",
+                "tag": "profile"
+            }),
+        )
+        .await
+        .expect("add source memory");
 
         let add = execute_memory_manager_tool(
             &context,
             &json!({
                 "action": "add",
-                "memory_id": "profile-name",
-                "title": "用户姓名",
-                "summary": "周华健",
-                "content": "用户姓名：周华健",
-                "category": "profile",
-                "tags": ["identity", "name"]
+                "memory_id": "display-name-v2",
+                "title": "Preferred display name",
+                "content": "Use Zhou Huajian as the user's preferred display name.",
+                "tag": "profile",
+                "related_memory_id": compact_memory_id_for_model("profile-name"),
+                "memory_time": "2026-04-12T08:37:00+08:00"
             }),
         )
         .await
-        .expect("add structured memory");
+        .expect("add related memory");
+        let compact_id = compact_memory_id_for_model("display-name-v2");
         assert_eq!(
-            add.pointer("/data/saved").and_then(Value::as_bool),
-            Some(true)
+            add.pointer("/data/memory_id").and_then(Value::as_str),
+            Some(compact_id.as_str())
         );
 
         let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
         let fragment = fragment_store
-            .get_fragment("u1", Some("agent-demo"), "profile-name")
-            .expect("get structured fragment");
-        assert_eq!(fragment.title_l0, "用户姓名");
-        assert_eq!(fragment.summary_l1, "周华健");
-        assert_eq!(fragment.content_l2, "用户姓名：周华健");
+            .get_fragment("u1", Some("agent-demo"), &compact_id)
+            .expect("get related fragment");
+        assert_eq!(fragment.title_l0, "Preferred display name");
+        assert_eq!(
+            fragment.content_l2,
+            "Use Zhou Huajian as the user's preferred display name."
+        );
         assert_eq!(fragment.category, "profile");
         assert_eq!(
-            fragment.tags,
-            vec!["identity".to_string(), "name".to_string()]
+            fragment.supersedes_memory_id.as_deref(),
+            Some(compact_memory_id_for_model("profile-name").as_str())
         );
-        assert_eq!(fragment.fact_key, "profile::用户姓名");
+        assert_eq!(fragment.valid_from, 1_775_954_220.0);
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_default_limits_keep_index_payload_compact() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-limit", Some("agent-demo"));
+
+        for idx in 0..35 {
+            execute_memory_manager_tool(
+                &context,
+                &json!({
+                    "action": "add",
+                    "memory_id": format!("ml{idx:06}"),
+                    "title": format!("Memory #{idx:02}"),
+                    "content": format!("Shared alpha detail {idx:02}")
+                }),
+            )
+            .await
+            .expect("seed memory fragment");
+        }
+
+        let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
+            .await
+            .expect("list default limit");
+        let list_items = listed
+            .pointer("/data/items")
+            .and_then(Value::as_array)
+            .cloned()
+            .expect("list items");
+        assert_eq!(
+            listed.pointer("/data/count").and_then(Value::as_u64),
+            Some(30)
+        );
+        assert_eq!(list_items.len(), 30);
+        assert!(list_items.iter().all(|item| item.get("content").is_none()));
+        assert!(list_items.iter().all(|item| item.get("summary").is_none()));
+        assert!(list_items.iter().all(|item| item.get("status").is_none()));
+        assert!(list_items.iter().all(|item| item.get("pinned").is_none()));
+
+        let searched = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "search",
+                "query": "Shared alpha"
+            }),
+        )
+        .await
+        .expect("search default limit");
+        let search_items = searched
+            .pointer("/data/items")
+            .and_then(Value::as_array)
+            .cloned()
+            .expect("search items");
+        assert_eq!(
+            searched.pointer("/data/count").and_then(Value::as_u64),
+            Some(10)
+        );
+        assert_eq!(search_items.len(), 10);
+        assert!(search_items
+            .iter()
+            .all(|item| item.get("content").is_none()));
+        assert!(search_items.iter().all(|item| item.get("why").is_none()));
+        assert!(search_items
+            .iter()
+            .all(|item| item.get("matched_terms").is_none()));
+        assert!(search_items
+            .iter()
+            .all(|item| item.get("snippet").and_then(Value::as_str).is_some()));
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_alias_actions_return_canonical_action_names() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-alias", Some("agent-demo"));
+
+        execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "add",
+                "memory_id": "pref-language-alias",
+                "title": "Reply language",
+                "content": "Reply in Chinese by default unless the user explicitly asks for English."
+            }),
+        )
+        .await
+        .expect("add alias memory");
+
+        let searched = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "recall",
+                "query": "Chinese"
+            }),
+        )
+        .await
+        .expect("search via recall alias");
+        assert_eq!(
+            searched.get("action").and_then(Value::as_str),
+            Some("search")
+        );
+        assert!(searched.pointer("/data/items/0/content").is_none());
+        assert!(searched.pointer("/data/items/0/why").is_none());
+
+        let loaded = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "read",
+                "memory_id": compact_memory_id_for_model("pref-language-alias")
+            }),
+        )
+        .await
+        .expect("get via read alias");
+        assert_eq!(loaded.get("action").and_then(Value::as_str), Some("get"));
+        assert_eq!(
+            loaded.pointer("/data/item/content").and_then(Value::as_str),
+            Some("Reply in Chinese by default unless the user explicitly asks for English.")
+        );
+
+        let removed = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "delete",
+                "memory_id": compact_memory_id_for_model("pref-language-alias")
+            }),
+        )
+        .await
+        .expect("remove via delete alias");
+        assert_eq!(
+            removed.get("action").and_then(Value::as_str),
+            Some("remove")
+        );
+        assert_eq!(
+            removed.pointer("/data/deleted").and_then(Value::as_i64),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_requires_memory_id_for_read_write_delete_actions() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-required", Some("agent-demo"));
+        let expected = i18n::t("tool.memory_manager.memory_id_required");
+
+        let get_err = execute_memory_manager_tool(&context, &json!({ "action": "get" }))
+            .await
+            .expect_err("get without memory_id should fail");
+        assert_eq!(get_err.to_string(), expected);
+
+        let update_err = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "update",
+                "content": "Reply in Chinese by default."
+            }),
+        )
+        .await
+        .expect_err("update without memory_id should fail");
+        assert_eq!(update_err.to_string(), expected);
+
+        let remove_err = execute_memory_manager_tool(&context, &json!({ "action": "remove" }))
+            .await
+            .expect_err("remove without memory_id should fail");
+        assert_eq!(remove_err.to_string(), expected);
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_resolves_compact_ids_for_existing_long_records() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-long", Some("agent-demo"));
+        let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
+
+        let saved = fragment_store
+            .save_fragment(
+                "u1",
+                Some("agent-demo"),
+                MemoryFragmentInput {
+                    memory_id: Some("memory-id-long-12345".to_string()),
+                    source_session_id: Some("sess-long".to_string()),
+                    source_type: Some("manual".to_string()),
+                    category: Some("note".to_string()),
+                    title_l0: Some("Long id memory".to_string()),
+                    content_l2: Some(
+                        "A stored fragment that keeps a long internal id.".to_string(),
+                    ),
+                    fact_key: Some("note::long-id-memory".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("seed long memory id");
+        let compact_id = compact_memory_id_for_model(&saved.memory_id);
+        assert_eq!(
+            compact_id,
+            compact_memory_id_for_model("memory-id-long-12345")
+        );
+
+        let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
+            .await
+            .expect("list long-id memory");
+        assert_eq!(
+            listed
+                .pointer("/data/items/0/memory_id")
+                .and_then(Value::as_str),
+            Some(compact_id.as_str())
+        );
+
+        let loaded = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "get",
+                "memory_id": compact_id
+            }),
+        )
+        .await
+        .expect("load with compact id");
+        assert_eq!(
+            loaded.pointer("/data/item/title").and_then(Value::as_str),
+            Some("Long id memory")
+        );
+
+        let removed = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "remove",
+                "memory_id": compact_id
+            }),
+        )
+        .await
+        .expect("remove with compact id");
+        assert_eq!(
+            removed.pointer("/data/deleted").and_then(Value::as_i64),
+            Some(1)
+        );
     }
 }

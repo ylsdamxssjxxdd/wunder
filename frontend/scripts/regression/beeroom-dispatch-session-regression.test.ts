@@ -7,10 +7,12 @@ import {
   shouldFinishBeeroomTerminalHydration,
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
+import { overlayBeeroomLiveDispatchLabel } from '../../src/components/beeroom/beeroomDispatchPreviewOverlay';
 import {
   resolveBeeroomSwarmWorkerReplyFromHistoryMessages,
   resolveBeeroomSwarmWorkerTerminalState
 } from '../../src/components/beeroom/beeroomSwarmWorkerShadowState';
+import { resolveBeeroomDispatchTaskLabel } from '../../src/components/beeroom/canvas/swarmCanvasModel';
 
 test('mother dispatch keeps following current primary session instead of stale previous session', () => {
   const sessionId = resolvePreferredBeeroomDispatchSessionId({
@@ -238,4 +240,66 @@ test('swarm worker terminal resolution prefers the latest successful terminal ev
     terminal: true,
     failed: false
   });
+});
+
+test('live dispatch preview overlays the current outgoing label while the round is active', () => {
+  const preview = overlayBeeroomLiveDispatchLabel(
+    {
+      sessionId: 'sess_active',
+      targetAgentId: 'worker-1',
+      targetName: 'Worker 1',
+      status: 'running',
+      summary: 'old summary',
+      dispatchLabel: 'previous task',
+      updatedTime: 100,
+      subagents: []
+    },
+    {
+      currentSessionId: 'sess_active',
+      runtimeStatus: 'running',
+      composerSending: true,
+      dispatchLabelPreview: 'current task'
+    }
+  );
+  assert.equal(preview?.dispatchLabel, 'current task');
+});
+
+test('live dispatch preview does not leak a draft label into another session', () => {
+  const preview = overlayBeeroomLiveDispatchLabel(
+    {
+      sessionId: 'sess_other',
+      targetAgentId: 'worker-1',
+      targetName: 'Worker 1',
+      status: 'running',
+      summary: 'old summary',
+      dispatchLabel: 'previous task',
+      updatedTime: 100,
+      subagents: []
+    },
+    {
+      currentSessionId: 'sess_active',
+      runtimeStatus: 'running',
+      composerSending: true,
+      dispatchLabelPreview: 'current task'
+    }
+  );
+  assert.equal(preview?.dispatchLabel, 'previous task');
+});
+
+test('active dispatch label ignores stale terminal task summaries when current mission text is generic', () => {
+  assert.equal(
+    resolveBeeroomDispatchTaskLabel(
+      {
+        summary: 'direct send',
+        strategy: 'direct_send'
+      } as never,
+      {
+        task_id: 'task_12345678',
+        status: 'completed',
+        result_summary: 'previous finished task'
+      } as never,
+      { allowTerminalTaskFallback: false }
+    ),
+    '#task_123'
+  );
 });

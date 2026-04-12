@@ -74,7 +74,7 @@ The current swarm system has one very important convention:
 
 The purpose is to keep the worker's context clean and avoid dragging dirty history from an older conversation directly into the new assignment.
 
-Only when you explicitly provide `sessionKey` does the system reuse an existing thread.
+If you explicitly pass `threadStrategy=main_thread` (or `reuseMainThread=true`), the system reuses the worker's current main thread, creating and binding one first when needed. Only an explicit `sessionKey` in `send` / `batch_send` pins the run to a specific existing thread.
 
 ## Why the main thread matters
 

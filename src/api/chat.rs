@@ -4125,7 +4125,7 @@ mod tests {
     fn extract_system_prompt_memory_preview_reads_tail_block() {
         let prefix = crate::i18n::t("memory.block_prefix");
         let prompt = format!(
-            "You are a helpful assistant.\n\n{}\n- Available long-term memories: 7. Injected now: 2 (limit 30).\n- If the injected memory below is not enough, continue with the memory manager tool via recall/list to search the remaining long-term memory.\n- [pref] Reply in Chinese\n- [project] Use Rust",
+            "You are a helpful assistant.\n\n{}\n- Available long-term memories: 7. Injected now: 2 (limit 30).\n- The injected items below are memory indexes only (memory_id + title). Use memory_manager get with a memory_id when you need the full detail.\n- If the injected indexes below are not enough, continue with memory_manager list/search to find more memory ids, then use get for the full detail.\n- [2026-04-12 09:00] mem_pref | Reply language\n- [2026-04-12 09:00] mem_proj | Project stack",
             prefix
         );
         let memory = extract_system_prompt_memory_preview(&prompt);

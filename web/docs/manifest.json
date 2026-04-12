@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-11T03:30:58.743628+00:00",
+  "generated_at": "2026-04-12T06:09:05.616108+00:00",
   "site": {
     "name": "wunder Manual / 使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -293,7 +293,7 @@
                   {
                     "slug": "zh-CN/tools/memory-manager",
                     "title": "记忆管理",
-                    "summary": "`memory_manager` 的动作、记忆范围与返回结构。",
+                    "summary": "说明 `memory_manager` 的当前动作、精简结构，以及“短索引注入 + get 取全文”的使用方式。",
                     "url": "/docs/zh-CN/tools/memory-manager/"
                   },
                   {
@@ -961,7 +961,7 @@
                   {
                     "slug": "en/tools/memory-manager",
                     "title": "Memory Manager",
-                    "summary": "The actions, memory scopes, and return structure of `memory_manager`.",
+                    "summary": "Explains the `memory_manager` actions, compact structure, and the \"short index injection + get full detail\" workflow.",
                     "url": "/docs/en/tools/memory-manager/"
                   },
                   {
@@ -4346,7 +4346,7 @@
       "language": "zh-CN",
       "title": "智能体蜂群",
       "summary": "调度已存在智能体的多智能体协作工具。",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-12",
       "read_when": [
         "你要调度当前用户已经拥有的其他正式智能体"
       ],
@@ -4383,10 +4383,15 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "status"
+          "text": "线程策略"
         },
         {
           "id": "section-6",
+          "level": 2,
+          "text": "status"
+        },
+        {
+          "id": "section-7",
           "level": 2,
           "text": "状态语义"
         }
@@ -4400,13 +4405,14 @@
       "slug": "zh-CN/tools/memory-manager",
       "language": "zh-CN",
       "title": "记忆管理",
-      "summary": "`memory_manager` 的动作、记忆范围与返回结构。",
-      "updated_at": "2026-04-10",
+      "summary": "说明 `memory_manager` 的当前动作、精简结构，以及“短索引注入 + get 取全文”的使用方式。",
+      "updated_at": "2026-04-12",
       "read_when": [
-        "你要增删改查长期记忆片段"
+        "你要新增、检索、读取、更新或删除长期记忆碎片"
       ],
       "source_docs": [
-        "src/services/tools/memory_manager_tool.rs"
+        "src/services/tools/memory_manager_tool.rs",
+        "src/services/memory_fragments.rs"
       ],
       "tab": "工具",
       "group": "会话与协作",
@@ -4423,22 +4429,32 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "list"
+          "text": "使用原则"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "add"
+          "text": "list"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "recall"
+          "text": "search"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "重点"
+          "text": "get"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "写入示例"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "关键约束"
         }
       ],
       "prev_slug": "zh-CN/tools/agent-swarm",
@@ -10819,7 +10835,7 @@
       "language": "en",
       "title": "Agent Swarm",
       "summary": "The multi-agent collaboration tool for dispatching agents that already exist.",
-      "updated_at": "2026-04-10",
+      "updated_at": "2026-04-12",
       "read_when": [
         "You need to dispatch other formal agents the current user already owns"
       ],
@@ -10856,10 +10872,15 @@
         {
           "id": "section-5",
           "level": 2,
-          "text": "status"
+          "text": "Thread strategy"
         },
         {
           "id": "section-6",
+          "level": 2,
+          "text": "status"
+        },
+        {
+          "id": "section-7",
           "level": 2,
           "text": "State semantics"
         }
@@ -10873,13 +10894,14 @@
       "slug": "en/tools/memory-manager",
       "language": "en",
       "title": "Memory Manager",
-      "summary": "The actions, memory scopes, and return structure of `memory_manager`.",
-      "updated_at": "2026-04-10",
+      "summary": "Explains the `memory_manager` actions, compact structure, and the \"short index injection + get full detail\" workflow.",
+      "updated_at": "2026-04-12",
       "read_when": [
-        "You need to add, remove, update, list, or recall long-term memory entries"
+        "You need to add, search, read, update, or remove long-term memory fragments"
       ],
       "source_docs": [
-        "src/services/tools/memory_manager_tool.rs"
+        "src/services/tools/memory_manager_tool.rs",
+        "src/services/memory_fragments.rs"
       ],
       "tab": "Tools",
       "group": "Sessions and Collaboration",
@@ -10896,22 +10918,32 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "list"
+          "text": "Usage Rules"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "add"
+          "text": "list"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "recall"
+          "text": "search"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Key points"
+          "text": "get"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Write Example"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Important Notes"
         }
       ],
       "prev_slug": "en/tools/agent-swarm",

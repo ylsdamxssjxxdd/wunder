@@ -14,12 +14,13 @@ export type BeeroomMissionCanvasState = {
   nodePositionOverrides: Record<string, BeeroomCanvasPositionOverride>;
   activeNodeId: string;
   chatCollapsed: boolean;
+  chatWidth: number;
   chatClearedAfter: number;
   viewport: BeeroomCanvasViewportState | null;
 };
 
 const MAX_CACHE_ENTRIES = 48;
-const MISSION_CANVAS_STATE_VERSION = 3;
+const MISSION_CANVAS_STATE_VERSION = 4;
 const MISSION_CANVAS_STATE_STORAGE_KEY = 'wunder:beeroom-mission-canvas-state';
 const missionCanvasStateCache = new Map<string, BeeroomMissionCanvasState>();
 let missionCanvasStateHydrated = false;
@@ -72,11 +73,18 @@ const normalizeChatClearedAfter = (value: unknown) => {
   return timestamp;
 };
 
+const normalizeChatWidth = (value: unknown) => {
+  const width = Math.round(Number(value || 0));
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return width;
+};
+
 const cloneState = (state: BeeroomMissionCanvasState): BeeroomMissionCanvasState => ({
   version: MISSION_CANVAS_STATE_VERSION,
   nodePositionOverrides: cloneNodePositionOverrides(state.nodePositionOverrides),
   activeNodeId: String(state.activeNodeId || '').trim(),
   chatCollapsed: !!state.chatCollapsed,
+  chatWidth: normalizeChatWidth(state.chatWidth),
   chatClearedAfter: normalizeChatClearedAfter(state.chatClearedAfter),
   viewport: cloneViewport(state.viewport)
 });
@@ -86,6 +94,7 @@ const normalizeState = (state: Partial<BeeroomMissionCanvasState> | null | undef
   nodePositionOverrides: cloneNodePositionOverrides(state?.nodePositionOverrides || {}),
   activeNodeId: String(state?.activeNodeId || '').trim(),
   chatCollapsed: !!state?.chatCollapsed,
+  chatWidth: normalizeChatWidth(state?.chatWidth),
   chatClearedAfter: normalizeChatClearedAfter(state?.chatClearedAfter),
   viewport: cloneViewport(state?.viewport || null)
 });
@@ -188,6 +197,8 @@ export const mergeBeeroomMissionCanvasState = (
         : current.activeNodeId,
     chatCollapsed:
       nextPatch.chatCollapsed !== undefined ? !!nextPatch.chatCollapsed : current.chatCollapsed,
+    chatWidth:
+      nextPatch.chatWidth !== undefined ? normalizeChatWidth(nextPatch.chatWidth) : current.chatWidth,
     chatClearedAfter:
       nextPatch.chatClearedAfter !== undefined
         ? normalizeChatClearedAfter(nextPatch.chatClearedAfter)
