@@ -614,30 +614,36 @@ impl PostgresStorage {
                 &[],
             )?;
         }
-        let today = Local::now().format("%Y-%m-%d").to_string();
-        conn.execute(
-            "UPDATE user_accounts
-             SET token_balance = CASE
-                     WHEN COALESCE(token_balance, 0) > 0 THEN token_balance
-                     WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota, 0) - COALESCE(daily_quota_used, 0), 0)
-                     ELSE GREATEST(COALESCE(daily_quota, 0), 0)
-                 END,
-                 token_granted_total = CASE
-                     WHEN COALESCE(token_granted_total, 0) > 0 THEN token_granted_total
-                     ELSE GREATEST(COALESCE(daily_quota, 0), 0)
-                 END,
-                 token_used_total = CASE
-                     WHEN COALESCE(token_used_total, 0) > 0 THEN token_used_total
-                     WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota_used, 0), 0)
-                     ELSE 0
-                 END,
-                 last_token_grant_date = COALESCE(last_token_grant_date, daily_quota_date)
-             WHERE COALESCE(token_balance, 0) = 0
-                OR COALESCE(token_granted_total, 0) = 0
-                OR COALESCE(token_used_total, 0) = 0
-                OR last_token_grant_date IS NULL",
-            &[&today],
-        )?;
+        // Only migrate from legacy daily_quota columns when they exist
+        let has_legacy_quota = columns.contains("daily_quota_date")
+            && columns.contains("daily_quota")
+            && columns.contains("daily_quota_used");
+        if has_legacy_quota {
+            let today = Local::now().format("%Y-%m-%d").to_string();
+            conn.execute(
+                "UPDATE user_accounts
+                 SET token_balance = CASE
+                         WHEN COALESCE(token_balance, 0) > 0 THEN token_balance
+                         WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota, 0) - COALESCE(daily_quota_used, 0), 0)
+                         ELSE GREATEST(COALESCE(daily_quota, 0), 0)
+                     END,
+                     token_granted_total = CASE
+                         WHEN COALESCE(token_granted_total, 0) > 0 THEN token_granted_total
+                         ELSE GREATEST(COALESCE(daily_quota, 0), 0)
+                     END,
+                     token_used_total = CASE
+                         WHEN COALESCE(token_used_total, 0) > 0 THEN token_used_total
+                         WHEN COALESCE(daily_quota_date, '') = $1 THEN GREATEST(COALESCE(daily_quota_used, 0), 0)
+                         ELSE 0
+                     END,
+                     last_token_grant_date = COALESCE(last_token_grant_date, daily_quota_date)
+                 WHERE COALESCE(token_balance, 0) = 0
+                    OR COALESCE(token_granted_total, 0) = 0
+                    OR COALESCE(token_used_total, 0) = 0
+                    OR last_token_grant_date IS NULL",
+                &[&today],
+            )?;
+        }
         Ok(())
     }
 
