@@ -2,7 +2,8 @@ const fs = require('fs')
 const path = require('path')
 const { Resvg } = require('@resvg/resvg-js')
 const { parseICO } = require('icojs')
-const pngToIco = require('png-to-ico')
+const pngToIcoModule = require('png-to-ico')
+const pngToIco = pngToIcoModule.default ?? pngToIcoModule
 const { PNG } = require('pngjs')
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..')
