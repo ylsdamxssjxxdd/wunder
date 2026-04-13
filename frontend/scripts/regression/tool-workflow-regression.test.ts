@@ -234,6 +234,19 @@ test('workflow consumed tokens fall back to round usage totals when explicit val
   assert.equal(tokens, 2840);
 });
 
+test('workflow consumed tokens can read nested model usage totals', () => {
+  const tokens = resolveWorkflowConsumedTokens(
+    JSON.stringify({
+      payload: {
+        usage: {
+          total_tokens: 8066
+        }
+      }
+    })
+  );
+  assert.equal(tokens, 8066);
+});
+
 test('workflow consumed tokens ignore context-only payloads', () => {
   const tokens = resolveWorkflowConsumedTokens(
     JSON.stringify({
@@ -268,13 +281,13 @@ test('workflow consumed tokens can still read request usage from item payload wh
   assert.equal(formatWorkflowConsumedTokensLabel(tokens), '2,048 tok');
 });
 
-test('workflow entry consumed tokens prefer tool call round usage over result aggregate', () => {
+test('workflow entry consumed tokens prefer tool call model usage over result aggregate', () => {
   const tokens = resolveWorkflowEntryConsumedTokens({
     callItem: {
       eventType: 'tool_call',
       modelRound: 2,
       payload: {
-        round_usage: {
+        usage: {
           total_tokens: 512
         },
         context_occupancy_tokens: 4096
@@ -323,7 +336,7 @@ test('workflow entry consumed token resolution records call as the winning sourc
     callItem: {
       eventType: 'tool_call',
       payload: {
-        round_usage: {
+        usage: {
           total_tokens: 321
         }
       }

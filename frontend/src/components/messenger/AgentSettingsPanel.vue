@@ -304,7 +304,7 @@
               {{ t('profile.avatar.pageNext') }}
             </button>
           </div>
-          <div v-if="!avatarDialogImageUrl" class="messenger-settings-row messenger-settings-row--compact">
+          <div class="messenger-settings-row messenger-settings-row--compact">
             <div class="messenger-settings-label">{{ t('portal.agent.avatarColor') }}</div>
             <div class="messenger-settings-avatar-color-select-wrap">
               <span class="messenger-settings-avatar-color-chip" :style="{ '--avatar-color': avatarDialogColor }"></span>
@@ -753,10 +753,10 @@ const resolveAvatarOptionImage = (key: unknown): string =>
 const agentAvatarPreviewImageUrl = computed(() => resolveAvatarOptionImage(form.icon_name));
 const avatarDialogImageUrl = computed(() => resolveAvatarOptionImage(avatarDialogIcon.value));
 const agentAvatarPreviewStyle = computed(() => ({
-  background: agentAvatarPreviewImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(form.icon_color)
+  background: normalizeAgentAvatarColor(form.icon_color)
 }));
 const avatarDialogPreviewStyle = computed(() => ({
-  background: avatarDialogImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(avatarDialogColor.value)
+  background: normalizeAgentAvatarColor(avatarDialogColor.value)
 }));
 const agentAvatarInitial = computed(() =>
   resolveAgentAvatarInitial(String(form.name || '').trim() || normalizedAgentId.value || t('messenger.defaultAgent'))

@@ -472,6 +472,51 @@ const mergeWorkflowUsageSnapshot = (current, incoming) => {
   return merged;
 };
 
+const buildWorkflowModelRoundUsageMeta = (...sources) => {
+  for (const source of sources) {
+    const record = parseWorkflowUsageRecord(source);
+    if (!record) {
+      continue;
+    }
+    const usageSource = parseWorkflowUsageRecord(record.usage) ?? record;
+    const usage: Record<string, number> = {};
+    const inputTokens = parseOptionalCount(
+      usageSource.input_tokens ?? usageSource.input ?? usageSource.inputTokens
+    );
+    const outputTokens = parseOptionalCount(
+      usageSource.output_tokens ?? usageSource.output ?? usageSource.outputTokens
+    );
+    const totalTokens = parseOptionalCount(
+      usageSource.total_tokens ?? usageSource.total ?? usageSource.totalTokens
+    );
+    if (inputTokens !== null) {
+      usage.input_tokens = inputTokens;
+    }
+    if (outputTokens !== null) {
+      usage.output_tokens = outputTokens;
+    }
+    if (totalTokens !== null) {
+      usage.total_tokens = totalTokens;
+    }
+    if (Object.keys(usage).length > 0) {
+      return { payload: { usage } };
+    }
+  }
+  return {};
+};
+
+const combineWorkflowUsageMeta = (...sources) => {
+  let merged = null;
+  sources.forEach((source) => {
+    const payload = parseWorkflowUsageRecord(source?.payload ?? source);
+    if (!payload) {
+      return;
+    }
+    merged = mergeWorkflowUsageSnapshot(merged, payload);
+  });
+  return merged ? { payload: merged } : {};
+};
+
 const summarizeWorkflowUsageDebug = (value, depth = 0) => {
   if (depth > 2) {
     return null;
@@ -6890,7 +6935,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     number,
     { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
   >();
-  const roundUsagePayloadMap = new Map<number, unknown>();
+  const modelRoundUsagePayloadMap = new Map<number, unknown>();
   let outputItemId = null;
   const blockedRounds = new Set();
   const consumedQuotaRoundSet = new Set<number>();
@@ -7459,13 +7504,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
   };
 
-  const applyRoundUsageToWorkflowTools = (roundNumber, usagePayload) => {
+  const applyModelRoundUsageToWorkflowTools = (roundNumber, usagePayload) => {
     const normalizedRound = normalizeStreamRound(roundNumber);
     if (!Number.isFinite(normalizedRound) || !Array.isArray(assistantMessage.workflowItems)) {
       return;
     }
-    roundUsagePayloadMap.set(normalizedRound, usagePayload);
-    const usageMeta = buildWorkflowUsageMeta(usagePayload);
+    modelRoundUsagePayloadMap.set(normalizedRound, usagePayload);
+    const usageMeta = buildWorkflowModelRoundUsageMeta(usagePayload);
     if (!usageMeta.payload) {
       return;
     }
@@ -7516,7 +7561,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
     });
     if (isChatDebugEnabled()) {
-      chatDebugLog('chat.store.runtime', 'workflow-tool-round-usage', {
+      chatDebugLog('chat.store.runtime', 'workflow-tool-model-usage', {
         roundNumber: normalizedRound,
         incoming: summarizeWorkflowUsageDebug(usageMeta.payload),
         matchedToolCalls: debugMatches.length,
@@ -7742,6 +7787,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       tool: executeCommandToolName,
       command: pickString(command, source?.command)
     });
+    const usageMeta = combineWorkflowUsageMeta(
+      buildWorkflowModelRoundUsageMeta(
+        Number.isFinite(lastRound) ? modelRoundUsagePayloadMap.get(lastRound) : null
+      ),
+      buildWorkflowUsageMeta(source)
+    );
     const patch = {
       title,
       detail,
@@ -7753,10 +7804,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
-      ...buildWorkflowUsageMeta(
-        Number.isFinite(lastRound) ? roundUsagePayloadMap.get(lastRound) : null,
-        source
-      )
+      ...usageMeta
     };
     const existing = toolCallItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7771,10 +7819,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
-      ...buildWorkflowUsageMeta(
-        Number.isFinite(lastRound) ? roundUsagePayloadMap.get(lastRound) : null,
-        source
-      )
+      ...usageMeta
     });
     assistantMessage.workflowItems.push(item);
     registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
@@ -8287,9 +8332,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       data?.model_round ??
         payload?.model_round ??
         data?.round ??
-        payload?.round ??
-        data?.user_round ??
-        payload?.user_round
+        payload?.round
     );
     if (directRound !== null) {
       return directRound;
@@ -8302,9 +8345,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       let segmentRound = null;
       segments.forEach((segment) => {
         if (!segment || typeof segment !== 'object') return;
-        const resolved = normalizeStreamRound(
-          segment.model_round ?? segment.round ?? segment.user_round
-        );
+        const resolved = normalizeStreamRound(segment.model_round ?? segment.round);
         if (resolved !== null) {
           segmentRound = resolved;
         }
@@ -8807,6 +8848,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const detailSource = data && typeof data === 'object' ? data : payload ?? data;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         const toolCallRound = resolveRound(payload, data);
+        const usageMeta = combineWorkflowUsageMeta(
+          buildWorkflowModelRoundUsageMeta(
+            toolCallRound !== null ? modelRoundUsagePayloadMap.get(toolCallRound) : null
+          ),
+          buildWorkflowUsageMeta(detailSource, data, payload)
+        );
         if (isExecuteCommandTool(toolName)) {
           if (commandSessionId) {
             syncCommandSessionSnapshot(detailSource);
@@ -8832,12 +8879,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           toolCallId: toolCallId || commandSessionId || undefined,
           commandSessionId: commandSessionId || undefined,
           modelRound: toolCallRound ?? undefined,
-          ...buildWorkflowUsageMeta(
-            toolCallRound !== null ? roundUsagePayloadMap.get(toolCallRound) : null,
-            detailSource,
-            data,
-            payload
-          )
+          ...usageMeta
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id, toolCallId || commandSessionId);
@@ -9288,6 +9330,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (round !== null) {
           lastRound = round;
           assistantMessage.stream_round = round;
+          applyModelRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         }
         if (round !== null && blockedRounds.has(round)) {
           break;
@@ -9376,6 +9419,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             updateContextFromUsage: false
           }
         );
+        applyModelRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         break;
       }
       case 'round_usage': {
@@ -9393,7 +9437,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             includeInRoundAverage: false
           }
         );
-        applyRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         fallbackQuotaUsageFromRound(data ?? payload ?? {}, round);
         break;
       }

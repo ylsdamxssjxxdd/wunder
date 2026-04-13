@@ -49,7 +49,7 @@ const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
 const avatarImageUrl = computed(() => resolveAgentAvatarImageByConfig(avatarConfig.value));
 const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
 const avatarFaceStyle = computed(() => ({
-  background: avatarImageUrl.value ? 'transparent' : avatarConfig.value.color
+  background: avatarConfig.value.color
 }));
 const statusIconClass = computed(() => {
   switch (props.state) {

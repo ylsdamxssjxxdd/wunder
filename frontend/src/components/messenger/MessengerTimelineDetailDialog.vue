@@ -120,6 +120,7 @@ type TimelineDetailEventItem = {
   title: string;
   raw: string;
   searchText: string;
+  rawEvent: TimelineDetailRoundEvent;
 };
 
 type TimelineRoundOption = {
@@ -491,11 +492,11 @@ const normalizeRounds = (value: unknown): TimelineDetailRound[] => {
     .filter((item) => Array.isArray(item.events) && item.events.length > 0);
 };
 
-const isStreamingEventType = (eventType: string): boolean => {
+const isDefaultHiddenEventType = (eventType: string): boolean => {
   const normalized = String(eventType || '')
     .trim()
     .toLowerCase();
-  return normalized.endsWith('_delta');
+  return normalized.endsWith('_delta') || normalized === 'context_usage';
 };
 
 const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSession => {
@@ -591,7 +592,8 @@ const events = computed<TimelineDetailEventItem[]>(() => {
         timestampLabel,
         title,
         raw,
-        searchText
+        searchText,
+        rawEvent: event
       });
     });
   });
@@ -670,7 +672,7 @@ const filteredEvents = computed(() => {
     if (selectedType && item.eventType !== selectedType) {
       return false;
     }
-    if (!selectedType && isStreamingEventType(item.eventType)) {
+    if (!selectedType && isDefaultHiddenEventType(item.eventType)) {
       return false;
     }
     if (!keyword) {
@@ -678,6 +680,15 @@ const filteredEvents = computed(() => {
     }
     return item.searchText.includes(keyword);
   });
+});
+
+const exportEvents = computed(() => {
+  const selectedType = String(eventTypeFilter.value || '').trim();
+  const keyword = String(keywordFilter.value || '').trim();
+  if (selectedType || keyword) {
+    return filteredEvents.value;
+  }
+  return events.value.filter((item) => !isDefaultHiddenEventType(item.eventType));
 });
 
 const dialogTitle = computed(() => {
@@ -813,26 +824,20 @@ const normalizeExportTimestamp = (value: unknown): string => {
 const buildTimelineExportLines = (): TimelineExportLine[] => {
   const output: TimelineExportLine[] = [];
   const uniqueEventTypes = new Set<string>();
-  let order = 0;
-
-  rounds.value.forEach((round, roundIndex) => {
-    const roundValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
-    const eventList = Array.isArray(round?.events) ? round.events : [];
-    eventList.forEach((event) => {
-      order += 1;
-      const eventType = String(event?.event || event?.type || 'unknown').trim() || 'unknown';
-      uniqueEventTypes.add(eventType);
-      output.push({
-        record_type: 'event',
-        order,
-        round: roundValue,
-        event: eventType,
-        timestamp: normalizeExportTimestamp(event?.timestamp),
-        timestamp_ms: normalizeTimestamp(event?.timestamp),
-        title: resolveEventTitle(eventType, event?.data),
-        summary: buildEventSummary(eventType, event?.data),
-        data: unwrapEventData(event?.data)
-      });
+  exportEvents.value.forEach((item, index) => {
+    const event = item.rawEvent;
+    const eventType = item.eventType || 'unknown';
+    uniqueEventTypes.add(eventType);
+    output.push({
+      record_type: 'event',
+      order: index + 1,
+      round: item.round,
+      event: eventType,
+      timestamp: normalizeExportTimestamp(event?.timestamp),
+      timestamp_ms: normalizeTimestamp(event?.timestamp),
+      title: item.title,
+      summary: buildEventSummary(eventType, event?.data),
+      data: unwrapEventData(event?.data)
     });
   });
 
@@ -845,7 +850,7 @@ const buildTimelineExportLines = (): TimelineExportLine[] => {
     summary: {
       question: detailQuestion.value,
       round_count: rounds.value.length,
-      event_count: order,
+      event_count: output.length,
       event_types: Array.from(uniqueEventTypes).sort((left, right) => left.localeCompare(right)),
       running: running.value,
       last_event_id: lastEventId.value
