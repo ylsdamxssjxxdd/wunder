@@ -280,6 +280,8 @@ impl SqliteStorage {
             created_at: row.get(17)?,
             updated_at: row.get(18)?,
             preset_binding: Self::parse_preset_binding(row.get(20)?),
+            silent: row.get::<_, Option<i64>>(21)?.unwrap_or(0) != 0,
+            prefer_mother: row.get::<_, Option<i64>>(22)?.unwrap_or(0) != 0,
         })
     }
 
@@ -592,6 +594,18 @@ impl SqliteStorage {
         }
         if !columns.contains("preset_binding") {
             conn.execute("ALTER TABLE user_agents ADD COLUMN preset_binding TEXT", [])?;
+        }
+        if !columns.contains("silent") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN silent INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("prefer_mother") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN prefer_mother INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -1641,7 +1655,9 @@ impl StorageBackend for SqliteStorage {
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
               preset_questions TEXT,
-              preset_binding TEXT
+              preset_binding TEXT,
+              silent INTEGER NOT NULL DEFAULT 0,
+              prefer_mother INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_user_agents_user
               ON user_agents (user_id, updated_at);
@@ -9034,11 +9050,11 @@ impl StorageBackend for SqliteStorage {
             .and_then(|value| serde_json::to_string(value).ok());
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, name = excluded.name, description = excluded.description, \
              system_prompt = excluded.system_prompt, model_name = excluded.model_name, tool_names = excluded.tool_names, declared_tool_names = excluded.declared_tool_names, declared_skill_names = excluded.declared_skill_names, ability_items = excluded.ability_items, access_level = excluded.access_level, approval_mode = excluded.approval_mode, \
-             is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at, preset_questions = excluded.preset_questions, preset_binding = excluded.preset_binding",
+             is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at, preset_questions = excluded.preset_questions, preset_binding = excluded.preset_binding, silent = excluded.silent, prefer_mother = excluded.prefer_mother",
             params![
                 record.agent_id,
                 record.user_id,
@@ -9060,7 +9076,9 @@ impl StorageBackend for SqliteStorage {
                 record.created_at,
                 record.updated_at,
                 preset_questions,
-                preset_binding
+                preset_binding,
+                if record.silent { 1 } else { 0 },
+                if record.prefer_mother { 1 } else { 0 }
             ],
         )?;
         Ok(())

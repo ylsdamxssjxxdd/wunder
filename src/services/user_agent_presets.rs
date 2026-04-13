@@ -251,6 +251,8 @@ fn build_target_snapshot_from_context(
                 is_shared: false,
                 icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
                 hive_id: DEFAULT_HIVE_ID.to_string(),
+                silent: false,
+                prefer_mother: false,
                 sandbox_container_id: preset.sandbox_container_id,
             },
             &skill_name_keys,
@@ -432,6 +434,8 @@ pub async fn create_preset_agent_record(
         created_at: now,
         updated_at: now,
         preset_binding: Some(build_binding(preset, &target)),
+        silent: false,
+        prefer_mother: false,
     }
 }
 
@@ -578,6 +582,8 @@ mod tests {
             created_at: 0.0,
             updated_at: 0.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         let mut skill_name_keys = HashSet::new();
         skill_name_keys.insert("planner".to_string());

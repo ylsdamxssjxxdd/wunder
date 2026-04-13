@@ -187,6 +187,8 @@ pub struct UserAgentRecord {
     pub created_at: f64,
     pub updated_at: f64,
     pub preset_binding: Option<UserAgentPresetBinding>,
+    pub silent: bool,
+    pub prefer_mother: bool,
 }
 
 #[derive(Debug, Clone)]

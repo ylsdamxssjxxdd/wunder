@@ -368,6 +368,12 @@ export default {
   'portal.agent.sandbox.label': 'Workspace Directory',
   'portal.agent.sandbox.option': 'Agent Workspace {id}',
   'portal.agent.sandbox.hint': 'Agents using the same agent workspace ID (1-10) share one file workspace.',
+  'portal.agent.silent.title': 'Silent Mode',
+  'portal.agent.silent.hint':
+    'Hide this agent from the messenger middle list and the beeroom right sidebar message feed.',
+  'portal.agent.preferMother.title': 'Prefer Mother Bee',
+  'portal.agent.preferMother.hint':
+    'Use this agent as the default mother bee when a hive has no explicit mother configured.',
   'portal.agent.permission.title': 'Permission Level',
   'portal.agent.permission.hint': 'Controls whether command / PTC tools need frontend approval.',
   'portal.agent.permission.tooltip': 'Controls command/PTC approvals. Adjust in Agent Settings.',

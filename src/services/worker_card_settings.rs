@@ -206,6 +206,8 @@ fn record_from_update(update: &WorkerCardRecordUpdate) -> UserAgentRecord {
         created_at: 0.0,
         updated_at: 0.0,
         preset_binding: None,
+        silent: update.silent,
+        prefer_mother: update.prefer_mother,
     }
 }
 
@@ -282,6 +284,8 @@ pub fn worker_card_update_from_record(
             icon: record.icon.clone(),
             hive_id: record.hive_id.clone(),
             sandbox_container_id: record.sandbox_container_id,
+            silent: record.silent,
+            prefer_mother: record.prefer_mother,
         },
         skill_name_keys,
     )
@@ -345,6 +349,8 @@ pub fn preset_update_from_config(
             is_shared: false,
             icon: Some(build_icon_payload(&config.icon_name, &config.icon_color)),
             hive_id: DEFAULT_HIVE_ID.to_string(),
+            silent: false,
+            prefer_mother: false,
             sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
         },
         skill_name_keys,
@@ -415,6 +421,8 @@ pub fn default_agent_update_from_config(
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
             hive_id: DEFAULT_HIVE_ID.to_string(),
+            silent: config.silent,
+            prefer_mother: config.prefer_mother,
             sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
         },
         skill_name_keys,
@@ -440,6 +448,8 @@ pub fn default_agent_config_from_update(
         status: normalize_agent_status(Some(status)),
         icon: update.icon.clone(),
         sandbox_container_id: normalize_sandbox_container_id(update.sandbox_container_id),
+        silent: update.silent,
+        prefer_mother: update.prefer_mother,
         created_at,
         updated_at,
     }

@@ -395,6 +395,23 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return map;
   });
 
+  const silentAgentIdSet = computed(() => {
+    const set = new Set<string>();
+    options.agents.value.forEach((member) => {
+      const agentId = String(member.agent_id || '').trim();
+      if (!agentId || member.silent !== true) return;
+      set.add(agentId);
+    });
+    Object.entries(agentStore.agentMap || {}).forEach(([agentId, agent]) => {
+      const normalizedAgentId = String(agentId || '').trim();
+      if (!normalizedAgentId || !agent || typeof agent !== 'object') return;
+      if (Boolean((agent as Record<string, unknown>).silent)) {
+        set.add(normalizedAgentId);
+      }
+    });
+    return set;
+  });
+
   const resolveAgentAvatarImageByAgentId = (agentId: unknown): string =>
     agentAvatarImageMap.value.get(String(agentId || '').trim()) || '';
 
@@ -2360,6 +2377,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         (message) =>
           !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
       )
+      .filter((message) => {
+        if (message.tone === 'user') return true;
+        const senderAgentId = String(message.senderAgentId || '').trim();
+        if (!senderAgentId) return true;
+        return !silentAgentIdSet.value.has(senderAgentId);
+      })
   );
 
   const dispatchBindingSignature = computed(() =>

@@ -236,6 +236,8 @@ fn record_from_preset_update(preset_id: &str, update: &WorkerCardRecordUpdate) -
         created_at: 0.0,
         updated_at: 0.0,
         preset_binding: None,
+        silent: update.silent,
+        prefer_mother: update.prefer_mother,
     }
 }
 

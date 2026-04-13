@@ -403,6 +403,8 @@ fn seed_agents(state: &AppState, user_id: &str, agent_count: usize) -> Result<Ve
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         state.user_store.upsert_user_agent(&record)?;
         agent_ids.push(agent_id);

@@ -428,6 +428,8 @@ impl PostgresStorage {
             created_at: row.get(17),
             updated_at: row.get(18),
             preset_binding: Self::parse_preset_binding(row.get(20)),
+            silent: row.get::<_, i32>(21) != 0,
+            prefer_mother: row.get::<_, i32>(22) != 0,
         }
     }
 
@@ -1018,6 +1020,18 @@ impl PostgresStorage {
         if !columns.contains("preset_binding") {
             conn.execute(
                 "ALTER TABLE user_agents ADD COLUMN preset_binding TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("silent") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN silent INTEGER NOT NULL DEFAULT 0",
+                &[],
+            )?;
+        }
+        if !columns.contains("prefer_mother") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN prefer_mother INTEGER NOT NULL DEFAULT 0",
                 &[],
             )?;
         }
@@ -2212,7 +2226,9 @@ impl StorageBackend for PostgresStorage {
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL,
                   preset_questions TEXT,
-                  preset_binding TEXT
+                  preset_binding TEXT,
+                  silent INTEGER NOT NULL DEFAULT 0,
+                  prefer_mother INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_user_agents_user
                   ON user_agents (user_id, updated_at);
@@ -9241,10 +9257,12 @@ impl StorageBackend for PostgresStorage {
             .as_ref()
             .and_then(|value| serde_json::to_string(value).ok());
         let is_shared = if record.is_shared { 1 } else { 0 };
+        let silent = if record.silent { 1 } else { 0 };
+        let prefer_mother = if record.prefer_mother { 1 } else { 0 };
         let sandbox_container_id = normalize_sandbox_container_id(record.sandbox_container_id);
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, model_name = EXCLUDED.model_name, tool_names = EXCLUDED.tool_names, declared_tool_names = EXCLUDED.declared_tool_names, declared_skill_names = EXCLUDED.declared_skill_names, ability_items = EXCLUDED.ability_items, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at, preset_questions = EXCLUDED.preset_questions, preset_binding = EXCLUDED.preset_binding",
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding, silent, prefer_mother)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, model_name = EXCLUDED.model_name, tool_names = EXCLUDED.tool_names, declared_tool_names = EXCLUDED.declared_tool_names, declared_skill_names = EXCLUDED.declared_skill_names, ability_items = EXCLUDED.ability_items, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at, preset_questions = EXCLUDED.preset_questions, preset_binding = EXCLUDED.preset_binding, silent = EXCLUDED.silent, prefer_mother = EXCLUDED.prefer_mother",
             &[
                 &record.agent_id,
                 &record.user_id,
@@ -9267,6 +9285,8 @@ impl StorageBackend for PostgresStorage {
                 &record.updated_at,
                 &preset_questions,
                 &preset_binding,
+                &silent,
+                &prefer_mother,
             ],
         )?;
         Ok(())

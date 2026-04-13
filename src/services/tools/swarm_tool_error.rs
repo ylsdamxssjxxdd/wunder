@@ -9,14 +9,12 @@ pub(crate) fn agent_swarm_send_example() -> Value {
         "action": "send",
         "agent_name": "worker_a",
         "message": "请完成指定任务。",
-        "threadStrategy": "fresh_main_thread"
     })
 }
 
 pub(crate) fn agent_swarm_batch_send_example() -> Value {
     json!({
         "action": "batch_send",
-        "threadStrategy": "fresh_main_thread",
         "tasks": [
             {
                 "agent_name": "worker_a",
@@ -42,7 +40,6 @@ pub(crate) fn agent_swarm_spawn_example() -> Value {
         "action": "spawn",
         "agent_name": "worker_a",
         "task": "请完成指定任务。",
-        "threadStrategy": "fresh_main_thread"
     })
 }
 

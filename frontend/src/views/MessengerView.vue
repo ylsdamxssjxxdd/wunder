@@ -2722,7 +2722,9 @@ const agentMap = computed(() => {
     name: t('messenger.defaultAgent'),
     description: t('messenger.defaultAgentDesc'),
     sandbox_container_id: 1,
-    approval_mode: defaultAgentApprovalMode.value
+    approval_mode: defaultAgentApprovalMode.value,
+    silent: false,
+    prefer_mother: false
   });
   ownedAgents.value.forEach((item) => {
     const id = normalizeAgentId(item?.id);
@@ -2736,6 +2738,12 @@ const agentMap = computed(() => {
   });
   return map;
 });
+
+const isSilentAgent = (agentId: unknown): boolean => {
+  const normalized = normalizeAgentId(agentId);
+  if (!normalized) return false;
+  return Boolean(agentMap.value.get(normalized)?.silent);
+};
 
 const activeConversation = computed(() => sessionHub.activeConversation);
 const resolvedMessageConversationKind = computed<'agent' | 'world' | ''>(() => {
@@ -4410,6 +4418,7 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
       } as MixedConversation;
     })
     .filter((item) => agentMap.value.has(item.agentId))
+    .filter((item) => !isSilentAgent(item.agentId))
     .filter((item) => {
       const dismissedAt = Number(dismissedMap[item.agentId] || 0);
       if (!dismissedAt) return true;
@@ -4422,6 +4431,7 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
     const draftDismissedAt = Number(dismissedMap[draftAgentId] || 0);
     if (
       agentMap.value.has(draftAgentId) &&
+      !isSilentAgent(draftAgentId) &&
       !agentItems.some((item) => item.agentId === draftAgentId) &&
       !draftDismissedAt
     ) {

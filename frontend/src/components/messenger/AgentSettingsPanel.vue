@@ -193,6 +193,24 @@
                 </el-select>
               </div>
             </div>
+            <div class="messenger-agent-base-item messenger-agent-base-item--switch">
+              <div class="messenger-agent-base-label">{{ t('portal.agent.silent.title') }}</div>
+              <div class="messenger-agent-base-control">
+                <div class="messenger-agent-switch-row">
+                  <el-switch v-model="form.silent" :disabled="isInteractionDisabled" />
+                  <span class="messenger-agent-base-hint">{{ t('portal.agent.silent.hint') }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="messenger-agent-base-item messenger-agent-base-item--switch">
+              <div class="messenger-agent-base-label">{{ t('portal.agent.preferMother.title') }}</div>
+              <div class="messenger-agent-base-control">
+                <div class="messenger-agent-switch-row">
+                  <el-switch v-model="form.prefer_mother" :disabled="isInteractionDisabled" />
+                  <span class="messenger-agent-base-hint">{{ t('portal.agent.preferMother.hint') }}</span>
+                </div>
+              </div>
+            </div>
           </div>
         </el-form-item>
         <el-form-item class="messenger-agent-form-item">
@@ -450,6 +468,8 @@ type AgentFormSnapshot = {
   approval_mode: string;
   icon_name: string;
   icon_color: string;
+  silent: boolean;
+  prefer_mother: boolean;
 };
 
 const props = defineProps({
@@ -523,6 +543,8 @@ const form = reactive({
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode(),
+  silent: false,
+  prefer_mother: false,
   icon_name: DEFAULT_AGENT_AVATAR_IMAGE_KEY,
   icon_color: DEFAULT_AVATAR_COLOR
 });
@@ -824,7 +846,9 @@ const buildFormSnapshot = (): AgentFormSnapshot => {
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
     approval_mode: normalizeApprovalMode(form.approval_mode),
     icon_name: normalizeAgentAvatarName(form.icon_name),
-    icon_color: normalizeAgentAvatarColor(form.icon_color)
+    icon_color: normalizeAgentAvatarColor(form.icon_color),
+    silent: Boolean(form.silent),
+    prefer_mother: Boolean(form.prefer_mother)
   };
 };
 
@@ -1124,6 +1148,8 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+    form.silent = Boolean(agent.silent);
+    form.prefer_mother = Boolean(agent.prefer_mother);
     form.icon_name = normalizeAgentAvatarName(avatarConfig.name);
     form.icon_color = normalizeAgentAvatarColor(avatarConfig.color);
     markFormClean();
@@ -1178,6 +1204,8 @@ const saveAgent = async () => {
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode),
+      silent: Boolean(form.silent),
+      prefer_mother: Boolean(form.prefer_mother),
       icon: stringifyAgentAvatarIconConfig({
         name: form.icon_name,
         color: form.icon_color
@@ -1217,6 +1245,8 @@ const exportWorkerCard = () => {
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     approval_mode: normalizeApprovalMode(form.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    silent: Boolean(form.silent),
+    prefer_mother: Boolean(form.prefer_mother),
     hive_id: groupPayload.hive_id,
     hive_name: groupPayload.hive_name,
     hive_description: groupPayload.hive_description
@@ -1423,6 +1453,24 @@ onBeforeUnmount(() => {
 .messenger-agent-base-control {
   width: 100%;
   min-width: 0;
+}
+
+.messenger-agent-base-item--switch {
+  align-items: start;
+}
+
+.messenger-agent-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  flex-wrap: wrap;
+}
+
+.messenger-agent-base-hint {
+  color: var(--el-text-color-secondary, #64748b);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .messenger-agent-base-select {

@@ -164,6 +164,8 @@ async fn build_default_agent_config(
         status: DEFAULT_AGENT_STATUS.to_string(),
         icon: None,
         sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+        silent: false,
+        prefer_mother: false,
         created_at: now_ts(),
         updated_at: now_ts(),
     };

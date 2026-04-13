@@ -139,6 +139,8 @@ pub async fn ensure_external_embed_agent_with_runtime(
         created_at: now,
         updated_at: now,
         preset_binding: None,
+        silent: false,
+        prefer_mother: false,
     };
     user_store.upsert_user_agent(&created)?;
     Ok((created, true))

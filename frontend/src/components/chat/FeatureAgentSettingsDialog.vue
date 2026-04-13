@@ -106,6 +106,16 @@
                   />
                 </el-select>
               </div>
+              <div class="agent-share-row agent-share-row--switch">
+                <span>{{ t('portal.agent.silent.title') }}</span>
+                <el-switch v-model="form.silent" size="small" />
+              </div>
+              <div class="agent-editor-hint">{{ t('portal.agent.silent.hint') }}</div>
+              <div class="agent-share-row agent-share-row--switch">
+                <span>{{ t('portal.agent.preferMother.title') }}</span>
+                <el-switch v-model="form.prefer_mother" size="small" />
+              </div>
+              <div class="agent-editor-hint">{{ t('portal.agent.preferMother.hint') }}</div>
               <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
               <div class="agent-editor-hint">{{ t('portal.agent.model.hint') }}</div>
               <div v-if="showApprovalModeSetting" class="agent-editor-hint">
@@ -241,7 +251,9 @@ const form = reactive({
   preset_questions: [],
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
-  approval_mode: resolveDefaultApprovalMode()
+  approval_mode: resolveDefaultApprovalMode(),
+  silent: false,
+  prefer_mother: false
 });
 
 const saving = ref(false);
@@ -395,6 +407,8 @@ const loadAgent = async () => {
     ) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+    form.silent = Boolean(agent.silent);
+    form.prefer_mother = Boolean(agent.prefer_mother);
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
   }
@@ -422,7 +436,9 @@ const saveAgent = async () => {
       system_prompt: form.system_prompt || '',
       model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
-      approval_mode: normalizeApprovalMode(form.approval_mode)
+      approval_mode: normalizeApprovalMode(form.approval_mode),
+      silent: Boolean(form.silent),
+      prefer_mother: Boolean(form.prefer_mother)
     };
     if (!payload.hive_name) delete payload.hive_name;
     if (!payload.hive_description) delete payload.hive_description;
@@ -453,6 +469,8 @@ const exportWorkerCard = () => {
     preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
     approval_mode: normalizeApprovalMode(form.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    silent: Boolean(form.silent),
+    prefer_mother: Boolean(form.prefer_mother),
     hive_id: groupPayload.hive_id,
     hive_name: groupPayload.hive_name,
     hive_description: groupPayload.hive_description

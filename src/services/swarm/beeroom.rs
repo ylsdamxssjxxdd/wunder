@@ -153,7 +153,44 @@ pub fn claim_mother_agent(
         }
     }
 
-    set_mother_agent(storage, user_id, hive_id, candidate)
+    let resolved = resolve_preferred_mother_agent_id(storage, user_id, hive_id, Some(candidate))?
+        .unwrap_or_else(|| candidate.to_string());
+    set_mother_agent(storage, user_id, hive_id, &resolved)
+}
+
+pub fn resolve_preferred_mother_agent_id(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    hive_id: &str,
+    candidate_agent_id: Option<&str>,
+) -> Result<Option<String>> {
+    let candidate = candidate_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let mut preferred = storage
+        .list_user_agents_by_hive(user_id, hive_id)?
+        .into_iter()
+        .filter(|agent| agent.prefer_mother)
+        .collect::<Vec<_>>();
+    if preferred.is_empty() {
+        return Ok(candidate);
+    }
+    preferred.sort_by(|left, right| {
+        if let Some(candidate_id) = candidate.as_deref() {
+            let left_is_candidate = left.agent_id == candidate_id;
+            let right_is_candidate = right.agent_id == candidate_id;
+            if left_is_candidate != right_is_candidate {
+                return right_is_candidate.cmp(&left_is_candidate);
+            }
+        }
+        right
+            .updated_at
+            .partial_cmp(&left.updated_at)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.agent_id.cmp(&right.agent_id))
+    });
+    Ok(preferred.into_iter().next().map(|agent| agent.agent_id))
 }
 
 pub fn set_mother_agent(
@@ -673,6 +710,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
 
         let (session, created) =
@@ -711,6 +750,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
 
         let (session, created) =

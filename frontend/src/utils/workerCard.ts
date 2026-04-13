@@ -57,6 +57,8 @@ export type WorkerCardDocument = {
     approval_mode: 'suggest' | 'auto_edit' | 'full_auto';
     sandbox_container_id: number;
     is_shared: boolean;
+    silent: boolean;
+    prefer_mother: boolean;
   };
   hive: {
     id: string;
@@ -360,7 +362,9 @@ export const buildWorkerCardDocument = (
       model_name: normalizeOptionalModelName(source.model_name),
       approval_mode: normalizeApprovalMode(source.approval_mode),
       sandbox_container_id: normalizeSandboxContainerId(source.sandbox_container_id),
-      is_shared: Boolean(source.is_shared)
+      is_shared: Boolean(source.is_shared),
+      silent: Boolean(source.silent),
+      prefer_mother: Boolean(source.prefer_mother)
     },
     hive: {
       id: trimString(source.hive_id),
@@ -436,7 +440,9 @@ const normalizeWorkerCardDocument = (
       model_name: normalizeOptionalModelName(runtime.model_name),
       approval_mode: normalizeApprovalMode(runtime.approval_mode),
       sandbox_container_id: normalizeSandboxContainerId(runtime.sandbox_container_id),
-      is_shared: Boolean(runtime.is_shared)
+      is_shared: Boolean(runtime.is_shared),
+      silent: Boolean(runtime.silent),
+      prefer_mother: Boolean(runtime.prefer_mother)
     },
     hive: {
       id: trimString(hive.id),
@@ -499,7 +505,9 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
     model_name: normalizeOptionalModelName(document.runtime.model_name),
     approval_mode: normalizeApprovalMode(document.runtime.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(document.runtime.sandbox_container_id),
-    is_shared: Boolean(document.runtime.is_shared)
+    is_shared: Boolean(document.runtime.is_shared),
+    silent: Boolean(document.runtime.silent),
+    prefer_mother: Boolean(document.runtime.prefer_mother)
   };
   const hiveId = trimString(document.hive.id);
   const hiveName = trimString(document.hive.name);

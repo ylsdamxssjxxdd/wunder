@@ -1,7 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
-    set_mother_agent, snapshot_team_run,
+    resolve_preferred_mother_agent_id, set_mother_agent, snapshot_team_run,
 };
 use crate::state::AppState;
 use crate::storage::{normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID};
@@ -459,9 +459,18 @@ fn group_payload(
     )
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let missions = load_group_missions(state, &group.user_id, &group.hive_id, mission_limit)?;
-    let mother_agent_id =
-        get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mother_agent_id = get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .or_else(|| {
+            resolve_preferred_mother_agent_id(
+                state.storage.as_ref(),
+                &group.user_id,
+                &group.hive_id,
+                None,
+            )
+            .ok()
+            .flatten()
+        });
     let mother_agent = mother_agent_id
         .as_deref()
         .and_then(|agent_id| agents.iter().find(|agent| agent.agent_id == agent_id));
@@ -579,6 +588,8 @@ fn agent_payload(
         "approval_mode": agent.approval_mode,
         "tool_names": agent.tool_names,
         "sandbox_container_id": agent.sandbox_container_id,
+        "silent": agent.silent,
+        "prefer_mother": agent.prefer_mother,
         "active_session_total": active_session_ids.len(),
         "active_session_ids": active_session_ids,
         "idle": activity.is_none_or(|item| item.is_idle()),

@@ -31,6 +31,10 @@ pub struct DefaultAgentConfig {
     #[serde(default)]
     pub sandbox_container_id: i32,
     #[serde(default)]
+    pub silent: bool,
+    #[serde(default)]
+    pub prefer_mother: bool,
+    #[serde(default)]
     pub created_at: f64,
     #[serde(default)]
     pub updated_at: f64,
@@ -54,6 +58,8 @@ pub fn default_agent_config_from_record(record: &UserAgentRecord) -> DefaultAgen
         status: record.status.clone(),
         icon: record.icon.clone(),
         sandbox_container_id: record.sandbox_container_id,
+        silent: record.silent,
+        prefer_mother: record.prefer_mother,
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
@@ -87,6 +93,8 @@ pub fn record_from_default_agent_config(
         created_at: config.created_at,
         updated_at: config.updated_at,
         preset_binding: None,
+        silent: config.silent,
+        prefer_mother: config.prefer_mother,
     }
 }
 

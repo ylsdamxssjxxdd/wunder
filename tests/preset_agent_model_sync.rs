@@ -1734,6 +1734,8 @@ async fn admin_preset_sync_ignores_conflicting_template_agent_state() {
             created_at: 1.0,
             updated_at: 2.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         })
         .expect("insert conflicting template agent");
 

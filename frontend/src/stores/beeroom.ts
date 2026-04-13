@@ -36,6 +36,8 @@ export type BeeroomMember = {
   active_session_total?: number;
   active_session_ids?: string[];
   idle?: boolean;
+  silent?: boolean;
+  prefer_mother?: boolean;
 };
 
 export type BeeroomMissionTask = {
@@ -274,6 +276,8 @@ const stableMemberFingerprint = (member: BeeroomMember): string =>
     normalizeScalar(member.status),
     normalizeScalar(member.hive_id),
     normalizeScalar(member.idle),
+    normalizeScalar(member.silent),
+    normalizeScalar(member.prefer_mother),
     normalizeScalar(member.active_session_total),
     normalizeScalar(member.sandbox_container_id),
     asArray<string>(member.active_session_ids).map(normalizeScalar).join(','),

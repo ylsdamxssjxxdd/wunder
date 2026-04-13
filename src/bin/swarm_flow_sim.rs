@@ -770,6 +770,8 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
         created_at: now,
         updated_at: now,
         preset_binding: None,
+        silent: false,
+        prefer_mother: false,
     };
     state.user_store.upsert_user_agent(&mother)?;
 
@@ -798,6 +800,8 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         state.user_store.upsert_user_agent(&worker)?;
         workers_ids.push(agent_id);

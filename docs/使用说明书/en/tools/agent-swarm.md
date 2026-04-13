@@ -64,8 +64,8 @@ A typical result is an asynchronous accepted state:
 
 ## Thread strategy
 
-- The default is `threadStrategy=fresh_main_thread`: the worker starts from a clean new thread and that thread becomes its new main thread.
-- If you want the worker to keep writing into its long-lived main thread, use `threadStrategy=main_thread` or `reuseMainThread=true`.
+- The default is to reuse the worker's current main thread. If the worker does not have one yet, the system creates and binds a main thread first.
+- If you need the worker to restart from a clean thread, explicitly pass `threadStrategy=fresh_main_thread`.
 - `main_thread` means "reuse the worker's current main thread, or create and bind one first if it does not exist yet".
 - For `send` / `batch_send`, an explicit `sessionKey` still has the highest priority and pins the run to that exact thread.
 - `spawn` supports the same thread strategy arguments and forwards them to the underlying worker dispatch.

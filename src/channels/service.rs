@@ -5368,6 +5368,8 @@ mod tests {
             created_at: 0.0,
             updated_at: 0.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         assert_eq!(
             resolve_channel_agent_display_name(Some(&record), Some("agent_fallback")),

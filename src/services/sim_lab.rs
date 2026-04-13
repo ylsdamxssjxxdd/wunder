@@ -1595,6 +1595,8 @@ fn seed_swarm_agents(
         created_at: now,
         updated_at: now,
         preset_binding: None,
+        silent: false,
+        prefer_mother: false,
     };
     state.user_store.upsert_user_agent(&mother)?;
 
@@ -1626,6 +1628,8 @@ fn seed_swarm_agents(
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         state.user_store.upsert_user_agent(&worker)?;
         worker_ids.push(agent_id);

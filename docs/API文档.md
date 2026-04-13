@@ -231,7 +231,7 @@
 - 新增内置工具 `会话让出`（英文别名 `sessions_yield`/`yield`），用于在完成子智能体派发后主动结束当前轮次，向用户返回一句简短提示，并等待后台子智能体完成后自动唤醒父会话继续。
 - 新增内置工具 `会话线程控制`（英文别名 `thread_control`/`session_thread`），通过 `action=list|info|create|switch|back|update_title|archive|restore|set_main` 控制当前用户的线程树，并可触发 `thread_control` 工作流事件驱动前端同步切换线程。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会为目标工蜂新建干净线程，并将其绑定为该工蜂新的主线程，以保持工蜂上下文干净；当显式传入 `threadStrategy=main_thread`（或 `reuseMainThread=true`）时，会改为复用工蜂当前主线程，若主线程不存在则先创建并绑定；`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
+- `智能体蜂群` 的 `send`/`batch_send`/`spawn` 默认会复用目标工蜂当前主线程；当主线程不存在时会先创建并绑定。若显式传入 `threadStrategy=fresh_main_thread`，则会为目标工蜂新建干净线程并将其绑定为新的主线程；`threadStrategy=main_thread`（或 `reuseMainThread=true`）则显式要求复用主线程。`send`/`batch_send` 在显式提供 `sessionKey` 时仍会优先复用指定线程。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - `智能体蜂群` 的 `send`/`batch_send`/`wait` 等待语义分三态：显式传 `0` 立即返回当前快照，显式传正数按该超时等待；省略等待参数时走系统默认超时，只有系统默认值本身为 `0` 时才会进入无限等待。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
@@ -287,6 +287,9 @@
 - 与模型选择相关字段：
   - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
   - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
+- 与蜂群协作相关字段：
+  - `silent`：是否静默；为 `true` 时，用户侧消息中栏和蜂群右侧消息栏默认隐藏该智能体的消息入口/消息项
+  - `prefer_mother`：是否优先作为母蜂；当蜂群未显式设置母蜂时，会优先使用该智能体作为默认母蜂
 - 与能力模型相关字段：
   - `ability_items`：结构化能力列表，字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
   - `abilities.items`：与 `ability_items` 等价的嵌套兼容字段
@@ -304,12 +307,18 @@
   - `abilities.items`：结构化能力列表的嵌套写法（可选，等价于 `ability_items`）
   - `declared_tool_names`：工蜂卡声明的非技能工具依赖（可选）
   - `declared_skill_names`：工蜂卡声明的技能依赖（可选）
+  - `silent`：静默模式（可选，兼容 `silentMode` / `silent_mode`）
+  - `prefer_mother`：优先母蜂（可选，兼容 `preferMother` / `prefer_mother`）
   - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
 - 说明：
   - 工蜂卡导入/导出时，技能声明应落在 `declared_skill_names`，不要混入 `declared_tool_names`
   - 当提交 `ability_items`/`abilities.items` 时，后端会把它作为结构化能力主数据持久化；`tool_names` 继续作为运行时兼容字段保留
 
 #### `PUT /wunder/agents/{agent_id}`
+
+- 说明补充：
+  - 与创建接口一致，更新时同样支持 `silent` / `prefer_mother`（以及兼容别名）并会直接回写到智能体配置。
+  - 默认智能体配置接口返回体也会同步携带 `silent` / `prefer_mother`。
 
 - 方法：`PUT`
 - 入参（Query）：`user_id`
@@ -2476,4 +2485,7 @@
   - `description?: string`，可选；传空串会清空说明。
   - `mother_agent_id?: string`，可选；传空串会清空母蜂绑定，传有效智能体 ID 时会自动将该智能体迁入目标蜂群并重设为母蜂。
 - 返回：`data` 为更新后的蜂群摘要，结构与 `GET /wunder/beeroom/groups/{group_id}` 返回中的 `group` 基础字段保持一致。
+- 返回补充：
+  - 蜂群成员 `agents[]` 现包含 `silent` / `prefer_mother`。
+  - 当蜂群未显式绑定 `mother_agent_id` 时，服务端会优先回退到首个 `prefer_mother=true` 的成员作为默认母蜂。
 

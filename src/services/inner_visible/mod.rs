@@ -403,6 +403,8 @@ impl InnerVisibleService {
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         });
 
         record.user_id = user_id.trim().to_string();
@@ -423,6 +425,8 @@ impl InnerVisibleService {
         record.status = normalize_agent_status(Some(&record.status));
         record.icon = parsed.icon;
         record.sandbox_container_id = parsed.sandbox_container_id;
+        record.silent = parsed.silent;
+        record.prefer_mother = parsed.prefer_mother;
         record.hive_id = normalize_hive_id(&parsed.hive_id);
         record.updated_at = now;
         if record.created_at <= 0.0 {
@@ -486,6 +490,8 @@ impl InnerVisibleService {
                 status: record.status,
                 icon: record.icon,
                 sandbox_container_id: record.sandbox_container_id,
+                silent: record.silent,
+                prefer_mother: record.prefer_mother,
                 created_at: record.created_at,
                 updated_at: record.updated_at,
             };
@@ -506,6 +512,8 @@ impl InnerVisibleService {
             status: DEFAULT_AGENT_STATUS.to_string(),
             icon: None,
             sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            silent: false,
+            prefer_mother: false,
             created_at: now,
             updated_at: now,
         };
@@ -554,6 +562,8 @@ impl InnerVisibleService {
         config.status = normalize_agent_status(Some(DEFAULT_AGENT_STATUS));
         config.icon = parsed.icon;
         config.sandbox_container_id = parsed.sandbox_container_id;
+        config.silent = parsed.silent;
+        config.prefer_mother = parsed.prefer_mother;
         config.updated_at = now;
         if config.created_at <= 0.0 {
             config.created_at = now;
@@ -1231,6 +1241,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         user_store.upsert_user_agent(&record).expect("upsert");
 
@@ -1313,6 +1325,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 preset_binding: None,
+                silent: false,
+                prefer_mother: false,
             })
             .expect("seed agent");
 
@@ -1414,6 +1428,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 preset_binding: None,
+                silent: false,
+                prefer_mother: false,
             })
             .expect("seed agent");
         service
@@ -1476,6 +1492,8 @@ mod tests {
                 created_at: now,
                 updated_at: now,
                 preset_binding: None,
+                silent: false,
+                prefer_mother: false,
             })
             .expect("seed default agent");
 

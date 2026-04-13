@@ -1817,6 +1817,8 @@ mod tests {
             created_at: updated_at,
             updated_at,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         }
     }
 

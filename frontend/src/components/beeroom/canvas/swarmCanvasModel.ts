@@ -228,7 +228,14 @@ export const resolveBeeroomMotherAgentId = (
   group: BeeroomGroup | null | undefined,
   agents: BeeroomMember[]
 ) =>
-  String(mission?.mother_agent_id || group?.mother_agent_id || mission?.entry_agent_id || agents[0]?.agent_id || '').trim();
+  String(
+    mission?.mother_agent_id ||
+      group?.mother_agent_id ||
+      mission?.entry_agent_id ||
+      agents.find((item) => item.prefer_mother)?.agent_id ||
+      agents[0]?.agent_id ||
+      ''
+  ).trim();
 
 const mergeProjectionMembers = (
   group: BeeroomGroup | null | undefined,

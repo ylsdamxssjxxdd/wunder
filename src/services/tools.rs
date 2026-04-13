@@ -1723,12 +1723,13 @@ fn parse_swarm_worker_thread_strategy(
         .filter(|value| !value.is_empty())
         .map(|value| value.to_ascii_lowercase().replace('-', "_"))
         .unwrap_or_default();
-    if normalized.is_empty()
-        || matches!(
-            normalized.as_str(),
-            "fresh_main_thread" | "new_main_thread" | "fresh" | "new_thread"
-        )
-    {
+    if normalized.is_empty() {
+        return Ok(SwarmWorkerThreadStrategy::MainThread);
+    }
+    if matches!(
+        normalized.as_str(),
+        "fresh_main_thread" | "new_main_thread" | "fresh" | "new_thread"
+    ) {
         return Ok(SwarmWorkerThreadStrategy::FreshMainThread);
     }
     if matches!(
@@ -2372,8 +2373,8 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                 (target_agent, main_session.session_id, created_main_session)
             }
             SwarmWorkerThreadStrategy::FreshMainThread => {
-                // Swarm-dispatched workers must start from a clean thread unless the caller
-                // explicitly pins the run to an existing session_key or selects main_thread.
+                // Callers can still force a clean worker thread, but this is no longer the
+                // default path for swarm workers.
                 let dispatch_preview = build_swarm_dispatch_message(
                     context.storage.as_ref(),
                     context.monitor.as_deref(),
@@ -9968,6 +9969,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         }
     }
 
@@ -10021,6 +10024,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         }
     }
 
@@ -11566,6 +11571,10 @@ PATCH"#;
 
     #[test]
     fn parse_swarm_worker_thread_strategy_supports_main_thread_option() {
+        assert_eq!(
+            parse_swarm_worker_thread_strategy(None, None).expect("default strategy"),
+            SwarmWorkerThreadStrategy::MainThread
+        );
         assert_eq!(
             parse_swarm_worker_thread_strategy(Some("main_thread"), None)
                 .expect("main_thread strategy"),

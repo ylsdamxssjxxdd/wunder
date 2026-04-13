@@ -1292,6 +1292,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
 
         store.upsert_user_agent(&record).expect("upsert agent");

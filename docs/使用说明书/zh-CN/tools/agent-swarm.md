@@ -64,8 +64,8 @@ updated_at: 2026-04-12
 
 ## 线程策略
 
-- 默认是 `threadStrategy=fresh_main_thread`：工蜂收到任务后会新建一个干净线程，并把它绑定成自己的新主线程。
-- 当你需要让工蜂继续在它自己的长期主线程里沉淀输出时，可以改用 `threadStrategy=main_thread`，或传 `reuseMainThread=true`。
+- 默认是复用工蜂当前主线程：如果工蜂已有主线程，任务会直接落到那条主线程；如果还没有，系统会先创建并绑定一条主线程。
+- 当你需要强制让工蜂从一个干净线程重新开始时，可以显式传 `threadStrategy=fresh_main_thread`。
 - `main_thread` 语义是：优先复用工蜂当前主线程；如果它还没有主线程，系统会先创建一个再派工。
 - `send` / `batch_send` 如果显式提供了 `sessionKey`，会优先使用那个指定线程；这时 `threadStrategy` 只作为补充信息，不再改变目标线程。
 - `spawn` 也支持同样的线程策略参数，本质上会把策略透传给底层派工。

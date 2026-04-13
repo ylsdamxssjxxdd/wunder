@@ -1145,6 +1145,8 @@ mod tests {
                     created_at: now_ts(),
                     updated_at: now_ts(),
                     preset_binding: None,
+                    silent: false,
+                    prefer_mother: false,
                 })
                 .expect("upsert agent");
         }

@@ -105,6 +105,8 @@ struct HiveWorkerRef {
     #[serde(default)]
     worker_id: Option<String>,
     #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
     display_name: Option<String>,
     #[serde(default)]
     description: Option<String>,
@@ -114,6 +116,10 @@ struct HiveWorkerRef {
     approval_mode: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default)]
+    silent: Option<bool>,
+    #[serde(default)]
+    prefer_mother: Option<bool>,
     path: String,
 }
 
@@ -234,6 +240,10 @@ struct WorkerCardRuntime {
     sandbox_container_id: Option<i32>,
     #[serde(default)]
     is_shared: Option<bool>,
+    #[serde(default)]
+    silent: Option<bool>,
+    #[serde(default)]
+    prefer_mother: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -292,6 +302,8 @@ struct HiveExportWorker {
     approval_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
+    silent: bool,
+    prefer_mother: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -335,6 +347,8 @@ struct WorkerImportSnapshot {
     duty: String,
     approval_mode: String,
     icon: Option<String>,
+    silent: bool,
+    prefer_mother: bool,
     role_prompt: String,
     declared_tool_names: Vec<String>,
     declared_skill_names: Vec<String>,
@@ -349,11 +363,14 @@ struct WorkerImportSnapshot {
 struct ImportWorkerRef {
     worker_id: String,
     path: PathBuf,
+    role: Option<String>,
     display_name: Option<String>,
     description: Option<String>,
     duty: Option<String>,
     approval_mode: Option<String>,
     icon: Option<String>,
+    silent: Option<bool>,
+    prefer_mother: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -728,6 +745,8 @@ async fn run_import_job_inner(
             created_at: now,
             updated_at: now,
             preset_binding: None,
+            silent: snapshot.silent,
+            prefer_mother: snapshot.prefer_mother,
         };
         state.user_store.upsert_user_agent(&record)?;
         runtime.created_agents.push(record.agent_id.clone());
@@ -935,12 +954,22 @@ reference_only mode does not include full skill files.
         workers.push(HiveExportWorker {
             worker_id: worker_id.clone(),
             path: format!("workers/{worker_id}"),
-            role: "specialist".to_string(),
+            role: if agent.prefer_mother {
+                "mother".to_string()
+            } else {
+                "specialist".to_string()
+            },
             display_name: agent.name.clone(),
             description: agent.description.clone(),
-            duty: "specialist".to_string(),
+            duty: if agent.prefer_mother {
+                "mother".to_string()
+            } else {
+                "specialist".to_string()
+            },
             approval_mode: normalize_approval_mode(Some(&agent.approval_mode)),
             icon: agent.icon.clone(),
+            silent: agent.silent,
+            prefer_mother: agent.prefer_mother,
         });
         worker_reports.push(json!({
             "worker_id": worker_id,
@@ -1069,6 +1098,19 @@ fn install_worker_snapshot(
         .icon
         .clone()
         .or_else(|| worker_ref.icon.clone());
+    let silent = worker_card
+        .runtime
+        .silent
+        .or(worker_ref.silent)
+        .unwrap_or(false);
+    let prefer_mother = worker_card
+        .runtime
+        .prefer_mother
+        .or(worker_ref.prefer_mother)
+        .unwrap_or_else(|| {
+            matches!(worker_ref.role.as_deref(), Some("mother"))
+                || matches!(worker_ref.duty.as_deref(), Some("mother"))
+        });
     let (declared_tool_names, declared_skill_names) =
         collect_worker_card_declared_abilities(&worker_card.abilities);
     let preset_questions = normalize_string_items(&worker_card.interaction.preset_questions);
@@ -1143,6 +1185,8 @@ fn install_worker_snapshot(
         duty,
         approval_mode,
         icon,
+        silent,
+        prefer_mother,
         role_prompt,
         declared_tool_names,
         declared_skill_names,
@@ -1169,11 +1213,14 @@ fn resolve_import_workers(
                     index + 1,
                 ),
                 path: worker_path,
+                role: worker_ref.role.clone(),
                 display_name: worker_ref.display_name.clone(),
                 description: worker_ref.description.clone(),
                 duty: worker_ref.duty.clone(),
                 approval_mode: worker_ref.approval_mode.clone(),
                 icon: worker_ref.icon.clone(),
+                silent: worker_ref.silent,
+                prefer_mother: worker_ref.prefer_mother,
             });
         }
     } else {
@@ -1194,11 +1241,14 @@ fn resolve_import_workers(
                         index + 1,
                     ),
                     path: worker_path,
+                    role: None,
                     display_name: None,
                     description: None,
                     duty: None,
                     approval_mode: None,
                     icon: None,
+                    silent: None,
+                    prefer_mother: None,
                 });
             }
         }
@@ -1358,6 +1408,8 @@ fn build_worker_card_manifest(
             approval_mode: Some(normalize_approval_mode(Some(&agent.approval_mode))),
             sandbox_container_id: Some(normalize_sandbox_container_id(agent.sandbox_container_id)),
             is_shared: Some(agent.is_shared),
+            silent: Some(agent.silent),
+            prefer_mother: Some(agent.prefer_mother),
         },
         hive: WorkerCardHive {
             id: Some(hive.hive_id.clone()),
@@ -2790,6 +2842,8 @@ mod tests {
             created_at: 0.0,
             updated_at: 0.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
 
         let skill_refs = collect_agent_skills_for_export(&agent, &bindings, &skill_root, &[]);
@@ -2829,6 +2883,8 @@ mod tests {
             created_at: 0.0,
             updated_at: 0.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         let global_specs = vec![SkillSpec {
             name: "report_writer".to_string(),
@@ -2909,6 +2965,8 @@ mod tests {
             created_at: 0.0,
             updated_at: 0.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         assert_eq!(export_worker_id(&agent, 0), "Recruit-Specialist");
     }

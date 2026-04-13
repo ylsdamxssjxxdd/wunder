@@ -995,6 +995,14 @@ async fn create_agent(
     };
     let status = normalize_agent_status(payload.status.as_deref());
     let is_shared = payload.is_shared.unwrap_or(false);
+    let silent = copy_source
+        .as_ref()
+        .map(|source| source.silent)
+        .unwrap_or_else(|| payload.silent.unwrap_or(false));
+    let prefer_mother = copy_source
+        .as_ref()
+        .map(|source| source.prefer_mother)
+        .unwrap_or_else(|| payload.prefer_mother.unwrap_or(false));
     let now = now_ts();
     let sandbox_container_id =
         normalize_sandbox_container_id(payload.sandbox_container_id.unwrap_or_else(|| {
@@ -1049,6 +1057,8 @@ async fn create_agent(
         created_at: now,
         updated_at: now,
         preset_binding: None,
+        silent,
+        prefer_mother,
     };
     state
         .user_store
@@ -1132,6 +1142,12 @@ async fn update_agent(
         if payload.icon.is_some() {
             config.icon = payload.icon;
         }
+        if let Some(silent) = payload.silent {
+            config.silent = silent;
+        }
+        if let Some(prefer_mother) = payload.prefer_mother {
+            config.prefer_mother = prefer_mother;
+        }
         if let Some(sandbox_container_id) = payload.sandbox_container_id {
             config.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
         }
@@ -1208,6 +1224,12 @@ async fn update_agent(
     }
     if payload.icon.is_some() {
         record.icon = payload.icon;
+    }
+    if let Some(silent) = payload.silent {
+        record.silent = silent;
+    }
+    if let Some(prefer_mother) = payload.prefer_mother {
+        record.prefer_mother = prefer_mother;
     }
     if let Some(sandbox_container_id) = payload.sandbox_container_id {
         record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
@@ -1433,6 +1455,8 @@ fn agent_payload(
         "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
+        "silent": record.silent,
+        "prefer_mother": record.prefer_mother,
         "hive_id": normalize_hive_id(&record.hive_id),
         "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
         "created_at": format_ts(record.created_at),
@@ -2093,6 +2117,8 @@ async fn build_default_agent_config(
         status: DEFAULT_AGENT_STATUS.to_string(),
         icon: Some("avatar-046".to_string()),
         sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+        silent: false,
+        prefer_mother: false,
         created_at: now,
         updated_at: now,
     };
@@ -2173,6 +2199,8 @@ fn default_agent_payload(
         "is_shared": false,
         "status": normalize_agent_status(Some(&config.status)),
         "icon": config.icon,
+        "silent": config.silent,
+        "prefer_mother": config.prefer_mother,
         "hive_id": DEFAULT_HIVE_ID,
         "sandbox_container_id": normalize_sandbox_container_id(config.sandbox_container_id),
         "created_at": format_ts(config.created_at),
@@ -2294,6 +2322,10 @@ struct AgentCreateRequest {
     approval_mode: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default, alias = "silentMode", alias = "silent_mode")]
+    silent: Option<bool>,
+    #[serde(default, alias = "preferMother", alias = "prefer_mother")]
+    prefer_mother: Option<bool>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
     #[serde(
@@ -2372,6 +2404,10 @@ struct AgentUpdateRequest {
     approval_mode: Option<String>,
     #[serde(default)]
     icon: Option<String>,
+    #[serde(default, alias = "silentMode", alias = "silent_mode")]
+    silent: Option<bool>,
+    #[serde(default, alias = "preferMother", alias = "prefer_mother")]
+    prefer_mother: Option<bool>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
     #[serde(
@@ -2468,6 +2504,8 @@ mod tests {
                 status: "active".to_string(),
                 icon: None,
                 sandbox_container_id: 1,
+                silent: false,
+                prefer_mother: false,
                 created_at: 1.0,
                 updated_at: 1.0,
             },

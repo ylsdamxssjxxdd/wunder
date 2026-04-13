@@ -1451,6 +1451,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 1.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         storage
             .upsert_user_agent(&agent)

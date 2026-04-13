@@ -74,7 +74,7 @@ updated_at: 2026-04-10
 
 这样做是为了让工蜂上下文保持干净，避免把旧对话脏上下文直接带进新任务。
 
-如果你显式提供 `threadStrategy=main_thread`（或 `reuseMainThread=true`），系统会改为复用工蜂当前主线程；若主线程不存在，则先创建一个。只有在 `send` / `batch_send` 里显式提供 `sessionKey` 时，系统才会直接复用你指定的那条线程。
+默认情况下，系统会复用工蜂当前主线程；若主线程不存在，则先创建一个。你也可以显式提供 `threadStrategy=main_thread`（或 `reuseMainThread=true`）来强调这一点；如果传 `threadStrategy=fresh_main_thread`，则会强制切到一个全新的干净线程。只有在 `send` / `batch_send` 里显式提供 `sessionKey` 时，系统才会直接复用你指定的那条线程。
 
 ## 主线程为什么重要
 

@@ -133,6 +133,10 @@ pub struct WorkerCardRuntime {
     pub sandbox_container_id: i32,
     #[serde(default)]
     pub is_shared: bool,
+    #[serde(default)]
+    pub silent: bool,
+    #[serde(default)]
+    pub prefer_mother: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -169,6 +173,8 @@ pub struct WorkerCardRecordUpdate {
     pub icon: Option<String>,
     pub hive_id: String,
     pub sandbox_container_id: i32,
+    pub silent: bool,
+    pub prefer_mother: bool,
 }
 
 pub fn build_worker_card(
@@ -228,6 +234,8 @@ pub fn build_worker_card(
             approval_mode: record.approval_mode.clone(),
             sandbox_container_id: record.sandbox_container_id,
             is_shared: record.is_shared,
+            silent: record.silent,
+            prefer_mother: record.prefer_mother,
         },
         hive: WorkerCardHive {
             id: record.hive_id.clone(),
@@ -292,6 +300,8 @@ pub fn parse_worker_card(
         icon: Some(document.metadata.icon.trim().to_string()).filter(|value| !value.is_empty()),
         hive_id: normalize_hive_id(&document.hive.id),
         sandbox_container_id: normalize_container_id(document.runtime.sandbox_container_id),
+        silent: document.runtime.silent,
+        prefer_mother: document.runtime.prefer_mother,
     }
 }
 
@@ -614,6 +624,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 2.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         let document = build_worker_card(
             &record,
@@ -668,6 +680,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 2.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         let document = build_worker_card(&record, Some("Default"), Some("Hive"), &HashSet::new());
         assert_eq!(document.abilities.items.len(), 1);
@@ -703,6 +717,8 @@ mod tests {
             created_at: 1.0,
             updated_at: 2.0,
             preset_binding: None,
+            silent: false,
+            prefer_mother: false,
         };
         let document = build_worker_card(
             &record,
