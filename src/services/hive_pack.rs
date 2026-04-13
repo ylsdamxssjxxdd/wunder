@@ -5,6 +5,7 @@ use crate::services::worker_card_protocol::{
     build_worker_card_prompt_envelope, resolve_worker_card_prompt_text, WorkerCardPrompt,
 };
 use crate::skills::SkillSpec;
+use crate::services::swarm::beeroom::claim_mother_agent;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, HiveRecord, UserAccountRecord,
@@ -765,6 +766,21 @@ async fn run_import_job_inner(
         let replaced_agents = runtime.replaced_agents.clone();
         replaced_agent_total =
             replace_existing_hive_agents(state, &user.user_id, &replaced_agents, runtime)?;
+    }
+
+    // Claim the mother agent for the hive if any worker has prefer_mother.
+    if let Some(mother_agent_id) = worker_snapshots
+        .iter()
+        .zip(created_agents.iter())
+        .find(|(snapshot, _)| snapshot.prefer_mother)
+        .and_then(|(_, agent)| agent.get("agent_id").and_then(Value::as_str).map(str::to_string))
+    {
+        let _ = claim_mother_agent(
+            state.storage.as_ref(),
+            &user.user_id,
+            &target_hive.hive.hive_id,
+            &mother_agent_id,
+        );
     }
 
     update_job(job, "activating", 90, "activating hivepack");
