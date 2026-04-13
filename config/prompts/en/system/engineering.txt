@@ -29,7 +29,7 @@ Date: {DATE}
 Your current working directory (all commands run from here by default): {DIR}
 Workspace (show 2 levels):
 {WORKSPACE_TREE}
-All commands must stay within the working directory and its subdirectories.
+All commands are preferentially executed in the current working directory and its subdirectories.
 
 [[RUNTIME_LOCAL]]
 - You are running in a local runtime (cli/desktop).

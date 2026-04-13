@@ -120,6 +120,15 @@ export const parseAgentAvatarIconConfig = (value: unknown): AgentAvatarIconConfi
   return { name, color };
 };
 
+export const resolveAgentAvatarConfiguredColor = (value: unknown, fallback = ''): string => {
+  const extracted = extractAgentIconFields(value);
+  if (extracted.rawColor) {
+    return normalizeAvatarColor(extracted.rawColor);
+  }
+  const normalizedFallback = String(fallback || '').trim();
+  return normalizedFallback ? normalizeAvatarColor(normalizedFallback) : '';
+};
+
 export const stringifyAgentAvatarIconConfig = (
   value: Partial<AgentAvatarIconConfig> | null | undefined
 ): string => {

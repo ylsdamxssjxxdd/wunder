@@ -126,9 +126,12 @@ const resolveAccentRgb = (color: string) => {
 
 const cardStyle = computed(() => {
   const accentRgb = resolveAccentRgb(props.node.accentColor);
+  const avatarAccentRgb = resolveAccentRgb(props.node.avatarColor || props.node.accentColor);
   return {
     '--node-accent': props.node.accentColor,
     '--node-accent-rgb': accentRgb,
+    '--node-avatar-accent': props.node.avatarColor || props.node.accentColor,
+    '--node-avatar-accent-rgb': avatarAccentRgb,
     '--node-activity-glow': `rgba(${accentRgb}, 0.22)`,
     '--node-activity-border': `rgba(${accentRgb}, 0.56)`,
     '--node-activity-border-soft': `rgba(${accentRgb}, 0.18)`,
@@ -287,15 +290,19 @@ onBeforeUnmount(() => {
   --node-activity-border-soft: rgba(255, 255, 255, 0);
   --node-activity-halo-strong: rgba(255, 255, 255, 0);
   --node-activity-shadow-soft: rgba(255, 255, 255, 0);
+  --node-avatar-accent: var(--node-accent);
+  --node-avatar-accent-rgb: var(--node-accent-rgb);
   position: absolute;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   gap: 8px;
   padding: 14px 14px 12px 16px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  border: 1px solid rgba(var(--node-accent-rgb), 0.24);
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(18, 22, 31, 0.98), rgba(12, 15, 22, 0.98));
+  background:
+    radial-gradient(circle at top left, rgba(var(--node-accent-rgb), 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(18, 22, 31, 0.98), rgba(12, 15, 22, 0.98));
   color: #e5e7eb;
   text-align: left;
   cursor: grab;
@@ -304,7 +311,9 @@ onBeforeUnmount(() => {
   -webkit-user-select: none;
   -webkit-user-drag: none;
   touch-action: none;
-  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.18);
+  box-shadow:
+    0 10px 22px rgba(2, 6, 23, 0.18),
+    inset 0 1px 0 rgba(var(--node-accent-rgb), 0.06);
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
   transition:
@@ -356,15 +365,19 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-node-card.is-mother {
-  border-color: rgba(245, 158, 11, 0.3);
-  background: linear-gradient(180deg, rgba(26, 33, 45, 0.98), rgba(12, 15, 22, 0.98));
+  border-color: rgba(var(--node-accent-rgb), 0.32);
+  background:
+    radial-gradient(circle at top left, rgba(var(--node-accent-rgb), 0.16), transparent 46%),
+    linear-gradient(180deg, rgba(26, 33, 45, 0.98), rgba(12, 15, 22, 0.98));
 }
 
 .beeroom-node-card.is-subagent {
   gap: 7px;
   padding: 12px 12px 10px 14px;
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(12, 18, 28, 0.96), rgba(8, 13, 22, 0.97));
+  background:
+    radial-gradient(circle at top left, rgba(var(--node-accent-rgb), 0.12), transparent 44%),
+    linear-gradient(180deg, rgba(12, 18, 28, 0.96), rgba(8, 13, 22, 0.97));
   box-shadow: 0 10px 18px rgba(2, 6, 23, 0.16);
 }
 
@@ -377,7 +390,9 @@ onBeforeUnmount(() => {
 
 .beeroom-node-card.is-subagent.is-emphasis-dormant {
   border-color: rgba(100, 116, 139, 0.24);
-  background: linear-gradient(180deg, rgba(18, 24, 34, 0.94), rgba(12, 16, 24, 0.96));
+  background:
+    radial-gradient(circle at top left, rgba(var(--node-accent-rgb), 0.08), transparent 44%),
+    linear-gradient(180deg, rgba(18, 24, 34, 0.94), rgba(12, 16, 24, 0.96));
   box-shadow: 0 8px 16px rgba(2, 6, 23, 0.1);
 }
 
@@ -429,30 +444,30 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(74, 222, 128, 0.24);
+  border: 1px solid rgba(var(--node-avatar-accent-rgb), 0.34);
   background:
     radial-gradient(
       circle at center,
-      rgba(74, 222, 128, 0.28) 0 18%,
-      rgba(16, 185, 129, 0.15) 18% 34%,
-      rgba(5, 150, 105, 0.08) 34% 52%,
+      rgba(var(--node-avatar-accent-rgb), 0.34) 0 18%,
+      rgba(var(--node-avatar-accent-rgb), 0.2) 18% 34%,
+      rgba(var(--node-avatar-accent-rgb), 0.12) 34% 52%,
       rgba(5, 12, 18, 0.94) 52% 100%
     ),
-    linear-gradient(135deg, rgba(34, 197, 94, 0.22), rgba(6, 78, 59, 0.92));
+    linear-gradient(135deg, rgba(var(--node-avatar-accent-rgb), 0.36), rgba(8, 18, 30, 0.92));
   color: #f8fafc;
   font-size: 14px;
   font-weight: 700;
   overflow: hidden;
   box-shadow:
-    inset 0 0 0 1px rgba(187, 247, 208, 0.1),
-    0 8px 18px rgba(6, 78, 59, 0.18);
+    inset 0 0 0 1px rgba(var(--node-avatar-accent-rgb), 0.18),
+    0 8px 18px rgba(var(--node-avatar-accent-rgb), 0.22);
 }
 
 .beeroom-node-card.is-subagent .beeroom-node-avatar {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  border-color: rgba(56, 189, 248, 0.2);
+  border-color: rgba(var(--node-avatar-accent-rgb), 0.3);
 }
 
 .beeroom-node-card.is-subagent .beeroom-node-avatar::before {
@@ -466,7 +481,7 @@ onBeforeUnmount(() => {
   inset: 3px;
   border-radius: 10px;
   background:
-    repeating-radial-gradient(circle at center, rgba(74, 222, 128, 0.16) 0 1px, transparent 1px 8px),
+    repeating-radial-gradient(circle at center, rgba(var(--node-avatar-accent-rgb), 0.16) 0 1px, transparent 1px 8px),
     linear-gradient(180deg, rgba(8, 28, 21, 0.06), rgba(2, 12, 10, 0.42));
   opacity: 0.92;
   pointer-events: none;
@@ -480,9 +495,9 @@ onBeforeUnmount(() => {
   background: conic-gradient(
     from 225deg,
     transparent 0 72%,
-    rgba(16, 185, 129, 0.06) 78%,
-    rgba(110, 231, 183, 0.34) 84%,
-    rgba(16, 185, 129, 0.16) 90%,
+    rgba(var(--node-avatar-accent-rgb), 0.08) 78%,
+    rgba(var(--node-avatar-accent-rgb), 0.34) 84%,
+    rgba(var(--node-avatar-accent-rgb), 0.16) 90%,
     transparent 96% 100%
   );
   opacity: 0.95;
@@ -505,7 +520,7 @@ onBeforeUnmount(() => {
 .beeroom-node-avatar-text {
   position: relative;
   z-index: 1;
-  text-shadow: 0 0 12px rgba(110, 231, 183, 0.26);
+  text-shadow: 0 0 12px rgba(var(--node-avatar-accent-rgb), 0.3);
 }
 
 .beeroom-node-title-group {

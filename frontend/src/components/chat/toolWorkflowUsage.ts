@@ -1,4 +1,13 @@
 type UnknownRecord = Record<string, unknown>;
+type WorkflowUsageEntryLike = {
+  callItem?: unknown;
+  outputItem?: unknown;
+  resultItem?: unknown;
+};
+export type WorkflowConsumedTokenResolution = {
+  tokens: number | null;
+  source: 'call' | 'output' | 'result' | 'none';
+};
 
 const asObject = (value: unknown): UnknownRecord | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -67,6 +76,10 @@ const resolveExplicitConsumedTokens = (value: unknown): number | null => {
   );
 };
 
+type ResolveWorkflowTokensOptions = {
+  allowUsageFallback?: boolean;
+};
+
 const NESTED_USAGE_KEYS = [
   'data',
   'result',
@@ -99,7 +112,17 @@ const collectCandidateObjects = (
   });
 };
 
-export const resolveWorkflowConsumedTokens = (...sources: unknown[]): number | null => {
+export const resolveWorkflowConsumedTokens = (...args: unknown[]): number | null => {
+  const lastArg = args[args.length - 1];
+  const hasOptions =
+    !!lastArg &&
+    typeof lastArg === 'object' &&
+    !Array.isArray(lastArg) &&
+    Object.prototype.hasOwnProperty.call(lastArg, 'allowUsageFallback');
+  const options = (hasOptions ? lastArg : {}) as ResolveWorkflowTokensOptions;
+  const sourceArgs = hasOptions ? args.slice(0, -1) : args;
+  const sources =
+    sourceArgs.length === 1 && Array.isArray(sourceArgs[0]) ? (sourceArgs[0] as unknown[]) : sourceArgs;
   const candidates: UnknownRecord[] = [];
   const seen = new Set<UnknownRecord>();
   sources.forEach((source) => collectCandidateObjects(source, candidates, seen));
@@ -107,6 +130,10 @@ export const resolveWorkflowConsumedTokens = (...sources: unknown[]): number | n
   for (const candidate of candidates) {
     const explicit = resolveExplicitConsumedTokens(candidate);
     if (explicit !== null) return explicit;
+  }
+
+  if (options.allowUsageFallback === false) {
+    return null;
   }
 
   for (const candidate of candidates) {
@@ -121,6 +148,46 @@ export const resolveWorkflowConsumedTokens = (...sources: unknown[]): number | n
   }
 
   return null;
+};
+
+export const resolveWorkflowEntryConsumedTokens = (
+  entry: WorkflowUsageEntryLike | null | undefined
+): number | null => {
+  return resolveWorkflowEntryConsumedTokenResolution(entry).tokens;
+};
+
+export const resolveWorkflowEntryConsumedTokenResolution = (
+  entry: WorkflowUsageEntryLike | null | undefined
+): WorkflowConsumedTokenResolution => {
+  const orderedSources = [
+    {
+      source: 'call' as const,
+      values: [entry?.callItem, asObject(entry?.callItem)?.detail],
+      allowUsageFallback: true
+    },
+    {
+      source: 'output' as const,
+      values: [entry?.outputItem, asObject(entry?.outputItem)?.detail],
+      allowUsageFallback: true
+    },
+    {
+      source: 'result' as const,
+      values: [entry?.resultItem, asObject(entry?.resultItem)?.detail],
+      // Result payloads often carry aggregate usage snapshots for the whole user turn.
+      // Per-tool row display should only trust explicit consumed-token fields here.
+      allowUsageFallback: false
+    }
+  ];
+  for (const candidate of orderedSources) {
+    const sources = candidate.values;
+    const resolved = resolveWorkflowConsumedTokens(sources, {
+      allowUsageFallback: candidate.allowUsageFallback
+    });
+    if (resolved !== null) {
+      return { tokens: resolved, source: candidate.source };
+    }
+  }
+  return { tokens: null, source: 'none' };
 };
 
 export const formatWorkflowConsumedTokensLabel = (tokens: number | null): string => {

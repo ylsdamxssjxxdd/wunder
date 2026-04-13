@@ -10,7 +10,7 @@
   >
     <template #header>
       <div class="messenger-dialog-header">
-        <div class="messenger-dialog-title">{{ t('beeroom.dialog.createTitle') }}</div>
+        <div class="messenger-dialog-title">{{ dialogTitle }}</div>
         <button class="messenger-dialog-close" type="button" @click="visible = false">&times;</button>
       </div>
     </template>
@@ -50,6 +50,16 @@
 
     <template #footer>
       <div class="messenger-dialog-footer">
+        <el-button
+          v-if="showDeleteAction"
+          type="danger"
+          plain
+          :loading="deleting"
+          :disabled="saving"
+          @click="handleDelete"
+        >
+          {{ t('common.delete') }}
+        </el-button>
         <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="saving" @click="handleSubmit">
           {{ saving ? t('common.loading') : t('common.save') }}
@@ -70,18 +80,44 @@ type AgentOption = {
   name?: string;
 };
 
-const props = defineProps({
-  modelValue: {
-    type: Boolean,
-    default: false
-  },
-  candidateAgents: {
-    type: Array as () => AgentOption[],
-    default: () => []
-  }
-});
+type DialogMode = 'create' | 'edit';
 
-const emit = defineEmits(['update:modelValue', 'submit']);
+type BeeroomDialogGroup = {
+  group_id?: string;
+  hive_id?: string;
+  name?: string;
+  description?: string;
+  mother_agent_id?: string | null;
+  is_default?: boolean;
+};
+
+const props = withDefaults(
+  defineProps<{
+    modelValue?: boolean;
+    candidateAgents?: AgentOption[];
+    mode?: DialogMode;
+    initialGroup?: BeeroomDialogGroup | null;
+    saving?: boolean;
+    deleting?: boolean;
+  }>(),
+  {
+    modelValue: false,
+    candidateAgents: () => [],
+    mode: 'create',
+    initialGroup: null,
+    saving: false,
+    deleting: false
+  }
+);
+
+const emit = defineEmits<{
+  (event: 'update:modelValue', value: boolean): void;
+  (
+    event: 'submit',
+    payload: { name: string; description: string; mother_agent_id: string }
+  ): void;
+  (event: 'delete'): void;
+}>();
 const { t } = useI18n();
 
 const visible = computed({
@@ -89,18 +125,32 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value)
 });
 
+const isEditMode = computed(() => props.mode === 'edit');
+const dialogTitle = computed(() =>
+  t(isEditMode.value ? 'beeroom.dialog.editTitle' : 'beeroom.dialog.createTitle')
+);
+const showDeleteAction = computed(() => isEditMode.value && !props.initialGroup?.is_default);
+
 const form = reactive({
   name: '',
   description: '',
   mother_agent_id: ''
 });
 
-const saving = computed(() => false);
-
 const resetForm = () => {
   form.name = '';
   form.description = '';
   form.mother_agent_id = '';
+};
+
+const syncForm = () => {
+  if (!isEditMode.value) {
+    resetForm();
+    return;
+  }
+  form.name = String(props.initialGroup?.name || '').trim();
+  form.description = String(props.initialGroup?.description || '');
+  form.mother_agent_id = String(props.initialGroup?.mother_agent_id || '').trim();
 };
 
 const handleSubmit = () => {
@@ -116,12 +166,20 @@ const handleSubmit = () => {
   });
 };
 
-watch(
-  () => visible.value,
-  (value) => {
-    if (value) {
-      resetForm();
-    }
+const handleDelete = () => {
+  if (!showDeleteAction.value) {
+    return;
   }
+  emit('delete');
+};
+
+watch(
+  [() => visible.value, () => props.initialGroup, () => props.mode],
+  ([value]) => {
+    if (value) {
+      syncForm();
+    }
+  },
+  { deep: true }
 );
 </script>

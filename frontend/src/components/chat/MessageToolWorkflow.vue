@@ -119,7 +119,7 @@ import {
 } from './toolWorkflowRunModel';
 import {
   formatWorkflowConsumedTokensLabel,
-  resolveWorkflowConsumedTokens
+  resolveWorkflowEntryConsumedTokenResolution
 } from './toolWorkflowUsage';
 import {
   buildStructuredToolResultView
@@ -171,6 +171,7 @@ type ToolEntryView = {
   isCompaction: boolean;
   status: string;
   consumedTokensLabel: string;
+  consumedTokensSource: string;
   durationLabel: string;
   sections: ToolWorkflowDetailSection[];
 };
@@ -3177,16 +3178,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
         )
       }
     : splitEntrySummary(summaryTitle, toolDisplay);
-  const consumedTokensLabel = formatWorkflowConsumedTokensLabel(
-    resolveWorkflowConsumedTokens(
-      entry.resultItem?.detail,
-      entry.outputItem?.detail,
-      entry.callItem?.detail,
-      entry.resultItem,
-      entry.outputItem,
-      entry.callItem
-    )
-  );
+  const consumedTokenResolution = resolveWorkflowEntryConsumedTokenResolution(entry);
+  const consumedTokensLabel = formatWorkflowConsumedTokensLabel(consumedTokenResolution.tokens);
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
@@ -3201,6 +3194,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     isCompaction: Boolean(compactionDisplay),
     status,
     consumedTokensLabel,
+    consumedTokensSource: consumedTokenResolution.source,
     durationLabel,
     sections
   };
@@ -3432,8 +3426,18 @@ const buildWorkflowDebugSnapshot = () => {
     workflowUserCollapsed: workflowUserCollapsed.value,
     latestEntryKey: latestEntry.value?.key || '',
     latestEntryStatus: latestEntry.value?.status || '',
+    latestEntryConsumedTokensLabel: latestEntry.value?.consumedTokensLabel || '',
+    latestEntryConsumedTokensSource: latestEntry.value?.consumedTokensSource || '',
     latestLiveEntryKey: liveEntry?.key || '',
     latestLiveEntryStatus: liveEntry?.status || '',
+    latestLiveEntryConsumedTokensLabel: liveEntry?.consumedTokensLabel || '',
+    latestLiveEntryConsumedTokensSource: liveEntry?.consumedTokensSource || '',
+    entryTokenSamples: displayEntries.value.slice(-3).map((entry) => ({
+      key: entry.key,
+      status: entry.status,
+      consumedTokensLabel: entry.consumedTokensLabel,
+      consumedTokensSource: entry.consumedTokensSource
+    })),
     expandedCount: expandedKeys.value.size,
     userCollapsedEntryCount: userCollapsedEntryKeys.value.size
   };
@@ -3460,6 +3464,7 @@ const buildPendingEntryView = (
     isCompaction,
     status: 'loading',
     consumedTokensLabel: '',
+    consumedTokensSource: '',
     durationLabel: '',
     sections: [
       buildEmptySection(

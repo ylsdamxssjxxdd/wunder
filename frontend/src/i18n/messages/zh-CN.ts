@@ -88,6 +88,7 @@ export default {
   'beehive.swarm.tasks': '任务 {total}',
   'beehive.swarm.taskLane': '任务泳道',
   'beeroom.dialog.createTitle': '创建蜂群',
+  'beeroom.dialog.editTitle': '编辑蜂群',
   'beeroom.dialog.name': '蜂群名称',
   'beeroom.dialog.namePlaceholder': '例如：情报分析蜂群',
   'beeroom.dialog.description': '蜂群说明',

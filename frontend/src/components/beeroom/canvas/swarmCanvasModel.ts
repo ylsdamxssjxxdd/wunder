@@ -24,6 +24,7 @@ import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } 
 import {
   DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
+  resolveAgentAvatarConfiguredColor,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
@@ -60,6 +61,7 @@ export type SwarmProjectionNode = {
   statusLabel: string;
   selected: boolean;
   accentColor: string;
+  avatarColor: string;
   avatarInitial: string;
   avatarImageUrl: string;
   x: number;
@@ -194,6 +196,21 @@ const resolveNodeAccent = (
     return '#38bdf8';
   }
   return CARD_ACCENT_PALETTE[hashText(agentId) % CARD_ACCENT_PALETTE.length] || '#3b82f6';
+};
+
+const resolveProjectionAgentColor = (options: {
+  agentId: unknown;
+  icon: unknown;
+  fallbackColor: string;
+  resolveAgentAvatarColorByAgentId?: ((agentId: unknown) => string) | undefined;
+}) => {
+  const explicitColor = resolveAgentAvatarConfiguredColor(options.icon);
+  if (explicitColor) return explicitColor;
+  const colorByAgentId =
+    typeof options.resolveAgentAvatarColorByAgentId === 'function'
+      ? String(options.resolveAgentAvatarColorByAgentId(options.agentId) || '').trim()
+      : '';
+  return colorByAgentId || options.fallbackColor;
 };
 
 export const resolveBeeroomSwarmScopeKey = (options: {
@@ -743,6 +760,7 @@ export const buildBeeroomSwarmProjection = (options: {
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   resolveAgentAvatarImageByAgentId?: (agentId: unknown) => string;
+  resolveAgentAvatarColorByAgentId?: (agentId: unknown) => string;
   t: TranslationFn;
 }): SwarmProjection => {
   const mission = options.mission;
@@ -875,6 +893,12 @@ export const buildBeeroomSwarmProjection = (options: {
     };
     nodeMetaMap.set(nodeId, meta);
     includeBounds(position.x, position.y, NODE_WIDTH, NODE_HEIGHT);
+    const accentColor = resolveProjectionAgentColor({
+      agentId,
+      icon: member?.icon,
+      fallbackColor: resolveNodeAccent(agentId, meta.role),
+      resolveAgentAvatarColorByAgentId: options.resolveAgentAvatarColorByAgentId
+    });
 
     return {
       id: nodeId,
@@ -886,7 +910,8 @@ export const buildBeeroomSwarmProjection = (options: {
       status,
       statusLabel,
       selected: nodeId === String(options.selectedNodeId || '').trim(),
-      accentColor: resolveNodeAccent(agentId, meta.role),
+      accentColor,
+      avatarColor: accentColor,
       avatarInitial: resolveAgentAvatarInitial(name),
       avatarImageUrl:
         resolveAgentAvatarImage(member?.icon) ||
@@ -1085,6 +1110,12 @@ export const buildBeeroomSwarmProjection = (options: {
       };
       nodeMetaMap.set(nodeId, meta);
       includeBounds(position.x, position.y, SUBAGENT_NODE_WIDTH, SUBAGENT_NODE_HEIGHT);
+      const accentColor = resolveProjectionAgentColor({
+        agentId: item.agentId,
+        icon: memberMap.get(item.agentId)?.icon,
+        fallbackColor: visualState.accentColor,
+        resolveAgentAvatarColorByAgentId: options.resolveAgentAvatarColorByAgentId
+      });
       subagentNodes.push({
         id: nodeId,
         agentId: item.agentId,
@@ -1095,7 +1126,8 @@ export const buildBeeroomSwarmProjection = (options: {
         status: visualState.status,
         statusLabel: visualState.statusLabel,
         selected: nodeId === String(options.selectedNodeId || '').trim(),
-        accentColor: visualState.accentColor,
+        accentColor,
+        avatarColor: accentColor,
         avatarInitial: resolveAgentAvatarInitial(name),
         avatarImageUrl: resolveSubagentAvatarImage({
           agentId: item.agentId,

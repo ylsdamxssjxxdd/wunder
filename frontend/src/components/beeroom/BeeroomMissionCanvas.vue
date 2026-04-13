@@ -23,6 +23,7 @@
           :workflow-items-by-task="workflowItemsByTask"
           :workflow-preview-by-task="workflowPreviewByTask"
           :resolve-agent-avatar-image-by-agent-id="resolveAgentAvatarImageByAgentId"
+          :resolve-agent-avatar-color-by-agent-id="resolveAgentAvatarColorByAgentId"
           :fullscreen="canvasFullscreen"
           @open-agent="emit('open-agent', $event)"
           @toggle-fullscreen="toggleCanvasFullscreen"
@@ -139,6 +140,7 @@ const {
   handleComposerSend,
   handleDispatchApproval,
   resolveAgentAvatarImageByAgentId,
+  resolveAgentAvatarColorByAgentId,
   resolveMessageAvatarImage,
   avatarLabel
 } = useBeeroomMissionCanvasRuntime({

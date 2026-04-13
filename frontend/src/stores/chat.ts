@@ -407,6 +407,114 @@ const buildWorkflowUsageMeta = (...sources) => {
   return {};
 };
 
+const hasWorkflowUsageConsumedTokens = (value, depth = 0) => {
+  if (depth > 3) {
+    return false;
+  }
+  const record = parseWorkflowUsageRecord(value, depth);
+  if (!record) {
+    return false;
+  }
+  const explicitConsumed = normalizeStatsCount(
+    record.request_consumed_tokens ??
+      record.requestConsumedTokens ??
+      record.consumed_tokens ??
+      record.consumedTokens ??
+      record.consumed ??
+      record.used ??
+      record.count
+  );
+  if (explicitConsumed > 0) {
+    return true;
+  }
+  const usageConsumed = normalizeStatsCount(
+    record.total ??
+      record.total_tokens ??
+      record.totalTokens ??
+      record.input ??
+      record.input_tokens ??
+      record.inputTokens
+  );
+  if (usageConsumed > 0) {
+    return true;
+  }
+  return WORKFLOW_USAGE_NESTED_KEYS.some((key) =>
+    hasWorkflowUsageConsumedTokens(record[key], depth + 1)
+  );
+};
+
+const mergeWorkflowUsageSnapshot = (current, incoming) => {
+  const base = parseWorkflowUsageRecord(current);
+  const patch = parseWorkflowUsageRecord(incoming);
+  if (!base) {
+    return patch ?? null;
+  }
+  if (!patch) {
+    return base;
+  }
+  const merged = { ...base };
+  Object.entries(patch).forEach(([key, value]) => {
+    const existing = merged[key];
+    const existingRecord = parseWorkflowUsageRecord(existing);
+    const nextRecord = parseWorkflowUsageRecord(value);
+    if (existingRecord && nextRecord) {
+      merged[key] = mergeWorkflowUsageSnapshot(existingRecord, nextRecord);
+      return;
+    }
+    if (existing === undefined || existing === null || existing === '') {
+      merged[key] = value;
+      return;
+    }
+    if (!hasWorkflowUsageConsumedTokens(existing) && hasWorkflowUsageConsumedTokens(value)) {
+      merged[key] = value;
+    }
+  });
+  return merged;
+};
+
+const summarizeWorkflowUsageDebug = (value, depth = 0) => {
+  if (depth > 2) {
+    return null;
+  }
+  const record = parseWorkflowUsageRecord(value, depth);
+  if (!record) {
+    return null;
+  }
+  const explicitConsumed = normalizeStatsCount(
+    record.request_consumed_tokens ??
+      record.requestConsumedTokens ??
+      record.consumed_tokens ??
+      record.consumedTokens ??
+      record.consumed ??
+      record.used ??
+      record.count
+  );
+  const usageTotal = normalizeStatsCount(
+    record.total ?? record.total_tokens ?? record.totalTokens
+  );
+  const usageInput = normalizeStatsCount(
+    record.input ?? record.input_tokens ?? record.inputTokens
+  );
+  const contextTokens = normalizeStatsCount(
+    record.context_occupancy_tokens ??
+      record.contextOccupancyTokens ??
+      record.context_tokens ??
+      record.contextTokens
+  );
+  const roundUsage =
+    summarizeWorkflowUsageDebug(record.roundUsage ?? record.round_usage, depth + 1) ?? undefined;
+  const usage = summarizeWorkflowUsageDebug(record.usage, depth + 1) ?? undefined;
+  const summary = {
+    explicitConsumed: explicitConsumed > 0 ? explicitConsumed : null,
+    usageTotal: usageTotal > 0 ? usageTotal : null,
+    usageInput: usageInput > 0 ? usageInput : null,
+    contextTokens: contextTokens > 0 ? contextTokens : null,
+    roundUsage,
+    usage
+  };
+  return Object.values(summary).some((item) => item !== null && item !== undefined) ? summary : null;
+};
+
 const WORKSPACE_PATH_HINT_KEYS = [
   'path',
   'paths',
@@ -6782,6 +6890,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     number,
     { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
   >();
+  const roundUsagePayloadMap = new Map<number, unknown>();
   let outputItemId = null;
   const blockedRounds = new Set();
   const consumedQuotaRoundSet = new Set<number>();
@@ -7350,6 +7459,72 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
   };
 
+  const applyRoundUsageToWorkflowTools = (roundNumber, usagePayload) => {
+    const normalizedRound = normalizeStreamRound(roundNumber);
+    if (!Number.isFinite(normalizedRound) || !Array.isArray(assistantMessage.workflowItems)) {
+      return;
+    }
+    roundUsagePayloadMap.set(normalizedRound, usagePayload);
+    const usageMeta = buildWorkflowUsageMeta(usagePayload);
+    if (!usageMeta.payload) {
+      return;
+    }
+    const debugMatches = [];
+    assistantMessage.workflowItems.forEach((item) => {
+      if (!item || typeof item !== 'object') return;
+      if (String(item.eventType || '').trim().toLowerCase() !== 'tool_call') return;
+      if (normalizeStreamRound(item.modelRound ?? item.model_round ?? item.round) !== normalizedRound) {
+        return;
+      }
+      const currentPayload = item.payload ?? item.meta ?? item;
+      const hadConsumedTokens = hasWorkflowUsageConsumedTokens(currentPayload);
+      if (hadConsumedTokens) {
+        if (isChatDebugEnabled()) {
+          debugMatches.push({
+            toolName: String(item.toolName || item.tool || ''),
+            toolCallId: String(item.toolCallId || item.tool_call_id || item.callId || item.call_id || ''),
+            action: 'skip-existing-consumed',
+            before: summarizeWorkflowUsageDebug(currentPayload)
+          });
+        }
+        return;
+      }
+      const mergedPayload = mergeWorkflowUsageSnapshot(item.payload, usageMeta.payload);
+      if (mergedPayload) {
+        item.payload = mergedPayload;
+        if (isChatDebugEnabled()) {
+          debugMatches.push({
+            toolName: String(item.toolName || item.tool || ''),
+            toolCallId: String(item.toolCallId || item.tool_call_id || item.callId || item.call_id || ''),
+            action: 'apply-round-usage',
+            before: summarizeWorkflowUsageDebug(currentPayload),
+            applied: summarizeWorkflowUsageDebug(usageMeta.payload),
+            after: summarizeWorkflowUsageDebug(mergedPayload)
+          });
+        }
+        return;
+      }
+      Object.assign(item, usageMeta);
+      if (isChatDebugEnabled()) {
+        debugMatches.push({
+          toolName: String(item.toolName || item.tool || ''),
+          toolCallId: String(item.toolCallId || item.tool_call_id || item.callId || item.call_id || ''),
+          action: 'assign-round-usage',
+          applied: summarizeWorkflowUsageDebug(usageMeta.payload),
+          after: summarizeWorkflowUsageDebug(item.payload ?? item.meta ?? item)
+        });
+      }
+    });
+    if (isChatDebugEnabled()) {
+      chatDebugLog('chat.store.runtime', 'workflow-tool-round-usage', {
+        roundNumber: normalizedRound,
+        incoming: summarizeWorkflowUsageDebug(usageMeta.payload),
+        matchedToolCalls: debugMatches.length,
+        matches: debugMatches
+      });
+    }
+  };
+
   const resolveToolItemId = (toolName, toolCallId = null) => {
     const normalizedCallId = normalizeToolCallRef(toolCallId);
     if (normalizedCallId) {
@@ -7577,7 +7752,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
-      ...buildWorkflowUsageMeta(source)
+      modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
+      ...buildWorkflowUsageMeta(
+        Number.isFinite(lastRound) ? roundUsagePayloadMap.get(lastRound) : null,
+        source
+      )
     };
     const existing = toolCallItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7591,7 +7770,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
-      ...buildWorkflowUsageMeta(source)
+      modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
+      ...buildWorkflowUsageMeta(
+        Number.isFinite(lastRound) ? roundUsagePayloadMap.get(lastRound) : null,
+        source
+      )
     });
     assistantMessage.workflowItems.push(item);
     registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
@@ -8623,6 +8806,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const commandSessionId = extractCommandSessionRef(payload, data);
         const detailSource = data && typeof data === 'object' ? data : payload ?? data;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
+        const toolCallRound = resolveRound(payload, data);
         if (isExecuteCommandTool(toolName)) {
           if (commandSessionId) {
             syncCommandSessionSnapshot(detailSource);
@@ -8647,7 +8831,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           toolName: String(toolName || ''),
           toolCallId: toolCallId || commandSessionId || undefined,
           commandSessionId: commandSessionId || undefined,
-          ...buildWorkflowUsageMeta(detailSource, data, payload)
+          modelRound: toolCallRound ?? undefined,
+          ...buildWorkflowUsageMeta(
+            toolCallRound !== null ? roundUsagePayloadMap.get(toolCallRound) : null,
+            detailSource,
+            data,
+            payload
+          )
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id, toolCallId || commandSessionId);
@@ -9203,6 +9393,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             includeInRoundAverage: false
           }
         );
+        applyRoundUsageToWorkflowTools(round, data ?? payload ?? {});
         fallbackQuotaUsageFromRound(data ?? payload ?? {}, round);
         break;
       }

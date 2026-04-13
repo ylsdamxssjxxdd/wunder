@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::services::swarm::beeroom::{
-    claim_mother_agent, collect_agent_activity, get_mother_agent_id, snapshot_team_run,
+    claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
+    set_mother_agent, snapshot_team_run,
 };
 use crate::state::AppState;
 use crate::storage::{normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID};
@@ -21,7 +22,9 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/beeroom/groups/{group_id}",
-            get(get_beeroom_group).delete(delete_beeroom_group),
+            get(get_beeroom_group)
+                .put(update_beeroom_group)
+                .delete(delete_beeroom_group),
         )
         .route(
             "/wunder/beeroom/groups/{group_id}/move_agents",
@@ -182,6 +185,64 @@ async fn get_beeroom_group(
             "missions": missions,
         }
     })))
+}
+
+async fn update_beeroom_group(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+    Json(payload): Json<UpdateBeeroomGroupRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let mut group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "beeroom name is required".to_string(),
+        ));
+    }
+
+    group.name = name.to_string();
+    group.description = payload.description.unwrap_or_default();
+    group.updated_time = now_ts();
+    state
+        .user_store
+        .upsert_hive(&group)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    match payload.mother_agent_id.as_deref().map(str::trim) {
+        Some("") => {
+            state
+                .storage
+                .set_meta(&mother_meta_key(&user_id, &group.hive_id), "")
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        Some(mother_agent_id) => {
+            state
+                .user_store
+                .get_user_agent(&user_id, mother_agent_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+                .ok_or_else(|| {
+                    error_response(StatusCode::BAD_REQUEST, "mother agent not found".to_string())
+                })?;
+            state
+                .user_store
+                .move_agents_to_hive(&user_id, &group.hive_id, &[mother_agent_id.to_string()])
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            set_mother_agent(state.storage.as_ref(), &user_id, &group.hive_id, mother_agent_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        None => {}
+    }
+
+    Ok(Json(json!({ "data": group_payload(state.as_ref(), &group, 10)? })))
 }
 
 async fn delete_beeroom_group(
@@ -547,6 +608,15 @@ struct CreateBeeroomGroupRequest {
     description: Option<String>,
     #[serde(default, alias = "groupId", alias = "hive_id", alias = "hiveId")]
     group_id: Option<String>,
+    #[serde(default, alias = "motherAgentId", alias = "mother_agent_id")]
+    mother_agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateBeeroomGroupRequest {
+    name: String,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default, alias = "motherAgentId", alias = "mother_agent_id")]
     mother_agent_id: Option<String>,
 }

@@ -88,6 +88,7 @@ export default {
   'beehive.swarm.tasks': 'Tasks {total}',
   'beehive.swarm.taskLane': 'Task Lane',
   'beeroom.dialog.createTitle': 'Create Swarm',
+  'beeroom.dialog.editTitle': 'Edit Swarm',
   'beeroom.dialog.name': 'Swarm Name',
   'beeroom.dialog.namePlaceholder': 'e.g. Operations Intelligence Swarm',
   'beeroom.dialog.description': 'Swarm Description',

@@ -2466,3 +2466,14 @@
 - 为减少模型上下文占用，observation 压缩阶段会将 `data` 下密集数组压缩为 JSONL 字段（如 `hits_jsonl/matches_jsonl/files_jsonl/rows_jsonl`）并附带 `*_count` 计数。
 - When truncation happens, payload/meta may include `truncation_reasons` (for example `array_items`/`string_chars`/`char_budget`), and multiple reasons can co-exist in the same result to indicate compound truncation.
 
+## 2026-04-13 增补：beeroom 蜂群元数据编辑
+
+### `PUT /wunder/beeroom/groups/{group_id}`
+
+- 用途：更新蜂群名称、说明和母蜂配置，供用户侧消息页蜂群中栏“编辑蜂群”弹窗调用。
+- 请求体：
+  - `name: string`，必填，蜂群名称。
+  - `description?: string`，可选；传空串会清空说明。
+  - `mother_agent_id?: string`，可选；传空串会清空母蜂绑定，传有效智能体 ID 时会自动将该智能体迁入目标蜂群并重设为母蜂。
+- 返回：`data` 为更新后的蜂群摘要，结构与 `GET /wunder/beeroom/groups/{group_id}` 返回中的 `group` 基础字段保持一致。
+

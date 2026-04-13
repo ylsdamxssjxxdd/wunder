@@ -75,11 +75,12 @@ import { consumeSseStream } from '@/utils/sse';
 import {
   DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
+  resolveAgentAvatarConfiguredColor,
   resolveAgentAvatarImageByConfig,
   resolveAgentAvatarInitial
 } from '@/utils/agentAvatar';
 import { PROFILE_AVATAR_OPTION_KEYS, resolveProfileAvatarImageByKey } from '@/utils/avatarCatalog';
-import { normalizeAvatarIcon, readUserAppearanceFromStorage } from '@/utils/userPreferences';
+import { DEFAULT_AVATAR_COLOR, normalizeAvatarIcon, readUserAppearanceFromStorage } from '@/utils/userPreferences';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 
 type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
@@ -368,8 +369,37 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return map;
   });
 
+  const agentAvatarColorMap = computed(() => {
+    const map = new Map<string, string>();
+    options.agents.value.forEach((member) => {
+      const agentId = String(member.agent_id || '').trim();
+      if (!agentId) return;
+      const color = resolveAgentAvatarConfiguredColor(member.icon);
+      if (color) {
+        map.set(agentId, color);
+      }
+    });
+    Object.entries(agentStore.agentMap || {}).forEach(([agentId, agent]) => {
+      const normalizedAgentId = String(agentId || '').trim();
+      if (!normalizedAgentId || map.has(normalizedAgentId)) return;
+      const icon =
+        agent && typeof agent === 'object' ? (agent as Record<string, unknown>).icon : undefined;
+      const color = resolveAgentAvatarConfiguredColor(icon);
+      if (color) {
+        map.set(normalizedAgentId, color);
+      }
+    });
+    if (!map.has(DEFAULT_AGENT_KEY)) {
+      map.set(DEFAULT_AGENT_KEY, DEFAULT_AVATAR_COLOR);
+    }
+    return map;
+  });
+
   const resolveAgentAvatarImageByAgentId = (agentId: unknown): string =>
     agentAvatarImageMap.value.get(String(agentId || '').trim()) || '';
+
+  const resolveAgentAvatarColorByAgentId = (agentId: unknown): string =>
+    agentAvatarColorMap.value.get(String(agentId || '').trim()) || '';
 
   const resolveMessageAvatarImage = (message: MissionChatMessage): string => {
     const explicitAvatarImageUrl = String(message?.avatarImageUrl || '').trim();
@@ -2969,6 +2999,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     handleDispatchStop,
     handleDemoAction,
     resolveAgentAvatarImageByAgentId,
+    resolveAgentAvatarColorByAgentId,
     resolveMessageAvatarImage,
     avatarLabel
   };

@@ -12,6 +12,8 @@ import {
 } from '../../src/components/chat/toolWorkflowRunModel';
 import {
   formatWorkflowConsumedTokensLabel,
+  resolveWorkflowEntryConsumedTokenResolution,
+  resolveWorkflowEntryConsumedTokens,
   resolveWorkflowConsumedTokens
 } from '../../src/components/chat/toolWorkflowUsage';
 
@@ -264,4 +266,134 @@ test('workflow consumed tokens can still read request usage from item payload wh
   );
   assert.equal(tokens, 2048);
   assert.equal(formatWorkflowConsumedTokensLabel(tokens), '2,048 tok');
+});
+
+test('workflow entry consumed tokens prefer tool call round usage over result aggregate', () => {
+  const tokens = resolveWorkflowEntryConsumedTokens({
+    callItem: {
+      eventType: 'tool_call',
+      modelRound: 2,
+      payload: {
+        round_usage: {
+          total_tokens: 512
+        },
+        context_occupancy_tokens: 4096
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            request_consumed_tokens: 1536,
+            context_occupancy_tokens: 8192
+          }
+        }
+      }
+    }
+  });
+  assert.equal(tokens, 512);
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '512 tok');
+});
+
+test('workflow entry consumed tokens fall back to result usage when tool call usage is absent', () => {
+  const tokens = resolveWorkflowEntryConsumedTokens({
+    callItem: {
+      eventType: 'tool_call',
+      payload: {
+        context_occupancy_tokens: 4096
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            request_consumed_tokens: 768
+          }
+        }
+      }
+    }
+  });
+  assert.equal(tokens, 768);
+});
+
+test('workflow entry consumed token resolution records call as the winning source', () => {
+  const resolution = resolveWorkflowEntryConsumedTokenResolution({
+    callItem: {
+      eventType: 'tool_call',
+      payload: {
+        round_usage: {
+          total_tokens: 321
+        }
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            request_consumed_tokens: 999
+          }
+        }
+      }
+    }
+  });
+  assert.deepEqual(resolution, {
+    tokens: 321,
+    source: 'call'
+  });
+});
+
+test('workflow entry consumed token resolution records none when no usage is available', () => {
+  const resolution = resolveWorkflowEntryConsumedTokenResolution({
+    callItem: {
+      eventType: 'tool_call',
+      payload: {
+        context_occupancy_tokens: 4096
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            context_occupancy_tokens: 8192
+          }
+        }
+      }
+    }
+  });
+  assert.deepEqual(resolution, {
+    tokens: null,
+    source: 'none'
+  });
+});
+
+test('workflow entry consumed tokens ignore result usage totals without explicit per-tool consumption', () => {
+  const resolution = resolveWorkflowEntryConsumedTokenResolution({
+    callItem: {
+      eventType: 'tool_call',
+      payload: {
+        context_occupancy_tokens: 4096
+      }
+    },
+    resultItem: {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          usage: {
+            total_tokens: 21946
+          },
+          meta: {
+            context_occupancy_tokens: 21946
+          }
+        }
+      }
+    }
+  });
+  assert.deepEqual(resolution, {
+    tokens: null,
+    source: 'none'
+  });
 });

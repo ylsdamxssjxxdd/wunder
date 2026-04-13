@@ -255,6 +255,7 @@ const props = defineProps<{
   workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
   workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   resolveAgentAvatarImageByAgentId?: (agentId: unknown) => string;
+  resolveAgentAvatarColorByAgentId?: (agentId: unknown) => string;
   fullscreen?: boolean;
 }>();
 
@@ -332,6 +333,7 @@ const projection = computed(() =>
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     resolveAgentAvatarImageByAgentId: props.resolveAgentAvatarImageByAgentId,
+    resolveAgentAvatarColorByAgentId: props.resolveAgentAvatarColorByAgentId,
     t
   })
 );
@@ -352,6 +354,7 @@ const baseProjection = computed(() =>
     workflowItemsByTask: props.workflowItemsByTask,
     workflowPreviewByTask: props.workflowPreviewByTask,
     resolveAgentAvatarImageByAgentId: props.resolveAgentAvatarImageByAgentId,
+    resolveAgentAvatarColorByAgentId: props.resolveAgentAvatarColorByAgentId,
     t
   })
 );

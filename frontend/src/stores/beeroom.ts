@@ -12,7 +12,8 @@ import {
   importBeeroomHivePack,
   listBeeroomGroups,
   listBeeroomMissions,
-  moveBeeroomAgents
+  moveBeeroomAgents,
+  updateBeeroomGroup
 } from '@/api/beeroom';
 import type { QueryParams } from '@/api/types';
 import {
@@ -943,6 +944,22 @@ export const useBeeroomStore = defineStore('beeroom', {
         this.upsertGroup(group);
         this.activeGroupId = normalizeGroupId(group.group_id || group.hive_id);
         await this.loadActiveGroup();
+      }
+      return group;
+    },
+
+    async updateGroup(groupId: unknown, payload: Record<string, unknown>) {
+      const normalizedGroupId = normalizeGroupId(groupId || this.activeGroupId);
+      if (!normalizedGroupId) {
+        return null;
+      }
+      const { data } = await updateBeeroomGroup(normalizedGroupId, payload);
+      const group = (data?.data || null) as BeeroomGroup | null;
+      if (group) {
+        this.upsertGroup(group);
+        if (normalizeGroupId(this.activeGroupId) === normalizedGroupId) {
+          await this.loadActiveGroup({ silent: true });
+        }
       }
       return group;
     },

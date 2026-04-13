@@ -173,7 +173,7 @@
           :filtered-beeroom-groups="filteredBeeroomGroups"
           :selected-beeroom-group-id="beeroomStore.activeGroupId"
           :select-beeroom-group="selectBeeroomGroup"
-          @delete-beeroom-group="handleDeleteBeeroomGroup"
+          :delete-beeroom-group="handleDeleteBeeroomGroup"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroup"
@@ -1704,11 +1704,6 @@ import {
 } from '@/utils/promptToolingPreview';
 import { collectAbilityDetails, collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
-  buildWorkspaceImagePersistentCacheKey,
-  readWorkspaceImagePersistentCache,
-  writeWorkspaceImagePersistentCache
-} from '@/utils/workspaceImagePersistentCache';
-import {
   buildWorkspacePublicPath,
   normalizeWorkspaceOwnerId,
   resolveMarkdownWorkspacePath
@@ -1717,6 +1712,10 @@ import {
   isImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
+import {
+  extractWorkspaceRefreshPaths,
+  isWorkspacePathAffected
+} from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
@@ -6898,17 +6897,6 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   };
 };
 
-const buildWorkspaceResourcePersistentCacheKey = (resource: WorkspaceResolvedResource): string => {
-  const currentUserId = normalizeWorkspaceOwnerId((authStore.user as Record<string, unknown> | null)?.id);
-  return buildWorkspaceImagePersistentCacheKey({
-    scope: currentUserId || 'anonymous',
-    requestUserId: resource.requestUserId,
-    requestAgentId: resource.requestAgentId,
-    requestContainerId: resource.requestContainerId,
-    publicPath: resource.publicPath
-  });
-};
-
 const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
   const raw = status?.dataset?.loadingLabel;
   const normalized = String(raw || '').trim();
@@ -6986,26 +6974,7 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
     };
   }
   if (cached?.promise) return cached.promise;
-  const allowPersistentCache = isImagePath(resource.filename || resource.relativePath || '');
-  const persistentCacheKey = allowPersistentCache
-    ? buildWorkspaceResourcePersistentCacheKey(resource)
-    : '';
   const promise = (async () => {
-    if (allowPersistentCache && persistentCacheKey) {
-      const cachedPayload = await readWorkspaceImagePersistentCache(persistentCacheKey);
-      if (cachedPayload?.blob) {
-        const filename = cachedPayload.filename || resource.filename || 'download';
-        const cachedBlob = normalizeWorkspaceImageBlob(
-          cachedPayload.blob,
-          filename,
-          cachedPayload.blob.type
-        );
-        const objectUrl = URL.createObjectURL(cachedBlob);
-        const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
-        workspaceResourceCache.set(cacheKey, entry);
-        return entry;
-      }
-    }
     const params: Record<string, string> = {
       path: String(resource.relativePath || '')
     };
@@ -7033,12 +7002,6 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
       const objectUrl = URL.createObjectURL(normalizedBlob);
       const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
       workspaceResourceCache.set(cacheKey, entry);
-      if (allowPersistentCache && persistentCacheKey) {
-        void writeWorkspaceImagePersistentCache(persistentCacheKey, {
-          blob: normalizedBlob,
-          filename
-        });
-      }
       return entry;
     } catch (error) {
       workspaceResourceCache.delete(cacheKey);
@@ -7158,6 +7121,33 @@ const scheduleWorkspaceResourceHydration = () => {
   });
 };
 
+const resetWorkspaceResourceCards = (changedPaths: string[] = []) => {
+  const container = messageListRef.value;
+  if (!container) return;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    const element = card as HTMLElement;
+    const publicPath = String(element.dataset.workspacePath || '').trim();
+    if (changedPaths.length) {
+      const parsed = parseWorkspaceResourceUrl(publicPath);
+      if (!isWorkspacePathAffected(parsed?.relativePath || '', changedPaths)) {
+        return;
+      }
+    }
+    element.dataset.workspaceState = '';
+    element.classList.remove('is-error');
+    element.classList.remove('is-ready');
+    const preview = element.querySelector('.ai-resource-preview');
+    if (preview instanceof HTMLImageElement) {
+      preview.removeAttribute('src');
+    }
+    const status = element.querySelector('.ai-resource-status');
+    if (status) {
+      status.textContent = '';
+    }
+  });
+};
+
 const clearWorkspaceResourceCache = () => {
   if (workspaceResourceHydrationFrame !== null && typeof window !== 'undefined') {
     window.cancelAnimationFrame(workspaceResourceHydrationFrame);
@@ -7171,6 +7161,43 @@ const clearWorkspaceResourceCache = () => {
   });
   workspaceResourceCache.clear();
   userAttachmentResourceCache.value = new Map();
+};
+
+const clearWorkspaceResourceCacheByPaths = (changedPaths: string[] = []) => {
+  if (!changedPaths.length) {
+    clearWorkspaceResourceCache();
+    return;
+  }
+  if (workspaceResourceHydrationFrame !== null && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(workspaceResourceHydrationFrame);
+    workspaceResourceHydrationFrame = null;
+  }
+  workspaceResourceHydrationPending = false;
+  Array.from(workspaceResourceCache.entries()).forEach(([cacheKey, entry]) => {
+    const parsed = parseWorkspaceResourceUrl(cacheKey);
+    if (!isWorkspacePathAffected(parsed?.relativePath || '', changedPaths)) {
+      return;
+    }
+    if (entry?.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+    workspaceResourceCache.delete(cacheKey);
+  });
+  if (userAttachmentResourceCache.value.size > 0) {
+    const next = new Map(userAttachmentResourceCache.value);
+    Array.from(next.keys()).forEach((publicPath) => {
+      const parsed = parseWorkspaceResourceUrl(publicPath);
+      if (!isWorkspacePathAffected(parsed?.relativePath || '', changedPaths)) {
+        return;
+      }
+      const entry = next.get(publicPath);
+      if (entry?.objectUrl) {
+        URL.revokeObjectURL(entry.objectUrl);
+      }
+      next.delete(publicPath);
+    });
+    userAttachmentResourceCache.value = next;
+  }
 };
 
 const parseWorkspaceRefreshContainerId = (value: unknown): number | null => {
@@ -7206,7 +7233,16 @@ const handleWorkspaceResourceRefresh = (event?: Event) => {
   if (!shouldHandleWorkspaceResourceRefresh(detail)) {
     return;
   }
-  clearWorkspaceResourceCache();
+  const changedPaths = extractWorkspaceRefreshPaths(detail);
+  if (!changedPaths.length) {
+    clearWorkspaceResourceCache();
+    resetWorkspaceResourceCards();
+    scheduleWorkspaceResourceHydration();
+    return;
+  }
+  clearWorkspaceResourceCacheByPaths(changedPaths);
+  resetWorkspaceResourceCards(changedPaths);
+  scheduleWorkspaceResourceHydration();
 };
 
 const downloadWorkspaceResource = async (publicPath: string) => {
@@ -8498,21 +8534,6 @@ const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
   if (!groupId) {
     return;
   }
-  const groupName = String(group?.name || groupId).trim() || groupId;
-  try {
-    await ElMessageBox.confirm(
-      t('beeroom.message.deleteConfirm', { name: groupName }),
-      t('common.delete'),
-      {
-        confirmButtonText: t('common.delete'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch {
-    return;
-  }
-
   try {
     await beeroomStore.deleteGroup(groupId);
     await Promise.all([

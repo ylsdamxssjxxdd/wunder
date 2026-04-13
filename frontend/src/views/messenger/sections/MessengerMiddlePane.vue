@@ -399,14 +399,13 @@
             <i class="fa-solid fa-download" aria-hidden="true"></i>
           </button>
           <button
-            v-if="!group.is_default"
             class="messenger-list-item-action"
             type="button"
-            :title="t('common.delete')"
-            :aria-label="t('common.delete')"
-            @click.stop="emit('delete-beeroom-group', group)"
+            :title="t('common.edit')"
+            :aria-label="t('common.edit')"
+            @click.stop="openSwarmEditDialog(group)"
           >
-            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+            <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -820,7 +819,19 @@
   <BeeroomCreateDialog
     v-model="swarmCreateVisible"
     :candidate-agents="swarmCreateCandidateAgents"
+    :saving="swarmCreateSaving"
     @submit="handleSwarmCreateSubmit"
+  />
+
+  <BeeroomCreateDialog
+    v-model="swarmEditVisible"
+    mode="edit"
+    :candidate-agents="swarmCreateCandidateAgents"
+    :initial-group="swarmEditingGroup"
+    :saving="swarmEditSaving"
+    :deleting="swarmEditDeleting"
+    @submit="handleSwarmEditSubmit"
+    @delete="handleSwarmEditDelete"
   />
 
   <input
@@ -884,6 +895,10 @@ const beeroomStore = useBeeroomStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 const swarmCreateVisible = ref(false);
 const swarmCreateSaving = ref(false);
+const swarmEditVisible = ref(false);
+const swarmEditSaving = ref(false);
+const swarmEditDeleting = ref(false);
+const swarmEditingGroup = ref<Record<string, any> | null>(null);
 const packOverlayMode = ref<'import' | 'export'>('export');
 const packOverlayTargetName = ref('');
 const selectedAgentIds = ref<string[]>([]);
@@ -945,6 +960,7 @@ const {
   filteredBeeroomGroups,
   selectedBeeroomGroupId,
   selectBeeroomGroup,
+  deleteBeeroomGroup,
   filteredGroups,
   selectedGroupId,
   selectGroup,
@@ -1026,6 +1042,7 @@ const {
   filteredBeeroomGroups: Array<Record<string, any>>;
   selectedBeeroomGroupId: string;
   selectBeeroomGroup: (group: Record<string, any>) => void;
+  deleteBeeroomGroup: (group: Record<string, any>) => void | Promise<void>;
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
@@ -1333,7 +1350,6 @@ const emit = defineEmits<{
   (event: 'update:selectedAgentHiveGroupId', value: string): void;
   (event: 'update:settingsPanelMode', value: string): void;
   (event: 'activate-settings-panel', value: string): void;
-  (event: 'delete-beeroom-group', group: Record<string, any>): void;
 }>();
 
 const updateKeyword = (value: string) => {
@@ -1561,6 +1577,19 @@ const openSwarmCreateDialog = () => {
   swarmCreateVisible.value = true;
 };
 
+const resolveSwarmGroupId = (group: Record<string, any> | null | undefined): string =>
+  String(group?.group_id || group?.hive_id || '').trim();
+
+const resolveSwarmGroupName = (group: Record<string, any> | null | undefined): string => {
+  const groupId = resolveSwarmGroupId(group);
+  return String(group?.name || groupId).trim() || groupId;
+};
+
+const openSwarmEditDialog = (group: Record<string, any>) => {
+  swarmEditingGroup.value = { ...group };
+  swarmEditVisible.value = true;
+};
+
 const handleSwarmPlusCommand = (command: string | number | Record<string, unknown>) => {
   const normalized = String(command || '').trim().toLowerCase();
   if (normalized === 'import') {
@@ -1584,6 +1613,53 @@ const handleSwarmCreateSubmit = async (payload: Record<string, unknown>) => {
     ElMessage.error(detail || t('common.requestFailed'));
   } finally {
     swarmCreateSaving.value = false;
+  }
+};
+
+const handleSwarmEditSubmit = async (payload: Record<string, unknown>) => {
+  const groupId = resolveSwarmGroupId(swarmEditingGroup.value);
+  if (swarmEditSaving.value || !groupId) return;
+  swarmEditSaving.value = true;
+  try {
+    const updated = await beeroomStore.updateGroup(groupId, payload);
+    swarmEditingGroup.value = updated ? { ...updated } : swarmEditingGroup.value;
+    swarmEditVisible.value = false;
+    ElMessage.success(t('common.saved'));
+  } catch (error: any) {
+    const detail = String(error?.response?.data?.detail || error?.message || '').trim();
+    ElMessage.error(detail || t('common.saveFailed'));
+  } finally {
+    swarmEditSaving.value = false;
+  }
+};
+
+const handleSwarmEditDelete = async () => {
+  const group = swarmEditingGroup.value;
+  const groupId = resolveSwarmGroupId(group);
+  if (!groupId || swarmEditDeleting.value) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      t('beeroom.message.deleteConfirm', { name: resolveSwarmGroupName(group) }),
+      t('common.delete'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch {
+    return;
+  }
+
+  swarmEditDeleting.value = true;
+  try {
+    await deleteBeeroomGroup(group);
+    swarmEditVisible.value = false;
+    swarmEditingGroup.value = null;
+  } finally {
+    swarmEditDeleting.value = false;
   }
 };
 
