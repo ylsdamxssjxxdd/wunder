@@ -255,10 +255,18 @@ export const resolveAbilityVisual = (input: AbilityVisualInput): AbilityVisualMe
   const kind = resolveAbilityKind(input.kind, input.group || input.source);
   const preferredTone = resolvePreferredTone(kind, input.group, input.source);
   const matchedRule = findAbilityRule(input);
-  const tone = preferredTone || matchedRule?.tone || (kind === 'skill' ? 'skill' : 'general');
+
+  // For skill-type abilities, prevent non-skill rules from overriding the icon.
+  // E.g. a skill whose description mentions "智能体蜂群" should not get the bee icon.
+  const effectiveRule =
+    kind === 'skill' && preferredTone === 'skill' && matchedRule?.tone !== 'skill'
+      ? null
+      : matchedRule;
+
+  const tone = preferredTone || effectiveRule?.tone || (kind === 'skill' ? 'skill' : 'general');
 
   return {
-    icon: matchedRule?.icon || resolveContextualDefaultIcon(input, tone),
+    icon: effectiveRule?.icon || resolveContextualDefaultIcon(input, tone),
     tone
   };
 };
