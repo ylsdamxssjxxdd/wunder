@@ -16,6 +16,11 @@ import {
   resolveWorkflowEntryConsumedTokens,
   resolveWorkflowConsumedTokens
 } from '../../src/components/chat/toolWorkflowUsage';
+import {
+  formatWorkflowDurationLabel,
+  resolveWorkflowDurationMs,
+  resolveWorkflowEntryDurationMs
+} from '../../src/utils/toolWorkflowTiming';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
@@ -217,7 +222,7 @@ test('workflow consumed tokens prefer explicit request consumption over context 
     })
   );
   assert.equal(tokens, 1536);
-  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '1,536 tok');
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '1536 token');
 });
 
 test('workflow consumed tokens fall back to round usage totals when explicit value is absent', () => {
@@ -278,7 +283,7 @@ test('workflow consumed tokens can still read request usage from item payload wh
     }
   );
   assert.equal(tokens, 2048);
-  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '2,048 tok');
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '2048 token');
 });
 
 test('workflow entry consumed tokens prefer tool call model usage over result aggregate', () => {
@@ -306,7 +311,37 @@ test('workflow entry consumed tokens prefer tool call model usage over result ag
     }
   });
   assert.equal(tokens, 512);
-  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '512 tok');
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '512 token');
+});
+
+test('workflow duration resolves nested elapsed timing from tool payload', () => {
+  const durationMs = resolveWorkflowDurationMs(
+    JSON.stringify({
+      result: {
+        data: {
+          meta: {
+            search: {
+              elapsed_ms: 612
+            }
+          }
+        }
+      }
+    })
+  );
+  assert.equal(durationMs, 612);
+  assert.equal(formatWorkflowDurationLabel(durationMs), '612ms');
+});
+
+test('workflow entry duration prefers explicit result timing when detail is observation only', () => {
+  const durationMs = resolveWorkflowEntryDurationMs({
+    resultItem: {
+      eventType: 'tool_result',
+      detail: '{"summary":"tool finished"}',
+      durationMs: 1700
+    }
+  });
+  assert.equal(durationMs, 1700);
+  assert.equal(formatWorkflowDurationLabel(durationMs), '1.7s');
 });
 
 test('workflow entry consumed tokens fall back to result usage when tool call usage is absent', () => {

@@ -192,5 +192,5 @@ export const resolveWorkflowEntryConsumedTokenResolution = (
 
 export const formatWorkflowConsumedTokensLabel = (tokens: number | null): string => {
   if (tokens === null || tokens <= 0) return '';
-  return `${tokens.toLocaleString('en-US')} tok`;
+  return `${tokens} token`;
 };

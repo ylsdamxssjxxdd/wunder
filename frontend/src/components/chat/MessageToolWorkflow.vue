@@ -58,14 +58,18 @@
               class="tool-workflow-entry-meta"
             >
               <span
-                v-if="entry.consumedTokensLabel"
-                class="tool-workflow-entry-consumed"
+                :class="[
+                  'tool-workflow-entry-consumed',
+                  { 'is-empty': !entry.consumedTokensLabel }
+                ]"
               >
                 {{ entry.consumedTokensLabel }}
               </span>
               <span
-                v-if="entry.durationLabel"
-                class="tool-workflow-entry-duration"
+                :class="[
+                  'tool-workflow-entry-duration',
+                  { 'is-empty': !entry.durationLabel }
+                ]"
               >
                 {{ entry.durationLabel }}
               </span>
@@ -133,6 +137,10 @@ import {
   type CompactionDisplay
 } from '@/utils/chatCompactionUi';
 import { resolveAbilityVisual } from '@/utils/abilityVisuals';
+import {
+  formatWorkflowDurationLabel,
+  resolveWorkflowEntryDurationMs
+} from '@/utils/toolWorkflowTiming';
 import MessageToolWorkflowSection from './MessageToolWorkflowSection.vue';
 import type {
   ToolWorkflowCommandView as CommandView,
@@ -1705,30 +1713,6 @@ const buildApplyPatchResultFiles = (patchEntries: PatchEntry[], errorText: strin
   return files;
 };
 
-const extractDurationMs = (
-  entry: RawEntry,
-  commandSession: CommandSessionRuntimeEntry | null
-): number | null => {
-  const liveDuration = resolveCommandSessionDurationMs(commandSession);
-  if (liveDuration !== null) {
-    return liveDuration;
-  }
-  const detailObject = parseDetailObject(entry.resultItem?.detail);
-  const resultObject = extractToolResultObject(detailObject);
-  const dataObject = extractToolResultData(resultObject);
-  return toOptionalInt(
-    resultObject?.duration_ms,
-    resultObject?.elapsed_ms,
-    resultObject?.durationMs,
-    resultObject?.elapsedMs,
-    asObject(resultObject?.meta)?.duration_ms,
-    dataObject?.duration_ms,
-    dataObject?.elapsed_ms,
-    dataObject?.durationMs,
-    dataObject?.elapsedMs
-  );
-};
-
 const toBool = (...values: unknown[]): boolean | null => {
   for (const value of values) {
     if (typeof value === 'boolean') return value;
@@ -1746,13 +1730,6 @@ const formatTokenTransition = (before: number | null, after: number | null): str
   if (before !== null && after !== null) return `${before} → ${after} tokens`;
   if (before !== null) return `${before} tokens`;
   return `${after} tokens`;
-};
-
-const formatDurationLabel = (durationMs: number | null): string => {
-  if (durationMs === null || durationMs <= 0) return '';
-  if (durationMs < 1000) return `${durationMs}ms`;
-  const seconds = durationMs / 1000;
-  return seconds >= 10 ? `${seconds.toFixed(0)}s` : `${seconds.toFixed(1)}s`;
 };
 
 const collectEntryPathHints = (
@@ -3180,7 +3157,9 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     : splitEntrySummary(summaryTitle, toolDisplay);
   const consumedTokenResolution = resolveWorkflowEntryConsumedTokenResolution(entry);
   const consumedTokensLabel = formatWorkflowConsumedTokensLabel(consumedTokenResolution.tokens);
-  const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
+  const durationLabel = formatWorkflowDurationLabel(
+    resolveWorkflowEntryDurationMs(entry, resolveCommandSessionDurationMs(commandSession))
+  );
   const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
 
@@ -4144,19 +4123,37 @@ onBeforeUnmount(() => {
 .tool-workflow-entry-meta {
   margin-left: auto;
   flex: 0 0 auto;
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: 12ch 6ch;
   align-items: center;
-  gap: 8px;
+  justify-content: end;
+  justify-items: end;
+  column-gap: 10px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .tool-workflow-entry-consumed,
 .tool-workflow-entry-duration {
-  flex: 0 0 auto;
+  display: block;
+  min-width: 0;
   color: var(--workflow-term-muted);
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+  text-align: right;
+}
+
+.tool-workflow-entry-consumed.is-empty,
+.tool-workflow-entry-duration.is-empty {
+  visibility: hidden;
+}
+
+@media (max-width: 760px) {
+  .tool-workflow-entry-meta {
+    grid-template-columns: 11ch 5ch;
+    column-gap: 8px;
+  }
 }
 
 @keyframes tool-workflow-status-pulse {

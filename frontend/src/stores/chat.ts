@@ -37,6 +37,7 @@ import {
   normalizeThreadRuntimeStatus
 } from '@/utils/chatSessionRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
+import { resolveWorkflowDurationMs } from '@/utils/toolWorkflowTiming';
 import { summarizeTurnDecodeSpeed } from '@/utils/turnDecodeSpeed';
 import {
   normalizeMessageFeedback,
@@ -405,6 +406,11 @@ const buildWorkflowUsageMeta = (...sources) => {
     }
   }
   return {};
+};
+
+const buildWorkflowTimingMeta = (...sources) => {
+  const durationMs = resolveWorkflowDurationMs(...sources);
+  return durationMs !== null ? { durationMs } : {};
 };
 
 const hasWorkflowUsageConsumedTokens = (value, depth = 0) => {
@@ -7804,7 +7810,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
-      ...usageMeta
+      ...usageMeta,
+      ...buildWorkflowTimingMeta(source)
     };
     const existing = toolCallItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7819,7 +7826,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
       modelRound: Number.isFinite(lastRound) ? lastRound : undefined,
-      ...usageMeta
+      ...usageMeta,
+      ...buildWorkflowTimingMeta(source)
     });
     assistantMessage.workflowItems.push(item);
     registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
@@ -7901,7 +7909,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
-      ...buildWorkflowUsageMeta(source)
+      ...buildWorkflowUsageMeta(source),
+      ...buildWorkflowTimingMeta(source)
     };
     const existing = commandSessionResultItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7915,7 +7924,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
       commandSessionId: normalizedSessionId,
-      ...buildWorkflowUsageMeta(source)
+      ...buildWorkflowUsageMeta(source),
+      ...buildWorkflowTimingMeta(source)
     });
     assistantMessage.workflowItems.push(item);
     commandSessionResultItemMap.set(normalizedSessionId, item.id);
@@ -8854,6 +8864,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           ),
           buildWorkflowUsageMeta(detailSource, data, payload)
         );
+        const timingMeta = buildWorkflowTimingMeta(detailSource, data, payload);
         if (isExecuteCommandTool(toolName)) {
           if (commandSessionId) {
             syncCommandSessionSnapshot(detailSource);
@@ -8879,7 +8890,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           toolCallId: toolCallId || commandSessionId || undefined,
           commandSessionId: commandSessionId || undefined,
           modelRound: toolCallRound ?? undefined,
-          ...usageMeta
+          ...usageMeta,
+          ...timingMeta
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id, toolCallId || commandSessionId);
@@ -8993,6 +9005,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             : detailPayload;
         // Workflow detail should mirror model input first; fallback to raw payload only when observation is missing.
         const detail = buildDetail(modelObservation ?? detailPayloadForDisplay ?? result);
+        const timingMeta = buildWorkflowTimingMeta(detailPayload, result, data, payload);
         const commandSessionRows = isExecuteCommandTool(toolName)
           ? extractCommandSessionResultRows(detailPayload ?? result)
           : [];
@@ -9070,7 +9083,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
                 eventType: 'tool_result',
                 toolName: String(toolName || ''),
                 toolCallId: toolCallId || undefined,
-                ...buildWorkflowUsageMeta(detailPayload, result, data, payload)
+                ...buildWorkflowUsageMeta(detailPayload, result, data, payload),
+                ...timingMeta
               }
             )
           );
@@ -9093,7 +9107,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               eventType: 'tool_result',
               toolName: String(toolName || ''),
               toolCallId: toolCallId || undefined,
-              ...buildWorkflowUsageMeta(detailPayload, result, data, payload)
+              ...buildWorkflowUsageMeta(detailPayload, result, data, payload),
+              ...timingMeta
             }
           )
         );

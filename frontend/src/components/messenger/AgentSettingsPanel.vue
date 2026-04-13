@@ -753,10 +753,10 @@ const resolveAvatarOptionImage = (key: unknown): string =>
 const agentAvatarPreviewImageUrl = computed(() => resolveAvatarOptionImage(form.icon_name));
 const avatarDialogImageUrl = computed(() => resolveAvatarOptionImage(avatarDialogIcon.value));
 const agentAvatarPreviewStyle = computed(() => ({
-  background: normalizeAgentAvatarColor(form.icon_color)
+  background: agentAvatarPreviewImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(form.icon_color)
 }));
 const avatarDialogPreviewStyle = computed(() => ({
-  background: normalizeAgentAvatarColor(avatarDialogColor.value)
+  background: avatarDialogImageUrl.value ? 'transparent' : normalizeAgentAvatarColor(avatarDialogColor.value)
 }));
 const agentAvatarInitial = computed(() =>
   resolveAgentAvatarInitial(String(form.name || '').trim() || normalizedAgentId.value || t('messenger.defaultAgent'))
