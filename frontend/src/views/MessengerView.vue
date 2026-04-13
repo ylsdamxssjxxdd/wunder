@@ -6,12 +6,14 @@
       'messenger-view--without-right': !showRightDock,
       'messenger-view--without-middle': !showMiddlePane,
       'messenger-view--right-collapsed': showRightDock && rightDockCollapsed,
+      'messenger-view--right-resizing': isRightDockResizing,
       'messenger-view--nav-collapsed': navigationPaneCollapsed,
       'messenger-view--host-medium': isRightDockOverlay,
       'messenger-view--host-small': isMiddlePaneOverlay,
       'messenger-view--host-tight': viewportWidth <= MESSENGER_TIGHT_HOST_BREAKPOINT,
       'messenger-view--action-blocked': isMessengerInteractionBlocked
     }"
+    :style="messengerViewStyle"
     @pointerenter="handleMessengerRootPointerMove"
     @pointermove="handleMessengerRootPointerMove"
     @pointerleave="handleMessengerRootPointerLeave"
@@ -1387,6 +1389,19 @@
       </footer>
     </section>
 
+    <div
+      v-if="showRightDock && rightDockResizable"
+      class="messenger-right-dock-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="t('messenger.right.resize')"
+      tabindex="0"
+      @pointerdown="startRightDockResize"
+      @dblclick.prevent="resetRightDockWidth"
+      @keydown.left.prevent="nudgeRightDockWidth(-24)"
+      @keydown.right.prevent="nudgeRightDockWidth(24)"
+    ></div>
+
     <MessengerRightDock
       ref="rightDockRef"
       v-if="showAgentRightDock"
@@ -1590,6 +1605,7 @@ import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversa
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
+import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
@@ -1762,6 +1778,7 @@ import {
   AGENT_TOOL_OVERRIDE_NONE,
   DEFAULT_AGENT_KEY,
   DISMISSED_AGENT_STORAGE_PREFIX,
+  MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY,
   MESSENGER_SEND_KEY_STORAGE_KEY,
   MESSENGER_UI_FONT_SIZE_STORAGE_KEY,
   USER_CONTAINER_ID,
@@ -2496,6 +2513,22 @@ const showNavigationCollapseToggle = computed(
   () => allowNavigationCollapse.value && (showMiddlePane.value || navigationPaneCollapsed.value)
 );
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
+const {
+  isRightDockResizing,
+  rightDockResizable,
+  rightDockStyle,
+  resetRightDockWidth,
+  nudgeRightDockWidth,
+  startRightDockResize
+} = useMessengerRightDockResize({
+  hostWidth: viewportWidth,
+  isOverlay: isRightDockOverlay,
+  isMiddlePaneOverlay,
+  navigationPaneCollapsed,
+  collapsed: rightDockCollapsed,
+  storageKey: MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY
+});
+const messengerViewStyle = computed(() => rightDockStyle.value);
 
 const scheduleMiddlePanePrewarm = () => {
   if (middlePaneMounted.value || isEmbeddedChatRoute.value || !isMiddlePaneOverlay.value) {

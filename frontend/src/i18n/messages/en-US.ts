@@ -2263,6 +2263,7 @@ export default {
   'messenger.world.emoji': 'Emoji',
   'messenger.world.history': 'History',
   'messenger.world.resize': 'Drag to resize composer height',
+  'messenger.right.resize': 'Drag to resize right sidebar width',
   'messenger.world.quick.recent': 'Recent',
   'messenger.world.quick.all': 'All',
   'messenger.world.voice.start': 'Start recording',

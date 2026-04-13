@@ -218,6 +218,7 @@ import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { sumConversationConsumedTokens } from '@/utils/messageStats';
 import { useThemeStore } from '@/stores/theme';
 import { isDemoMode } from '@/utils/demo';
 import { showApiError } from '@/utils/apiError';
@@ -342,10 +343,7 @@ const tokenUsageTotal = computed(() =>
   (() => {
     const total = Number(usageSummary.value?.consumed_tokens ?? usageSummary.value?.consumedTokens);
     if (Number.isFinite(total) && total > 0) return total;
-    return assistantMessages.value.reduce((sum, message) => {
-      const messageTotal = Number(message?.stats?.roundUsage?.total ?? message?.stats?.usage?.total ?? 0);
-      return sum + (Number.isFinite(messageTotal) ? messageTotal : 0);
-    }, 0);
+    return sumConversationConsumedTokens(conversationMessages.value);
   })()
 );
 

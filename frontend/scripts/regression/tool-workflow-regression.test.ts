@@ -10,6 +10,10 @@ import {
   buildWorkflowToolRuns,
   resolveWorkflowPendingPlaceholder
 } from '../../src/components/chat/toolWorkflowRunModel';
+import {
+  formatWorkflowConsumedTokensLabel,
+  resolveWorkflowConsumedTokens
+} from '../../src/components/chat/toolWorkflowUsage';
 
 const messages: Record<string, string> = {
   'chat.toolWorkflow.detail.hits': 'Hits',
@@ -194,4 +198,70 @@ test('workflow pending placeholder detects command session activity before tool 
     toolName: 'execute_command',
     eventType: 'command_session_start'
   });
+});
+
+test('workflow consumed tokens prefer explicit request consumption over context occupancy', () => {
+  const tokens = resolveWorkflowConsumedTokens(
+    JSON.stringify({
+      result: {
+        meta: {
+          request_consumed_tokens: 1536,
+          context_occupancy_tokens: 8192
+        },
+        usage: {
+          total_tokens: 8192
+        }
+      }
+    })
+  );
+  assert.equal(tokens, 1536);
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '1,536 tok');
+});
+
+test('workflow consumed tokens fall back to round usage totals when explicit value is absent', () => {
+  const tokens = resolveWorkflowConsumedTokens(
+    JSON.stringify({
+      data: {
+        round_usage: {
+          total_tokens: 2840
+        },
+        context_occupancy_tokens: 12064
+      }
+    })
+  );
+  assert.equal(tokens, 2840);
+});
+
+test('workflow consumed tokens ignore context-only payloads', () => {
+  const tokens = resolveWorkflowConsumedTokens(
+    JSON.stringify({
+      data: {
+        context_occupancy_tokens: 12064,
+        context_usage: {
+          context_tokens: 12064
+        }
+      }
+    })
+  );
+  assert.equal(tokens, null);
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '');
+});
+
+test('workflow consumed tokens can still read request usage from item payload when detail is observation-only', () => {
+  const tokens = resolveWorkflowConsumedTokens(
+    '{"summary":"tool finished"}',
+    {
+      eventType: 'tool_result',
+      payload: {
+        result: {
+          meta: {
+            request_consumed_tokens: 2048,
+            context_occupancy_tokens: 10000
+          }
+        }
+      }
+    }
+  );
+  assert.equal(tokens, 2048);
+  assert.equal(formatWorkflowConsumedTokensLabel(tokens), '2,048 tok');
 });

@@ -51,6 +51,12 @@ import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
+  assistantEntriesShareTurnAnchor,
+  buildAssistantMatchEntries,
+  buildAssistantMatchEntryMap,
+  findAnchoredAssistantContentMatchIndex
+} from './chatAssistantMatch';
+import {
   clearTrailingPendingAssistantMessages,
   clearSupersededPendingAssistantMessages,
   findPendingAssistantMessage,
@@ -311,6 +317,94 @@ const parseOptionalCount = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const parseWorkflowUsageRecord = (value, depth = 0) => {
+  if (depth > 3 || value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length < 2 || (normalized[0] !== '{' && normalized[0] !== '[')) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(normalized);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const WORKFLOW_USAGE_DIRECT_KEYS = [
+  'request_consumed_tokens',
+  'requestConsumedTokens',
+  'consumed_tokens',
+  'consumedTokens',
+  'consumed',
+  'used',
+  'count',
+  'context_occupancy_tokens',
+  'contextOccupancyTokens',
+  'context_tokens',
+  'contextTokens',
+  'context_total_tokens',
+  'contextTotalTokens',
+  'max_context',
+  'maxContext'
+];
+
+const WORKFLOW_USAGE_NESTED_KEYS = [
+  'usage',
+  'roundUsage',
+  'round_usage',
+  'billedUsage',
+  'billed_usage',
+  'quotaConsumed',
+  'quota_consumed',
+  'quota',
+  'stats',
+  'meta',
+  'data',
+  'result',
+  'payload'
+];
+
+const buildWorkflowUsageSnapshot = (value, depth = 0) => {
+  const record = parseWorkflowUsageRecord(value, depth);
+  if (!record) {
+    return null;
+  }
+  const snapshot = {};
+  WORKFLOW_USAGE_DIRECT_KEYS.forEach((key) => {
+    if (record[key] !== undefined) {
+      snapshot[key] = record[key];
+    }
+  });
+  WORKFLOW_USAGE_NESTED_KEYS.forEach((key) => {
+    const nested = buildWorkflowUsageSnapshot(record[key], depth + 1);
+    if (nested && Object.keys(nested).length > 0) {
+      snapshot[key] = nested;
+    }
+  });
+  return Object.keys(snapshot).length > 0 ? snapshot : null;
+};
+
+const buildWorkflowUsageMeta = (...sources) => {
+  for (const source of sources) {
+    const snapshot = buildWorkflowUsageSnapshot(source);
+    if (snapshot && Object.keys(snapshot).length > 0) {
+      // Preserve a compact raw usage snapshot so UI token display does not depend
+      // on human-facing model_observation/detail strings.
+      return { payload: snapshot };
+    }
+  }
+  return {};
 };
 
 const WORKSPACE_PATH_HINT_KEYS = [
@@ -828,7 +922,7 @@ const normalizeMessageStats = (stats) => {
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
-  const contextTokens = roundUsageContextTokens ?? usageContextTokens ?? explicitContextTokens;
+  const contextTokens = usageContextTokens ?? roundUsageContextTokens ?? explicitContextTokens;
   const contextTotalTokens = normalizeContextTotalTokens(
     stats.contextTotalTokens ??
       stats.context_total_tokens ??
@@ -1904,7 +1998,7 @@ const mergeSnapshotAssistant = (target, snapshot) => {
   return true;
 };
 
-const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
+const findSnapshotAssistantIndex = (target, targetEntry, snapshotAssistants, cursor) => {
   if (!target || cursor < 0) return -1;
   const targetIsCompactionMarker = isCompactionMarkerAssistantMessage(target);
   const targetEventId = normalizeStreamEventId(target.stream_event_id);
@@ -1914,8 +2008,12 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   let bestIndex = -1;
   let bestDelta = Infinity;
   for (let i = cursor; i >= 0; i -= 1) {
-    const snapshot = snapshotAssistants[i];
+    const snapshotEntry = snapshotAssistants[i];
+    const snapshot = snapshotEntry?.message;
     if (!snapshot) continue;
+    if (!assistantEntriesShareTurnAnchor(targetEntry, snapshotEntry)) {
+      continue;
+    }
     if (isCompactionMarkerAssistantMessage(snapshot) !== targetIsCompactionMarker) {
       continue;
     }
@@ -1937,22 +2035,28 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
       }
       continue;
     }
-    if (targetContent) {
-      const snapshotContent = normalizeAssistantContent(snapshot.content || '');
-      if (
-        snapshotContent &&
-        (targetContent.includes(snapshotContent) || snapshotContent.includes(targetContent))
-      ) {
-        return i;
-      }
-    }
   }
   if (bestIndex >= 0) return bestIndex;
+  if (!targetIsCompactionMarker && targetContent) {
+    const contentMatchIndex = findAnchoredAssistantContentMatchIndex(
+      targetEntry,
+      targetContent,
+      snapshotAssistants,
+      { maxIndex: cursor }
+    );
+    if (contentMatchIndex >= 0) {
+      return contentMatchIndex;
+    }
+  }
   const isPendingTarget =
     normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
   if (isPendingTarget || !Number.isFinite(targetTime)) {
-    const fallback = snapshotAssistants[cursor];
+    const fallbackEntry = snapshotAssistants[cursor];
+    const fallback = fallbackEntry?.message;
     if (!fallback) return -1;
+    if (!assistantEntriesShareTurnAnchor(targetEntry, fallbackEntry)) {
+      return -1;
+    }
     if (isCompactionMarkerAssistantMessage(fallback) !== targetIsCompactionMarker) {
       return -1;
     }
@@ -1977,6 +2081,119 @@ const findSnapshotAssistantIndex = (target, snapshotAssistants, cursor) => {
   return -1;
 };
 
+// Like findSnapshotAssistantIndex but skips indices present in the excluded set,
+// preventing the cursor-exhaustion bug where a single early match prevents all
+// subsequent matches from succeeding.
+const findSnapshotAssistantIndexExcluding = (
+  target,
+  targetEntry,
+  snapshotAssistants,
+  excludedIndices
+) => {
+  if (!target || !Array.isArray(snapshotAssistants) || snapshotAssistants.length === 0) return -1;
+  const targetIsCompactionMarker = isCompactionMarkerAssistantMessage(target);
+  const targetEventId = normalizeStreamEventId(target.stream_event_id);
+  const targetRound = normalizeStreamRound(target.stream_round);
+  const targetTime = resolveTimestampMs(target.created_at);
+  const targetContent = normalizeAssistantContent(target.content || '');
+  let bestIndex = -1;
+  let bestDelta = Infinity;
+  // Search backward from the tail, same as findSnapshotAssistantIndex,
+  // but skip indices already claimed by a prior match.
+  for (let i = snapshotAssistants.length - 1; i >= 0; i -= 1) {
+    if (excludedIndices.has(i)) continue;
+    const snapshotEntry = snapshotAssistants[i];
+    const snapshot = snapshotEntry?.message;
+    if (!snapshot) continue;
+    if (!assistantEntriesShareTurnAnchor(targetEntry, snapshotEntry)) {
+      continue;
+    }
+    if (isCompactionMarkerAssistantMessage(snapshot) !== targetIsCompactionMarker) {
+      continue;
+    }
+    const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
+    if (targetEventId !== null && snapshotEventId !== null && snapshotEventId === targetEventId) {
+      return i;
+    }
+    const snapshotRound = normalizeStreamRound(snapshot.stream_round);
+    if (targetRound !== null && snapshotRound !== null && snapshotRound === targetRound) {
+      return i;
+    }
+    const snapshotTime = resolveTimestampMs(snapshot.created_at);
+    if (Number.isFinite(targetTime) && Number.isFinite(snapshotTime)) {
+      const delta = Math.abs(targetTime - snapshotTime);
+      if (delta <= SNAPSHOT_MATCH_WINDOW_MS && delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = i;
+        if (delta === 0) break;
+      }
+      continue;
+    }
+  }
+  if (bestIndex >= 0) return bestIndex;
+  if (!targetIsCompactionMarker && targetContent) {
+    const contentMatchIndex = findAnchoredAssistantContentMatchIndex(
+      targetEntry,
+      targetContent,
+      snapshotAssistants,
+      { excludedIndices }
+    );
+    if (contentMatchIndex >= 0) {
+      return contentMatchIndex;
+    }
+  }
+  // Fallback: for pending / incomplete targets, try the last unmatched position
+  const isPendingTarget =
+    normalizeFlag(target.stream_incomplete) || !normalizeAssistantContent(target.content || '');
+  if (isPendingTarget || !Number.isFinite(targetTime)) {
+    for (let i = snapshotAssistants.length - 1; i >= 0; i -= 1) {
+      if (excludedIndices.has(i)) continue;
+      const snapshotEntry = snapshotAssistants[i];
+      const snapshot = snapshotEntry?.message;
+      if (!snapshot) continue;
+      if (!assistantEntriesShareTurnAnchor(targetEntry, snapshotEntry)) {
+        continue;
+      }
+      if (isCompactionMarkerAssistantMessage(snapshot) !== targetIsCompactionMarker) continue;
+      const snapshotEventId = normalizeStreamEventId(snapshot.stream_event_id);
+      const snapshotRound = normalizeStreamRound(snapshot.stream_round);
+      const snapshotPending =
+        normalizeFlag(snapshot.stream_incomplete) || normalizeFlag(snapshot.workflowStreaming);
+      if (targetEventId !== null && snapshotEventId !== null && targetEventId === snapshotEventId) {
+        return i;
+      }
+      if (targetRound !== null && snapshotRound !== null && targetRound === snapshotRound) {
+        return i;
+      }
+      if (
+        snapshotPending &&
+        (targetRound === null || snapshotRound === null || targetRound === snapshotRound)
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  return -1;
+};
+
+// Find the best insertion index for an unmatched live assistant message
+// by looking at the position of the previous live assistant in the merged list.
+const findLiveAssistantInsertionIndex = (liveAssistant, mergedMessages) => {
+  const liveCreatedTime = resolveTimestampMs(liveAssistant?.created_at);
+  let bestIndex = -1;
+  for (let i = mergedMessages.length - 1; i >= 0; i -= 1) {
+    const msg = mergedMessages[i];
+    if (!msg || msg.role !== 'assistant' || msg.isGreeting) continue;
+    const msgTime = resolveTimestampMs(msg.created_at);
+    if (Number.isFinite(liveCreatedTime) && Number.isFinite(msgTime) && msgTime <= liveCreatedTime) {
+      bestIndex = i;
+      break;
+    }
+  }
+  return bestIndex;
+};
+
 const mergeSnapshotIntoMessages = (messages, snapshot) => {
   if (!snapshot || !Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
     return messages;
@@ -1990,21 +2207,25 @@ const mergeSnapshotIntoMessages = (messages, snapshot) => {
   if (!snapshotMessages.length) {
     return messages;
   }
-  const snapshotAssistants = snapshotMessages.filter(
-    (message) => message.role === 'assistant' && !message.isGreeting
-  );
+  const snapshotAssistants = buildAssistantMatchEntries(snapshotMessages);
   if (!snapshotAssistants.length) return messages;
+  const messageAssistantEntryMap = buildAssistantMatchEntryMap(messages);
   let cursor = snapshotAssistants.length - 1;
   for (let i = messages.length - 1; i >= 0 && cursor >= 0; i -= 1) {
     const target = messages[i];
     if (target?.role !== 'assistant') {
       continue;
     }
-    const matchIndex = findSnapshotAssistantIndex(target, snapshotAssistants, cursor);
+    const matchIndex = findSnapshotAssistantIndex(
+      target,
+      messageAssistantEntryMap.get(target),
+      snapshotAssistants,
+      cursor
+    );
     if (matchIndex < 0) {
       continue;
     }
-    mergeSnapshotAssistant(target, snapshotAssistants[matchIndex]);
+    mergeSnapshotAssistant(target, snapshotAssistants[matchIndex].message);
     cursor = matchIndex - 1;
   }
   return messages;
@@ -4726,9 +4947,7 @@ const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages)
       }
     };
   }
-  const liveAssistants = liveMessages.filter(
-    (message) => message?.role === 'assistant' && !message?.isGreeting
-  );
+  const liveAssistants = buildAssistantMatchEntries(liveMessages);
   if (liveAssistants.length === 0) {
     return {
       messages: hydratedMessages,
@@ -4740,29 +4959,53 @@ const mergeForegroundHydratedMessagesWithLive = (liveMessages, hydratedMessages)
     };
   }
   const matchedLiveAssistants = new Set();
-  let cursor = liveAssistants.length - 1;
+  const hydratedAssistantEntryMap = buildAssistantMatchEntryMap(hydratedMessages);
   const mergedMessages = hydratedMessages.map((message) => {
     if (!message || message.role !== 'assistant' || message.isGreeting) {
       return message;
     }
-    const matchIndex = findSnapshotAssistantIndex(message, liveAssistants, cursor);
+    const matchIndex = findSnapshotAssistantIndexExcluding(
+      message,
+      hydratedAssistantEntryMap.get(message),
+      liveAssistants,
+      matchedLiveAssistants
+    );
     if (matchIndex < 0) {
       return message;
     }
-    const liveTarget = liveAssistants[matchIndex];
-    matchedLiveAssistants.add(liveTarget);
+    const liveTarget = liveAssistants[matchIndex].message;
+    matchedLiveAssistants.add(matchIndex);
     mergeSnapshotAssistant(liveTarget, message);
-    cursor = matchIndex - 1;
     return liveTarget;
   });
+  // Preserve unmatched live assistants that were lost during merge.
+  // This prevents realtime client messages from being silently replaced by
+  // stale or misordered server data when the cursor-based search exhausts early.
+  for (let i = 0; i < liveAssistants.length; i += 1) {
+    if (!matchedLiveAssistants.has(i)) {
+      const liveTarget = liveAssistants[i].message;
+      const insertAfterIndex = findLiveAssistantInsertionIndex(liveTarget, mergedMessages);
+      if (insertAfterIndex >= 0) {
+        mergedMessages.splice(insertAfterIndex + 1, 0, liveTarget);
+      } else {
+        mergedMessages.push(liveTarget);
+      }
+      matchedLiveAssistants.add(i);
+    }
+  }
   const livePendingAssistant = findPendingAssistantMessage(liveMessages);
   let appendedLivePending = false;
   const suppressedLivePendingCompaction =
     isCompactionMarkerAssistantMessage(livePendingAssistant) &&
     isSupersededRunningManualCompactionMarker(livePendingAssistant, mergedMessages);
+  // Check if livePendingAssistant was already matched by checking its index in liveAssistants
+  const livePendingAssistantIndex = liveAssistants.findIndex(
+    (entry) => entry.message === livePendingAssistant
+  );
+  const livePendingAlreadyMatched = livePendingAssistantIndex >= 0 && matchedLiveAssistants.has(livePendingAssistantIndex);
   if (
     isForegroundRealtimeAssistant(livePendingAssistant) &&
-    !matchedLiveAssistants.has(livePendingAssistant) &&
+    !livePendingAlreadyMatched &&
     !suppressedLivePendingCompaction
   ) {
     mergedMessages.push(livePendingAssistant);
@@ -6931,14 +7174,37 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const normalizedUsage = normalizeUsagePayload(usagePayload?.usage ?? usagePayload);
     if (!normalizedUsage) return;
     stats.roundUsage = normalizedUsage;
-    const roundUsageContextTokens = resolveUsageContextTokens(normalizedUsage);
-    if (roundUsageContextTokens === null) return;
-    const existingContextTokens = normalizeContextTokens(stats.contextTokens);
-    const changed = existingContextTokens !== roundUsageContextTokens;
-    stats.contextTokens = roundUsageContextTokens;
-    contextEstimateBaseTokens = roundUsageContextTokens;
-    if (changed) {
-      options.onContextUsage?.(roundUsageContextTokens, stats.contextTotalTokens ?? null);
+    const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
+    const explicitContextTokens = normalizeContextTokens(
+      usagePayload?.context_occupancy_tokens ??
+        usagePayload?.contextOccupancyTokens ??
+        usagePayload?.context_tokens ??
+        usagePayload?.contextTokens ??
+        usagePayload?.context_usage?.context_tokens ??
+        usagePayload?.context_usage?.contextTokens
+    );
+    const explicitContextTotalTokens = normalizeContextTotalTokens(
+      usagePayload?.max_context ??
+        usagePayload?.maxContext ??
+        usagePayload?.context_total_tokens ??
+        usagePayload?.contextTotalTokens ??
+        usagePayload?.context_usage?.max_context ??
+        usagePayload?.context_usage?.context_max_tokens
+    );
+    const nextContextTokens = usageContextTokens ?? explicitContextTokens;
+    if (nextContextTokens !== null) {
+      const existingContextTokens = normalizeContextTokens(stats.contextTokens);
+      const changed = existingContextTokens !== nextContextTokens;
+      stats.contextTokens = nextContextTokens;
+      contextEstimateBaseTokens = nextContextTokens;
+      if (explicitContextTotalTokens !== null) {
+        stats.contextTotalTokens = explicitContextTotalTokens;
+      }
+      if (changed) {
+        options.onContextUsage?.(nextContextTokens, stats.contextTotalTokens ?? null);
+      }
+    } else if (explicitContextTotalTokens !== null) {
+      stats.contextTotalTokens = explicitContextTotalTokens;
     }
   };
 
@@ -7003,10 +7269,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const updateContextUsage = (payload) => {
     if (!stats) return;
-    const contextTokens = normalizeContextTokens(
+    const usageContextTokens = resolveUsageContextTokens(
+      normalizeUsagePayload(payload?.usage ?? payload?.roundUsage ?? payload?.round_usage)
+    );
+    const explicitContextTokens = normalizeContextTokens(
       payload?.context_occupancy_tokens ??
         payload?.contextOccupancyTokens ??
-      payload?.context_tokens ??
+        payload?.context_tokens ??
         payload?.contextTokens ??
         payload?.context ??
         payload?.contextUsage ??
@@ -7022,13 +7291,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         payload?.context_usage?.max_context ??
         payload?.context_usage?.context_max_tokens
     );
-    if (contextTokens !== null) {
-      stats.contextTokens = contextTokens;
-      contextEstimateBaseTokens = contextTokens;
+    const nextContextTokens = usageContextTokens ?? explicitContextTokens;
+    if (nextContextTokens !== null) {
+      stats.contextTokens = nextContextTokens;
+      contextEstimateBaseTokens = nextContextTokens;
       if (contextTotalTokens !== null) {
         stats.contextTotalTokens = contextTotalTokens;
       }
-      options.onContextUsage?.(contextTokens, contextTotalTokens);
+      options.onContextUsage?.(nextContextTokens, contextTotalTokens);
     } else if (contextTotalTokens !== null) {
       stats.contextTotalTokens = contextTotalTokens;
     }
@@ -7306,7 +7576,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       eventType: 'tool_call',
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
-      commandSessionId: normalizedSessionId
+      commandSessionId: normalizedSessionId,
+      ...buildWorkflowUsageMeta(source)
     };
     const existing = toolCallItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7319,7 +7590,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       eventType: 'tool_call',
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
-      commandSessionId: normalizedSessionId
+      commandSessionId: normalizedSessionId,
+      ...buildWorkflowUsageMeta(source)
     });
     assistantMessage.workflowItems.push(item);
     registerToolItem(executeCommandToolName, item.id, normalizedSessionId);
@@ -7400,7 +7672,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       eventType: 'tool_result',
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
-      commandSessionId: normalizedSessionId
+      commandSessionId: normalizedSessionId,
+      ...buildWorkflowUsageMeta(source)
     };
     const existing = commandSessionResultItemMap.get(normalizedSessionId);
     if (existing) {
@@ -7413,7 +7686,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       eventType: 'tool_result',
       toolName: executeCommandToolName,
       toolCallId: normalizedSessionId,
-      commandSessionId: normalizedSessionId
+      commandSessionId: normalizedSessionId,
+      ...buildWorkflowUsageMeta(source)
     });
     assistantMessage.workflowItems.push(item);
     commandSessionResultItemMap.set(normalizedSessionId, item.id);
@@ -8372,7 +8646,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           eventType: 'tool_call',
           toolName: String(toolName || ''),
           toolCallId: toolCallId || commandSessionId || undefined,
-          commandSessionId: commandSessionId || undefined
+          commandSessionId: commandSessionId || undefined,
+          ...buildWorkflowUsageMeta(detailSource, data, payload)
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id, toolCallId || commandSessionId);
@@ -8562,7 +8837,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
                 toolCategory,
                 eventType: 'tool_result',
                 toolName: String(toolName || ''),
-                toolCallId: toolCallId || undefined
+                toolCallId: toolCallId || undefined,
+                ...buildWorkflowUsageMeta(detailPayload, result, data, payload)
               }
             )
           );
@@ -8584,7 +8860,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               toolCategory,
               eventType: 'tool_result',
               toolName: String(toolName || ''),
-              toolCallId: toolCallId || undefined
+              toolCallId: toolCallId || undefined,
+              ...buildWorkflowUsageMeta(detailPayload, result, data, payload)
             }
           )
         );

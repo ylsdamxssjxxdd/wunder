@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>睡眠与让出 | 使用说明书</title>
+  <meta name="description" content="`sleep` 与 `sessions_yield` 的语义区别。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/sleep","language":"zh-CN","title":"睡眠与让出","summary":"`sleep` 与 `sessions_yield` 的语义区别。","updated_at":"2026-04-10","read_when":["你要等待一段时间，或暂时让出当前轮次控制权"],"source_docs":["src/services/tools/sleep_tool.rs","src/services/tools/sessions_yield_tool.rs"],"tab":"工具","group":"UI and Automation","group_path":["UI and Automation"],"url":"/docs/zh-CN/tools/sleep/","headings":[{"id":"section-1","level":1,"text":"睡眠与让出"},{"id":"section-2","level":2,"text":"sleep"},{"id":"section-3","level":3,"text":"最小参数"},{"id":"section-4","level":3,"text":"成功返回"},{"id":"section-5","level":2,"text":"sessionsyield"},{"id":"section-6","level":3,"text":"最小参数"},{"id":"section-7","level":3,"text":"成功返回"},{"id":"section-8","level":2,"text":"怎么选"}],"prev_slug":"zh-CN/tools/final-response","next_slug":"zh-CN/tools/thread-control","markdown":"# 睡眠与让出\n\n这里其实有两个不同工具：\n\n- `sleep`\n- `sessions_yield`\n\n它们不要混用。\n\n## `sleep`\n\n### 最小参数\n\n```json\n{\n  \"seconds\": 1.5\n}\n```\n\n### 成功返回\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"sleep\",\n  \"state\": \"completed\",\n  \"summary\": \"Slept for 1.5 seconds.\",\n  \"data\": {\n    \"requested_seconds\": 1.5,\n    \"elapsed_ms\": 1502,\n    \"reason\": null\n  }\n}\n```\n\n它表示：**当前轮次里真的阻塞等待了一段时间。**\n\n## `sessions_yield`\n\n### 最小参数\n\n```json\n{\n  \"message\": \"已提交任务，等待外部结果\"\n}\n```\n\n### 成功返回\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"sessions_yield\",\n  \"state\": \"yielded\",\n  \"summary\": \"Yielded the current turn and is waiting.\",\n  \"data\": {\n    \"status\": \"yielded\",\n    \"message\": \"已提交任务，等待外部结果\"\n  },\n  \"meta\": {\n    \"turn_control\": {\n      \"kind\": \"yield\",\n      \"message\": \"已提交任务，等待外部结果\"\n    }\n  }\n}\n```\n\n它表示：**当前轮次让出控制权，不是最终回复。**\n\n## 怎么选\n\n- 只是轮询间隔：`sleep`\n- 需要明确告诉系统“这轮先停在这里”：`sessions_yield`\n","source_path":"使用说明书/zh-CN/tools/sleep.md"}</script>
+</body>
+</html>

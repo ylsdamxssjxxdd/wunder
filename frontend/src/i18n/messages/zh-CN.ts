@@ -2240,6 +2240,7 @@ export default {
   'messenger.world.emoji': '表情',
   'messenger.world.history': '历史',
   'messenger.world.resize': '拖动调整输入区高度',
+  'messenger.right.resize': '拖动调整右侧栏宽度',
   'messenger.world.quick.recent': '最近使用',
   'messenger.world.quick.all': '全部',
   'messenger.world.voice.start': '开始录音',

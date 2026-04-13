@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Final Response | 使用说明书</title>
+  <meta name="description" content="The sole job of `final_response` is to end the current turn with the reply for the user.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/final-response","language":"en","title":"Final Response","summary":"The sole job of `final_response` is to end the current turn with the reply for the user.","updated_at":"2026-04-10","read_when":["You have finished tool calls and reasoning and are ready to answer the user"],"source_docs":["src/services/tools/dispatch.rs","src/services/tools/catalog.rs"],"tab":"Tools","group":"UI and Automation","group_path":["UI and Automation"],"url":"/docs/en/tools/final-response/","headings":[{"id":"section-1","level":1,"text":"Final Response"},{"id":"section-2","level":2,"text":"Input"},{"id":"section-3","level":2,"text":"Return"},{"id":"section-4","level":2,"text":"Key points"}],"prev_slug":"en/tools/schedule-task","next_slug":"en/tools/sleep","markdown":"# Final Response\n\n`final_response` is not a normal business tool. It is only a termination signal.\n\n## Input\n\n```json\n{\n  \"content\": \"This is the final reply\"\n}\n```\n\n## Return\n\n```json\n{\n  \"answer\": \"This is the final reply\"\n}\n```\n\n## Key points\n\n- It does not use the unified success envelope\n- It does not include `ok`, `action`, `state`, `summary`, or `data`\n- It should only be called when the task is genuinely ready to close\n\nIf the system still needs to wait for a child task, keep polling, or request more input from the user, this is not the right tool yet.\n","source_path":"使用说明书/en/tools/final-response.md"}</script>
+</body>
+</html>

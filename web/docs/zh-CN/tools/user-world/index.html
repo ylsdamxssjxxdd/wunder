@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>用户世界工具 | wunder Manual / 使用说明书</title>
+  <title>用户世界工具 | 使用说明书</title>
   <meta name="description" content="站内用户查询与站内消息投递。">
   <link rel="stylesheet" href="/docs/site.css">
   <script type="module" src="/docs/site.js"></script>
@@ -15,7 +15,7 @@
         <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
             <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
-            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+            <span class="docs-brand-text">使用说明书</span>
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/user-world","language":"zh-CN","title":"用户世界工具","summary":"站内用户查询与站内消息投递。","updated_at":"2026-04-10","read_when":["你要查站内用户，或给站内用户发送消息"],"source_docs":["src/services/tools.rs"],"tab":"工具","group":"系统桥接","group_path":["系统桥接"],"url":"/docs/zh-CN/tools/user-world/","headings":[{"id":"section-1","level":1,"text":"用户世界工具"},{"id":"section-2","level":2,"text":"listusers"},{"id":"section-3","level":2,"text":"sendmessage"},{"id":"section-4","level":2,"text":"重点"}],"prev_slug":"zh-CN/tools/channel","next_slug":"zh-CN/tools/a2a-tools","markdown":"# 用户世界工具\n\n`user_world` 主要两个动作：\n\n- `list_users`\n- `send_message`\n\n## `list_users`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list_users\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 20 users from user world.\",\n  \"data\": {\n    \"items\": [\n      {\n        \"user_id\": \"user_xxx\",\n        \"username\": \"alice\",\n        \"status\": \"active\",\n        \"unit_id\": \"unit_xxx\"\n      }\n    ],\n    \"total\": 20,\n    \"offset\": 0,\n    \"limit\": 20\n  }\n}\n```\n\n## `send_message`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"send_message\",\n  \"state\": \"completed\",\n  \"summary\": \"Processed 2 user world message deliveries.\",\n  \"data\": {\n    \"results\": [\n      {\n        \"user_id\": \"user_xxx\",\n        \"status\": \"sent\"\n      }\n    ],\n    \"staged_files\": []\n  }\n}\n```\n\n## 重点\n\n- 这是站内用户世界，不是外部渠道\n- 有附件落地时，会在 `staged_files` 里体现\n","source_path":"使用说明书/zh-CN/tools/user-world.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/user-world","language":"zh-CN","title":"用户世界工具","summary":"站内用户查询与站内消息投递。","updated_at":"2026-04-10","read_when":["你要查站内用户，或给站内用户发送消息"],"source_docs":["src/services/tools.rs"],"tab":"工具","group":"系统桥接","group_path":["系统桥接"],"url":"/docs/zh-CN/tools/user-world/","headings":[{"id":"section-1","level":1,"text":"用户世界工具"},{"id":"section-2","level":2,"text":"listusers"},{"id":"section-3","level":2,"text":"sendmessage"},{"id":"section-4","level":2,"text":"重点"}],"prev_slug":"zh-CN/tools/self-status","next_slug":"zh-CN/tools/a2a-tools","markdown":"# 用户世界工具\n\n`user_world` 主要两个动作：\n\n- `list_users`\n- `send_message`\n\n## `list_users`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"list_users\",\n  \"state\": \"completed\",\n  \"summary\": \"Listed 20 users from user world.\",\n  \"data\": {\n    \"items\": [\n      {\n        \"user_id\": \"user_xxx\",\n        \"username\": \"alice\",\n        \"status\": \"active\",\n        \"unit_id\": \"unit_xxx\"\n      }\n    ],\n    \"total\": 20,\n    \"offset\": 0,\n    \"limit\": 20\n  }\n}\n```\n\n## `send_message`\n\n```json\n{\n  \"ok\": true,\n  \"action\": \"send_message\",\n  \"state\": \"completed\",\n  \"summary\": \"Processed 2 user world message deliveries.\",\n  \"data\": {\n    \"results\": [\n      {\n        \"user_id\": \"user_xxx\",\n        \"status\": \"sent\"\n      }\n    ],\n    \"staged_files\": []\n  }\n}\n```\n\n## 重点\n\n- 这是站内用户世界，不是外部渠道\n- 有附件落地时，会在 `staged_files` 里体现\n","source_path":"使用说明书/zh-CN/tools/user-world.md"}</script>
 </body>
 </html>

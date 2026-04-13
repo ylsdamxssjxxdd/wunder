@@ -123,8 +123,8 @@ const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefi
 const resolveContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
   return (
-    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
     resolveUsageConsumedTokens(stats.usage) ??
+    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
     resolveExplicitContextTokens(stats)
   );
 };
@@ -161,6 +161,78 @@ const resolveAssistantTurnConsumedTokens = (
     found = true;
   }
   return found ? total : null;
+};
+
+const resolveAssistantConsumedTokens = (
+  message: MessageLike,
+  allMessages?: MessageLike[] | null
+): number | null => {
+  const stats =
+    message?.stats && typeof message.stats === 'object'
+      ? (message.stats as Record<string, any>)
+      : null;
+  const usageInputTokens = Number(
+    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
+  );
+  const roundUsageInputTokens = Number(
+    stats?.roundUsage?.input ??
+      stats?.roundUsage?.input_tokens ??
+      stats?.roundUsage?.inputTokens ??
+      stats?.round_usage?.input ??
+      stats?.round_usage?.input_tokens ??
+      stats?.round_usage?.inputTokens
+  );
+  const aggregatedTurnConsumedTokens = resolveAssistantTurnConsumedTokens(message, allMessages);
+  const directConsumedTokens =
+    resolveExplicitConsumedTokens(stats) ?? resolveExplicitConsumedTokens(message);
+  const fallbackConsumedTokens =
+    resolveUsageConsumedTokens(stats?.roundUsage ?? stats?.round_usage) ??
+    (Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0
+      ? roundUsageInputTokens
+      : null) ??
+    resolveUsageConsumedTokens(stats?.usage) ??
+    (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null);
+  const explicitConsumedTokens = aggregatedTurnConsumedTokens ?? directConsumedTokens;
+  if (explicitConsumedTokens !== null && explicitConsumedTokens > 1) {
+    return explicitConsumedTokens;
+  }
+  if (fallbackConsumedTokens !== null) {
+    return fallbackConsumedTokens;
+  }
+  return explicitConsumedTokens;
+};
+
+export const sumConversationConsumedTokens = (messages: MessageLike[] | null | undefined): number => {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return 0;
+  }
+  let userTurnIndex = 0;
+  const turnConsumed = new Map<number, number>();
+  messages.forEach((message) => {
+    if (!message || message.isGreeting) {
+      return;
+    }
+    if (message.role === 'user') {
+      userTurnIndex += 1;
+      return;
+    }
+    if (message.role !== 'assistant') {
+      return;
+    }
+    const consumed = resolveAssistantConsumedTokens(message, messages);
+    if (consumed === null || consumed <= 0) {
+      return;
+    }
+    const previous = turnConsumed.get(userTurnIndex) ?? 0;
+    if (consumed > previous) {
+      turnConsumed.set(userTurnIndex, consumed);
+    }
+  });
+  let total = 0;
+  turnConsumed.forEach((value) => {
+    total += value;
+  });
+  return total;
 };
 
 const normalizeDurationSeconds = (value: unknown): number | null => {
@@ -508,40 +580,8 @@ export const buildAssistantMessageStatsEntries = (
   }
   const durationSeconds = resolveDurationSeconds(stats);
   const speed = resolveTokenSpeed(stats);
-  const usageInputTokens = Number(
-    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
-  );
-  const usageTotalTokens = Number(
-    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
-  );
-  const roundUsageInputTokens = Number(
-    stats?.roundUsage?.input ??
-      stats?.roundUsage?.input_tokens ??
-      stats?.roundUsage?.inputTokens ??
-      stats?.round_usage?.input ??
-      stats?.round_usage?.input_tokens ??
-      stats?.round_usage?.inputTokens
-  );
   const contextTokens = resolveContextTokens(stats);
-  const aggregatedTurnConsumedTokens = resolveAssistantTurnConsumedTokens(message, allMessages);
-  const directConsumedTokens =
-    resolveExplicitConsumedTokens(stats) ?? resolveExplicitConsumedTokens(message);
-  const fallbackConsumedTokens =
-    resolveUsageConsumedTokens(stats.roundUsage ?? stats.round_usage) ??
-    (Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0
-      ? roundUsageInputTokens
-      : null) ??
-    resolveUsageConsumedTokens(stats.usage) ??
-    (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null);
-  const effectiveQuotaConsumedTokens = [
-    aggregatedTurnConsumedTokens,
-    directConsumedTokens,
-    fallbackConsumedTokens
-  ].reduce<number | null>(
-    (maxValue, candidate) =>
-      candidate !== null && (maxValue === null || candidate > maxValue) ? candidate : maxValue,
-    null
-  );
+  const effectiveQuotaConsumedTokens = resolveAssistantConsumedTokens(message, allMessages);
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasQuota =
     Number.isFinite(Number(effectiveQuotaConsumedTokens)) && Number(effectiveQuotaConsumedTokens) > 0;

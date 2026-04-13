@@ -1,8 +1,8 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-12T06:09:05.616108+00:00",
+  "generated_at": "2026-04-13T01:13:44.112016+00:00",
   "site": {
-    "name": "wunder Manual / 使用说明书",
+    "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
@@ -253,7 +253,7 @@
                 ]
               },
               {
-                "group": "界面与自动化",
+                "group": "UI and Automation",
                 "pages": [
                   {
                     "slug": "zh-CN/tools/panels-and-a2ui",
@@ -266,6 +266,18 @@
                     "title": "定时任务",
                     "summary": "`schedule_task` 的扁平参数、调度动作与压缩返回。",
                     "url": "/docs/zh-CN/tools/schedule-task/"
+                  },
+                  {
+                    "slug": "zh-CN/tools/final-response",
+                    "title": "最终回复",
+                    "summary": "`final_response` 的唯一职责是结束当前轮次并给用户回复。",
+                    "url": "/docs/zh-CN/tools/final-response/"
+                  },
+                  {
+                    "slug": "zh-CN/tools/sleep",
+                    "title": "睡眠与让出",
+                    "summary": "`sleep` 与 `sessions_yield` 的语义区别。",
+                    "url": "/docs/zh-CN/tools/sleep/"
                   }
                 ]
               },
@@ -301,6 +313,12 @@
                     "title": "渠道工具",
                     "summary": "`channel_tool` 的联系人查询、发信与同步/异步回执结构。",
                     "url": "/docs/zh-CN/tools/channel/"
+                  },
+                  {
+                    "slug": "zh-CN/tools/self-status",
+                    "title": "自我状态",
+                    "summary": "`self_status` 用于查看当前会话、模型、事件与线程运行态。",
+                    "url": "/docs/zh-CN/tools/self-status/"
                   }
                 ]
               },
@@ -393,6 +411,12 @@
                     "title": "渠道 Webhook",
                     "summary": "Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。",
                     "url": "/docs/zh-CN/integration/channel-webhook/"
+                  },
+                  {
+                    "slug": "zh-CN/integration/weixin-channel",
+                    "title": "微信 iLink 渠道",
+                    "summary": "`weixin` 是 Wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。",
+                    "url": "/docs/zh-CN/integration/weixin-channel/"
                   },
                   {
                     "slug": "zh-CN/integration/external-login",
@@ -768,67 +792,67 @@
                   {
                     "slug": "en/concepts/core-agent-loop",
                     "title": "Core Agent Loop",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "The Core Agent Loop explains why Wunder treats threads as first-class runtime units, and why the main execution path must be stable, recoverable, and convergent.",
                     "url": "/docs/en/concepts/core-agent-loop/"
                   },
                   {
                     "slug": "en/concepts/core-tools",
-                    "title": "Core Tools",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Tools",
+                    "summary": "The Tools core explains why Wunder must unify all capabilities as tools, and why tools must simultaneously serve model invocation, execution governance, and frontend display.",
                     "url": "/docs/en/concepts/core-tools/"
                   },
                   {
                     "slug": "en/concepts/core-swarm",
-                    "title": "Core Swarm",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Swarm",
+                    "summary": "The Swarm core explains how Wunder builds multi-agent collaboration into a formal system capability, rather than temporarily stuffing parallel tasks into a single large thread.",
                     "url": "/docs/en/concepts/core-swarm/"
                   },
                   {
                     "slug": "en/concepts/core-context-compression",
-                    "title": "Core Context Compression",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Context Compression",
+                    "summary": "The Context Compression core explains how Wunder actively manages context size during long sessions, making compression a traceable, observable, and reviewable formal operation.",
                     "url": "/docs/en/concepts/core-context-compression/"
                   },
                   {
                     "slug": "en/concepts/core-memory",
-                    "title": "Core Memory",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Memory",
+                    "summary": "The Memory core explains why Wunder insists on \"inject once during thread initialization, keep frozen afterward\", separating long-term data utilization from thread cognitive stability.",
                     "url": "/docs/en/concepts/core-memory/"
                   },
                   {
                     "slug": "en/concepts/core-channels",
                     "title": "Core Channels",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Core Channels explains why Wunder allows multiple entry points, but absolutely forbids these entries from growing into multiple independent runtimes.",
                     "url": "/docs/en/concepts/core-channels/"
                   },
                   {
                     "slug": "en/concepts/core-scheduled-tasks",
-                    "title": "Core Scheduled Tasks",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Scheduled Tasks",
+                    "summary": "The Scheduled Tasks core explains why Wunder treats time-driven background tasks as a first-class system capability rather than leaving them to ad-hoc external scripts.",
                     "url": "/docs/en/concepts/core-scheduled-tasks/"
                   },
                   {
                     "slug": "en/concepts/core-multi-user-management",
-                    "title": "Core Multi-user Management",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Multi-user Management",
+                    "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and token account governance into the system skeleton from day one, rather than bolting it on later.",
                     "url": "/docs/en/concepts/core-multi-user-management/"
                   },
                   {
                     "slug": "en/concepts/core-realtime",
-                    "title": "Core Realtime",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Realtime",
+                    "summary": "The realtime core explains why Wunder must continuously project thread changes to the outside world, and strictly distinguishes between event projection and backend truth.",
                     "url": "/docs/en/concepts/core-realtime/"
                   },
                   {
                     "slug": "en/concepts/core-stability",
-                    "title": "Core Stability",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Stability",
+                    "summary": "The Stability core explains why Wunder must use structural governance to control fault propagation rather than relying on prompts, luck, and manual monitoring for stability.",
                     "url": "/docs/en/concepts/core-stability/"
                   },
                   {
                     "slug": "en/concepts/core-observability",
-                    "title": "Core Observability",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Observability",
+                    "summary": "The observability core explains how Wunder splits \"what happened, why, and how to review\" into three distinct semantic layers: the fact layer, replay layer, and profile layer.",
                     "url": "/docs/en/concepts/core-observability/"
                   }
                 ]
@@ -934,6 +958,18 @@
                     "title": "Schedule Task",
                     "summary": "The flat input style, scheduling actions, and compact return shape of `schedule_task`.",
                     "url": "/docs/en/tools/schedule-task/"
+                  },
+                  {
+                    "slug": "en/tools/final-response",
+                    "title": "Final Response",
+                    "summary": "The sole job of `final_response` is to end the current turn with the reply for the user.",
+                    "url": "/docs/en/tools/final-response/"
+                  },
+                  {
+                    "slug": "en/tools/sleep",
+                    "title": "Sleep and Yield",
+                    "summary": "The semantic difference between `sleep` and `sessions_yield`.",
+                    "url": "/docs/en/tools/sleep/"
                   }
                 ]
               },
@@ -969,6 +1005,12 @@
                     "title": "Channel Tool",
                     "summary": "The contact lookup, message sending, and synchronous or asynchronous receipt structures of `channel_tool`.",
                     "url": "/docs/en/tools/channel/"
+                  },
+                  {
+                    "slug": "en/tools/self-status",
+                    "title": "Self Status",
+                    "summary": "`self_status` is used to inspect the current session, model, events, and thread runtime state.",
+                    "url": "/docs/en/tools/self-status/"
                   }
                 ]
               },
@@ -1006,8 +1048,8 @@
                 "pages": [
                   {
                     "slug": "en/integration/index",
-                    "title": "Overview",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Integration Overview",
+                    "summary": "Wunder's integration surface includes a unified execution entry, chat domain, workspace, channels, A2A, and MCP; pick the right layer first for a more stable integration.",
                     "url": "/docs/en/integration/"
                   }
                 ]
@@ -1018,31 +1060,31 @@
                   {
                     "slug": "en/integration/wunder-api",
                     "title": "wunder API",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "`/wunder` is the unified execution entry point, suitable for capability calls; when building a complete chat product, prefer `/wunder/chat/*`.",
                     "url": "/docs/en/integration/wunder-api/"
                   },
                   {
                     "slug": "en/integration/chat-ws",
                     "title": "Chat WebSocket",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "`/wunder/chat/ws` is Wunder's primary real-time chat channel; real-time sessions prefer WS, with SSE as fallback.",
                     "url": "/docs/en/integration/chat-ws/"
                   },
                   {
                     "slug": "en/integration/chat-sessions",
                     "title": "Chat Sessions",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "`/wunder/chat/sessions/*` is Wunder's primary chat domain, responsible for session lifecycle, message sending/receiving, attachment preprocessing, event recovery, and runtime management.",
                     "url": "/docs/en/integration/chat-sessions/"
                   },
                   {
                     "slug": "en/integration/workspace-api",
                     "title": "Workspace API",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "/wunder/workspace* is not just a file interface - it determines which isolated workspace files are stored in.",
                     "url": "/docs/en/integration/workspace-api/"
                   },
                   {
                     "slug": "en/integration/temp-dir",
-                    "title": "Temp Directory",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Temp Directory and Document Conversion",
+                    "summary": "`/wunder/temp_dir/*` handles temporary upload, download, and transit; document conversion and chat attachment preprocessing are handled by separate public conversion, debug conversion, and chat-domain conversion endpoints.",
                     "url": "/docs/en/integration/temp-dir/"
                   }
                 ]
@@ -1053,31 +1095,37 @@
                   {
                     "slug": "en/integration/user-world",
                     "title": "User World",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "`/wunder/user_world/*` is the user-to-user communication domain in Wunder, existing in parallel with the user-to-agent conversation domain.",
                     "url": "/docs/en/integration/user-world/"
                   },
                   {
                     "slug": "en/integration/channel-webhook",
                     "title": "Channel Webhook",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Wunder uses /wunder/channel/{provider}/webhook as a unified inbound entry for external channels, then hands off to ChannelHub and the outbox for processing.",
                     "url": "/docs/en/integration/channel-webhook/"
                   },
                   {
+                    "slug": "en/integration/weixin-channel",
+                    "title": "WeChat iLink Channel",
+                    "summary": "`weixin` is Wunder's new WeChat channel (iLink protocol), different from `wechat` / `wechat_mp`; this article covers selection, QR code integration, runtime checks, and troubleshooting.",
+                    "url": "/docs/en/integration/weixin-channel/"
+                  },
+                  {
                     "slug": "en/integration/external-login",
-                    "title": "External Login",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "External Login and Seamless Embedding",
+                    "summary": "Wunder reserves `/wunder/auth/external/*` as the interface for external system embedding and passwordless access.",
                     "url": "/docs/en/integration/external-login/"
                   },
                   {
                     "slug": "en/integration/a2a",
-                    "title": "A2A",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "A2A Interface",
+                    "summary": "Wunder exposes A2A JSON-RPC standard access via /a2a and provides a capability discovery entry through AgentCard.",
                     "url": "/docs/en/integration/a2a/"
                   },
                   {
                     "slug": "en/integration/mcp-endpoint",
                     "title": "MCP Endpoint",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.",
                     "url": "/docs/en/integration/mcp-endpoint/"
                   }
                 ]
@@ -1093,8 +1141,8 @@
                 "pages": [
                   {
                     "slug": "en/surfaces/index",
-                    "title": "Overview",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Interface Overview",
+                    "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
                     "url": "/docs/en/surfaces/"
                   }
                 ]
@@ -1104,20 +1152,20 @@
                 "pages": [
                   {
                     "slug": "en/surfaces/frontend",
-                    "title": "Frontend",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "User Frontend",
+                    "summary": "The user-side frontend lives in `frontend/`, unified into a single Messenger workbench that covers profile, chat, swarm, workspace, and system settings.",
                     "url": "/docs/en/surfaces/frontend/"
                   },
                   {
                     "slug": "en/surfaces/web-admin",
-                    "title": "Web Admin",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Admin Interface",
+                    "summary": "The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.",
                     "url": "/docs/en/surfaces/web-admin/"
                   },
                   {
                     "slug": "en/surfaces/desktop-ui",
-                    "title": "Desktop UI",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Desktop Interface",
+                    "summary": "`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.",
                     "url": "/docs/en/surfaces/desktop-ui/"
                   }
                 ]
@@ -1133,8 +1181,8 @@
                 "pages": [
                   {
                     "slug": "en/ops/index",
-                    "title": "Overview",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Operations Overview",
+                    "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
                     "url": "/docs/en/ops/"
                   }
                 ]
@@ -1144,38 +1192,38 @@
                 "pages": [
                   {
                     "slug": "en/ops/deployment",
-                    "title": "Deployment",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Deployment and Running",
+                    "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
                     "url": "/docs/en/ops/deployment/"
                   },
                   {
                     "slug": "en/ops/data-and-storage",
                     "title": "Data and Storage",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.",
                     "url": "/docs/en/ops/data-and-storage/"
                   },
                   {
                     "slug": "en/ops/desktop-local-mode",
                     "title": "Desktop Local Mode",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Desktop local mode is not a scaled-down server, but a local-first, persistent-directory-first runtime form.",
                     "url": "/docs/en/ops/desktop-local-mode/"
                   },
                   {
                     "slug": "en/ops/auth-and-security",
-                    "title": "Auth and Security",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Authentication and Security",
+                    "summary": "Wunder needs to distinguish between API Keys, user tokens, external auth, and tool execution boundaries.",
                     "url": "/docs/en/ops/auth-and-security/"
                   },
                   {
                     "slug": "en/ops/benchmark-and-observability",
-                    "title": "Benchmark and Observability",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Monitoring and Benchmark",
+                    "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and benchmark together.",
                     "url": "/docs/en/ops/benchmark-and-observability/"
                   },
                   {
                     "slug": "en/ops/channel-runtime",
                     "title": "Channel Runtime",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.",
                     "url": "/docs/en/ops/channel-runtime/"
                   }
                 ]
@@ -1191,8 +1239,8 @@
                 "pages": [
                   {
                     "slug": "en/reference/index",
-                    "title": "Overview",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Reference Overview",
+                    "summary": "Reference pages provide stable lookup content and also collect runtime model reference pages broken down by topic, suitable for diving into details after reviewing the core overview.",
                     "url": "/docs/en/reference/"
                   }
                 ]
@@ -1203,37 +1251,37 @@
                   {
                     "slug": "en/reference/api-index",
                     "title": "API Index",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "This is an index page for Wunder's most commonly used interface groups, used for quickly locating endpoints rather than replacing the full API documentation.",
                     "url": "/docs/en/reference/api-index/"
                   },
                   {
                     "slug": "en/reference/config",
                     "title": "Configuration",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.",
                     "url": "/docs/en/reference/config/"
                   },
                   {
                     "slug": "en/reference/stream-events",
                     "title": "Stream Events",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "When integrating with Wunder's streaming pipeline, the most important thing is not memorizing every event, but knowing which events carry true lifecycle semantics.",
                     "url": "/docs/en/reference/stream-events/"
                   },
                   {
                     "slug": "en/reference/workspace-routing",
                     "title": "Workspace Routing",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Wunder's workspace routing is not simply directory lookup by user_id; it is determined jointly by `container_id`, agent container configuration, and scoped user_id.",
                     "url": "/docs/en/reference/workspace-routing/"
                   },
                   {
                     "slug": "en/reference/prompt-templates",
                     "title": "Prompt Templates",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Wunder splits system prompts into template packs and segment files. Administrators manage system template packs. The user side currently provides two built-in template packs (Chinese and English) by default and supports switching or copying them into custom packs.",
                     "url": "/docs/en/reference/prompt-templates/"
                   },
                   {
                     "slug": "en/reference/admin-panels",
                     "title": "Admin Panels",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "The admin-side frontend is not a single debug page, but a set of well-organized governance panels with clear responsibilities.",
                     "url": "/docs/en/reference/admin-panels/"
                   }
                 ]
@@ -1249,8 +1297,8 @@
                   },
                   {
                     "slug": "en/concepts/workspaces",
-                    "title": "Workspaces",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Workspaces and Containers",
+                    "summary": "Wunder's file isolation is not 'a current directory', but a persistent workspace organized by `user_id + container_id` in layers.",
                     "url": "/docs/en/concepts/workspaces/"
                   },
                   {
@@ -1261,14 +1309,14 @@
                   },
                   {
                     "slug": "en/concepts/streaming",
-                    "title": "Streaming",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Streaming Execution",
+                    "summary": "Wunder's streaming is not just a character stream, but exposes thread execution, tool calls, and terminal states together.",
                     "url": "/docs/en/concepts/streaming/"
                   },
                   {
                     "slug": "en/concepts/presence-and-runtime",
-                    "title": "Presence and Runtime",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Runtime and Online Status",
+                    "summary": "Wunder doesn't just return message content; it continuously maintains runtime projections of threads and sessions to express states like loaded, waiting, streaming, and idle.",
                     "url": "/docs/en/concepts/presence-and-runtime/"
                   },
                   {
@@ -1291,8 +1339,8 @@
                   },
                   {
                     "slug": "en/concepts/quota-and-token-usage",
-                    "title": "Token Balance and Usage",
-                    "summary": "Wunder uses a token balance as the user's spendable currency, and token usage as the runtime view of context load.",
+                    "title": "Token Account and Usage",
+                    "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
                     "url": "/docs/en/concepts/quota-and-token-usage/"
                   },
                   {
@@ -1304,7 +1352,7 @@
                   {
                     "slug": "en/concepts/boundary-handling",
                     "title": "Boundary Handling",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "wunder's handling strategies and recovery mechanisms for edge cases such as context overflow, network interruption, tool failure, and system exceptions.",
                     "url": "/docs/en/concepts/boundary-handling/"
                   }
                 ]
@@ -1320,8 +1368,8 @@
                 "pages": [
                   {
                     "slug": "en/help/index",
-                    "title": "Overview",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "title": "Help",
+                    "summary": "Start by categorizing symptoms, then follow the troubleshooting path; the goal is to reduce blind log searching and repeated trial-and-error.",
                     "url": "/docs/en/help/"
                   }
                 ]
@@ -1332,19 +1380,19 @@
                   {
                     "slug": "en/help/troubleshooting",
                     "title": "Troubleshooting",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Follow the \"entry -> auth -> config -> dependencies -> realtime channel\" sequence to quickly locate most Wunder issues.",
                     "url": "/docs/en/help/troubleshooting/"
                   },
                   {
                     "slug": "en/help/faq",
                     "title": "FAQ",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "Quick answers to high-frequency questions about Wunder, suitable for initial assessment before diving into detailed troubleshooting.",
                     "url": "/docs/en/help/faq/"
                   },
                   {
                     "slug": "en/help/glossary",
                     "title": "Glossary",
-                    "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+                    "summary": "This page is for quickly standardizing core terminology in Wunder documentation, avoiding mixing user, session, thread, container, and agent into a single concept.",
                     "url": "/docs/en/help/glossary/"
                   }
                 ]
@@ -1388,11 +1436,14 @@
     "zh-CN/tools/desktop-control",
     "zh-CN/tools/panels-and-a2ui",
     "zh-CN/tools/schedule-task",
+    "zh-CN/tools/final-response",
+    "zh-CN/tools/sleep",
     "zh-CN/tools/thread-control",
     "zh-CN/tools/subagent-control",
     "zh-CN/tools/agent-swarm",
     "zh-CN/tools/memory-manager",
     "zh-CN/tools/channel",
+    "zh-CN/tools/self-status",
     "zh-CN/tools/user-world",
     "zh-CN/tools/a2a-tools",
     "zh-CN/tools/node-invoke",
@@ -1404,6 +1455,7 @@
     "zh-CN/integration/temp-dir",
     "zh-CN/integration/user-world",
     "zh-CN/integration/channel-webhook",
+    "zh-CN/integration/weixin-channel",
     "zh-CN/integration/external-login",
     "zh-CN/integration/a2a",
     "zh-CN/integration/mcp-endpoint",
@@ -1472,11 +1524,14 @@
     "en/tools/desktop-control",
     "en/tools/panels-and-a2ui",
     "en/tools/schedule-task",
+    "en/tools/final-response",
+    "en/tools/sleep",
     "en/tools/thread-control",
     "en/tools/subagent-control",
     "en/tools/agent-swarm",
     "en/tools/memory-manager",
     "en/tools/channel",
+    "en/tools/self-status",
     "en/tools/user-world",
     "en/tools/a2a-tools",
     "en/tools/node-invoke",
@@ -1488,6 +1543,7 @@
     "en/integration/temp-dir",
     "en/integration/user-world",
     "en/integration/channel-webhook",
+    "en/integration/weixin-channel",
     "en/integration/external-login",
     "en/integration/a2a",
     "en/integration/mcp-endpoint",
@@ -4078,9 +4134,9 @@
         "src/services/tools/catalog.rs"
       ],
       "tab": "工具",
-      "group": "界面与自动化",
+      "group": "UI and Automation",
       "group_path": [
-        "界面与自动化"
+        "UI and Automation"
       ],
       "url": "/docs/zh-CN/tools/panels-and-a2ui/",
       "headings": [
@@ -4149,9 +4205,9 @@
         "src/services/cron.rs"
       ],
       "tab": "工具",
-      "group": "界面与自动化",
+      "group": "UI and Automation",
       "group_path": [
-        "界面与自动化"
+        "UI and Automation"
       ],
       "url": "/docs/zh-CN/tools/schedule-task/",
       "headings": [
@@ -4197,9 +4253,121 @@
         }
       ],
       "prev_slug": "zh-CN/tools/panels-and-a2ui",
-      "next_slug": "zh-CN/tools/thread-control",
+      "next_slug": "zh-CN/tools/final-response",
       "source_path": "zh-CN/tools/schedule-task.md",
       "output_path": "zh-CN/tools/schedule-task/index.html"
+    },
+    "zh-CN/tools/final-response": {
+      "slug": "zh-CN/tools/final-response",
+      "language": "zh-CN",
+      "title": "最终回复",
+      "summary": "`final_response` 的唯一职责是结束当前轮次并给用户回复。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你已经完成工具调用和推理，准备正式回答用户"
+      ],
+      "source_docs": [
+        "src/services/tools/dispatch.rs",
+        "src/services/tools/catalog.rs"
+      ],
+      "tab": "工具",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/zh-CN/tools/final-response/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "最终回复"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "输入"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "返回"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "重点"
+        }
+      ],
+      "prev_slug": "zh-CN/tools/schedule-task",
+      "next_slug": "zh-CN/tools/sleep",
+      "source_path": "zh-CN/tools/final-response.md",
+      "output_path": "zh-CN/tools/final-response/index.html"
+    },
+    "zh-CN/tools/sleep": {
+      "slug": "zh-CN/tools/sleep",
+      "language": "zh-CN",
+      "title": "睡眠与让出",
+      "summary": "`sleep` 与 `sessions_yield` 的语义区别。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你要等待一段时间，或暂时让出当前轮次控制权"
+      ],
+      "source_docs": [
+        "src/services/tools/sleep_tool.rs",
+        "src/services/tools/sessions_yield_tool.rs"
+      ],
+      "tab": "工具",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/zh-CN/tools/sleep/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "睡眠与让出"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "sleep"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "最小参数"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "成功返回"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "sessionsyield"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "最小参数"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "成功返回"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "怎么选"
+        }
+      ],
+      "prev_slug": "zh-CN/tools/final-response",
+      "next_slug": "zh-CN/tools/thread-control",
+      "source_path": "zh-CN/tools/sleep.md",
+      "output_path": "zh-CN/tools/sleep/index.html"
     },
     "zh-CN/tools/thread-control": {
       "slug": "zh-CN/tools/thread-control",
@@ -4256,7 +4424,7 @@
           "text": "和 subagentcontrol 的区别"
         }
       ],
-      "prev_slug": "zh-CN/tools/schedule-task",
+      "prev_slug": "zh-CN/tools/sleep",
       "next_slug": "zh-CN/tools/subagent-control",
       "source_path": "zh-CN/tools/thread-control.md",
       "output_path": "zh-CN/tools/thread-control/index.html"
@@ -4528,9 +4696,59 @@
         }
       ],
       "prev_slug": "zh-CN/tools/memory-manager",
-      "next_slug": "zh-CN/tools/user-world",
+      "next_slug": "zh-CN/tools/self-status",
       "source_path": "zh-CN/tools/channel.md",
       "output_path": "zh-CN/tools/channel/index.html"
+    },
+    "zh-CN/tools/self-status": {
+      "slug": "zh-CN/tools/self-status",
+      "language": "zh-CN",
+      "title": "自我状态",
+      "summary": "`self_status` 用于查看当前会话、模型、事件与线程运行态。",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "你要查看当前会话到底跑到了哪一步"
+      ],
+      "source_docs": [
+        "src/services/tools/self_status_tool.rs"
+      ],
+      "tab": "工具",
+      "group": "会话与协作",
+      "group_path": [
+        "会话与协作"
+      ],
+      "url": "/docs/zh-CN/tools/self-status/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "自我状态"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "最小参数"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "常用参数"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "返回结构"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "重点"
+        }
+      ],
+      "prev_slug": "zh-CN/tools/channel",
+      "next_slug": "zh-CN/tools/user-world",
+      "source_path": "zh-CN/tools/self-status.md",
+      "output_path": "zh-CN/tools/self-status/index.html"
     },
     "zh-CN/tools/user-world": {
       "slug": "zh-CN/tools/user-world",
@@ -4572,7 +4790,7 @@
           "text": "重点"
         }
       ],
-      "prev_slug": "zh-CN/tools/channel",
+      "prev_slug": "zh-CN/tools/self-status",
       "next_slug": "zh-CN/tools/a2a-tools",
       "source_path": "zh-CN/tools/user-world.md",
       "output_path": "zh-CN/tools/user-world/index.html"
@@ -5347,9 +5565,100 @@
         }
       ],
       "prev_slug": "zh-CN/integration/user-world",
-      "next_slug": "zh-CN/integration/external-login",
+      "next_slug": "zh-CN/integration/weixin-channel",
       "source_path": "zh-CN/integration/channel-webhook.md",
       "output_path": "zh-CN/integration/channel-webhook/index.html"
+    },
+    "zh-CN/integration/weixin-channel": {
+      "slug": "zh-CN/integration/weixin-channel",
+      "language": "zh-CN",
+      "title": "微信 iLink 渠道",
+      "summary": "`weixin` 是 Wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。",
+      "updated_at": "2026-04-02",
+      "read_when": [
+        "你要接入新微信渠道并替换旧的 `wechat` / `wechat_mp`",
+        "你想确认用户是否可以直接扫系统生成二维码",
+        "你在排查 `context_token` 缺失、会话过期、文件下载失败"
+      ],
+      "source_docs": [
+        "docs/方案/新微信渠道落地方案.md",
+        "docs/API文档.md",
+        "src/channels/weixin.rs",
+        "src/channels/service.rs",
+        "src/api/user_channels.rs"
+      ],
+      "tab": "接入",
+      "group": "扩展接入",
+      "group_path": [
+        "扩展接入"
+      ],
+      "url": "/docs/zh-CN/integration/weixin-channel/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "微信 iLink 渠道"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "30 秒选型"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "关键差异（新旧区分）"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "用户侧扫码接入（已支持）"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "最小可用配置（P0）"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "文件与媒体链路"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "常见问题定位"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "报错 weixin outbound contexttoken missing"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "长时间收不到消息"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "会话频繁过期（session expired）"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "对接建议（迁移旧微信渠道时）"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/integration/channel-webhook",
+      "next_slug": "zh-CN/integration/external-login",
+      "source_path": "zh-CN/integration/weixin-channel.md",
+      "output_path": "zh-CN/integration/weixin-channel/index.html"
     },
     "zh-CN/integration/external-login": {
       "slug": "zh-CN/integration/external-login",
@@ -5425,7 +5734,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/integration/channel-webhook",
+      "prev_slug": "zh-CN/integration/weixin-channel",
       "next_slug": "zh-CN/integration/a2a",
       "source_path": "zh-CN/integration/external-login.md",
       "output_path": "zh-CN/integration/external-login/index.html"
@@ -9424,13 +9733,14 @@
       "slug": "en/concepts/core-agent-loop",
       "language": "en",
       "title": "Core Agent Loop",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "The Core Agent Loop explains why Wunder treats threads as first-class runtime units, and why the main execution path must be stable, recoverable, and convergent.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to understand why threads are Wunder's first-class runtime units",
+        "You need to determine where execution logic should land when integrating, troubleshooting, or designing tools"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-agent-loop.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9443,6 +9753,61 @@
           "id": "section-1",
           "level": 1,
           "text": "Core Agent Loop"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core Concept"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Priorities"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Priority 1: Thread is more important than \"current response\""
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Priority 2: Actions must return to the same chain"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Priority 3: Terminal state is not a UI feeling, it's a system fact"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/index",
@@ -9453,14 +9818,15 @@
     "en/concepts/core-tools": {
       "slug": "en/concepts/core-tools",
       "language": "en",
-      "title": "Core Tools",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Tools",
+      "summary": "The Tools core explains why Wunder must unify all capabilities as tools, and why tools must simultaneously serve model invocation, execution governance, and frontend display.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are designing built-in tools, MCP, or Skills",
+        "You want to understand why tool returns must be concise and clear"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-tools.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9472,7 +9838,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Tools"
+          "text": "Tools"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Takeaways"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be Listed as a Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Focus"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Focus One: Wunder Doesn't Just Make Models \"Talk,\" It Makes Models \"Do\""
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Focus Two: Tool Results Should Serve Scheduling First, Then Display"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Focus Three: A Unified Tool System Is More Important Than \"More Tools\""
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-agent-loop",
@@ -9483,14 +9904,15 @@
     "en/concepts/core-swarm": {
       "slug": "en/concepts/core-swarm",
       "language": "en",
-      "title": "Core Swarm",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Swarm",
+      "summary": "The Swarm core explains how Wunder builds multi-agent collaboration into a formal system capability, rather than temporarily stuffing parallel tasks into a single large thread.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are designing multi-agent collaboration",
+        "You need to distinguish between swarms, sub-agents, and ordinary thread flows"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-swarm.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9502,7 +9924,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Swarm"
+          "text": "Swarm"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Takeaways"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be Listed as a Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Focus"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Focus One: Swarms Manage \"Existing Agents\""
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Focus Two: Sub-agents and Swarms Are Not the Same Thing"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Focus Three: Collaboration Quality Depends on Clear Boundaries, Not Worker Count"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-tools",
@@ -9513,14 +9990,15 @@
     "en/concepts/core-context-compression": {
       "slug": "en/concepts/core-context-compression",
       "language": "en",
-      "title": "Core Context Compression",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Context Compression",
+      "summary": "The Context Compression core explains how Wunder actively manages context size during long sessions, making compression a traceable, observable, and reviewable formal operation.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are handling long sessions or oversized tool outputs",
+        "You want to understand why compression cannot be a simple summary"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-context-compression.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9532,7 +10010,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Context Compression"
+          "text": "Context Compression"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Actually Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Highlights"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Highlight 1: Compression is not truncation"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Highlight 2: Compression timing matters"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Highlight 3: Tool observations are high-pressure zones"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-swarm",
@@ -9543,14 +10076,15 @@
     "en/concepts/core-memory": {
       "slug": "en/concepts/core-memory",
       "language": "en",
-      "title": "Core Memory",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Memory",
+      "summary": "The Memory core explains why Wunder insists on \"inject once during thread initialization, keep frozen afterward\", separating long-term data utilization from thread cognitive stability.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are designing long-term memory, knowledge base, or data injection strategies",
+        "You want to understand the relationship between prompt freezing and memory injection"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-memory.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9562,7 +10096,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Memory"
+          "text": "Memory"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Actually Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Highlights"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Highlight 1: The value of memory is \"stable recall,\" not \"remembering more\""
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Highlight 2: Initialization injection and runtime retrieval must be layered"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Highlight 3: Workspaces, knowledge bases, and memory fragments are not the same thing"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-context-compression",
@@ -9574,13 +10163,14 @@
       "slug": "en/concepts/core-channels",
       "language": "en",
       "title": "Core Channels",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Core Channels explains why Wunder allows multiple entry points, but absolutely forbids these entries from growing into multiple independent runtimes.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are integrating multiple entry points",
+        "You want to determine whether a capability belongs in the core or the integration layer"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-channels.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9593,6 +10183,61 @@
           "id": "section-1",
           "level": 1,
           "text": "Core Channels"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core Concept"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Priorities"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Priority 1: Channel diversification cannot break thread semantics"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Priority 2: Entry differences are \"surface,\" not \"skeleton\""
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Priority 3: More entries means unified semantics matter more"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-memory",
@@ -9603,14 +10248,15 @@
     "en/concepts/core-scheduled-tasks": {
       "slug": "en/concepts/core-scheduled-tasks",
       "language": "en",
-      "title": "Core Scheduled Tasks",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Scheduled Tasks",
+      "summary": "The Scheduled Tasks core explains why Wunder treats time-driven background tasks as a first-class system capability rather than leaving them to ad-hoc external scripts.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are designing inspection, reminders, background maintenance, or delayed execution tasks",
+        "You want to distinguish online threads from system-level async tasks"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-scheduled-tasks.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9622,7 +10268,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Scheduled Tasks"
+          "text": "Scheduled Tasks"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Standalone Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Really Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Highlights"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Highlight 1: Bring \"time\" into the system, not leave it outside"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Highlight 2: Scheduled tasks are a background execution chain, not a synchronous wait chain"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Highlight 3: Scheduling capability must natively carry execution records"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-channels",
@@ -9633,14 +10334,15 @@
     "en/concepts/core-multi-user-management": {
       "slug": "en/concepts/core-multi-user-management",
       "language": "en",
-      "title": "Core Multi-user Management",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Multi-user Management",
+      "summary": "The Multi-user Management core explains why Wunder must build organization, user, permission, and token account governance into the system skeleton from day one, rather than bolting it on later.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are deploying server or designing the admin side",
+        "You want to understand why multi-user governance cannot be retrofitted"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-multi-user-management.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9652,7 +10354,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Multi-user Management"
+          "text": "Multi-user Management"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Actually Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Highlights"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Highlight 1: Identity and isolation are two separate layers"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Highlight 2: Multi-user governance will inevitably sink into the runtime"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Highlight 3: Administrator capabilities must be strong, but boundaries must remain clear"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-scheduled-tasks",
@@ -9663,14 +10420,15 @@
     "en/concepts/core-realtime": {
       "slug": "en/concepts/core-realtime",
       "language": "en",
-      "title": "Core Realtime",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Realtime",
+      "summary": "The realtime core explains why Wunder must continuously project thread changes to the outside world, and strictly distinguishes between event projection and backend truth.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are working on WebSocket, streaming output, or state synchronization",
+        "You want to understand the boundaries of event streams, snapshot compensation, and disconnection recovery"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-realtime.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9682,7 +10440,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Realtime"
+          "text": "Realtime"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Takeaways"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core Principle"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Priorities"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Priority 1: Streaming is only part of realtime"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Priority 2: Realtime systems must support \"continuing from where you left off\", not just \"starting from the beginning\""
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Priority 3: Event semantics must be designed for multi-client reuse"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-multi-user-management",
@@ -9693,14 +10506,15 @@
     "en/concepts/core-stability": {
       "slug": "en/concepts/core-stability",
       "language": "en",
-      "title": "Core Stability",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Stability",
+      "summary": "The Stability core explains why Wunder must use structural governance to control fault propagation rather than relying on prompts, luck, and manual monitoring for stability.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are troubleshooting, stress-testing, or designing high-risk execution paths",
+        "You want to determine which layer a fault-tolerance capability should belong to"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-stability.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9712,7 +10526,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Stability"
+          "text": "Stability"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Bottom Line"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Standalone Core"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Really Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Highlights"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Highlight 1: Stability is first about \"controlling propagation\""
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Highlight 2: Recovery paths must be as formal as the main path"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Highlight 3: Resource governance is part of stability"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-realtime",
@@ -9723,14 +10592,15 @@
     "en/concepts/core-observability": {
       "slug": "en/concepts/core-observability",
       "language": "en",
-      "title": "Core Observability",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Observability",
+      "summary": "The observability core explains how Wunder splits \"what happened, why, and how to review\" into three distinct semantic layers: the fact layer, replay layer, and profile layer.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are working on troubleshooting, replay, evaluation, or admin profiling",
+        "You want to establish unified metrics and event standards"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/core-observability.md"
+        "docs/总体设计.md"
       ],
       "tab": "Core",
       "group": "11 Core Ideas",
@@ -9742,7 +10612,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Core Observability"
+          "text": "Observability"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Takeaways"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why It Must Be a Core Principle"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What This Core Truly Protects"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key Constraints"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Design Priorities"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Priority 1: Facts first, then interpretations, then profiles"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Priority 2: Observability must serve two types of people"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Priority 3: benchmark, throughput, and monitor are not the same thing"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Boundaries with Other Cores"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/core-stability",
@@ -10686,9 +11611,121 @@
         }
       ],
       "prev_slug": "en/tools/panels-and-a2ui",
-      "next_slug": "en/tools/thread-control",
+      "next_slug": "en/tools/final-response",
       "source_path": "en/tools/schedule-task.md",
       "output_path": "en/tools/schedule-task/index.html"
+    },
+    "en/tools/final-response": {
+      "slug": "en/tools/final-response",
+      "language": "en",
+      "title": "Final Response",
+      "summary": "The sole job of `final_response` is to end the current turn with the reply for the user.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You have finished tool calls and reasoning and are ready to answer the user"
+      ],
+      "source_docs": [
+        "src/services/tools/dispatch.rs",
+        "src/services/tools/catalog.rs"
+      ],
+      "tab": "Tools",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/en/tools/final-response/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Final Response"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Input"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Return"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/schedule-task",
+      "next_slug": "en/tools/sleep",
+      "source_path": "en/tools/final-response.md",
+      "output_path": "en/tools/final-response/index.html"
+    },
+    "en/tools/sleep": {
+      "slug": "en/tools/sleep",
+      "language": "en",
+      "title": "Sleep and Yield",
+      "summary": "The semantic difference between `sleep` and `sessions_yield`.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to wait for a while, or temporarily yield control of the current turn"
+      ],
+      "source_docs": [
+        "src/services/tools/sleep_tool.rs",
+        "src/services/tools/sessions_yield_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "UI and Automation",
+      "group_path": [
+        "UI and Automation"
+      ],
+      "url": "/docs/en/tools/sleep/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Sleep and Yield"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "sleep"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "sessionsyield"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Success result"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "How to choose"
+        }
+      ],
+      "prev_slug": "en/tools/final-response",
+      "next_slug": "en/tools/thread-control",
+      "source_path": "en/tools/sleep.md",
+      "output_path": "en/tools/sleep/index.html"
     },
     "en/tools/thread-control": {
       "slug": "en/tools/thread-control",
@@ -10745,7 +11782,7 @@
           "text": "Difference from subagentcontrol"
         }
       ],
-      "prev_slug": "en/tools/schedule-task",
+      "prev_slug": "en/tools/sleep",
       "next_slug": "en/tools/subagent-control",
       "source_path": "en/tools/thread-control.md",
       "output_path": "en/tools/thread-control/index.html"
@@ -11017,9 +12054,59 @@
         }
       ],
       "prev_slug": "en/tools/memory-manager",
-      "next_slug": "en/tools/user-world",
+      "next_slug": "en/tools/self-status",
       "source_path": "en/tools/channel.md",
       "output_path": "en/tools/channel/index.html"
+    },
+    "en/tools/self-status": {
+      "slug": "en/tools/self-status",
+      "language": "en",
+      "title": "Self Status",
+      "summary": "`self_status` is used to inspect the current session, model, events, and thread runtime state.",
+      "updated_at": "2026-04-10",
+      "read_when": [
+        "You need to understand exactly where the current session is in its execution flow"
+      ],
+      "source_docs": [
+        "src/services/tools/self_status_tool.rs"
+      ],
+      "tab": "Tools",
+      "group": "Sessions and Collaboration",
+      "group_path": [
+        "Sessions and Collaboration"
+      ],
+      "url": "/docs/en/tools/self-status/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Self Status"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Minimum arguments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Common arguments"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Return structure"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Key points"
+        }
+      ],
+      "prev_slug": "en/tools/channel",
+      "next_slug": "en/tools/user-world",
+      "source_path": "en/tools/self-status.md",
+      "output_path": "en/tools/self-status/index.html"
     },
     "en/tools/user-world": {
       "slug": "en/tools/user-world",
@@ -11061,7 +12148,7 @@
           "text": "Key points"
         }
       ],
-      "prev_slug": "en/tools/channel",
+      "prev_slug": "en/tools/self-status",
       "next_slug": "en/tools/a2a-tools",
       "source_path": "en/tools/user-world.md",
       "output_path": "en/tools/user-world/index.html"
@@ -11164,14 +12251,17 @@
     "en/integration/index": {
       "slug": "en/integration/index",
       "language": "en",
-      "title": "Overview",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Integration Overview",
+      "summary": "Wunder's integration surface includes a unified execution entry, chat domain, workspace, channels, A2A, and MCP; pick the right layer first for a more stable integration.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are about to integrate Wunder into your business system",
+        "You are not sure whether to start with /wunder, the chat domain, or the workspace API"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/index.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
       ],
       "tab": "Integrations",
       "group": "Overview",
@@ -11183,7 +12273,77 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Overview"
+          "text": "Integration Overview"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Choose First: What Are You Trying to Do?"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Integration Surface Overview"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Three High-Frequency Entry Points in Detail"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "1. Unified Execution Entry: /wunder"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "2. Chat Control Entry: /wunder/chat/ + WebSocket"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "3. File Artifact Entry: Workspace API"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Transport Protocol: WebSocket First, SSE as Fallback"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Key Design Conventions"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "userid Does Not Require Registration"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Token Counting Reflects Context Usage"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Thread System Prompts Are Frozen"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Long-Term Memory Is Injected Only Once"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/tools/node-invoke",
@@ -11195,13 +12355,16 @@
       "slug": "en/integration/wunder-api",
       "language": "en",
       "title": "wunder API",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "`/wunder` is the unified execution entry point, suitable for capability calls; when building a complete chat product, prefer `/wunder/chat/*`.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to integrate Wunder from a business system",
+        "You need to decide between `/wunder` and `/wunder/chat/*`"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/wunder-api.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -11214,6 +12377,51 @@
           "id": "section-1",
           "level": 1,
           "text": "wunder API"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to Prefer /wunder"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "When Not to Use Only /wunder"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Recommended Integration Path (Stable Agent Binding)"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Request Fields (Minimum Set)"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Don't Throw Attachments Directly to /wunder"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Identity Field Notes"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Related Interfaces"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/index",
@@ -11225,13 +12433,16 @@
       "slug": "en/integration/chat-ws",
       "language": "en",
       "title": "Chat WebSocket",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "`/wunder/chat/ws` is Wunder's primary real-time chat channel; real-time sessions prefer WS, with SSE as fallback.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are developing chat UI or desktop real-time sessions",
+        "You need to handle start/resume/watch/cancel/approval"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/chat-ws.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "src/api/chat_ws.rs"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -11244,6 +12455,56 @@
           "id": "section-1",
           "level": 1,
           "text": "Chat WebSocket"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Applicable Scenarios"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Endpoint"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Actions Available After Connection"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Minimal Integration Sequence"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Minimal Handshake Example"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Start an Execution"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Key Events Clients Should Focus On"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Common Pitfalls"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Fallback on Failure"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/wunder-api",
@@ -11255,13 +12516,15 @@
       "slug": "en/integration/chat-sessions",
       "language": "en",
       "title": "Chat Sessions",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "`/wunder/chat/sessions/*` is Wunder's primary chat domain, responsible for session lifecycle, message sending/receiving, attachment preprocessing, event recovery, and runtime management.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are building chat UI, desktop sessions, or messaging workbench",
+        "You want to upgrade from \"capability invocation\" to \"session productization\""
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/chat-sessions.md"
+        "docs/API文档.md",
+        "src/api/chat.rs"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -11274,6 +12537,46 @@
           "id": "section-1",
           "level": 1,
           "text": "Chat Sessions"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What This Group of Interfaces Is Responsible For"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "High-Frequency Interfaces"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Typical Flow"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Recommended Attachment Flow"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Relationship with /wunder"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Why Prompt Preview Matters"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Common Pitfalls"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/chat-ws",
@@ -11285,13 +12588,16 @@
       "slug": "en/integration/workspace-api",
       "language": "en",
       "title": "Workspace API",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "/wunder/workspace* is not just a file interface - it determines which isolated workspace files are stored in.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are building workspace panels, file upload/download, or artifact callbacks",
+        "You need to understand why container_id overrides agent_id"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/workspace-api.md"
+        "docs/API文档.md",
+        "src/api/workspace.rs",
+        "docs/设计方案.md"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -11304,6 +12610,36 @@
           "id": "section-1",
           "level": 1,
           "text": "Workspace API"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Routing Rules (Read First)"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Where This Set of Interfaces Is Used"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "How to Distinguish Common Interfaces"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/chat-sessions",
@@ -11314,14 +12650,19 @@
     "en/integration/temp-dir": {
       "slug": "en/integration/temp-dir",
       "language": "en",
-      "title": "Temp Directory",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Temp Directory and Document Conversion",
+      "summary": "`/wunder/temp_dir/*` handles temporary upload, download, and transit; document conversion and chat attachment preprocessing are handled by separate public conversion, debug conversion, and chat-domain conversion endpoints.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to send download links to external systems",
+        "You need to distinguish the responsibilities of workspace, temp_dir, and doc2md"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/temp-dir.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "src/api/temp_dir.rs",
+        "src/api/doc2md.rs",
+        "src/api/chat.rs"
       ],
       "tab": "Integrations",
       "group": "Core Interfaces",
@@ -11333,7 +12674,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Temp Directory"
+          "text": "Temp Directory and Document Conversion"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What This Page Covers"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Most Commonly Used Endpoints"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "When to Use These Endpoints"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "How the Four High-Frequency Endpoints Differ"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Why Many Files End Up as tempdir Download Links"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Treating tempdir as Long-Term Storage"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Treating Converted Markdown as the Workspace Master File"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Assuming tempdir Is Only for the Admin Panel"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Implementation Guidelines"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/workspace-api",
@@ -11345,13 +12741,18 @@
       "slug": "en/integration/user-world",
       "language": "en",
       "title": "User World",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "`/wunder/user_world/*` is the user-to-user communication domain in Wunder, existing in parallel with the user-to-agent conversation domain.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to integrate user-to-user direct or group chat",
+        "You want to understand the boundary between user_world and chat endpoints"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/user-world.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md",
+        "src/api/user_world.rs",
+        "src/api/user_world_ws.rs"
       ],
       "tab": "Integrations",
       "group": "Extended Integrations",
@@ -11364,6 +12765,76 @@
           "id": "section-1",
           "level": 1,
           "text": "User World"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What Problem Does This Solve"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "How It Differs from /wunder/chat/"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Which Endpoints You Will Typically Use"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Contacts and Groups"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Conversations"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Messages"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Real-Time Streams"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Why WebSocket Is Still Recommended"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "What Are Events"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "How to Distinguish Group Chat from Direct Chat"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "How Files and Voice Are Handled"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "When You Should Not Use It"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Typical Integration Order"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/temp-dir",
@@ -11375,13 +12846,18 @@
       "slug": "en/integration/channel-webhook",
       "language": "en",
       "title": "Channel Webhook",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Wunder uses /wunder/channel/{provider}/webhook as a unified inbound entry for external channels, then hands off to ChannelHub and the outbox for processing.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to connect Feishu, WeCom, QQBot, XMPP, and other channels into Wunder",
+        "You want to understand the relationship between Webhook, persistent connections, and the outbox"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/channel-webhook.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "src/api/channel.rs",
+        "src/channels/catalog.rs"
       ],
       "tab": "Integrations",
       "group": "Extended Integrations",
@@ -11394,24 +12870,169 @@
           "id": "section-1",
           "level": 1,
           "text": "Channel Webhook"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Core Goals of This Pipeline"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Existing Typical Entries"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Why a Unified Entry"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "What Happens After a Webhook Comes In"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Are Persistent Connections and Webhooks Opposed"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "What Does the Outbox Do"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Why Files Get Rewritten to Download Links"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "What to Look at in the Admin Panel"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Most Common Problems"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/user-world",
-      "next_slug": "en/integration/external-login",
+      "next_slug": "en/integration/weixin-channel",
       "source_path": "en/integration/channel-webhook.md",
       "output_path": "en/integration/channel-webhook/index.html"
+    },
+    "en/integration/weixin-channel": {
+      "slug": "en/integration/weixin-channel",
+      "language": "en",
+      "title": "WeChat iLink Channel",
+      "summary": "`weixin` is Wunder's new WeChat channel (iLink protocol), different from `wechat` / `wechat_mp`; this article covers selection, QR code integration, runtime checks, and troubleshooting.",
+      "updated_at": "2026-04-13",
+      "read_when": [
+        "You need to integrate the new WeChat channel and replace old `wechat` / `wechat_mp`",
+        "You want to confirm if users can directly scan system-generated QR codes",
+        "You are troubleshooting `context_token` missing, session expired, or file download failures"
+      ],
+      "source_docs": [
+        "docs/方案/新微信渠道落地方案.md",
+        "docs/API文档.md",
+        "src/channels/weixin.rs",
+        "src/channels/service.rs",
+        "src/api/user_channels.rs"
+      ],
+      "tab": "Integrations",
+      "group": "Extended Integrations",
+      "group_path": [
+        "Extended Integrations"
+      ],
+      "url": "/docs/en/integration/weixin-channel/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "WeChat iLink Channel"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "30-Second Selection Guide"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Key Differences (New vs Old)"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "User-Side QR Code Integration (Supported)"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Minimum Viable Configuration (P0)"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "File and Media Link"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Common Issue Diagnosis"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Error weixin outbound contexttoken missing"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Not receiving messages for a long time"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Session frequently expired"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Integration Recommendations (When Migrating from Old WeChat Channel)"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
+        }
+      ],
+      "prev_slug": "en/integration/channel-webhook",
+      "next_slug": "en/integration/external-login",
+      "source_path": "en/integration/weixin-channel.md",
+      "output_path": "en/integration/weixin-channel/index.html"
     },
     "en/integration/external-login": {
       "slug": "en/integration/external-login",
       "language": "en",
-      "title": "External Login",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "External Login and Seamless Embedding",
+      "summary": "Wunder reserves `/wunder/auth/external/*` as the interface for external system embedding and passwordless access.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to enter Wunder directly from an external system",
+        "You want to understand the purposes of external login, launch, and token_login"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/external-login.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "config/wunder-example.yaml",
+        "src/api/auth.rs"
       ],
       "tab": "Integrations",
       "group": "Extended Integrations",
@@ -11423,10 +13044,55 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "External Login"
+          "text": "External Login and Seamless Embedding"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Why Not Reuse Regular Login"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Common Interfaces"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What tokenlogin Is Suitable For"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Why launch / code Still Exist"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What Ensures Security Boundaries"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Where to Redirect After Integration"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "What Scenarios This Chain Is Suitable For"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Common Pitfalls"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/integration/channel-webhook",
+      "prev_slug": "en/integration/weixin-channel",
       "next_slug": "en/integration/a2a",
       "source_path": "en/integration/external-login.md",
       "output_path": "en/integration/external-login/index.html"
@@ -11434,14 +13100,18 @@
     "en/integration/a2a": {
       "slug": "en/integration/a2a",
       "language": "en",
-      "title": "A2A",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "A2A Interface",
+      "summary": "Wunder exposes A2A JSON-RPC standard access via /a2a and provides a capability discovery entry through AgentCard.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want Wunder to be called by other agent systems",
+        "You want to plug external A2A services into Wunder's tool system"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/a2a.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "src/api/a2a.rs",
+        "config/wunder-example.yaml"
       ],
       "tab": "Integrations",
       "group": "Extended Integrations",
@@ -11453,7 +13123,52 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "A2A"
+          "text": "A2A Interface"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Exposed Endpoints"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Current Protocol Characteristics"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What Is AgentCard For"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "When to Use POST /a2a"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Difference from /wunder"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "How to Use External A2A Inside Wunder"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Things to Note When Integrating"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Tasks Suited for A2A"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/external-login",
@@ -11465,13 +13180,17 @@
       "slug": "en/integration/mcp-endpoint",
       "language": "en",
       "title": "MCP Endpoint",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Wunder supports both a self-hosted MCP service at `/wunder/mcp` and external MCP service integration.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to expose Wunder as an MCP service",
+        "You need to understand the relationship between Wunder's internal MCP and extra_mcp"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/integration/mcp-endpoint.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "src/services/mcp.rs",
+        "config/wunder-example.yaml"
       ],
       "tab": "Integrations",
       "group": "Extended Integrations",
@@ -11484,6 +13203,41 @@
           "id": "section-1",
           "level": 1,
           "text": "MCP Endpoint"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Self-Hosted MCP Endpoint"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "When to Use the Self-Hosted MCP"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Configuration Example"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "External MCP vs extramcp"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "How the Admin Panel Handles MCP"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Relationship Between MCP and the Tool Catalog"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/a2a",
@@ -11494,14 +13248,17 @@
     "en/surfaces/index": {
       "slug": "en/surfaces/index",
       "language": "en",
-      "title": "Overview",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Interface Overview",
+      "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to quickly understand what the user frontend, admin frontend, and desktop each do",
+        "You are looking for which interface a particular feature belongs to"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/surfaces/index.md"
+        "docs/系统介绍.md",
+        "docs/API文档.md",
+        "docs/设计方案.md"
       ],
       "tab": "Surfaces",
       "group": "Overview",
@@ -11513,7 +13270,47 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Overview"
+          "text": "Interface Overview"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Quick Entry"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Responsibilities of Each Surface"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "By Role"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Regular Users"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Administrators"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Integration Developers"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/integration/mcp-endpoint",
@@ -11524,14 +13321,18 @@
     "en/surfaces/frontend": {
       "slug": "en/surfaces/frontend",
       "language": "en",
-      "title": "Frontend",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "title": "User Frontend",
+      "summary": "The user-side frontend lives in `frontend/`, unified into a single Messenger workbench that covers profile, chat, swarm, workspace, and system settings.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to understand the primary interface that Wunder exposes to regular users",
+        "You need to know how chat, profile, swarm, files, and settings are organized"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/surfaces/frontend.md"
+        "docs/API文档.md",
+        "frontend/src/views/MessengerView.vue",
+        "frontend/src/components/messenger/MessengerSettingsPanel.vue",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
@@ -11543,7 +13344,67 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Frontend"
+          "text": "User Frontend"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Code Location"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Current Main Entry Points"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "How the Interface Is Organized"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Login, Registration, and Passwords"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What You Can See in My Profile"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "What the Chat Area Supports"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Why the \"New Thread\" Button Is Sometimes Disabled"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "How to Read Swarm Status"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Dangerous Operations in System Settings"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Help Manual Entry"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "When to Check This Page First"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/surfaces/index",
@@ -11554,14 +13415,17 @@
     "en/surfaces/web-admin": {
       "slug": "en/surfaces/web-admin",
       "language": "en",
-      "title": "Web Admin",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Admin Interface",
+      "summary": "The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to understand the interface seen by administrators and system maintainers",
+        "You need to know the responsibility boundary between the admin frontend and the user frontend"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/surfaces/web-admin.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
       ],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
@@ -11573,7 +13437,47 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Web Admin"
+          "text": "Admin Interface"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Code Location"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Default Responsibilities"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Why It Must Be Separate from the User Frontend"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "What You Currently See in the Admin Interface"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Token Accounting in User Management"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Relationship Between the Usage Manual and the Admin Interface"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "When to Check the Admin Documentation First"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/surfaces/frontend",
@@ -11584,14 +13488,17 @@
     "en/surfaces/desktop-ui": {
       "slug": "en/surfaces/desktop-ui",
       "language": "en",
-      "title": "Desktop UI",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Desktop Interface",
+      "summary": "`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to use Wunder directly",
+        "You want to understand why desktop is the current product focus"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/surfaces/desktop-ui.md"
+        "README.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
       ],
       "tab": "Surfaces",
       "group": "Frontend and Desktop",
@@ -11603,7 +13510,42 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Desktop UI"
+          "text": "Desktop Interface"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "What It Is"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Why Desktop Is the Current Focus"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Current Characteristics"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Relationship with the User Frontend"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Who It Suits Best"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "What If You Need Server Capabilities"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/surfaces/web-admin",
@@ -11614,14 +13556,17 @@
     "en/ops/index": {
       "slug": "en/ops/index",
       "language": "en",
-      "title": "Overview",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Operations Overview",
+      "summary": "Wunder operations covers deployment, storage, security, channel runtime, and observability. The goal is sustainable, stable operation -- not just \"it started successfully.\"",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are deploying or taking over a Wunder runtime environment",
+        "You need to quickly locate operations and governance entry points"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/index.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
       ],
       "tab": "Operations",
       "group": "Overview",
@@ -11633,7 +13578,62 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Overview"
+          "text": "Operations Overview"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Operations Entry Points"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "The Five Operations Threads"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "1. Deployment and Runtime"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "2. Data and Storage"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "3. Authentication and Security"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "4. Channel Runtime"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "5. Monitoring and Benchmark"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Troubleshooting Priority"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Production Environment Checklist"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Next Steps"
         }
       ],
       "prev_slug": "en/surfaces/desktop-ui",
@@ -11644,14 +13644,18 @@
     "en/ops/deployment": {
       "slug": "en/ops/deployment",
       "language": "en",
-      "title": "Deployment",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Deployment and Running",
+      "summary": "Before deploying Wunder, distinguish between desktop, local development, and server paths, then discuss startup commands.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to deploy Wunder",
+        "You need to confirm where to place databases, MCP, sandbox, and workspaces"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/deployment.md"
+        "README.md",
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "config/wunder-example.yaml"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11663,7 +13667,77 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Deployment"
+          "text": "Deployment and Running"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Decide These Four Things First"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Choose Deployment Path by Goal"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Desktop"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Server"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Local Development"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "If You Deploy Server, What's the Minimum Required"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "How to Plan External Paths"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Check These First After Startup"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Key Configuration Files"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Common Environment Variables"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Browser Runtime Under Docker"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Most Overlooked Deployment Issues"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/index",
@@ -11675,13 +13749,17 @@
       "slug": "en/ops/data-and-storage",
       "language": "en",
       "title": "Data and Storage",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Wunder's persistence requires distinguishing between databases, workspaces, vector storage, and temporary directories.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to deploy or migrate data",
+        "You want to understand what PostgreSQL, SQLite, Weaviate, workspaces, and temp_dir each store"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/data-and-storage.md"
+        "config/wunder-example.yaml",
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11694,6 +13772,76 @@
           "id": "section-1",
           "level": 1,
           "text": "Data and Storage"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "First, Distinguish Four Categories of Data"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "Relational Primary Data"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Workspace Files"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Vector Knowledge Base"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Temporary Directory"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "What storage.backend Determines"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Typical Choices for Server and Desktop"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "What Goes in Weaviate"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "What Goes in Workspaces"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "What is tempdir"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Why Workspaces and tempdir Must Be Separate"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Typical Persistence Checklist"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/deployment",
@@ -11705,13 +13853,16 @@
       "slug": "en/ops/desktop-local-mode",
       "language": "en",
       "title": "Desktop Local Mode",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Desktop local mode is not a scaled-down server, but a local-first, persistent-directory-first runtime form.",
+      "updated_at": "2026-04-11",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You primarily use wunder-desktop",
+        "You need to determine what local mode versus remote server mode are each suitable for"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/desktop-local-mode.md"
+        "docs/API文档.md",
+        "src/api/desktop.rs",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11724,6 +13875,66 @@
           "id": "section-1",
           "level": 1,
           "text": "Desktop Local Mode"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "First, What NOT to Think of It As"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Core Characteristics of Local Mode"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Working Directory is Persistent"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Container Semantics Are Still Preserved"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Prioritizes Bundled Runtime"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Why Local Mode is Suitable as the First Entry Point"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "What's Special About File Capabilities in Local Mode"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "What is One-Click Reset Working State"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "What Gets Preserved After Reset"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "When to Switch to Server"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Common Pitfalls in Local Mode"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/data-and-storage",
@@ -11734,14 +13945,18 @@
     "en/ops/auth-and-security": {
       "slug": "en/ops/auth-and-security",
       "language": "en",
-      "title": "Auth and Security",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Authentication and Security",
+      "summary": "Wunder needs to distinguish between API Keys, user tokens, external auth, and tool execution boundaries.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are deploying Wunder to a long-running environment",
+        "You need to determine which credentials to use for which entry points"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/auth-and-security.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "src/core/auth.rs",
+        "config/wunder-example.yaml"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11753,7 +13968,67 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Auth and Security"
+          "text": "Authentication and Security"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Four Types of Credentials"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "API Key"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "User Bearer Token"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "External Embed Auth"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Logged-in User Identity"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "An Important Distinction"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Path Protection Boundaries"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Tool Execution Security"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Thread Safety Conventions"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "WebSocket and Approval Isolation"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Security Configuration to Check First"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/desktop-local-mode",
@@ -11764,14 +14039,17 @@
     "en/ops/benchmark-and-observability": {
       "slug": "en/ops/benchmark-and-observability",
       "language": "en",
-      "title": "Benchmark and Observability",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Monitoring and Benchmark",
+      "summary": "Wunder's observability surface is not a single monitoring page, but composed of session monitoring, tool statistics, performance sampling, throughput stress testing, and benchmark together.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are troubleshooting thread, tool, or model pipeline issues",
+        "You need to distinguish the responsibilities of monitor, throughput, performance, and benchmark"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/benchmark-and-observability.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "src/api/admin.rs"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11783,7 +14061,82 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Benchmark and Observability"
+          "text": "Monitoring and Benchmark"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Four Categories of Capabilities"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Server Runtime Logs"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Session Monitoring"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Tool Usage Statistics"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Performance and Throughput"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Benchmark"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Why Separate Them"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Key Fields to Remember When Observing"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Using benchmark as a substitute for online monitoring"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Using throughput stress testing as a substitute for capability evaluation"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Only looking at one layer of logs"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Implementation Recommendations"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/auth-and-security",
@@ -11795,13 +14148,16 @@
       "slug": "en/ops/channel-runtime",
       "language": "en",
       "title": "Channel Runtime",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Channel issues often stem not from the model, but from the access chain: accounts, persistent connections, webhooks, outbox, and download link rewriting.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are troubleshooting channel anomalies for Feishu, WeChat, QQBot, WhatsApp, XMPP, etc.",
+        "You want to know what channel runtime interfaces are available on both admin and user sides"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/ops/channel-runtime.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md"
       ],
       "tab": "Operations",
       "group": "Deployment and Operations",
@@ -11814,6 +14170,41 @@
           "id": "section-1",
           "level": 1,
           "text": "Channel Runtime"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Most Important Admin Endpoints"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "User-Side Runtime Log Endpoints"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "When Not to Blame the Model First"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Why Files Often Become Download Links in Channels"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Implementation Recommendations"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/benchmark-and-observability",
@@ -11824,14 +14215,17 @@
     "en/reference/index": {
       "slug": "en/reference/index",
       "language": "en",
-      "title": "Overview",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Reference Overview",
+      "summary": "Reference pages provide stable lookup content and also collect runtime model reference pages broken down by topic, suitable for diving into details after reviewing the core overview.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need field-level, event-level, or configuration-level reference",
+        "You already know which layer the problem is in and want to quickly check the standard answer"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/index.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "docs/设计方案.md"
       ],
       "tab": "Reference",
       "group": "Overview",
@@ -11843,7 +14237,32 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Overview"
+          "text": "Reference Overview"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Reference Entries"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Runtime Model Reference"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "When to Prioritize Reading Reference Pages"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/ops/channel-runtime",
@@ -11855,13 +14274,15 @@
       "slug": "en/reference/api-index",
       "language": "en",
       "title": "API Index",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "This is an index page for Wunder's most commonly used interface groups, used for quickly locating endpoints rather than replacing the full API documentation.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are looking for which category an interface roughly belongs to",
+        "You don't want to browse through the complete `docs/API文档.md` directly"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/api-index.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -11874,6 +14295,46 @@
           "id": "section-1",
           "level": 1,
           "text": "API Index"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Core Execution Endpoints"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Chat Session Domain"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "A2A"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "MCP"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "User World"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Admin Interfaces"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "When to Return to Full API Documentation"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/index",
@@ -11885,13 +14346,16 @@
       "slug": "en/reference/config",
       "language": "en",
       "title": "Configuration",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "When configuration doesn't take effect, first confirm which layer you're modifying, rather than suspecting the program isn't reading it.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are checking where a specific configuration should be written",
+        "You need to distinguish between base configuration, runtime overrides, and external MCP configuration"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/config.md"
+        "config/wunder-example.yaml",
+        "docs/API文档.md",
+        "docs/系统介绍.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -11904,6 +14368,66 @@
           "id": "section-1",
           "level": 1,
           "text": "Configuration"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Key Configuration Files"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What Each File Is Responsible For"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "config/wunder.yaml"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "config/wunder-example.yaml"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "WUNDERTEMP/config/wunder.yaml"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "config/mcpconfig.json"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Find Configuration by Problem"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Items You're Most Likely to Modify First"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Three Things to Check When Configuration Doesn't Take Effect"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/api-index",
@@ -11915,13 +14439,17 @@
       "slug": "en/reference/stream-events",
       "language": "en",
       "title": "Stream Events",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "When integrating with Wunder's streaming pipeline, the most important thing is not memorizing every event, but knowing which events carry true lifecycle semantics.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are integrating SSE or WebSocket",
+        "You want to understand why turn_terminal, approval_resolved, and thread_status matter"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/stream-events.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "src/orchestrator/execute.rs",
+        "src/api/chat.rs"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -11934,6 +14462,71 @@
           "id": "section-1",
           "level": 1,
           "text": "Stream Events"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Core Event Priority"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Category 1: Process Events"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "How to Understand roundusage"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Category 2: Queueing & Waiting Events"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Category 3: Closure Events"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "approvalresolved"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "turnterminal"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "threadstatus"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Why You Cannot Rely on final Alone"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Minimum Handling for New Integrations"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "SSE vs WebSocket Key Differences"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "A Simple Decision Guide"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/config",
@@ -11945,13 +14538,16 @@
       "slug": "en/reference/workspace-routing",
       "language": "en",
       "title": "Workspace Routing",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Wunder's workspace routing is not simply directory lookup by user_id; it is determined jointly by `container_id`, agent container configuration, and scoped user_id.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are troubleshooting why files ended up in \"a different workspace\"",
+        "You want to precisely understand the routing priority of workspace endpoints"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/workspace-routing.md"
+        "docs/API文档.md",
+        "src/api/workspace.rs",
+        "docs/设计方案.md"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -11964,6 +14560,61 @@
           "id": "section-1",
           "level": 1,
           "text": "Workspace Routing"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Routing Priority"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Container Conventions"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Do Not Mix Public Paths and Underlying Paths"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What Is a Scoped userid"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Common Pitfalls"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Assuming agentid Always Determines the Workspace"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Assuming Only Uploads and Downloads Need to Consider Containers"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Assuming Local Mode Has No Containers"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Implementation Recommendations"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/stream-events",
@@ -11975,13 +14626,19 @@
       "slug": "en/reference/prompt-templates",
       "language": "en",
       "title": "Prompt Templates",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "Wunder splits system prompts into template packs and segment files. Administrators manage system template packs. The user side currently provides two built-in template packs (Chinese and English) by default and supports switching or copying them into custom packs.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to modify system prompt template packs",
+        "You want to understand the relationship between `default-zh`, `default-en`, and custom packs on the user side",
+        "You are troubleshooting why switching template packs takes effect for new threads but not existing ones"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/prompt-templates.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md",
+        "src/api/admin_prompt_templates.rs",
+        "src/api/user_prompt_templates.rs"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -11994,6 +14651,46 @@
           "id": "section-1",
           "level": 1,
           "text": "Prompt Templates"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Current Segments"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Admin-Side Template Packs"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "User-Side Template Packs"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "User-Side Fallback Chain"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Creating a Custom Pack"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "When Changes Take Effect"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Implementation Recommendations"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/workspace-routing",
@@ -12005,13 +14702,16 @@
       "slug": "en/reference/admin-panels",
       "language": "en",
       "title": "Admin Panels",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "The admin-side frontend is not a single debug page, but a set of well-organized governance panels with clear responsibilities.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are using the admin side for the first time",
+        "You want to know where to find a specific configuration, monitoring view, or documentation entry"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/reference/admin-panels.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "web/index.html"
       ],
       "tab": "Reference",
       "group": "System Reference",
@@ -12024,6 +14724,71 @@
           "id": "section-1",
           "level": 1,
           "text": "Admin Panels"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "System Group"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "User Management Supplement"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Agent Group"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Debug Group"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Documentation Group"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "User Guide"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "API Reference"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "What Different Roles Use Most"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Administrators"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Developers"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Delivery or Training Staff"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "A Practical Tip"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/reference/prompt-templates",
@@ -12111,14 +14876,17 @@
     "en/concepts/workspaces": {
       "slug": "en/concepts/workspaces",
       "language": "en",
-      "title": "Workspaces",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Workspaces and Containers",
+      "summary": "Wunder's file isolation is not 'a current directory', but a persistent workspace organized by `user_id + container_id` in layers.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to understand why files are isolated by user and container",
+        "You need to determine the relationship between `agent_id`, `container_id`, and workspace"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/workspaces.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
       ],
       "tab": "Reference",
       "group": "Runtime Model Reference",
@@ -12130,7 +14898,57 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Workspaces"
+          "text": "Workspaces and Containers"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Current Conventions"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "containerid=0 Is Not Just a Private Folder"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What Are containerid=110 Used For"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "What Is the Relationship Between agentid and Workspace"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What Do External Paths Look Like"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Common Misconceptions"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Misconception 1: agentid Equals Workspace"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Misconception 2: All Files Should Be in the Private Container"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Misconception 3: There's No Container Concept in Local Mode"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/architecture",
@@ -12218,14 +15036,18 @@
     "en/concepts/streaming": {
       "slug": "en/concepts/streaming",
       "language": "en",
-      "title": "Streaming",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Streaming Execution",
+      "summary": "Wunder's streaming is not just a character stream, but exposes thread execution, tool calls, and terminal states together.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are integrating SSE or WebSocket",
+        "You are designing a state machine for a chat interface"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/streaming.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "src/api/chat.rs",
+        "src/api/core.rs"
       ],
       "tab": "Reference",
       "group": "Runtime Model Reference",
@@ -12237,7 +15059,72 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Streaming"
+          "text": "Streaming Execution"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "When to Read This"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Streaming Doesn't Have Just One Entry Point"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "What You Really Need to Care About Is Not All Event Names"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Process Events"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Status Events"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Terminal Events"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Common Client Mistakes"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Only Watching final"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Only Watching running"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Treating SSE as the Complete Chat Protocol"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Implementation Suggestions"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/sessions-and-rounds",
@@ -12248,14 +15135,17 @@
     "en/concepts/presence-and-runtime": {
       "slug": "en/concepts/presence-and-runtime",
       "language": "en",
-      "title": "Presence and Runtime",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Runtime and Online Status",
+      "summary": "Wunder doesn't just return message content; it continuously maintains runtime projections of threads and sessions to express states like loaded, waiting, streaming, and idle.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You are building session lists, status badges, or runtime panels",
+        "You are troubleshooting whether a thread is stuck or has finished"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/presence-and-runtime.md"
+        "docs/API文档.md",
+        "src/api/chat.rs",
+        "src/core/session_runtime.rs"
       ],
       "tab": "Reference",
       "group": "Runtime Model Reference",
@@ -12267,7 +15157,67 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Presence and Runtime"
+          "text": "Runtime and Online Status"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Key Points on This Page"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Don't Confuse the Two Layers of State"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "Thread Event Status"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Session Runtime Projection"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Why Not Just Keep a Single running"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Most Common Status Judgments on Session Pages"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "When It's Easiest to Make Mistakes"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "Treating \"Waiting for Approval\" as \"Already Finished\""
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "Only Reading Status on Detail Pages"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "Mixing Event Stream and Summary State into One Layer"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Implementation Suggestions"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/streaming",
@@ -12542,14 +15492,17 @@
     "en/concepts/quota-and-token-usage": {
       "slug": "en/concepts/quota-and-token-usage",
       "language": "en",
-      "title": "Token Balance and Usage",
-      "summary": "Wunder uses a token balance as the user's spendable currency, and token usage as the runtime view of context load.",
-      "updated_at": "2026-04-10",
+      "title": "Token Account and Usage",
+      "summary": "Wunder uses Token accounts to manage user's disposable balance, and Token usage to observe context load; these are related but not the same thing.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need to understand token balance, daily grants, or runtime token usage"
+        "You are looking at Token balance, daily grants, or session resource usage",
+        "You want to understand why the system emphasizes round_usage.total_tokens and context occupancy"
       ],
       "source_docs": [
-        "docs/使用说明书/zh-CN/concepts/quota-and-token-usage.md"
+        "docs/API文档.md",
+        "docs/设计方案.md",
+        "docs/系统介绍.md"
       ],
       "tab": "Reference",
       "group": "Runtime Model Reference",
@@ -12561,17 +15514,52 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Token Balance and Usage"
+          "text": "Token Account and Usage"
         },
         {
           "id": "section-2",
           "level": 2,
-          "text": "Token balance"
+          "text": "Key Points"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "Token usage"
+          "text": "What Is a Token Account"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "What Is Token Usage"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Why Emphasize This Metric"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Key Fields to Watch"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Token Account and Token Usage Are Not the Same Thing"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Applicable Scenarios"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Implementation Suggestions"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/memory",
@@ -12676,13 +15664,18 @@
       "slug": "en/concepts/boundary-handling",
       "language": "en",
       "title": "Boundary Handling",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "wunder's handling strategies and recovery mechanisms for edge cases such as context overflow, network interruption, tool failure, and system exceptions.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You need to understand system behavior under exceptional conditions",
+        "You need to design fault tolerance and recovery logic",
+        "You need to troubleshoot production environment issues"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/concepts/boundary-handling.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "src/orchestrator/",
+        "src/core/"
       ],
       "tab": "Reference",
       "group": "Runtime Model Reference",
@@ -12695,6 +15688,206 @@
           "id": "section-1",
           "level": 1,
           "text": "Boundary Handling"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "1. Context Overflow Handling"
+        },
+        {
+          "id": "section-3",
+          "level": 3,
+          "text": "1.1 What is Context Overflow"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "1.2 Handling Strategy"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "1.3 Compression Levels"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "1.4 Key Design Constraints"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "2. Network Interruption Handling"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "2.1 WebSocket Connection Interruption"
+        },
+        {
+          "id": "section-9",
+          "level": 4,
+          "text": "Client-side Behavior"
+        },
+        {
+          "id": "section-10",
+          "level": 4,
+          "text": "Server-side Behavior"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "2.2 SSE Connection Interruption"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "2.3 Model API Call Failures"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "3. Tool Execution Failure Handling"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "3.1 Tool Failure Categories"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "3.2 Tool Result Overflow Protection"
+        },
+        {
+          "id": "section-16",
+          "level": 4,
+          "text": "Layer 1: Execution Budget"
+        },
+        {
+          "id": "section-17",
+          "level": 4,
+          "text": "Layer 2: Output Trimming Strategy"
+        },
+        {
+          "id": "section-18",
+          "level": 4,
+          "text": "Layer 3: Signal Feedback"
+        },
+        {
+          "id": "section-19",
+          "level": 3,
+          "text": "3.3 Atomic Write Strategy"
+        },
+        {
+          "id": "section-20",
+          "level": 2,
+          "text": "4. Session and Thread Exception Handling"
+        },
+        {
+          "id": "section-21",
+          "level": 3,
+          "text": "4.1 Session State Machine"
+        },
+        {
+          "id": "section-22",
+          "level": 3,
+          "text": "4.2 Exception State Recovery"
+        },
+        {
+          "id": "section-23",
+          "level": 3,
+          "text": "4.3 Thread State Sync"
+        },
+        {
+          "id": "section-24",
+          "level": 2,
+          "text": "5. Concurrency and Queue Handling"
+        },
+        {
+          "id": "section-25",
+          "level": 3,
+          "text": "5.1 Main Thread Queue"
+        },
+        {
+          "id": "section-26",
+          "level": 3,
+          "text": "5.2 Queue Configuration"
+        },
+        {
+          "id": "section-27",
+          "level": 3,
+          "text": "5.3 Priority Strategy"
+        },
+        {
+          "id": "section-28",
+          "level": 2,
+          "text": "6. Data Consistency Guarantee"
+        },
+        {
+          "id": "section-29",
+          "level": 3,
+          "text": "6.1 Database Transactions"
+        },
+        {
+          "id": "section-30",
+          "level": 3,
+          "text": "6.2 Idempotency Design"
+        },
+        {
+          "id": "section-31",
+          "level": 3,
+          "text": "6.3 Eventual Consistency"
+        },
+        {
+          "id": "section-32",
+          "level": 2,
+          "text": "7. Resource Leak Prevention"
+        },
+        {
+          "id": "section-33",
+          "level": 3,
+          "text": "7.1 Timeout Mechanisms"
+        },
+        {
+          "id": "section-34",
+          "level": 3,
+          "text": "7.2 Connection Pool Management"
+        },
+        {
+          "id": "section-35",
+          "level": 3,
+          "text": "7.3 Memory Protection"
+        },
+        {
+          "id": "section-36",
+          "level": 2,
+          "text": "8. Observability and Debugging"
+        },
+        {
+          "id": "section-37",
+          "level": 3,
+          "text": "8.1 Error Classification"
+        },
+        {
+          "id": "section-38",
+          "level": 3,
+          "text": "8.2 Key Event Logging"
+        },
+        {
+          "id": "section-39",
+          "level": 3,
+          "text": "8.3 Log Levels"
+        },
+        {
+          "id": "section-40",
+          "level": 2,
+          "text": "9. Common Boundary Scenarios Quick Reference"
+        },
+        {
+          "id": "section-41",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/swarm",
@@ -12705,14 +15898,17 @@
     "en/help/index": {
       "slug": "en/help/index",
       "language": "en",
-      "title": "Overview",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "title": "Help",
+      "summary": "Start by categorizing symptoms, then follow the troubleshooting path; the goal is to reduce blind log searching and repeated trial-and-error.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You want to quickly locate the problem entry point",
+        "You want to distinguish between usage questions and system failures"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/help/index.md"
+        "docs/API文档.md",
+        "docs/系统介绍.md",
+        "docs/使用说明书/zh-CN/help/troubleshooting.md"
       ],
       "tab": "Help",
       "group": "Overview",
@@ -12724,7 +15920,47 @@
         {
           "id": "section-1",
           "level": 1,
-          "text": "Overview"
+          "text": "Help"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Three High-Frequency Entry Points"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "First, Categorize the Problem"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Jump by Symptom"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "API Anomalies, State Anomalies"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "File, Download, Conversion Anomalies"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Channel Integration Anomalies"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "Configuration & Governance Anomalies"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/concepts/boundary-handling",
@@ -12736,13 +15972,17 @@
       "slug": "en/help/troubleshooting",
       "language": "en",
       "title": "Troubleshooting",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "summary": "Follow the \"entry -> auth -> config -> dependencies -> realtime channel\" sequence to quickly locate most Wunder issues.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "Wunder won't start or behaves abnormally",
+        "You've confirmed it's not a simple usage issue"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/help/troubleshooting.md"
+        "docs/API文档.md",
+        "frontend/src/views/LoginView.vue",
+        "frontend/src/views/MessengerView.vue",
+        "frontend/src/components/messenger/DesktopRuntimeSettingsPanel.vue"
       ],
       "tab": "Help",
       "group": "Help",
@@ -12755,6 +15995,91 @@
           "id": "section-1",
           "level": 1,
           "text": "Troubleshooting"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "60-Second Health Check"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Symptom -> Check Path"
+        },
+        {
+          "id": "section-4",
+          "level": 3,
+          "text": "1. API Returns 401 / 403 Directly"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "2. Configuration Changed but Not Taking Effect"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "3. Service Starts Successfully but Capabilities Unavailable"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "4. Real-time State Not Updating, Can't See Intermediate Process"
+        },
+        {
+          "id": "section-8",
+          "level": 3,
+          "text": "5. Tools Not Appearing or Can't Be Invoked"
+        },
+        {
+          "id": "section-9",
+          "level": 3,
+          "text": "6. Attachment Stuck Processing, or Can't Send After Upload"
+        },
+        {
+          "id": "section-10",
+          "level": 3,
+          "text": "7. Login Page Password Reset Failed"
+        },
+        {
+          "id": "section-11",
+          "level": 3,
+          "text": "8. Edit Profile or Change Password Save Failed"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "9. New Thread Button Is Grayed Out"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "10. Swarm Page State Looks Incorrect"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "11. Session or Swarm State Completely Messed Up"
+        },
+        {
+          "id": "section-15",
+          "level": 3,
+          "text": "12. Microphone or Screenshot Button Unavailable"
+        },
+        {
+          "id": "section-16",
+          "level": 3,
+          "text": "13. Help Manual Blank or Won't Open"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "Still Can't Locate"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "Suggested Information When Submitting Issues"
         }
       ],
       "prev_slug": "en/help/index",
@@ -12766,13 +16091,16 @@
       "slug": "en/help/faq",
       "language": "en",
       "title": "FAQ",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
+      "summary": "Quick answers to high-frequency questions about Wunder, suitable for initial assessment before diving into detailed troubleshooting.",
       "updated_at": "2026-04-10",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You have common usage questions",
+        "You want to quickly determine if it's a failure"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/help/faq.md"
+        "docs/API文档.md",
+        "frontend/src/views/LoginView.vue",
+        "frontend/src/views/MessengerView.vue"
       ],
       "tab": "Help",
       "group": "Help",
@@ -12785,6 +16113,71 @@
           "id": "section-1",
           "level": 1,
           "text": "FAQ"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "Does the userid in /wunder have to be a registered user?"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "When building a chat product, should I prioritize /wunder or /wunder/chat/?"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "How do I choose between SSE and WebSocket?"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "Why doesn't the token count match the bill?"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "What's needed to reset password on the login page?"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "Where to change username or password after logging in?"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Why is the \"New Thread\" button sometimes grayed out?"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "How do I choose between Swarm and Sub-Agent?"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "Can tempdir be used as a long-term storage directory?"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "Why can't I see a tool in a particular session?"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "Does Desktop mode require Server deployment first?"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "What's the difference between webfetch and browser tools?"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "Which page should I look at first when problems occur?"
         }
       ],
       "prev_slug": "en/help/troubleshooting",
@@ -12796,13 +16189,16 @@
       "slug": "en/help/glossary",
       "language": "en",
       "title": "Glossary",
-      "summary": "English translation for this page is in progress. Use the Simplified Chinese page for the full content.",
-      "updated_at": "2026-04-10",
+      "summary": "This page is for quickly standardizing core terminology in Wunder documentation, avoiding mixing user, session, thread, container, and agent into a single concept.",
+      "updated_at": "2026-04-13",
       "read_when": [
-        "You need the English entry for this topic right now"
+        "You're reading Wunder documentation systematically for the first time",
+        "You notice many terms look similar but don't know the boundaries"
       ],
       "source_docs": [
-        "docs/?????/zh-CN/help/glossary.md"
+        "docs/系统介绍.md",
+        "docs/设计方案.md",
+        "docs/API文档.md"
       ],
       "tab": "Help",
       "group": "Help",
@@ -12815,6 +16211,96 @@
           "id": "section-1",
           "level": 1,
           "text": "Glossary"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "userid"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "Registered User"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "agentid"
+        },
+        {
+          "id": "section-5",
+          "level": 2,
+          "text": "sessionid"
+        },
+        {
+          "id": "section-6",
+          "level": 2,
+          "text": "Thread"
+        },
+        {
+          "id": "section-7",
+          "level": 2,
+          "text": "User Turn / Model Turn"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "containerid"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Workspace"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "skill"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "skillcall"
+        },
+        {
+          "id": "section-12",
+          "level": 2,
+          "text": "MCP"
+        },
+        {
+          "id": "section-13",
+          "level": 2,
+          "text": "A2A"
+        },
+        {
+          "id": "section-14",
+          "level": 2,
+          "text": "channel"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "outbox"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "turnterminal"
+        },
+        {
+          "id": "section-17",
+          "level": 2,
+          "text": "threadstatus"
+        },
+        {
+          "id": "section-18",
+          "level": 2,
+          "text": "approvalresolved"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "Further Reading"
         }
       ],
       "prev_slug": "en/help/faq",

@@ -67,6 +67,7 @@ impl Orchestrator {
         tool_call_mode: ToolCallMode,
         _user_id: &str,
         _current_agent_id: Option<&str>,
+        workspace_id: &str,
     ) -> Option<FunctionTooling> {
         if allowed_tool_names.is_empty() {
             return None;
@@ -92,15 +93,25 @@ impl Orchestrator {
         let mut used_names = HashSet::new();
         let mut tools = Vec::new();
         let mut name_map = HashMap::new();
+        // Replace the generic {user_id} placeholder in builtin tool descriptions
+        // with the actual scoped workspace id so the model produces correct paths.
+        let ws_placeholder = "/workspaces/{user_id}/";
+        let ws_actual = format!("/workspaces/{workspace_id}/");
         for spec in specs {
             let preferred = select_preferred_tool_name(&spec.name, &canonical_aliases);
             let sanitized = sanitize_function_name(&preferred);
             let function_name =
                 ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
             name_map.insert(function_name.clone(), spec.name.clone());
+            // Resolve workspace placeholders in description.
+            let description = if spec.description.contains(ws_placeholder) {
+                spec.description.replace(ws_placeholder, &ws_actual)
+            } else {
+                spec.description
+            };
             if tool_call_mode == ToolCallMode::FreeformCall {
                 if let Some(tool) =
-                    build_responses_freeform_tool(&spec.name, &spec.description, &function_name)
+                    build_responses_freeform_tool(&spec.name, &description, &function_name)
                 {
                     tools.push(tool);
                     continue;
@@ -112,7 +123,7 @@ impl Orchestrator {
                 "type": "function",
                 "function": {
                     "name": function_name,
-                    "description": spec.description,
+                    "description": description,
                     "parameters": parameters,
                 }
             }));

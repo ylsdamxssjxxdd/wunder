@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>自我状态 | 使用说明书</title>
+  <meta name="description" content="`self_status` 用于查看当前会话、模型、事件与线程运行态。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/self-status","language":"zh-CN","title":"自我状态","summary":"`self_status` 用于查看当前会话、模型、事件与线程运行态。","updated_at":"2026-04-10","read_when":["你要查看当前会话到底跑到了哪一步"],"source_docs":["src/services/tools/self_status_tool.rs"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/self-status/","headings":[{"id":"section-1","level":1,"text":"自我状态"},{"id":"section-2","level":2,"text":"最小参数"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"返回结构"},{"id":"section-5","level":2,"text":"重点"}],"prev_slug":"zh-CN/tools/channel","next_slug":"zh-CN/tools/user-world","markdown":"# 自我状态\n\n`self_status` 是一个诊断型工具。  \n它和大多数工具不同，成功时直接返回状态对象，不包统一的 `ok/action/state/summary/data`。\n\n## 最小参数\n\n```json\n{\n  \"detail_level\": \"standard\"\n}\n```\n\n## 常用参数\n\n- `detail_level`：`basic` / `standard` / `full`\n- `include_events`\n- `events_limit`\n- `include_system_metrics`\n\n## 返回结构\n\n```json\n{\n  \"tool\": \"self_status\",\n  \"detail_level\": \"standard\",\n  \"session\": {\n    \"user_id\": \"user_xxx\",\n    \"session_id\": \"sess_xxx\",\n    \"workspace_id\": \"user_xxx\",\n    \"agent_id\": \"agent_docs\",\n    \"is_admin\": false\n  },\n  \"model\": {\n    \"active\": { ... },\n    \"configured_default\": { ... }\n  },\n  \"context\": {\n    \"context_occupancy_tokens\": 12345,\n    \"context_overflow\": false,\n    \"monitor_context_tokens\": 12000,\n    \"monitor_context_tokens_peak\": 18000\n  },\n  \"monitor\": {\n    \"status\": \"running\",\n    \"stage\": \"tool_call\",\n    \"summary\": \"正在等待子智能体结果\",\n    \"updated_time\": 1760000000\n  },\n  \"thread\": { ... },\n  \"rounds\": {\n    \"user_rounds\": 3,\n    \"model_rounds_peak\": 12,\n    \"event_user_round_peak\": 3\n  },\n  \"events\": {\n    \"total\": 48,\n    \"last_event_id\": 128,\n    \"counts\": {\n      \"llm_request\": 5,\n      \"tool_call\": 12,\n      \"tool_result\": 12,\n      \"approval_request\": 0,\n      \"approval_resolved\": 0\n    },\n    \"by_type\": { ... },\n    \"recent_limit\": 20,\n    \"recent\": [ ... ]\n  },\n  \"system_metrics\": { ... }\n}\n```\n\n## 重点\n\n- `detail_level=full` 时默认会带更多事件和系统指标\n- `events.recent` 适合看最近发生了什么\n- `thread` 和 `monitor` 适合看当前线程是否还在运行、卡在哪个阶段\n","source_path":"使用说明书/zh-CN/tools/self-status.md"}</script>
+</body>
+</html>

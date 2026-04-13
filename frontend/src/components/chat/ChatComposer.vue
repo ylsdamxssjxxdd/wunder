@@ -740,6 +740,22 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (!stats) {
     return null;
   }
+  const usageTotal = normalizePositiveTokenCount(
+    (stats.usage as Record<string, unknown> | undefined)?.total ??
+      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
+  );
+  if (usageTotal !== null) {
+    return usageTotal;
+  }
+  const usageInput = normalizePositiveTokenCount(
+    (stats.usage as Record<string, unknown> | undefined)?.input ??
+      (stats.usage as Record<string, unknown> | undefined)?.input_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.inputTokens
+  );
+  if (usageInput !== null) {
+    return usageInput;
+  }
   const roundUsageTotal = normalizePositiveTokenCount(
     (stats.roundUsage as Record<string, unknown> | undefined)?.total ??
       (stats.roundUsage as Record<string, unknown> | undefined)?.total_tokens ??
@@ -761,22 +777,6 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   );
   if (roundUsageInput !== null) {
     return roundUsageInput;
-  }
-  const usageTotal = normalizePositiveTokenCount(
-    (stats.usage as Record<string, unknown> | undefined)?.total ??
-      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
-      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
-  );
-  if (usageTotal !== null) {
-    return usageTotal;
-  }
-  const usageInput = normalizePositiveTokenCount(
-    (stats.usage as Record<string, unknown> | undefined)?.input ??
-      (stats.usage as Record<string, unknown> | undefined)?.input_tokens ??
-      (stats.usage as Record<string, unknown> | undefined)?.inputTokens
-  );
-  if (usageInput !== null) {
-    return usageInput;
   }
   const explicitContext = normalizePositiveTokenCount(
     stats.contextTokens ??
@@ -825,10 +825,10 @@ const resolveCurrentSessionContextTokens = (): number | null => {
     return null;
   }
   return normalizePositiveTokenCount(
-    session.contextOccupancyTokens ??
-      session.context_occupancy_tokens ??
     session.contextTokens ??
       session.context_tokens ??
+      session.contextOccupancyTokens ??
+      session.context_occupancy_tokens ??
       (session.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
       (session.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );

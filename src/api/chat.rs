@@ -3183,6 +3183,7 @@ fn build_prompt_tooling_preview_payload(
         tool_call_mode,
         user_id,
         agent_record.map(|record| record.agent_id.as_str()),
+        user_id,
     );
     let llm_tools = tooling
         .as_ref()

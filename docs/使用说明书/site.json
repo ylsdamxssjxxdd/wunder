@@ -1,6 +1,6 @@
 {
   "site": {
-    "name": "wunder Manual / 使用说明书",
+    "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
     "default_language": "zh-CN",
     "home_page": "zh-CN/index",
@@ -97,10 +97,12 @@
                 ]
               },
               {
-                "group": "界面与自动化",
+                "group": "UI and Automation",
                 "pages": [
                   "zh-CN/tools/panels-and-a2ui",
-                  "zh-CN/tools/schedule-task"
+                  "zh-CN/tools/schedule-task",
+                  "zh-CN/tools/final-response",
+                  "zh-CN/tools/sleep"
                 ]
               },
               {
@@ -110,7 +112,8 @@
                   "zh-CN/tools/subagent-control",
                   "zh-CN/tools/agent-swarm",
                   "zh-CN/tools/memory-manager",
-                  "zh-CN/tools/channel"
+                  "zh-CN/tools/channel",
+                  "zh-CN/tools/self-status"
                 ]
               },
               {
@@ -147,6 +150,7 @@
                 "pages": [
                   "zh-CN/integration/user-world",
                   "zh-CN/integration/channel-webhook",
+                  "zh-CN/integration/weixin-channel",
                   "zh-CN/integration/external-login",
                   "zh-CN/integration/a2a",
                   "zh-CN/integration/mcp-endpoint"
@@ -340,7 +344,9 @@
                 "group": "UI and Automation",
                 "pages": [
                   "en/tools/panels-and-a2ui",
-                  "en/tools/schedule-task"
+                  "en/tools/schedule-task",
+                  "en/tools/final-response",
+                  "en/tools/sleep"
                 ]
               },
               {
@@ -350,7 +356,8 @@
                   "en/tools/subagent-control",
                   "en/tools/agent-swarm",
                   "en/tools/memory-manager",
-                  "en/tools/channel"
+                  "en/tools/channel",
+                  "en/tools/self-status"
                 ]
               },
               {
@@ -387,6 +394,7 @@
                 "pages": [
                   "en/integration/user-world",
                   "en/integration/channel-webhook",
+                  "en/integration/weixin-channel",
                   "en/integration/external-login",
                   "en/integration/a2a",
                   "en/integration/mcp-endpoint"

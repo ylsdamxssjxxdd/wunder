@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Desktop UI | wunder Manual / 使用说明书</title>
-  <meta name="description" content="English translation for this page is in progress. Use the Simplified Chinese page for the full content.">
+  <title>Desktop Interface | 使用说明书</title>
+  <meta name="description" content="`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.">
   <link rel="stylesheet" href="/docs/site.css">
   <script type="module" src="/docs/site.js"></script>
 </head>
@@ -15,7 +15,7 @@
         <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
             <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
-            <span class="docs-brand-text">wunder Manual / 使用说明书</span>
+            <span class="docs-brand-text">使用说明书</span>
           </a>
           <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
@@ -55,6 +55,6 @@
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"en/surfaces/desktop-ui","language":"en","title":"Desktop UI","summary":"English translation for this page is in progress. Use the Simplified Chinese page for the full content.","updated_at":"2026-04-10","read_when":["You need the English entry for this topic right now"],"source_docs":["docs/?????/zh-CN/surfaces/desktop-ui.md"],"tab":"Surfaces","group":"Frontend and Desktop","group_path":["Frontend and Desktop"],"url":"/docs/en/surfaces/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"Desktop UI"}],"prev_slug":"en/surfaces/web-admin","next_slug":"en/ops/index","markdown":"# Desktop UI\n\nThis English page is being translated manually.\n\nFor the full content right now, see the Simplified Chinese version:\n\n- [Desktop UI (Simplified Chinese)](/docs/zh-CN/surfaces/desktop-ui/)\n","source_path":"使用说明书/en/surfaces/desktop-ui.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"en/surfaces/desktop-ui","language":"en","title":"Desktop Interface","summary":"`wunder-desktop` is the current primary delivery form, emphasizing local-first and desktop workbench.","updated_at":"2026-04-13","read_when":["You want to use Wunder directly","You want to understand why desktop is the current product focus"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"Surfaces","group":"Frontend and Desktop","group_path":["Frontend and Desktop"],"url":"/docs/en/surfaces/desktop-ui/","headings":[{"id":"section-1","level":1,"text":"Desktop Interface"},{"id":"section-2","level":2,"text":"What It Is"},{"id":"section-3","level":2,"text":"Why Desktop Is the Current Focus"},{"id":"section-4","level":2,"text":"Current Characteristics"},{"id":"section-5","level":2,"text":"Relationship with the User Frontend"},{"id":"section-6","level":2,"text":"Who It Suits Best"},{"id":"section-7","level":2,"text":"What If You Need Server Capabilities"},{"id":"section-8","level":2,"text":"Further Reading"}],"prev_slug":"en/surfaces/web-admin","next_slug":"en/ops/index","markdown":"# Desktop Interface\n\nIf you think of Wunder as a product rather than a backend project, the most important interface right now is the desktop client.\n\n## What It Is\n\n`wunder-desktop` is not simply a web page wrapped in a native shell.\n\nIts goal is to combine these elements into a \"local-first agent workbench\":\n\n- User-side messaging workbench\n- Local bridge service\n- Local working directory\n- Local run mode\n- Desktop capability access\n\n## Why Desktop Is the Current Focus\n\nBecause it validates Wunder's core value chain in a single package:\n\n- Conversation entry point\n- Tool execution\n- Workspace artifacts\n- Local file capabilities\n- Visualized agent loop\n\n## Current Characteristics\n\n- Local mode is the default\n- Uses the bundled Python runtime by default\n- Supports a persistent local working directory\n- Reuses the unified `/wunder` orchestration kernel\n- No longer provides a server connection switch within the desktop client\n\n## Relationship with the User Frontend\n\nDesktop reuses the same page structure as the user-side frontend wherever possible.\n\nThis means:\n\n- Most page interaction logic comes from `frontend/`\n- What the desktop client adds are local bridging, system settings, directory mapping, and runtime-mode capabilities\n\n## Who It Suits Best\n\n- Regular individual users\n- People who need local files and a desktop environment\n- People who want to get started without deploying a full server first\n\n## What If You Need Server Capabilities\n\nThe desktop client now only maintains local mode.\n\nIf you need the following capabilities, use a browser to access the server directly instead of switching connection modes inside the desktop client:\n\n- Multi-user and multi-tenant\n- Unified admin governance\n- Organization-level deployment\n- Unified channel and gateway access\n\n## Further Reading\n\n- [Getting Started with Desktop](/docs/en/start/desktop/)\n- [User Frontend](/docs/en/surfaces/frontend/)\n- [Deployment and Operations](/docs/en/ops/deployment/)\n","source_path":"使用说明书/en/surfaces/desktop-ui.md"}</script>
 </body>
 </html>

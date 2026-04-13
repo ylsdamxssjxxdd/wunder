@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WeChat iLink Channel | 使用说明书</title>
+  <meta name="description" content="`weixin` is Wunder&#x27;s new WeChat channel (iLink protocol), different from `wechat` / `wechat_mp`; this article covers selection, QR code integration, runtime checks, and troubleshooting.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/integration/weixin-channel","language":"en","title":"WeChat iLink Channel","summary":"`weixin` is Wunder's new WeChat channel (iLink protocol), different from `wechat` / `wechat_mp`; this article covers selection, QR code integration, runtime checks, and troubleshooting.","updated_at":"2026-04-13","read_when":["You need to integrate the new WeChat channel and replace old `wechat` / `wechat_mp`","You want to confirm if users can directly scan system-generated QR codes","You are troubleshooting `context_token` missing, session expired, or file download failures"],"source_docs":["docs/方案/新微信渠道落地方案.md","docs/API文档.md","src/channels/weixin.rs","src/channels/service.rs","src/api/user_channels.rs"],"tab":"Integrations","group":"Extended Integrations","group_path":["Extended Integrations"],"url":"/docs/en/integration/weixin-channel/","headings":[{"id":"section-1","level":1,"text":"WeChat iLink Channel"},{"id":"section-2","level":2,"text":"30-Second Selection Guide"},{"id":"section-3","level":2,"text":"Key Differences (New vs Old)"},{"id":"section-4","level":2,"text":"User-Side QR Code Integration (Supported)"},{"id":"section-5","level":2,"text":"Minimum Viable Configuration (P0)"},{"id":"section-6","level":2,"text":"File and Media Link"},{"id":"section-7","level":2,"text":"Common Issue Diagnosis"},{"id":"section-8","level":3,"text":"Error weixin outbound contexttoken missing"},{"id":"section-9","level":3,"text":"Not receiving messages for a long time"},{"id":"section-10","level":3,"text":"Session frequently expired"},{"id":"section-11","level":2,"text":"Integration Recommendations (When Migrating from Old WeChat Channel)"},{"id":"section-12","level":2,"text":"Further Reading"}],"prev_slug":"en/integration/channel-webhook","next_slug":"en/integration/external-login","markdown":"# WeChat iLink Channel\n\n`weixin` is an independent provider, not a parameter variant of old WeChat channels.  \nIn Wunder, please follow the rules below for selection to avoid incorrect integration.\n\n## 30-Second Selection Guide\n\n| Scenario | Choice |\n| --- | --- |\n| Enterprise WeChat app callback | `wechat` (legacy) |\n| WeChat Official Account callback | `wechat_mp` (legacy) |\n| iLink protocol WeChat capability (openclaw-weixin) | `weixin` (new) |\n\n## Key Differences (New vs Old)\n\n| Dimension | `weixin` (new) | `wechat` / `wechat_mp` (legacy) |\n| --- | --- | --- |\n| Inbound model | Long polling `ilink/bot/getupdates` | Webhook callback |\n| Reply key field | Must include `context_token` | No `context_token` dependency |\n| Login method | Scan QR code to get `bot_token` | Traditional app/corp parameters |\n| Media link | CDN + AES decrypt/encrypt | Platform native API |\n| Recommended status | Preferred for new integrations | Maintenance mode/legacy support |\n\n## User-Side QR Code Integration (Supported)\n\nAfter selecting `weixin` in channel settings, users can directly:\n\n1. Click \"Generate QR Code\"\n2. Scan with WeChat\n3. Click \"Wait for Confirmation\"\n4. System auto-fills `bot_token`, `ilink_bot_id`, `ilink_user_id`, `api_base`\n5. Save account configuration\n\nNotes:\n- After successful auto-fill, you must save for the long polling worker to take effect.\n- QR code session has TTL; regenerate if expired.\n\n## Minimum Viable Configuration (P0)\n\n```json\n{\n  \"weixin\": {\n    \"api_base\": \"https://ilinkai.weixin.qq.com\",\n    \"bot_token\": \"<required>\",\n    \"ilink_bot_id\": \"<required>\",\n    \"long_connection_enabled\": true\n  }\n}\n```\n\nOptional enhancements:\n- `cdn_base`\n- `bot_type`\n- `allow_from`\n- `poll_timeout_ms` / `api_timeout_ms`\n- `max_consecutive_failures` / `backoff_ms`\n- `route_tag`\n\n## File and Media Link\n\nCurrent implementation supports:\n- Outbound attachments: First `getuploadurl`, then CDN upload, finally `sendmessage` references the media\n- Inbound attachments: Parse `item_list` media items, download CDN objects and decrypt before saving to workspace\n\nTroubleshooting priority:\n1. Whether `media_enabled` is on\n2. Whether `cdn_base` is reachable\n3. Whether AES key is correct (base64/raw16 or hex32)\n4. Whether attachment exceeds size limit\n\n## Common Issue Diagnosis\n\n### Error `weixin outbound context_token missing`\n\nCause: Reply message didn't get the `context_token` from the previous inbound message.  \nResolution: Confirm current reply chain is based on the same session, and inbound message metadata has preserved `weixin_context_token`.\n\n### Not receiving messages for a long time\n\nCheck:\n- Whether account status is `active`\n- Whether `long_connection_enabled` is on\n- Whether `bot_token` / `ilink_bot_id` is valid\n- Whether admin console runtime shows `long_connection_session_expired`\n\n### Session frequently expired\n\nUsually login state is lost. Recommend re-scanning to get new token and save.\n\n## Integration Recommendations (When Migrating from Old WeChat Channel)\n\n1. Parallel run: Keep old channel first, new traffic prefers `weixin`\n2. Batch switch: Migrate by account gradually\n3. Monitor metrics: Inbound success rate, outbound success rate, first packet latency, failure TopN\n4. Mark old channel as maintenance mode after stable\n\n## Further Reading\n\n- [Channel Webhook](/docs/en/integration/channel-webhook/)\n- [API Index](/docs/en/reference/api-index/)\n- [Admin Interface](/docs/en/surfaces/web-admin/)\n","source_path":"使用说明书/en/integration/weixin-channel.md"}</script>
+</body>
+</html>

@@ -53,7 +53,23 @@
                 {{ entry.summaryBrief || entry.summaryTitle }}
               </span>
             </span>
-            <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
+            <span
+              v-if="entry.consumedTokensLabel || entry.durationLabel"
+              class="tool-workflow-entry-meta"
+            >
+              <span
+                v-if="entry.consumedTokensLabel"
+                class="tool-workflow-entry-consumed"
+              >
+                {{ entry.consumedTokensLabel }}
+              </span>
+              <span
+                v-if="entry.durationLabel"
+                class="tool-workflow-entry-duration"
+              >
+                {{ entry.durationLabel }}
+              </span>
+            </span>
           </summary>
 
           <div class="tool-workflow-entry-body">
@@ -101,6 +117,10 @@ import {
   type RawToolRun as RawEntry,
   type WorkflowItem
 } from './toolWorkflowRunModel';
+import {
+  formatWorkflowConsumedTokensLabel,
+  resolveWorkflowConsumedTokens
+} from './toolWorkflowUsage';
 import {
   buildStructuredToolResultView
 } from './toolWorkflowStructuredView';
@@ -150,6 +170,7 @@ type ToolEntryView = {
   toolIconClass: string;
   isCompaction: boolean;
   status: string;
+  consumedTokensLabel: string;
   durationLabel: string;
   sections: ToolWorkflowDetailSection[];
 };
@@ -3156,6 +3177,16 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
         )
       }
     : splitEntrySummary(summaryTitle, toolDisplay);
+  const consumedTokensLabel = formatWorkflowConsumedTokensLabel(
+    resolveWorkflowConsumedTokens(
+      entry.resultItem?.detail,
+      entry.outputItem?.detail,
+      entry.callItem?.detail,
+      entry.resultItem,
+      entry.outputItem,
+      entry.callItem
+    )
+  );
   const durationLabel = formatDurationLabel(extractDurationMs(entry, commandSession));
   const toolResultSection = buildToolResultSection(entry, status, compactionDisplay);
   const sections = [toolResultSection].filter(Boolean) as ToolWorkflowDetailSection[];
@@ -3169,6 +3200,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     toolIconClass: resolveToolIconClass(entry.toolName),
     isCompaction: Boolean(compactionDisplay),
     status,
+    consumedTokensLabel,
     durationLabel,
     sections
   };
@@ -3427,6 +3459,7 @@ const buildPendingEntryView = (
     toolIconClass: resolveToolIconClass(toolName),
     isCompaction,
     status: 'loading',
+    consumedTokensLabel: '',
     durationLabel: '',
     sections: [
       buildEmptySection(
@@ -4103,8 +4136,17 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
 }
 
-.tool-workflow-entry-duration {
+.tool-workflow-entry-meta {
   margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.tool-workflow-entry-consumed,
+.tool-workflow-entry-duration {
   flex: 0 0 auto;
   color: var(--workflow-term-muted);
   font-size: 11px;

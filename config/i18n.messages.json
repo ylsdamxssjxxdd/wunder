@@ -1424,8 +1424,8 @@
     "zh-CN": "刷新远端任务的超时秒数（可选）。"
   },
   "tool.spec.a2a_observe.description": {
-    "en-US": "Observe A2A tasks in the current session and return aggregated status/results.",
-    "zh-CN": "观察当前会话内 A2A 任务的状态与结果，并汇总返回。"
+    "en-US": "Inspect A2A task snapshots. Usually provide task_ids; only specify endpoint or service_name when needed; use refresh to actively refresh remote state.",
+    "zh-CN": "查看 A2A 任务快照。常用 task_ids；必要时再指定 endpoint 或 service_name；refresh 用于主动刷新远端状态。"
   },
   "tool.spec.a2a_service.args.blocking": {
     "en-US": "Whether SendMessage blocks for result (default true).",
@@ -1524,8 +1524,8 @@
     "zh-CN": "等待秒数（可选，默认 30 秒）。"
   },
   "tool.spec.a2a_wait.description": {
-    "en-US": "Wait for A2A tasks to finish or timeout, useful for long-running jobs.",
-    "zh-CN": "等待 A2A 任务完成或超时返回，可用于长任务休眠。"
+    "en-US": "Wait for A2A tasks to finish. Usually use wait_s, poll_interval_s, and task_ids; inspect the final snapshot with a2a观察 afterward.",
+    "zh-CN": "等待 A2A 任务完成。常用 wait_s、poll_interval_s、task_ids；等待结束后再结合 a2a观察 查看最终快照。"
   },
   "tool.spec.a2ui.args.content": {
     "en-US": "Optional short textual note.",
@@ -1540,16 +1540,16 @@
     "zh-CN": "可选的 UI Surface 标识；省略时默认使用当前会话的渲染区域。"
   },
   "tool.spec.a2ui.description": {
-    "en-US": "Send structured A2UI render messages to the client.",
-    "zh-CN": "向客户端发送结构化 A2UI 渲染消息。"
+    "en-US": "Send structured UI instructions to the frontend. Prefer the known message shapes beginRendering, surfaceUpdate, dataModelUpdate, and deleteSurface, and avoid inventing arbitrary payload shapes.",
+    "zh-CN": "向前端发送结构化 UI 指令。优先使用已知消息形状 beginRendering、surfaceUpdate、dataModelUpdate、deleteSurface，不要随意扩展结构。"
   },
   "tool.spec.apply_patch.args.input": {
     "en-US": "Raw apply_patch payload only (no JSON wrapper / no markdown fence). Start at *** Begin Patch and end at *** End Patch. After @@, every Update File line must start with space/+/-. Do not include editor line numbers like 123:, and do not use *** as an old/new separator inside a hunk. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch",
     "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。不要带 123: 这类编辑器行号，也不要在 hunk 内用 *** 分隔旧内容和新内容。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise, reviewable edits with apply_patch grammar. Best for small targeted multi-file changes after reading the latest file content. Keep hunks small, preserve exact context lines, and switch to write_file for full rewrites. Example call args: {\"input\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}.",
-    "zh-CN": "使用 apply_patch 语法做精确、可审查的修改。适合在先读取最新文件内容后，执行小范围、可定位的多文件编辑。请保持 hunk 尽量小、上下文行精确；整文件重写请改用 write_file。示例入参：{\"input\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}。"
+    "en-US": "Apply precise small edits with apply_patch grammar. Use it for narrow reviewable changes; use write_file for full file rewrites.",
+    "zh-CN": "按 apply_patch grammar 做精确小修改。适合小范围可审查编辑；整文件重写请改用写入文件。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -1608,8 +1608,8 @@
     "zh-CN": "调用层级方向：incoming/outgoing。"
   },
   "tool.spec.lsp.description": {
-    "en-US": "Query the language server for definitions, references, hover info, symbols, implementations, or call hierarchy.",
-    "zh-CN": "查询语言服务器，获取定义、引用、悬停信息、符号、实现或调用层级。"
+    "en-US": "Query code intelligence. definition/references/hover/implementation/call_hierarchy usually need path + line + character; workspace_symbol usually needs query; call_hierarchy_direction is only for call_hierarchy.",
+    "zh-CN": "查询代码智能信息。definition/references/hover/implementation/call_hierarchy 常用 path + line + character；workspace_symbol 常用 query；call_hierarchy_direction 仅用于 call_hierarchy。"
   },
   "tool.spec.exec.args.content": {
     "en-US": "CLI command. Content has no path restrictions.",
@@ -1628,8 +1628,8 @@
     "zh-CN": "在工作区内执行 CLI 命令。`workdir` 仅用于指定工作区内的相对目录。"
   },
   "tool.spec.browser.description": {
-    "en-US": "Operate the built-in browser runtime with session, tab, snapshot and act actions.",
-    "zh-CN": "通过统一 action 操作浏览器运行时，支持会话、标签页、snapshot 与 act。"
+    "en-US": "Browser automation tool. Common flow: start/open -> snapshot/read_page -> click/type/press -> wait/screenshot. Prefer browser_session_id, target_id, url, selector, text, key, format, and max_chars.",
+    "zh-CN": "浏览器自动化工具。常用流程：start/open -> snapshot/read_page -> click/type/press -> wait/screenshot。优先使用 browser_session_id、target_id、url、selector、text、key、format、max_chars。"
   },
   "tool.spec.browser.args.action": {
     "en-US": "Action: status/profiles/start/stop/tabs/open/focus/close/navigate/snapshot/act/click/type/press/hover/wait/screenshot/read_page.",
@@ -1724,8 +1724,8 @@
     "zh-CN": "关闭当前浏览器会话"
   },
   "tool.spec.web_fetch.description": {
-    "en-US": "Fetch a remote public web page directly over HTTP(S) and return cleaned low-noise content. Requires a concrete public URL. Do not use this for local workspace files, generic keyword search, or when you only have search terms.",
-    "zh-CN": "直接通过 HTTP(S) 抓取远程公网网页，并返回清洗后的低噪声正文内容。必须传入明确的公网 URL；不要把它用于本地工作区文件、通用关键词搜索，或仅有搜索词的场景。"
+    "en-US": "Fetch a single webpage and extract the main content. Usually use url, extract_mode, and max_chars; it is aimed at static fetches rather than complex interactive pages.",
+    "zh-CN": "抓取单个网页并提取正文。常用 url、extract_mode、max_chars；它偏静态抓取，不适合复杂交互网页。"
   },
   "tool.spec.web_fetch.args.url": {
     "en-US": "The exact public URL to fetch (http/https only). Pass a full URL, not keywords or local paths.",
@@ -1740,8 +1740,8 @@
     "zh-CN": "清洗后返回内容的最大字符数，可选。"
   },
   "tool.spec.desktop_controller.description": {
-    "en-US": "Desktop controller. Use bbox + action + description in normalized screenshot space (default 1000x1000). One call = one atomic action; multi-step actions should use multiple rounds with the latest screenshot.",
-    "zh-CN": "桌面控制器：使用 bbox + action + description（归一化截图坐标，默认 1000x1000）。一次调用完成一个原子动作，多步操作需多轮并使用最新截图。"
+    "en-US": "Execute desktop input actions. Usually use bbox + action; keyboard actions use key or text; scrolling uses scroll_steps; drag operations use to_bbox; only fill delay/duration when fine-grained timing is needed.",
+    "zh-CN": "执行桌面输入动作。常用 bbox + action；键盘动作用 key 或 text；滚动用 scroll_steps；拖拽用 to_bbox；delay/duration 仅在需要精细控制时填写。"
   },
   "tool.spec.desktop_controller.args.bbox": {
     "en-US": "Target bbox in normalized screenshot space. Format: [x1,y1,x2,y2] or [cx,cy].",
@@ -1816,8 +1816,8 @@
     "zh-CN": "本次返回条数。默认 500，最大 500。"
   },
   "tool.spec.list.description": {
-    "en-US": "List direct child files and folders in a workspace directory.",
-    "zh-CN": "列出工作区目录下的直接子文件和文件夹。"
+    "en-US": "List direct child files and folders in a directory. Usually use path, cursor, limit, and max_depth; if you need to search content rather than list a directory, use search_content instead.",
+    "zh-CN": "列出目录下的直接子文件和子目录。常用 path、cursor、limit、max_depth；如果要搜内容而不是列目录，请改用 search_content。"
   },
   "tool.spec.plan.args.explanation": {
     "en-US": "Optional. Short explanation for the plan.",
@@ -1940,8 +1940,8 @@
     "zh-CN": "去重key。"
   },
   "tool.spec.schedule_task.description": {
-    "en-US": "Schedule tasks: add/update/remove/enable/disable/get/list/run.",
-    "zh-CN": "定时任务：add/update/remove/enable/disable/get/list/run。"
+    "en-US": "Manage scheduled tasks: add/update/remove/enable/disable/get/list/run/status. Prefer flat fields such as job_id, schedule_text, message, and enabled; only fill schedule when you need precise at/every/cron timing.",
+    "zh-CN": "管理定时任务：add/update/remove/enable/disable/get/list/run/status。优先使用扁平字段 job_id、schedule_text、message、enabled；只有需要精确 at/every/cron 时再填写 schedule。"
   },
   "tool.spec.sleep.args.reason": {
     "en-US": "Optional reason for this sleep.",
@@ -1952,8 +1952,8 @@
     "zh-CN": "休眠秒数（0 < seconds <= 3600）。"
   },
   "tool.spec.sleep.description": {
-    "en-US": "Pause execution for a specified number of seconds.",
-    "zh-CN": "按指定秒数暂停执行。"
+    "en-US": "Sleep for a number of seconds, mainly for active polling intervals. Usually only seconds is needed; reason is optional context.",
+    "zh-CN": "按秒等待一段时间，适合主动轮询间隔。常用 seconds，reason 仅用于补充说明。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",
@@ -1992,12 +1992,12 @@
     "zh-CN": "可选的客户端消息 ID，用于去重。"
   },
   "tool.spec.user_world.description": {
-    "en-US": "User world tool: list users or send direct messages.",
-    "zh-CN": "用户世界工具：获取用户列表或发送私信。"
+    "en-US": "User-world lookup and delivery tool. list_users usually needs keyword and limit; send_message usually needs user_id or user_ids, content, and content_type. Prefer explicit target users instead of relying on pagination offsets.",
+    "zh-CN": "用户世界检索与投递工具。list_users 常用 keyword、limit；send_message 常用 user_id 或 user_ids、content、content_type。优先直接给目标用户，不要依赖分页偏移。"
   },
   "tool.spec.channel_tool.description": {
-    "en-US": "Channel tool: list contacts or send messages/files through channel accounts.",
-    "zh-CN": "渠道工具：查询可联系对象，或通过渠道账号发送消息/文件。"
+    "en-US": "List channel contacts or send channel messages. list_contacts usually needs channel/account_id/keyword/limit; send_message usually needs to, peer_kind, thread_id, content, attachments, and wait. Use content as the only message body field and avoid legacy text/meta/contact fields.",
+    "zh-CN": "渠道联系人与消息工具。list_contacts 常用 channel/account_id/keyword/limit；send_message 常用 to、peer_kind、thread_id、content、attachments、wait。正文只用 content，不要使用旧字段 text/meta/contact。"
   },
   "tool.spec.channel_tool.args.action": {
     "en-US": "Action: list_contacts/send_message.",
@@ -2172,8 +2172,8 @@
     "zh-CN": "可选起始行（包含）。如果未提供 end_line，工具会从这里开始默认读取 200 行；需要不同窗口大小时请同时提供 end_line，或改用 offset+limit。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read targeted local plain-text excerpts from specified paths, with batch and line-range support. Also accepts Codex-style file_path plus offset/limit input. Use it when you already know the file or exact line window for code/config/log/markdown/text files. If the file or heading is uncertain, use list_files/search_content first. When you pass only start_line, the tool reads a 200-line window starting there; use end_line or offset+limit for a different window size. For long documents, always locate hits first, then read narrow windows or indentation blocks; do not do blind fixed-step paging, and avoid more than three consecutive reads on the same file without new evidence. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
-    "zh-CN": "按指定路径读取本地纯文本片段，支持批量和行号范围，也兼容 Codex 常用的 `file_path + offset/limit` 形式。它适合在你已经确定文件或精确行窗时读取代码、配置、日志、Markdown 等文本文件；文件或标题不确定时先用 list_files/search_content。若只传 `start_line`，工具会从该行开始默认读取 200 行；需要不同窗口大小时请同时传 `end_line`，或改用 `offset+limit`。面对长文档时，必须先定位命中点再读小窗口或缩进块，禁止盲目固定步长翻页；在没有新增依据时，同一文件连续读取不应超过 3 次。不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
+    "en-US": "Read targeted local plain-text excerpts. If the file or location is uncertain, use search_content first; prefer path with start_line/end_line or line_ranges; use mode=indentation only for indentation-based code blocks. Do not use it for images or binary files.",
+    "zh-CN": "定点读取本地纯文本片段。若不确定文件或位置，先用 search_content；常用 path + start_line/end_line 或 line_ranges；mode=indentation 仅用于按缩进读取代码块。不要用于图片或二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",
@@ -2184,16 +2184,16 @@
     "zh-CN": "可选，附加给模型的读图说明。"
   },
   "tool.spec.read_image.description": {
-    "en-US": "Read a local image and attach it to the next model turn.",
-    "zh-CN": "读取本地图片，并附加到下一轮模型请求。"
+    "en-US": "Read a local image and extract the needed information. A local path is required; prompt only explains what to inspect, and this is not a web image-search tool.",
+    "zh-CN": "读取本地图片并提取所需信息。必须提供本地 path；prompt 仅用于说明你想看什么，不是联网看图工具。"
   },
   "tool.spec.skill_call.args.name": {
     "en-US": "Skill name to load.",
     "zh-CN": "要加载的技能名称。"
   },
   "tool.spec.skill_call.description": {
-    "en-US": "Return full SKILL.md and directory tree for the specified skill name. Prefer this over guessing SKILL.md paths manually.",
-    "zh-CN": "根据技能名称返回完整 SKILL.md 及技能目录结构。需要查看技能正文时优先使用它，不要手动猜测 SKILL.md 路径。"
+    "en-US": "Load the SKILL.md and directory tree for a named skill. Pass only the skill name instead of guessing file paths.",
+    "zh-CN": "加载指定技能的 SKILL.md 和目录结构。只传技能名，不要猜测技能文件路径。"
   },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
@@ -2276,8 +2276,8 @@
     "zh-CN": "可选的 rg 风格别名，等价于 max_matches/head_limit，用于限制返回的命中条数。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search local workspace text files only. This is not a web search tool. Prefer expressing searches like a narrowed rg call: put the regex in pattern/query, narrow with path plus glob/type, and request context with context or -A/-B/-C. If you are not sure the files exist, use list_files first. The tool accepts rg-style aliases such as pattern, glob, type, -i, -A/-B/-C, -F, max_count/head_limit, and returns both legacy matches plus structured hits.",
-    "zh-CN": "仅在本地工作区文本文件中搜索，这不是网页搜索工具。建议按收窄后的 rg 调用来组织参数：把模式写在 pattern/query，用 path 配合 glob/type 缩小范围，再用 context 或 -A/-B/-C 请求上下文；如果不确定文件是否存在，先用列出文件。工具支持 pattern、glob、type、-i、-A/-B/-C、-F、max_count/head_limit 等 rg 风格别名，并同时返回兼容的 matches 与结构化 hits。"
+    "en-US": "Search local workspace text files only, never the web. Prefer query with path/glob to narrow the scope; switch to query_mode=regex only when needed; prefer context_before/context_after for surrounding lines.",
+    "zh-CN": "搜索本地工作区纯文本文件，不联网。优先使用 query + path/glob 缩小范围；只有需要正则时才改用 query_mode=regex；上下文请优先使用 context_before/context_after。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",
@@ -2288,24 +2288,24 @@
     "zh-CN": "要写入的文件路径。"
   },
   "tool.spec.write.description": {
-    "en-US": "Write content to a path. Existing files are overwritten.",
-    "zh-CN": "请求向指定路径写入内容。如果文件已存在，将被提供的内容覆盖。"
+    "en-US": "Write file content, overwriting existing files when present. Usually use path and content; dry_run only previews the write and does not persist changes.",
+    "zh-CN": "写入文件内容，已存在文件会被覆盖。常用 path 和 content；dry_run 仅用于预览，不会真正落盘。"
   },
   "tool.spec.subagent_control.description": {
-    "en-US": "Control child sub-agent sessions under the current parent session. spawn immediately dispatches the initial task to the child and returns its session_id/run_id. list/status/wait default to the current session's children; history/send only accept one child session of the current session.",
-    "zh-CN": "控制当前父会话下的子智能体会话。spawn 会立即把初始任务派发给子会话，并返回它的 session_id/run_id。list/status/wait 默认查看当前会话的子会话；history/send 只接受当前会话下的单个子会话。"
+    "en-US": "Manage child sub-agents under the current session. Common flow: spawn(task) -> wait/status -> history; spawn already sends the first turn, so do not call send immediately after spawn; prefer the session_id or run_id returned by spawn.",
+    "zh-CN": "管理当前会话下的子智能体。常用流程：spawn(task) -> wait/status -> history；spawn 已经会发送第一轮任务，不要立刻再 send；优先使用 spawn 返回的 session_id 或 run_id。"
   },
   "tool.spec.subagent_control.args.action": {
     "en-US": "Action to perform: list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume. Typical flow: spawn(task=...) for the first turn, then send(...) only for follow-up turns on the existing child session.",
     "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。典型流程是先用 spawn(task=...) 发起第一轮，再仅在需要继续追问时对现有子会话调用 send(...)。"
   },
   "tool.spec.agent_swarm.description": {
-    "en-US": "Swarm dispatch tool. Typical flow: batch_send then wait.",
-    "zh-CN": "蜂群调度工具。常用流程：batch_send 后 wait。"
+    "en-US": "Swarm collaboration tool, only manages already existing other agents. Common flow: send/batch_send -> wait/status -> history. Prefer canonical fields agent_id, agent_name, session_id, run_ids; use subagent_control for temporary child sessions.",
+    "zh-CN": "蜂群协作工具，只管理已存在的其他智能体。常用流程：send/batch_send -> wait/status -> history。优先使用 canonical 字段 agent_id、agent_name、session_id、run_ids；临时子会话请改用子智能体控制。"
   },
   "tool.spec.agent_swarm.args.action": {
-    "en-US": "Action: list/status/send/history/spawn/batch_send/wait.",
-    "zh-CN": "操作类型：list/status/send/history/spawn/batch_send/wait。"
+    "en-US": "Action. Use send/batch_send to dispatch work; use wait/status/history to inspect results; use spawn only to branch into an existing agent.",
+    "zh-CN": "动作。send/batch_send 用于派发任务；wait/status/history 用于查看结果；spawn 仅用于派生到已存在智能体。"
   },
   "tool.spec.agent_swarm.args.create_if_missing": {
     "en-US": "Optional. Auto-create session if missing.",
@@ -2336,8 +2336,8 @@
     "zh-CN": "轮询间隔（秒）。"
   },
   "tool.spec.node_invoke.description": {
-    "en-US": "List connected gateway nodes or invoke a command on a node.",
-    "zh-CN": "列出已接入的网关节点，或调用节点执行指令。"
+    "en-US": "List gateway nodes or invoke a command on a node. list inspects nodes only; invoke usually uses node_id, command, args, and timeout_s.",
+    "zh-CN": "查询节点或向节点下发命令。list 只看节点列表；invoke 常用 node_id、command、args、timeout_s。"
   },
   "tool.spec.node_invoke.args.action": {
     "en-US": "Action type: list to discover nodes, invoke to execute a node command.",
@@ -2444,16 +2444,16 @@
     "zh-CN": "可选。完成后的清理策略（keep/delete）。"
   },
   "tool.spec.sessions_yield.description": {
-    "en-US": "End the current turn intentionally after spawning background work, and continue when sub-agent results wake the parent session.",
-    "zh-CN": "在派发后台子智能体后主动结束当前轮次，等待子智能体结果回流并自动唤醒父会话继续。"
+    "en-US": "Yield control of the current turn, optionally with a short note. It is not a final answer; it only means the current step is pausing or waiting.",
+    "zh-CN": "让出当前回合控制权，并可附带一条简短说明。它不是最终回复，只表示当前步骤暂停或等待。"
   },
   "tool.spec.sessions_yield.args.message": {
     "en-US": "Optional. Short user-facing message shown before the turn yields.",
     "zh-CN": "可选。本轮让出前向用户显示的一句简短提示。"
   },
   "tool.spec.thread_control.description": {
-    "en-US": "Control conversation threads for the current user: create, switch, inspect, archive, restore, or set the main thread.",
-    "zh-CN": "控制当前用户的会话线程，可创建、切换、查看、归档、恢复或设为主线程。"
+    "en-US": "Manage conversation threads. Common flow: list/info to inspect, create to open a new thread, switch/back to move between threads, archive/restore to change lifecycle; prefer session_id, parent_session_id, title, scope, status, and set_main.",
+    "zh-CN": "管理会话线程。常用流程：list/info 查看，create 新建，switch/back 切换，archive/restore 归档恢复；优先使用 session_id、parent_session_id、title、scope、status、set_main。"
   },
   "tool.spec.thread_control.args.action": {
     "en-US": "Thread control action: list, info, create, switch, back, update_title, archive, restore, or set_main.",
@@ -2500,8 +2500,8 @@
     "zh-CN": "是否将目标线程绑定为该智能体的主线程。"
   },
   "tool.spec.self_status.description": {
-    "en-US": "Inspect current runtime status, context occupancy, and recent thread statistics.",
-    "zh-CN": "查看当前运行状态、上下文占用和近期线程统计。"
+    "en-US": "Inspect the current session runtime state. Use the default summary first; raise detail_level or enable include_events only when you need more event detail. Do not call it frequently in normal task solving.",
+    "zh-CN": "诊断当前会话运行状态。默认只看摘要；需要更多事件时提高 detail_level 或开启 include_events。普通任务中不要高频调用。"
   },
   "tool.spec.self_status.args.detail_level": {
     "en-US": "Detail level for output: basic, standard, or full.",
@@ -2518,6 +2518,86 @@
   "tool.spec.self_status.args.include_system_metrics": {
     "en-US": "Whether to include system resource metrics.",
     "zh-CN": "是否包含系统资源指标。"
+  },
+  "tool.spec.read.args.path": {
+    "en-US": "Path to a local plain-text file. Use it for targeted reads of code, config, logs, markdown, and similar text files; do not pass images or other binary files.",
+    "zh-CN": "本地纯文本文件路径。适合代码、配置、日志、Markdown 等定点读取；不要传图片或其他二进制文件。"
+  },
+  "tool.spec.read.args.start_line": {
+    "en-US": "Start line (inclusive). Usually used together with end_line.",
+    "zh-CN": "起始行（包含）。常与 end_line 一起使用。"
+  },
+  "tool.spec.read.args.end_line": {
+    "en-US": "End line (inclusive). Must be greater than or equal to start_line.",
+    "zh-CN": "结束行（包含），必须大于等于 start_line。"
+  },
+  "tool.spec.read.args.line_ranges": {
+    "en-US": "Multiple line ranges. Each item is [start_line, end_line].",
+    "zh-CN": "多个行区间，每项为 [start_line, end_line]。"
+  },
+  "tool.spec.read.args.mode": {
+    "en-US": "Read mode: slice reads explicit line slices, indentation reads indentation-based code blocks.",
+    "zh-CN": "读取模式：slice 为按行切片，indentation 为按缩进读取代码块。"
+  },
+  "tool.spec.read.args.indentation": {
+    "en-US": "Indentation block options used when mode=indentation.",
+    "zh-CN": "mode=indentation 时使用的缩进块参数。"
+  },
+  "tool.spec.subagent_control.args.parent_id": {
+    "en-US": "Parent session id. list/status/wait default to the current session when omitted.",
+    "zh-CN": "父会话 ID；list/status/wait 不填时默认当前会话。"
+  },
+  "tool.spec.subagent_control.args.session_id": {
+    "en-US": "Single child session id. Prefer the session_id returned by spawn.",
+    "zh-CN": "单个子会话 ID。优先使用 spawn 返回的 session_id。"
+  },
+  "tool.spec.subagent_control.args.session_ids": {
+    "en-US": "Use multiple child session ids only for batch status/wait.",
+    "zh-CN": "批量状态/等待时可传多个子会话 ID。"
+  },
+  "tool.spec.subagent_control.args.run_id": {
+    "en-US": "Single child run id. Prefer the run_id returned by spawn or list.",
+    "zh-CN": "单个子运行 ID。优先使用 spawn 或 list 返回的 run_id。"
+  },
+  "tool.spec.subagent_control.args.run_ids": {
+    "en-US": "Use multiple child run ids only for batch status/wait.",
+    "zh-CN": "批量状态/等待时可传多个子运行 ID。"
+  },
+  "tool.spec.subagent_control.args.dispatch_id": {
+    "en-US": "Dispatch id returned by batch_spawn.",
+    "zh-CN": "batch_spawn 返回的批次 ID。"
+  },
+  "tool.spec.subagent_control.args.strategy": {
+    "en-US": "Batch dispatch strategy for batch_spawn.",
+    "zh-CN": "batch_spawn 的调度策略。"
+  },
+  "tool.spec.subagent_control.args.remaining_action": {
+    "en-US": "How to handle unfinished sibling subagents after early convergence.",
+    "zh-CN": "提前收敛后如何处理未完成的兄弟子智能体。"
+  },
+  "tool.spec.subagent_control.args.message": {
+    "en-US": "Follow-up message content for send. Do not resend the same task immediately after spawn.",
+    "zh-CN": "send 的后续消息内容。不要在 spawn 后立刻重复发送同一任务。"
+  },
+  "tool.spec.subagent_control.args.task": {
+    "en-US": "First task for spawn or batch_spawn.",
+    "zh-CN": "spawn 或 batch_spawn 的首轮任务。"
+  },
+  "tool.spec.subagent_control.args.tasks": {
+    "en-US": "Child tasks for batch_spawn.",
+    "zh-CN": "batch_spawn 的子任务列表。"
+  },
+  "tool.spec.subagent_control.args.wait_seconds": {
+    "en-US": "Wait duration in seconds for wait.",
+    "zh-CN": "wait 的等待秒数。"
+  },
+  "tool.spec.subagent_control.args.poll_interval_seconds": {
+    "en-US": "Polling interval in seconds for wait.",
+    "zh-CN": "wait 的轮询间隔秒数。"
+  },
+  "tool.spec.subagent_control.args.wait_mode": {
+    "en-US": "Completion mode for wait.",
+    "zh-CN": "wait 的完成判定模式。"
   },
   "workspace.error.batch_action_unsupported": {
     "en-US": "Unsupported batch action",

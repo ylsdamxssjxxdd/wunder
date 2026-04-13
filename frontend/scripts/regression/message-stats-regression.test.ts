@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildAssistantMessageStatsEntries } from '../../src/utils/messageStats';
+import {
+  buildAssistantMessageStatsEntries,
+  sumConversationConsumedTokens
+} from '../../src/utils/messageStats';
 import { summarizeTurnDecodeSpeed } from '../../src/utils/turnDecodeSpeed';
 
 const createTranslator = () => {
@@ -72,7 +75,7 @@ test('message stats shows backend average decode speed even when usage is absent
   assert.equal(findEntryValue(entries, 'Speed'), '1050.45 token/s');
 });
 
-test('message stats context uses roundUsage.total_tokens when explicit context is absent', () => {
+test('message stats context uses latest usage.total_tokens before round usage snapshots', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -92,10 +95,10 @@ test('message stats context uses roundUsage.total_tokens when explicit context i
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '4198');
+  assert.equal(findEntryValue(entries, 'Context'), '4080');
 });
 
-test('message stats context prefers roundUsage.total_tokens over usage.total_tokens and explicit context_tokens', () => {
+test('message stats context prefers latest usage totals over explicit occupancy aliases', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
@@ -116,16 +119,15 @@ test('message stats context prefers roundUsage.total_tokens over usage.total_tok
     },
     t
   );
-  assert.equal(findEntryValue(entries, 'Context'), '7227');
+  assert.equal(findEntryValue(entries, 'Context'), '7300');
 });
 
-test('message stats context falls back to usage.total_tokens when roundUsage is absent', () => {
+test('message stats context falls back to usage.total_tokens when explicit context is absent', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
       role: 'assistant',
       stats: {
-        context_tokens: 2783,
         usage: {
           input_tokens: 9244,
           output_tokens: 12,
@@ -256,6 +258,43 @@ test('message stats sums explicit consumed tokens across assistant messages in t
 
   assert.equal(findEntryValue(entries, 'Quota'), '4200');
   assert.equal(findEntryValue(entries, 'Context'), '3600');
+});
+
+test('conversation consumed tokens aggregate by user turn instead of context totals', () => {
+  const messages = [
+    {
+      role: 'user',
+      content: 'first task'
+    },
+    {
+      role: 'assistant',
+      content: 'first answer',
+      stats: {
+        quotaConsumed: 2800,
+        contextTokens: 3600,
+        roundUsage: {
+          total_tokens: 3600
+        }
+      }
+    },
+    {
+      role: 'user',
+      content: 'second task'
+    },
+    {
+      role: 'assistant',
+      content: 'second answer',
+      stats: {
+        quotaConsumed: 4100,
+        contextTokens: 1900,
+        roundUsage: {
+          total_tokens: 1900
+        }
+      }
+    }
+  ];
+
+  assert.equal(sumConversationConsumedTokens(messages), 6900);
 });
 
 test('message stats ignores legacy round-marker quota placeholders when usage totals are present', () => {

@@ -1,17 +1,75 @@
 ---
-title: Overview
-summary: English translation for this page is in progress. Use the Simplified Chinese page for the full content.
+title: Interface Overview
+summary: Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.
 read_when:
-  - You need the English entry for this topic right now
+  - You want to quickly understand what the user frontend, admin frontend, and desktop each do
+  - You are looking for which interface a particular feature belongs to
 source_docs:
-  - docs/?????/zh-CN/surfaces/index.md
-updated_at: 2026-04-10
+  - docs/系统介绍.md
+  - docs/API文档.md
+  - docs/设计方案.md
 ---
 
-# Overview
+# Interface Overview
 
-This English page is being translated manually.
+Wunder is not a single-page chat product. It is three interface surfaces working together.
 
-For the full content right now, see the Simplified Chinese version:
+If you are trying to figure out "where should I look for a particular feature," start here.
 
-- [Overview (Simplified Chinese)](/docs/zh-CN/surfaces/index/)
+## Quick Entry
+
+<div class="docs-card-grid docs-card-grid-compact">
+  <a class="docs-card" href="/docs/en/surfaces/frontend/">
+    <strong>User Frontend</strong>
+    <span>The unified workbench for chat, user world, workspace, tools, and settings.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/surfaces/web-admin/">
+    <strong>Admin Interface</strong>
+    <span>The management entry point for models, users, channels, tools, monitoring, and benchmarks.</span>
+  </a>
+  <a class="docs-card" href="/docs/en/surfaces/desktop-ui/">
+    <strong>Desktop Interface</strong>
+    <span>The primary local delivery form, emphasizing local-first and desktop workbench experience.</span>
+  </a>
+</div>
+
+## Responsibilities of Each Surface
+
+- **User frontend**: Focused on conversations, files, contacts, and tool operations
+- **Admin frontend**: Focused on governance, configuration, monitoring, and evaluation
+- **Desktop**: Focused on local-first and desktop capabilities
+
+## By Role
+
+### Regular Users
+
+Start with:
+
+- [User Frontend](/docs/en/surfaces/frontend/)
+- [Desktop Interface](/docs/en/surfaces/desktop-ui/)
+
+### Administrators
+
+Start with:
+
+- [Admin Interface](/docs/en/surfaces/web-admin/)
+- [Admin Panel Index](/docs/en/reference/admin-panels/)
+
+### Integration Developers
+
+In addition to the interface pages, you should also read:
+
+- [Chat Sessions](/docs/en/integration/chat-sessions/)
+- [Workspace API](/docs/en/integration/workspace-api/)
+
+## Common Misconceptions
+
+- The user frontend emphasizes conversation experience and the file-agent loop.
+- The admin frontend emphasizes governance, monitoring, configuration, and evaluation.
+- Desktop is the current primary delivery form, but it now only maintains local mode — switching to a server connection from within the desktop client is no longer supported.
+
+## Further Reading
+
+- [Getting Started](/docs/en/start/desktop/)
+- [Operations Overview](/docs/en/ops/)
+- [Help](/docs/en/help/)

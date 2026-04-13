@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Self Status | 使用说明书</title>
+  <meta name="description" content="`self_status` is used to inspect the current session, model, events, and thread runtime state.">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/tools/self-status","language":"en","title":"Self Status","summary":"`self_status` is used to inspect the current session, model, events, and thread runtime state.","updated_at":"2026-04-10","read_when":["You need to understand exactly where the current session is in its execution flow"],"source_docs":["src/services/tools/self_status_tool.rs"],"tab":"Tools","group":"Sessions and Collaboration","group_path":["Sessions and Collaboration"],"url":"/docs/en/tools/self-status/","headings":[{"id":"section-1","level":1,"text":"Self Status"},{"id":"section-2","level":2,"text":"Minimum arguments"},{"id":"section-3","level":2,"text":"Common arguments"},{"id":"section-4","level":2,"text":"Return structure"},{"id":"section-5","level":2,"text":"Key points"}],"prev_slug":"en/tools/channel","next_slug":"en/tools/user-world","markdown":"# Self Status\n\n`self_status` is a diagnostic tool.  \nUnlike most tools, it returns a raw status object on success rather than the unified `ok/action/state/summary/data` envelope.\n\n## Minimum arguments\n\n```json\n{\n  \"detail_level\": \"standard\"\n}\n```\n\n## Common arguments\n\n- `detail_level`: `basic`, `standard`, or `full`\n- `include_events`\n- `events_limit`\n- `include_system_metrics`\n\n## Return structure\n\n```json\n{\n  \"tool\": \"self_status\",\n  \"detail_level\": \"standard\",\n  \"session\": {\n    \"user_id\": \"user_xxx\",\n    \"session_id\": \"sess_xxx\",\n    \"workspace_id\": \"user_xxx\",\n    \"agent_id\": \"agent_docs\",\n    \"is_admin\": false\n  },\n  \"model\": {\n    \"active\": { ... },\n    \"configured_default\": { ... }\n  },\n  \"context\": {\n    \"context_occupancy_tokens\": 12345,\n    \"context_overflow\": false,\n    \"monitor_context_tokens\": 12000,\n    \"monitor_context_tokens_peak\": 18000\n  },\n  \"monitor\": {\n    \"status\": \"running\",\n    \"stage\": \"tool_call\",\n    \"summary\": \"Waiting for a subagent result\",\n    \"updated_time\": 1760000000\n  },\n  \"thread\": { ... },\n  \"rounds\": {\n    \"user_rounds\": 3,\n    \"model_rounds_peak\": 12,\n    \"event_user_round_peak\": 3\n  },\n  \"events\": {\n    \"total\": 48,\n    \"last_event_id\": 128,\n    \"counts\": {\n      \"llm_request\": 5,\n      \"tool_call\": 12,\n      \"tool_result\": 12,\n      \"approval_request\": 0,\n      \"approval_resolved\": 0\n    },\n    \"by_type\": { ... },\n    \"recent_limit\": 20,\n    \"recent\": [ ... ]\n  },\n  \"system_metrics\": { ... }\n}\n```\n\n## Key points\n\n- `detail_level=full` usually includes more events and system metrics\n- `events.recent` is the fastest way to see what happened most recently\n- `thread` and `monitor` are the most useful sections when you need to know whether the current thread is still running and which stage it is stuck in\n","source_path":"使用说明书/en/tools/self-status.md"}</script>
+</body>
+</html>

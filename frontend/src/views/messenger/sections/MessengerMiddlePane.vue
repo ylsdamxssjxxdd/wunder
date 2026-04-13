@@ -601,7 +601,7 @@
         type="button"
         @click="selectToolCategory('skills')"
       >
-        <div class="messenger-list-avatar"><i class="fa-solid fa-book-open" aria-hidden="true"></i></div>
+        <div class="messenger-list-avatar"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></div>
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ t('toolManager.system.skills') }}</span>

@@ -60,6 +60,7 @@ export const USER_WORLD_UPLOAD_BASE = 'user-world';
 export const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
 export const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
 export const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
+export const MESSENGER_RIGHT_DOCK_WIDTH_STORAGE_KEY = 'wunder_messenger_right_dock_width';
 export const DISMISSED_AGENT_STORAGE_PREFIX = 'messenger_dismissed_agent_conversations';
 export const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
 export const WORLD_EMOJI_CATALOG = [

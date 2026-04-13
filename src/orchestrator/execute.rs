@@ -352,6 +352,7 @@ impl Orchestrator {
                     tool_call_mode,
                     &user_id,
                     prepared.agent_id.as_deref(),
+                    &prepared.workspace_id,
                 )
             } else {
                 None
@@ -758,23 +759,6 @@ impl Orchestrator {
                 last_response = Some((content.clone(), reasoning.clone()));
                 turn_decode_speed.record_summary(&round_speed);
                 update_round_usage_authority(&mut round_usage, &usage);
-                let usage_context_tokens = if usage.total > 0 {
-                    usage.total
-                } else {
-                    usage.input
-                };
-                if usage_context_tokens > 0 {
-                    let usage_context_tokens = usage_context_tokens.min(i64::MAX as u64) as i64;
-                    self.workspace
-                        .save_session_context_tokens_async(
-                            &user_id,
-                            &session_id,
-                            usage_context_tokens,
-                        )
-                        .await;
-                    persisted_context_tokens = usage_context_tokens;
-                }
-
                 let tool_calls = if prepared.skip_tool_calls {
                     Vec::new()
                 } else {
@@ -1699,26 +1683,20 @@ impl Orchestrator {
                     .max(round_usage.input.saturating_add(round_usage.output));
             let has_round_usage =
                 round_usage.total > 0 || round_usage.input > 0 || round_usage.output > 0;
+            let round_context_tokens = resolve_round_context_occupancy_tokens(persisted_context_tokens);
             if has_round_usage {
-                let mut usage_payload = json!({
-                    "input_tokens": round_usage.input,
-                    "output_tokens": round_usage.output,
-                    "total_tokens": round_usage.total,
-                    "context_occupancy_tokens": round_usage.total,
-                    "request_consumed_tokens": round_usage.total,
-                });
-                if let Value::Object(ref mut map) = usage_payload {
-                    request_round.insert_into(map);
-                }
+                let usage_payload =
+                    build_round_usage_payload(&round_usage, round_context_tokens, request_round);
                 emitter.emit("round_usage", usage_payload).await;
-                let round_context_tokens = round_usage.total.min(i64::MAX as u64) as i64;
-                self.workspace
-                    .save_session_context_tokens_async(
-                        &user_id,
-                        &session_id,
-                        round_context_tokens,
-                    )
-                    .await;
+                if round_context_tokens > 0 {
+                    self.workspace
+                        .save_session_context_tokens_async(
+                            &user_id,
+                            &session_id,
+                            round_context_tokens,
+                        )
+                        .await;
+                }
             }
 
             let response_usage = if has_round_usage {
@@ -1738,6 +1716,7 @@ impl Orchestrator {
                 "answer": answer,
                 "usage": response_usage.clone().unwrap_or(TokenUsage { input: 0, output: 0, total: 0 }),
                 "round_usage": round_usage,
+                "context_occupancy_tokens": round_context_tokens,
                 "stop_reason": stop_reason
             });
             if let Value::Object(ref mut map) = final_payload {
@@ -2940,10 +2919,34 @@ fn build_tool_budget_guard_model_notice(
     )
 }
 
+// Accumulate token usage across model rounds within a user round.
+// Each llm_output reports its own usage; the round_usage total must be the sum.
 fn update_round_usage_authority(target: &mut TokenUsage, usage: &TokenUsage) {
-    target.input = usage.input;
-    target.output = usage.output;
-    target.total = usage.total.max(usage.input.saturating_add(usage.output));
+    target.input = target.input.saturating_add(usage.input);
+    target.output = target.output.saturating_add(usage.output);
+    target.total = target.total.saturating_add(usage.total);
+}
+
+fn resolve_round_context_occupancy_tokens(persisted_context_tokens: i64) -> i64 {
+    persisted_context_tokens.max(0)
+}
+
+fn build_round_usage_payload(
+    round_usage: &TokenUsage,
+    context_occupancy_tokens: i64,
+    request_round: RoundInfo,
+) -> Value {
+    let mut usage_payload = json!({
+        "input_tokens": round_usage.input,
+        "output_tokens": round_usage.output,
+        "total_tokens": round_usage.total,
+        "context_occupancy_tokens": resolve_round_context_occupancy_tokens(context_occupancy_tokens),
+        "request_consumed_tokens": round_usage.total,
+    });
+    if let Value::Object(ref mut map) = usage_payload {
+        request_round.insert_into(map);
+    }
+    usage_payload
 }
 
 fn extract_workspace_changed_paths(
@@ -3706,6 +3709,32 @@ mod tests {
         assert!(notice.contains("Attempted 2001 > limit 2000"));
         assert!(notice.contains("db_query=2000/2000"));
         assert!(notice.contains("extra_mcp@db_query"));
+    }
+
+    #[test]
+    fn build_round_usage_payload_keeps_context_occupancy_distinct_from_consumed_total() {
+        let payload = build_round_usage_payload(
+            &TokenUsage {
+                input: 120,
+                output: 80,
+                total: 200,
+            },
+            960,
+            RoundInfo::new(3, 2),
+        );
+        assert_eq!(payload.get("total_tokens").and_then(Value::as_u64), Some(200));
+        assert_eq!(
+            payload.get("request_consumed_tokens").and_then(Value::as_u64),
+            Some(200)
+        );
+        assert_eq!(
+            payload
+                .get("context_occupancy_tokens")
+                .and_then(Value::as_i64),
+            Some(960)
+        );
+        assert_eq!(payload.get("user_round").and_then(Value::as_i64), Some(3));
+        assert_eq!(payload.get("model_round").and_then(Value::as_i64), Some(2));
     }
 
     #[test]

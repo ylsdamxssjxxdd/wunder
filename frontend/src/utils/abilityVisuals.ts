@@ -96,7 +96,7 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   {
     keywords: ['skill', 'skills', 'prompt', 'workflow', 'template', 'agent preset', 'preset'],
-    icon: 'fa-book-open',
+    icon: 'fa-wand-magic-sparkles',
     tone: 'skill'
   },
   { keywords: ['knowledge', 'rag', 'vector', 'embedding', 'document', 'kb'], icon: 'fa-book', tone: 'knowledge' },
@@ -177,7 +177,7 @@ const resolvePreferredTone = (kind: AbilityKind, group: unknown, source: unknown
 const resolveDefaultIcon = (tone: AbilityVisualTone): string => {
   switch (tone) {
     case 'skill':
-      return 'fa-book-open';
+      return 'fa-wand-magic-sparkles';
     case 'mcp':
       return 'fa-plug';
     case 'knowledge':

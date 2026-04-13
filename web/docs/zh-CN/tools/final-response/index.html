@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>最终回复 | 使用说明书</title>
+  <meta name="description" content="`final_response` 的唯一职责是结束当前轮次并给用户回复。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/final-response","language":"zh-CN","title":"最终回复","summary":"`final_response` 的唯一职责是结束当前轮次并给用户回复。","updated_at":"2026-04-10","read_when":["你已经完成工具调用和推理，准备正式回答用户"],"source_docs":["src/services/tools/dispatch.rs","src/services/tools/catalog.rs"],"tab":"工具","group":"UI and Automation","group_path":["UI and Automation"],"url":"/docs/zh-CN/tools/final-response/","headings":[{"id":"section-1","level":1,"text":"最终回复"},{"id":"section-2","level":2,"text":"输入"},{"id":"section-3","level":2,"text":"返回"},{"id":"section-4","level":2,"text":"重点"}],"prev_slug":"zh-CN/tools/schedule-task","next_slug":"zh-CN/tools/sleep","markdown":"# 最终回复\n\n`final_response` 不是普通业务工具，它只是一个终结信号。\n\n## 输入\n\n```json\n{\n  \"content\": \"这是最终回复\"\n}\n```\n\n## 返回\n\n```json\n{\n  \"answer\": \"这是最终回复\"\n}\n```\n\n## 重点\n\n- 它不走统一成功骨架\n- 不带 `ok/action/state/summary/data`\n- 只应该在任务真正收尾时调用\n\n如果还要继续等子任务、继续轮询、继续请求用户输入，就不该用它\n","source_path":"使用说明书/zh-CN/tools/final-response.md"}</script>
+</body>
+</html>

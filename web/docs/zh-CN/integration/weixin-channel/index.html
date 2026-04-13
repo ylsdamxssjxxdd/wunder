@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微信 iLink 渠道 | 使用说明书</title>
+  <meta name="description" content="`weixin` 是 Wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/weixin-channel","language":"zh-CN","title":"微信 iLink 渠道","summary":"`weixin` 是 Wunder 的新微信渠道（iLink 协议），与 `wechat` / `wechat_mp` 不同；本文给出选型、扫码接入、运行态检查与故障定位。","updated_at":"2026-04-02","read_when":["你要接入新微信渠道并替换旧的 `wechat` / `wechat_mp`","你想确认用户是否可以直接扫系统生成二维码","你在排查 `context_token` 缺失、会话过期、文件下载失败"],"source_docs":["docs/方案/新微信渠道落地方案.md","docs/API文档.md","src/channels/weixin.rs","src/channels/service.rs","src/api/user_channels.rs"],"tab":"接入","group":"扩展接入","group_path":["扩展接入"],"url":"/docs/zh-CN/integration/weixin-channel/","headings":[{"id":"section-1","level":1,"text":"微信 iLink 渠道"},{"id":"section-2","level":2,"text":"30 秒选型"},{"id":"section-3","level":2,"text":"关键差异（新旧区分）"},{"id":"section-4","level":2,"text":"用户侧扫码接入（已支持）"},{"id":"section-5","level":2,"text":"最小可用配置（P0）"},{"id":"section-6","level":2,"text":"文件与媒体链路"},{"id":"section-7","level":2,"text":"常见问题定位"},{"id":"section-8","level":3,"text":"报错 weixin outbound contexttoken missing"},{"id":"section-9","level":3,"text":"长时间收不到消息"},{"id":"section-10","level":3,"text":"会话频繁过期（session expired）"},{"id":"section-11","level":2,"text":"对接建议（迁移旧微信渠道时）"},{"id":"section-12","level":2,"text":"延伸阅读"}],"prev_slug":"zh-CN/integration/channel-webhook","next_slug":"zh-CN/integration/external-login","markdown":"# 微信 iLink 渠道\n\n`weixin` 是独立 provider，不是旧微信渠道的参数变体。  \n在 Wunder 中请按以下规则选型，避免接错。\n\n## 30 秒选型\n\n| 场景 | 选择 |\n| --- | --- |\n| 企业微信应用回调 | `wechat`（旧） |\n| 微信公众号回调 | `wechat_mp`（旧） |\n| iLink 协议微信能力（openclaw-weixin） | `weixin`（新） |\n\n## 关键差异（新旧区分）\n\n| 维度 | `weixin`（新） | `wechat` / `wechat_mp`（旧） |\n| --- | --- | --- |\n| 入站模型 | 长轮询 `ilink/bot/getupdates` | Webhook 回调 |\n| 回复关键字段 | 必须带 `context_token` | 不依赖 `context_token` |\n| 登录方式 | 扫码获得 `bot_token` | 传统 app/corp 参数 |\n| 媒体链路 | CDN + AES 解密/加密 | 平台原生接口 |\n| 推荐状态 | 新接入优先 | 维护态/兼容存量 |\n\n## 用户侧扫码接入（已支持）\n\n用户在渠道设置选择 `weixin` 后，可直接执行：\n\n1. 点击“生成二维码”\n2. 用微信扫码\n3. 点击“等待确认”\n4. 系统自动回填 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`\n5. 保存账号配置\n\n说明：\n- 回填成功后必须保存，长轮询 worker 才会真正生效。\n- 二维码会话有 TTL，过期需重新生成。\n\n## 最小可用配置（P0）\n\n```json\n{\n  \"weixin\": {\n    \"api_base\": \"https://ilinkai.weixin.qq.com\",\n    \"bot_token\": \"<required>\",\n    \"ilink_bot_id\": \"<required>\",\n    \"long_connection_enabled\": true\n  }\n}\n```\n\n可选增强项：\n- `cdn_base`\n- `bot_type`\n- `allow_from`\n- `poll_timeout_ms` / `api_timeout_ms`\n- `max_consecutive_failures` / `backoff_ms`\n- `route_tag`\n\n## 文件与媒体链路\n\n当前实现已支持：\n- 出站附件：先 `getuploadurl`，再 CDN 上传，最后 `sendmessage` 引用媒体\n- 入站附件：解析 `item_list` 媒体项，下载 CDN 对象并解密后落地到工作区\n\n排查优先级：\n1. `media_enabled` 是否开启\n2. `cdn_base` 是否可达\n3. AES key 是否正确（base64/raw16 或 hex32）\n4. 附件是否超出大小限制\n\n## 常见问题定位\n\n### 报错 `weixin outbound context_token missing`\n\n原因：回复消息没拿到上一条入站的 `context_token`。  \n处理：确认当前回复链路是否基于同一会话，且入站消息元数据已保留 `weixin_context_token`。\n\n### 长时间收不到消息\n\n检查：\n- 账号状态是否 `active`\n- `long_connection_enabled` 是否开启\n- `bot_token` / `ilink_bot_id` 是否有效\n- 管理端运行态是否出现 `long_connection_session_expired`\n\n### 会话频繁过期（session expired）\n\n通常是登录态失效，建议重新扫码，获取新的 token 并保存。\n\n## 对接建议（迁移旧微信渠道时）\n\n1. 并行运行：先保留旧渠道，新增流量优先 `weixin`\n2. 分批切换：按账号逐步迁移\n3. 观察指标：入站成功率、出站成功率、首包时延、失败 TopN\n4. 稳定后再把旧渠道标记为维护态\n\n## 延伸阅读\n\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n- [管理员界面](/docs/zh-CN/surfaces/web-admin/)\n","source_path":"使用说明书/zh-CN/integration/weixin-channel.md"}</script>
+</body>
+</html>
