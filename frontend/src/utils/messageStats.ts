@@ -67,6 +67,9 @@ const parsePositiveInteger = (value: unknown): number | null => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 };
 
+const isMeaningfulConsumedTokens = (value: number | null): value is number =>
+  value !== null && Number.isFinite(value) && value > 1;
+
 const resolveUsageConsumedTokens = (value: unknown): number | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, any>;
@@ -104,6 +107,21 @@ const resolveExplicitConsumedTokens = (source: Record<string, any> | null | unde
         source.consumedTokens
     ) ??
     resolveQuotaConsumedValue(source.quotaConsumed ?? source.quota_consumed ?? source.quota)
+  );
+};
+
+const resolveRoundConsumedTokens = (source: Record<string, any> | null | undefined): number | null => {
+  if (!source || typeof source !== 'object') return null;
+  const roundUsage =
+    source.roundUsage ??
+    source.round_usage ??
+    source.round_usage_total ??
+    source.billedUsage ??
+    source.billed_usage;
+  return (
+    resolveQuotaConsumedValue(roundUsage) ??
+    resolveUsageConsumedTokens(roundUsage) ??
+    parsePositiveInteger(roundUsage)
   );
 };
 
@@ -156,7 +174,7 @@ const resolveAssistantTurnConsumedTokens = (
     const consumed =
       resolveExplicitConsumedTokens(candidate?.stats as Record<string, any> | null | undefined) ??
       resolveExplicitConsumedTokens(candidate);
-    if (consumed === null) continue;
+    if (!isMeaningfulConsumedTokens(consumed)) continue;
     total += consumed;
     found = true;
   }
@@ -171,35 +189,18 @@ const resolveAssistantConsumedTokens = (
     message?.stats && typeof message.stats === 'object'
       ? (message.stats as Record<string, any>)
       : null;
-  const usageInputTokens = Number(
-    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
-  );
-  const roundUsageInputTokens = Number(
-    stats?.roundUsage?.input ??
-      stats?.roundUsage?.input_tokens ??
-      stats?.roundUsage?.inputTokens ??
-      stats?.round_usage?.input ??
-      stats?.round_usage?.input_tokens ??
-      stats?.round_usage?.inputTokens
-  );
   const aggregatedTurnConsumedTokens = resolveAssistantTurnConsumedTokens(message, allMessages);
   const directConsumedTokens =
     resolveExplicitConsumedTokens(stats) ?? resolveExplicitConsumedTokens(message);
-  const fallbackConsumedTokens =
-    resolveUsageConsumedTokens(stats?.roundUsage ?? stats?.round_usage) ??
-    (Number.isFinite(roundUsageInputTokens) && roundUsageInputTokens > 0
-      ? roundUsageInputTokens
-      : null) ??
-    resolveUsageConsumedTokens(stats?.usage) ??
-    (Number.isFinite(usageInputTokens) && usageInputTokens > 0 ? usageInputTokens : null);
+  const fallbackConsumedTokens = resolveRoundConsumedTokens(stats) ?? resolveRoundConsumedTokens(message);
   const explicitConsumedTokens = aggregatedTurnConsumedTokens ?? directConsumedTokens;
-  if (explicitConsumedTokens !== null && explicitConsumedTokens > 1) {
+  if (isMeaningfulConsumedTokens(explicitConsumedTokens)) {
     return explicitConsumedTokens;
   }
-  if (fallbackConsumedTokens !== null) {
+  if (isMeaningfulConsumedTokens(fallbackConsumedTokens)) {
     return fallbackConsumedTokens;
   }
-  return explicitConsumedTokens;
+  return null;
 };
 
 export const sumConversationConsumedTokens = (messages: MessageLike[] | null | undefined): number => {

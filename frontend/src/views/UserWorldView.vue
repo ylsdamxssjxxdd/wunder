@@ -498,6 +498,13 @@ import {
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
+import {
+  clearWorkspaceLoadingLabelTimer,
+  getFilenameFromHeaders,
+  normalizeWorkspaceImageBlob,
+  saveObjectUrlAsFile,
+  scheduleWorkspaceLoadingLabel
+} from '@/utils/workspaceResourceCards';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import {
   extractWorkspaceRefreshPaths,
@@ -1567,7 +1574,6 @@ type UserWorldResourceCacheEntry = {
   promise?: Promise<UserWorldResourceCacheEntry>;
 };
 
-const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const userWorldResourceCache = new Map<string, UserWorldResourceCacheEntry>();
 let userWorldResourceHydrationFrame: number | null = null;
 let userWorldResourceHydrationPending = false;
@@ -1577,46 +1583,6 @@ let userWorldResourceHydrationTargetPaths = new Set<string>();
 const userWorldRefreshVersionByScope = new Map<string, number>();
 const MAX_USER_WORLD_REFRESH_SCOPE_CACHE = 96;
 let stopUserWorldWorkspaceRefresh: (() => void) | null = null;
-
-const getFilenameFromHeaders = (headers: Record<string, string>, fallback: string) => {
-  const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
-  if (!disposition) return fallback;
-  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-  if (utf8Match) {
-    return decodeURIComponent(utf8Match[1]);
-  }
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  return match ? match[1] : fallback;
-};
-
-const getFileExtension = (filename: string) => {
-  const base = String(filename || '').split('?')[0].split('#')[0];
-  const parts = base.split('.');
-  if (parts.length < 2) return '';
-  return parts.pop()?.toLowerCase() || '';
-};
-
-const normalizeWorkspaceImageBlob = (blob: Blob, filename: string, contentType: string) => {
-  if (!(blob instanceof Blob)) return blob;
-  const extension = getFileExtension(filename);
-  if (extension !== 'svg') return blob;
-  const expectedType = 'image/svg+xml';
-  if (blob.type === expectedType) return blob;
-  const headerType = String(contentType || '').toLowerCase();
-  if (headerType.includes('image/svg')) {
-    return blob.slice(0, blob.size, expectedType);
-  }
-  return blob.slice(0, blob.size, expectedType);
-};
-
-const saveBlobUrl = (url: string, filename: string) => {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || 'download';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
 
 const ensureFileCardStatus = (card: HTMLElement | null) => {
   if (!card) return null;
@@ -1687,30 +1653,6 @@ const buildUserWorldPersistentCacheKey = (resource: {
     requestContainerId: resource.containerId,
     publicPath: resource.publicPath
   });
-};
-
-const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
-  const raw = status?.dataset?.loadingLabel;
-  const normalized = String(raw || '').trim();
-  return normalized || t('chat.resourceImageLoading');
-};
-
-const scheduleWorkspaceLoadingLabel = (
-  card: HTMLElement,
-  status: HTMLElement | null
-): number | null => {
-  if (!status || typeof window === 'undefined') return null;
-  status.textContent = '';
-  const label = resolveWorkspaceLoadingLabel(status);
-  return window.setTimeout(() => {
-    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
-    status.textContent = label;
-  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
-};
-
-const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
-  if (timerId === null || typeof window === 'undefined') return;
-  window.clearTimeout(timerId);
 };
 
 const fetchUserWorldResource = async (resource: {
@@ -1881,7 +1823,11 @@ const hydrateUserWorldResourceCard = async (card: HTMLElement) => {
   card.dataset.workspaceState = 'loading';
   card.classList.remove('is-error');
   card.classList.remove('is-ready');
-  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status as HTMLElement | null);
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(
+    card,
+    status as HTMLElement | null,
+    t('chat.resourceImageLoading')
+  );
   try {
     const entry = await fetchUserWorldResource(resource);
     preview.src = entry.objectUrl;
@@ -2167,7 +2113,7 @@ const downloadUserWorldResource = async (
   if (!resource) return;
   try {
     const entry = await fetchUserWorldResource(resource);
-    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+    saveObjectUrlAsFile(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
     const missing = isUserWorldResourceMissing(error);
     if (card && (card.dataset?.workspaceKind || 'file') !== 'image') {

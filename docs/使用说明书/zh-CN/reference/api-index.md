@@ -1,101 +1,186 @@
 ---
-title: API 索引
-summary: 这是 Wunder 当前最常用接口族的索引页，用来快速定位入口而不是替代完整 API 文档。
-read_when:
-  - 你在找某个接口大概属于哪一类
-  - 你不想直接翻完整 `docs/API文档.md`
-source_docs:
-  - docs/API文档.md
-  - docs/系统介绍.md
+title: 功能与能力速查
+summary: Wunder 能做什么，每个能力在哪使用。按功能类别组织，方便快速定位。
 ---
 
-# API 索引
+# 功能与能力速查
 
-这不是完整 API 手册，而是 Wunder 当前主要接口族的索引页。
+这页帮你快速了解 Wunder 能做什么，以及每个能力在界面中的位置。
 
-## 核心执行入口
+## 智能对话
 
-- `POST /wunder`
-- `POST /wunder/system_prompt`
-- `GET /wunder/tools`
+**核心能力：与 AI 智能体进行自然语言对话**
 
-适合先看：
+- 位置：桌面应用或网页端 → 左栏"聊天"
+- 能做什么：
+  - 提问并获得智能回答
+  - 上传文件让智能体分析
+  - 让智能体执行各种任务（写代码、处理文件、搜索信息等）
+  - 查看对话历史和继续之前的会话
 
-- [wunder API](/docs/zh-CN/integration/wunder-api/)
+**相关参考**
 
-## 聊天会话域
+- [会话状态说明](/docs/zh-CN/reference/stream-events/)
+- [提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
 
-- `GET/POST /wunder/chat/sessions`
-- `POST /wunder/chat/attachments/convert`
-- `POST /wunder/chat/attachments/media/process`
-- `POST /wunder/chat/sessions/{session_id}/messages`
-- `GET /wunder/chat/sessions/{session_id}/resume`
-- `POST /wunder/chat/sessions/{session_id}/cancel`
-- `GET /wunder/chat/ws`
+## 文件管理
 
-适合先看：
+**核心能力：上传、下载、组织你的工作文件**
 
-- [聊天会话](/docs/zh-CN/integration/chat-sessions/)
-- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/)
-- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
+- 位置：桌面应用或网页端 → 左栏"文件"或"工作区"
+- 能做什么：
+  - 上传文档、图片、音频等文件供智能体使用
+  - 下载智能体生成的文件
+  - 浏览和管理个人文件目录
+  - 查看智能体工作过程中产生的文件
 
-## A2A
+**相关参考**
 
-- `POST /a2a`
-- `GET /.well-known/agent-card.json`
-- `GET /a2a/agentCard`
-- `GET /a2a/extendedAgentCard`
+- [工作区管理参考](/docs/zh-CN/reference/workspace-routing/)
 
-适合先看：
+## 蜂群协作
 
-- [A2A 接口](/docs/zh-CN/integration/a2a/)
+**核心能力：多个智能体协同完成复杂任务**
 
-## MCP
+- 位置：桌面应用或网页端 → 左栏"蜂群"
+- 能做什么：
+  - 查看正在运行的蜂群任务
+  - 查看每个工蜂的工作进度和工具轨迹
+  - 管理历史蜂群任务记录
 
-- `POST /wunder/mcp`
-- `GET/POST /wunder/admin/mcp`
-- `POST /wunder/admin/mcp/tools`
-- `POST /wunder/admin/mcp/tools/call`
+**特点说明**
 
-适合先看：
+蜂群协作适合需要拆解成多个子任务的复杂工作。母蜂负责拆解任务、分派工蜂、汇总结果；工蜂各司其职，完成后将结果汇报给母蜂。
 
-- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)
+**相关参考**
 
-## 用户世界
+- [蜂群协作概念](/docs/zh-CN/concepts/swarm/)
 
-- `GET /wunder/user_world/contacts`
-- `GET /wunder/user_world/groups`
-- `GET /wunder/user_world/conversations`
-- `GET /wunder/user_world/ws`
+## 智能体管理
 
-## 管理接口
+**核心能力：配置和定制你的专属智能体**
 
-大部分管理接口都在：
+- 位置：桌面应用或网页端 → 左栏"智能体"或聊天页右上角
+- 能做什么：
+  - 创建自定义智能体
+  - 给智能体选择不同的模型
+  - 配置智能体可用的工具
+  - 设置智能体的回答风格（提示词模板）
+  - 管理智能体的长期记忆
 
-- `/wunder/admin/*`
+**相关参考**
 
-它们覆盖：
+- [提示词与个性化](/docs/zh-CN/reference/prompt-templates/)
+- [工具体系概念](/docs/zh-CN/concepts/tools/)
 
-- 模型
-- 工具
-- 用户与组织
-- 预设智能体
-- benchmark
-- 渠道治理
+## 工具与技能
 
-## 什么时候回到完整 API 文档
+**核心能力：扩展智能体能做的事情**
 
-当你需要这些信息时，就该回完整文档了：
+- 位置：桌面应用或网页端 → 左栏"工具"
+- 能做什么：
+  - 查看可用工具列表
+  - 配置技能（预设的能力包）
+  - 添加知识库（让智能体参考你的专属资料）
 
-- 字段级请求体
-- 响应结构
-- 错误码
-- 鉴权细节
-- 历史兼容字段
+**工具类型**
+
+内置工具包括：
+
+- 文件操作：读取、写入、搜索文件
+- 网络操作：搜索、抓取网页内容
+- 代码操作：执行命令、编写代码
+- 系统操作：截图、获取系统状态
+- 更多能力通过 MCP 扩展
+
+**相关参考**
+
+- [工具体系概念](/docs/zh-CN/concepts/tools/)
+- [提示词与技能概念](/docs/zh-CN/concepts/prompt-and-skills/)
+
+## 渠道接入
+
+**核心能力：把 Wunder 连接到飞书、微信等外部平台**
+
+- 位置：管理端 → "渠道管理"
+- 能做什么：
+  - 绑定飞书/企业微信/微信/QQ 等账号
+  - 让外部平台的用户也能使用智能体
+  - 查看渠道运行状态和消息日志
+  - 排查渠道相关问题
+
+**适用场景**
+
+当你想让组织成员通过飞书、微信等熟悉的平台与智能体对话时，使用渠道接入功能。
+
+**相关参考**
+
+- [渠道管理指南](/docs/zh-CN/ops/channel-runtime/)
+- [管理端面板指南](/docs/zh-CN/reference/admin-panels/)
+
+## 定时任务
+
+**核心能力：设置智能体在指定时间自动执行任务**
+
+- 位置：桌面应用或网页端 → 左栏"定时任务"
+- 能做什么：
+  - 创建定时执行的任务
+  - 查看任务执行历史
+  - 管理、暂停、删除定时任务
+
+**适用场景**
+
+适合周期性的工作，比如每天定时汇总报告、定时检查系统状态等。
+
+## 系统设置
+
+**核心能力：配置系统运行参数**
+
+- 位置：桌面应用或网页端 → 左栏"设置"
+- 能做什么：
+  - 修改系统语言
+  - 配置连接的服务地址
+  - 管理个人账户信息
+  - 查看使用统计和 Token 余额
+
+**相关参考**
+
+- [系统设置参考](/docs/zh-CN/reference/config/)
+
+## 管理端功能（管理员专用）
+
+**核心能力：管理整个系统**
+
+- 位置：浏览器访问管理端地址
+- 主要面板：
+  - 系统设置：全局配置
+  - 用户管理：用户账户、Token 账户
+  - 单位管理：组织架构
+  - 模型配置：可选用的 AI 模型
+  - 工具管理：可用工具列表
+  - 渠道监控：外部渠道状态
+  - 性能监控：系统运行状态
+
+**相关参考**
+
+- [管理端面板指南](/docs/zh-CN/reference/admin-panels/)
+- [系统设置参考](/docs/zh-CN/reference/config/)
+
+## 按需求快速定位
+
+| 我想... | 去哪里 |
+|---------|--------|
+| 开始一个对话 | 左栏"聊天" → 选择智能体 → 开始对话 |
+| 上传文件让智能体分析 | 对话框点击上传按钮或直接拖拽文件 |
+| 查看智能体生成的文件 | 左栏"文件"或"工作区" |
+| 定制智能体的风格 | 左栏"智能体" → 设置 → 提示词模板 |
+| 查看蜂群任务进度 | 左栏"蜂群" |
+| 创建定时任务 | 左栏"定时任务" → 创建任务 |
+| 管理用户（管理员） | 管理端 → 用户管理 |
+| 配置渠道（管理员） | 管理端 → 渠道管理 |
 
 ## 延伸阅读
 
-- [wunder API](/docs/zh-CN/integration/wunder-api/)
-- [配置说明](/docs/zh-CN/reference/config/)
+- [核心概念概览](/docs/zh-CN/concepts/)
+- [快速入门](/docs/zh-CN/start/quickstart/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)

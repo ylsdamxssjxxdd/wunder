@@ -1754,6 +1754,48 @@
   transform: scale(1.06);
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn {
+  border-color: rgba(132, 173, 255, 0.2);
+  background: rgba(17, 40, 69, 0.78);
+  color: #9eb6d5;
+  box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn::before {
+  content: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn > * {
+  filter: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.34);
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  color: #e6f2ff;
+  box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn.danger {
+  border-color: rgba(132, 173, 255, 0.2);
+  color: #9eb6d5;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn.danger:hover:not(:disabled),
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn.danger:focus-visible {
+  border-color: rgba(248, 113, 113, 0.38);
+  background: rgba(248, 113, 113, 0.12);
+  color: #ffd6d6;
+  box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn:hover > *,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-icon-btn:focus-visible > * {
+  transform: none;
+  filter: none;
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-plus-btn.active,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-avatar-icon-btn.active,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-tool-btn.active,
@@ -2622,7 +2664,8 @@
   --portal-primary: var(--ui-accent);
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-view .chat-shell {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-view .chat-shell,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .beeroom-canvas-workspace-shell.chat-shell {
   --chat-bg: var(--tech-blue-bg);
   --chat-panel: rgba(14, 25, 43, 0.9);
   --chat-card: rgba(19, 36, 58, 0.9);

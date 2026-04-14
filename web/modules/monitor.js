@@ -1449,10 +1449,46 @@ const parseMonitorTimestamp = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const resolveMonitorDetailScopedEvents = (session, events) => {
+  const sourceEvents = Array.isArray(events) ? events.filter(Boolean) : [];
+  if (!sourceEvents.length) {
+    return [];
+  }
+  const sessionTraceId = String(session?.trace_id || "").trim();
+  const traceMatched = sessionTraceId
+    ? sourceEvents.filter((event) => {
+        const eventTraceId = String(
+          event?.trace_id ?? event?.data?.trace_id ?? event?.data?.data?.trace_id ?? ""
+        ).trim();
+        return eventTraceId && eventTraceId === sessionTraceId;
+      })
+    : [];
+  const traceEvents = traceMatched.length ? traceMatched : sourceEvents;
+  const declaredRounds = collectMonitorDetailRoundOptions(session, traceEvents);
+  const latestRound = declaredRounds.length ? declaredRounds[declaredRounds.length - 1] : 0;
+  const scopeEvents =
+    latestRound > 0
+      ? traceEvents.filter((event) => resolveMonitorEventRound(event) === latestRound)
+      : traceEvents;
+  const candidateEvents = scopeEvents.length ? scopeEvents : traceEvents;
+  const terminalIndex = candidateEvents.findIndex((event) => {
+    const eventType = String(event?.type || "").trim().toLowerCase();
+    return (
+      eventType === "turn_terminal" ||
+      eventType === "final" ||
+      eventType === "finished"
+    );
+  });
+  if (terminalIndex >= 0) {
+    return candidateEvents.slice(0, terminalIndex + 1);
+  }
+  return candidateEvents;
+};
+
 const resolveMonitorDetailTimeRange = (session, events) => {
   let startMs = null;
   let endMs = null;
-  (Array.isArray(events) ? events : []).forEach((event) => {
+  resolveMonitorDetailScopedEvents(session, events).forEach((event) => {
     const ts = parseMonitorTimestamp(event?.timestamp);
     if (!Number.isFinite(ts)) {
       return;
@@ -1477,12 +1513,15 @@ const resolveMonitorDetailTimeRange = (session, events) => {
 };
 
 const resolveMonitorDetailElapsedSeconds = (session, events) => {
+  const fallback = parseMetricNumber(session?.elapsed_s);
+  if (Number.isFinite(fallback) && fallback >= 0) {
+    return fallback;
+  }
   const { startMs, endMs } = resolveMonitorDetailTimeRange(session, events);
   if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
     return Math.max(0, (endMs - startMs) / 1000);
   }
-  const fallback = parseMetricNumber(session?.elapsed_s);
-  return Number.isFinite(fallback) ? fallback : null;
+  return null;
 };
 
 const normalizeMonitorDetailCount = (value) => {

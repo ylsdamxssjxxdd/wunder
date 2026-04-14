@@ -612,23 +612,23 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "description": t("tool.spec.agent_swarm.args.action"),
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
-                    "agent_id": {"type": "string", "description": "目标智能体 ID。"},
-                    "agent_name": {"type": "string", "description": "目标智能体名称。"},
+                    "agent_id": {"type": "string", "description": "目标智能体 ID。仅在名称不可用、存在重名歧义或用户明确指定时使用，避免手抄长 ID。"},
+                    "agent_name": {"type": "string", "description": "目标智能体名称。派发工蜂时优先使用名称。"},
                     "session_id": {"type": "string", "description": "目标会话 ID。"},
                     "message": {"type": "string", "description": "消息内容。", "minLength": 1},
-                    "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agent_id/agent_name 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
+                    "task": {"type": "string", "description": "任务描述。spawn 仅在已提供 agent_name/agent_id 时有效；临时子会话请用 subagent_control.spawn。", "minLength": 1},
                     "limit": {"type": "integer", "description": "Maximum number of items to return for list/status.", "minimum": 1},
                     "wait_seconds": {"type": "number", "description": "Optional wait duration in seconds for wait/batch_send."},
                     "poll_interval_seconds": {"type": "number", "description": "Polling interval in seconds while waiting."},
                     "tasks": {
                         "type": "array",
-                        "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agent_id/agent_name/session_id 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
+                        "description": "batch_send 任务列表。每个 task 都必须指定一个目标(agent_name/agent_id/session_id 之一)；message 建议每个 task 都显式填写，不要传空对象 {}。",
                         "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "agent_id": {"type": "string", "description": "目标智能体 ID。"},
-                                "agent_name": {"type": "string", "description": "目标智能体名称。"},
+                                "agent_id": {"type": "string", "description": "目标智能体 ID。仅在名称不可用、存在重名歧义或用户明确指定时使用，避免手抄长 ID。"},
+                                "agent_name": {"type": "string", "description": "目标智能体名称。派发工蜂时优先使用名称。"},
                                 "session_id": {"type": "string", "description": "目标会话 ID。"},
                                 "message": {"type": "string", "description": "任务消息。", "minLength": 1}
                             },
@@ -1585,10 +1585,17 @@ mod tests {
             .find(|spec| spec.name == "智能体蜂群")
             .expect("agent_swarm spec");
         assert!(spec.description.contains("子智能体控制"));
+        assert!(spec.description.contains("优先使用 agent_name"));
         assert!(spec.description.contains("agent_id"));
         assert!(spec
             .description
             .contains("send/batch_send -> wait/status -> history"));
+        assert!(spec.input_schema["properties"]["agent_id"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("避免手抄长 ID")));
+        assert!(spec.input_schema["properties"]["agent_name"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("优先使用名称")));
         assert!(spec.input_schema["properties"]["agent_id"].is_object());
         assert!(spec.input_schema["properties"]["agent_name"].is_object());
         assert!(spec.input_schema["properties"]["session_id"].is_object());

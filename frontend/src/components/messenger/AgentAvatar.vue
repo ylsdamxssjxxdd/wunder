@@ -32,12 +32,14 @@ const props = withDefaults(
     state?: AgentRuntimeState;
     title?: string;
     icon?: unknown;
+    imageUrl?: string;
     name?: string;
   }>(),
   {
     size: 'md',
     state: 'idle',
     title: '',
+    imageUrl: '',
     name: ''
   }
 );
@@ -46,7 +48,9 @@ const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
 const isRunning = computed(() => props.state === 'running');
 const avatarConfig = computed(() => parseAgentAvatarIconConfig(props.icon));
-const avatarImageUrl = computed(() => resolveAgentAvatarImageByConfig(avatarConfig.value));
+const avatarImageUrl = computed(
+  () => String(props.imageUrl || '').trim() || resolveAgentAvatarImageByConfig(avatarConfig.value)
+);
 const avatarInitial = computed(() => resolveAgentAvatarInitial(props.name || props.title));
 const avatarFaceStyle = computed(() => ({
   background: avatarImageUrl.value ? 'transparent' : avatarConfig.value.color

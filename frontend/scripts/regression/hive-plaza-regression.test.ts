@@ -23,6 +23,7 @@ const buildPlazaItem = (partial: Partial<PlazaItem> & { item_id: string; kind: P
   owner_username: String(partial.owner_username || 'User 1'),
   source_key: String(partial.source_key || partial.item_id),
   artifact_size_bytes: Number(partial.artifact_size_bytes || 0),
+  freshness_status: partial.freshness_status,
   tags: partial.tags || [],
   mine: partial.mine
 });
@@ -103,4 +104,22 @@ test('hive plaza pagination clamps page bounds and slices stable card windows', 
     paginatePlazaItems(items, 2, 4).map((item) => item.item_id),
     ['worker-5', 'worker-6', 'worker-7', 'worker-8']
   );
+});
+
+test('hive plaza item fixtures preserve freshness status for reminder rendering', () => {
+  const outdated = buildPlazaItem({
+    item_id: 'worker-outdated',
+    kind: 'worker_card',
+    title: 'Outdated Worker',
+    freshness_status: 'outdated'
+  });
+  const missing = buildPlazaItem({
+    item_id: 'skill-missing',
+    kind: 'skill_pack',
+    title: 'Missing Skill',
+    freshness_status: 'source_missing'
+  });
+
+  assert.equal(outdated.freshness_status, 'outdated');
+  assert.equal(missing.freshness_status, 'source_missing');
 });

@@ -2300,8 +2300,8 @@
     "zh-CN": "操作类型：list/history/send/spawn/batch_spawn/status/wait/interrupt/close/resume。典型流程是先用 spawn(task=...) 发起第一轮，再仅在需要继续追问时对现有子会话调用 send(...)。"
   },
   "tool.spec.agent_swarm.description": {
-    "en-US": "Swarm collaboration tool, only manages already existing other agents. Common flow: send/batch_send -> wait/status -> history. Prefer canonical fields agent_id, agent_name, session_id, run_ids; use subagent_control for temporary child sessions.",
-    "zh-CN": "蜂群协作工具，只管理已存在的其他智能体。常用流程：send/batch_send -> wait/status -> history。优先使用 canonical 字段 agent_id、agent_name、session_id、run_ids；临时子会话请改用子智能体控制。"
+    "en-US": "Swarm collaboration tool, only manages already existing other agents. Common flow: send/batch_send -> wait/status -> history. Prefer agent_name for dispatching workers; use agent_id only when the name is unavailable, ambiguous, or explicitly provided by the user. Use session_id and run_ids for existing sessions/runs; use subagent_control for temporary child sessions.",
+    "zh-CN": "蜂群协作工具，只管理已存在的其他智能体。常用流程：send/batch_send -> wait/status -> history。派发工蜂时优先使用 agent_name；仅在名称不可用、存在重名歧义或用户明确指定时再使用 agent_id。session_id、run_ids 用于跟踪既有会话和运行；临时子会话请改用子智能体控制。"
   },
   "tool.spec.agent_swarm.args.action": {
     "en-US": "Action. Use send/batch_send to dispatch work; use wait/status/history to inspect results; use spawn only to branch into an existing agent.",

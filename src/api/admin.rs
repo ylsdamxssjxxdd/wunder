@@ -1681,16 +1681,15 @@ async fn admin_tools_update(
     Json(payload): Json<ToolsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let previous = state.config_store.get().await;
+    let previous_enabled = admin_enabled_builtin_names(&previous);
     let updated = state
         .config_store
         .update(|config| {
-            config.tools.builtin.enabled = normalize_builtin_enabled(&payload.enabled);
+            apply_builtin_tools_update(config, &payload.enabled);
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let previous_enabled: HashSet<String> =
-        previous.tools.builtin.enabled.iter().cloned().collect();
-    let updated_enabled: HashSet<String> = updated.tools.builtin.enabled.iter().cloned().collect();
+    let updated_enabled = admin_enabled_builtin_names(&updated);
     let mut enabled_added: Vec<String> = updated_enabled
         .difference(&previous_enabled)
         .cloned()
@@ -6784,14 +6783,37 @@ fn normalize_builtin_enabled(enabled: &[String]) -> Vec<String> {
     output
 }
 
-fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
-    let enabled_set: HashSet<String> = config
+fn admin_browser_tool_name() -> String {
+    resolve_tool_name("browser")
+}
+
+fn admin_enabled_builtin_names(config: &Config) -> HashSet<String> {
+    let browser_tool_name = admin_browser_tool_name();
+    let mut enabled: HashSet<String> = config
         .tools
         .builtin
         .enabled
         .iter()
         .map(|name| resolve_tool_name(name))
+        .filter(|name| !name.is_empty() && name != &browser_tool_name)
         .collect();
+    if config.tools.browser.enabled {
+        enabled.insert(browser_tool_name);
+    }
+    enabled
+}
+
+fn apply_builtin_tools_update(config: &mut Config, enabled: &[String]) {
+    let browser_tool_name = admin_browser_tool_name();
+    let mut normalized = normalize_builtin_enabled(enabled);
+    let browser_enabled = normalized.iter().any(|name| name == &browser_tool_name);
+    normalized.retain(|name| name != &browser_tool_name);
+    config.tools.browser.enabled = browser_enabled;
+    config.tools.builtin.enabled = normalized;
+}
+
+fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
+    let enabled_set = admin_enabled_builtin_names(config);
     let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
     for (alias, canonical) in builtin_aliases() {
         canonical_aliases.entry(canonical).or_default().push(alias);
@@ -6826,6 +6848,61 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
         })
         .collect::<Vec<_>>();
     (enabled, tools)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{admin_browser_tool_name, apply_builtin_tools_update, build_builtin_tools_payload};
+    use crate::config::Config;
+    use crate::tools::resolve_tool_name;
+    use serde_json::Value;
+
+    fn tool_enabled(tools: &[Value], canonical_name: &str) -> bool {
+        tools.iter().any(|tool| {
+            let Some(name) = tool.get("name").and_then(Value::as_str) else {
+                return false;
+            };
+            resolve_tool_name(name) == canonical_name
+                && tool.get("enabled").and_then(Value::as_bool) == Some(true)
+        })
+    }
+
+    #[test]
+    fn apply_builtin_tools_update_moves_browser_toggle_to_dedicated_flag() {
+        let mut config = Config::default();
+        let browser_tool = admin_browser_tool_name();
+        let read_tool = resolve_tool_name("read_file");
+
+        apply_builtin_tools_update(&mut config, &[browser_tool.clone(), read_tool.clone()]);
+        assert!(config.tools.browser.enabled);
+        assert_eq!(config.tools.builtin.enabled, vec![read_tool.clone()]);
+
+        apply_builtin_tools_update(&mut config, std::slice::from_ref(&read_tool));
+        assert!(!config.tools.browser.enabled);
+        assert_eq!(config.tools.builtin.enabled, vec![read_tool]);
+    }
+
+    #[test]
+    fn build_builtin_tools_payload_uses_browser_visibility_flag() {
+        let mut config = Config::default();
+        let browser_tool = admin_browser_tool_name();
+
+        config.tools.builtin.enabled = vec![browser_tool.clone()];
+        config.tools.browser.enabled = false;
+        let (enabled, tools) = build_builtin_tools_payload(&config);
+        assert!(!enabled
+            .iter()
+            .any(|name| resolve_tool_name(name) == browser_tool));
+        assert!(!tool_enabled(&tools, &browser_tool));
+
+        config.tools.builtin.enabled.clear();
+        config.tools.browser.enabled = true;
+        let (enabled, tools) = build_builtin_tools_payload(&config);
+        assert!(enabled
+            .iter()
+            .any(|name| resolve_tool_name(name) == browser_tool));
+        assert!(tool_enabled(&tools, &browser_tool));
+    }
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

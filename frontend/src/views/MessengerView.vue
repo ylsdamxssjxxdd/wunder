@@ -172,20 +172,19 @@
           :is-contact-online="isContactOnline"
           :format-contact-presence="formatContactPresence"
           :resolve-unread="resolveUnread"
-          :filtered-beeroom-groups="filteredBeeroomGroups"
+          :filtered-beeroom-groups="filteredBeeroomGroupsOrdered"
           :selected-beeroom-group-id="beeroomStore.activeGroupId"
           :select-beeroom-group="selectBeeroomGroupFromMiddlePane"
           :delete-beeroom-group="handleDeleteBeeroomGroup"
           :selected-plaza-browse-kind="plazaBrowseKind"
           :select-plaza-browse-kind="selectPlazaBrowseKindFromMiddlePane"
-          :plaza-browse-page-counts="plazaBrowsePageCounts"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroupFromMiddlePane"
           :agent-hive-total-count="agentHiveTotalCount"
           :agent-hive-tree-rows="agentHiveTreeRows"
-          :filtered-owned-agents="filteredOwnedAgents"
-          :filtered-shared-agents="filteredSharedAgents"
+          :filtered-owned-agents="filteredOwnedAgentsOrdered"
+          :filtered-shared-agents="filteredSharedAgentsOrdered"
           :show-default-agent-entry="showDefaultAgentEntry"
           :selected-agent-id="selectedAgentId"
           :default-agent-key="DEFAULT_AGENT_KEY"
@@ -208,6 +207,9 @@
           :current-username="currentUsername"
           :settings-logout-disabled="settingsLogoutDisabled"
           :handle-settings-logout="handleSettingsLogout"
+          :move-message-item="moveMixedConversationItem"
+          :move-agent-item="moveAgentListItem"
+          :move-swarm-item="moveBeeroomGroupItem"
           @activate-settings-panel="activateSettingsPanel"
       />
     </section>
@@ -1635,6 +1637,7 @@ import { resolveAgentSelectionAfterRemoval } from '@/views/messenger/agentSelect
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessageViewportRuntime, type MessageViewportRuntime } from '@/views/messenger/messageViewportRuntime';
 import { useStableMixedConversationOrder } from '@/views/messenger/mixedConversationOrder';
+import { usePersistentStableListOrder } from '@/views/messenger/stableListOrder';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
@@ -1753,6 +1756,14 @@ import {
   isImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
+import {
+  clearWorkspaceLoadingLabelTimer,
+  getFilenameFromHeaders,
+  normalizeWorkspaceImageBlob,
+  resetWorkspaceImageCardState,
+  saveObjectUrlAsFile,
+  scheduleWorkspaceLoadingLabel
+} from '@/utils/workspaceResourceCards';
 import {
   extractWorkspaceRefreshPaths,
   isWorkspacePathAffected
@@ -2272,7 +2283,6 @@ type AttachmentResourceState = {
   error?: boolean;
   loading?: boolean;
 };
-const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const KEYWORD_INPUT_DEBOUNCE_MS = 120;
 const RIGHT_DOCK_SKILL_AUTO_RETRY_DELAY_MS = 1200;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
@@ -3970,6 +3980,24 @@ const filteredOwnedAgents = computed(() => {
   );
 });
 
+const primaryAgentList = computed(() => {
+  const items: Array<Record<string, unknown>> = [];
+  if (showDefaultAgentEntry.value) {
+    items.push({
+      id: DEFAULT_AGENT_KEY,
+      name: t('messenger.defaultAgent'),
+      description: t('messenger.defaultAgentDesc'),
+      icon: (defaultAgentProfile.value as Record<string, unknown> | null)?.icon
+    });
+  }
+  return [...items, ...filteredOwnedAgents.value];
+});
+
+const orderedOwnedAgentsState = usePersistentStableListOrder(primaryAgentList, {
+  getKey: (agent) => normalizeAgentId(agent?.id),
+  storageKey: computed(() => `messenger:agents:owned:${resolveCurrentUserScope()}`)
+});
+
 watch(
   () => agentSettingMode.value,
   (mode) => {
@@ -3989,18 +4017,26 @@ const filteredSharedAgents = computed(() => {
   );
 });
 
+const orderedSharedAgentsState = usePersistentStableListOrder(filteredSharedAgents, {
+  getKey: (agent) => normalizeAgentId(agent?.id),
+  storageKey: computed(() => `messenger:agents:shared:${resolveCurrentUserScope()}`)
+});
+
+const filteredOwnedAgentsOrdered = computed(() =>
+  orderedOwnedAgentsState.orderedItems.value.filter((agent) => normalizeAgentId(agent?.id) !== DEFAULT_AGENT_KEY)
+);
+const orderedPrimaryAgents = computed(() => orderedOwnedAgentsState.orderedItems.value);
+const filteredSharedAgentsOrdered = computed(() => orderedSharedAgentsState.orderedItems.value);
+
 const visibleAgentIdsForSelection = computed(() => {
   const ids: string[] = [];
-  if (showDefaultAgentEntry.value) {
-    ids.push(DEFAULT_AGENT_KEY);
-  }
-  filteredOwnedAgents.value.forEach((agent) => {
+  orderedPrimaryAgents.value.forEach((agent) => {
     const agentId = normalizeAgentId(agent?.id);
     if (agentId && !ids.includes(agentId)) {
       ids.push(agentId);
     }
   });
-  filteredSharedAgents.value.forEach((agent) => {
+  filteredSharedAgentsOrdered.value.forEach((agent) => {
     const agentId = normalizeAgentId(agent?.id);
     if (agentId && !ids.includes(agentId)) {
       ids.push(agentId);
@@ -4063,20 +4099,12 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     });
   };
 
-  if (showDefaultAgentEntry.value) {
-    pushCard(
-      {
-        id: DEFAULT_AGENT_KEY,
-        name: t('messenger.defaultAgent'),
-        description: t('messenger.defaultAgentDesc'),
-        icon: (defaultAgentProfile.value as Record<string, unknown> | null)?.icon,
-        sandbox_container_id: 1
-      },
-      { isDefault: true }
-    );
-  }
-  filteredOwnedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>));
-  filteredSharedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>, { shared: true }));
+  orderedPrimaryAgents.value.forEach((item) =>
+    pushCard(item as Record<string, unknown>, {
+      isDefault: normalizeAgentId((item as Record<string, unknown>)?.id) === DEFAULT_AGENT_KEY
+    })
+  );
+  filteredSharedAgentsOrdered.value.forEach((item) => pushCard(item as Record<string, unknown>, { shared: true }));
   return cards;
 });
 
@@ -4309,12 +4337,6 @@ const filteredPlazaItems = computed(() =>
   filterPlazaItemsByKindAndKeyword(plazaStore.items, plazaBrowseKind.value, '')
 );
 
-const plazaBrowsePageCounts = computed<Record<PlazaBrowseKind, number>>(() => ({
-  hive_pack: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'hive_pack', '').length,
-  worker_card: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'worker_card', '').length,
-  skill_pack: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'skill_pack', '').length
-}));
-
 const filteredBeeroomGroups = computed(() => {
   const text = keyword.value.toLowerCase();
   return (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).filter((item) => {
@@ -4324,6 +4346,13 @@ const filteredBeeroomGroups = computed(() => {
     return !text || name.includes(text) || groupId.includes(text) || description.includes(text);
   });
 });
+
+const orderedBeeroomGroupsState = usePersistentStableListOrder(filteredBeeroomGroups, {
+  getKey: (group) => String(group?.group_id || group?.hive_id || '').trim(),
+  storageKey: computed(() => `messenger:swarms:${resolveCurrentUserScope()}`)
+});
+
+const filteredBeeroomGroupsOrdered = computed(() => orderedBeeroomGroupsState.orderedItems.value);
 
 const beeroomGroupOptions = computed(() =>
   (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((item) => {
@@ -4533,15 +4562,90 @@ const sortedMixedConversations = computed<MixedConversation[]>(() => {
 
 const mixedConversations = useStableMixedConversationOrder(sortedMixedConversations);
 
+const orderedMixedConversationsState = usePersistentStableListOrder(mixedConversations, {
+  getKey: (item) => String(item?.key || '').trim(),
+  storageKey: computed(() => `messenger:messages:${resolveCurrentUserScope()}`)
+});
+
 const filteredMixedConversations = computed(() => {
   const text = keyword.value.toLowerCase();
-  return mixedConversations.value.filter((item) => {
+  return orderedMixedConversationsState.orderedItems.value.filter((item) => {
     if (!text) return true;
     return item.title.toLowerCase().includes(text) || item.preview.toLowerCase().includes(text);
   });
 });
 
-const hasAnyMixedConversations = computed(() => mixedConversations.value.length > 0);
+const hasAnyMixedConversations = computed(() => orderedMixedConversationsState.orderedItems.value.length > 0);
+
+const moveMixedConversationItem = (
+  draggedKey: string,
+  targetKey: string,
+  position: 'before' | 'after',
+  visibleKeys: string[]
+) => {
+  orderedMixedConversationsState.moveItem(draggedKey, targetKey, position, visibleKeys);
+};
+
+const moveAgentListItem = (
+  draggedKey: string,
+  targetKey: string,
+  position: 'before' | 'after',
+  visibleKeys: string[]
+) => {
+  const normalizedDraggedKey = normalizeAgentId(draggedKey);
+  const normalizedTargetKey = normalizeAgentId(targetKey);
+  if (!normalizedDraggedKey || !normalizedTargetKey) {
+    return;
+  }
+  const normalizedVisibleKeys = visibleKeys.map((key) => normalizeAgentId(key)).filter(Boolean);
+  const draggedIsOwned = normalizedDraggedKey === DEFAULT_AGENT_KEY || filteredOwnedAgentsOrdered.value.some(
+    (agent) => normalizeAgentId(agent?.id) === normalizedDraggedKey
+  );
+  const targetIsOwned = normalizedTargetKey === DEFAULT_AGENT_KEY || filteredOwnedAgentsOrdered.value.some(
+    (agent) => normalizeAgentId(agent?.id) === normalizedTargetKey
+  );
+  if (draggedIsOwned && targetIsOwned) {
+    const ownedVisibleKeys = normalizedVisibleKeys.filter((key) => {
+      if (key === DEFAULT_AGENT_KEY) {
+        return showDefaultAgentEntry.value;
+      }
+      return filteredOwnedAgentsOrdered.value.some((agent) => normalizeAgentId(agent?.id) === key);
+    });
+    orderedOwnedAgentsState.moveItem(
+      normalizedDraggedKey,
+      normalizedTargetKey,
+      position,
+      ownedVisibleKeys
+    );
+    return;
+  }
+  const draggedIsShared = filteredSharedAgentsOrdered.value.some(
+    (agent) => normalizeAgentId(agent?.id) === normalizedDraggedKey
+  );
+  const targetIsShared = filteredSharedAgentsOrdered.value.some(
+    (agent) => normalizeAgentId(agent?.id) === normalizedTargetKey
+  );
+  if (draggedIsShared && targetIsShared) {
+    const sharedVisibleKeys = normalizedVisibleKeys.filter((key) =>
+      filteredSharedAgentsOrdered.value.some((agent) => normalizeAgentId(agent?.id) === key)
+    );
+    orderedSharedAgentsState.moveItem(
+      normalizedDraggedKey,
+      normalizedTargetKey,
+      position,
+      sharedVisibleKeys
+    );
+  }
+};
+
+const moveBeeroomGroupItem = (
+  draggedKey: string,
+  targetKey: string,
+  position: 'before' | 'after',
+  visibleKeys: string[]
+) => {
+  orderedBeeroomGroupsState.moveItem(draggedKey, targetKey, position, visibleKeys);
+};
 
 const activeConversationTitle = computed(() => {
   const identity = activeConversation.value;
@@ -6949,73 +7053,6 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   };
 };
 
-const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
-  const raw = status?.dataset?.loadingLabel;
-  const normalized = String(raw || '').trim();
-  return normalized || t('chat.resourceImageLoading');
-};
-
-const scheduleWorkspaceLoadingLabel = (
-  card: HTMLElement,
-  status: HTMLElement | null
-): number | null => {
-  if (!status || typeof window === 'undefined') return null;
-  status.textContent = '';
-  const label = resolveWorkspaceLoadingLabel(status);
-  return window.setTimeout(() => {
-    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
-    status.textContent = label;
-  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
-};
-
-const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
-  if (timerId === null || typeof window === 'undefined') return;
-  window.clearTimeout(timerId);
-};
-
-const getFilenameFromHeaders = (headers: Record<string, unknown> | undefined, fallback: string): string => {
-  const disposition = String(headers?.['content-disposition'] || headers?.['Content-Disposition'] || '').trim();
-  if (!disposition) return fallback;
-  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  return match?.[1] || fallback;
-};
-
-const getFileExtension = (filename: string): string => {
-  const base = String(filename || '').split('?')[0].split('#')[0];
-  const parts = base.split('.');
-  if (parts.length < 2) return '';
-  return String(parts.pop() || '').toLowerCase();
-};
-
-const normalizeWorkspaceImageBlob = (blob: Blob, filename: string, contentType: string): Blob => {
-  if (!(blob instanceof Blob)) return blob;
-  if (getFileExtension(filename) !== 'svg') return blob;
-  const expectedType = 'image/svg+xml';
-  if (blob.type === expectedType) return blob;
-  const headerType = String(contentType || '').toLowerCase();
-  if (headerType.includes('image/svg')) {
-    return blob.slice(0, blob.size, expectedType);
-  }
-  return blob.slice(0, blob.size, expectedType);
-};
-
-const saveBlobUrl = (url: string, filename: string) => {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || 'download';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
 const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
   const cacheKey = resource.publicPath;
   const cached = workspaceResourceCache.get(cacheKey);
@@ -7130,7 +7167,7 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
   card.dataset.workspaceState = 'loading';
   card.classList.remove('is-error');
   card.classList.remove('is-ready');
-  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status);
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, t('chat.resourceImageLoading'));
   try {
     const entry = await fetchWorkspaceResource(resource);
     preview.src = entry.objectUrl;
@@ -7186,17 +7223,7 @@ const resetWorkspaceResourceCards = (changedPaths: string[] = []) => {
         return;
       }
     }
-    element.dataset.workspaceState = '';
-    element.classList.remove('is-error');
-    element.classList.remove('is-ready');
-    const preview = element.querySelector('.ai-resource-preview');
-    if (preview instanceof HTMLImageElement) {
-      preview.removeAttribute('src');
-    }
-    const status = element.querySelector('.ai-resource-status');
-    if (status) {
-      status.textContent = '';
-    }
+    resetWorkspaceImageCardState(element, { clearSrc: true, includeReady: true });
   });
 };
 
@@ -7302,7 +7329,7 @@ const downloadWorkspaceResource = async (publicPath: string) => {
   if (!resource || !resource.allowed) return;
   try {
     const entry = await fetchWorkspaceResource(resource);
-    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+    saveObjectUrlAsFile(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
     ElMessage.error(
       isWorkspaceResourceMissing(error) ? t('chat.resourceMissing') : t('chat.resourceDownloadFailed')
@@ -10014,14 +10041,16 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'swarms') {
-    if (!beeroomStore.activeGroupId && filteredBeeroomGroups.value.length > 0) {
+    if (!beeroomStore.activeGroupId && filteredBeeroomGroupsOrdered.value.length > 0) {
       const preferredGroup = preferredBeeroomGroupId.value;
       const matchedGroup = preferredGroup
-        ? filteredBeeroomGroups.value.find(
+        ? filteredBeeroomGroupsOrdered.value.find(
             (item) => String(item?.group_id || item?.hive_id || '').trim() === preferredGroup
           )
         : null;
-      beeroomStore.setActiveGroup(matchedGroup?.group_id || filteredBeeroomGroups.value[0]?.group_id || '');
+      beeroomStore.setActiveGroup(
+        matchedGroup?.group_id || filteredBeeroomGroupsOrdered.value[0]?.group_id || ''
+      );
     }
     return;
   }
@@ -12233,7 +12262,7 @@ watch(
 
 watch(
   () =>
-    filteredBeeroomGroups.value
+    filteredBeeroomGroupsOrdered.value
       .map((item) => String(item?.group_id || item?.hive_id || ''))
       .join('|'),
   () => {
@@ -12297,8 +12326,8 @@ watch(
     filteredContacts.value.length,
     filteredGroups.value.length,
     filteredPlazaItems.value.length,
-    filteredOwnedAgents.value.length,
-    filteredSharedAgents.value.length,
+    filteredOwnedAgentsOrdered.value.length,
+    filteredSharedAgentsOrdered.value.length,
     showDefaultAgentEntry.value ? 1 : 0
   ],
   () => {

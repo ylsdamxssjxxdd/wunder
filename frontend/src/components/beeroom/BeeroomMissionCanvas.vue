@@ -656,6 +656,8 @@ watch(
   height: clamp(460px, 68vh, 760px);
   overflow: hidden;
   border-radius: 18px;
+  background: transparent;
+  color: var(--chat-text);
 }
 
 .beeroom-canvas-workspace-dialog :deep(.el-dialog) {
@@ -674,7 +676,7 @@ watch(
 
 .beeroom-canvas-workspace-dialog :deep(.el-dialog__body) {
   padding: 14px 18px 18px;
-  background: linear-gradient(180deg, #f8fafc, #f3f6fb);
+  background: transparent;
 }
 
 @media (prefers-reduced-motion: reduce) {

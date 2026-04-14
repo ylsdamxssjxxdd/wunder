@@ -795,6 +795,14 @@ import {
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
 import {
+  clearWorkspaceLoadingLabelTimer,
+  getFilenameFromHeaders,
+  normalizeWorkspaceImageBlob,
+  resetWorkspaceImageCards,
+  saveObjectUrlAsFile,
+  scheduleWorkspaceLoadingLabel
+} from '@/utils/workspaceResourceCards';
+import {
   isImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
@@ -1736,7 +1744,6 @@ type WorkspaceResourceCacheEntry = {
   promise?: Promise<WorkspaceResourceCachePayload>;
 };
 
-const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame = null;
 let workspaceResourceHydrationPending = false;
@@ -1909,70 +1916,6 @@ const buildWorkspaceResourcePersistentCacheKey = (resource) => {
   });
 };
 
-const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
-  const raw = status?.dataset?.loadingLabel;
-  const normalized = String(raw || '').trim();
-  return normalized || t('chat.resourceImageLoading');
-};
-
-const scheduleWorkspaceLoadingLabel = (
-  card: HTMLElement,
-  status: HTMLElement | null
-): number | null => {
-  if (!status || typeof window === 'undefined') return null;
-  status.textContent = '';
-  const label = resolveWorkspaceLoadingLabel(status);
-  return window.setTimeout(() => {
-    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
-    status.textContent = label;
-  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
-};
-
-const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
-  if (timerId === null || typeof window === 'undefined') return;
-  window.clearTimeout(timerId);
-};
-
-const getFilenameFromHeaders = (headers, fallback) => {
-  const disposition = headers?.['content-disposition'] || headers?.['Content-Disposition'];
-  if (!disposition) return fallback;
-  const utf8Match = /filename\\*=UTF-8''([^;]+)/i.exec(disposition);
-  if (utf8Match) {
-    return decodeURIComponent(utf8Match[1]);
-  }
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  return match ? match[1] : fallback;
-};
-
-const getFileExtension = (filename) => {
-  const base = String(filename || '').split('?')[0].split('#')[0];
-  const parts = base.split('.');
-  if (parts.length < 2) return '';
-  return parts.pop()?.toLowerCase() || '';
-};
-
-const normalizeWorkspaceImageBlob = (blob, filename, contentType) => {
-  if (!(blob instanceof Blob)) return blob;
-  const extension = getFileExtension(filename);
-  if (extension !== 'svg') return blob;
-  const expectedType = 'image/svg+xml';
-  if (blob.type === expectedType) return blob;
-  const headerType = String(contentType || '').toLowerCase();
-  if (headerType.includes('image/svg')) {
-    return blob.slice(0, blob.size, expectedType);
-  }
-  return blob.slice(0, blob.size, expectedType);
-};
-
-const saveBlobUrl = (url, filename) => {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || 'download';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
 const fetchWorkspaceResource = async (resource) => {
   const cached = workspaceResourceCache.get(resource.publicPath);
   if (cached?.objectUrl) {
@@ -2079,7 +2022,11 @@ const hydrateWorkspaceResourceCard = async (card) => {
   card.dataset.workspaceState = 'loading';
   card.classList.remove('is-error');
   card.classList.remove('is-ready');
-  const loadingTimerId = scheduleWorkspaceLoadingLabel(card as HTMLElement, status as HTMLElement | null);
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(
+    card as HTMLElement,
+    status as HTMLElement | null,
+    t('chat.resourceImageLoading')
+  );
   try {
     const entry = await fetchWorkspaceResource(resource);
     preview.src = entry.objectUrl;
@@ -2134,22 +2081,7 @@ const hydrateWorkspaceResources = (options: { changedPaths?: string[]; eventCont
 };
 
 const resetWorkspaceResourceCards = () => {
-  const container = messagesContainerRef.value;
-  if (!container) return;
-  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
-  cards.forEach((card) => {
-    const kind = card.dataset?.workspaceKind || 'image';
-    if (kind !== 'image') return;
-    const state = card.dataset?.workspaceState || '';
-    if (state === 'ready') return;
-    card.dataset.workspaceState = '';
-    card.classList.remove('is-error');
-    card.classList.remove('is-ready');
-    const status = card.querySelector('.ai-resource-status');
-    if (status) {
-      status.textContent = '';
-    }
-  });
+  resetWorkspaceImageCards(messagesContainerRef.value);
 };
 
 const resolveWorkspaceCardMeta = (publicPath) => {
@@ -2380,7 +2312,7 @@ const downloadWorkspaceResource = async (publicPath) => {
   }
   try {
     const entry = await fetchWorkspaceResource(resource);
-    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+    saveObjectUrlAsFile(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
     ElMessage.error(
       isWorkspaceResourceMissing(error)

@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { downloadWunderWorkspaceFile } from '@/api/workspace';
 import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
@@ -32,6 +32,14 @@ import { copyText } from '@/utils/clipboard';
 import { renderMarkdown, hydrateExternalMarkdownImages } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { normalizeWorkspaceOwnerId } from '@/utils/messageWorkspacePath';
+import {
+  clearWorkspaceLoadingLabelTimer,
+  getFilenameFromHeaders,
+  normalizeWorkspaceImageBlob,
+  resetWorkspaceImageCards,
+  saveObjectUrlAsFile,
+  scheduleWorkspaceLoadingLabel
+} from '@/utils/workspaceResourceCards';
 import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
 const props = defineProps<{
@@ -58,7 +66,6 @@ type WorkspaceResourceCacheEntry = {
 };
 
 const MARKDOWN_CACHE_LIMIT = 160;
-const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const markdownCache = new Map<string, MarkdownCacheEntry>();
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 
@@ -154,76 +161,6 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   };
 };
 
-const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
-  const raw = status?.dataset?.loadingLabel;
-  const normalized = String(raw || '').trim();
-  return normalized || t('chat.resourceImageLoading');
-};
-
-const scheduleWorkspaceLoadingLabel = (
-  card: HTMLElement,
-  status: HTMLElement | null
-): number | null => {
-  if (!status || typeof window === 'undefined') return null;
-  status.textContent = '';
-  const label = resolveWorkspaceLoadingLabel(status);
-  return window.setTimeout(() => {
-    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
-    status.textContent = label;
-  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
-};
-
-const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
-  if (timerId === null || typeof window === 'undefined') return;
-  window.clearTimeout(timerId);
-};
-
-const getFilenameFromHeaders = (
-  headers: Record<string, unknown> | undefined,
-  fallback: string
-): string => {
-  const disposition = String(headers?.['content-disposition'] || headers?.['Content-Disposition'] || '').trim();
-  if (!disposition) return fallback;
-  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
-  if (utf8Match?.[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch {
-      return utf8Match[1];
-    }
-  }
-  const match = /filename="?([^";]+)"?/i.exec(disposition);
-  return match?.[1] || fallback;
-};
-
-const getFileExtension = (filename: string): string => {
-  const base = String(filename || '').split('?')[0].split('#')[0];
-  const parts = base.split('.');
-  if (parts.length < 2) return '';
-  return String(parts.pop() || '').toLowerCase();
-};
-
-const normalizeWorkspaceImageBlob = (blob: Blob, filename: string, contentType: string): Blob => {
-  if (!(blob instanceof Blob)) return blob;
-  if (getFileExtension(filename) !== 'svg') return blob;
-  const expectedType = 'image/svg+xml';
-  if (blob.type === expectedType) return blob;
-  const headerType = String(contentType || '').toLowerCase();
-  if (headerType.includes('image/svg')) {
-    return blob.slice(0, blob.size, expectedType);
-  }
-  return blob.slice(0, blob.size, expectedType);
-};
-
-const saveBlobUrl = (url: string, filename: string) => {
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename || 'download';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-};
-
 const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
   const cacheKey = resource.publicPath;
   const cached = workspaceResourceCache.get(cacheKey);
@@ -315,7 +252,7 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
   card.dataset.workspaceState = 'loading';
   card.classList.remove('is-error');
   card.classList.remove('is-ready');
-  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status);
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status, t('chat.resourceImageLoading'));
   const markReady = () => {
     clearWorkspaceLoadingLabelTimer(loadingTimerId);
     card.dataset.workspaceState = 'ready';
@@ -347,7 +284,11 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
   }
 };
 
-const scheduleHydration = () => {
+const resetWorkspaceResourceCards = () => {
+  resetWorkspaceImageCards(contentRef.value, { clearSrc: true });
+};
+
+const scheduleHydration = (options: { resetStale?: boolean } = {}) => {
   if (typeof window === 'undefined') return;
   if (hydrationFrame !== null) {
     window.cancelAnimationFrame(hydrationFrame);
@@ -357,6 +298,9 @@ const scheduleHydration = () => {
       hydrationFrame = null;
       const container = contentRef.value;
       if (!container) return;
+      if (options.resetStale) {
+        resetWorkspaceResourceCards();
+      }
       const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
       cards.forEach((node) => {
         const card = node as HTMLElement;
@@ -385,7 +329,7 @@ const downloadWorkspaceResource = async (publicPath: string) => {
   }
   try {
     const entry = await fetchWorkspaceResource(resource);
-    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+    saveObjectUrlAsFile(entry.objectUrl, entry.filename || resource.filename || 'download');
   } catch (error) {
     ElMessage.error(
       isWorkspaceResourceMissing(error) ? t('chat.resourceMissing') : t('chat.resourceDownloadFailed')
@@ -472,10 +416,15 @@ watch(
   () => renderedHtml.value,
   () => {
     if (!renderedHtml.value) return;
-    scheduleHydration();
+    scheduleHydration({ resetStale: true });
   },
   { immediate: true }
 );
+
+onMounted(() => {
+  if (!renderedHtml.value) return;
+  scheduleHydration({ resetStale: true });
+});
 
 onBeforeUnmount(() => {
   if (hydrationFrame !== null && typeof window !== 'undefined') {

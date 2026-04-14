@@ -16,6 +16,8 @@ import {
   updateBeeroomGroup
 } from '@/api/beeroom';
 import type { QueryParams } from '@/api/types';
+import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
+import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
 import {
   isStaleRealtimeUpdate,
   shouldApplyRealtimeStatusTransition
@@ -135,6 +137,19 @@ export type BeeroomPackImportOptions = {
 export type BeeroomPackExportMode = 'full' | 'reference_only';
 
 const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
+
+const collectInstalledSkillNames = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const unique = new Set<string>();
+  value.forEach((item) => {
+    const name = String(item || '').trim();
+    if (!name) return;
+    unique.add(name);
+  });
+  return Array.from(unique);
+};
 
 const normalizeGroupId = (value: unknown): string =>
   String(value || '').trim();
@@ -1094,6 +1109,7 @@ export const useBeeroomStore = defineStore('beeroom', {
 
         // Keep beeroom list/detail in sync when import has finished.
         if (normalizePackStatus(resolvedJob.status) === 'completed') {
+          const installedSkillNames = collectInstalledSkillNames(resolvedJob.report?.skills_installed);
           const agentStore = useAgentStore();
           const targetHiveId = normalizeGroupId(
             resolvedJob.report?.hive_id || normalizedGroupId || this.activeGroupId
@@ -1106,6 +1122,10 @@ export const useBeeroomStore = defineStore('beeroom', {
             await this.selectGroup(targetHiveId, { silent: true }).catch(() => null);
           } else if (this.activeGroupId) {
             await this.loadActiveGroup({ silent: true }).catch(() => null);
+          }
+          if (installedSkillNames.length > 0) {
+            invalidateAllUserToolsCaches();
+            emitUserToolsUpdated({ scope: 'skills', action: 'import' });
           }
         }
 

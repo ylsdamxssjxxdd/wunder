@@ -143,6 +143,7 @@ import {
 } from '@/api/userTools';
 import { showApiError } from '@/utils/apiError';
 import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
+import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -183,6 +184,11 @@ let fileVersion = 0;
 
 const emitLoadingChange = (value) => {
   emit('loading-change', value === true);
+};
+
+const syncUserSkillsCatalog = (action: string) => {
+  invalidateAllUserToolsCaches();
+  emitUserToolsUpdated({ scope: 'skills', action });
 };
 
 const normalizeSkillDisplayPath = (value) => {
@@ -394,7 +400,7 @@ const handleUpload = async () => {
   try {
     await uploadUserSkillZip(file);
     await loadSkills({ refreshDetail: true });
-    emitUserToolsUpdated({ scope: 'skills', action: 'upload' });
+    syncUserSkillsCatalog('upload');
     ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.upload.failed'));
@@ -404,6 +410,7 @@ const handleUpload = async () => {
 const reloadSkills = async () => {
   try {
     await loadSkills({ refreshDetail: true });
+    syncUserSkillsCatalog('refresh');
     ElMessage.success(t('userTools.skills.refresh.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.refresh.failed'));
@@ -498,7 +505,7 @@ const saveSkillFile = async () => {
     const payload = data?.data || {};
     if (payload.reloaded) {
       await loadSkills({ refreshDetail: true });
-      emitUserToolsUpdated({ scope: 'skills', action: 'save' });
+      syncUserSkillsCatalog('save');
     }
     ElMessage.success(t('userTools.skills.file.saveSuccess'));
   } catch (error) {
@@ -555,7 +562,7 @@ const deleteSkill = async (skill) => {
   try {
     await deleteUserSkill(skill.name);
     await removeSkillFromList(skill.name);
-    emitUserToolsUpdated({ scope: 'skills', action: 'delete' });
+    syncUserSkillsCatalog('delete');
     ElMessage.success(t('userTools.skills.deleted', { name: skill.name }));
   } catch (error) {
     ElMessage.error(

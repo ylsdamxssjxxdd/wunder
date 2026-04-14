@@ -176,16 +176,37 @@
             ? selectedAgentId === normalizeAgentId(defaultAgentKey)
             : isMixedConversationActive(item),
           'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
-          'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running'
+          'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running',
+          'is-dragging': dragState.section === 'messages' && dragState.key === resolveConversationItemKey(item),
+          'is-drag-over':
+            dragState.section === 'messages' &&
+            dragOverState.key === resolveConversationItemKey(item) &&
+            dragOverState.position !== ''
         }"
         role="button"
         tabindex="0"
+        draggable="true"
         @pointerenter="preloadMixedConversation(item)"
         @focus="preloadMixedConversation(item)"
         @click="openConversationFromList(item)"
         @keydown.enter.prevent="openConversationFromList(item)"
         @keydown.space.prevent="openConversationFromList(item)"
+        @dragstart="handleConversationDragStart($event, item)"
+        @dragover="handleConversationDragOver($event, item)"
+        @drop="handleConversationDrop($event, item)"
+        @dragend="handleDragEnd"
       >
+        <button
+          class="messenger-list-drag-handle"
+          type="button"
+          tabindex="-1"
+          :title="t('common.sort')"
+          :aria-label="t('common.sort')"
+          @mousedown.stop
+          @pointerdown.stop
+        >
+          <i class="fa-solid fa-grip-vertical" aria-hidden="true"></i>
+        </button>
         <AgentAvatar
           v-if="item.kind === 'agent'"
           size="md"
@@ -368,14 +389,35 @@
         class="messenger-list-item messenger-agent-item messenger-swarm-item"
         :class="{
           active: selectedBeeroomGroupId === String(group.group_id || ''),
-          'is-running': isBeeroomGroupRunning(group)
+          'is-running': isBeeroomGroupRunning(group),
+          'is-dragging': dragState.section === 'swarms' && dragState.key === resolveSwarmDragKey(group),
+          'is-drag-over':
+            dragState.section === 'swarms' &&
+            dragOverState.key === resolveSwarmDragKey(group) &&
+            dragOverState.position !== ''
         }"
         role="button"
         tabindex="0"
+        draggable="true"
         @click="selectBeeroomGroup(group)"
         @keydown.enter.prevent="selectBeeroomGroup(group)"
         @keydown.space.prevent="selectBeeroomGroup(group)"
+        @dragstart="handleSwarmDragStart($event, group)"
+        @dragover="handleSwarmDragOver($event, group)"
+        @drop="handleSwarmDrop($event, group)"
+        @dragend="handleDragEnd"
       >
+        <button
+          class="messenger-list-drag-handle"
+          type="button"
+          tabindex="-1"
+          :title="t('common.sort')"
+          :aria-label="t('common.sort')"
+          @mousedown.stop
+          @pointerdown.stop
+        >
+          <i class="fa-solid fa-grip-vertical" aria-hidden="true"></i>
+        </button>
         <div class="messenger-list-avatar">{{ avatarLabel(group.name || group.group_id) }}</div>
         <div class="messenger-list-main">
           <div class="messenger-list-row">
@@ -423,7 +465,7 @@
         type="button"
         @click="selectPlazaBrowseKind(page.kind)"
       >
-        <div class="messenger-plaza-page-avatar" :class="`is-${page.kind}`">
+        <div class="messenger-list-avatar messenger-plaza-page-avatar" :class="`is-${page.kind}`">
           <img
             v-if="page.imageUrl"
             class="messenger-plaza-page-avatar-image"
@@ -439,7 +481,6 @@
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ page.label }}</span>
-            <span class="messenger-plaza-page-count">{{ page.count }}</span>
           </div>
           <div class="messenger-list-row">
             <span class="messenger-list-preview">{{ page.description }}</span>
@@ -489,67 +530,49 @@
       </div>
 
       <button
-        v-if="showDefaultAgentEntry"
+        v-for="agent in orderedPrimaryAgents"
+        :key="agent.renderKey"
         class="messenger-list-item messenger-agent-item"
         :class="{
-          active: selectedAgentId === defaultAgentKey,
-          selected: isAgentMultiSelected(defaultAgentKey),
-          'is-running': resolveAgentRuntimeState(defaultAgentKey) === 'running'
+          active: selectedAgentId === agent.agentId,
+          selected: isAgentMultiSelected(agent.agentId),
+          'is-running': resolveAgentRuntimeState(agent.agentId) === 'running',
+          'is-dragging': dragState.section === 'agents' && dragState.key === resolveAgentDragKey(agent.agentId),
+          'is-drag-over':
+            dragState.section === 'agents' &&
+            dragOverState.key === resolveAgentDragKey(agent.agentId) &&
+            dragOverState.position !== ''
         }"
         type="button"
-        @pointerenter="preloadAgentById(defaultAgentKey)"
-        @focus="preloadAgentById(defaultAgentKey)"
-        @click="handleAgentSelectionClick($event, defaultAgentKey)"
-        @dblclick="openAgentById(defaultAgentKey)"
-        @contextmenu.prevent.stop="openAgentContextMenu($event, defaultAgentKey)"
+        draggable="true"
+        @pointerenter="preloadAgentById(agent.agentId)"
+        @focus="preloadAgentById(agent.agentId)"
+        @click="handleAgentSelectionClick($event, agent.agentId)"
+        @dblclick="handleAgentOpenById(agent.agentId)"
+        @contextmenu.prevent.stop="openAgentContextMenu($event, agent.agentId)"
+        @dragstart="handleAgentDragStart($event, agent.agentId)"
+        @dragover="handleAgentDragOver($event, agent.agentId)"
+        @drop="handleAgentDrop($event, agent.agentId)"
+        @dragend="handleDragEnd"
       >
+        <span class="messenger-list-drag-handle" aria-hidden="true">
+          <i class="fa-solid fa-grip-vertical" aria-hidden="true"></i>
+        </span>
         <AgentAvatar
           size="md"
-          :state="resolveAgentRuntimeState(defaultAgentKey)"
-          :icon="defaultAgentIcon"
-          :name="t('messenger.defaultAgent')"
-        />
-        <div class="messenger-list-main">
-          <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ t('messenger.defaultAgent') }}</span>
-          </div>
-          <div class="messenger-list-row">
-            <span class="messenger-list-preview">{{ t('messenger.defaultAgentDesc') }}</span>
-          </div>
-        </div>
-      </button>
-      <button
-        v-for="agent in filteredOwnedAgents"
-        :key="agent.id"
-        class="messenger-list-item messenger-agent-item"
-        :class="{
-          active: selectedAgentId === normalizeAgentId(agent.id),
-          selected: isAgentMultiSelected(agent.id),
-          'is-running': resolveAgentRuntimeState(agent.id) === 'running'
-        }"
-        type="button"
-        @pointerenter="preloadAgentById(agent.id)"
-        @focus="preloadAgentById(agent.id)"
-        @click="handleAgentSelectionClick($event, agent.id)"
-        @dblclick="handleAgentOpenById(agent.id)"
-        @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
-      >
-        <AgentAvatar
-          size="md"
-          :state="resolveAgentRuntimeState(agent.id)"
+          :state="resolveAgentRuntimeState(agent.agentId)"
           :icon="agent.icon"
-          :name="agent.name || agent.id"
+          :name="agent.name"
         />
         <div class="messenger-list-main">
           <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
+            <span class="messenger-list-name">{{ agent.name }}</span>
           </div>
           <div class="messenger-list-row">
-            <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
+            <span class="messenger-list-preview">{{ agent.description }}</span>
           </div>
         </div>
       </button>
-
       <div v-if="filteredSharedAgents.length" class="messenger-block-title">
         {{ t('messenger.agent.shared') }}
       </div>
@@ -560,15 +583,28 @@
         :class="{
           active: selectedAgentId === normalizeAgentId(agent.id),
           selected: isAgentMultiSelected(agent.id),
-          'is-running': resolveAgentRuntimeState(agent.id) === 'running'
+          'is-running': resolveAgentRuntimeState(agent.id) === 'running',
+          'is-dragging': dragState.section === 'agents' && dragState.key === resolveAgentDragKey(agent.id),
+          'is-drag-over':
+            dragState.section === 'agents' &&
+            dragOverState.key === resolveAgentDragKey(agent.id) &&
+            dragOverState.position !== ''
         }"
         type="button"
+        draggable="true"
         @pointerenter="preloadAgentById(agent.id)"
         @focus="preloadAgentById(agent.id)"
         @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
+        @dragstart="handleAgentDragStart($event, agent.id)"
+        @dragover="handleAgentDragOver($event, agent.id)"
+        @drop="handleAgentDrop($event, agent.id)"
+        @dragend="handleDragEnd"
       >
+        <span class="messenger-list-drag-handle" aria-hidden="true">
+          <i class="fa-solid fa-grip-vertical" aria-hidden="true"></i>
+        </span>
         <AgentAvatar
           size="md"
           :state="resolveAgentRuntimeState(agent.id)"
@@ -584,10 +620,7 @@
           </div>
         </div>
       </button>
-      <div
-        v-if="!showDefaultAgentEntry && !filteredOwnedAgents.length && !filteredSharedAgents.length"
-        class="messenger-list-empty"
-      >
+      <div v-if="!orderedPrimaryAgents.length && !filteredSharedAgents.length" class="messenger-list-empty">
         {{ t('messenger.empty.agents') }}
       </div>
     </template>
@@ -942,6 +975,20 @@ const selectedAgentIds = ref<string[]>([]);
 const agentSelectionAnchorId = ref('');
 const agentContextMenuVisible = ref(false);
 const agentContextMenuStyle = ref<Record<string, string>>({});
+const dragState = ref<{
+  section: 'messages' | 'agents' | 'swarms' | '';
+  key: string;
+}>({
+  section: '',
+  key: ''
+});
+const dragOverState = ref<{
+  key: string;
+  position: '' | 'before' | 'after';
+}>({
+  key: '',
+  position: ''
+});
 
 type ContainerEntry = {
   id: number;
@@ -1000,7 +1047,6 @@ const {
   deleteBeeroomGroup,
   selectedPlazaBrowseKind,
   selectPlazaBrowseKind,
-  plazaBrowsePageCounts,
   filteredGroups,
   selectedGroupId,
   selectGroup,
@@ -1033,7 +1079,10 @@ const {
   desktopMode,
   currentUsername,
   settingsLogoutDisabled,
-  handleSettingsLogout
+  handleSettingsLogout,
+  moveMessageItem,
+  moveAgentItem,
+  moveSwarmItem
 } = defineProps<{
   activeSection: string;
   activeSectionTitle: string;
@@ -1085,7 +1134,6 @@ const {
   deleteBeeroomGroup: (group: Record<string, any>) => void | Promise<void>;
   selectedPlazaBrowseKind: PlazaBrowseKind;
   selectPlazaBrowseKind: (kind: PlazaBrowseKind) => void;
-  plazaBrowsePageCounts: Record<PlazaBrowseKind, number>;
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
@@ -1119,12 +1167,23 @@ const {
   currentUsername: string;
   settingsLogoutDisabled: boolean;
   handleSettingsLogout: () => void;
+  moveMessageItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
+  moveAgentItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
+  moveSwarmItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
 }>();
 
 
 type AgentSelectionEntry = {
   id: string;
   deletable: boolean;
+};
+
+type PrimaryAgentListEntry = {
+  renderKey: string;
+  agentId: string;
+  name: string;
+  description: string;
+  icon?: unknown;
 };
 
 const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
@@ -1148,6 +1207,36 @@ const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
   return output;
 });
 
+const orderedPrimaryAgents = computed<PrimaryAgentListEntry[]>(() => {
+  const output: PrimaryAgentListEntry[] = [];
+  if (showDefaultAgentEntry) {
+    const defaultId = normalizeAgentId(defaultAgentKey);
+    if (defaultId) {
+      output.push({
+        renderKey: `primary:${defaultId}`,
+        agentId: defaultId,
+        name: t('messenger.defaultAgent'),
+        description: t('messenger.defaultAgentDesc'),
+        icon: defaultAgentIcon
+      });
+    }
+  }
+  (Array.isArray(filteredOwnedAgents) ? filteredOwnedAgents : []).forEach((agent) => {
+    const agentId = normalizeAgentId(agent?.id);
+    if (!agentId) {
+      return;
+    }
+    output.push({
+      renderKey: `primary:${agentId}`,
+      agentId,
+      name: String(agent?.name || agentId),
+      description: String(agent?.description || t('messenger.preview.empty')),
+      icon: agent?.icon
+    });
+  });
+  return output;
+});
+
 const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
@@ -1159,21 +1248,18 @@ const plazaBrowsePages = computed(() => [
     kind: 'hive_pack' as PlazaBrowseKind,
     label: t('plaza.kind.hive_pack'),
     description: t('plaza.page.hivePackDesc'),
-    count: Number(plazaBrowsePageCounts.hive_pack || 0),
     imageUrl: plazaHivePageIconUrl
   },
   {
     kind: 'worker_card' as PlazaBrowseKind,
     label: t('plaza.kind.worker_card'),
     description: t('plaza.page.workerCardDesc'),
-    count: Number(plazaBrowsePageCounts.worker_card || 0),
     imageUrl: avatar046Url
   },
   {
     kind: 'skill_pack' as PlazaBrowseKind,
     label: t('plaza.kind.skill_pack'),
     description: t('plaza.page.skillPackDesc'),
-    count: Number(plazaBrowsePageCounts.skill_pack || 0),
     imageUrl: avatar016Url
   }
 ]);
@@ -1205,6 +1291,134 @@ const displayedMixedConversations = computed(() => {
   }
   return [buildGuidedDefaultConversation()];
 });
+
+const resolveConversationItemKey = (item: Record<string, unknown> | null | undefined): string =>
+  String(item?.key || '').trim();
+
+const resolveSwarmDragKey = (group: Record<string, unknown> | null | undefined): string =>
+  String(group?.group_id || group?.hive_id || '').trim();
+
+const resolveAgentDragKey = (agentId: unknown): string => normalizeAgentId(agentId);
+
+const resetDragState = () => {
+  dragState.value = { section: '', key: '' };
+  dragOverState.value = { key: '', position: '' };
+};
+
+const resolveDragPosition = (event: DragEvent): 'before' | 'after' => {
+  const target = event.currentTarget as HTMLElement | null;
+  if (!target) {
+    return 'before';
+  }
+  const rect = target.getBoundingClientRect();
+  return event.clientY > rect.top + rect.height / 2 ? 'after' : 'before';
+};
+
+const beginDrag = (event: DragEvent, section: 'messages' | 'agents' | 'swarms', key: string) => {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) {
+    event.preventDefault();
+    return;
+  }
+  dragState.value = { section, key: normalizedKey };
+  dragOverState.value = { key: '', position: '' };
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', normalizedKey);
+  }
+};
+
+const updateDragOver = (
+  event: DragEvent,
+  section: 'messages' | 'agents' | 'swarms',
+  key: string
+) => {
+  if (dragState.value.section !== section || !dragState.value.key) {
+    return;
+  }
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey || normalizedKey === dragState.value.key) {
+    dragOverState.value = { key: '', position: '' };
+    return;
+  }
+  event.preventDefault();
+  dragOverState.value = {
+    key: normalizedKey,
+    position: resolveDragPosition(event)
+  };
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'move';
+  }
+};
+
+const commitDragMove = (
+  event: DragEvent,
+  section: 'messages' | 'agents' | 'swarms',
+  targetKey: string,
+  visibleKeys: string[],
+  move: (draggedKey: string, key: string, position: 'before' | 'after', visibleKeys: string[]) => void
+) => {
+  if (dragState.value.section !== section || !dragState.value.key) {
+    return;
+  }
+  const normalizedTargetKey = String(targetKey || '').trim();
+  if (!normalizedTargetKey || normalizedTargetKey === dragState.value.key) {
+    resetDragState();
+    return;
+  }
+  event.preventDefault();
+  move(dragState.value.key, normalizedTargetKey, resolveDragPosition(event), visibleKeys);
+  resetDragState();
+};
+
+const handleConversationDragStart = (event: DragEvent, item: Record<string, unknown>) =>
+  beginDrag(event, 'messages', resolveConversationItemKey(item));
+
+const handleConversationDragOver = (event: DragEvent, item: Record<string, unknown>) =>
+  updateDragOver(event, 'messages', resolveConversationItemKey(item));
+
+const handleConversationDrop = (event: DragEvent, item: Record<string, unknown>) =>
+  commitDragMove(
+    event,
+    'messages',
+    resolveConversationItemKey(item),
+    displayedMixedConversations.value.map((entry) => resolveConversationItemKey(entry)),
+    moveMessageItem
+  );
+
+const handleAgentDragStart = (event: DragEvent, agentId: unknown) =>
+  beginDrag(event, 'agents', resolveAgentDragKey(agentId));
+
+const handleAgentDragOver = (event: DragEvent, agentId: unknown) =>
+  updateDragOver(event, 'agents', resolveAgentDragKey(agentId));
+
+const handleAgentDrop = (event: DragEvent, agentId: unknown) =>
+  commitDragMove(
+    event,
+    'agents',
+    resolveAgentDragKey(agentId),
+    visibleSelectableAgentItems.value.map((entry) => entry.id),
+    moveAgentItem
+  );
+
+const handleSwarmDragStart = (event: DragEvent, group: Record<string, unknown>) =>
+  beginDrag(event, 'swarms', resolveSwarmDragKey(group));
+
+const handleSwarmDragOver = (event: DragEvent, group: Record<string, unknown>) =>
+  updateDragOver(event, 'swarms', resolveSwarmDragKey(group));
+
+const handleSwarmDrop = (event: DragEvent, group: Record<string, unknown>) =>
+  commitDragMove(
+    event,
+    'swarms',
+    resolveSwarmDragKey(group),
+    filteredBeeroomGroups.map((entry) => resolveSwarmDragKey(entry)),
+    moveSwarmItem
+  );
+
+const handleDragEnd = () => {
+  resetDragState();
+};
 
 const HOT_BEEROOM_MISSION_STATUSES = new Set([
   'queued',
@@ -1394,6 +1608,7 @@ watch(
 watch(
   () => activeSection,
   (value) => {
+    resetDragState();
     if (value !== 'agents') {
       clearAgentSelection();
     }
@@ -1410,6 +1625,7 @@ onBeforeUnmount(() => {
     window.removeEventListener('pointerdown', handleGlobalPointerDown);
     window.removeEventListener('keydown', handleGlobalKeydown);
   }
+  resetDragState();
 });
 
 const emit = defineEmits<{
@@ -1820,9 +2036,6 @@ const handleSwarmExport = async (group: Record<string, any>) => {
 }
 
 .messenger-plaza-page-avatar {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1849,20 +2062,6 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-.messenger-plaza-page-count {
-  min-width: 28px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 214, 127, 0.22);
-  color: #925b12;
-  font-size: 12px;
-  font-weight: 700;
 }
 </style>
 

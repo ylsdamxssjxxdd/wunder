@@ -14,6 +14,8 @@ export type PlazaItem = {
   artifact_filename?: string;
   artifact_size_bytes?: number;
   source_updated_at?: number;
+  source_signature?: string;
+  freshness_status?: 'current' | 'outdated' | 'source_missing' | string;
   tags?: string[];
   metadata?: Record<string, unknown> | null;
   created_at?: number;
@@ -38,6 +40,8 @@ const normalizeItem = (value: unknown): PlazaItem | null => {
     artifact_filename: String(source.artifact_filename || '').trim() || undefined,
     artifact_size_bytes: Number(source.artifact_size_bytes || 0) || 0,
     source_updated_at: Number(source.source_updated_at || 0) || undefined,
+    source_signature: String(source.source_signature || '').trim() || undefined,
+    freshness_status: String(source.freshness_status || '').trim() || 'current',
     tags: Array.isArray(source.tags)
       ? source.tags.map((item) => String(item || '').trim()).filter(Boolean)
       : [],

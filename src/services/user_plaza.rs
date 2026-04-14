@@ -9,6 +9,7 @@ use crate::services::inner_visible::{build_worker_card, parse_worker_card, Worke
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_agent_presets::filter_allowed_tools;
 use crate::services::user_store::build_default_agent_record_from_storage;
+use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
 use crate::services::worker_card_settings::collect_context_skill_names;
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -19,6 +20,7 @@ use crate::storage::{
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::io::{Cursor, Read, Write};
@@ -52,6 +54,8 @@ pub struct UserPlazaItemRecord {
     pub artifact_size_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_updated_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_signature: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Value::is_null")]
@@ -100,13 +104,31 @@ pub struct UserPlazaOwnerPurgeResult {
     pub deleted_meta_records: usize,
 }
 
-pub fn list_items(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlazaFreshnessStatus {
+    Current,
+    Outdated,
+    SourceMissing,
+}
+
+impl PlazaFreshnessStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Outdated => "outdated",
+            Self::SourceMissing => "source_missing",
+        }
+    }
+}
+
+pub async fn list_items(
     state: &AppState,
     current_user_id: &str,
     query: &ListUserPlazaItemsQuery,
 ) -> Result<Vec<Value>> {
     let current_user_id = current_user_id.trim();
     let filtered_kind = normalize_item_kind(query.kind.as_deref());
+    let config = state.config_store.get().await;
     let mut items = Vec::new();
     for (_, raw) in state.storage.list_meta_prefix(USER_PLAZA_META_PREFIX)? {
         let record: UserPlazaItemRecord = match serde_json::from_str(&raw) {
@@ -124,12 +146,13 @@ pub fn list_items(
         if !Path::new(&record.artifact_path).is_file() {
             continue;
         }
-        items.push(item_payload(&record, current_user_id));
+        let freshness = resolve_plaza_item_freshness(state, &config, &record).await?;
+        items.push(item_payload(&record, current_user_id, freshness));
     }
     Ok(items)
 }
 
-pub fn get_item(state: &AppState, item_id: &str) -> Result<Option<UserPlazaItemRecord>> {
+pub async fn get_item(state: &AppState, item_id: &str) -> Result<Option<UserPlazaItemRecord>> {
     let cleaned = item_id.trim();
     if cleaned.is_empty() {
         return Ok(None);
@@ -202,7 +225,7 @@ pub async fn publish_item(
         }
         _ => return Err(anyhow!("unsupported plaza item kind")),
     };
-    let payload = item_payload(&published, &user.user_id);
+    let payload = item_payload(&published, &user.user_id, PlazaFreshnessStatus::Current);
     state
         .user_store
         .set_meta(
@@ -218,7 +241,11 @@ pub fn unpublish_item(state: &AppState, user_id: &str, item_id: &str) -> Result<
     if cleaned_item_id.is_empty() {
         return Ok(false);
     }
-    let Some(record) = get_item(state, cleaned_item_id)? else {
+    let Some(record) = state
+        .user_store
+        .get_meta(&meta_key(cleaned_item_id))?
+        .and_then(|raw| serde_json::from_str::<UserPlazaItemRecord>(&raw).ok())
+    else {
         return Ok(false);
     };
     if record.owner_user_id != user_id.trim() {
@@ -238,7 +265,9 @@ pub async fn import_item(
     item_id: &str,
 ) -> Result<UserPlazaImportResult> {
     state.inner_visible.sync_user_state(&user.user_id).await?;
-    let record = get_item(state, item_id)?.ok_or_else(|| anyhow!("plaza item not found"))?;
+    let record = get_item(state, item_id)
+        .await?
+        .ok_or_else(|| anyhow!("plaza item not found"))?;
     let artifact = PathBuf::from(&record.artifact_path);
     if !artifact.is_file() {
         return Err(anyhow!("plaza item artifact is missing"));
@@ -317,6 +346,15 @@ async fn publish_hive_pack(
         });
     let title = request_title_or(&request.title, &hive.name);
     let summary = request_summary_or(&request.summary, &hive.description);
+    let config = state.config_store.get().await;
+    let source_signature = compute_hive_pack_source_signature(
+        state,
+        &config,
+        user,
+        &hive,
+        &agents,
+    )
+    .await?;
     let metadata = json!({
         "group_id": hive.hive_id,
         "group_name": hive.name,
@@ -336,6 +374,7 @@ async fn publish_hive_pack(
         tags,
         metadata,
         hive.updated_time,
+        Some(source_signature),
         &artifact_path,
         &artifact_filename,
     )
@@ -374,6 +413,13 @@ async fn publish_worker_card(
     )?;
     let title = request_title_or(&request.title, &record.name);
     let summary = request_summary_or(&request.summary, &record.description);
+    let source_signature = compute_worker_card_source_signature(
+        state,
+        user,
+        &record,
+        hive.as_ref(),
+    )
+    .await?;
     let metadata = json!({
         "agent_id": record.agent_id,
         "agent_name": record.name,
@@ -396,6 +442,7 @@ async fn publish_worker_card(
         tags,
         metadata,
         record.updated_at,
+        Some(source_signature),
         &temp_path,
         &temp_filename,
     )
@@ -422,6 +469,7 @@ async fn publish_skill_pack(
     let temp_filename = format!("{}.skill", sanitize_filename_stem(&title));
     let temp_path = temp_artifact_path(state.workspace.root(), &temp_filename);
     create_skill_archive(&spec.root, &skill_dir_name, &temp_path)?;
+    let source_signature = compute_skill_pack_source_signature(&spec)?;
     let metadata = json!({
         "skill_name": spec.name,
         "skill_dir": skill_dir_name,
@@ -440,6 +488,7 @@ async fn publish_skill_pack(
         tags,
         metadata,
         Some(file_modified_ts(&spec.root)),
+        Some(source_signature),
         &temp_path,
         &temp_filename,
     )
@@ -457,6 +506,7 @@ fn build_record_from_artifact(
     tags: Vec<String>,
     metadata: Value,
     source_updated_at: impl Into<Option<f64>>,
+    source_signature: Option<String>,
     artifact_source: &Path,
     artifact_filename: &str,
 ) -> Result<UserPlazaItemRecord> {
@@ -486,6 +536,7 @@ fn build_record_from_artifact(
         artifact_path: target_path.to_string_lossy().to_string(),
         artifact_size_bytes,
         source_updated_at: source_updated_at.into(),
+        source_signature,
         tags,
         metadata,
         created_at: existing.map(|item| item.created_at).unwrap_or(now),
@@ -883,7 +934,11 @@ fn ensure_import_hive(
     Ok(record)
 }
 
-fn item_payload(record: &UserPlazaItemRecord, current_user_id: &str) -> Value {
+fn item_payload(
+    record: &UserPlazaItemRecord,
+    current_user_id: &str,
+    freshness_status: PlazaFreshnessStatus,
+) -> Value {
     json!({
         "item_id": record.item_id,
         "kind": record.kind,
@@ -896,6 +951,8 @@ fn item_payload(record: &UserPlazaItemRecord, current_user_id: &str) -> Value {
         "artifact_filename": record.artifact_filename,
         "artifact_size_bytes": record.artifact_size_bytes,
         "source_updated_at": record.source_updated_at,
+        "freshness_status": freshness_status.as_str(),
+        "source_signature": record.source_signature,
         "tags": record.tags,
         "metadata": record.metadata,
         "created_at": record.created_at,
@@ -997,6 +1054,505 @@ fn file_modified_ts(path: &Path) -> f64 {
         Ok(value) => value.as_secs_f64(),
         Err(_) => now_ts(),
     }
+}
+
+async fn resolve_plaza_item_freshness(
+    state: &AppState,
+    config: &Config,
+    record: &UserPlazaItemRecord,
+) -> Result<PlazaFreshnessStatus> {
+    let Some(published_signature) = record
+        .source_signature
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(PlazaFreshnessStatus::Current);
+    };
+    let current_signature = match compute_current_source_signature(state, config, record).await? {
+        Some(value) => value,
+        None => return Ok(PlazaFreshnessStatus::SourceMissing),
+    };
+    if current_signature == published_signature {
+        Ok(PlazaFreshnessStatus::Current)
+    } else {
+        Ok(PlazaFreshnessStatus::Outdated)
+    }
+}
+
+async fn compute_current_source_signature(
+    state: &AppState,
+    config: &Config,
+    record: &UserPlazaItemRecord,
+) -> Result<Option<String>> {
+    match record.kind.as_str() {
+        "worker_card" => {
+            let agent =
+                match resolve_agent_for_publish(state, &record.owner_user_id, &record.source_key) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(None),
+                };
+            let hive = state.user_store.get_hive(&record.owner_user_id, &agent.hive_id)?;
+            let Some(user) = state.user_store.get_user_by_id(&record.owner_user_id)? else {
+                return Ok(None);
+            };
+            Ok(Some(
+                compute_worker_card_source_signature(
+                    state,
+                    &user,
+                    &agent,
+                    hive.as_ref(),
+                )
+                .await?,
+            ))
+        }
+        "skill_pack" => {
+            let spec = match resolve_custom_user_skill_spec(state, config, &record.owner_user_id, &record.source_key) {
+                Ok(value) => value,
+                Err(_) => return Ok(None),
+            };
+            Ok(Some(compute_skill_pack_source_signature(&spec)?))
+        }
+        "hive_pack" => {
+            let hive_id = normalize_hive_id(&record.source_key);
+            let hive = if hive_id == DEFAULT_HIVE_ID {
+                match state.user_store.ensure_default_hive(&record.owner_user_id) {
+                    Ok(value) => value,
+                    Err(_) => return Ok(None),
+                }
+            } else {
+                match state.user_store.get_hive(&record.owner_user_id, &hive_id)? {
+                    Some(value) => value,
+                    None => return Ok(None),
+                }
+            };
+            let agents = state
+                .user_store
+                .list_user_agents_by_hive_with_default(&record.owner_user_id, &hive_id)?;
+            if agents.is_empty() {
+                return Ok(None);
+            }
+            let user = state
+                .user_store
+                .get_user_by_id(&record.owner_user_id)?
+                .ok_or_else(|| anyhow!("plaza owner not found"))?;
+            Ok(Some(
+                compute_hive_pack_source_signature(state, config, &user, &hive, &agents).await?,
+            ))
+        }
+        _ => Ok(None),
+    }
+}
+
+async fn compute_worker_card_source_signature(
+    state: &AppState,
+    user: &UserAccountRecord,
+    agent: &UserAgentRecord,
+    hive: Option<&HiveRecord>,
+) -> Result<String> {
+    let tool_context = build_user_tool_context(state, &user.user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
+    let mut document = build_worker_card(
+        agent,
+        hive.map(|item| item.name.as_str()),
+        hive.map(|item| item.description.as_str()),
+        &skill_name_keys,
+    );
+    document.metadata.exported_at.clear();
+    stable_json_signature(&document)
+}
+
+fn compute_skill_pack_source_signature(spec: &SkillSpec) -> Result<String> {
+    directory_tree_signature(&spec.root)
+}
+
+async fn compute_hive_pack_source_signature(
+    state: &AppState,
+    config: &Config,
+    user: &UserAccountRecord,
+    hive: &HiveRecord,
+    agents: &[UserAgentRecord],
+) -> Result<String> {
+    let skills = state.skills.read().await.clone();
+    let global_skill_specs = skills.list_specs();
+    let bindings = state
+        .user_tool_manager
+        .build_bindings(config, &skills, &user.user_id);
+    let skill_root = state.user_tool_store.get_skill_root(&user.user_id);
+
+    let mut worker_entries = Vec::new();
+    let mut occupied_worker_id_keys = HashSet::new();
+    let mut exported_skill_names: BTreeSet<String> = BTreeSet::new();
+    let mut included_skill_signatures = Vec::new();
+
+    for (index, agent) in agents.iter().enumerate() {
+        let preferred_worker_id = export_worker_id_local(agent, index);
+        let worker_id = unique_label_with_reserved_local(
+            &preferred_worker_id,
+            &occupied_worker_id_keys,
+            &format!("worker-{}", index + 1),
+        );
+        occupied_worker_id_keys.insert(normalize_conflict_key_local(&worker_id));
+
+        let mut worker_skill_sources =
+            collect_agent_skills_for_export(agent, &bindings, &skill_root, &global_skill_specs);
+        worker_skill_sources.sort_by(|left, right| left.name.cmp(&right.name));
+        worker_skill_sources.dedup_by(|left, right| left.name == right.name);
+
+        let mut attached_skill_names = Vec::new();
+        for skill in &worker_skill_sources {
+            let skill_name = skill.name.trim();
+            if skill_name.is_empty() {
+                continue;
+            }
+            attached_skill_names.push(skill_name.to_string());
+            if !skill.include_in_package || exported_skill_names.contains(skill_name) {
+                continue;
+            }
+            if !skill.source_dir.exists()
+                || !skill.source_dir.is_dir()
+                || !skill.source_dir.join("SKILL.md").is_file()
+            {
+                continue;
+            }
+            included_skill_signatures.push(json!({
+                "skill_name": skill_name,
+                "signature": directory_tree_signature(&skill.source_dir)?,
+            }));
+            exported_skill_names.insert(skill_name.to_string());
+        }
+        attached_skill_names.sort();
+        attached_skill_names.dedup();
+        let declared_tool_names =
+            collect_agent_declared_tools_for_export(agent, &bindings.alias_map);
+        let declared_skill_names = if agent.declared_skill_names.is_empty() {
+            attached_skill_names.clone()
+        } else {
+            normalize_string_items_local(&agent.declared_skill_names)
+        };
+        worker_entries.push(json!({
+            "worker_id": worker_id,
+            "agent_id": agent.agent_id,
+            "name": agent.name,
+            "description": agent.description,
+            "system_prompt": agent.system_prompt,
+            "model_name": agent.model_name,
+            "declared_tool_names": declared_tool_names,
+            "declared_skill_names": declared_skill_names,
+            "preset_questions": normalize_string_items_local(&agent.preset_questions),
+            "approval_mode": normalize_approval_mode_local(Some(&agent.approval_mode)),
+            "icon": agent.icon,
+            "sandbox_container_id": normalize_sandbox_container_id(agent.sandbox_container_id),
+            "silent": agent.silent,
+            "prefer_mother": agent.prefer_mother,
+            "attached_skill_names": attached_skill_names,
+        }));
+    }
+
+    stable_json_signature(&json!({
+        "kind": "hive_pack",
+        "hive_id": hive.hive_id,
+        "hive_name": hive.name,
+        "hive_description": hive.description,
+        "workers": worker_entries,
+        "included_skills": included_skill_signatures,
+    }))
+}
+
+fn directory_tree_signature(root: &Path) -> Result<String> {
+    if !root.exists() || !root.is_dir() {
+        return Err(anyhow!("source directory missing"));
+    }
+    let mut hasher = Sha256::new();
+    let mut entries = WalkDir::new(root)
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.path().to_string_lossy().to_string());
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if entry.file_type().is_dir() {
+            hasher.update(b"D:");
+            hasher.update(relative.as_bytes());
+            hasher.update(b"\n");
+            continue;
+        }
+        hasher.update(b"F:");
+        hasher.update(relative.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(fs::read(path)?);
+        hasher.update(b"\n");
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn stable_json_signature<T: Serialize>(value: &T) -> Result<String> {
+    let bytes = serde_json::to_vec(value)?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn normalize_conflict_key_local(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
+}
+
+fn export_worker_id_local(agent: &UserAgentRecord, index: usize) -> String {
+    let indexed_fallback = format!("worker-{}", index + 1);
+    let id_fallback = if agent.agent_id.trim().is_empty() {
+        indexed_fallback.clone()
+    } else {
+        normalize_name_like(&agent.agent_id, &indexed_fallback)
+    };
+    normalize_export_filename_stem_local(&agent.name, &id_fallback)
+}
+
+fn unique_label_with_reserved_local(
+    preferred: &str,
+    reserved: &HashSet<String>,
+    fallback: &str,
+) -> String {
+    let base = normalize_name_like(preferred, fallback);
+    if !reserved.contains(&normalize_conflict_key_local(&base)) {
+        return base;
+    }
+    let mut index = 2usize;
+    loop {
+        let candidate = format!("{base}-{index}");
+        if !reserved.contains(&normalize_conflict_key_local(&candidate)) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn normalize_name_like(raw: &str, fallback: &str) -> String {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return fallback.to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch.to_ascii_lowercase());
+        } else if ch == '_' || ch == '-' {
+            output.push(ch);
+        } else if ch.is_whitespace() {
+            output.push('-');
+        }
+    }
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let mut output = output.trim_matches('-').to_string();
+    if output.is_empty() {
+        output = fallback.to_string();
+    }
+    output
+}
+
+fn normalize_export_filename_stem_local(hive_name: &str, hive_id: &str) -> String {
+    let base = if hive_name.trim().is_empty() {
+        hive_id.trim()
+    } else {
+        hive_name.trim()
+    };
+    let mut output = String::with_capacity(base.len());
+    for ch in base.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            output.push('-');
+            continue;
+        }
+        if ch.is_whitespace() {
+            output.push('-');
+        } else {
+            output.push(ch);
+        }
+    }
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let cleaned = output.trim_matches(['-', '.', ' ']).to_string();
+    if cleaned.is_empty() {
+        normalize_name_like(hive_id, "hivepack")
+    } else {
+        cleaned
+    }
+}
+
+fn normalize_string_items_local(values: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for value in values {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if seen.insert(owned.clone()) {
+            items.push(owned);
+        }
+    }
+    items
+}
+
+fn normalize_approval_mode_local(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or("suggest").trim().to_ascii_lowercase();
+    if matches!(cleaned.as_str(), "suggest" | "auto_edit" | "full_auto") {
+        cleaned
+    } else {
+        "suggest".to_string()
+    }
+}
+
+fn collect_agent_declared_tools_for_export(
+    agent: &UserAgentRecord,
+    alias_map: &std::collections::HashMap<String, UserToolAlias>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    let source_names = if agent.declared_tool_names.is_empty() {
+        &agent.tool_names
+    } else {
+        &agent.declared_tool_names
+    };
+    for name in source_names {
+        let cleaned = name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if alias_map
+            .get(cleaned)
+            .is_some_and(|alias| matches!(alias.kind, UserToolKind::Skill))
+        {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if seen.insert(owned.clone()) {
+            names.push(owned);
+        }
+    }
+    names
+}
+
+#[derive(Debug, Clone)]
+struct ExportSkillSourceLocal {
+    name: String,
+    include_in_package: bool,
+    source_dir: PathBuf,
+}
+
+fn collect_agent_skills_for_export(
+    agent: &UserAgentRecord,
+    bindings: &UserToolBindings,
+    skill_root: &Path,
+    global_skill_specs: &[SkillSpec],
+) -> Vec<ExportSkillSourceLocal> {
+    let mut alias_to_skill_name = std::collections::HashMap::new();
+    let mut skill_name_to_source = std::collections::HashMap::new();
+    for spec in &bindings.skill_specs {
+        let alias_name = spec.name.trim();
+        if alias_name.is_empty() {
+            continue;
+        }
+        let Some(alias) = bindings.alias_map.get(alias_name) else {
+            continue;
+        };
+        if !matches!(alias.kind, UserToolKind::Skill) {
+            continue;
+        }
+        let skill_name = alias.target.trim();
+        if skill_name.is_empty() {
+            continue;
+        }
+        alias_to_skill_name.insert(alias_name.to_string(), skill_name.to_string());
+        skill_name_to_source
+            .entry(skill_name.to_string())
+            .or_insert_with(|| spec.root.clone());
+    }
+    for spec in global_skill_specs {
+        let skill_name = spec.name.trim();
+        if skill_name.is_empty() {
+            continue;
+        }
+        skill_name_to_source
+            .entry(skill_name.to_string())
+            .or_insert_with(|| spec.root.clone());
+    }
+
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for tool_name in &agent.tool_names {
+        let normalized_tool_name = tool_name.trim();
+        if normalized_tool_name.is_empty() {
+            continue;
+        }
+
+        let mut skill_name = String::new();
+        if let Some(alias) = bindings.alias_map.get(normalized_tool_name) {
+            if matches!(alias.kind, UserToolKind::Skill) && !alias.target.trim().is_empty() {
+                skill_name = alias.target.trim().to_string();
+            }
+        }
+        if skill_name.is_empty() {
+            if let Some(from_alias) = alias_to_skill_name.get(normalized_tool_name) {
+                skill_name = from_alias.clone();
+            } else if skill_name_to_source.contains_key(normalized_tool_name) {
+                skill_name = normalized_tool_name.to_string();
+            } else if let Some((owner_id, maybe_skill_name)) = normalized_tool_name.split_once('@')
+            {
+                if !owner_id.trim().is_empty()
+                    && skill_name_to_source.contains_key(maybe_skill_name)
+                {
+                    skill_name = maybe_skill_name.to_string();
+                }
+            }
+        }
+        if skill_name.is_empty() {
+            continue;
+        }
+
+        let source_dir = skill_name_to_source
+            .get(&skill_name)
+            .cloned()
+            .or_else(|| {
+                let candidate = skill_root.join(&skill_name);
+                if candidate.is_dir() && candidate.join("SKILL.md").is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                let candidate = skill_root.join(normalized_tool_name);
+                if candidate.is_dir() && candidate.join("SKILL.md").is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            });
+        let Some(source_dir) = source_dir else {
+            continue;
+        };
+        if !seen.insert(normalize_conflict_key_local(&skill_name)) {
+            continue;
+        }
+        output.push(ExportSkillSourceLocal {
+            name: skill_name,
+            include_in_package: source_dir.starts_with(skill_root),
+            source_dir,
+        });
+    }
+
+    output
 }
 
 fn now_ts() -> f64 {

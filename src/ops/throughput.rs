@@ -764,11 +764,11 @@ impl SpeedAccumulator {
     }
 
     fn single_prefill_speed(&self) -> Option<f64> {
-        if self.prefill_tokens_total > 0 && self.prefill_duration_total_s > 0.0 {
-            return Some(self.prefill_tokens_total as f64 / self.prefill_duration_total_s);
-        }
         if self.prefill_speed_count > 0 {
             return Some(self.prefill_speed_sum / self.prefill_speed_count as f64);
+        }
+        if self.prefill_tokens_total > 0 && self.prefill_duration_total_s > 0.0 {
+            return Some(self.prefill_tokens_total as f64 / self.prefill_duration_total_s);
         }
         None
     }
@@ -1314,4 +1314,56 @@ async fn load_report(run_id: &str) -> Result<ThroughputReport, String> {
         .await
         .map_err(|_| "未找到对应压测报告".to_string())?;
     serde_json::from_slice::<ThroughputReport>(&payload).map_err(|err| err.to_string())
+}
+#[cfg(test)]
+mod tests {
+    use super::SpeedAccumulator;
+    use crate::core::llm_speed::LlmSpeedSummary;
+
+    #[test]
+    fn single_prefill_speed_prefers_request_average() {
+        let mut acc = SpeedAccumulator::default();
+        acc.record(&LlmSpeedSummary {
+            prefill_tokens: Some(600),
+            prefill_duration_s: Some(2.0),
+            prefill_speed_tps: Some(300.0),
+            ..LlmSpeedSummary::default()
+        });
+        acc.record(&LlmSpeedSummary {
+            prefill_tokens: Some(400),
+            prefill_duration_s: Some(4.0),
+            prefill_speed_tps: Some(100.0),
+            ..LlmSpeedSummary::default()
+        });
+
+        let single = acc
+            .single_prefill_speed()
+            .expect("single prefill speed should exist");
+        let total = acc
+            .total_prefill_speed(10.0, 1_000)
+            .expect("total prefill speed should exist");
+
+        assert!((single - 200.0).abs() < f64::EPSILON);
+        assert!((total - 400.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn single_prefill_speed_falls_back_to_weighted_total_when_average_missing() {
+        let acc = SpeedAccumulator {
+            prefill_speed_sum: 0.0,
+            prefill_speed_count: 0,
+            decode_speed_sum: 0.0,
+            decode_speed_count: 0,
+            prefill_tokens_total: 900,
+            prefill_duration_total_s: 3.0,
+            decode_tokens_total: 0,
+            decode_duration_total_s: 0.0,
+        };
+
+        let single = acc
+            .single_prefill_speed()
+            .expect("weighted fallback should exist");
+
+        assert!((single - 300.0).abs() < f64::EPSILON);
+    }
 }

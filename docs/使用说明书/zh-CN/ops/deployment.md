@@ -1,121 +1,111 @@
 ---
 title: 部署与运行
-summary: 部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。
-read_when:
-  - 你要部署 Wunder
-  - 你要确认数据库、MCP、sandbox 和工作区怎么放
-source_docs:
-  - README.md
-  - docs/API文档.md
-  - docs/系统介绍.md
-  - config/wunder-example.yaml
+summary: 部署前先想清楚用哪种形态、准备什么环境。Server 部署至少需要数据库、工作区和后端服务。
 ---
 
 # 部署与运行
 
-部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。
+## 先选形态
 
-## 本页重点
+部署前先回答一个问题：**你打算怎么用？**
 
-- 怎么先选对部署路径
-- server 侧最少要准备哪些东西
-- 启动后应该先查哪些入口
+| 形态 | 适合谁 | 需要什么 |
+|------|--------|----------|
+| **Desktop** | 个人使用 | 下载安装包，开箱即用 |
+| **Server** | 团队/组织 | 服务器 + 数据库 + 配置 |
+| **本地开发** | 开发调试 | 本地编译环境 |
 
-## 先定这四件事
+## Desktop 部署
 
-- 你是个人本地使用，还是团队上线
-- 数据库该用 PostgreSQL 还是 SQLite
-- 工作区放在哪，是否持久化
-- sandbox、MCP、静态前端要不要一起上线
+最简单的方式：
+1. 下载安装包
+2. 安装并启动
+3. 开始使用
 
-## 按目标选部署路径
+不需要额外配置。数据存在本地，使用 SQLite。
 
-### Desktop
+详细步骤见 [Desktop 入门](/docs/zh-CN/start/desktop/)。
 
-- 适合个人直接使用
-- 本地优先
-- 自带桌面壳
-- 不要求先搭完整 server
+## Server 部署
 
-### Server
+### 最少需要什么
 
-- 适合团队、组织和统一治理
-- 多用户、多租户
-- 管理端与用户端协同
-- 可接 sandbox、MCP、A2A 和外部渠道
+| 组件 | 说明 | 必须？ |
+|------|------|--------|
+| 后端服务 | wunder-server | 是 |
+| PostgreSQL | 主数据库 | 是 |
+| 工作区存储 | 用户文件空间 | 是 |
+| 前端静态资源 | 用户端/管理端页面 | 推荐 |
+| MCP 服务 | 外部工具能力 | 按需 |
+| 沙盒服务 | 隔离执行环境 | 按需 |
+| 向量数据库 | 知识库检索 | 按需 |
 
-### 本地开发
+### 推荐部署方式
 
-- 适合开发者联调
-- Rust 后端和前端 dev server 分层调试
-- 可以只启动某一层做局部验证
+**Docker Compose**（推荐）：
+- 一键启动所有组件
+- 配置统一管理
+- 升级方便
 
-## 如果你部署 Server，最少要准备什么
+### 网络规划
 
-典型部署里，至少会涉及这些组件：
+部署前先规划好对外的网络入口：
 
-- `wunder-server`
-- PostgreSQL
-- 持久化用户工作区
+| 入口 | 用途 |
+|------|------|
+| 主服务地址 | 后端接口 |
+| WebSocket 通道 | 实时通信 |
+| 管理端地址 | 管理后台 |
+| 文档站地址 | 使用说明书 |
 
-如果你需要更完整的能力，再按需接入：
+建议统一在同一域名下，通过路径区分。
 
-- `wunder-sandbox`
-- `extra-mcp`
-- 用户侧或管理侧静态资源服务
+### 启动后检查
 
-## 对外路径怎么规划
+启动完成后，按这个清单检查：
 
-- `/wunder`
-- `/wunder/chat/*`
-- `/a2a`
-- `/.well-known/agent-card.json`
-- `/docs/`
+1. 后端服务是否正常运行
+2. 数据库连接是否正常
+3. WebSocket 是否可建立连接
+4. 管理端是否可打开
+5. 用户端是否可访问
+6. 文档站是否可访问
 
-这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。
+### 关键环境变量
 
-## 启动后先查这几项
+| 变量 | 作用 |
+|------|------|
+| `WUNDER_HOST` | 服务监听地址 |
+| `WUNDER_PORT` | 服务端口 |
+| `WUNDER_API_KEY` | API 密钥 |
+| `WUNDER_POSTGRES_DSN` | PostgreSQL 连接串 |
+| `WUNDER_CONFIG_PATH` | 配置文件路径 |
 
-1. `/wunder` 是否可返回
-2. `/wunder/chat/ws` 是否可建连
-3. `/a2a/agentCard` 是否可读
-4. `/wunder/mcp` 是否可达
-5. `/docs/` 是否能正常打开
+### Docker 下的浏览器
 
-## 关键配置文件
+如果需要在 Docker 中使用浏览器工具：
+- 确保镜像构建时安装了 Chromium
+- 分配足够的共享内存（`shm_size: 2gb`）
+- 启用浏览器相关环境变量
 
-- `config/wunder.yaml`
-- `config/wunder-example.yaml`
-- `WUNDER_TEMP/config/wunder.yaml`（CLI/Desktop 运行时）
-- `config/mcp_config.json`
+## 升级策略
 
-## 常见环境变量
+- 滚动更新：逐个替换实例，不中断服务
+- 数据库迁移：系统自动处理，不需要手动操作
+- 配置兼容：新版本会自动适配旧配置格式
 
-- `WUNDER_HOST`
-- `WUNDER_PORT`
-- `WUNDER_API_KEY`
-- `WUNDER_POSTGRES_DSN`
-- `WUNDER_SANDBOX_ENDPOINT`
-- `WUNDER_MCP_HOST`
-- `WUNDER_CONFIG_PATH`
-- `WUNDER_USER_TOOLS_ROOT`
+## 常见部署问题
 
-## Docker 下的浏览器运行时
-
-- 当前 Compose 默认会在镜像构建阶段安装 Playwright Chromium
-- 当前 Compose 默认会开启 `WUNDER_BROWSER_ENABLED=true`、`WUNDER_BROWSER_TOOL_ENABLED=true` 和 `WUNDER_BROWSER_DOCKER_ENABLED=true`
-- `shm_size: 2gb` 是给 Chromium 的 `/dev/shm` 预留空间，避免容器内因为共享内存过小出现崩溃、卡死、空白页或截图失败
-
-## 最容易忽略的部署问题
-
-- 只启动了 server，但没准备好 Postgres
-- 开启了 MCP 配置，但目标服务没通
-- 工作区没有持久化，导致产物丢失
-- 把长期业务数据放进了 `config/data/` 运行时目录
-- 误把 desktop 本地模式当成 server 部署方式
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 启动失败 | PostgreSQL 未准备好 | 确保数据库先启动 |
+| WebSocket 连不上 | 端口或代理配置问题 | 检查端口和反向代理配置 |
+| 工作区丢失 | 没有持久化存储 | 使用数据卷挂载 |
+| 临时文件堆积 | 没有清理策略 | 配置定期清理任务 |
+| 浏览器工具不可用 | Docker 未安装 Chromium | 检查镜像构建配置 |
 
 ## 延伸阅读
 
-- [Server 部署](/docs/zh-CN/start/server/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
-- [配置说明](/docs/zh-CN/reference/config/)
+- [Server 入门](/docs/zh-CN/start/server/)
+- [数据与存储](/docs/zh-CN/ops/data-and-storage/)
+- [系统设置参考](/docs/zh-CN/reference/config/)

@@ -889,6 +889,8 @@
     - `artifact_filename/artifact_size_bytes`：工件文件名与大小
     - `icon/tags/metadata`：展示补充信息
     - `created_at/updated_at/source_updated_at`：时间戳（秒）
+    - `freshness_status`：源内容状态，`current|outdated|source_missing`
+    - `source_signature`：发布快照时记录的源签名，仅用于诊断
     - `mine`：是否为当前用户自己的条目
 
 #### `POST /wunder/plaza/items`
@@ -902,6 +904,7 @@
   - `hive_pack`：复用蜂群包导出链路生成工件后上架
   - `worker_card`：复用工蜂卡构建链路生成工件后上架
   - `skill_pack`：将当前用户的自定义技能目录打包后上架
+  - 同一用户、同一 `kind + source_key` 再次发布时会覆盖原快照，不会自动跟随源内容更新
 - 返回（JSON）：
   - `data`：创建后的条目对象，字段同列表项
 

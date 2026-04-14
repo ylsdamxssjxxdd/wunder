@@ -216,6 +216,10 @@ fn create_custom_skill(app: &TestApp, user: &TestUser, skill_name: &str) -> Path
     skill_dir
 }
 
+fn overwrite_skill_markdown(skill_dir: &Path, content: &str) {
+    fs::write(skill_dir.join("SKILL.md"), content).expect("overwrite skill markdown");
+}
+
 fn create_hive(
     app: &TestApp,
     user: &TestUser,
@@ -838,4 +842,202 @@ async fn skill_pack_import_rejects_illegal_archive_paths() {
     let imported_root = app.state.user_tool_store.get_skill_root(&importer.user_id);
     assert!(!imported_root.join("evil.txt").exists());
     assert!(!imported_root.join("shared").join("evil.txt").exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plaza_item_marks_skill_pack_outdated_until_republished() {
+    let app = build_test_app().await;
+    let owner = create_user_session(&app, "plaza_skill_refresh_owner");
+
+    let skill_dir = create_custom_skill(&app, &owner, "plaza_skill_refresh");
+    let published = publish_plaza_item(
+        &app,
+        &owner,
+        "skill_pack",
+        "plaza_skill_refresh",
+        "Refreshable Skill",
+    )
+    .await;
+    let item_id = item_id_from_payload(&published);
+
+    let (status, before_payload) = send_json(
+        &app.app,
+        &owner.token,
+        Method::GET,
+        "/wunder/plaza/items?kind=skill_pack",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let before_status = before_payload["data"]["items"][0]["freshness_status"].as_str();
+    assert_eq!(before_status, Some("current"));
+
+    overwrite_skill_markdown(
+        &skill_dir,
+        "---\nname: plaza_skill_refresh\ndescription: changed skill\n---\n# changed\n",
+    );
+
+    let (status, outdated_payload) = send_json(
+        &app.app,
+        &owner.token,
+        Method::GET,
+        &format!("/wunder/plaza/items/{item_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        Some("outdated")
+    );
+
+    let republished = publish_plaza_item(
+        &app,
+        &owner,
+        "skill_pack",
+        "plaza_skill_refresh",
+        "Refreshable Skill",
+    )
+    .await;
+    assert_eq!(item_id_from_payload(&republished), item_id);
+    assert_eq!(
+        republished.pointer("/data/freshness_status").and_then(Value::as_str),
+        Some("current")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plaza_item_marks_worker_card_outdated_and_missing_source() {
+    let app = build_test_app().await;
+    let owner = create_user_session(&app, "plaza_worker_refresh_owner");
+
+    let hive = create_hive(&app, &owner, "plaza_worker_refresh_hive", "Refresh Hive", "refresh");
+    let agent = create_agent(
+        &app,
+        &owner,
+        &hive.hive_id,
+        "agent_plaza_worker_refresh",
+        "Refresh Worker",
+        "before change",
+        Some("palette:#aa8844"),
+        false,
+        false,
+    );
+
+    let published = publish_plaza_item(
+        &app,
+        &owner,
+        "worker_card",
+        &agent.agent_id,
+        "Refresh Worker Card",
+    )
+    .await;
+    let item_id = item_id_from_payload(&published);
+
+    let mut changed_agent = app
+        .state
+        .user_store
+        .get_user_agent(&owner.user_id, &agent.agent_id)
+        .expect("query worker")
+        .expect("worker should exist");
+    changed_agent.description = "after change".to_string();
+    changed_agent.updated_at = now_ts();
+    app.state
+        .user_store
+        .upsert_user_agent(&changed_agent)
+        .expect("update worker");
+
+    let (status, outdated_payload) = send_json(
+        &app.app,
+        &owner.token,
+        Method::GET,
+        &format!("/wunder/plaza/items/{item_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        Some("outdated")
+    );
+
+    app.state
+        .user_store
+        .delete_user_agent(&owner.user_id, &agent.agent_id)
+        .expect("delete worker");
+
+    let (status, missing_payload) = send_json(
+        &app.app,
+        &owner.token,
+        Method::GET,
+        &format!("/wunder/plaza/items/{item_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        missing_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        Some("source_missing")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plaza_item_marks_hive_pack_outdated_after_member_change() {
+    let app = build_test_app().await;
+    let owner = create_user_session(&app, "plaza_hive_refresh_owner");
+
+    let hive = create_hive(&app, &owner, "plaza_hive_refresh", "Refresh Hive", "refresh hive");
+    let mother = create_agent(
+        &app,
+        &owner,
+        &hive.hive_id,
+        "agent_plaza_hive_refresh_mother",
+        "Refresh Mother",
+        "mother",
+        Some("palette:#cc8844"),
+        false,
+        true,
+    );
+    create_agent(
+        &app,
+        &owner,
+        &hive.hive_id,
+        "agent_plaza_hive_refresh_worker",
+        "Refresh Worker",
+        "worker",
+        Some("palette:#557799"),
+        true,
+        false,
+    );
+
+    let published = publish_plaza_item(&app, &owner, "hive_pack", &hive.hive_id, "Refresh Hive Pack").await;
+    let item_id = item_id_from_payload(&published);
+
+    let mut changed_mother = app
+        .state
+        .user_store
+        .get_user_agent(&owner.user_id, &mother.agent_id)
+        .expect("query mother")
+        .expect("mother should exist");
+    changed_mother.prefer_mother = false;
+    changed_mother.description = "mother changed".to_string();
+    changed_mother.updated_at = now_ts();
+    app.state
+        .user_store
+        .upsert_user_agent(&changed_mother)
+        .expect("update mother");
+
+    let (status, outdated_payload) = send_json(
+        &app.app,
+        &owner.token,
+        Method::GET,
+        &format!("/wunder/plaza/items/{item_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        Some("outdated")
+    );
 }

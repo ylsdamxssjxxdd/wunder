@@ -42,6 +42,7 @@ async fn list_user_plaza_items(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, user_query.user_id.as_deref()).await?;
     let items = list_items(&state, &resolved.user.user_id, &query)
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
@@ -59,6 +60,7 @@ async fn get_user_plaza_item(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, user_query.user_id.as_deref()).await?;
     let record = get_item(&state, &item_id)
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "plaza item not found".to_string()))?;
     let items = list_items(
@@ -69,6 +71,7 @@ async fn get_user_plaza_item(
             kind: Some(record.kind.clone()),
         },
     )
+    .await
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let payload = items
         .into_iter()

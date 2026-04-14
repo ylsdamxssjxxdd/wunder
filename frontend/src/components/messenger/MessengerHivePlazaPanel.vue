@@ -64,7 +64,8 @@
               <AgentAvatar
                 size="md"
                 state="idle"
-                :icon="item.icon"
+                :icon="resolvePlazaAvatarIcon(item)"
+                :image-url="resolvePlazaAvatarImageUrl(item)"
                 :name="item.title"
                 :title="item.title"
               />
@@ -74,8 +75,13 @@
               </div>
             </div>
             <div class="hive-plaza-feed-summary">{{ item.summary || t('common.noDescription') }}</div>
-            <div v-if="item.tags?.length" class="hive-plaza-card-tags">
-              <span v-for="tag in item.tags.slice(0, 3)" :key="tag" class="hive-plaza-tag">{{ tag }}</span>
+            <div
+              v-if="resolveFreshnessNotice(item)"
+              class="hive-plaza-freshness"
+              :class="`is-${item.freshness_status || 'current'}`"
+            >
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              <span>{{ resolveFreshnessNotice(item) }}</span>
             </div>
             <div class="hive-plaza-feed-foot">
               <span>{{ formatBytes(item.artifact_size_bytes) }}</span>
@@ -130,7 +136,8 @@
           <AgentAvatar
             size="lg"
             state="idle"
-            :icon="selectedItem.icon"
+            :icon="resolvePlazaAvatarIcon(selectedItem)"
+            :image-url="resolvePlazaAvatarImageUrl(selectedItem)"
             :name="selectedItem.title"
             :title="selectedItem.title"
           />
@@ -159,6 +166,15 @@
             <span class="hive-plaza-detail-label">{{ t('plaza.detail.updatedAt') }}</span>
             <span class="hive-plaza-detail-value">{{ formatTime(selectedItem.updated_at) || '-' }}</span>
           </div>
+        </div>
+
+        <div
+          v-if="resolveFreshnessNotice(selectedItem)"
+          class="hive-plaza-detail-notice"
+          :class="`is-${selectedItem.freshness_status || 'current'}`"
+        >
+          <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+          <span>{{ resolveFreshnessNotice(selectedItem) }}</span>
         </div>
 
         <div v-if="selectedItem.tags?.length" class="hive-plaza-tag-row">
@@ -316,6 +332,7 @@ const { t } = useI18n();
 const plazaStore = usePlazaStore();
 const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
+const hivePackAvatarImageUrl = `${import.meta.env.BASE_URL}beeroom.png`;
 
 const publishDialogVisible = ref(false);
 const panelKeyword = ref('');
@@ -532,6 +549,12 @@ const removeSelectedItem = async () => {
 
 const resolveKindLabel = (kind: string) => t(`plaza.kind.${kind}`);
 
+const resolvePlazaAvatarImageUrl = (item: PlazaItem | null | undefined) =>
+  item?.kind === 'hive_pack' ? hivePackAvatarImageUrl : '';
+
+const resolvePlazaAvatarIcon = (item: PlazaItem | null | undefined) =>
+  item?.kind === 'hive_pack' ? '' : item?.icon;
+
 const resolveOwnerLabel = (item: PlazaItem) => {
   if (item.owner_user_id && item.owner_user_id === String(props.currentUserId || '')) {
     return t('plaza.meta.mine');
@@ -543,6 +566,19 @@ const resolveImportActionLabel = (kind: string) => {
   if (kind === 'hive_pack') return t('plaza.action.importHive');
   if (kind === 'skill_pack') return t('plaza.action.importSkill');
   return t('plaza.action.importWorker');
+};
+
+const resolveFreshnessNotice = (item: PlazaItem | null | undefined) => {
+  const status = String(item?.freshness_status || 'current').trim();
+  if (status === 'outdated') {
+    return item?.mine ? t('plaza.freshness.outdatedMine') : t('plaza.freshness.outdatedRemote');
+  }
+  if (status === 'source_missing') {
+    return item?.mine
+      ? t('plaza.freshness.sourceMissingMine')
+      : t('plaza.freshness.sourceMissingRemote');
+  }
+  return '';
 };
 
 const formatBytes = (value: unknown) => {
@@ -853,7 +889,27 @@ defineExpose({
   -webkit-box-orient: vertical;
 }
 
-.hive-plaza-card-tags,
+.hive-plaza-freshness,
+.hive-plaza-detail-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  background: rgba(255, 247, 237, 0.92);
+  color: #9a5e11;
+}
+
+.hive-plaza-freshness.is-source_missing,
+.hive-plaza-detail-notice.is-source_missing {
+  border-color: rgba(244, 63, 94, 0.2);
+  background: rgba(255, 241, 242, 0.94);
+  color: #be123c;
+}
+
 .hive-plaza-detail-badges,
 .hive-plaza-tag-row,
 .hive-plaza-detail-actions,

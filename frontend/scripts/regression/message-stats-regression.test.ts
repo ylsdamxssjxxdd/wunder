@@ -206,6 +206,79 @@ test('message stats still shows quota consumed after an interrupted response', (
   assert.equal(findEntryValue(entries, 'Quota'), '1536');
 });
 
+test('message stats interrupted response prefers accumulated user-round quota over latest usage snapshot', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1536,
+        usage: {
+          input_tokens: 4800,
+          output_tokens: 200,
+          total_tokens: 5000
+        },
+        contextTokens: 5000
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '1536');
+  assert.equal(findEntryValue(entries, 'Context'), '5000');
+});
+
+test('message stats interrupted response falls back to round usage instead of usage snapshot when quota event is missing', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        quotaConsumed: 1,
+        roundUsage: {
+          input_tokens: 2100,
+          output_tokens: 420,
+          total_tokens: 2520
+        },
+        usage: {
+          input_tokens: 6100,
+          output_tokens: 100,
+          total_tokens: 6200
+        },
+        contextTokens: 6200
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '2520');
+  assert.equal(findEntryValue(entries, 'Context'), '6200');
+});
+
+test('message stats does not treat usage snapshot as quota when interrupted response lacks round totals', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stop_reason: 'interrupted',
+      stats: {
+        usage: {
+          input_tokens: 4096,
+          output_tokens: 128,
+          total_tokens: 4224
+        },
+        contextTokens: 4224
+      }
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, 'Quota'), '-');
+  assert.equal(findEntryValue(entries, 'Context'), '4224');
+});
+
 test('message stats falls back to user-round total tokens when quota event is missing', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(

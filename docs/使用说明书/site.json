@@ -220,7 +220,7 @@
                 ]
               },
               {
-                "group": "运行模型参考",
+                "group": "深入了解",
                 "pages": [
                   "zh-CN/concepts/architecture",
                   "zh-CN/concepts/workspaces",
@@ -464,7 +464,7 @@
                 ]
               },
               {
-                "group": "Runtime Model Reference",
+                "group": "Deep Dives",
                 "pages": [
                   "en/concepts/architecture",
                   "en/concepts/workspaces",

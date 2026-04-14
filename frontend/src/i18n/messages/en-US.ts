@@ -2569,6 +2569,12 @@ export default {
   'plaza.publish.summary': 'Summary',
   'plaza.publish.submit': 'Publish Now',
   'plaza.publish.sourceEmpty': 'No publishable source is available for this type right now.',
+  'plaza.freshness.outdatedMine': 'The source content has changed. Plaza snapshots do not update automatically, so re-publish this item.',
+  'plaza.freshness.outdatedRemote': 'The publisher has changed the source content. This plaza item is still an older snapshot.',
+  'plaza.freshness.sourceMissingMine':
+    'The source content no longer exists. This plaza item still keeps the historical snapshot; re-publish from a valid source if needed.',
+  'plaza.freshness.sourceMissingRemote':
+    'The publisher source no longer exists. This plaza item only keeps the historical snapshot.',
   'plaza.publish.success': 'Published to plaza',
   'plaza.publish.failed': 'Failed to publish plaza item',
   'plaza.publish.loadSkillsFailed': 'Failed to load custom skills',
