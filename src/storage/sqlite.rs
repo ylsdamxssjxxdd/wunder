@@ -17,10 +17,10 @@ use crate::storage::{
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
-    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
-    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
-    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
-    VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
+    UserSessionScopeRecord, UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord,
+    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
 use chrono::{Local, Utc};
@@ -518,6 +518,28 @@ impl SqliteStorage {
     }
 
     fn ensure_user_account_list_indexes(&self, _conn: &Connection) -> Result<()> {
+        Ok(())
+    }
+
+    fn ensure_user_token_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "user_tokens")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+        if !columns.contains("session_scope") {
+            conn.execute(
+                "ALTER TABLE user_tokens ADD COLUMN session_scope TEXT NOT NULL DEFAULT 'default'",
+                [],
+            )?;
+        }
+        conn.execute(
+            "UPDATE user_tokens SET session_scope = 'default' WHERE session_scope IS NULL OR trim(session_scope) = ''",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_tokens_user_scope_created ON user_tokens (user_id, session_scope, created_at)",
+            [],
+        )?;
         Ok(())
     }
 
@@ -1136,6 +1158,7 @@ impl StorageBackend for SqliteStorage {
             CREATE TABLE IF NOT EXISTS user_tokens (
               token TEXT PRIMARY KEY,
               user_id TEXT NOT NULL,
+              session_scope TEXT NOT NULL DEFAULT 'default',
               expires_at REAL NOT NULL,
               created_at REAL NOT NULL,
               last_used_at REAL NOT NULL
@@ -1144,6 +1167,12 @@ impl StorageBackend for SqliteStorage {
               ON user_tokens (user_id);
             CREATE INDEX IF NOT EXISTS idx_user_tokens_expires
               ON user_tokens (expires_at);
+            CREATE TABLE IF NOT EXISTS user_session_scopes (
+              user_id TEXT NOT NULL,
+              session_scope TEXT NOT NULL,
+              last_login_at REAL NOT NULL,
+              PRIMARY KEY (user_id, session_scope)
+            );
             CREATE TABLE IF NOT EXISTS user_tool_access (
               user_id TEXT PRIMARY KEY,
               allowed_tools TEXT,
@@ -1746,6 +1775,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_user_account_level_columns(&conn)?;
         self.ensure_user_account_unit_columns(&conn)?;
         self.ensure_user_account_list_indexes(&conn)?;
+        self.ensure_user_token_columns(&conn)?;
         self.ensure_user_tool_access_columns(&conn)?;
         self.ensure_chat_session_columns(&conn)?;
         self.ensure_channel_columns(&conn)?;
@@ -4836,10 +4866,11 @@ impl StorageBackend for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO user_tokens (token, user_id, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO user_tokens (token, user_id, session_scope, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)",
             params![
                 record.token,
                 record.user_id,
+                record.session_scope,
                 record.expires_at,
                 record.created_at,
                 record.last_used_at
@@ -4857,15 +4888,16 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT token, user_id, expires_at, created_at, last_used_at FROM user_tokens WHERE token = ?",
+                "SELECT token, user_id, session_scope, expires_at, created_at, last_used_at FROM user_tokens WHERE token = ?",
                 params![cleaned],
                 |row| {
                     Ok(UserTokenRecord {
                         token: row.get(0)?,
                         user_id: row.get(1)?,
-                        expires_at: row.get(2)?,
-                        created_at: row.get(3)?,
-                        last_used_at: row.get(4)?,
+                        session_scope: row.get(2)?,
+                        expires_at: row.get(3)?,
+                        created_at: row.get(4)?,
+                        last_used_at: row.get(5)?,
                     })
                 },
             )
@@ -4896,6 +4928,45 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let affected = conn.execute("DELETE FROM user_tokens WHERE token = ?", params![cleaned])?;
         Ok(affected as i64)
+    }
+
+    fn upsert_user_session_scope(&self, record: &UserSessionScopeRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO user_session_scopes (user_id, session_scope, last_login_at) VALUES (?, ?, ?)
+             ON CONFLICT(user_id, session_scope) DO UPDATE SET last_login_at = excluded.last_login_at",
+            params![record.user_id, record.session_scope, record.last_login_at],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_session_scope(
+        &self,
+        user_id: &str,
+        session_scope: &str,
+    ) -> Result<Option<UserSessionScopeRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user_id = user_id.trim();
+        let cleaned_scope = session_scope.trim();
+        if cleaned_user_id.is_empty() || cleaned_scope.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT user_id, session_scope, last_login_at FROM user_session_scopes WHERE user_id = ? AND session_scope = ?",
+                params![cleaned_user_id, cleaned_scope],
+                |row| {
+                    Ok(UserSessionScopeRecord {
+                        user_id: row.get(0)?,
+                        session_scope: row.get(1)?,
+                        last_login_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
     }
 
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {

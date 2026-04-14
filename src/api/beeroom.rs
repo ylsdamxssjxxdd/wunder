@@ -230,19 +230,29 @@ async fn update_beeroom_group(
                 .get_user_agent(&user_id, mother_agent_id)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
                 .ok_or_else(|| {
-                    error_response(StatusCode::BAD_REQUEST, "mother agent not found".to_string())
+                    error_response(
+                        StatusCode::BAD_REQUEST,
+                        "mother agent not found".to_string(),
+                    )
                 })?;
             state
                 .user_store
                 .move_agents_to_hive(&user_id, &group.hive_id, &[mother_agent_id.to_string()])
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            set_mother_agent(state.storage.as_ref(), &user_id, &group.hive_id, mother_agent_id)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            set_mother_agent(
+                state.storage.as_ref(),
+                &user_id,
+                &group.hive_id,
+                mother_agent_id,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
         None => {}
     }
 
-    Ok(Json(json!({ "data": group_payload(state.as_ref(), &group, 10)? })))
+    Ok(Json(
+        json!({ "data": group_payload(state.as_ref(), &group, 10)? }),
+    ))
 }
 
 async fn delete_beeroom_group(
@@ -459,18 +469,19 @@ fn group_payload(
     )
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let missions = load_group_missions(state, &group.user_id, &group.hive_id, mission_limit)?;
-    let mother_agent_id = get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .or_else(|| {
-            resolve_preferred_mother_agent_id(
-                state.storage.as_ref(),
-                &group.user_id,
-                &group.hive_id,
-                None,
-            )
-            .ok()
-            .flatten()
-        });
+    let mother_agent_id =
+        get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .or_else(|| {
+                resolve_preferred_mother_agent_id(
+                    state.storage.as_ref(),
+                    &group.user_id,
+                    &group.hive_id,
+                    None,
+                )
+                .ok()
+                .flatten()
+            });
     let mother_agent = mother_agent_id
         .as_deref()
         .and_then(|agent_id| agents.iter().find(|agent| agent.agent_id == agent_id));

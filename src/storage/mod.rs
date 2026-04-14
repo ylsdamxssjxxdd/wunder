@@ -125,9 +125,17 @@ pub struct UserExperienceUpdateResult {
 pub struct UserTokenRecord {
     pub token: String,
     pub user_id: String,
+    pub session_scope: String,
     pub expires_at: f64,
     pub created_at: f64,
     pub last_used_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserSessionScopeRecord {
+    pub user_id: String,
+    pub session_scope: String,
+    pub last_login_at: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1182,6 +1190,12 @@ pub trait StorageBackend: Send + Sync {
     fn get_user_token(&self, token: &str) -> Result<Option<UserTokenRecord>>;
     fn touch_user_token(&self, token: &str, last_used_at: f64) -> Result<()>;
     fn delete_user_token(&self, token: &str) -> Result<i64>;
+    fn upsert_user_session_scope(&self, record: &UserSessionScopeRecord) -> Result<()>;
+    fn get_user_session_scope(
+        &self,
+        user_id: &str,
+        session_scope: &str,
+    ) -> Result<Option<UserSessionScopeRecord>>;
 
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()>;
     fn get_chat_session(

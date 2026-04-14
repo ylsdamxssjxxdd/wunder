@@ -3722,9 +3722,14 @@ mod tests {
             960,
             RoundInfo::new(3, 2),
         );
-        assert_eq!(payload.get("total_tokens").and_then(Value::as_u64), Some(200));
         assert_eq!(
-            payload.get("request_consumed_tokens").and_then(Value::as_u64),
+            payload.get("total_tokens").and_then(Value::as_u64),
+            Some(200)
+        );
+        assert_eq!(
+            payload
+                .get("request_consumed_tokens")
+                .and_then(Value::as_u64),
             Some(200)
         );
         assert_eq!(

@@ -166,6 +166,7 @@ pub fn provision_external_user(
     password: &str,
     unit_id: Option<String>,
     desktop_mode: bool,
+    session_scope: &str,
 ) -> Result<(crate::services::user_store::UserSession, bool, bool)> {
     let normalized =
         UserStore::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
@@ -227,7 +228,7 @@ pub fn provision_external_user(
         created = true;
     }
 
-    let session = user_store.login(&normalized, password)?;
+    let session = user_store.login_with_scope(&normalized, password, session_scope)?;
     Ok((session, created, updated))
 }
 
@@ -237,11 +238,19 @@ pub fn provision_external_launch_session(
     password: Option<&str>,
     unit_id: Option<String>,
     desktop_mode: bool,
+    session_scope: &str,
 ) -> Result<(crate::services::user_store::UserSession, bool, bool)> {
     if let Some(password) = password {
         let cleaned = password.trim();
         if !cleaned.is_empty() {
-            return provision_external_user(user_store, username, cleaned, unit_id, desktop_mode);
+            return provision_external_user(
+                user_store,
+                username,
+                cleaned,
+                unit_id,
+                desktop_mode,
+                session_scope,
+            );
         }
     }
 
@@ -292,7 +301,7 @@ pub fn provision_external_launch_session(
         created = true;
         created_user
     };
-    let session = user_store.issue_session_for_user(user)?;
+    let session = user_store.issue_session_for_user_with_scope(user, session_scope)?;
     Ok((session, created, updated))
 }
 

@@ -147,47 +147,48 @@ pre {
 .docs-language-switcher {
   display: flex;
   align-items: center;
-  gap: 8px;
   min-width: 0;
 }
 
-.docs-language-chip {
+.docs-language-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  color: var(--docs-text-soft);
-  font-size: 13px;
-  line-height: 1;
-}
-
-.docs-language-chip.is-active {
+  padding: 6px 12px;
+  border: 1px solid var(--docs-border);
+  border-radius: 8px;
   background: var(--docs-bg-subtle);
-  border-color: var(--docs-border);
   color: var(--docs-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
-.docs-language-chip-dot {
-  width: 10px;
-  height: 10px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #da3434, #ff8f3a);
+.docs-language-toggle:hover {
+  background: var(--docs-bg-muted);
+  border-color: var(--docs-text-soft);
 }
 
-.docs-language-chip-caret {
+.docs-language-toggle-icon {
   width: 14px;
   height: 14px;
-  color: var(--docs-text-dim);
+  flex: 0 0 auto;
+  color: var(--docs-text-soft);
 }
 
-.docs-language-chip-caret svg {
+.docs-language-toggle-icon svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+.docs-language-toggle-text {
+  min-width: 20px;
+  text-align: center;
 }
 
 .docs-search {
@@ -789,8 +790,7 @@ pre {
     gap: 12px;
   }
 
-  .docs-header-link,
-  .docs-language-chip {
+  .docs-header-link {
     font-size: 13px;
   }
 

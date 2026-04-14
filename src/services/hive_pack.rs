@@ -1,11 +1,11 @@
 use crate::schemas::AbilityKind;
+use crate::services::swarm::beeroom::claim_mother_agent;
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::services::worker_card_protocol::{
     build_worker_card_prompt_envelope, resolve_worker_card_prompt_text, WorkerCardPrompt,
 };
 use crate::skills::SkillSpec;
-use crate::services::swarm::beeroom::claim_mother_agent;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, HiveRecord, UserAccountRecord,
@@ -781,7 +781,12 @@ async fn run_import_job_inner(
         .iter()
         .zip(created_agents.iter())
         .find(|(snapshot, _)| snapshot.prefer_mother)
-        .and_then(|(_, agent)| agent.get("agent_id").and_then(Value::as_str).map(str::to_string))
+        .and_then(|(_, agent)| {
+            agent
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
     {
         let _ = claim_mother_agent(
             state.storage.as_ref(),

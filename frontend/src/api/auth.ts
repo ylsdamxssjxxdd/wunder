@@ -16,9 +16,17 @@ export type ResetWorkStateSummary = {
   fresh_main_sessions: ResetWorkStateSession[];
 };
 
-export const login = (payload: ApiPayload) => api.post('/auth/login', payload);
-export const register = (payload: ApiPayload) => api.post('/auth/register', payload);
-export const loginDemo = (payload: ApiPayload) => api.post('/auth/demo', payload);
+const USER_WEB_AUTH_CONFIG = {
+  headers: {
+    'x-wunder-session-scope': 'user_web'
+  }
+};
+
+export const login = (payload: ApiPayload) => api.post('/auth/login', payload, USER_WEB_AUTH_CONFIG);
+export const register = (payload: ApiPayload) =>
+  api.post('/auth/register', payload, USER_WEB_AUTH_CONFIG);
+export const loginDemo = (payload: ApiPayload) =>
+  api.post('/auth/demo', payload, USER_WEB_AUTH_CONFIG);
 export const resetPassword = (payload: ApiPayload) => api.post('/auth/reset_password', payload);
 export const fetchMe = () => api.get('/auth/me');
 export const updateProfile = (payload: ApiPayload) => api.patch('/auth/me', payload);

@@ -10,6 +10,7 @@ use tracing::warn;
 
 pub struct ResolvedUser {
     pub user: UserAccountRecord,
+    pub session_scope: Option<String>,
 }
 
 pub async fn resolve_user(
@@ -20,9 +21,11 @@ pub async fn resolve_user(
     let requested = user_id
         .map(|value| value.trim())
         .filter(|value| !value.is_empty());
-    let token_user = if let Some(token) = guard_auth::extract_bearer_token(headers) {
+    let token_auth = if let Some(token) = guard_auth::extract_bearer_token(headers) {
         let user_store = state.user_store.clone();
-        match tokio::task::spawn_blocking(move || user_store.authenticate_token(&token)).await {
+        match tokio::task::spawn_blocking(move || user_store.authenticate_token_details(&token))
+            .await
+        {
             Ok(Ok(user)) => user,
             Ok(Err(err)) => {
                 warn!("resolve_user token auth failed: {err}");
@@ -36,6 +39,8 @@ pub async fn resolve_user(
     } else {
         None
     };
+    let token_user = token_auth.as_ref().map(|auth| auth.user.clone());
+    let token_session_scope = token_auth.as_ref().map(|auth| auth.session_scope.clone());
     let token_is_admin = token_user
         .as_ref()
         .map(UserStore::is_admin)
@@ -52,13 +57,19 @@ pub async fn resolve_user(
         if let Some(user) = token_user.as_ref() {
             if user.user_id == requested {
                 state.control.presence.touch_user(&user.user_id, now_ts());
-                return Ok(ResolvedUser { user: user.clone() });
+                return Ok(ResolvedUser {
+                    user: user.clone(),
+                    session_scope: token_session_scope.clone(),
+                });
             }
             if requested_user_matches_token_scope(requested, &user.user_id) {
                 let mut scoped = user.clone();
                 scoped.user_id = requested.to_string();
                 state.control.presence.touch_user(&user.user_id, now_ts());
-                return Ok(ResolvedUser { user: scoped });
+                return Ok(ResolvedUser {
+                    user: scoped,
+                    session_scope: token_session_scope.clone(),
+                });
             }
         }
         if api_key_valid || token_is_admin {
@@ -71,10 +82,16 @@ pub async fn resolve_user(
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             if let Some(user) = user {
                 state.control.presence.touch_user(&user.user_id, now_ts());
-                return Ok(ResolvedUser { user });
+                return Ok(ResolvedUser {
+                    user,
+                    session_scope: None,
+                });
             }
             let user = build_virtual_user(requested);
-            return Ok(ResolvedUser { user });
+            return Ok(ResolvedUser {
+                user,
+                session_scope: None,
+            });
         }
         return Err(error_response(
             StatusCode::UNAUTHORIZED,
@@ -84,7 +101,10 @@ pub async fn resolve_user(
 
     if let Some(user) = token_user {
         state.control.presence.touch_user(&user.user_id, now_ts());
-        return Ok(ResolvedUser { user });
+        return Ok(ResolvedUser {
+            user,
+            session_scope: token_session_scope,
+        });
     }
 
     Err(error_response(

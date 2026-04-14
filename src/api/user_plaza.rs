@@ -18,8 +18,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/plaza/items",
             get(list_user_plaza_items).post(create_user_plaza_item),
         )
-        .route("/wunder/plaza/items/{item_id}", get(get_user_plaza_item).delete(delete_user_plaza_item))
-        .route("/wunder/plaza/items/{item_id}/import", post(import_user_plaza_item))
+        .route(
+            "/wunder/plaza/items/{item_id}",
+            get(get_user_plaza_item).delete(delete_user_plaza_item),
+        )
+        .route(
+            "/wunder/plaza/items/{item_id}/import",
+            post(import_user_plaza_item),
+        )
 }
 
 #[derive(Debug, Deserialize, Default)]

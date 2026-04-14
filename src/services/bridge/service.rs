@@ -203,6 +203,7 @@ async fn auto_provision_route(
         None,
         center.target_unit_id.clone(),
         desktop_mode,
+        crate::services::user_store::UserStore::default_session_scope(),
     )?;
     let (agent, agent_created) = ensure_external_embed_agent_with_runtime(
         &runtime.config_store,

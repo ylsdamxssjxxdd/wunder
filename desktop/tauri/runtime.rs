@@ -1325,6 +1325,7 @@ fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str)
     let record = UserTokenRecord {
         token: desktop_token.to_string(),
         user_id: user_id.to_string(),
+        session_scope: UserStore::default_session_scope().to_string(),
         expires_at: now + 10.0 * 365.0 * 24.0 * 3600.0,
         created_at: now,
         last_used_at: now,

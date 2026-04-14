@@ -416,34 +416,36 @@
 
     <template v-else-if="activeSection === 'plaza'">
       <button
-        v-for="item in filteredPlazaItems"
-        :key="item.item_id"
-        class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedPlazaItemId === String(item.item_id || '') }"
+        v-for="page in plazaBrowsePages"
+        :key="page.kind"
+        class="messenger-list-item messenger-plaza-page-item"
+        :class="{ active: selectedPlazaBrowseKind === page.kind }"
         type="button"
-        @click="selectPlazaItem(item.item_id)"
+        @click="selectPlazaBrowseKind(page.kind)"
       >
-        <AgentAvatar
-          size="md"
-          state="idle"
-          :icon="item.icon"
-          :name="item.title || item.item_id"
-        />
+        <div class="messenger-plaza-page-avatar" :class="`is-${page.kind}`">
+          <img
+            v-if="page.imageUrl"
+            class="messenger-plaza-page-avatar-image"
+            :src="page.imageUrl"
+            :alt="page.label"
+          />
+          <i
+            v-else
+            class="fa-solid fa-wand-magic-sparkles"
+            aria-hidden="true"
+          ></i>
+        </div>
         <div class="messenger-list-main">
           <div class="messenger-list-row">
-            <span class="messenger-list-name">{{ item.title }}</span>
-            <span class="messenger-kind-tag">{{ resolvePlazaKindLabel(item.kind) }}</span>
+            <span class="messenger-list-name">{{ page.label }}</span>
+            <span class="messenger-plaza-page-count">{{ page.count }}</span>
           </div>
           <div class="messenger-list-row">
-            <span class="messenger-list-preview">
-              {{ item.summary || resolvePlazaOwnerLabel(item) || t('messenger.preview.empty') }}
-            </span>
+            <span class="messenger-list-preview">{{ page.description }}</span>
           </div>
         </div>
       </button>
-      <div v-if="!filteredPlazaItems.length" class="messenger-list-empty">
-        {{ t('messenger.empty.plaza') }}
-      </div>
     </template>
 
     <template v-else-if="activeSection === 'agents'">
@@ -919,6 +921,9 @@ import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
 import BeeroomPackWaitingOverlay from '@/components/beeroom/BeeroomPackWaitingOverlay.vue';
+import avatar046Url from '@/assets/agent-avatars/avatar-046.png';
+import avatar016Url from '@/assets/agent-avatars/avatar-016.png';
+import type { PlazaBrowseKind } from '@/components/messenger/hivePlazaPanelState';
 import { useBeeroomStore } from '@/stores/beeroom';
 import { runUnsavedChangesGuards } from '@/utils/unsavedChangesGuard';
 
@@ -993,9 +998,9 @@ const {
   selectedBeeroomGroupId,
   selectBeeroomGroup,
   deleteBeeroomGroup,
-  filteredPlazaItems,
-  selectedPlazaItemId,
-  selectPlazaItem,
+  selectedPlazaBrowseKind,
+  selectPlazaBrowseKind,
+  plazaBrowsePageCounts,
   filteredGroups,
   selectedGroupId,
   selectGroup,
@@ -1078,9 +1083,9 @@ const {
   selectedBeeroomGroupId: string;
   selectBeeroomGroup: (group: Record<string, any>) => void;
   deleteBeeroomGroup: (group: Record<string, any>) => void | Promise<void>;
-  filteredPlazaItems: Array<Record<string, any>>;
-  selectedPlazaItemId: string;
-  selectPlazaItem: (itemId: string) => void;
+  selectedPlazaBrowseKind: PlazaBrowseKind;
+  selectPlazaBrowseKind: (kind: PlazaBrowseKind) => void;
+  plazaBrowsePageCounts: Record<PlazaBrowseKind, number>;
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
@@ -1143,22 +1148,35 @@ const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
   return output;
 });
 
-const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'plaza', 'agents']);
+const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );
 
-const resolvePlazaKindLabel = (kind: unknown): string => {
-  const normalized = String(kind || '').trim() || 'worker_card';
-  return t(`plaza.kind.${normalized}`);
-};
-
-const resolvePlazaOwnerLabel = (item: Record<string, unknown>): string => {
-  if (item?.mine === true) {
-    return t('plaza.meta.mine');
+const plazaHivePageIconUrl = `${import.meta.env.BASE_URL}beeroom.png`;
+const plazaBrowsePages = computed(() => [
+  {
+    kind: 'hive_pack' as PlazaBrowseKind,
+    label: t('plaza.kind.hive_pack'),
+    description: t('plaza.page.hivePackDesc'),
+    count: Number(plazaBrowsePageCounts.hive_pack || 0),
+    imageUrl: plazaHivePageIconUrl
+  },
+  {
+    kind: 'worker_card' as PlazaBrowseKind,
+    label: t('plaza.kind.worker_card'),
+    description: t('plaza.page.workerCardDesc'),
+    count: Number(plazaBrowsePageCounts.worker_card || 0),
+    imageUrl: avatar046Url
+  },
+  {
+    kind: 'skill_pack' as PlazaBrowseKind,
+    label: t('plaza.kind.skill_pack'),
+    description: t('plaza.page.skillPackDesc'),
+    count: Number(plazaBrowsePageCounts.skill_pack || 0),
+    imageUrl: avatar016Url
   }
-  return String(item?.owner_username || item?.owner_user_id || '').trim();
-};
+]);
 
 const GUIDED_DEFAULT_CONVERSATION_KEY = '__guided_default_agent__';
 
@@ -1795,5 +1813,57 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   }
 };
 </script>
+
+<style scoped>
+.messenger-plaza-page-item {
+  align-items: center;
+}
+
+.messenger-plaza-page-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(255, 214, 120, 0.22), rgba(237, 157, 49, 0.12));
+  color: #ab6a10;
+  box-shadow: inset 0 0 0 1px rgba(223, 161, 72, 0.18);
+}
+
+.messenger-plaza-page-avatar.is-hive_pack {
+  background: linear-gradient(135deg, rgba(255, 216, 128, 0.28), rgba(236, 165, 79, 0.14));
+}
+
+.messenger-plaza-page-avatar.is-worker_card {
+  background: linear-gradient(135deg, rgba(252, 221, 168, 0.24), rgba(214, 160, 122, 0.14));
+}
+
+.messenger-plaza-page-avatar.is-skill_pack {
+  background: linear-gradient(135deg, rgba(255, 236, 184, 0.28), rgba(244, 194, 86, 0.12));
+}
+
+.messenger-plaza-page-avatar-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.messenger-plaza-page-count {
+  min-width: 28px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 214, 127, 0.22);
+  color: #925b12;
+  font-size: 12px;
+  font-weight: 700;
+}
+</style>
 
 

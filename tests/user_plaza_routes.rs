@@ -95,6 +95,23 @@ fn create_user_session(app: &TestApp, username: &str) -> TestUser {
     }
 }
 
+fn create_admin_session(app: &TestApp) -> TestUser {
+    app.state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let token = app
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+    TestUser {
+        token,
+        user_id: "admin".to_string(),
+    }
+}
+
 async fn send_json(
     app: &Router,
     token: &str,
@@ -184,15 +201,18 @@ fn load_plaza_record(app: &TestApp, item_id: &str) -> UserPlazaItemRecord {
 }
 
 fn create_custom_skill(app: &TestApp, user: &TestUser, skill_name: &str) -> PathBuf {
-    let skill_dir = app.state.user_tool_store.get_skill_root(&user.user_id).join(skill_name);
+    let skill_dir = app
+        .state
+        .user_tool_store
+        .get_skill_root(&user.user_id)
+        .join(skill_name);
     fs::create_dir_all(skill_dir.join("notes")).expect("create skill notes dir");
     fs::write(
         skill_dir.join("SKILL.md"),
         format!("---\nname: {skill_name}\ndescription: plaza skill\n---\n# {skill_name}\n"),
     )
     .expect("write SKILL.md");
-    fs::write(skill_dir.join("notes").join("guide.txt"), "skill guide")
-        .expect("write skill guide");
+    fs::write(skill_dir.join("notes").join("guide.txt"), "skill guide").expect("write skill guide");
     skill_dir
 }
 
@@ -213,7 +233,10 @@ fn create_hive(
         created_time: now_ts(),
         updated_time: now_ts(),
     };
-    app.state.user_store.upsert_hive(&record).expect("upsert hive");
+    app.state
+        .user_store
+        .upsert_hive(&record)
+        .expect("upsert hive");
     record
 }
 
@@ -380,7 +403,9 @@ async fn list_items_filters_by_owner_and_kind_and_skips_missing_artifacts() {
         .and_then(Value::as_bool);
     let viewer_visible_mine = skill_items
         .iter()
-        .find(|item| item.get("item_id").and_then(Value::as_str) == Some(viewer_visible_id.as_str()))
+        .find(|item| {
+            item.get("item_id").and_then(Value::as_str) == Some(viewer_visible_id.as_str())
+        })
         .and_then(|item| item.get("mine"))
         .and_then(Value::as_bool);
     assert_eq!(owner_skill_mine, Some(true));
@@ -450,7 +475,10 @@ async fn skill_pack_import_extracts_skill_for_other_user() {
         .any(|value| value.as_str() == Some("plaza_skill_shared")));
 
     let imported_root = app.state.user_tool_store.get_skill_root(&importer.user_id);
-    assert!(imported_root.join("plaza_skill_shared").join("SKILL.md").is_file());
+    assert!(imported_root
+        .join("plaza_skill_shared")
+        .join("SKILL.md")
+        .is_file());
     assert!(imported_root
         .join("plaza_skill_shared")
         .join("notes")
@@ -574,7 +602,9 @@ async fn hive_pack_import_reports_hive_id_and_recreates_agents() {
     let (status, payload) = import_plaza_item(&app, &importer, &item_id).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        payload.pointer("/data/imported_job/status").and_then(Value::as_str),
+        payload
+            .pointer("/data/imported_job/status")
+            .and_then(Value::as_str),
         Some("completed")
     );
     let imported_hive_id = payload
@@ -671,6 +701,112 @@ async fn delete_item_requires_owner_and_removes_artifact_and_meta() {
         .get_meta(&format!("user_plaza:item:{item_id}"))
         .expect("query plaza meta")
         .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleting_user_account_removes_owned_plaza_assets() {
+    let app = build_test_app().await;
+    let admin = create_admin_session(&app);
+    let owner = create_user_session(&app, "plaza_deleted_account_owner");
+    let other = create_user_session(&app, "plaza_deleted_account_other");
+
+    create_custom_skill(&app, &owner, "plaza_deleted_account_skill_a");
+    let owner_a = publish_plaza_item(
+        &app,
+        &owner,
+        "skill_pack",
+        "plaza_deleted_account_skill_a",
+        "Owner Shared Skill A",
+    )
+    .await;
+    create_custom_skill(&app, &owner, "plaza_deleted_account_skill_b");
+    let owner_b = publish_plaza_item(
+        &app,
+        &owner,
+        "skill_pack",
+        "plaza_deleted_account_skill_b",
+        "Owner Shared Skill B",
+    )
+    .await;
+    create_custom_skill(&app, &other, "plaza_deleted_account_other_skill");
+    let other_item = publish_plaza_item(
+        &app,
+        &other,
+        "skill_pack",
+        "plaza_deleted_account_other_skill",
+        "Other Shared Skill",
+    )
+    .await;
+
+    let owner_a_id = item_id_from_payload(&owner_a);
+    let owner_b_id = item_id_from_payload(&owner_b);
+    let other_item_id = item_id_from_payload(&other_item);
+    let owner_a_record = load_plaza_record(&app, &owner_a_id);
+    let owner_b_record = load_plaza_record(&app, &owner_b_id);
+    let other_record = load_plaza_record(&app, &other_item_id);
+
+    assert!(Path::new(&owner_a_record.artifact_path).is_file());
+    assert!(Path::new(&owner_b_record.artifact_path).is_file());
+    assert!(Path::new(&other_record.artifact_path).is_file());
+
+    let (status, payload) = send_json(
+        &app.app,
+        &admin.token,
+        Method::DELETE,
+        &format!("/wunder/admin/user_accounts/{}", owner.user_id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload.pointer("/ok").and_then(Value::as_bool), Some(true));
+    assert!(app
+        .state
+        .user_store
+        .get_user_by_id(&owner.user_id)
+        .expect("query deleted owner")
+        .is_none());
+    assert!(!Path::new(&owner_a_record.artifact_path).exists());
+    assert!(!Path::new(&owner_b_record.artifact_path).exists());
+    assert!(app
+        .state
+        .user_store
+        .get_meta(&format!("user_plaza:item:{owner_a_id}"))
+        .expect("query deleted owner plaza meta a")
+        .is_none());
+    assert!(app
+        .state
+        .user_store
+        .get_meta(&format!("user_plaza:item:{owner_b_id}"))
+        .expect("query deleted owner plaza meta b")
+        .is_none());
+
+    assert!(Path::new(&other_record.artifact_path).is_file());
+    assert!(app
+        .state
+        .user_store
+        .get_meta(&format!("user_plaza:item:{other_item_id}"))
+        .expect("query other plaza meta")
+        .is_some());
+
+    let (status, list_payload) = send_json(
+        &app.app,
+        &other.token,
+        Method::GET,
+        "/wunder/plaza/items",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed_ids = list_payload["data"]["items"]
+        .as_array()
+        .expect("listed plaza items")
+        .iter()
+        .filter_map(|item| item.get("item_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    assert!(!listed_ids.contains(&owner_a_id));
+    assert!(!listed_ids.contains(&owner_b_id));
+    assert!(listed_ids.contains(&other_item_id));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

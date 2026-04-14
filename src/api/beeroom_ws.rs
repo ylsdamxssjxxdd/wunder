@@ -84,11 +84,20 @@ async fn beeroom_ws(
     let auth_headers = apply_ws_auth_headers(&headers, &query);
     let resolved = resolve_user(&state, &auth_headers, None).await?;
     let connection_id = format!("brws_{}", Uuid::new_v4().simple());
+    let session_scope = resolved.session_scope.clone();
     Ok(ws
         .protocols(["wunder"])
         .max_message_size(WS_MAX_MESSAGE_BYTES)
         .max_frame_size(WS_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| handle_ws(socket, state, resolved.user.user_id, connection_id)))
+        .on_upgrade(move |socket| {
+            handle_ws(
+                socket,
+                state,
+                resolved.user.user_id,
+                session_scope,
+                connection_id,
+            )
+        }))
 }
 
 async fn beeroom_chat_stream(
@@ -218,6 +227,7 @@ async fn handle_ws(
     socket: WebSocket,
     state: Arc<AppState>,
     user_id: String,
+    session_scope: Option<String>,
     connection_id: String,
 ) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
@@ -233,10 +243,14 @@ async fn handle_ws(
         }
     });
 
-    state
-        .control
-        .auth_sessions
-        .register(&user_id, &connection_id, out_tx.clone());
+    if let Some(session_scope) = session_scope.as_deref() {
+        state.control.auth_sessions.register(
+            &user_id,
+            session_scope,
+            &connection_id,
+            out_tx.clone(),
+        );
+    }
     state.control.presence.connect_client(
         &user_id,
         &connection_id,

@@ -1585,9 +1585,7 @@ mod tests {
             .find(|spec| spec.name == "智能体蜂群")
             .expect("agent_swarm spec");
         assert!(spec.description.contains("子智能体控制"));
-        assert!(spec
-            .description
-            .contains("agent_id"));
+        assert!(spec.description.contains("agent_id"));
         assert!(spec
             .description
             .contains("send/batch_send -> wait/status -> history"));

@@ -17,10 +17,10 @@ use crate::storage::{
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserExperienceUpdateResult,
-    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
-    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
-    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
-    VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
+    UserSessionScopeRecord, UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord,
+    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::{anyhow, Result};
 use chrono::{Local, Utc};
@@ -695,6 +695,22 @@ impl PostgresStorage {
         );
         let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created ON user_accounts (unit_id, created_at)",
+            &[],
+        );
+        Ok(())
+    }
+
+    fn ensure_user_token_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE user_tokens ADD COLUMN IF NOT EXISTS session_scope TEXT NOT NULL DEFAULT 'default'",
+            &[],
+        )?;
+        conn.execute(
+            "UPDATE user_tokens SET session_scope = 'default' WHERE session_scope IS NULL OR btrim(session_scope) = ''",
+            &[],
+        )?;
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_user_tokens_user_scope_created ON user_tokens (user_id, session_scope, created_at)",
             &[],
         );
         Ok(())
@@ -1707,6 +1723,7 @@ impl StorageBackend for PostgresStorage {
                 CREATE TABLE IF NOT EXISTS user_tokens (
                   token TEXT PRIMARY KEY,
                   user_id TEXT NOT NULL,
+                  session_scope TEXT NOT NULL DEFAULT 'default',
                   expires_at DOUBLE PRECISION NOT NULL,
                   created_at DOUBLE PRECISION NOT NULL,
                   last_used_at DOUBLE PRECISION NOT NULL
@@ -1715,6 +1732,12 @@ impl StorageBackend for PostgresStorage {
                   ON user_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS idx_user_tokens_expires
                   ON user_tokens (expires_at);
+                CREATE TABLE IF NOT EXISTS user_session_scopes (
+                  user_id TEXT NOT NULL,
+                  session_scope TEXT NOT NULL,
+                  last_login_at DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (user_id, session_scope)
+                );
                 CREATE TABLE IF NOT EXISTS user_tool_access (
                   user_id TEXT PRIMARY KEY,
                   allowed_tools TEXT,
@@ -2319,6 +2342,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_user_account_level_columns(&mut conn)?;
                     self.ensure_user_account_unit_columns(&mut conn)?;
                     self.ensure_user_account_list_indexes(&mut conn)?;
+                    self.ensure_user_token_columns(&mut conn)?;
                     self.ensure_user_tool_access_columns(&mut conn)?;
                     self.ensure_chat_session_columns(&mut conn)?;
                     self.ensure_channel_columns(&mut conn)?;
@@ -5225,10 +5249,11 @@ impl StorageBackend for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO user_tokens (token, user_id, expires_at, created_at, last_used_at) VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO user_tokens (token, user_id, session_scope, expires_at, created_at, last_used_at) VALUES ($1, $2, $3, $4, $5, $6)",
             &[
                 &record.token,
                 &record.user_id,
+                &record.session_scope,
                 &record.expires_at,
                 &record.created_at,
                 &record.last_used_at,
@@ -5245,15 +5270,16 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT token, user_id, expires_at, created_at, last_used_at FROM user_tokens WHERE token = $1",
+            "SELECT token, user_id, session_scope, expires_at, created_at, last_used_at FROM user_tokens WHERE token = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| UserTokenRecord {
             token: row.get(0),
             user_id: row.get(1),
-            expires_at: row.get(2),
-            created_at: row.get(3),
-            last_used_at: row.get(4),
+            session_scope: row.get(2),
+            expires_at: row.get(3),
+            created_at: row.get(4),
+            last_used_at: row.get(5),
         }))
     }
 
@@ -5280,6 +5306,48 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let affected = conn.execute("DELETE FROM user_tokens WHERE token = $1", &[&cleaned])?;
         Ok(affected as i64)
+    }
+
+    fn upsert_user_session_scope(&self, record: &UserSessionScopeRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO user_session_scopes (user_id, session_scope, last_login_at)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (user_id, session_scope) DO UPDATE
+             SET last_login_at = EXCLUDED.last_login_at",
+            &[
+                &record.user_id,
+                &record.session_scope,
+                &record.last_login_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_user_session_scope(
+        &self,
+        user_id: &str,
+        session_scope: &str,
+    ) -> Result<Option<UserSessionScopeRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user_id = user_id.trim();
+        let cleaned_scope = session_scope.trim();
+        if cleaned_user_id.is_empty() || cleaned_scope.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT user_id, session_scope, last_login_at
+             FROM user_session_scopes
+             WHERE user_id = $1 AND session_scope = $2",
+            &[&cleaned_user_id, &cleaned_scope],
+        )?;
+        Ok(row.map(|row| UserSessionScopeRecord {
+            user_id: row.get(0),
+            session_scope: row.get(1),
+            last_login_at: row.get(2),
+        }))
     }
 
     fn upsert_chat_session(&self, record: &ChatSessionRecord) -> Result<()> {

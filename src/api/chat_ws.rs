@@ -115,12 +115,20 @@ async fn chat_ws(
     let has_protocol_token = has_ws_protocol_token(&headers);
     let conn_meta = WsConnMeta::from_headers(&headers, has_protocol_token);
     let connection_id = format!("ws_{}", Uuid::new_v4().simple());
+    let session_scope = resolved.session_scope.clone();
     Ok(ws
         .protocols(["wunder"])
         .max_message_size(WS_MAX_MESSAGE_BYTES)
         .max_frame_size(WS_MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| {
-            handle_ws(socket, state, resolved.user, connection_id, conn_meta)
+            handle_ws(
+                socket,
+                state,
+                resolved.user,
+                session_scope,
+                connection_id,
+                conn_meta,
+            )
         }))
 }
 
@@ -128,6 +136,7 @@ async fn handle_ws(
     socket: WebSocket,
     state: Arc<AppState>,
     user: crate::storage::UserAccountRecord,
+    session_scope: Option<String>,
     connection_id: String,
     conn_meta: WsConnMeta,
 ) {
@@ -146,10 +155,14 @@ async fn handle_ws(
         }
     });
 
-    state
-        .control
-        .auth_sessions
-        .register(&user.user_id, &connection_id, out_tx.clone());
+    if let Some(session_scope) = session_scope.as_deref() {
+        state.control.auth_sessions.register(
+            &user.user_id,
+            session_scope,
+            &connection_id,
+            out_tx.clone(),
+        );
+    }
     state.control.presence.connect_client(
         &user.user_id,
         &connection_id,

@@ -4717,7 +4717,9 @@ async fn admin_agent_avatars_list(
         }
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if extension.is_empty() || !matches!(extension.to_lowercase().as_str(), "png" | "jpg" | "jpeg") {
+        if extension.is_empty()
+            || !matches!(extension.to_lowercase().as_str(), "png" | "jpg" | "jpeg")
+        {
             continue;
         }
         // Extract key like "avatar-000" from "avatar-000.png"
@@ -4729,15 +4731,24 @@ async fn admin_agent_avatars_list(
             keys.push(key.clone());
         }
         // Record preferred extension (png > jpg > jpeg)
-        let existing = extension_map.get(&key).and_then(Value::as_str).unwrap_or("");
+        let existing = extension_map
+            .get(&key)
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if extension.eq_ignore_ascii_case("png") || existing.is_empty() {
             extension_map.insert(key, Value::String(extension.to_lowercase()));
         }
     }
 
     keys.sort_by(|left, right| {
-        let left_num = left.strip_prefix("avatar-").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
-        let right_num = right.strip_prefix("avatar-").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        let left_num = left
+            .strip_prefix("avatar-")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
+        let right_num = right
+            .strip_prefix("avatar-")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
         left_num.cmp(&right_num)
     });
 
@@ -5105,6 +5116,13 @@ async fn admin_user_accounts_cleanup(
     let mut user_tools_deleted = 0;
 
     for user_id in target_user_ids {
+        if let Err(err) = crate::services::user_plaza::purge_owner_items(&state, &user_id) {
+            failed.push(json!({
+                "user_id": user_id,
+                "error": format!("purge plaza assets failed: {err}"),
+            }));
+            continue;
+        }
         match state.user_store.delete_user(&user_id) {
             Ok(affected) if affected > 0 => {
                 deleted_users += affected;
@@ -5532,6 +5550,8 @@ async fn admin_user_accounts_delete(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     ensure_user_scope(&actor, &record)?;
+    crate::services::user_plaza::purge_owner_items(&state, cleaned)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let deleted_user = state
         .user_store
         .delete_user(cleaned)

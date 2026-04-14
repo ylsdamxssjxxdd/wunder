@@ -100,9 +100,8 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         "INVALID_PROTOCOL_RANGE" | "PROTOCOL_MISMATCH" | "VERSION_NOT_SUPPORTED" => {
             Some("Align client protocol version with the server supported range.")
         }
-        "AUTH_REQUIRED" | "UNAUTHORIZED" | "SESSION_REPLACED" | "PERMISSION_DENIED" | "FORBIDDEN" => {
-            Some("Check authentication credentials and permission scope.")
-        }
+        "AUTH_REQUIRED" | "UNAUTHORIZED" | "SESSION_REPLACED" | "PERMISSION_DENIED"
+        | "FORBIDDEN" => Some("Check authentication credentials and permission scope."),
         "SESSION_REQUIRED" | "SESSION_NOT_FOUND" => {
             Some("Verify session identifier and ownership before retrying.")
         }

@@ -74,17 +74,17 @@
     <el-dialog
       v-model="motherWorkspaceVisible"
       :title="motherWorkspaceDialogTitle"
-      width="860px"
+      width="min(980px, calc(100vw - 28px))"
+      top="clamp(10px, 4vh, 36px)"
       class="workspace-dialog beeroom-canvas-workspace-dialog"
       append-to-body
       destroy-on-close
     >
-      <div class="beeroom-canvas-workspace-shell">
+      <div class="beeroom-canvas-workspace-shell messenger-right-panel--sandbox messenger-workspace-scope chat-shell">
         <WorkspacePanel
           v-if="motherWorkspaceVisible && motherWorkspaceAvailable"
           :agent-id="motherWorkspaceAgentId"
           :container-id="motherWorkspaceContainerId"
-          :title="t('beeroom.canvas.artifacts')"
         />
       </div>
     </el-dialog>
@@ -650,16 +650,31 @@ watch(
 }
 
 .beeroom-canvas-workspace-shell {
-  min-height: 460px;
-  height: min(68vh, 760px);
+  display: flex;
+  width: 100%;
+  min-height: clamp(460px, 68vh, 760px);
+  height: clamp(460px, 68vh, 760px);
+  overflow: hidden;
+  border-radius: 18px;
+}
+
+.beeroom-canvas-workspace-dialog :deep(.el-dialog) {
+  overflow: hidden;
+  border-radius: 22px;
+}
+
+.beeroom-canvas-workspace-dialog :deep(.el-dialog__header) {
+  padding: 18px 20px 0;
 }
 
 .beeroom-canvas-workspace-shell :deep(.workspace-panel) {
+  flex: 1;
   height: 100%;
 }
 
 .beeroom-canvas-workspace-dialog :deep(.el-dialog__body) {
-  padding-top: 12px;
+  padding: 14px 18px 18px;
+  background: linear-gradient(180deg, #f8fafc, #f3f6fb);
 }
 
 @media (prefers-reduced-motion: reduce) {

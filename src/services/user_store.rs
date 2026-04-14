@@ -8,8 +8,9 @@ use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
     SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
-    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenBalanceStatus,
-    UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserSessionScopeRecord,
+    UserTokenBalanceStatus, UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
+    DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -41,6 +42,8 @@ const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const SESSION_TIME_EPSILON_MICROS: u64 = 1;
+const DEFAULT_SESSION_SCOPE: &str = "default";
+const SESSION_SCOPE_MAX_LEN: usize = 32;
 
 static LAST_SESSION_ISSUED_AT_MICROS: AtomicU64 = AtomicU64::new(0);
 
@@ -86,6 +89,12 @@ pub struct UserProfile {
 pub struct UserSession {
     pub user: UserAccountRecord,
     pub token: UserTokenRecord,
+}
+
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUserToken {
+    pub user: UserAccountRecord,
+    pub session_scope: String,
 }
 
 pub struct UserStore {
@@ -165,6 +174,29 @@ impl UserStore {
             level
         } else {
             "A".to_string()
+        }
+    }
+
+    pub fn default_session_scope() -> &'static str {
+        DEFAULT_SESSION_SCOPE
+    }
+
+    pub fn normalize_session_scope(raw: Option<&str>) -> String {
+        let cleaned = raw
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEFAULT_SESSION_SCOPE)
+            .to_ascii_lowercase();
+        if cleaned.len() > SESSION_SCOPE_MAX_LEN {
+            return DEFAULT_SESSION_SCOPE.to_string();
+        }
+        if cleaned
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+        {
+            cleaned
+        } else {
+            DEFAULT_SESSION_SCOPE.to_string()
         }
     }
 
@@ -507,16 +539,31 @@ impl UserStore {
     }
 
     pub fn create_session_token(&self, user_id: &str) -> Result<UserTokenRecord> {
-        let now = now_ts();
-        self.create_session_token_at(user_id, now)
+        self.create_session_token_with_scope(user_id, DEFAULT_SESSION_SCOPE)
     }
 
-    fn create_session_token_at(&self, user_id: &str, issued_at: f64) -> Result<UserTokenRecord> {
+    pub fn create_session_token_with_scope(
+        &self,
+        user_id: &str,
+        session_scope: &str,
+    ) -> Result<UserTokenRecord> {
+        let now = now_ts();
+        self.create_session_token_at(user_id, session_scope, now)
+    }
+
+    fn create_session_token_at(
+        &self,
+        user_id: &str,
+        session_scope: &str,
+        issued_at: f64,
+    ) -> Result<UserTokenRecord> {
         let expires_at = issued_at + DEFAULT_TOKEN_TTL_S as f64;
+        let normalized_scope = Self::normalize_session_scope(Some(session_scope));
         let token = format!("wund_{}", Uuid::new_v4().simple());
         let record = UserTokenRecord {
             token: token.clone(),
             user_id: user_id.to_string(),
+            session_scope: normalized_scope,
             expires_at,
             created_at: issued_at,
             last_used_at: issued_at,
@@ -525,21 +572,55 @@ impl UserStore {
         Ok(record)
     }
 
-    pub fn issue_session_for_user(&self, mut user: UserAccountRecord) -> Result<UserSession> {
-        let latest_login_at = self
+    pub fn issue_session_for_user(&self, user: UserAccountRecord) -> Result<UserSession> {
+        self.issue_session_for_user_with_scope(user, DEFAULT_SESSION_SCOPE)
+    }
+
+    pub fn issue_session_for_user_with_scope(
+        &self,
+        mut user: UserAccountRecord,
+        session_scope: &str,
+    ) -> Result<UserSession> {
+        let normalized_scope = Self::normalize_session_scope(Some(session_scope));
+        let global_latest_login_at = self
             .storage
             .get_user_account(&user.user_id)?
             .and_then(|record| record.last_login_at)
             .or(user.last_login_at);
+        let scoped_latest_login_at = self
+            .storage
+            .get_user_session_scope(&user.user_id, &normalized_scope)?
+            .map(|record| record.last_login_at);
+        let latest_login_at = match (scoped_latest_login_at, global_latest_login_at) {
+            (Some(scoped), Some(global)) => Some(scoped.max(global)),
+            (Some(scoped), None) => Some(scoped),
+            (None, Some(global)) => Some(global),
+            (None, None) => None,
+        };
         let issued_at = next_session_issued_at(latest_login_at);
         user.last_login_at = Some(issued_at);
         user.updated_at = issued_at;
         self.storage.upsert_user_account(&user)?;
-        let token = self.create_session_token_at(&user.user_id, issued_at)?;
+        self.storage
+            .upsert_user_session_scope(&UserSessionScopeRecord {
+                user_id: user.user_id.clone(),
+                session_scope: normalized_scope.clone(),
+                last_login_at: issued_at,
+            })?;
+        let token = self.create_session_token_at(&user.user_id, &normalized_scope, issued_at)?;
         Ok(UserSession { user, token })
     }
 
     pub fn authenticate_token(&self, token: &str) -> Result<Option<UserAccountRecord>> {
+        Ok(self
+            .authenticate_token_details(token)?
+            .map(|authenticated| authenticated.user))
+    }
+
+    pub fn authenticate_token_details(
+        &self,
+        token: &str,
+    ) -> Result<Option<AuthenticatedUserToken>> {
         let record = self.storage.get_user_token(token)?;
         let Some(record) = record else {
             return Ok(None);
@@ -552,9 +633,10 @@ impl UserStore {
         let Some(user) = self.storage.get_user_account(&record.user_id)? else {
             return Ok(None);
         };
-        if user
-            .last_login_at
-            .is_some_and(|last_login_at| record.created_at + 0.000_001 < last_login_at)
+        if self
+            .storage
+            .get_user_session_scope(&record.user_id, &record.session_scope)?
+            .is_some_and(|scope| record.created_at + 0.000_001 < scope.last_login_at)
         {
             let _ = self.storage.delete_user_token(&record.token);
             return Ok(None);
@@ -565,7 +647,10 @@ impl UserStore {
         if self.should_touch_token_at(&record.token, record.last_used_at, now) {
             let _ = self.storage.touch_user_token(&record.token, now);
         }
-        Ok(Some(user))
+        Ok(Some(AuthenticatedUserToken {
+            user,
+            session_scope: Self::normalize_session_scope(Some(&record.session_scope)),
+        }))
     }
 
     fn should_touch_token_at(&self, token: &str, last_used_at: f64, now: f64) -> bool {
@@ -589,6 +674,15 @@ impl UserStore {
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<UserSession> {
+        self.login_with_scope(username, password, DEFAULT_SESSION_SCOPE)
+    }
+
+    pub fn login_with_scope(
+        &self,
+        username: &str,
+        password: &str,
+        session_scope: &str,
+    ) -> Result<UserSession> {
         let user_id =
             Self::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
         let user = match self.storage.get_user_account_by_username(&user_id)? {
@@ -610,10 +704,18 @@ impl UserStore {
         if !Self::verify_password(&user.password_hash, password) {
             return Err(anyhow!("invalid password"));
         }
-        self.issue_session_for_user(user)
+        self.issue_session_for_user_with_scope(user, session_scope)
     }
 
     pub fn demo_login(&self, demo_id: Option<&str>) -> Result<UserSession> {
+        self.demo_login_with_scope(demo_id, DEFAULT_SESSION_SCOPE)
+    }
+
+    pub fn demo_login_with_scope(
+        &self,
+        demo_id: Option<&str>,
+        session_scope: &str,
+    ) -> Result<UserSession> {
         let seed = normalize_demo_seed(demo_id);
         let username = format!("demo_{seed}");
         let maybe_user = self.storage.get_user_account_by_username(&username)?;
@@ -637,7 +739,7 @@ impl UserStore {
         if !user.roles.iter().any(|role| role == "user") {
             user.roles.push("user".to_string());
         }
-        self.issue_session_for_user(user)
+        self.issue_session_for_user_with_scope(user, session_scope)
     }
 
     pub fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {
@@ -1526,15 +1628,17 @@ mod tests {
             )
             .expect("create user");
 
-        let first = store.login("alice", "secret").expect("first login");
-        let second = store.login("alice", "secret").expect("second login");
+        let first = store
+            .login_with_scope("alice", "secret", "user_web")
+            .expect("first login");
+        let second = store
+            .login_with_scope("alice", "secret", "user_web")
+            .expect("second login");
 
-        assert!(
-            store
-                .authenticate_token(&first.token.token)
-                .expect("authenticate first token")
-                .is_none()
-        );
+        assert!(store
+            .authenticate_token(&first.token.token)
+            .expect("authenticate first token")
+            .is_none());
         assert_eq!(
             store
                 .authenticate_token(&second.token.token)
@@ -1542,6 +1646,51 @@ mod tests {
                 .expect("second token should be valid")
                 .user_id,
             "alice"
+        );
+    }
+
+    #[test]
+    fn authenticate_token_keeps_other_scope_generation_valid() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-scope-isolation.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        store
+            .create_user(
+                "alice",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        let user_web = store
+            .login_with_scope("alice", "secret", "user_web")
+            .expect("user login");
+        let admin_web = store
+            .login_with_scope("alice", "secret", "admin_web")
+            .expect("admin login");
+
+        assert_eq!(
+            store
+                .authenticate_token_details(&user_web.token.token)
+                .expect("authenticate user token")
+                .expect("user token should stay valid")
+                .session_scope,
+            "user_web"
+        );
+        assert_eq!(
+            store
+                .authenticate_token_details(&admin_web.token.token)
+                .expect("authenticate admin token")
+                .expect("admin token should stay valid")
+                .session_scope,
+            "admin_web"
         );
     }
 }

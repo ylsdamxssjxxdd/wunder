@@ -94,6 +94,12 @@ pub struct UserPlazaImportResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UserPlazaOwnerPurgeResult {
+    pub deleted_items: usize,
+    pub deleted_meta_records: usize,
+}
+
 pub fn list_items(
     state: &AppState,
     current_user_id: &str,
@@ -131,12 +137,44 @@ pub fn get_item(state: &AppState, item_id: &str) -> Result<Option<UserPlazaItemR
     let Some(raw) = state.user_store.get_meta(&meta_key(cleaned))? else {
         return Ok(None);
     };
-    let record: UserPlazaItemRecord =
-        serde_json::from_str(&raw).with_context(|| format!("parse plaza item failed: {cleaned}"))?;
+    let record: UserPlazaItemRecord = serde_json::from_str(&raw)
+        .with_context(|| format!("parse plaza item failed: {cleaned}"))?;
     if !Path::new(&record.artifact_path).is_file() {
         return Ok(None);
     }
     Ok(Some(record))
+}
+
+pub fn purge_owner_items(
+    state: &AppState,
+    owner_user_id: &str,
+) -> Result<UserPlazaOwnerPurgeResult> {
+    let cleaned_owner_user_id = owner_user_id.trim();
+    if cleaned_owner_user_id.is_empty() {
+        return Ok(UserPlazaOwnerPurgeResult::default());
+    }
+    let mut result = UserPlazaOwnerPurgeResult::default();
+    let mut removed_item_ids = HashSet::new();
+    for (meta_key_value, raw) in state.storage.list_meta_prefix(USER_PLAZA_META_PREFIX)? {
+        let record: UserPlazaItemRecord = match serde_json::from_str(&raw) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if record.owner_user_id != cleaned_owner_user_id {
+            continue;
+        }
+        if let Some(item_id) = purge_item_id(&meta_key_value, &record) {
+            if removed_item_ids.insert(item_id.clone()) {
+                remove_path_if_exists(item_dir(state.workspace.root(), &item_id))?;
+            }
+        }
+        result.deleted_items += 1;
+        result.deleted_meta_records += state
+            .storage
+            .delete_meta_prefix(&meta_key_value)
+            .context("delete owned plaza item meta failed")?;
+    }
+    Ok(result)
 }
 
 pub async fn publish_item(
@@ -153,9 +191,15 @@ pub async fn publish_item(
     }
     let existing = find_existing_owned_item(state, &user.user_id, &kind, source_key)?;
     let published = match kind.as_str() {
-        "hive_pack" => publish_hive_pack(state, user, source_key, &request, existing.as_ref()).await?,
-        "worker_card" => publish_worker_card(state, user, source_key, &request, existing.as_ref()).await?,
-        "skill_pack" => publish_skill_pack(state, user, source_key, &request, existing.as_ref()).await?,
+        "hive_pack" => {
+            publish_hive_pack(state, user, source_key, &request, existing.as_ref()).await?
+        }
+        "worker_card" => {
+            publish_worker_card(state, user, source_key, &request, existing.as_ref()).await?
+        }
+        "skill_pack" => {
+            publish_skill_pack(state, user, source_key, &request, existing.as_ref()).await?
+        }
         _ => return Err(anyhow!("unsupported plaza item kind")),
     };
     let payload = item_payload(&published, &user.user_id);
@@ -258,8 +302,8 @@ async fn publish_hive_pack(
         },
     )
     .await?;
-    let artifact_path =
-        resolve_export_artifact_path(&export_job).ok_or_else(|| anyhow!("hive pack export missing artifact"))?;
+    let artifact_path = resolve_export_artifact_path(&export_job)
+        .ok_or_else(|| anyhow!("hive pack export missing artifact"))?;
     let artifact_filename = export_job
         .artifact
         .as_ref()
@@ -493,11 +537,7 @@ async fn import_hive_pack_item(
             .report
             .as_ref()
             // Keep plaza import compatible with both the old and current hivepack report keys.
-            .and_then(|value| {
-                value
-                    .get("target_hive_id")
-                    .or_else(|| value.get("hive_id"))
-            })
+            .and_then(|value| value.get("target_hive_id").or_else(|| value.get("hive_id")))
             .and_then(Value::as_str)
             .map(str::to_string),
         imported_job: Some(json!({
@@ -518,8 +558,12 @@ async fn import_worker_card_item(
     record: &UserPlazaItemRecord,
     artifact: &Path,
 ) -> Result<UserPlazaImportResult> {
-    let document = fs::read_to_string(artifact)
-        .with_context(|| format!("read worker card plaza artifact failed: {}", artifact.display()))?;
+    let document = fs::read_to_string(artifact).with_context(|| {
+        format!(
+            "read worker card plaza artifact failed: {}",
+            artifact.display()
+        )
+    })?;
     let worker_card: WorkerCardDocument =
         serde_json::from_str(&document).context("parse worker card plaza artifact failed")?;
     let parsed = parse_worker_card(worker_card, None);
@@ -618,7 +662,10 @@ fn resolve_agent_for_publish(
 ) -> Result<UserAgentRecord> {
     let cleaned = agent_id.trim();
     if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("__default__") {
-        return build_default_agent_record_from_storage(state.user_store.storage_backend().as_ref(), user_id);
+        return build_default_agent_record_from_storage(
+            state.user_store.storage_backend().as_ref(),
+            user_id,
+        );
     }
     state
         .user_store
@@ -713,7 +760,9 @@ fn import_skill_archive_for_user(
     let mut extracted = 0;
     let mut top_level_dirs = BTreeSet::new();
     for index in 0..archive.len() {
-        let mut file = archive.by_index(index).context("invalid skill archive entry")?;
+        let mut file = archive
+            .by_index(index)
+            .context("invalid skill archive entry")?;
         if file.is_dir() {
             continue;
         }
@@ -730,7 +779,9 @@ fn import_skill_archive_for_user(
         }
         let top_dir = uploaded_skill_archive_top_dir(path)?;
         if reserved_top_dirs.contains(&top_dir) {
-            return Err(anyhow!("skill archive conflicts with builtin skill directory"));
+            return Err(anyhow!(
+                "skill archive conflicts with builtin skill directory"
+            ));
         }
         top_level_dirs.insert(top_dir);
         let dest = skill_root.join(path);
@@ -778,7 +829,9 @@ fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String> {
         .next()
         .ok_or_else(|| anyhow!("skill archive entry is empty"))?;
     if components.next().is_none() {
-        return Err(anyhow!("skill archive must contain a dedicated top-level directory"));
+        return Err(anyhow!(
+            "skill archive must contain a dedicated top-level directory"
+        ));
     }
     match top {
         std::path::Component::Normal(value) => {
@@ -852,7 +905,12 @@ fn item_payload(record: &UserPlazaItemRecord, current_user_id: &str) -> Value {
 }
 
 fn normalize_item_kind(value: Option<&str>) -> Option<String> {
-    match value.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "hive_pack" | "hivepack" | "swarm" | "beeroom" => Some("hive_pack".to_string()),
         "worker_card" | "worker-card" | "agent" => Some("worker_card".to_string()),
         "skill_pack" | "skill-pack" | "skill" => Some("skill_pack".to_string()),
@@ -880,6 +938,19 @@ fn request_summary_or(requested: &Option<String>, fallback: &str) -> String {
 
 fn meta_key(item_id: &str) -> String {
     format!("{USER_PLAZA_META_PREFIX}{}", item_id.trim())
+}
+
+fn purge_item_id(meta_key_value: &str, record: &UserPlazaItemRecord) -> Option<String> {
+    let from_record = record.item_id.trim();
+    if !from_record.is_empty() {
+        return Some(from_record.to_string());
+    }
+    meta_key_value
+        .trim()
+        .strip_prefix(USER_PLAZA_META_PREFIX)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn plaza_root(workspace_root: &Path) -> PathBuf {

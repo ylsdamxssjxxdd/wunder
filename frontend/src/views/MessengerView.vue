@@ -123,8 +123,10 @@
     >
       <MessengerMiddlePane
           v-model:keyword="keywordInput"
-          v-model:selected-contact-unit-id="selectedContactUnitId"
-          v-model:selected-agent-hive-group-id="selectedAgentHiveGroupId"
+          :selected-contact-unit-id="selectedContactUnitId"
+          @update:selected-contact-unit-id="handleMiddlePaneContactUnitIdUpdate"
+          :selected-agent-hive-group-id="selectedAgentHiveGroupId"
+          @update:selected-agent-hive-group-id="handleMiddlePaneAgentHiveGroupIdUpdate"
           v-model:settings-panel-mode="settingsPanelMode"
           :active-section="middlePaneActiveSection"
           :active-section-title="middlePaneActiveSectionTitle"
@@ -141,7 +143,7 @@
           :helper-apps-online-items="helperAppsOnlineItems"
           :helper-apps-online-loading="helperAppsOnlineLoading"
           :is-helper-app-active="isHelperAppActive"
-          :select-helper-app="selectHelperApp"
+          :select-helper-app="selectHelperAppFromMiddlePane"
           :resolve-external-icon="resolveExternalIcon"
           :resolve-external-icon-style="resolveExternalIconStyle"
           :resolve-external-host="resolveExternalHost"
@@ -165,21 +167,21 @@
           :contact-virtual-bottom-padding="contactVirtualBottomPadding"
           :visible-filtered-contacts="visibleFilteredContacts"
           :selected-contact-user-id="selectedContactUserId"
-          :select-contact="selectContact"
+          :select-contact="selectContactFromMiddlePane"
           :open-contact-conversation-from-list="openContactConversationFromList"
           :is-contact-online="isContactOnline"
           :format-contact-presence="formatContactPresence"
           :resolve-unread="resolveUnread"
           :filtered-beeroom-groups="filteredBeeroomGroups"
           :selected-beeroom-group-id="beeroomStore.activeGroupId"
-          :select-beeroom-group="selectBeeroomGroup"
+          :select-beeroom-group="selectBeeroomGroupFromMiddlePane"
           :delete-beeroom-group="handleDeleteBeeroomGroup"
-          :filtered-plaza-items="filteredPlazaItems"
-          :selected-plaza-item-id="selectedPlazaItemId"
-          :select-plaza-item="selectPlazaItem"
+          :selected-plaza-browse-kind="plazaBrowseKind"
+          :select-plaza-browse-kind="selectPlazaBrowseKindFromMiddlePane"
+          :plaza-browse-page-counts="plazaBrowsePageCounts"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
-          :select-group="selectGroup"
+          :select-group="selectGroupFromMiddlePane"
           :agent-hive-total-count="agentHiveTotalCount"
           :agent-hive-tree-rows="agentHiveTreeRows"
           :filtered-owned-agents="filteredOwnedAgents"
@@ -188,17 +190,17 @@
           :selected-agent-id="selectedAgentId"
           :default-agent-key="DEFAULT_AGENT_KEY"
           :default-agent-icon="defaultAgentProfile?.icon"
-          :select-agent-for-settings="selectAgentForSettings"
+          :select-agent-for-settings="selectAgentForSettingsFromMiddlePane"
           :open-agent-by-id="openAgentById"
           :preload-agent-by-id="preloadAgentById"
           :normalize-agent-id="normalizeAgentId"
           :selected-tool-entry-key="selectedToolEntryKey"
-          :select-tool-category="selectToolCategory"
+          :select-tool-category="selectToolCategoryFromMiddlePane"
           :desktop-local-mode="desktopLocalMode"
           :file-scope="fileScope"
           :selected-file-container-id="selectedFileContainerId"
           :user-container-id="USER_CONTAINER_ID"
-          :select-container="selectContainer"
+          :select-container="selectContainerFromMiddlePane"
           :open-file-container-menu="openFileContainerMenu"
           :bound-agent-file-containers="boundAgentFileContainers"
           :unbound-agent-file-containers="unboundAgentFileContainers"
@@ -260,6 +262,24 @@
           >
             <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
             <span>{{ t('portal.agent.delete') }}</span>
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'plaza'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerPlazaPublish"
+          >
+            <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
+            <span>{{ t('plaza.action.publish') }}</span>
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'plaza'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerPlazaRefresh"
+          >
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+            <span>{{ t('common.refresh') }}</span>
           </button>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
@@ -739,7 +759,10 @@
 
             <MessengerHivePlazaPanel
               v-else-if="sessionHub.activeSection === 'plaza'"
+              ref="messengerHivePlazaPanelRef"
               :active="sessionHub.activeSection === 'plaza'"
+              :items="filteredPlazaItems"
+              :browse-kind="plazaBrowseKind"
               :selected-item-id="selectedPlazaItemId"
               :current-user-id="currentUserId"
               @update:selected-item-id="selectPlazaItem"
@@ -1617,6 +1640,12 @@ import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
+import {
+  filterPlazaItemsByKindAndKeyword,
+  normalizePlazaBrowseKind,
+  resolveRetainedSelectedPlazaItemId,
+  type PlazaBrowseKind
+} from '@/components/messenger/hivePlazaPanelState';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
@@ -1848,6 +1877,7 @@ const selectedAgentHiveGroupId = ref('');
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
+const plazaBrowseKind = ref<PlazaBrowseKind>('hive_pack');
 const selectedPlazaItemId = ref('');
 const agentQuickCreateVisible = ref(false);
 const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
@@ -1869,6 +1899,10 @@ const middlePaneRef = ref<HTMLElement | null>(null);
 const rightDockRef = ref<{
   $el?: HTMLElement;
   refreshWorkspace?: (options?: { background?: boolean }) => Promise<boolean>;
+} | null>(null);
+const messengerHivePlazaPanelRef = ref<{
+  openPublishDialog: () => Promise<void> | void;
+  reload: () => Promise<void>;
 } | null>(null);
 const worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 const worldUploading = ref(false);
@@ -2317,14 +2351,18 @@ const leftRailMainSectionOptions = computed(() =>
       item.key === 'messages' ||
       item.key === 'agents' ||
       item.key === 'swarms' ||
-      item.key === 'plaza' ||
-      item.key === 'tools' ||
-      item.key === 'files'
+      item.key === 'plaza'
   )
 );
 
 const leftRailSocialSectionOptions = computed(() =>
-  sectionOptions.value.filter((item) => item.key === 'users' || item.key === 'groups')
+  sectionOptions.value.filter(
+    (item) =>
+      item.key === 'users' ||
+      item.key === 'groups' ||
+      item.key === 'tools' ||
+      item.key === 'files'
+  )
 );
 
 const isLeftNavSectionActive = (section: MessengerSection): boolean => {
@@ -2501,7 +2539,7 @@ const activeSectionSubtitle = computed(() => {
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
-const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'plaza', 'agents']);
+const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
 const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
@@ -2589,6 +2627,8 @@ const isLeftRailMoreActive = computed(
     leftRailMoreExpanded.value ||
     isLeftNavSectionActive('users') ||
     isLeftNavSectionActive('groups') ||
+    isLeftNavSectionActive('tools') ||
+    isLeftNavSectionActive('files') ||
     isLeftNavSectionActive('more') ||
     isHelperAppsMiddlePaneActive.value
 );
@@ -4265,26 +4305,15 @@ const filteredGroups = computed(() => {
   });
 });
 
-const filteredPlazaItems = computed(() => {
-  const text = keyword.value.toLowerCase();
-  return plazaStore.items.filter((item) => {
-    if (!text) return true;
-    const title = String(item?.title || '').toLowerCase();
-    const summary = String(item?.summary || '').toLowerCase();
-    const owner = String(item?.owner_username || item?.owner_user_id || '').toLowerCase();
-    const sourceKey = String(item?.source_key || '').toLowerCase();
-    const kind = String(item?.kind || '').toLowerCase();
-    const tags = Array.isArray(item?.tags) ? item.tags.join(' ').toLowerCase() : '';
-    return (
-      title.includes(text) ||
-      summary.includes(text) ||
-      owner.includes(text) ||
-      sourceKey.includes(text) ||
-      kind.includes(text) ||
-      tags.includes(text)
-    );
-  });
-});
+const filteredPlazaItems = computed(() =>
+  filterPlazaItemsByKindAndKeyword(plazaStore.items, plazaBrowseKind.value, '')
+);
+
+const plazaBrowsePageCounts = computed<Record<PlazaBrowseKind, number>>(() => ({
+  hive_pack: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'hive_pack', '').length,
+  worker_card: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'worker_card', '').length,
+  skill_pack: filterPlazaItemsByKindAndKeyword(plazaStore.items, 'skill_pack', '').length
+}));
 
 const filteredBeeroomGroups = computed(() => {
   const text = keyword.value.toLowerCase();
@@ -7935,6 +7964,89 @@ const switchSection = (
   ensureSectionSelection();
 };
 
+const ensureMiddlePaneSection = (
+  section: MessengerSection,
+  options: {
+    helperWorkspace?: boolean;
+    panelHint?: string;
+    settingsPanelMode?: SettingsPanelMode;
+  } = {}
+) => {
+  const helperWorkspace = section === 'groups' && options.helperWorkspace === true;
+  const nextSettingsPanelMode = normalizeSettingsPanelMode(options.settingsPanelMode);
+  const helperWorkspaceChanged =
+    section === 'groups' && helperAppsWorkspaceMode.value !== helperWorkspace;
+  const settingsModeChanged =
+    section === 'more' && settingsPanelMode.value !== nextSettingsPanelMode;
+  if (
+    sessionHub.activeSection === section &&
+    !helperWorkspaceChanged &&
+    !settingsModeChanged
+  ) {
+    return;
+  }
+  switchSection(section, {
+    preserveHelperWorkspace: helperWorkspace,
+    helperWorkspace,
+    panelHint:
+      section === 'more'
+        ? String(options.panelHint || nextSettingsPanelMode).trim()
+        : '',
+    settingsPanelMode: section === 'more' ? nextSettingsPanelMode : undefined
+  });
+};
+
+const handleMiddlePaneContactUnitIdUpdate = (value: string) => {
+  ensureMiddlePaneSection('users');
+  selectedContactUnitId.value = value;
+};
+
+const handleMiddlePaneAgentHiveGroupIdUpdate = (value: string) => {
+  ensureMiddlePaneSection('agents');
+  selectedAgentHiveGroupId.value = value;
+};
+
+const selectHelperAppFromMiddlePane = (kind: 'offline' | 'online', key: string) => {
+  ensureMiddlePaneSection('groups', { helperWorkspace: true });
+  selectHelperApp(kind, key);
+};
+
+const selectContactFromMiddlePane = (contact: Record<string, unknown>) => {
+  ensureMiddlePaneSection('users');
+  selectContact(contact);
+};
+
+const selectGroupFromMiddlePane = (group: Record<string, unknown>) => {
+  ensureMiddlePaneSection('groups');
+  selectGroup(group);
+};
+
+const selectPlazaBrowseKindFromMiddlePane = (kind: PlazaBrowseKind) => {
+  ensureMiddlePaneSection('plaza');
+  plazaBrowseKind.value = normalizePlazaBrowseKind(kind);
+  selectedPlazaItemId.value = '';
+};
+
+const selectBeeroomGroupFromMiddlePane = async (group: Record<string, unknown>) => {
+  ensureMiddlePaneSection('swarms');
+  await selectBeeroomGroup(group);
+};
+
+const selectAgentForSettingsFromMiddlePane = (agentId: unknown) => {
+  ensureMiddlePaneSection('agents');
+  selectAgentForSettings(agentId);
+};
+
+const selectToolCategoryFromMiddlePane = (category: 'admin' | 'mcp' | 'skills' | 'knowledge') => {
+  ensureMiddlePaneSection('tools');
+  selectToolCategory(category);
+};
+
+const selectContainerFromMiddlePane = (containerId: number | 'user') => {
+  ensureMiddlePaneSection('files');
+  selectContainer(containerId);
+};
+
 const activateSettingsPanel = (panelMode: string) => {
   const nextPanelMode = normalizeSettingsPanelMode(panelMode);
   const panelHint =
@@ -8545,6 +8657,14 @@ const selectGroup = (group: Record<string, unknown>) => {
 
 const selectPlazaItem = (itemId: unknown) => {
   selectedPlazaItemId.value = String(itemId || '').trim();
+};
+
+const triggerPlazaPublish = () => {
+  void messengerHivePlazaPanelRef.value?.openPublishDialog();
+};
+
+const triggerPlazaRefresh = () => {
+  void messengerHivePlazaPanelRef.value?.reload();
 };
 
 const selectBeeroomGroup = async (group: Record<string, unknown>) => {
@@ -9907,15 +10027,7 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'plaza') {
-    if (!filteredPlazaItems.value.length) {
-      return;
-    }
-    const exists = filteredPlazaItems.value.some(
-      (item) => String(item?.item_id || '').trim() === String(selectedPlazaItemId.value || '').trim()
-    );
-    if (!exists) {
-      selectedPlazaItemId.value = String(filteredPlazaItems.value[0]?.item_id || '').trim();
-    }
+    selectedPlazaItemId.value = resolveRetainedSelectedPlazaItemId(filteredPlazaItems.value, selectedPlazaItemId.value);
     return;
   }
 
@@ -11920,6 +12032,7 @@ watch(
     rightDockSkillCatalogLoadVersion += 1;
     rightDockSkillContentLoadVersion += 1;
     plazaStore.$reset();
+    plazaBrowseKind.value = 'hive_pack';
     selectedPlazaItemId.value = '';
     agentToolSummaryPromise = null;
     invalidateAllUserToolsCaches();
@@ -12033,6 +12146,21 @@ watch(
   (value) => {
     if (sessionHub.activeSection !== 'swarms' || !String(value || '').trim()) return;
     void beeroomStore.loadActiveGroup({ silent: true }).catch(() => null);
+  }
+);
+
+watch(plazaBrowseKind, (nextKind, previousKind) => {
+  if (nextKind !== previousKind) {
+    selectedPlazaItemId.value = '';
+  }
+});
+
+watch(
+  () => sessionHub.activeSection,
+  (section, previousSection) => {
+    if (previousSection === 'plaza' && section !== 'plaza') {
+      selectedPlazaItemId.value = '';
+    }
   }
 );
 

@@ -25,6 +25,7 @@ use std::sync::Arc;
 const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = external_service::DEFAULT_EXTERNAL_LAUNCH_PASSWORD;
 const USER_PROFILE_RUNTIME_RECORD_LIMIT: i64 = 5000;
 const USER_PROFILE_SESSION_TREND_DAYS: i64 = 7;
+const SESSION_SCOPE_HEADER: &str = "x-wunder-session-scope";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -190,8 +191,17 @@ struct ExternalTokenLoginTarget {
     focus_mode: bool,
 }
 
+fn resolve_login_session_scope(headers: &HeaderMap) -> String {
+    UserStore::normalize_session_scope(
+        headers
+            .get(SESSION_SCOPE_HEADER)
+            .and_then(|value| value.to_str().ok()),
+    )
+}
+
 async fn register(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
     let username = payload.username.trim();
@@ -232,12 +242,12 @@ async fn register(
     }
     let session = state
         .user_store
-        .login(username, password)
+        .login_with_scope(username, password, &resolve_login_session_scope(&headers))
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, localize_register_error(&err)))?;
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
@@ -245,6 +255,7 @@ async fn register(
 
 async fn login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
     let username = payload.username.trim();
@@ -257,12 +268,12 @@ async fn login(
     }
     let session = state
         .user_store
-        .login(username, password)
+        .login_with_scope(username, password, &resolve_login_session_scope(&headers))
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
@@ -352,16 +363,20 @@ async fn reset_password(
 
 async fn login_demo(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<DemoLoginRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
     let session = state
         .user_store
-        .demo_login(payload.demo_id.as_deref())
+        .demo_login_with_scope(
+            payload.demo_id.as_deref(),
+            &resolve_login_session_scope(&headers),
+        )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
@@ -369,6 +384,7 @@ async fn login_demo(
 
 async fn external_login(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<ExternalLoginRequest>,
 ) -> Result<Json<Value>, Response> {
     validate_external_key(&state, &payload.key).await?;
@@ -390,6 +406,7 @@ async fn external_login(
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
+    let session_scope_snapshot = resolve_login_session_scope(&headers);
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_user(
             &user_store,
@@ -397,6 +414,7 @@ async fn external_login(
             &password_snapshot,
             unit_snapshot,
             desktop_mode_snapshot,
+            &session_scope_snapshot,
         )
     })
     .await
@@ -406,7 +424,7 @@ async fn external_login(
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(json!({
@@ -421,6 +439,7 @@ async fn external_login(
 
 async fn external_issue_code(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<ExternalLoginRequest>,
 ) -> Result<Json<Value>, Response> {
     validate_external_key(&state, &payload.key).await?;
@@ -442,6 +461,7 @@ async fn external_issue_code(
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
+    let session_scope_snapshot = resolve_login_session_scope(&headers);
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_user(
             &user_store,
@@ -449,6 +469,7 @@ async fn external_issue_code(
             &password_snapshot,
             unit_snapshot,
             desktop_mode_snapshot,
+            &session_scope_snapshot,
         )
     })
     .await
@@ -458,7 +479,7 @@ async fn external_issue_code(
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let record = state
         .external_auth_codes
@@ -505,6 +526,7 @@ async fn external_exchange(
 
 async fn external_launch(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<ExternalLaunchRequest>,
 ) -> Result<Json<Value>, Response> {
     validate_external_key(&state, &payload.key).await?;
@@ -531,6 +553,7 @@ async fn external_launch(
     let password_snapshot = password;
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
+    let session_scope_snapshot = resolve_login_session_scope(&headers);
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_launch_session(
             &user_store,
@@ -538,6 +561,7 @@ async fn external_launch(
             password_snapshot.as_deref(),
             unit_snapshot,
             desktop_mode_snapshot,
+            &session_scope_snapshot,
         )
     })
     .await
@@ -547,7 +571,7 @@ async fn external_launch(
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let launch = build_external_launch_result(
         &state,
@@ -563,6 +587,7 @@ async fn external_launch(
 
 async fn external_token_launch(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<ExternalTokenLaunchRequest>,
 ) -> Result<Json<Value>, Response> {
     let raw_token = payload.token.trim();
@@ -597,6 +622,7 @@ async fn external_token_launch(
     let username_snapshot = launch_username.to_string();
     let unit_snapshot = unit_id.clone();
     let desktop_mode_snapshot = desktop_mode;
+    let session_scope_snapshot = resolve_login_session_scope(&headers);
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_launch_session(
             &user_store,
@@ -604,6 +630,7 @@ async fn external_token_launch(
             None,
             unit_snapshot,
             desktop_mode_snapshot,
+            &session_scope_snapshot,
         )
     })
     .await
@@ -613,7 +640,7 @@ async fn external_token_launch(
     state
         .control
         .auth_sessions
-        .force_logout_user(&session.user.user_id)
+        .force_logout_user(&session.user.user_id, &session.token.session_scope)
         .await;
     let target_agent =
         resolve_external_token_login_target(&state, &session.user, payload.agent_name.as_deref())
@@ -1627,8 +1654,16 @@ fn provision_external_user(
     password: &str,
     unit_id: Option<String>,
     desktop_mode: bool,
+    session_scope: &str,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
-    external_service::provision_external_user(user_store, username, password, unit_id, desktop_mode)
+    external_service::provision_external_user(
+        user_store,
+        username,
+        password,
+        unit_id,
+        desktop_mode,
+        session_scope,
+    )
 }
 
 fn provision_external_launch_session(
@@ -1637,6 +1672,7 @@ fn provision_external_launch_session(
     password: Option<&str>,
     unit_id: Option<String>,
     desktop_mode: bool,
+    session_scope: &str,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
     external_service::provision_external_launch_session(
         user_store,
@@ -1644,6 +1680,7 @@ fn provision_external_launch_session(
         password,
         unit_id,
         desktop_mode,
+        session_scope,
     )
 }
 
@@ -2081,9 +2118,15 @@ mod tests {
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         let store = UserStore::new(storage as Arc<dyn StorageBackend>);
 
-        let (session, created, updated) =
-            provision_external_launch_session(&store, "external_1", None, None, false)
-                .expect("create external launch session");
+        let (session, created, updated) = provision_external_launch_session(
+            &store,
+            "external_1",
+            None,
+            None,
+            false,
+            UserStore::default_session_scope(),
+        )
+        .expect("create external launch session");
 
         assert!(created);
         assert!(!updated);

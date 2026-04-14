@@ -1,156 +1,193 @@
 <template>
   <div class="hive-plaza-panel">
-    <section class="hive-plaza-hero">
-      <div class="hive-plaza-hero-copy">
-        <div class="hive-plaza-eyebrow">{{ t('plaza.title') }}</div>
-        <h2 class="hive-plaza-hero-title">{{ t('plaza.heroTitle') }}</h2>
-        <p class="hive-plaza-hero-desc">{{ t('plaza.heroDesc') }}</p>
+    <div v-if="plazaStore.error" class="hive-plaza-banner hive-plaza-banner--error">
+      <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+      <span>{{ plazaStore.error }}</span>
+    </div>
+
+    <section class="hive-plaza-feed-shell">
+      <div class="hive-plaza-toolbar">
+        <div class="hive-plaza-toolbar-copy">
+          <div class="hive-plaza-toolbar-title">{{ resolveKindLabel(browseKindInternal) }}</div>
+          <div class="hive-plaza-toolbar-subtitle">{{ currentBrowseDescription }}</div>
+        </div>
+        <label class="hive-plaza-search">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input
+            v-model="panelKeyword"
+            type="text"
+            :placeholder="t('plaza.search.placeholder')"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
       </div>
-      <div class="hive-plaza-hero-actions">
-        <button class="hive-plaza-primary-btn" type="button" @click="openPublishDialog">
-          <i class="fa-solid fa-arrow-up-from-bracket" aria-hidden="true"></i>
-          <span>{{ t('plaza.action.publish') }}</span>
-        </button>
-        <button class="hive-plaza-secondary-btn" type="button" :disabled="plazaStore.loading" @click="reload">
-          <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-          <span>{{ t('common.refresh') }}</span>
-        </button>
+
+      <div class="hive-plaza-toolbar-meta">
+        <span>{{ t('plaza.search.resultCount', { count: filteredFeedItems.length }) }}</span>
+        <span v-if="pageCount > 1">{{ t('plaza.pager.summary', { page: currentPageInternal, total: pageCount }) }}</span>
       </div>
-      <div class="hive-plaza-stats">
-        <div class="hive-plaza-stat-card">
-          <span class="hive-plaza-stat-label">{{ t('plaza.stats.total') }}</span>
-          <strong class="hive-plaza-stat-value">{{ totalCount }}</strong>
-        </div>
-        <div class="hive-plaza-stat-card">
-          <span class="hive-plaza-stat-label">{{ t('plaza.stats.mine') }}</span>
-          <strong class="hive-plaza-stat-value">{{ mineCount }}</strong>
-        </div>
-        <div class="hive-plaza-stat-card">
-          <span class="hive-plaza-stat-label">{{ t('plaza.stats.remote') }}</span>
-          <strong class="hive-plaza-stat-value">{{ remoteCount }}</strong>
-        </div>
-      </div>
-    </section>
 
-    <div class="hive-plaza-layout">
-      <section class="hive-plaza-detail-card">
-        <div v-if="selectedItem" class="hive-plaza-detail-shell">
-          <div class="hive-plaza-detail-head">
-            <AgentAvatar
-              size="lg"
-              state="idle"
-              :icon="selectedItem.icon"
-              :name="selectedItem.title"
-              :title="selectedItem.title"
-            />
-            <div class="hive-plaza-detail-copy">
-              <div class="hive-plaza-detail-badges">
-                <span class="hive-plaza-kind-chip" :class="`is-${selectedItem.kind}`">
-                  {{ resolveKindLabel(selectedItem.kind) }}
-                </span>
-                <span v-if="selectedItem.mine" class="hive-plaza-kind-chip is-mine">
-                  {{ t('plaza.meta.mine') }}
-                </span>
-              </div>
-              <h3 class="hive-plaza-detail-title">{{ selectedItem.title }}</h3>
-              <p class="hive-plaza-detail-summary">
-                {{ selectedItem.summary || t('common.noDescription') }}
-              </p>
-            </div>
-          </div>
-
-          <div class="hive-plaza-detail-grid">
-            <div class="hive-plaza-detail-meta">
-              <span class="hive-plaza-detail-label">{{ t('plaza.detail.owner') }}</span>
-              <span class="hive-plaza-detail-value">{{ resolveOwnerLabel(selectedItem) }}</span>
-            </div>
-            <div class="hive-plaza-detail-meta">
-              <span class="hive-plaza-detail-label">{{ t('plaza.detail.source') }}</span>
-              <span class="hive-plaza-detail-value">{{ selectedItem.source_key || '-' }}</span>
-            </div>
-            <div class="hive-plaza-detail-meta">
-              <span class="hive-plaza-detail-label">{{ t('plaza.detail.size') }}</span>
-              <span class="hive-plaza-detail-value">{{ formatBytes(selectedItem.artifact_size_bytes) }}</span>
-            </div>
-            <div class="hive-plaza-detail-meta">
-              <span class="hive-plaza-detail-label">{{ t('plaza.detail.updatedAt') }}</span>
-              <span class="hive-plaza-detail-value">{{ formatTime(selectedItem.updated_at) || '-' }}</span>
-            </div>
-          </div>
-
-          <div v-if="selectedItem.tags?.length" class="hive-plaza-tag-row">
-            <span v-for="tag in selectedItem.tags" :key="tag" class="hive-plaza-tag">{{ tag }}</span>
-          </div>
-
-          <div class="hive-plaza-detail-actions">
-            <button
-              class="hive-plaza-primary-btn"
-              type="button"
-              :disabled="plazaStore.importingItemId === selectedItem.item_id"
-              @click="importSelectedItem"
-            >
-              <i class="fa-solid fa-download" aria-hidden="true"></i>
-              <span>{{ resolveImportActionLabel(selectedItem.kind) }}</span>
-            </button>
-            <button
-              v-if="selectedItem.mine"
-              class="hive-plaza-danger-btn"
-              type="button"
-              :disabled="plazaStore.deletingItemId === selectedItem.item_id"
-              @click="removeSelectedItem"
-            >
-              <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-              <span>{{ t('plaza.action.unpublish') }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="hive-plaza-empty">
+      <div class="hive-plaza-results">
+        <div v-if="plazaStore.loading && !filteredFeedItems.length" class="hive-plaza-empty">
           <div class="hive-plaza-empty-icon">
-            <i class="fa-solid fa-hexagon-nodes-bolt" aria-hidden="true"></i>
+            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
           </div>
-          <div class="hive-plaza-empty-title">{{ t('plaza.detail.emptyTitle') }}</div>
-          <div class="hive-plaza-empty-desc">{{ t('plaza.detail.emptyDesc') }}</div>
+          <div class="hive-plaza-empty-title">{{ t('common.loading') }}</div>
         </div>
-      </section>
-
-      <section class="hive-plaza-feed-card">
-        <div class="hive-plaza-section-head">
-          <div>
-            <div class="hive-plaza-section-title">{{ t('plaza.feed.title') }}</div>
-            <div class="hive-plaza-section-subtitle">{{ t('plaza.feed.subtitle') }}</div>
+        <div v-else-if="!filteredFeedItems.length" class="hive-plaza-empty">
+          <div class="hive-plaza-empty-icon">
+            <i :class="hasSearchKeyword ? 'fa-solid fa-magnifying-glass' : 'fa-solid fa-store-slash'" aria-hidden="true"></i>
           </div>
-        </div>
-
-        <div v-if="plazaStore.loading && !recentItems.length" class="hive-plaza-feed-empty">
-          {{ t('common.loading') }}
-        </div>
-        <div v-else-if="!recentItems.length" class="hive-plaza-feed-empty">
-          {{ t('plaza.feed.empty') }}
+          <div class="hive-plaza-empty-title">
+            {{ hasSearchKeyword ? t('plaza.feed.emptyFiltered') : t('plaza.feed.empty') }}
+          </div>
+          <div class="hive-plaza-empty-desc">
+            {{ hasSearchKeyword ? t('plaza.search.emptyHint') : currentBrowseDescription }}
+          </div>
         </div>
         <div v-else class="hive-plaza-feed-grid">
           <button
-            v-for="item in recentItems"
+            v-for="item in pagedFeedItems"
             :key="item.item_id"
             class="hive-plaza-feed-item"
-            :class="{ active: item.item_id === selectedItemIdInternal }"
             type="button"
             @click="selectItem(item.item_id)"
           >
             <div class="hive-plaza-feed-top">
-              <span class="hive-plaza-feed-kind">{{ resolveKindLabel(item.kind) }}</span>
+              <span class="hive-plaza-kind-chip" :class="`is-${item.kind}`">
+                {{ resolveKindLabel(item.kind) }}
+              </span>
               <span class="hive-plaza-feed-time">{{ formatTime(item.updated_at) || '-' }}</span>
             </div>
-            <div class="hive-plaza-feed-title">{{ item.title }}</div>
+            <div class="hive-plaza-feed-head">
+              <AgentAvatar
+                size="md"
+                state="idle"
+                :icon="item.icon"
+                :name="item.title"
+                :title="item.title"
+              />
+              <div class="hive-plaza-feed-copy">
+                <div class="hive-plaza-feed-title">{{ item.title }}</div>
+                <div class="hive-plaza-feed-owner">{{ resolveOwnerLabel(item) }}</div>
+              </div>
+            </div>
             <div class="hive-plaza-feed-summary">{{ item.summary || t('common.noDescription') }}</div>
+            <div v-if="item.tags?.length" class="hive-plaza-card-tags">
+              <span v-for="tag in item.tags.slice(0, 3)" :key="tag" class="hive-plaza-tag">{{ tag }}</span>
+            </div>
             <div class="hive-plaza-feed-foot">
-              <span>{{ resolveOwnerLabel(item) }}</span>
               <span>{{ formatBytes(item.artifact_size_bytes) }}</span>
+              <span class="hive-plaza-feed-source">{{ item.source_key || '-' }}</span>
             </div>
           </button>
         </div>
+      </div>
+
+      <div v-if="pageCount > 1" class="hive-plaza-pager">
+        <button
+          class="hive-plaza-secondary-btn"
+          type="button"
+          :disabled="currentPageInternal <= 1"
+          @click="goPrevPage"
+        >
+          <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
+          <span>{{ t('plaza.pager.prev') }}</span>
+        </button>
+        <div class="hive-plaza-pager-summary">
+          {{ t('plaza.pager.summary', { page: currentPageInternal, total: pageCount }) }}
+        </div>
+        <button
+          class="hive-plaza-secondary-btn"
+          type="button"
+          :disabled="currentPageInternal >= pageCount"
+          @click="goNextPage"
+        >
+          <span>{{ t('plaza.pager.next') }}</span>
+          <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+        </button>
+      </div>
+    </section>
+
+    <el-dialog
+      v-model="detailDialogVisible"
+      :title="selectedItem?.title || ''"
+      width="720px"
+      destroy-on-close
+    >
+      <section v-if="selectedItem" class="hive-plaza-detail-shell">
+        <div class="hive-plaza-detail-badges">
+          <span class="hive-plaza-kind-chip" :class="`is-${selectedItem.kind}`">
+            {{ resolveKindLabel(selectedItem.kind) }}
+          </span>
+          <span v-if="selectedItem.mine" class="hive-plaza-kind-chip is-mine">
+            {{ t('plaza.meta.mine') }}
+          </span>
+        </div>
+
+        <div class="hive-plaza-detail-head">
+          <AgentAvatar
+            size="lg"
+            state="idle"
+            :icon="selectedItem.icon"
+            :name="selectedItem.title"
+            :title="selectedItem.title"
+          />
+          <div class="hive-plaza-detail-copy">
+            <h3 class="hive-plaza-detail-title">{{ selectedItem.title }}</h3>
+            <p class="hive-plaza-detail-summary">
+              {{ selectedItem.summary || t('common.noDescription') }}
+            </p>
+          </div>
+        </div>
+
+        <div class="hive-plaza-detail-grid">
+          <div class="hive-plaza-detail-meta">
+            <span class="hive-plaza-detail-label">{{ t('plaza.detail.owner') }}</span>
+            <span class="hive-plaza-detail-value">{{ resolveOwnerLabel(selectedItem) }}</span>
+          </div>
+          <div class="hive-plaza-detail-meta">
+            <span class="hive-plaza-detail-label">{{ t('plaza.detail.source') }}</span>
+            <span class="hive-plaza-detail-value">{{ selectedItem.source_key || '-' }}</span>
+          </div>
+          <div class="hive-plaza-detail-meta">
+            <span class="hive-plaza-detail-label">{{ t('plaza.detail.size') }}</span>
+            <span class="hive-plaza-detail-value">{{ formatBytes(selectedItem.artifact_size_bytes) }}</span>
+          </div>
+          <div class="hive-plaza-detail-meta">
+            <span class="hive-plaza-detail-label">{{ t('plaza.detail.updatedAt') }}</span>
+            <span class="hive-plaza-detail-value">{{ formatTime(selectedItem.updated_at) || '-' }}</span>
+          </div>
+        </div>
+
+        <div v-if="selectedItem.tags?.length" class="hive-plaza-tag-row">
+          <span v-for="tag in selectedItem.tags" :key="tag" class="hive-plaza-tag">{{ tag }}</span>
+        </div>
+
+        <div class="hive-plaza-detail-actions">
+          <button
+            class="hive-plaza-primary-btn"
+            type="button"
+            :disabled="plazaStore.importingItemId === selectedItem.item_id"
+            @click="importSelectedItem"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+            <span>{{ resolveImportActionLabel(selectedItem.kind) }}</span>
+          </button>
+          <button
+            v-if="selectedItem.mine"
+            class="hive-plaza-danger-btn"
+            type="button"
+            :disabled="plazaStore.deletingItemId === selectedItem.item_id"
+            @click="removeSelectedItem"
+          >
+            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+            <span>{{ t('plaza.action.unpublish') }}</span>
+          </button>
+        </div>
       </section>
-    </div>
+    </el-dialog>
 
     <el-dialog
       v-model="publishDialogVisible"
@@ -229,11 +266,21 @@ import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
 import { usePlazaStore, type PlazaItem } from '@/stores/plaza';
+import {
+  clampPlazaPage,
+  filterPlazaItemsByKeyword,
+  isPublishableBeeroomGroup,
+  isPublishableOwnedAgent,
+  normalizePlazaBrowseKind,
+  paginatePlazaItems,
+  resolvePlazaPageCount,
+  type PlazaBrowseKind
+} from '@/components/messenger/hivePlazaPanelState';
 import { showApiError } from '@/utils/apiError';
 import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { invalidateUserSkillsCache } from '@/utils/userToolsCache';
 
-type PublishKind = 'hive_pack' | 'worker_card' | 'skill_pack';
+type PublishKind = PlazaBrowseKind;
 
 type SourceOption = {
   value: string;
@@ -242,14 +289,20 @@ type SourceOption = {
   summary: string;
 };
 
+const PAGE_SIZE = 8;
+
 const props = withDefaults(
   defineProps<{
     active?: boolean;
+    items?: PlazaItem[];
+    browseKind?: PlazaBrowseKind;
     selectedItemId?: string;
     currentUserId?: string;
   }>(),
   {
     active: false,
+    items: () => [],
+    browseKind: 'hive_pack',
     selectedItemId: '',
     currentUserId: ''
   }
@@ -265,6 +318,8 @@ const agentStore = useAgentStore();
 const beeroomStore = useBeeroomStore();
 
 const publishDialogVisible = ref(false);
+const panelKeyword = ref('');
+const currentPage = ref(1);
 const publishKinds: PublishKind[] = ['hive_pack', 'worker_card', 'skill_pack'];
 const publishForm = reactive<{ kind: PublishKind; source_key: string; title: string; summary: string }>({
   kind: 'hive_pack',
@@ -274,48 +329,76 @@ const publishForm = reactive<{ kind: PublishKind; source_key: string; title: str
 });
 const customSkills = ref<Array<Record<string, unknown>>>([]);
 
-const ownedAgentOptions = computed<SourceOption[]>(() => {
-  const options: SourceOption[] = [
-    {
-      value: '__default__',
-      label: t('messenger.defaultAgent'),
-      title: t('messenger.defaultAgent'),
-      summary: t('messenger.defaultAgentDesc')
+const itemsInternal = computed(() => (Array.isArray(props.items) ? props.items : []));
+const browseKindInternal = computed(() => normalizePlazaBrowseKind(props.browseKind));
+const selectedItemIdInternal = computed(() => String(props.selectedItemId || '').trim());
+const selectedItem = computed<PlazaItem | null>(
+  () => itemsInternal.value.find((item) => item.item_id === selectedItemIdInternal.value) || null
+);
+const detailDialogVisible = computed({
+  get: () => Boolean(selectedItem.value),
+  set: (visible: boolean) => {
+    if (!visible) {
+      closeDetail();
     }
-  ];
-  (Array.isArray(agentStore.agents) ? agentStore.agents : []).forEach((agent) => {
-    const id = String(agent?.id || '').trim();
-    if (!id) return;
-    options.push({
-      value: id,
-      label: String(agent?.name || id).trim(),
-      title: String(agent?.name || id).trim(),
-      summary: String(agent?.description || '').trim()
-    });
-  });
-  return options;
+  }
 });
+const hasSearchKeyword = computed(() => Boolean(String(panelKeyword.value || '').trim()));
+const currentBrowseDescription = computed(() => {
+  if (browseKindInternal.value === 'worker_card') {
+    return t('plaza.page.workerCardDesc');
+  }
+  if (browseKindInternal.value === 'skill_pack') {
+    return t('plaza.page.skillPackDesc');
+  }
+  return t('plaza.page.hivePackDesc');
+});
+const filteredFeedItems = computed(() => filterPlazaItemsByKeyword(itemsInternal.value, panelKeyword.value));
+const pageCount = computed(() => resolvePlazaPageCount(filteredFeedItems.value.length, PAGE_SIZE));
+const currentPageInternal = computed(() => clampPlazaPage(currentPage.value, filteredFeedItems.value.length, PAGE_SIZE));
+const pagedFeedItems = computed(() => paginatePlazaItems(filteredFeedItems.value, currentPageInternal.value, PAGE_SIZE));
+
+const ownedAgentOptions = computed<SourceOption[]>(() =>
+  (Array.isArray(agentStore.agents) ? agentStore.agents : [])
+    .filter((agent) => isPublishableOwnedAgent(agent))
+    .map((agent) => {
+      const id = String(agent?.id || '').trim();
+      const title = String(agent?.name || id).trim() || id;
+      return {
+        value: id,
+        label: title,
+        title,
+        summary: String(agent?.description || '').trim()
+      };
+    })
+);
 
 const swarmOptions = computed<SourceOption[]>(() =>
-  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((group) => {
-    const groupId = String(group?.group_id || group?.hive_id || '').trim();
-    return {
-      value: groupId,
-      label: String(group?.name || groupId).trim(),
-      title: String(group?.name || groupId).trim(),
-      summary: String(group?.description || group?.mother_agent_name || '').trim()
-    };
-  }).filter((item) => item.value)
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : [])
+    .filter((group) => isPublishableBeeroomGroup(group))
+    .map((group) => {
+      const groupId = String(group?.group_id || group?.hive_id || '').trim();
+      const title = String(group?.name || groupId).trim() || groupId;
+      return {
+        value: groupId,
+        label: title,
+        title,
+        summary: String(group?.description || group?.mother_agent_name || '').trim()
+      };
+    })
 );
 
 const skillOptions = computed<SourceOption[]>(() =>
   customSkills.value
-    .map((skill) => ({
-      value: String(skill?.name || '').trim(),
-      label: String(skill?.name || '').trim(),
-      title: String(skill?.name || '').trim(),
-      summary: String(skill?.description || '').trim()
-    }))
+    .map((skill) => {
+      const title = String(skill?.name || '').trim();
+      return {
+        value: title,
+        label: title,
+        title,
+        summary: String(skill?.description || '').trim()
+      };
+    })
     .filter((item) => item.value)
 );
 
@@ -330,38 +413,15 @@ const sourceOptions = computed<SourceOption[]>(() => {
   }
 });
 
-const totalCount = computed(() => plazaStore.items.length);
-const mineCount = computed(
-  () => plazaStore.items.filter((item) => item.owner_user_id === String(props.currentUserId || '')).length
-);
-const remoteCount = computed(() => Math.max(0, totalCount.value - mineCount.value));
-const selectedItemIdInternal = computed(() => String(props.selectedItemId || '').trim());
-const selectedItem = computed<PlazaItem | null>(() => {
-  const matched = plazaStore.items.find((item) => item.item_id === selectedItemIdInternal.value);
-  return matched || plazaStore.items[0] || null;
-});
-const recentItems = computed(() => plazaStore.items.slice(0, 6));
-
 const loadPublishSources = async () => {
   try {
-    await Promise.allSettled([
-      plazaStore.loadItems({ force: true }),
-      beeroomStore.loadGroups(),
-      agentStore.loadAgents()
-    ]);
+    await Promise.allSettled([beeroomStore.loadGroups(), agentStore.loadAgents()]);
     const { data } = await fetchUserSkills();
     const skills = Array.isArray(data?.data?.skills) ? data.data.skills : [];
     customSkills.value = skills.filter((item) => String(item?.source || '').trim() === 'custom');
   } catch (error) {
     showApiError(error, t('plaza.publish.loadSkillsFailed'));
   }
-};
-
-const ensureSelectedItem = () => {
-  if (selectedItemIdInternal.value && plazaStore.items.some((item) => item.item_id === selectedItemIdInternal.value)) {
-    return;
-  }
-  emit('update:selectedItemId', plazaStore.items[0]?.item_id || '');
 };
 
 const syncPublishSource = () => {
@@ -382,7 +442,6 @@ const syncPublishSource = () => {
 const reload = async () => {
   try {
     await plazaStore.loadItems({ force: true });
-    ensureSelectedItem();
     ElMessage.success(t('common.refreshSuccess'));
   } catch (error) {
     showApiError(error, t('plaza.loadFailed'));
@@ -393,12 +452,25 @@ const openPublishDialog = async () => {
   publishDialogVisible.value = true;
   publishForm.title = '';
   publishForm.summary = '';
+  publishForm.kind = browseKindInternal.value;
   await loadPublishSources();
   syncPublishSource();
 };
 
 const selectItem = (itemId: string) => {
   emit('update:selectedItemId', String(itemId || '').trim());
+};
+
+const closeDetail = () => {
+  emit('update:selectedItemId', '');
+};
+
+const goPrevPage = () => {
+  currentPage.value = Math.max(1, currentPageInternal.value - 1);
+};
+
+const goNextPage = () => {
+  currentPage.value = Math.min(pageCount.value, currentPageInternal.value + 1);
 };
 
 const submitPublish = async () => {
@@ -415,7 +487,7 @@ const submitPublish = async () => {
     });
     publishDialogVisible.value = false;
     await Promise.allSettled([plazaStore.loadItems({ force: true }), agentStore.loadAgents(), beeroomStore.loadGroups()]);
-    if (published?.item_id) {
+    if (published?.item_id && publishForm.kind === browseKindInternal.value) {
       selectItem(published.item_id);
     }
     ElMessage.success(t('plaza.publish.success'));
@@ -450,11 +522,8 @@ const removeSelectedItem = async () => {
     return;
   }
   try {
-    const removedId = selectedItem.value.item_id;
-    await plazaStore.deleteItem(removedId);
-    if (selectedItemIdInternal.value === removedId) {
-      emit('update:selectedItemId', plazaStore.items.find((item) => item.item_id !== removedId)?.item_id || '');
-    }
+    await plazaStore.deleteItem(selectedItem.value.item_id);
+    closeDetail();
     ElMessage.success(t('plaza.delete.success'));
   } catch (error) {
     showApiError(error, t('plaza.delete.failed'));
@@ -502,12 +571,30 @@ watch(
   () => props.active,
   (active) => {
     if (!active) return;
-    void plazaStore.loadItems({ force: plazaStore.items.length === 0 }).then(ensureSelectedItem);
+    void plazaStore.loadItems({ force: plazaStore.items.length === 0 });
   },
   { immediate: true }
 );
 
-watch(() => plazaStore.items, ensureSelectedItem, { deep: true });
+watch(panelKeyword, () => {
+  currentPage.value = 1;
+});
+
+watch(
+  () => browseKindInternal.value,
+  () => {
+    panelKeyword.value = '';
+    currentPage.value = 1;
+    closeDetail();
+  }
+);
+
+watch(
+  () => filteredFeedItems.value.length,
+  (length) => {
+    currentPage.value = clampPlazaPage(currentPage.value, length, PAGE_SIZE);
+  }
+);
 
 watch(
   () => publishForm.kind,
@@ -525,285 +612,133 @@ watch(sourceOptions, () => {
 
 onMounted(() => {
   if (props.active) {
-    void plazaStore.loadItems({ force: plazaStore.items.length === 0 }).then(ensureSelectedItem);
+    void plazaStore.loadItems({ force: plazaStore.items.length === 0 });
   }
+});
+
+defineExpose({
+  openPublishDialog,
+  reload
 });
 </script>
 
 <style scoped>
 .hive-plaza-panel {
+  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
-.hive-plaza-hero {
-  position: relative;
-  padding: 22px 24px;
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at top right, rgba(255, 206, 117, 0.34), transparent 34%),
-    radial-gradient(circle at bottom left, rgba(247, 156, 62, 0.22), transparent 28%),
-    linear-gradient(135deg, rgba(255, 248, 229, 0.98), rgba(255, 236, 196, 0.96));
-  border: 1px solid rgba(223, 161, 72, 0.26);
-  box-shadow: 0 18px 34px rgba(196, 145, 53, 0.12);
-  display: grid;
-  grid-template-columns: minmax(0, 1.6fr) auto;
-  gap: 18px;
-}
-
-.hive-plaza-eyebrow {
-  font-size: 12px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #9a6a18;
-  font-weight: 700;
-}
-
-.hive-plaza-hero-title {
-  margin: 8px 0 10px;
-  font-size: 28px;
-  line-height: 1.1;
-  color: #432b0b;
-}
-
-.hive-plaza-hero-desc {
-  margin: 0;
-  max-width: 720px;
-  color: #6e5327;
-  line-height: 1.7;
-}
-
-.hive-plaza-hero-actions {
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.hive-plaza-stats {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.hive-plaza-stat-card,
-.hive-plaza-detail-card,
-.hive-plaza-feed-card {
+.hive-plaza-banner,
+.hive-plaza-feed-shell,
+.hive-plaza-detail-shell {
   border-radius: 22px;
   border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.06);
 }
 
-.hive-plaza-stat-card {
-  padding: 14px 16px;
+.hive-plaza-banner {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #9f1239;
+  background: rgba(255, 241, 242, 0.98);
+  border-color: rgba(244, 114, 182, 0.22);
+}
+
+.hive-plaza-feed-shell {
+  flex: 1;
+  min-height: 0;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hive-plaza-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.hive-plaza-toolbar-copy {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.hive-plaza-stat-label {
-  font-size: 12px;
-  color: #8d6732;
-}
-
-.hive-plaza-stat-value {
-  font-size: 24px;
-  color: #3f2b11;
-}
-
-.hive-plaza-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-  gap: 18px;
-}
-
-.hive-plaza-detail-card,
-.hive-plaza-feed-card {
-  padding: 20px;
-}
-
-.hive-plaza-detail-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.hive-plaza-detail-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.hive-plaza-detail-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-
-.hive-plaza-detail-badges,
-.hive-plaza-tag-row,
-.hive-plaza-detail-actions,
-.hive-plaza-publish-kind-row,
-.hive-plaza-dialog-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.hive-plaza-kind-chip,
-.hive-plaza-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 12px;
+.hive-plaza-toolbar-title {
+  font-size: 20px;
   font-weight: 700;
-}
-
-.hive-plaza-kind-chip {
-  background: rgba(255, 214, 127, 0.22);
-  color: #8a5a0a;
-}
-
-.hive-plaza-kind-chip.is-hive_pack {
-  background: rgba(255, 196, 120, 0.24);
-}
-
-.hive-plaza-kind-chip.is-worker_card {
-  background: rgba(114, 155, 255, 0.18);
-  color: #2645a1;
-}
-
-.hive-plaza-kind-chip.is-skill_pack {
-  background: rgba(65, 183, 136, 0.18);
-  color: #136548;
-}
-
-.hive-plaza-kind-chip.is-mine,
-.hive-plaza-tag {
-  background: rgba(15, 23, 42, 0.06);
-  color: #435068;
-}
-
-.hive-plaza-detail-title {
-  margin: 0;
-  font-size: 24px;
   color: #1f2937;
 }
 
-.hive-plaza-detail-summary {
-  margin: 0;
-  color: #536275;
-  line-height: 1.7;
+.hive-plaza-toolbar-subtitle {
+  color: #64748b;
+  line-height: 1.6;
 }
 
-.hive-plaza-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.hive-plaza-detail-meta {
+.hive-plaza-search {
+  min-width: 260px;
+  max-width: 360px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px 14px;
+  align-items: center;
+  gap: 10px;
   border-radius: 16px;
-  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(223, 161, 72, 0.22);
+  background: rgba(255, 250, 240, 0.96);
+  padding: 0 14px;
+  box-sizing: border-box;
 }
 
-.hive-plaza-detail-label {
-  font-size: 12px;
-  color: #7a8797;
+.hive-plaza-search i {
+  color: #a16207;
 }
 
-.hive-plaza-detail-value {
-  color: #233146;
-  font-weight: 600;
-  word-break: break-all;
+.hive-plaza-search input {
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #1f2937;
+  font: inherit;
 }
 
-.hive-plaza-section-head {
+.hive-plaza-toolbar-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 14px;
-}
-
-.hive-plaza-section-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1f2937;
-}
-
-.hive-plaza-section-subtitle {
-  margin-top: 4px;
-  color: #66768a;
+  color: #7a8797;
   font-size: 13px;
 }
 
-.hive-plaza-feed-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.hive-plaza-feed-item {
-  text-align: left;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
-  cursor: pointer;
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-}
-
-.hive-plaza-feed-item:hover,
-.hive-plaza-feed-item.active {
-  transform: translateY(-1px);
-  border-color: rgba(214, 143, 51, 0.34);
-  box-shadow: 0 12px 22px rgba(196, 145, 53, 0.12);
-}
-
-.hive-plaza-feed-top,
-.hive-plaza-feed-foot {
+.hive-plaza-results {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  color: #7a8797;
 }
 
-.hive-plaza-feed-title {
-  margin: 10px 0 8px;
-  font-size: 16px;
-  font-weight: 700;
-  color: #1f2937;
-}
-
-.hive-plaza-feed-summary {
-  min-height: 40px;
-  color: #526070;
-  line-height: 1.5;
-}
-
-.hive-plaza-feed-empty,
 .hive-plaza-empty {
-  min-height: 220px;
+  flex: 1;
+  min-height: 0;
+  border-radius: 22px;
+  border: 1px dashed rgba(223, 161, 72, 0.32);
+  background: linear-gradient(180deg, rgba(255, 249, 237, 0.92), rgba(255, 255, 255, 0.96));
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: 10px;
   color: #718096;
+  padding: 24px;
 }
 
 .hive-plaza-empty-icon {
@@ -825,9 +760,232 @@ onMounted(() => {
 }
 
 .hive-plaza-empty-desc {
-  max-width: 360px;
+  max-width: 420px;
   text-align: center;
   line-height: 1.7;
+}
+
+.hive-plaza-feed-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 280px);
+  grid-auto-rows: 252px;
+  gap: 16px;
+  align-content: start;
+  justify-content: start;
+}
+
+.hive-plaza-feed-item {
+  width: 280px;
+  height: 252px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.hive-plaza-feed-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(223, 161, 72, 0.32);
+  box-shadow: 0 18px 32px rgba(223, 161, 72, 0.14);
+}
+
+.hive-plaza-feed-top,
+.hive-plaza-feed-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hive-plaza-feed-time,
+.hive-plaza-feed-foot {
+  font-size: 12px;
+  color: #7a8797;
+}
+
+.hive-plaza-feed-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.hive-plaza-feed-copy {
+  min-width: 0;
+}
+
+.hive-plaza-feed-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.hive-plaza-feed-owner {
+  margin-top: 4px;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  font-size: 13px;
+  color: #7a8797;
+}
+
+.hive-plaza-feed-summary {
+  flex: 1;
+  min-height: 0;
+  color: #526070;
+  line-height: 1.6;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.hive-plaza-card-tags,
+.hive-plaza-detail-badges,
+.hive-plaza-tag-row,
+.hive-plaza-detail-actions,
+.hive-plaza-publish-kind-row,
+.hive-plaza-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hive-plaza-feed-source {
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hive-plaza-kind-chip,
+.hive-plaza-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hive-plaza-kind-chip {
+  background: rgba(15, 23, 42, 0.06);
+  color: #475569;
+}
+
+.hive-plaza-kind-chip.is-hive_pack {
+  background: rgba(252, 191, 73, 0.2);
+  color: #a16207;
+}
+
+.hive-plaza-kind-chip.is-worker_card {
+  background: rgba(251, 191, 36, 0.16);
+  color: #a16207;
+}
+
+.hive-plaza-kind-chip.is-skill_pack {
+  background: rgba(254, 240, 138, 0.26);
+  color: #a16207;
+}
+
+.hive-plaza-kind-chip.is-mine,
+.hive-plaza-tag {
+  background: rgba(234, 179, 8, 0.12);
+  color: #925b12;
+}
+
+.hive-plaza-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.hive-plaza-pager-summary {
+  min-width: 88px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hive-plaza-detail-shell {
+  padding: 4px;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.hive-plaza-detail-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+}
+
+.hive-plaza-detail-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hive-plaza-detail-title {
+  margin: 0;
+  font-size: 24px;
+  color: #1f2937;
+}
+
+.hive-plaza-detail-summary {
+  margin: 0;
+  color: #526070;
+  line-height: 1.7;
+}
+
+.hive-plaza-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hive-plaza-detail-meta {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hive-plaza-detail-label {
+  font-size: 12px;
+  color: #7a8797;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.hive-plaza-detail-value {
+  color: #1f2937;
+  font-weight: 700;
+  word-break: break-word;
 }
 
 .hive-plaza-primary-btn,
@@ -934,20 +1092,41 @@ onMounted(() => {
   font-size: 12px;
 }
 
-@media (max-width: 1180px) {
-  .hive-plaza-layout,
-  .hive-plaza-hero {
-    grid-template-columns: minmax(0, 1fr);
+@media (max-width: 900px) {
+  .hive-plaza-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .hive-plaza-feed-grid,
+  .hive-plaza-search {
+    min-width: 0;
+    max-width: none;
+  }
+
+  .hive-plaza-feed-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: auto;
+  }
+
+  .hive-plaza-feed-item {
+    width: auto;
+    height: auto;
+    min-height: 240px;
+  }
+
   .hive-plaza-detail-grid,
-  .hive-plaza-stats {
+  .hive-plaza-detail-head {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .hive-plaza-hero-actions {
-    justify-content: flex-start;
+  .hive-plaza-toolbar-meta,
+  .hive-plaza-pager {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .hive-plaza-pager-summary {
+    text-align: left;
   }
 }
 </style>

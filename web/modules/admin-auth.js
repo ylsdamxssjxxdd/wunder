@@ -214,6 +214,7 @@ const performLogin = async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Wunder-Session-Scope": "admin_web",
       },
       body: JSON.stringify({ username, password }),
     });

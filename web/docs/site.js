@@ -207,28 +207,36 @@ const renderLanguageSwitcher = () => {
   }
   const currentLanguage = state.pageData.language;
   const languages = state.manifest?.navigation?.languages || [];
-  if (!languages.length) {
+  if (languages.length < 2) {
     elements.languageSwitcher.innerHTML = "";
     return;
   }
-  elements.languageSwitcher.innerHTML = languages
-    .map((language) => {
-      const isActive = language.language === currentLanguage;
-      const currentPrefix = `${currentLanguage}/`;
-      const targetSlug = state.pageData.slug.startsWith(currentPrefix)
-        ? `${language.language}/${state.pageData.slug.slice(currentPrefix.length)}`
-        : state.manifest?.site?.home_page;
-      const targetPage = getPageBySlug(targetSlug) || getPageBySlug(state.manifest?.site?.home_page);
-      const className = isActive ? "docs-language-chip is-active" : "docs-language-chip";
-      return `
-        <a class="${className}" href="${escapeHtml(targetPage?.url || DOCS_BASE)}"${isActive ? ' aria-current="page"' : ""}>
-          <span class="docs-language-chip-dot" aria-hidden="true"></span>
-          <span>${escapeHtml(language.label)}</span>
-          ${isActive ? '<span class="docs-language-chip-caret" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"></path></svg></span>' : ""}
-        </a>
-      `;
-    })
-    .join("");
+
+  const otherLanguage = languages.find((lang) => lang.language !== currentLanguage);
+  if (!otherLanguage) {
+    elements.languageSwitcher.innerHTML = "";
+    return;
+  }
+
+  const currentPrefix = `${currentLanguage}/`;
+  const targetSlug = state.pageData.slug.startsWith(currentPrefix)
+    ? `${otherLanguage.language}/${state.pageData.slug.slice(currentPrefix.length)}`
+    : state.manifest?.site?.home_page;
+  const targetPage = getPageBySlug(targetSlug) || getPageBySlug(state.manifest?.site?.home_page);
+
+  const shortLabel = otherLanguage.language === "zh-CN" ? "zh" : "en";
+
+  elements.languageSwitcher.innerHTML = `
+    <a class="docs-language-toggle" href="${escapeHtml(targetPage?.url || DOCS_BASE)}" title="${escapeHtml(otherLanguage.label)}">
+      <span class="docs-language-toggle-icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="6.5"/>
+          <path d="M1 8h14M8 1a12 12 0 0 0 0 14 12 12 0 0 0 0-14"/>
+        </svg>
+      </span>
+      <span class="docs-language-toggle-text">${escapeHtml(shortLabel)}</span>
+    </a>
+  `;
 };
 
 const renderPageHeader = () => {
