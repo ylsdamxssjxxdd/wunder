@@ -320,6 +320,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/admin/preset_agents/sync",
             post(admin_preset_agents_sync),
         )
+        .route("/wunder/admin/agent_avatars", get(admin_agent_avatars_list))
         .route(
             "/wunder/admin/external_links/{link_id}",
             delete(admin_external_links_delete),
@@ -4685,6 +4686,65 @@ async fn admin_preset_agents_sync(
                 "updated_agents": summary.updated_agents,
                 "rebound_agents": summary.rebound_agents,
             }
+        }
+    })))
+}
+
+/// Scan the agent-avatars directory and return a list of available avatar keys.
+async fn admin_agent_avatars_list(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let avatar_dir = Path::new("frontend/src/assets/agent-avatars");
+    if !avatar_dir.is_dir() {
+        return Ok(Json(json!({
+            "data": {
+                "keys": [],
+                "extension_map": {}
+            }
+        })));
+    }
+
+    let mut keys: Vec<String> = Vec::new();
+    let mut extension_map: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    let read_dir = std::fs::read_dir(avatar_dir)
+        .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if extension.is_empty() || !matches!(extension.to_lowercase().as_str(), "png" | "jpg" | "jpeg") {
+            continue;
+        }
+        // Extract key like "avatar-000" from "avatar-000.png"
+        let key = file_name.replace(&format!(".{}", extension), "");
+        if !key.starts_with("avatar-") {
+            continue;
+        }
+        if !keys.contains(&key) {
+            keys.push(key.clone());
+        }
+        // Record preferred extension (png > jpg > jpeg)
+        let existing = extension_map.get(&key).and_then(Value::as_str).unwrap_or("");
+        if extension.eq_ignore_ascii_case("png") || existing.is_empty() {
+            extension_map.insert(key, Value::String(extension.to_lowercase()));
+        }
+    }
+
+    keys.sort_by(|left, right| {
+        let left_num = left.strip_prefix("avatar-").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        let right_num = right.strip_prefix("avatar-").and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+        left_num.cmp(&right_num)
+    });
+
+    Ok(Json(json!({
+        "data": {
+            "keys": keys,
+            "extension_map": extension_map
         }
     })))
 }

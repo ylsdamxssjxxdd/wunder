@@ -33,7 +33,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时聚焦单个已命中的智能体，并隐藏左/中栏；普通默认外链入口仍进入 `/app/chat`（desktop `/desktop/chat`）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
+- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|beeroom|plaza|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`），用于外链接入时聚焦单个已命中的智能体，并隐藏左/中栏；普通默认外链入口仍进入 `/app/chat`（desktop `/desktop/chat`）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
 - QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
@@ -866,6 +866,77 @@
   - `data.message`：日志内容
   - `data.ts`：写入时间戳（秒）
   - `data.status`：同 `/wunder/channels/runtime_logs` 的 `status` 字段
+
+### 4.1.2.31.2 `/wunder/plaza/items*`
+
+- 说明：用户侧蜂巢广场接口。用于发布、浏览、下架和引入蜂群包（`hive_pack`）、工蜂卡（`worker_card`）和技能包（`skill_pack`）。
+- 鉴权：用户端 Bearer Token；`user_id` 可省略，服务端默认按当前登录用户解析。
+
+#### `GET /wunder/plaza/items`
+
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选）
+  - `mine_only`：仅返回当前用户发布的条目（可选，布尔）
+  - `kind`：按类型过滤（可选，`hive_pack|worker_card|skill_pack`）
+- 返回（JSON）：
+  - `data.total`：条目总数
+  - `data.items[]`：广场条目列表
+    - `item_id`：条目 ID
+    - `kind`：条目类型
+    - `title/summary`：展示名称与简介
+    - `owner_user_id/owner_username`：发布者
+    - `source_key`：源对象标识（蜂群 ID / 智能体 ID / 技能名）
+    - `artifact_filename/artifact_size_bytes`：工件文件名与大小
+    - `icon/tags/metadata`：展示补充信息
+    - `created_at/updated_at/source_updated_at`：时间戳（秒）
+    - `mine`：是否为当前用户自己的条目
+
+#### `POST /wunder/plaza/items`
+
+- 入参（JSON）：
+  - `kind`：必填，`hive_pack|worker_card|skill_pack`
+  - `source_key`：必填；发布源对象标识
+  - `title`：可选，自定义展示名
+  - `summary`：可选，自定义简介
+- 行为：
+  - `hive_pack`：复用蜂群包导出链路生成工件后上架
+  - `worker_card`：复用工蜂卡构建链路生成工件后上架
+  - `skill_pack`：将当前用户的自定义技能目录打包后上架
+- 返回（JSON）：
+  - `data`：创建后的条目对象，字段同列表项
+
+#### `GET /wunder/plaza/items/{item_id}`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 返回（JSON）：
+  - `data`：单个广场条目详情，字段同列表项
+
+#### `DELETE /wunder/plaza/items/{item_id}`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 约束：
+  - 仅允许条目发布者下架自己的条目
+- 返回（JSON）：
+  - `data.ok`：固定 `true`
+  - `data.item_id`：已下架条目 ID
+
+#### `POST /wunder/plaza/items/{item_id}/import`
+
+- 入参（Path）：
+  - `item_id`：广场条目 ID
+- 行为：
+  - `hive_pack`：直接走蜂群包导入链路
+  - `worker_card`：解析工蜂卡并在当前用户下创建新智能体
+  - `skill_pack`：解压到当前用户技能目录
+- 返回（JSON）：
+  - `data.kind/item_id/title`：本次引入的基础信息
+  - `data.imported_hive_id`：引入蜂群后的目标蜂群 ID（仅蜂群包）
+  - `data.imported_agent_id`：引入工蜂后的目标智能体 ID（仅工蜂卡）
+  - `data.imported_job`：蜂群包导入任务结果（仅蜂群包）
+  - `data.skill_import`：技能包导入摘要（仅技能包）
+  - `data.message`：给前端直接展示的结果文案
 
 ### 4.1.3 `/wunder/admin/mcp`
 

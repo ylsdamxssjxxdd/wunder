@@ -638,15 +638,23 @@ async fn run_import_job_inner(
     } else {
         Vec::new()
     };
-    let mut occupied_agent_name_keys = if import_conflict_mode.allows_direct_replace() {
-        HashSet::new()
-    } else {
-        existing_agents
-            .iter()
-            .map(|item| normalize_conflict_key(&item.name))
-            .filter(|value| !value.is_empty())
-            .collect::<HashSet<_>>()
-    };
+
+    // Collect agent name keys globally (not just within target hive) to avoid duplicates.
+    let all_user_agents = state.user_store.list_user_agents(&user.user_id)?;
+    let all_shared_agents = state.user_store.list_shared_user_agents(&user.user_id)?;
+    let mut occupied_agent_name_keys: HashSet<String> = all_user_agents
+        .iter()
+        .chain(all_shared_agents.iter())
+        .map(|item| normalize_conflict_key(&item.name))
+        .filter(|value| !value.is_empty())
+        .collect();
+
+    // In replace mode, exclude agents that will be deleted from name conflict check.
+    if import_conflict_mode.allows_direct_replace() {
+        for agent in &existing_agents {
+            occupied_agent_name_keys.remove(&normalize_conflict_key(&agent.name));
+        }
+    }
 
     // Collect deterministic rename entries so UI can explain conflict outcomes.
     let skill_renames = worker_snapshots
@@ -1183,6 +1191,7 @@ fn install_worker_snapshot(
             std::fs::remove_dir_all(&skill_target)?;
         }
         copy_dir_recursive(&skill_source.source_dir, &skill_target)?;
+        rewrite_skill_md_name(&skill_target, &final_name)?;
         runtime.installed_skill_dirs.push(skill_target);
         runtime.installed_skill_names.push(final_name.clone());
         runtime.import_skill_name_keys.insert(final_name.clone());
@@ -2136,6 +2145,61 @@ fn zip_directory(source_root: &Path, target_zip: &Path) -> Result<()> {
     }
     writer.finish()?;
     Ok(())
+}
+
+/// Update the `name` field in SKILL.md frontmatter so it matches the renamed skill directory.
+fn rewrite_skill_md_name(skill_dir: &Path, new_name: &str) -> Result<()> {
+    let skill_md = skill_dir.join("SKILL.md");
+    if !skill_md.is_file() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(&skill_md)
+        .with_context(|| format!("read {}", skill_md.display()))?;
+    let rewritten = rewrite_frontmatter_name(&content, new_name);
+    std::fs::write(&skill_md, rewritten)
+        .with_context(|| format!("write {}", skill_md.display()))?;
+    Ok(())
+}
+
+/// Replace the `name` value in YAML frontmatter while preserving formatting and other fields.
+fn rewrite_frontmatter_name(content: &str, new_name: &str) -> String {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let mut in_frontmatter = false;
+    let mut frontmatter_ended = false;
+    let mut result = String::with_capacity(content.len());
+
+    for line in normalized.lines() {
+        if !frontmatter_ended {
+            if !in_frontmatter && line.trim() == "---" {
+                in_frontmatter = true;
+                result.push_str(line);
+                result.push('\n');
+                continue;
+            }
+            if in_frontmatter {
+                if line.trim() == "---" {
+                    frontmatter_ended = true;
+                    result.push_str(line);
+                    result.push('\n');
+                    continue;
+                }
+                // Only match top-level `name:` (not nested or inside descriptions).
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("name:") && !trimmed[5..].trim_start().starts_with('\n') {
+                    if let Some(colon_pos) = line.find(':') {
+                        result.push_str(&line[..colon_pos + 1]);
+                        result.push(' ');
+                        result.push_str(new_name);
+                        result.push('\n');
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {

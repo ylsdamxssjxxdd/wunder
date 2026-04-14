@@ -62,7 +62,7 @@ pub(crate) fn build_error_meta(
 pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
     let normalized = code.trim().to_ascii_uppercase();
     match normalized.as_str() {
-        "AUTH_REQUIRED" | "UNAUTHORIZED" => StatusCode::UNAUTHORIZED,
+        "AUTH_REQUIRED" | "UNAUTHORIZED" | "SESSION_REPLACED" => StatusCode::UNAUTHORIZED,
         "FORBIDDEN" | "PERMISSION_DENIED" => StatusCode::FORBIDDEN,
         "NOT_FOUND" | "SESSION_NOT_FOUND" | "TASK_NOT_FOUND" => StatusCode::NOT_FOUND,
         "CONFLICT" | "TASK_NOT_CANCELABLE" => StatusCode::CONFLICT,
@@ -100,7 +100,7 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         "INVALID_PROTOCOL_RANGE" | "PROTOCOL_MISMATCH" | "VERSION_NOT_SUPPORTED" => {
             Some("Align client protocol version with the server supported range.")
         }
-        "AUTH_REQUIRED" | "UNAUTHORIZED" | "PERMISSION_DENIED" | "FORBIDDEN" => {
+        "AUTH_REQUIRED" | "UNAUTHORIZED" | "SESSION_REPLACED" | "PERMISSION_DENIED" | "FORBIDDEN" => {
             Some("Check authentication credentials and permission scope.")
         }
         "SESSION_REQUIRED" | "SESSION_NOT_FOUND" => {

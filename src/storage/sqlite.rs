@@ -1786,6 +1786,29 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
+    fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.ensure_initialized()?;
+        let cleaned = prefix.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let pattern = format!("{cleaned}%");
+        let mut stmt = conn.prepare(
+            "SELECT key, value FROM meta WHERE key LIKE ? ORDER BY updated_time DESC, key ASC",
+        )?;
+        let rows = stmt.query_map(params![pattern], |row| {
+            let key: String = row.get(0)?;
+            let value: String = row.get(1)?;
+            Ok((key, value))
+        })?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row?);
+        }
+        Ok(items)
+    }
+
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize> {
         self.ensure_initialized()?;
         let conn = self.open()?;

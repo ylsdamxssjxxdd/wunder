@@ -1,4 +1,5 @@
 import { t } from '@/i18n';
+import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { parseStructuredErrorPayload } from '@/utils/streamError';
 
 type WsError = Error & {
@@ -48,6 +49,14 @@ type PendingEntry = {
 };
 
 type WsMessagePayload = Record<string, unknown>;
+
+const AUTH_ERROR_CODES = new Set([
+  'AUTH_REQUIRED',
+  'UNAUTHORIZED',
+  'SESSION_REPLACED',
+  'AUTH_FORCED_LOGOUT'
+]);
+let wsAuthRedirecting = false;
 
 const buildAbortError = (): WsError => {
   try {
@@ -131,6 +140,31 @@ const buildSlowClientError = (eventPayload: Record<string, unknown>): WsError =>
   err.detail = data;
   err.resumeRequired = data.resume_recommended !== false;
   return err;
+};
+
+const normalizeErrorCode = (value: unknown): string => String(value || '').trim().toUpperCase();
+
+const isAuthWsError = (error: Partial<WsError> | null | undefined): boolean => {
+  if (!error) {
+    return false;
+  }
+  if (Number(error.status) === 401) {
+    return true;
+  }
+  return AUTH_ERROR_CODES.has(normalizeErrorCode(error.code));
+};
+
+const forceLogoutFromWs = (): void => {
+  if (typeof window === 'undefined' || wsAuthRedirecting) {
+    return;
+  }
+  wsAuthRedirecting = true;
+  try {
+    localStorage.removeItem('access_token');
+  } catch {
+    // ignore localStorage failures
+  }
+  redirectToLoginAfterLogout();
 };
 
 export const consumeWsStream = (
@@ -235,6 +269,9 @@ export const consumeWsStream = (
       if (type === 'error') {
         const errorPayload = asPayloadRecord(payload?.payload);
         const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
+        if (isAuthWsError(err)) {
+          forceLogoutFromWs();
+        }
         try {
           socket.close(1000, 'error');
         } catch {
@@ -441,6 +478,9 @@ export const createWsMultiplexer = (
     if (type === 'error') {
       const errorPayload = asPayloadRecord(payload?.payload);
       const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
+      if (isAuthWsError(err)) {
+        forceLogoutFromWs();
+      }
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (requestId && pending.has(requestId)) {
         rejectRequest(requestId, err);

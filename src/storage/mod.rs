@@ -858,6 +858,7 @@ pub trait StorageBackend: Send + Sync {
 
     fn get_meta(&self, key: &str) -> Result<Option<String>>;
     fn set_meta(&self, key: &str, value: &str) -> Result<()>;
+    fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>>;
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize>;
 
     fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()>;

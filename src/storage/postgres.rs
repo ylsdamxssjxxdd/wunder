@@ -2363,6 +2363,24 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
+    fn list_meta_prefix(&self, prefix: &str) -> Result<Vec<(String, String)>> {
+        self.ensure_initialized()?;
+        let cleaned = prefix.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let pattern = format!("{cleaned}%");
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT key, value FROM meta WHERE key LIKE $1 ORDER BY updated_time DESC, key ASC",
+            &[&pattern],
+        )?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+            .collect())
+    }
+
     fn delete_meta_prefix(&self, prefix: &str) -> Result<usize> {
         self.ensure_initialized()?;
         let cleaned = prefix.trim();

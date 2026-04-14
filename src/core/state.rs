@@ -15,6 +15,7 @@ use crate::orchestrator::Orchestrator;
 use crate::org_units;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::bridge::BridgeRuntime;
+use crate::services::auth_sessions::AuthSessionService;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::presence::PresenceService;
@@ -203,6 +204,7 @@ pub struct AppProjectionServices {
 
 #[derive(Clone)]
 pub struct AppControlServices {
+    pub auth_sessions: Arc<AuthSessionService>,
     pub presence: Arc<PresenceService>,
     pub channels: Arc<ChannelHub>,
     pub gateway: Arc<GatewayHub>,
@@ -276,6 +278,7 @@ impl AppState {
             user_tool_manager.clone(),
             user_store.clone(),
         ));
+        let auth_sessions = Arc::new(AuthSessionService::new());
         let presence = Arc::new(PresenceService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
         let beeroom_realtime = Arc::new(BeeroomRealtimeService::new(storage.clone()));
@@ -402,6 +405,7 @@ impl AppState {
                 beeroom: beeroom_realtime,
             },
             control: AppControlServices {
+                auth_sessions,
                 presence,
                 channels,
                 gateway,

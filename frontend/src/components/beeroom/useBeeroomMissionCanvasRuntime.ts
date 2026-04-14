@@ -8,6 +8,10 @@ import {
   sendMessageStream
 } from '@/api/chat';
 import {
+  listRecentBeeroomAgentOutputs,
+  DEFAULT_BEEROOM_AGENT_OUTPUT_PREVIEW_LIMIT
+} from '@/components/beeroom/beeroomAgentOutputPreview';
+import {
   BEEROOM_SUBAGENT_REPLY_SORT_ORDER,
   BEEROOM_SUBAGENT_REQUEST_SORT_ORDER,
   collapseMissionChatAssistantTurns,
@@ -2361,7 +2365,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
   };
 
-  const displayChatMessages = computed(() =>
+  const allRenderableChatMessages = computed(() =>
     [...manualChatMessages.value, ...runtimeRelayChatMessages.value]
       .map((message) => ({
         ...message,
@@ -2377,6 +2381,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         (message) =>
           !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
       )
+  );
+
+  const displayChatMessages = computed(() =>
+    allRenderableChatMessages.value
       .filter((message) => {
         if (message.tone === 'user') return true;
         const senderAgentId = String(message.senderAgentId || '').trim();
@@ -2384,6 +2392,15 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         return !silentAgentIdSet.value.has(senderAgentId);
       })
   );
+
+  const listRecentAgentOutputs = (
+    agentId: unknown,
+    limit = DEFAULT_BEEROOM_AGENT_OUTPUT_PREVIEW_LIMIT
+  ): MissionChatMessage[] =>
+    listRecentBeeroomAgentOutputs(allRenderableChatMessages.value, {
+      agentId,
+      limit
+    });
 
   const dispatchBindingSignature = computed(() =>
     [
@@ -3009,6 +3026,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchSessionId,
     dispatchPreview: effectiveDispatchPreview,
     displayChatMessages,
+    listRecentAgentOutputs,
     motherWorkflowItems,
     subagentsByTask,
     workflowItemsByTask,

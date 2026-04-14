@@ -48,11 +48,13 @@
         :composer-sending="composerSending"
         :composer-can-send="Boolean(composerText.trim())"
         :composer-error="''"
+        :artifacts-enabled="true"
         :resolve-message-avatar-image="resolveMessageAvatarImage"
         :avatar-label="avatarLabel"
         @update:collapsed="chatCollapsed = $event"
         @update:composer-text="composerText = $event"
         @update:composer-target-agent-id="composerTargetAgentId = $event"
+        @open-artifacts="handleOpenArtifacts"
         @send="handleComposerSend"
       />
     </section>
@@ -239,6 +241,10 @@ const resolveMessageAvatarImage = (message: MissionChatMessage) =>
 const avatarLabel = (value: unknown) => String(value || '').trim().slice(0, 1).toUpperCase() || '?';
 
 const displayMessages = computed(() => [...messages.value].sort(compareMissionChatMessages));
+
+const handleOpenArtifacts = () => {
+  logHarness('open-artifacts');
+};
 
 const resetHarness = () => {
   chatCollapsed.value = false;

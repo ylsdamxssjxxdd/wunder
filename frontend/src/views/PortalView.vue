@@ -265,12 +265,10 @@
               <el-select
                 v-model="form.copy_from_agent_id"
                 class="agent-copy-select"
-                clearable
                 filterable
                 size="small"
                 :placeholder="t('portal.agent.form.copyFromPlaceholder')"
               >
-                <el-option :label="t('portal.agent.form.copyFromNone')" value="" />
                 <el-option
                   v-for="agent in agentCopyOptions"
                   :key="`copy-agent-${agent.id}`"
@@ -742,7 +740,7 @@ const form = reactive({
   name: '',
   description: '',
   is_shared: false,
-  copy_from_agent_id: '',
+  copy_from_agent_id: DEFAULT_AGENT_KEY,
   tool_names: [],
   system_prompt: '',
   preset_questions: [],
@@ -1166,7 +1164,7 @@ const resetForm = () => {
   form.name = '';
   form.description = '';
   form.is_shared = false;
-  form.copy_from_agent_id = '';
+  form.copy_from_agent_id = DEFAULT_AGENT_KEY;
   form.system_prompt = '';
   form.preset_questions = [];
   form.group = createBeeroomGroupDraft();
@@ -1547,7 +1545,7 @@ const saveAgent = async () => {
       name,
       description: form.description || '',
       is_shared: false,
-      copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
+      copy_from_agent_id: String(form.copy_from_agent_id || DEFAULT_AGENT_KEY).trim() || DEFAULT_AGENT_KEY,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group, beeroomGroupOptions.value),
@@ -1555,9 +1553,6 @@ const saveAgent = async () => {
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
-    if (!payload.copy_from_agent_id) {
-      delete payload.copy_from_agent_id;
-    }
     if (!payload.hive_id) {
       delete payload.hive_id;
     }

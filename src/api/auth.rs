@@ -234,6 +234,11 @@ async fn register(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, localize_register_error(&err)))?;
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
@@ -254,6 +259,11 @@ async fn login(
         .user_store
         .login(username, password)
         .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
@@ -348,6 +358,11 @@ async fn login_demo(
         .user_store
         .demo_login(payload.demo_id.as_deref())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
 }
@@ -388,6 +403,11 @@ async fn external_login(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(json!({
         "data": {
@@ -435,6 +455,11 @@ async fn external_issue_code(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let record = state
         .external_auth_codes
         .issue(
@@ -519,6 +544,11 @@ async fn external_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let launch = build_external_launch_result(
         &state,
         session,
@@ -580,6 +610,11 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    state
+        .control
+        .auth_sessions
+        .force_logout_user(&session.user.user_id)
+        .await;
     let target_agent =
         resolve_external_token_login_target(&state, &session.user, payload.agent_name.as_deref())
             .await?;

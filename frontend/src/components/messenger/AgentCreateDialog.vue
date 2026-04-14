@@ -28,12 +28,10 @@
         <el-form-item :label="t('messenger.agentCreate.copyFrom')">
           <el-select
             v-model="form.copy_from_agent_id"
-            clearable
             filterable
             class="messenger-form-full"
             :placeholder="t('messenger.agentCreate.copyFromPlaceholder')"
           >
-            <el-option :label="t('messenger.agentCreate.copyFromNone')" value="" />
             <el-option
               v-for="agent in copyFromAgents"
               :key="agent.id"
@@ -206,6 +204,7 @@ import {
   type BeeroomGroupOption
 } from '@/utils/beeroomGroupDraft';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
+import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 
 type ToolOption = {
   label: string;
@@ -297,7 +296,7 @@ const detailPopupStyle = computed(() => ({
 const form = reactive({
   name: '',
   description: '',
-  copy_from_agent_id: '',
+  copy_from_agent_id: DEFAULT_AGENT_KEY,
   group: createBeeroomGroupDraft(),
   system_prompt: '',
   model_name: '',
@@ -374,7 +373,7 @@ const allToolValues = computed(() => {
 const resetForm = () => {
   form.name = '';
   form.description = '';
-  form.copy_from_agent_id = '';
+  form.copy_from_agent_id = DEFAULT_AGENT_KEY;
   form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
   form.model_name = '';
@@ -460,7 +459,7 @@ const handleSave = async () => {
     const payload: Record<string, unknown> = {
       name,
       description: String(form.description || '').trim(),
-      copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
+      copy_from_agent_id: String(form.copy_from_agent_id || DEFAULT_AGENT_KEY).trim() || DEFAULT_AGENT_KEY,
       ...buildBeeroomGroupPayload(form.group, props.beeroomGroups),
       system_prompt: String(form.system_prompt || ''),
       model_name: String(form.model_name || '').trim(),
@@ -470,9 +469,6 @@ const handleSave = async () => {
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
-    if (!payload.copy_from_agent_id) {
-      delete payload.copy_from_agent_id;
-    }
     if (!payload.hive_name) {
       delete payload.hive_name;
     }

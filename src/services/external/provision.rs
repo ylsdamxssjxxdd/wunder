@@ -292,12 +292,8 @@ pub fn provision_external_launch_session(
         created = true;
         created_user
     };
-    let token = user_store.create_session_token(&user.user_id)?;
-    Ok((
-        crate::services::user_store::UserSession { user, token },
-        created,
-        updated,
-    ))
+    let session = user_store.issue_session_for_user(user)?;
+    Ok((session, created, updated))
 }
 
 fn sync_external_unit_binding(

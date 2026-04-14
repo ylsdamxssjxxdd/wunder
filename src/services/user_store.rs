@@ -18,6 +18,7 @@ use argon2::password_hash::{
 use argon2::Argon2;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
@@ -39,6 +40,9 @@ const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+const SESSION_TIME_EPSILON_MICROS: u64 = 1;
+
+static LAST_SESSION_ISSUED_AT_MICROS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserUnitProfile {
@@ -504,17 +508,35 @@ impl UserStore {
 
     pub fn create_session_token(&self, user_id: &str) -> Result<UserTokenRecord> {
         let now = now_ts();
-        let expires_at = now + DEFAULT_TOKEN_TTL_S as f64;
+        self.create_session_token_at(user_id, now)
+    }
+
+    fn create_session_token_at(&self, user_id: &str, issued_at: f64) -> Result<UserTokenRecord> {
+        let expires_at = issued_at + DEFAULT_TOKEN_TTL_S as f64;
         let token = format!("wund_{}", Uuid::new_v4().simple());
         let record = UserTokenRecord {
             token: token.clone(),
             user_id: user_id.to_string(),
             expires_at,
-            created_at: now,
-            last_used_at: now,
+            created_at: issued_at,
+            last_used_at: issued_at,
         };
         self.storage.create_user_token(&record)?;
         Ok(record)
+    }
+
+    pub fn issue_session_for_user(&self, mut user: UserAccountRecord) -> Result<UserSession> {
+        let latest_login_at = self
+            .storage
+            .get_user_account(&user.user_id)?
+            .and_then(|record| record.last_login_at)
+            .or(user.last_login_at);
+        let issued_at = next_session_issued_at(latest_login_at);
+        user.last_login_at = Some(issued_at);
+        user.updated_at = issued_at;
+        self.storage.upsert_user_account(&user)?;
+        let token = self.create_session_token_at(&user.user_id, issued_at)?;
+        Ok(UserSession { user, token })
     }
 
     pub fn authenticate_token(&self, token: &str) -> Result<Option<UserAccountRecord>> {
@@ -530,6 +552,13 @@ impl UserStore {
         let Some(user) = self.storage.get_user_account(&record.user_id)? else {
             return Ok(None);
         };
+        if user
+            .last_login_at
+            .is_some_and(|last_login_at| record.created_at + 0.000_001 < last_login_at)
+        {
+            let _ = self.storage.delete_user_token(&record.token);
+            return Ok(None);
+        }
         if user.status.trim().to_lowercase() != "active" {
             return Ok(None);
         }
@@ -562,7 +591,7 @@ impl UserStore {
     pub fn login(&self, username: &str, password: &str) -> Result<UserSession> {
         let user_id =
             Self::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
-        let mut user = match self.storage.get_user_account_by_username(&user_id)? {
+        let user = match self.storage.get_user_account_by_username(&user_id)? {
             Some(user) => user,
             None => {
                 if Self::is_default_admin(&user_id) {
@@ -581,12 +610,7 @@ impl UserStore {
         if !Self::verify_password(&user.password_hash, password) {
             return Err(anyhow!("invalid password"));
         }
-        let now = now_ts();
-        user.last_login_at = Some(now);
-        user.updated_at = now;
-        self.storage.upsert_user_account(&user)?;
-        let token = self.create_session_token(&user.user_id)?;
-        Ok(UserSession { user, token })
+        self.issue_session_for_user(user)
     }
 
     pub fn demo_login(&self, demo_id: Option<&str>) -> Result<UserSession> {
@@ -607,18 +631,13 @@ impl UserStore {
                 true,
             )?
         };
-        let now = now_ts();
         if user.status.trim().to_lowercase() != "active" {
             user.status = "active".to_string();
         }
         if !user.roles.iter().any(|role| role == "user") {
             user.roles.push("user".to_string());
         }
-        user.last_login_at = Some(now);
-        user.updated_at = now;
-        self.storage.upsert_user_account(&user)?;
-        let token = self.create_session_token(&user.user_id)?;
-        Ok(UserSession { user, token })
+        self.issue_session_for_user(user)
     }
 
     pub fn get_user_tool_access(&self, user_id: &str) -> Result<Option<UserToolAccessRecord>> {
@@ -1111,6 +1130,41 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     }
 }
 
+fn next_session_issued_at(last_login_at: Option<f64>) -> f64 {
+    let wall_micros = ts_to_micros(now_ts());
+    let baseline_micros = last_login_at
+        .map(ts_to_micros)
+        .unwrap_or(0)
+        .saturating_add(SESSION_TIME_EPSILON_MICROS);
+    let mut candidate = wall_micros.max(baseline_micros);
+    loop {
+        let previous = LAST_SESSION_ISSUED_AT_MICROS.load(Ordering::Relaxed);
+        let next = candidate.max(previous.saturating_add(SESSION_TIME_EPSILON_MICROS));
+        match LAST_SESSION_ISSUED_AT_MICROS.compare_exchange(
+            previous,
+            next,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => return micros_to_ts(next),
+            Err(observed) => {
+                candidate = candidate.max(observed.saturating_add(SESSION_TIME_EPSILON_MICROS));
+            }
+        }
+    }
+}
+
+fn ts_to_micros(value: f64) -> u64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0;
+    }
+    (value * 1_000_000.0).round().max(0.0) as u64
+}
+
+fn micros_to_ts(value: u64) -> f64 {
+    value as f64 / 1_000_000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::UserStore;
@@ -1450,5 +1504,44 @@ mod tests {
         assert_eq!(status.used_total, 4);
         assert_eq!(status.daily_grant, 0);
         assert!(status.allowed);
+    }
+
+    #[test]
+    fn authenticate_token_rejects_previous_login_generation() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-session-generation.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        store
+            .create_user(
+                "alice",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        let first = store.login("alice", "secret").expect("first login");
+        let second = store.login("alice", "secret").expect("second login");
+
+        assert!(
+            store
+                .authenticate_token(&first.token.token)
+                .expect("authenticate first token")
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .authenticate_token(&second.token.token)
+                .expect("authenticate second token")
+                .expect("second token should be valid")
+                .user_id,
+            "alice"
+        );
     }
 }

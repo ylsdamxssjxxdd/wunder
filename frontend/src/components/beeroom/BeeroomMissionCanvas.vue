@@ -26,6 +26,7 @@
           :resolve-agent-avatar-color-by-agent-id="resolveAgentAvatarColorByAgentId"
           :fullscreen="canvasFullscreen"
           @open-agent="emit('open-agent', $event)"
+          @preview-node-output="handleAgentOutputPreview"
           @toggle-fullscreen="toggleCanvasFullscreen"
         />
 
@@ -55,31 +56,67 @@
           :composer-sending="composerSending"
           :composer-can-send="composerCanSend"
           :composer-error="composerError"
+          :artifacts-enabled="motherWorkspaceAvailable"
           :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="composerText = $event"
           @update:composer-target-agent-id="composerTargetAgentId = $event"
           @clear="handleClearHistory"
+          @open-artifacts="openMotherWorkspace"
           @send="handleComposerSend"
           @open-agent="emit('open-agent', $event)"
           @approval="handleDispatchApproval($event.decision, $event.approvalId)"
         />
       </div>
     </div>
+
+    <el-dialog
+      v-model="motherWorkspaceVisible"
+      :title="motherWorkspaceDialogTitle"
+      width="860px"
+      class="workspace-dialog beeroom-canvas-workspace-dialog"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="beeroom-canvas-workspace-shell">
+        <WorkspacePanel
+          v-if="motherWorkspaceVisible && motherWorkspaceAvailable"
+          :agent-id="motherWorkspaceAgentId"
+          :container-id="motherWorkspaceContainerId"
+          :title="t('beeroom.canvas.artifacts')"
+        />
+      </div>
+    </el-dialog>
+
+    <BeeroomAgentOutputPreviewDialog
+      v-model:visible="agentOutputPreviewVisible"
+      :agent-name="agentOutputPreviewTitle"
+      :role-label="agentOutputPreviewRoleLabel"
+      :status-label="agentOutputPreviewStatusLabel"
+      :outputs="agentOutputPreviewMessages"
+      :resolve-message-avatar-image="resolveMessageAvatarImage"
+      :avatar-label="avatarLabel"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, toRef, watch } from 'vue';
 
+import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
+import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import {
   getBeeroomMissionCanvasState,
   mergeBeeroomMissionCanvasState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import BeeroomSwarmCanvasPane from '@/components/beeroom/canvas/BeeroomSwarmCanvasPane.vue';
-import { hasBeeroomSwarmNodes, resolveBeeroomSwarmScopeKey } from '@/components/beeroom/canvas/swarmCanvasModel';
+import {
+  hasBeeroomSwarmNodes,
+  resolveBeeroomMotherAgentId,
+  resolveBeeroomSwarmScopeKey
+} from '@/components/beeroom/canvas/swarmCanvasModel';
 import { useBeeroomMissionCanvasRuntime } from '@/components/beeroom/useBeeroomMissionCanvasRuntime';
 import { useI18n } from '@/i18n';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
@@ -104,11 +141,13 @@ const canvasFullscreen = ref(false);
 const boardWidth = ref(0);
 const chatWidth = ref(344);
 const isChatResizing = ref(false);
+const motherWorkspaceVisible = ref(false);
 
 const DEFAULT_CHAT_WIDTH = 344;
 const MIN_CHAT_WIDTH = 308;
 const MAX_CHAT_WIDTH = 680;
 const MOBILE_CHAT_BREAKPOINT = 900;
+const AGENT_OUTPUT_PREVIEW_LIMIT = 6;
 
 let boardResizeObserver: ResizeObserver | null = null;
 let activeResizePointerId: number | null = null;
@@ -118,6 +157,19 @@ let dragStartChatWidth = DEFAULT_CHAT_WIDTH;
 const groupRef = toRef(props, 'group');
 const missionRef = toRef(props, 'mission');
 const agentsRef = toRef(props, 'agents');
+const agentOutputPreviewVisible = ref(false);
+const agentOutputPreviewAgentId = ref('');
+const agentOutputPreviewTitle = ref('');
+const agentOutputPreviewRoleLabel = ref('');
+const agentOutputPreviewStatusLabel = ref('');
+
+type AgentOutputPreviewPayload = {
+  nodeId: string;
+  agentId: string;
+  agentName: string;
+  roleLabel: string;
+  statusLabel: string;
+};
 
 const {
   chatCollapsed,
@@ -132,6 +184,7 @@ const {
   dispatchCanStop,
   dispatchPreview,
   displayChatMessages,
+  listRecentAgentOutputs,
   motherWorkflowItems,
   subagentsByTask,
   workflowItemsByTask,
@@ -150,6 +203,10 @@ const {
   t,
   onRefresh: () => emit('refresh')
 });
+
+const agentOutputPreviewMessages = computed(() =>
+  listRecentAgentOutputs(agentOutputPreviewAgentId.value, AGENT_OUTPUT_PREVIEW_LIMIT)
+);
 
 const hasSwarmNodes = computed(() => {
   if (props.hideStandbyWhenMissionEmpty && !props.mission) {
@@ -170,6 +227,64 @@ const missionCanvasScopeKey = computed(() =>
     groupId: props.group?.group_id
   })
 );
+
+const motherWorkspaceAgentId = computed(() =>
+  resolveBeeroomMotherAgentId(props.mission, props.group, props.agents)
+);
+
+const motherWorkspaceMember = computed<BeeroomMember | null>(() => {
+  const motherAgentId = String(motherWorkspaceAgentId.value || '').trim();
+  if (!motherAgentId) return null;
+  const candidates = [
+    ...(Array.isArray(props.agents) ? props.agents : []),
+    ...(Array.isArray(props.group?.members) ? props.group.members : [])
+  ];
+  return (
+    candidates.find((member) => String(member?.agent_id || '').trim() === motherAgentId) || null
+  );
+});
+
+const motherWorkspaceAgentName = computed(() => {
+  const memberName = String(motherWorkspaceMember.value?.name || '').trim();
+  if (memberName) return memberName;
+  const groupName = String(props.group?.mother_agent_name || '').trim();
+  if (groupName) return groupName;
+  return String(motherWorkspaceAgentId.value || '').trim();
+});
+
+const motherWorkspaceContainerId = computed(() => {
+  const parsed = Number.parseInt(
+    String(motherWorkspaceMember.value?.sandbox_container_id ?? 1),
+    10
+  );
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+});
+
+const motherWorkspaceAvailable = computed(() => Boolean(motherWorkspaceAgentId.value));
+
+const motherWorkspaceDialogTitle = computed(() =>
+  t('beeroom.canvas.artifactsTitle', {
+    agent: motherWorkspaceAgentName.value || '-'
+  })
+);
+
+const closeAgentOutputPreview = () => {
+  agentOutputPreviewVisible.value = false;
+  agentOutputPreviewAgentId.value = '';
+  agentOutputPreviewTitle.value = '';
+  agentOutputPreviewRoleLabel.value = '';
+  agentOutputPreviewStatusLabel.value = '';
+};
+
+const handleAgentOutputPreview = (payload: AgentOutputPreviewPayload) => {
+  const agentId = String(payload?.agentId || '').trim();
+  if (!agentId) return;
+  agentOutputPreviewAgentId.value = agentId;
+  agentOutputPreviewTitle.value = String(payload?.agentName || agentId).trim() || agentId;
+  agentOutputPreviewRoleLabel.value = String(payload?.roleLabel || '').trim();
+  agentOutputPreviewStatusLabel.value = String(payload?.statusLabel || '').trim();
+  agentOutputPreviewVisible.value = true;
+};
 
 const getChatWidthBounds = () => {
   const currentBoardWidth = Math.max(0, Math.round(boardWidth.value || boardRef.value?.clientWidth || 0));
@@ -296,6 +411,11 @@ const handleClearHistory = async () => {
   await clearManualChatHistory();
 };
 
+const openMotherWorkspace = () => {
+  if (!motherWorkspaceAvailable.value) return;
+  motherWorkspaceVisible.value = true;
+};
+
 onMounted(() => {
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
@@ -333,9 +453,16 @@ watch(
   (scopeKey) => {
     const cached = getBeeroomMissionCanvasState(scopeKey);
     chatWidth.value = clampChatWidth(Number(cached?.chatWidth || DEFAULT_CHAT_WIDTH));
+    closeAgentOutputPreview();
   },
   { immediate: true }
 );
+
+watch(hasSwarmNodes, (value) => {
+  if (!value) {
+    closeAgentOutputPreview();
+  }
+});
 
 watch(
   () => boardWidth.value,
@@ -520,6 +647,19 @@ watch(
 .beeroom-canvas-empty i {
   font-size: 30px;
   color: #38bdf8;
+}
+
+.beeroom-canvas-workspace-shell {
+  min-height: 460px;
+  height: min(68vh, 760px);
+}
+
+.beeroom-canvas-workspace-shell :deep(.workspace-panel) {
+  height: 100%;
+}
+
+.beeroom-canvas-workspace-dialog :deep(.el-dialog__body) {
+  padding-top: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

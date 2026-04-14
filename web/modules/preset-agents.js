@@ -1,9 +1,9 @@
-﻿import { elements } from "./elements.js?v=20260215-01";
+﻿import { elements } from "./elements.js?v=20260414-01";
 import { state } from "./state.js";
 import { getWunderBase } from "./api.js";
-import { appendLog } from "./log.js?v=20260215-01";
+import { appendLog } from "./log.js?v=20260414-01";
 import { notify } from "./notify.js";
-import { t } from "./i18n.js?v=20260215-01";
+import { t } from "./i18n.js?v=20260414-01";
 
 const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
@@ -34,111 +34,77 @@ const PRESET_AVATAR_BASE_URL = (() => {
   }
 })();
 
-const PRESET_AGENT_AVATAR_EXTENSION_MAP = {
-  "avatar-000": "jpg",
-  "avatar-001": "jpg",
-  "avatar-003": "jpg",
-  "avatar-004": "jpg",
-  "avatar-007": "jpg",
-  "avatar-010": "png",
-  "avatar-011": "jpg",
-  "avatar-012": "jpg",
-  "avatar-013": "jpg",
-  "avatar-014": "jpg",
-  "avatar-015": "png",
-  "avatar-016": "jpg",
-  "avatar-017": "jpg",
-  "avatar-018": "jpg",
-  "avatar-019": "jpg",
-  "avatar-020": "jpg",
-  "avatar-021": "jpg",
-  "avatar-022": "jpg",
-  "avatar-023": "jpg",
-  "avatar-024": "jpg",
-  "avatar-025": "jpg",
-  "avatar-027": "jpg",
-  "avatar-028": "jpg",
-  "avatar-029": "jpg",
-  "avatar-032": "jpg",
-  "avatar-034": "jpg",
-  "avatar-036": "jpg",
-  "avatar-040": "jpg",
-  "avatar-041": "jpg",
-  "avatar-043": "jpg",
-  "avatar-044": "jpg",
-  "avatar-046": "jpg",
-  "avatar-047": "jpg",
-  "avatar-048": "jpg",
-  "avatar-049": "jpg",
-  "avatar-050": "jpg",
-  "avatar-051": "jpg",
-  "avatar-054": "jpg",
-  "avatar-055": "jpg",
-  "avatar-056": "jpg",
-  "avatar-057": "jpg",
-  "avatar-058": "jpg",
-  "avatar-059": "jpg",
-  "avatar-060": "jpg",
-  "avatar-061": "jpg",
-  "avatar-062": "jpg",
-  "avatar-063": "jpg",
-  "avatar-065": "jpg",
-  "avatar-066": "jpg",
-  "avatar-067": "jpg",
-  "avatar-069": "jpg",
-  "avatar-070": "jpg",
-  "avatar-072": "jpg",
-  "avatar-073": "jpg",
-  "avatar-075": "jpg",
-  "avatar-076": "jpg",
-  "avatar-077": "jpg",
-};
-
-const PRESET_AVATAR_EXTENSION_CANDIDATES = ["png", "jpg", "jpeg"];
-
-const PRESET_AGENT_AVATAR_KEYS = Object.keys(PRESET_AGENT_AVATAR_EXTENSION_MAP).sort((left, right) =>
-  left.localeCompare(right, "en", { numeric: true, sensitivity: "base" })
-);
-
-const buildPresetAvatarImageCandidates = (key) => {
-  const normalized = String(key || "").trim();
-  if (!normalized) {
-    return [];
-  }
-  const preferredExtension = String(PRESET_AGENT_AVATAR_EXTENSION_MAP[normalized] || "")
-    .trim()
-    .toLowerCase();
-  return Array.from(
-    new Set(
-      [preferredExtension, ...PRESET_AVATAR_EXTENSION_CANDIDATES].filter((item) => Boolean(String(item || "").trim()))
-    )
-  ).map((extension) => `${PRESET_AVATAR_BASE_URL}${normalized}.${extension}`);
-};
-
-const PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", imageCandidates: [], label: "initial" }].concat(
-  PRESET_AGENT_AVATAR_KEYS.map((key) => {
-    const imageCandidates = buildPresetAvatarImageCandidates(key);
-    return {
-      key,
-      image: imageCandidates[0] || "",
-      imageCandidates,
-      label: `Agent Avatar ${key.slice("avatar-".length)}`,
-    };
-  })
-);
-
-const PRESET_AVATAR_IMAGE_CANDIDATE_MAP = new Map(
-  PRESET_AVATAR_OPTIONS.filter((item) => Array.isArray(item.imageCandidates) && item.imageCandidates.length).map((item) => [
-    item.key,
-    item.imageCandidates,
-  ])
-);
-const PRESET_AVATAR_OPTION_KEYS = new Set(PRESET_AVATAR_OPTIONS.map((item) => item.key));
-const DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("avatar-000")
-  ? "avatar-000"
-  : PRESET_AGENT_AVATAR_KEYS[0] || "initial";
-const FALLBACK_PRESET_AVATAR_ICON_NAME = "initial";
+// Dynamic avatar config loaded from backend - populated after init
+let PRESET_AGENT_AVATAR_EXTENSION_MAP = {};
+let PRESET_AGENT_AVATAR_KEYS = [];
+let PRESET_AVATAR_OPTIONS = [];
+let PRESET_AVATAR_IMAGE_CANDIDATE_MAP = new Map();
+let PRESET_AVATAR_OPTION_KEYS = new Set();
+let DEFAULT_PRESET_AVATAR_ICON_NAME = "avatar-000";
+let FALLBACK_PRESET_AVATAR_ICON_NAME = "initial";
 const LEGACY_DEFAULT_AVATAR_KEY = "qq-avatar-0199";
+
+async function loadPresetAvatars() {
+  try {
+    const response = await fetch(`${getWunderBase()}/wunder/admin/agent_avatars`);
+    if (!response.ok) {
+      console.warn("[preset-agents] failed to load avatar config");
+      return;
+    }
+    const json = await response.json();
+    const data = json?.data;
+    if (!data || !Array.isArray(data.keys)) {
+      return;
+    }
+    PRESET_AGENT_AVATAR_KEYS = data.keys;
+    PRESET_AGENT_AVATAR_EXTENSION_MAP = data.extension_map || {};
+    buildPresetAvatarOptions();
+  } catch (err) {
+    console.warn("[preset-agents] avatar config load error:", err);
+  }
+}
+
+function buildPresetAvatarOptions() {
+  const extensionCandidates = ["png", "jpg", "jpeg"];
+
+  function buildImageCandidates(key) {
+    const normalized = String(key || "").trim();
+    if (!normalized) {
+      return [];
+    }
+    const preferredExtension = String(PRESET_AGENT_AVATAR_EXTENSION_MAP[normalized] || "")
+      .trim()
+      .toLowerCase();
+    return Array.from(
+      new Set(
+        [preferredExtension, ...extensionCandidates].filter((item) => Boolean(String(item || "").trim()))
+      )
+    ).map((extension) => `${PRESET_AVATAR_BASE_URL}${normalized}.${extension}`);
+  }
+
+  PRESET_AVATAR_OPTIONS = [{ key: "initial", image: "", imageCandidates: [], label: "initial" }].concat(
+    PRESET_AGENT_AVATAR_KEYS.map((key) => {
+      const imageCandidates = buildImageCandidates(key);
+      return {
+        key,
+        image: imageCandidates[0] || "",
+        imageCandidates,
+        label: `Agent Avatar ${key.slice("avatar-".length)}`,
+      };
+    })
+  );
+
+  PRESET_AVATAR_IMAGE_CANDIDATE_MAP = new Map(
+    PRESET_AVATAR_OPTIONS.filter((item) => Array.isArray(item.imageCandidates) && item.imageCandidates.length).map((item) => [
+      item.key,
+      item.imageCandidates,
+    ])
+  );
+  PRESET_AVATAR_OPTION_KEYS = new Set(PRESET_AVATAR_OPTIONS.map((item) => item.key));
+  DEFAULT_PRESET_AVATAR_ICON_NAME = PRESET_AVATAR_OPTION_KEYS.has("avatar-046")
+    ? "avatar-046"
+    : PRESET_AGENT_AVATAR_KEYS[0] || "initial";
+}
 
 const normalizeAgentAvatarSequenceKey = (rawValue) => {
   const sequence = Number.parseInt(rawValue, 10);
@@ -2573,7 +2539,7 @@ const bindActions = () => {
   }
 };
 
-export const initPresetAgentsPanel = () => {
+export const initPresetAgentsPanel = async () => {
   ensureState();
   if (!ensureElements()) {
     return;
@@ -2581,6 +2547,8 @@ export const initPresetAgentsPanel = () => {
   if (state.presetAgents.initialized) {
     return;
   }
+  // Load avatar config from backend first
+  await loadPresetAvatars();
   bindTabs();
   bindPresetDraftFields();
   bindActions();

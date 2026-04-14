@@ -2,8 +2,32 @@
   <div class="workspace-panel">
     <div class="workspace-header">
       <div class="workspace-title-row">
-        <div class="workspace-title">{{ panelTitle }}</div>
-        <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
+        <div class="workspace-title-group">
+          <div class="workspace-title">{{ panelTitle }}</div>
+          <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
+        </div>
+        <div class="workspace-header-actions">
+          <button
+            class="workspace-icon-btn"
+            type="button"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            :disabled="loading"
+            @click="refreshWorkspace"
+          >
+            <i class="fa-solid fa-rotate-right workspace-icon" aria-hidden="true"></i>
+          </button>
+          <button
+            class="workspace-icon-btn danger"
+            type="button"
+            :title="t('workspace.panel.clear')"
+            :aria-label="t('workspace.panel.clear')"
+            :disabled="loading"
+            @click="clearWorkspaceCurrent"
+          >
+            <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
     </div>
 

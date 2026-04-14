@@ -108,7 +108,7 @@
             :empty-label="workflowEmptyLabel"
             :style="{ left: `${node.left}px`, top: `${node.top}px` }"
             @click="handleNodeClick(node.id)"
-            @dblclick="node.agentId && emit('open-agent', node.agentId)"
+            @dblclick="handleNodeDoubleClick(node.id)"
           />
         </div>
       </div>
@@ -243,6 +243,7 @@ const MINIMAP_WIDTH = 132;
 const MINIMAP_HEIGHT = 80;
 const WORLD_DRAG_BUFFER = 720;
 const MINIMAP_REFERENCE_BUFFER = 720;
+const NODE_OUTPUT_PREVIEW_CLICK_DELAY_MS = 220;
 const GRID_PATTERN_ID_BASE = `beeroom-swarm-grid-${Math.random().toString(36).slice(2, 10)}`;
 
 const props = defineProps<{
@@ -261,6 +262,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
+  (event: 'preview-node-output', payload: {
+    nodeId: string;
+    agentId: string;
+    agentName: string;
+    roleLabel: string;
+    statusLabel: string;
+  }): void;
   (event: 'toggle-fullscreen'): void;
 }>();
 
@@ -308,6 +316,7 @@ let panState: PanState | null = null;
 let releaseInteractionListeners: (() => void) | null = null;
 let dragPointerTarget: HTMLElement | null = null;
 let suppressSelection = false;
+let pendingNodeOutputPreviewTimer: number | null = null;
 const knownProjectionNodeIds = new Set<string>();
 const knownProjectionNodeDispatchActivity = new Map<string, boolean>();
 const revealCleanupTimers = new Map<string, number>();
@@ -887,6 +896,37 @@ const handleViewportWheel = (event: WheelEvent) => {
   );
 };
 
+const clearPendingNodeOutputPreview = () => {
+  if (pendingNodeOutputPreviewTimer === null || typeof window === 'undefined') return;
+  window.clearTimeout(pendingNodeOutputPreviewTimer);
+  pendingNodeOutputPreviewTimer = null;
+};
+
+const emitNodeOutputPreview = (nodeId: string) => {
+  const node = worldNodeMap.value.get(String(nodeId || '').trim());
+  const agentId = String(node?.agentId || '').trim();
+  if (!node || !agentId) return;
+  emit('preview-node-output', {
+    nodeId: node.id,
+    agentId,
+    agentName: String(node.name || node.displayName || agentId).trim() || agentId,
+    roleLabel: String(node.roleLabel || '').trim(),
+    statusLabel: String(node.statusLabel || '').trim()
+  });
+};
+
+const scheduleNodeOutputPreview = (nodeId: string) => {
+  clearPendingNodeOutputPreview();
+  if (typeof window === 'undefined') {
+    emitNodeOutputPreview(nodeId);
+    return;
+  }
+  pendingNodeOutputPreviewTimer = window.setTimeout(() => {
+    pendingNodeOutputPreviewTimer = null;
+    emitNodeOutputPreview(nodeId);
+  }, NODE_OUTPUT_PREVIEW_CLICK_DELAY_MS);
+};
+
 const handleNodeClick = (nodeId: string) => {
   if (suppressSelection) {
     suppressSelection = false;
@@ -894,10 +934,21 @@ const handleNodeClick = (nodeId: string) => {
   }
   selectedNodeId.value = nodeId;
   saveNodeState();
+  scheduleNodeOutputPreview(nodeId);
+};
+
+const handleNodeDoubleClick = (nodeId: string) => {
+  clearPendingNodeOutputPreview();
+  const node = worldNodeMap.value.get(String(nodeId || '').trim());
+  const agentId = String(node?.agentId || '').trim();
+  if (agentId) {
+    emit('open-agent', agentId);
+  }
 };
 
 const handleNodePointerDown = (nodeId: string, event: PointerEvent, pointerTarget?: HTMLElement | null) => {
   if (event.button !== 0) return;
+  clearPendingNodeOutputPreview();
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation?.();
@@ -931,6 +982,7 @@ const handleNodeLayerPointerDown = (event: PointerEvent) => {
 
 const handleViewportPointerDown = (event: PointerEvent) => {
   if (event.button !== 0) return;
+  clearPendingNodeOutputPreview();
   const target = event.target as HTMLElement | null;
   if (target?.closest?.('.beeroom-node-card')) return;
   if (dragState) return;
@@ -1114,6 +1166,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearPendingNodeOutputPreview();
   clearViewportSaveTimer();
   resizeObserver?.disconnect();
   resizeObserver = null;

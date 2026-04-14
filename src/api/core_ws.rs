@@ -129,6 +129,10 @@ async fn handle_ws(
         }
     });
 
+    state
+        .control
+        .auth_sessions
+        .register(&user.user_id, &connection_id, out_tx.clone());
     state.control.presence.connect_client(
         &user.user_id,
         &connection_id,
@@ -717,6 +721,7 @@ async fn handle_ws(
     }
 
     drop(out_tx);
+    state.control.auth_sessions.unregister(&connection_id);
     let _ = writer.await;
     state.control.presence.disconnect_client(
         &user.user_id,

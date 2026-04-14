@@ -174,6 +174,9 @@
           :selected-beeroom-group-id="beeroomStore.activeGroupId"
           :select-beeroom-group="selectBeeroomGroup"
           :delete-beeroom-group="handleDeleteBeeroomGroup"
+          :filtered-plaza-items="filteredPlazaItems"
+          :selected-plaza-item-id="selectedPlazaItemId"
+          :select-plaza-item="selectPlazaItem"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroup"
@@ -733,6 +736,14 @@
               </div>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
             </template>
+
+            <MessengerHivePlazaPanel
+              v-else-if="sessionHub.activeSection === 'plaza'"
+              :active="sessionHub.activeSection === 'plaza'"
+              :selected-item-id="selectedPlazaItemId"
+              :current-user-id="currentUserId"
+              @update:selected-item-id="selectPlazaItem"
+            />
 
             <MessengerToolsSection
               v-else-if="sessionHub.activeSection === 'tools'"
@@ -1538,7 +1549,6 @@
     <AgentQuickCreateDialog
       v-model="agentQuickCreateVisible"
       :creating="quickCreatingAgent"
-      :copy-from-agents="agentQuickCreateCopyFromAgents"
       @submit="submitAgentQuickCreate"
     />
     <input
@@ -1606,6 +1616,7 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
+import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import MessengerToolsSection from '@/views/messenger/sections/MessengerToolsSection.vue';
@@ -1658,6 +1669,7 @@ import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useBeeroomStore, type BeeroomGroup } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
+import { usePlazaStore } from '@/stores/plaza';
 import { useThemeStore } from '@/stores/theme';
 import {
   useSessionHubStore,
@@ -1822,6 +1834,7 @@ const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
 const beeroomStore = useBeeroomStore();
+const plazaStore = usePlazaStore();
 const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
@@ -1835,6 +1848,7 @@ const selectedAgentHiveGroupId = ref('');
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
+const selectedPlazaItemId = ref('');
 const agentQuickCreateVisible = ref(false);
 const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
 const workerCardImporting = ref(false);
@@ -2288,6 +2302,7 @@ const sectionOptions = computed(() => {
     { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
     { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
     { key: 'swarms' as MessengerSection, icon: 'fa-solid fa-bee', label: t('messenger.section.swarms') },
+    { key: 'plaza' as MessengerSection, icon: 'fa-solid fa-store', label: t('messenger.section.plaza') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
     { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
     { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
@@ -2302,6 +2317,7 @@ const leftRailMainSectionOptions = computed(() =>
       item.key === 'messages' ||
       item.key === 'agents' ||
       item.key === 'swarms' ||
+      item.key === 'plaza' ||
       item.key === 'tools' ||
       item.key === 'files'
   )
@@ -2485,7 +2501,7 @@ const activeSectionSubtitle = computed(() => {
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
-const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'plaza', 'agents']);
 const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
@@ -4249,6 +4265,27 @@ const filteredGroups = computed(() => {
   });
 });
 
+const filteredPlazaItems = computed(() => {
+  const text = keyword.value.toLowerCase();
+  return plazaStore.items.filter((item) => {
+    if (!text) return true;
+    const title = String(item?.title || '').toLowerCase();
+    const summary = String(item?.summary || '').toLowerCase();
+    const owner = String(item?.owner_username || item?.owner_user_id || '').toLowerCase();
+    const sourceKey = String(item?.source_key || '').toLowerCase();
+    const kind = String(item?.kind || '').toLowerCase();
+    const tags = Array.isArray(item?.tags) ? item.tags.join(' ').toLowerCase() : '';
+    return (
+      title.includes(text) ||
+      summary.includes(text) ||
+      owner.includes(text) ||
+      sourceKey.includes(text) ||
+      kind.includes(text) ||
+      tags.includes(text)
+    );
+  });
+});
+
 const filteredBeeroomGroups = computed(() => {
   const text = keyword.value.toLowerCase();
   return (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).filter((item) => {
@@ -4305,30 +4342,6 @@ const beeroomCandidateAgents = computed(() => {
       name: String(item?.name || item?.id || '').trim()
     }))
     .filter((item) => item.id);
-});
-
-const agentQuickCreateCopyFromAgents = computed(() => {
-  const seen = new Set<string>();
-  const defaultAgentName =
-    String((defaultAgentProfile.value as Record<string, unknown> | null)?.name || '').trim() ||
-    t('messenger.defaultAgent');
-  return [
-    {
-      id: DEFAULT_AGENT_KEY,
-      name: defaultAgentName
-    },
-    ...ownedAgents.value,
-    ...sharedAgents.value
-  ]
-    .map((item) => ({
-      id: String(item?.id || '').trim(),
-      name: String(item?.name || item?.id || '').trim()
-    }))
-    .filter((item) => {
-      if (!item.id || seen.has(item.id)) return false;
-      seen.add(item.id);
-      return true;
-    });
 });
 
 const filteredGroupCreateContacts = computed(() => {
@@ -8192,10 +8205,8 @@ const submitAgentQuickCreate = async (payload: { copy_from_agent_id?: string }) 
   if (targetHiveId) {
     createPayload.hive_id = targetHiveId;
   }
-  const copyFromAgentId = String(payload?.copy_from_agent_id || '').trim();
-  if (copyFromAgentId) {
-    createPayload.copy_from_agent_id = copyFromAgentId;
-  }
+  const copyFromAgentId = String(payload?.copy_from_agent_id || DEFAULT_AGENT_KEY).trim() || DEFAULT_AGENT_KEY;
+  createPayload.copy_from_agent_id = copyFromAgentId;
   const created = await submitAgentCreate(createPayload);
   if (created) {
     agentQuickCreateVisible.value = false;
@@ -8530,6 +8541,10 @@ const selectContact = (contact: Record<string, unknown>) => {
 const selectGroup = (group: Record<string, unknown>) => {
   selectedGroupId.value = String(group?.group_id || '').trim();
   selectedContactUserId.value = '';
+};
+
+const selectPlazaItem = (itemId: unknown) => {
+  selectedPlazaItemId.value = String(itemId || '').trim();
 };
 
 const selectBeeroomGroup = async (group: Record<string, unknown>) => {
@@ -9887,6 +9902,19 @@ const ensureSectionSelection = () => {
           )
         : null;
       beeroomStore.setActiveGroup(matchedGroup?.group_id || filteredBeeroomGroups.value[0]?.group_id || '');
+    }
+    return;
+  }
+
+  if (sessionHub.activeSection === 'plaza') {
+    if (!filteredPlazaItems.value.length) {
+      return;
+    }
+    const exists = filteredPlazaItems.value.some(
+      (item) => String(item?.item_id || '').trim() === String(selectedPlazaItemId.value || '').trim()
+    );
+    if (!exists) {
+      selectedPlazaItemId.value = String(filteredPlazaItems.value[0]?.item_id || '').trim();
     }
     return;
   }
@@ -11722,6 +11750,10 @@ const bootstrap = async () => {
       run: () => beeroomStore.loadGroups()
     },
     {
+      sections: ['plaza'],
+      run: () => plazaStore.loadItems()
+    },
+    {
       sections: ['messages'],
       run: () => chatStore.loadSessions()
     },
@@ -11887,6 +11919,8 @@ watch(
     clearRightDockSkillAutoRetry();
     rightDockSkillCatalogLoadVersion += 1;
     rightDockSkillContentLoadVersion += 1;
+    plazaStore.$reset();
+    selectedPlazaItemId.value = '';
     agentToolSummaryPromise = null;
     invalidateAllUserToolsCaches();
     clearWorkspaceResourceCache();
@@ -11964,6 +11998,12 @@ watch(
       if (!cronPermissionDenied.value) {
         void loadCronAgentIds();
       }
+    }
+    if (section === 'plaza' && !plazaStore.items.length) {
+      void plazaStore
+        .loadItems()
+        .then(() => ensureSectionSelection())
+        .catch(() => null);
     }
     if (section === 'more') {
       void preloadMessengerSettingsPanels({ desktopMode: desktopMode.value });
@@ -12075,6 +12115,14 @@ watch(
 );
 
 watch(
+  () => filteredPlazaItems.value.map((item) => String(item?.item_id || '')).join('|'),
+  () => {
+    if (sessionHub.activeSection !== 'plaza') return;
+    ensureSectionSelection();
+  }
+);
+
+watch(
   () => [
     sessionHub.activeSection,
     sessionHub.activeConversationKey,
@@ -12120,6 +12168,7 @@ watch(
   () => [
     filteredContacts.value.length,
     filteredGroups.value.length,
+    filteredPlazaItems.value.length,
     filteredOwnedAgents.value.length,
     filteredSharedAgents.value.length,
     showDefaultAgentEntry.value ? 1 : 0

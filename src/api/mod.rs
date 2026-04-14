@@ -31,6 +31,7 @@ pub mod user_channel_logs;
 pub mod user_channels;
 pub mod user_context;
 pub mod user_memory;
+pub mod user_plaza;
 pub mod user_prompt_templates;
 pub mod user_tools;
 pub mod user_world;
@@ -69,6 +70,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(benchmark::router())
         .merge(external_links::router())
         .merge(user_tools::router())
+        .merge(user_plaza::router())
         .merge(user_prompt_templates::router())
         .merge(user_world::router())
         .merge(user_world_ws::router())
@@ -106,6 +108,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(temp_dir::router())
         .merge(workspace::router())
         .merge(user_tools::router())
+        .merge(user_plaza::router())
         .merge(user_prompt_templates::router())
         .merge(user_world::router())
         .merge(user_world_ws::router())

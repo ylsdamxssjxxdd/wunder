@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 export type MessengerSection =
   | 'messages'
   | 'swarms'
+  | 'plaza'
   | 'users'
   | 'groups'
   | 'agents'
@@ -25,6 +26,7 @@ const normalizeSection = (value: unknown): MessengerSection => {
   const allowed: MessengerSection[] = [
     'messages',
     'swarms',
+    'plaza',
     'users',
     'groups',
     'agents',
@@ -118,6 +120,9 @@ export const resolveSectionFromRoute = (
   }
   if (path.includes('/beeroom')) {
     return 'swarms';
+  }
+  if (path.includes('/plaza')) {
+    return 'plaza';
   }
   if (path.includes('/workspace')) {
     return 'files';

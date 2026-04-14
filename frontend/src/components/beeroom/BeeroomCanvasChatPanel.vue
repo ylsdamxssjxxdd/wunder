@@ -14,6 +14,16 @@
       <div class="beeroom-canvas-chat-head">
         <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
         <div class="beeroom-canvas-chat-head-actions">
+          <button
+            class="beeroom-canvas-icon-btn"
+            type="button"
+            :title="t('beeroom.canvas.artifacts')"
+            :aria-label="t('beeroom.canvas.artifacts')"
+            :disabled="!artifactsEnabled"
+            @click="emit('open-artifacts')"
+          >
+            <i class="fa-solid fa-folder-open" aria-hidden="true"></i>
+          </button>
           <button class="beeroom-canvas-icon-btn" type="button" :title="t('common.clear')" @click="emit('clear')">
             <i class="fa-solid fa-broom" aria-hidden="true"></i>
           </button>
@@ -200,6 +210,7 @@ const props = defineProps<{
   composerSending: boolean;
   composerCanSend: boolean;
   composerError: string;
+  artifactsEnabled: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>();
@@ -209,6 +220,7 @@ const emit = defineEmits<{
   (event: 'update:composerText', value: string): void;
   (event: 'update:composerTargetAgentId', value: string): void;
   (event: 'clear'): void;
+  (event: 'open-artifacts'): void;
   (event: 'send'): void;
   (event: 'open-agent', agentId: string): void;
   (event: 'approval', value: { decision: 'approve_once' | 'approve_session' | 'deny'; approvalId: string }): void;

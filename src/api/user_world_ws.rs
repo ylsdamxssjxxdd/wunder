@@ -97,6 +97,10 @@ async fn handle_ws(
         }
     });
 
+    state
+        .control
+        .auth_sessions
+        .register(&user_id, &connection_id, out_tx.clone());
     let connected_at = Utc::now().timestamp_millis() as f64 / 1000.0;
     state
         .control
@@ -367,6 +371,7 @@ async fn handle_ws(
         &connection_id,
         Utc::now().timestamp_millis() as f64 / 1000.0,
     );
+    state.control.auth_sessions.unregister(&connection_id);
     drop(out_tx);
     let _ = writer.await;
 }

@@ -414,6 +414,38 @@
       </div>
     </template>
 
+    <template v-else-if="activeSection === 'plaza'">
+      <button
+        v-for="item in filteredPlazaItems"
+        :key="item.item_id"
+        class="messenger-list-item messenger-agent-item"
+        :class="{ active: selectedPlazaItemId === String(item.item_id || '') }"
+        type="button"
+        @click="selectPlazaItem(item.item_id)"
+      >
+        <AgentAvatar
+          size="md"
+          state="idle"
+          :icon="item.icon"
+          :name="item.title || item.item_id"
+        />
+        <div class="messenger-list-main">
+          <div class="messenger-list-row">
+            <span class="messenger-list-name">{{ item.title }}</span>
+            <span class="messenger-kind-tag">{{ resolvePlazaKindLabel(item.kind) }}</span>
+          </div>
+          <div class="messenger-list-row">
+            <span class="messenger-list-preview">
+              {{ item.summary || resolvePlazaOwnerLabel(item) || t('messenger.preview.empty') }}
+            </span>
+          </div>
+        </div>
+      </button>
+      <div v-if="!filteredPlazaItems.length" class="messenger-list-empty">
+        {{ t('messenger.empty.plaza') }}
+      </div>
+    </template>
+
     <template v-else-if="activeSection === 'agents'">
       <div class="messenger-unit-structure messenger-unit-structure--agents">
         <div class="messenger-unit-structure-head">
@@ -961,6 +993,9 @@ const {
   selectedBeeroomGroupId,
   selectBeeroomGroup,
   deleteBeeroomGroup,
+  filteredPlazaItems,
+  selectedPlazaItemId,
+  selectPlazaItem,
   filteredGroups,
   selectedGroupId,
   selectGroup,
@@ -1043,6 +1078,9 @@ const {
   selectedBeeroomGroupId: string;
   selectBeeroomGroup: (group: Record<string, any>) => void;
   deleteBeeroomGroup: (group: Record<string, any>) => void | Promise<void>;
+  filteredPlazaItems: Array<Record<string, any>>;
+  selectedPlazaItemId: string;
+  selectPlazaItem: (itemId: string) => void;
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
@@ -1105,10 +1143,22 @@ const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
   return output;
 });
 
-const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'plaza', 'agents']);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );
+
+const resolvePlazaKindLabel = (kind: unknown): string => {
+  const normalized = String(kind || '').trim() || 'worker_card';
+  return t(`plaza.kind.${normalized}`);
+};
+
+const resolvePlazaOwnerLabel = (item: Record<string, unknown>): string => {
+  if (item?.mine === true) {
+    return t('plaza.meta.mine');
+  }
+  return String(item?.owner_username || item?.owner_user_id || '').trim();
+};
 
 const GUIDED_DEFAULT_CONVERSATION_KEY = '__guided_default_agent__';
 
