@@ -1073,6 +1073,10 @@ impl UserStore {
         self.storage.list_session_locks_by_user(user_id)
     }
 
+    pub fn count_session_locks(&self) -> Result<i64> {
+        self.storage.count_session_locks()
+    }
+
     pub fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()> {
         self.storage.upsert_agent_thread(record)
     }
@@ -1099,6 +1103,20 @@ impl UserStore {
 
     pub fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>> {
         self.storage.list_pending_agent_tasks(limit)
+    }
+
+    pub fn count_pending_agent_tasks(&self) -> Result<i64> {
+        self.storage.count_pending_agent_tasks()
+    }
+
+    pub fn count_pending_agent_tasks_ahead(
+        &self,
+        retry_at: f64,
+        created_at: f64,
+        task_id: &str,
+    ) -> Result<i64> {
+        self.storage
+            .count_pending_agent_tasks_ahead(retry_at, created_at, task_id)
     }
 
     pub fn list_agent_tasks_by_thread(

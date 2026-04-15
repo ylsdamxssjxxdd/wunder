@@ -6077,6 +6077,7 @@ const startSessionWatcher = (store, sessionId) => {
       normalizedEventType === 'error' ||
       normalizedEventType === 'turn_terminal' ||
       normalizedEventType === 'queue_enter' ||
+      normalizedEventType === 'queue_update' ||
       normalizedEventType === 'queue_start' ||
       normalizedEventType === 'queue_finish' ||
       normalizedEventType === 'queue_fail' ||
@@ -6119,6 +6120,7 @@ const startSessionWatcher = (store, sessionId) => {
   const isWatchWorkflowEventType = (normalizedEventType) =>
     isWatchTerminalEventType(normalizedEventType) ||
     normalizedEventType === 'queue_enter' ||
+    normalizedEventType === 'queue_update' ||
     normalizedEventType === 'queue_start' ||
     normalizedEventType === 'queue_finish' ||
     normalizedEventType === 'received' ||
@@ -8636,15 +8638,33 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
     // 基于事件类型生成工作流条目并更新回复内容
       switch (eventType) {
-      case 'queue_enter': {
-        assistantMessage.workflowItems.push(
-          buildWorkflowItem(
-            t('chat.workflow.queued'),
-            buildDetail(data ?? payload),
-            'pending',
-            { eventType: 'queue_enter' }
-          )
-        );
+      case 'queue_enter':
+      case 'queue_update': {
+        const detailPayload = data ?? payload;
+        const existingQueueItem = [...assistantMessage.workflowItems]
+          .reverse()
+          .find(
+            (item) =>
+              ['queue_enter', 'queue_update'].includes(String(item?.eventType || item?.event || '').trim()) &&
+              String(item?.status || '').trim().toLowerCase() !== 'completed'
+          );
+        if (existingQueueItem?.id) {
+          updateWorkflowItem(assistantMessage.workflowItems, existingQueueItem.id, {
+            title: t('chat.workflow.queued'),
+            detail: buildDetail(detailPayload),
+            status: 'pending',
+            eventType: 'queue_enter'
+          });
+        } else {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem(
+              t('chat.workflow.queued'),
+              buildDetail(detailPayload),
+              'pending',
+              { eventType: 'queue_enter' }
+            )
+          );
+        }
         break;
       }
       case 'queue_start': {
@@ -11887,7 +11907,7 @@ export const useChatStore = defineStore('chat', {
               queued = true;
               if (!suppressQueuedNotice) {
                 assistantMessage.workflowItems.push(
-                  buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending', {
+                  buildWorkflowItem(t('chat.workflow.queued'), buildDetail(payload?.data ?? payload), 'pending', {
                     eventType: 'queued'
                   })
                 );

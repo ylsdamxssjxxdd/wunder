@@ -52,6 +52,7 @@ import { normalizeChatTimestampMs } from '@/utils/chatTiming';
 
 type WorkflowItemLike = {
   eventType?: unknown;
+  detail?: unknown;
   isTool?: unknown;
   attempt?: unknown;
   maxAttempts?: unknown;
@@ -172,7 +173,9 @@ const latestRetry = computed(() =>
   findLatestItem((item) => normalizeEventType(item?.eventType) === 'llm_stream_retry')
 );
 const latestQueue = computed(() =>
-  findLatestItem((item) => ['queued', 'queue_enter', 'queue_start'].includes(normalizeEventType(item?.eventType)))
+  findLatestItem((item) =>
+    ['queued', 'queue_enter', 'queue_update', 'queue_start'].includes(normalizeEventType(item?.eventType))
+  )
 );
 const latestRequest = computed(() =>
   findLatestItem((item) => normalizeEventType(item?.eventType) === 'llm_request')
@@ -274,6 +277,36 @@ const retryReasonLabel = computed(() =>
   resolveRetryReasonLabel(latestRetry.value.item?.retryReason)
 );
 
+const parseQueueAhead = (item: WorkflowItemLike | null) => {
+  if (!item) return null;
+  let detail: Record<string, unknown> | null = null;
+  if (typeof item.detail === 'string') {
+    try {
+      const parsed = JSON.parse(item.detail);
+      if (parsed && typeof parsed === 'object') {
+        detail = parsed as Record<string, unknown>;
+      }
+    } catch {
+      detail = null;
+    }
+  } else if (item.detail && typeof item.detail === 'object') {
+    detail = item.detail as Record<string, unknown>;
+  }
+  const candidates = [
+    detail?.queue_ahead,
+    detail?.queueAhead,
+    (detail?.data as Record<string, unknown> | undefined)?.queue_ahead,
+    (detail?.data as Record<string, unknown> | undefined)?.queueAhead
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(String(candidate ?? ''), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return null;
+};
+
+const queueAheadCount = computed(() => parseQueueAhead(latestQueue.value.item));
+
 const title = computed(() => {
   switch (phase.value) {
     case 'queued':
@@ -294,7 +327,9 @@ const title = computed(() => {
 const detail = computed(() => {
   switch (phase.value) {
     case 'queued':
-      return t('chat.waiting.queuedDetail');
+      return queueAheadCount.value !== null
+        ? t('chat.waiting.queuedDetailWithAhead', { count: queueAheadCount.value })
+        : t('chat.waiting.queuedDetail');
     case 'model':
       return elapsedMs.value >= 20000
         ? t('chat.waiting.modelDetailLong')

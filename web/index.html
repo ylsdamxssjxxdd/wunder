@@ -3513,7 +3513,7 @@
                   </div>
                 </div>
                 <div class="api-docs-note is-warning" data-i18n="apiDocs.note.concurrent">
-                  同一 user_id 同时只允许一个进行中会话，重复请求会返回 429。
+                  同一 user_id 同时只允许一个进行中会话；会话繁忙或全局并发达到上限时，请求会进入队列并返回排队状态。
                 </div>
               </div>
               <div class="api-docs-card api-docs-list-card">

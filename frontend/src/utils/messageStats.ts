@@ -57,6 +57,37 @@ const formatCompactElapsed = (milliseconds: number): string => {
   return restMinutes > 0 ? `${hours}h ${restMinutes}m` : `${hours}h`;
 };
 
+const resolveQueueAheadCount = (item: WorkflowItemLike | null | undefined): number | null => {
+  if (!item) return null;
+  const detail =
+    typeof item.detail === 'string'
+      ? (() => {
+          try {
+            return JSON.parse(item.detail);
+          } catch {
+            return null;
+          }
+        })()
+      : item.detail && typeof item.detail === 'object'
+        ? item.detail
+        : null;
+  const candidates = [
+    item.queue_ahead,
+    item.queueAhead,
+    detail?.queue_ahead,
+    detail?.queueAhead,
+    detail?.data?.queue_ahead,
+    detail?.data?.queueAhead
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(String(candidate ?? ''), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
 const normalizeSpeed = (speed: number): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
   return speed;
@@ -495,7 +526,12 @@ const resolveAssistantStatusEntry = (
     workflowItems,
     (item) => {
       const eventType = normalizeWorkflowEventType(item?.eventType ?? item?.event);
-      return eventType === 'queued' || eventType === 'queue_enter' || eventType === 'queue_start';
+      return (
+        eventType === 'queued' ||
+        eventType === 'queue_enter' ||
+        eventType === 'queue_update' ||
+        eventType === 'queue_start'
+      );
     }
   );
   const latestRequest = findLastWorkflowItem(
@@ -545,7 +581,12 @@ const resolveAssistantStatusEntry = (
     return buildStatusEntry(buildRetryStatusValue(message, latestRetry.item, t, nowMs), 'warning', true);
   }
   if (latestQueue.index >= 0 && latestQueue.index >= latestRequest.index && latestQueue.index >= latestOutput.index) {
-    return buildStatusEntry(t('messenger.messageStatus.queued'), 'muted', true);
+    const queueAhead = resolveQueueAheadCount(latestQueue.item);
+    const queuedLabel =
+      queueAhead !== null
+        ? t('messenger.messageStatus.queuedAhead', { count: queueAhead })
+        : t('messenger.messageStatus.queued');
+    return buildStatusEntry(queuedLabel, 'muted', true);
   }
   if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
     return buildStatusEntry(t('messenger.messageStatus.compacting'), 'warning', true);

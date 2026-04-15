@@ -23,10 +23,18 @@ const createTranslator = () => {
     'messenger.messageStatus.running': 'Running',
     'messenger.messageStatus.toolRunning': 'Tool running',
     'messenger.messageStatus.queued': 'Queued',
+    'messenger.messageStatus.queuedAhead': 'Queued · {count} ahead',
     'messenger.messageStatus.resumable': 'Resumable',
     'messenger.messageStatus.retrying': 'Retrying'
   };
-  return (key: string) => table[key] || key;
+  return (key: string, params?: Record<string, unknown>) => {
+    const template = table[key] || key;
+    if (!params) return template;
+    return Object.entries(params).reduce(
+      (output, [name, value]) => output.replace(`{${name}}`, String(value)),
+      template
+    );
+  };
 };
 
 const findEntryValue = (
@@ -278,6 +286,29 @@ test('message stats interrupted response falls back to completed model-round usa
 
   assert.equal(findEntryValue(entries, 'Quota'), '4224');
   assert.equal(findEntryValue(entries, 'Context'), '4224');
+});
+
+test('message stats shows queue ahead count in queued status', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stream_incomplete: true,
+      workflowItems: [
+        {
+          eventType: 'queue_enter',
+          status: 'pending',
+          detail: JSON.stringify({
+            queue_ahead: 3,
+            queue_total: 4
+          })
+        }
+      ]
+    },
+    t
+  );
+
+  assert.equal(findEntryValue(entries, ''), 'Queued · 3 ahead');
 });
 
 test('message stats sums explicit and partial consumed tokens across assistant messages in the same user turn', () => {

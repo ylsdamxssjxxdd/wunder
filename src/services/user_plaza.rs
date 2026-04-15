@@ -10,6 +10,7 @@ use crate::services::user_access::{build_user_tool_context, compute_allowed_tool
 use crate::services::user_agent_presets::filter_allowed_tools;
 use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
+use crate::services::worker_card_protocol::resolve_worker_card_prompt_text;
 use crate::services::worker_card_settings::collect_context_skill_names;
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -1050,19 +1051,28 @@ async fn resolve_plaza_item_freshness(
     config: &Config,
     record: &UserPlazaItemRecord,
 ) -> Result<PlazaFreshnessStatus> {
-    let Some(published_signature) = record
+    let published_signature = record
         .source_signature
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    else {
-        return Ok(PlazaFreshnessStatus::Current);
-    };
+        .map(str::to_string);
     let current_signature = match compute_current_source_signature(state, config, record).await? {
         Some(value) => value,
         None => return Ok(PlazaFreshnessStatus::SourceMissing),
     };
-    if current_signature == published_signature {
+    if published_signature
+        .as_deref()
+        .is_some_and(|published| current_signature == published)
+    {
+        return Ok(PlazaFreshnessStatus::Current);
+    }
+    if let Some(snapshot_signature) = compute_published_artifact_signature(record)? {
+        if current_signature == snapshot_signature {
+            return Ok(PlazaFreshnessStatus::Current);
+        }
+    }
+    if published_signature.is_none() {
         Ok(PlazaFreshnessStatus::Current)
     } else {
         Ok(PlazaFreshnessStatus::Outdated)
@@ -1134,6 +1144,35 @@ async fn compute_current_source_signature(
     }
 }
 
+fn compute_published_artifact_signature(record: &UserPlazaItemRecord) -> Result<Option<String>> {
+    let artifact_path = Path::new(&record.artifact_path);
+    if !artifact_path.is_file() {
+        return Ok(None);
+    }
+    match record.kind.as_str() {
+        "worker_card" => {
+            let raw = fs::read_to_string(artifact_path).with_context(|| {
+                format!("read plaza worker card failed: {}", artifact_path.display())
+            })?;
+            let mut document: WorkerCardDocument =
+                serde_json::from_str(&raw).context("parse plaza worker card artifact failed")?;
+            document.metadata.exported_at.clear();
+            Ok(Some(stable_json_signature(&document)?))
+        }
+        "skill_pack" => {
+            let temp_dir = temporary_extract_dir("skill-plaza")?;
+            let result = (|| -> Result<String> {
+                extract_zip_into_dir(artifact_path, &temp_dir)?;
+                directory_tree_signature(&temp_dir)
+            })();
+            let _ = remove_path_if_exists(&temp_dir);
+            Ok(Some(result?))
+        }
+        "hive_pack" => compute_published_hive_pack_signature(artifact_path).map(Some),
+        _ => Ok(None),
+    }
+}
+
 async fn compute_worker_card_source_signature(
     state: &AppState,
     user: &UserAccountRecord,
@@ -1171,19 +1210,19 @@ async fn compute_hive_pack_source_signature(
     let skill_root = state.user_tool_store.get_skill_root(&user.user_id);
 
     let mut worker_entries = Vec::new();
-    let mut occupied_worker_id_keys = HashSet::new();
     let mut exported_skill_names: BTreeSet<String> = BTreeSet::new();
     let mut included_skill_signatures = Vec::new();
 
-    for (index, agent) in agents.iter().enumerate() {
-        let preferred_worker_id = export_worker_id_local(agent, index);
-        let worker_id = unique_label_with_reserved_local(
-            &preferred_worker_id,
-            &occupied_worker_id_keys,
-            &format!("worker-{}", index + 1),
-        );
-        occupied_worker_id_keys.insert(normalize_conflict_key_local(&worker_id));
+    let mut sorted_agents = agents.to_vec();
+    sorted_agents.sort_by(|left, right| {
+        left.prefer_mother
+            .cmp(&right.prefer_mother)
+            .reverse()
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.agent_id.cmp(&right.agent_id))
+    });
 
+    for agent in &sorted_agents {
         let mut worker_skill_sources =
             collect_agent_skills_for_export(agent, &bindings, &skill_root, &global_skill_specs);
         worker_skill_sources.sort_by(|left, right| left.name.cmp(&right.name));
@@ -1221,12 +1260,9 @@ async fn compute_hive_pack_source_signature(
             normalize_string_items_local(&agent.declared_skill_names)
         };
         worker_entries.push(json!({
-            "worker_id": worker_id,
-            "agent_id": agent.agent_id,
             "name": agent.name,
             "description": agent.description,
             "system_prompt": agent.system_prompt,
-            "model_name": agent.model_name,
             "declared_tool_names": declared_tool_names,
             "declared_skill_names": declared_skill_names,
             "preset_questions": normalize_string_items_local(&agent.preset_questions),
@@ -1238,6 +1274,34 @@ async fn compute_hive_pack_source_signature(
             "attached_skill_names": attached_skill_names,
         }));
     }
+    worker_entries.sort_by(|left, right| {
+        left.get("prefer_mother")
+            .and_then(Value::as_bool)
+            .cmp(&right.get("prefer_mother").and_then(Value::as_bool))
+            .reverse()
+            .then_with(|| {
+                left.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .cmp(
+                        right
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )
+            })
+            .then_with(|| {
+                left.get("system_prompt")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .cmp(
+                        right
+                            .get("system_prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )
+            })
+    });
 
     stable_json_signature(&json!({
         "kind": "hive_pack",
@@ -1247,6 +1311,261 @@ async fn compute_hive_pack_source_signature(
         "workers": worker_entries,
         "included_skills": included_skill_signatures,
     }))
+}
+
+fn compute_published_hive_pack_signature(artifact_path: &Path) -> Result<String> {
+    let temp_dir = temporary_extract_dir("hive-plaza")?;
+    let result = (|| -> Result<String> {
+        extract_zip_into_dir(artifact_path, &temp_dir)?;
+        build_hive_pack_snapshot_signature(&temp_dir)
+    })();
+    let _ = remove_path_if_exists(&temp_dir);
+    result
+}
+
+fn extract_zip_into_dir(zip_path: &Path, target_root: &Path) -> Result<()> {
+    let file = fs::File::open(zip_path)
+        .with_context(|| format!("open plaza artifact failed: {}", zip_path.display()))?;
+    let mut archive = ZipArchive::new(file).context("open plaza artifact zip failed")?;
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .context("read plaza artifact zip entry failed")?;
+        let name = entry.name().replace('\\', "/");
+        if name.trim().is_empty() {
+            continue;
+        }
+        if name.starts_with('/') || name.starts_with('\\') {
+            return Err(anyhow!("artifact contains absolute paths"));
+        }
+        let relative = Path::new(&name);
+        if relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(anyhow!("artifact contains illegal paths"));
+        }
+        let target = target_root.join(relative);
+        if entry.is_dir() {
+            fs::create_dir_all(&target)?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut buffer = Vec::new();
+        entry.read_to_end(&mut buffer)?;
+        fs::write(&target, buffer)?;
+    }
+    Ok(())
+}
+
+fn build_hive_pack_snapshot_signature(package_root: &Path) -> Result<String> {
+    let hive_manifest_path = package_root.join("hive.yaml");
+    let hive_manifest_text = fs::read_to_string(&hive_manifest_path)
+        .with_context(|| format!("read {} failed", hive_manifest_path.display()))?;
+    let hive_manifest: serde_yaml::Value =
+        serde_yaml::from_str(&hive_manifest_text).context("parse hive manifest failed")?;
+    let hive_name = hive_manifest
+        .get("pack")
+        .and_then(|value| value.get("name"))
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let hive_description = hive_manifest
+        .get("pack")
+        .and_then(|value| value.get("description"))
+        .and_then(serde_yaml::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let mut worker_dirs = fs::read_dir(package_root.join("workers"))
+        .with_context(|| format!("read workers dir failed: {}", package_root.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .collect::<Vec<_>>();
+    worker_dirs.sort_by_key(|entry| entry.file_name().to_string_lossy().to_string());
+
+    let mut worker_entries = Vec::new();
+    let mut included_skill_signatures = Vec::new();
+    for worker_dir in worker_dirs {
+        let worker_root = worker_dir.path();
+        let worker_card_path = worker_root.join("worker-card.json");
+        let worker_card_raw = fs::read_to_string(&worker_card_path)
+            .with_context(|| format!("read {} failed", worker_card_path.display()))?;
+        let worker_card: serde_json::Value =
+            serde_json::from_str(&worker_card_raw).context("parse worker-card.json failed")?;
+
+        let system_prompt = resolve_worker_card_prompt_text(
+            worker_card
+                .get("system_prompt")
+                .and_then(serde_json::Value::as_str),
+            worker_card
+                .get("extra_prompt")
+                .and_then(serde_json::Value::as_str),
+            &serde_json::from_value(
+                worker_card
+                    .get("prompt")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            )
+            .context("parse worker card prompt failed")?,
+        );
+        let declared_tool_names = worker_card
+            .get("abilities")
+            .and_then(|value| value.get("tool_names"))
+            .and_then(serde_json::Value::as_array)
+            .map(|values| json_string_array(values))
+            .unwrap_or_default();
+        let declared_skill_names: Vec<String> = worker_card
+            .get("abilities")
+            .and_then(|value| value.get("skills"))
+            .and_then(serde_json::Value::as_array)
+            .map(|values| json_string_array(values))
+            .unwrap_or_default();
+        let preset_questions: Vec<String> = worker_card
+            .get("interaction")
+            .and_then(|value| value.get("preset_questions"))
+            .and_then(serde_json::Value::as_array)
+            .map(|values| json_string_array(values))
+            .unwrap_or_default();
+        let attached_skill_names = declared_skill_names
+            .iter()
+            .filter(|name| {
+                let skill_dir = package_root.join("skills").join(name.as_str());
+                skill_dir.is_dir() && skill_dir.join("SKILL.md").is_file()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        worker_entries.push(json!({
+            "name": worker_card
+                .get("metadata")
+                .and_then(|value| value.get("name"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim(),
+            "description": worker_card
+                .get("metadata")
+                .and_then(|value| value.get("description"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim(),
+            "system_prompt": system_prompt,
+            "declared_tool_names": declared_tool_names,
+            "declared_skill_names": declared_skill_names,
+            "preset_questions": preset_questions,
+            "approval_mode": worker_card
+                .get("runtime")
+                .and_then(|value| value.get("approval_mode"))
+                .and_then(serde_json::Value::as_str)
+                .map(|value| normalize_approval_mode_local(Some(value)))
+                .unwrap_or_else(|| normalize_approval_mode_local(None)),
+            "icon": worker_card
+                .get("metadata")
+                .and_then(|value| value.get("icon"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty()),
+            "sandbox_container_id": worker_card
+                .get("runtime")
+                .and_then(|value| value.get("sandbox_container_id"))
+                .and_then(serde_json::Value::as_i64)
+                .map(|value| normalize_sandbox_container_id(value as i32))
+                .unwrap_or_else(|| normalize_sandbox_container_id(1)),
+            "silent": worker_card
+                .get("runtime")
+                .and_then(|value| value.get("silent"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            "prefer_mother": worker_card
+                .get("runtime")
+                .and_then(|value| value.get("prefer_mother"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            "attached_skill_names": attached_skill_names,
+        }));
+    }
+    worker_entries.sort_by(|left, right| {
+        left.get("prefer_mother")
+            .and_then(Value::as_bool)
+            .cmp(&right.get("prefer_mother").and_then(Value::as_bool))
+            .reverse()
+            .then_with(|| {
+                left.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .cmp(
+                        right
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )
+            })
+            .then_with(|| {
+                left.get("system_prompt")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .cmp(
+                        right
+                            .get("system_prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    )
+            })
+    });
+
+    let skills_root = package_root.join("skills");
+    if skills_root.is_dir() {
+        let mut skill_dirs = fs::read_dir(&skills_root)?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir() && entry.path().join("SKILL.md").is_file())
+            .collect::<Vec<_>>();
+        skill_dirs.sort_by_key(|entry| entry.file_name().to_string_lossy().to_string());
+        for skill_dir in skill_dirs {
+            included_skill_signatures.push(json!({
+                "skill_name": skill_dir.file_name().to_string_lossy().to_string(),
+                "signature": directory_tree_signature(&skill_dir.path())?,
+            }));
+        }
+    }
+
+    stable_json_signature(&json!({
+        "kind": "hive_pack",
+        "hive_name": hive_name,
+        "hive_description": hive_description,
+        "workers": worker_entries,
+        "included_skills": included_skill_signatures,
+    }))
+}
+
+fn json_string_array(values: &[serde_json::Value]) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for value in values {
+        let Some(text) = value.as_str() else {
+            continue;
+        };
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if seen.insert(owned.clone()) {
+            output.push(owned);
+        }
+    }
+    output
+}
+
+fn temporary_extract_dir(prefix: &str) -> Result<PathBuf> {
+    let dir = std::env::temp_dir()
+        .join("wunder")
+        .join("plaza")
+        .join(format!("{prefix}-{}", Uuid::new_v4().simple()));
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("create temporary extract dir failed: {}", dir.display()))?;
+    Ok(dir)
 }
 
 fn directory_tree_signature(root: &Path) -> Result<String> {
@@ -1290,92 +1609,6 @@ fn stable_json_signature<T: Serialize>(value: &T) -> Result<String> {
 
 fn normalize_conflict_key_local(value: &str) -> String {
     value.trim().to_ascii_lowercase()
-}
-
-fn export_worker_id_local(agent: &UserAgentRecord, index: usize) -> String {
-    let indexed_fallback = format!("worker-{}", index + 1);
-    let id_fallback = if agent.agent_id.trim().is_empty() {
-        indexed_fallback.clone()
-    } else {
-        normalize_name_like(&agent.agent_id, &indexed_fallback)
-    };
-    normalize_export_filename_stem_local(&agent.name, &id_fallback)
-}
-
-fn unique_label_with_reserved_local(
-    preferred: &str,
-    reserved: &HashSet<String>,
-    fallback: &str,
-) -> String {
-    let base = normalize_name_like(preferred, fallback);
-    if !reserved.contains(&normalize_conflict_key_local(&base)) {
-        return base;
-    }
-    let mut index = 2usize;
-    loop {
-        let candidate = format!("{base}-{index}");
-        if !reserved.contains(&normalize_conflict_key_local(&candidate)) {
-            return candidate;
-        }
-        index += 1;
-    }
-}
-
-fn normalize_name_like(raw: &str, fallback: &str) -> String {
-    let cleaned = raw.trim();
-    if cleaned.is_empty() {
-        return fallback.to_string();
-    }
-    let mut output = String::with_capacity(cleaned.len());
-    for ch in cleaned.chars() {
-        if ch.is_ascii_alphanumeric() {
-            output.push(ch.to_ascii_lowercase());
-        } else if ch == '_' || ch == '-' {
-            output.push(ch);
-        } else if ch.is_whitespace() {
-            output.push('-');
-        }
-    }
-    while output.contains("--") {
-        output = output.replace("--", "-");
-    }
-    let mut output = output.trim_matches('-').to_string();
-    if output.is_empty() {
-        output = fallback.to_string();
-    }
-    output
-}
-
-fn normalize_export_filename_stem_local(hive_name: &str, hive_id: &str) -> String {
-    let base = if hive_name.trim().is_empty() {
-        hive_id.trim()
-    } else {
-        hive_name.trim()
-    };
-    let mut output = String::with_capacity(base.len());
-    for ch in base.chars() {
-        if ch.is_control() {
-            continue;
-        }
-        if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-            output.push('-');
-            continue;
-        }
-        if ch.is_whitespace() {
-            output.push('-');
-        } else {
-            output.push(ch);
-        }
-    }
-    while output.contains("--") {
-        output = output.replace("--", "-");
-    }
-    let cleaned = output.trim_matches(['-', '.', ' ']).to_string();
-    if cleaned.is_empty() {
-        normalize_name_like(hive_id, "hivepack")
-    } else {
-        cleaned
-    }
 }
 
 fn normalize_string_items_local(values: &[String]) -> Vec<String> {
@@ -1547,4 +1780,169 @@ fn collect_agent_skills_for_export(
 
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_hive_pack_snapshot_signature, compute_published_hive_pack_signature,
+        stable_json_signature,
+    };
+    use anyhow::Result;
+    use serde_json::json;
+    use std::fs;
+    use tempfile::tempdir;
+    use zip::write::FileOptions;
+    use zip::{CompressionMethod, ZipWriter};
+
+    #[test]
+    fn hive_pack_snapshot_signature_ignores_worker_directory_order() -> Result<()> {
+        let root_a = tempdir()?;
+        let root_b = tempdir()?;
+        write_hive_snapshot_fixture(
+            root_a.path(),
+            vec![
+                WorkerFixture::new("zzz-worker", "Alpha", true),
+                WorkerFixture::new("aaa-worker", "Beta", false),
+            ],
+        )?;
+        write_hive_snapshot_fixture(
+            root_b.path(),
+            vec![
+                WorkerFixture::new("aaa-worker", "Beta", false),
+                WorkerFixture::new("zzz-worker", "Alpha", true),
+            ],
+        )?;
+        assert_eq!(
+            build_hive_pack_snapshot_signature(root_a.path())?,
+            build_hive_pack_snapshot_signature(root_b.path())?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn published_hive_pack_signature_matches_unpacked_snapshot() -> Result<()> {
+        let package_root = tempdir()?;
+        write_hive_snapshot_fixture(
+            package_root.path(),
+            vec![
+                WorkerFixture::new("mother-worker", "Mother", true),
+                WorkerFixture::new("tool-worker", "Tooler", false),
+            ],
+        )?;
+        let zip_path = package_root.path().join("fixture.hivepack");
+        zip_fixture_dir(package_root.path(), &zip_path)?;
+        assert_eq!(
+            build_hive_pack_snapshot_signature(package_root.path())?,
+            compute_published_hive_pack_signature(&zip_path)?
+        );
+        Ok(())
+    }
+
+    struct WorkerFixture {
+        worker_id: &'static str,
+        name: &'static str,
+        prefer_mother: bool,
+    }
+
+    impl WorkerFixture {
+        const fn new(worker_id: &'static str, name: &'static str, prefer_mother: bool) -> Self {
+            Self {
+                worker_id,
+                name,
+                prefer_mother,
+            }
+        }
+    }
+
+    fn write_hive_snapshot_fixture(
+        root: &std::path::Path,
+        workers: Vec<WorkerFixture>,
+    ) -> Result<()> {
+        fs::create_dir_all(root.join("workers"))?;
+        fs::create_dir_all(root.join("skills").join("shared-skill"))?;
+        fs::write(
+            root.join("skills").join("shared-skill").join("SKILL.md"),
+            "# shared\n",
+        )?;
+        fs::write(
+            root.join("skills").join("shared-skill").join("skill.yaml"),
+            "kind: skill_pack\n",
+        )?;
+        fs::write(
+            root.join("hive.yaml"),
+            "pack:\n  name: Demo Hive\n  description: Demo Desc\n",
+        )?;
+        for worker in workers {
+            let worker_root = root.join("workers").join(worker.worker_id);
+            fs::create_dir_all(&worker_root)?;
+            let worker_card = json!({
+                "metadata": {
+                    "name": worker.name,
+                    "description": format!("{} desc", worker.name),
+                    "icon": "fa-bug",
+                    "exported_at": "2026-01-01T00:00:00Z"
+                },
+                "system_prompt": format!("Prompt {}", worker.name),
+                "abilities": {
+                    "tool_names": ["tool_a"],
+                    "skills": ["shared-skill"]
+                },
+                "interaction": {
+                    "preset_questions": ["hello"]
+                },
+                "runtime": {
+                    "approval_mode": "full_auto",
+                    "sandbox_container_id": 1,
+                    "silent": false,
+                    "prefer_mother": worker.prefer_mother
+                }
+            });
+            fs::write(
+                worker_root.join("worker-card.json"),
+                serde_json::to_vec_pretty(&worker_card)?,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn zip_fixture_dir(source_root: &std::path::Path, target_zip: &std::path::Path) -> Result<()> {
+        let file = fs::File::create(target_zip)?;
+        let mut writer = ZipWriter::new(file);
+        let options = FileOptions::default()
+            .compression_method(CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        let mut entries = walkdir::WalkDir::new(source_root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.path().to_string_lossy().to_string());
+        for entry in entries {
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(source_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative.is_empty() || relative.ends_with(".hivepack") {
+                continue;
+            }
+            if entry.file_type().is_dir() {
+                writer.add_directory(format!("{relative}/"), options)?;
+                continue;
+            }
+            writer.start_file(relative, options)?;
+            writer.write_all(&fs::read(path)?)?;
+        }
+        writer.finish()?;
+        Ok(())
+    }
+
+    #[test]
+    fn stable_json_signature_changes_when_payload_changes() -> Result<()> {
+        let left = stable_json_signature(&json!({ "a": 1 }))?;
+        let right = stable_json_signature(&json!({ "a": 2 }))?;
+        assert_ne!(left, right);
+        Ok(())
+    }
 }

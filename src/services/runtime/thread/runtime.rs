@@ -36,6 +36,8 @@ pub struct QueueInfo {
     pub task_id: String,
     pub thread_id: String,
     pub session_id: String,
+    pub queue_ahead: usize,
+    pub queue_total: usize,
 }
 
 #[derive(Debug)]
@@ -183,7 +185,9 @@ impl ThreadRuntime {
 
         if config.agent_queue.enabled {
             if let Some(session_id) = session_id.as_deref() {
-                if self.should_queue(&user_id, Some(session_id)).await {
+                if self.should_queue(&user_id, Some(session_id)).await
+                    || self.is_global_capacity_reached(&user_id, session_id).await
+                {
                     let info = self
                         .enqueue_task(&request, &agent_id, Some(session_id))
                         .await?;
@@ -545,6 +549,16 @@ impl ThreadRuntime {
             last_error: None,
         };
         self.user_store.insert_agent_task(&record)?;
+        let queue_stats = self.compute_queue_stats(&record).await;
+        let mut request_payload = record.request_payload.clone();
+        if let Value::Object(ref mut map) = request_payload {
+            map.insert("queue_ahead".to_string(), json!(queue_stats.queue_ahead));
+            map.insert("queue_total".to_string(), json!(queue_stats.queue_total));
+        }
+        self.user_store.insert_agent_task(&AgentTaskRecord {
+            request_payload,
+            ..record.clone()
+        })?;
         let _ = self.update_thread_status(
             &record.user_id,
             &record.agent_id,
@@ -561,6 +575,8 @@ impl ThreadRuntime {
                 "session_id": record.session_id,
                 "agent_id": record.agent_id,
                 "user_id": record.user_id,
+                "queue_ahead": queue_stats.queue_ahead,
+                "queue_total": queue_stats.queue_total,
             }),
         )
         .await;
@@ -568,7 +584,81 @@ impl ThreadRuntime {
             task_id: record.task_id,
             thread_id: record.thread_id,
             session_id: record.session_id,
+            queue_ahead: queue_stats.queue_ahead,
+            queue_total: queue_stats.queue_total,
         })
+    }
+
+    async fn is_global_capacity_reached(&self, user_id: &str, session_id: &str) -> bool {
+        let cleaned_user = user_id.trim();
+        let cleaned_session = session_id.trim();
+        if cleaned_user.is_empty() || cleaned_session.is_empty() {
+            return false;
+        }
+        let config = self.config_store.get().await;
+        let max_active = config.server.max_active_sessions.max(1);
+        let active_locks = self
+            .user_store
+            .count_session_locks()
+            .map(|count| count.max(0) as usize)
+            .unwrap_or(0);
+        if active_locks < max_active {
+            return false;
+        }
+        self.user_store
+            .list_session_locks_by_user(cleaned_user)
+            .map(|locks| {
+                locks
+                    .into_iter()
+                    .any(|lock| lock.session_id.trim() == cleaned_session)
+            })
+            .unwrap_or(false)
+            || active_locks >= max_active
+    }
+
+    async fn compute_queue_stats(&self, task: &AgentTaskRecord) -> QueueStats {
+        let total = self
+            .user_store
+            .count_pending_agent_tasks()
+            .map(|count| count.max(0) as usize)
+            .unwrap_or(0);
+        let ahead = self
+            .user_store
+            .count_pending_agent_tasks_ahead(task.retry_at, task.created_at, &task.task_id)
+            .map(|count| count.max(0) as usize)
+            .unwrap_or(0);
+        QueueStats {
+            queue_ahead: ahead.min(total.saturating_sub(1)),
+            queue_total: total,
+        }
+    }
+
+    async fn emit_queue_update(&self, task: &AgentTaskRecord) {
+        let stats = self.compute_queue_stats(task).await;
+        let mut request_payload = task.request_payload.clone();
+        if let Value::Object(ref mut map) = request_payload {
+            map.insert("queue_ahead".to_string(), json!(stats.queue_ahead));
+            map.insert("queue_total".to_string(), json!(stats.queue_total));
+        }
+        let _ = self.user_store.insert_agent_task(&AgentTaskRecord {
+            request_payload,
+            ..task.clone()
+        });
+        self.emit_queue_event(
+            &task.session_id,
+            &task.user_id,
+            "queue_update",
+            json!({
+                "queue_id": task.task_id,
+                "thread_id": task.thread_id,
+                "session_id": task.session_id,
+                "agent_id": task.agent_id,
+                "user_id": task.user_id,
+                "queue_ahead": stats.queue_ahead,
+                "queue_total": stats.queue_total,
+            }),
+        )
+        .await;
     }
 
     async fn is_session_available_for_submit(&self, user_id: &str, session_id: &str) -> bool {
@@ -713,6 +803,9 @@ impl ThreadRuntime {
         if pending.is_empty() {
             return Ok(());
         }
+        for task in &pending {
+            self.emit_queue_update(task).await;
+        }
         let config = self.config_store.get().await;
         let ttl_s = config.agent_queue.task_ttl_s as f64;
         for task in pending {
@@ -782,6 +875,8 @@ impl ThreadRuntime {
                 "session_id": task.session_id,
                 "agent_id": task.agent_id,
                 "user_id": task.user_id,
+                "queue_ahead": 0,
+                "queue_total": 0,
             }),
         )
         .await;
@@ -845,6 +940,8 @@ impl ThreadRuntime {
                         "session_id": task.session_id,
                         "agent_id": task.agent_id,
                         "user_id": task.user_id,
+                        "queue_ahead": 0,
+                        "queue_total": 0,
                     }),
                 )
                 .await;
@@ -927,6 +1024,8 @@ impl ThreadRuntime {
                 "user_id": task.user_id,
                 "status": status,
                 "error": message,
+                "queue_ahead": 0,
+                "queue_total": 0,
             }),
         )
         .await;
@@ -945,4 +1044,10 @@ fn normalize_agent_id(value: Option<&str>) -> String {
 
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct QueueStats {
+    queue_ahead: usize,
+    queue_total: usize,
 }

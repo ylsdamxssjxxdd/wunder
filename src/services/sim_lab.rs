@@ -1335,6 +1335,12 @@ fn collect_observation_payloads(messages: &[Value]) -> Vec<Value> {
         .collect::<Vec<_>>()
 }
 
+#[derive(Debug, Clone)]
+struct SwarmWaitParsed {
+    summary: SwarmWaitSummary,
+    run_ids: Vec<String>,
+}
+
 fn parse_observation_payload(message: &Value) -> Option<Value> {
     let role = message
         .get("role")
@@ -1444,181 +1450,459 @@ fn is_ptc_tool(name: &str) -> bool {
 }
 
 fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWaitSummary> {
-    for payload in observation_payloads.iter().rev() {
-        let Some(data) = payload.get("data") else {
-            continue;
-        };
-        let Some(wait) = data.get("wait") else {
-            continue;
-        };
-        let wait_data = swarm_wait_payload_data(wait);
-        let counts = wait_data.get("counts").and_then(Value::as_object);
-        let total = counts
-            .and_then(|map| map.get("total"))
-            .and_then(Value::as_u64)
-            .or_else(|| wait_data.get("total").and_then(Value::as_u64))
-            .or_else(|| data.get("task_total").and_then(Value::as_u64))
-            .unwrap_or(0) as usize;
-        let success_total = counts
-            .and_then(|map| map.get("success"))
-            .or_else(|| wait_data.get("success_total"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let failed_total = counts
-            .and_then(|map| map.get("failed"))
-            .or_else(|| wait_data.get("failed_total"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let done_total = counts
-            .and_then(|map| map.get("done"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let all_finished = wait_data
-            .get("all_finished")
-            .or_else(|| wait.get("all_finished"))
-            .and_then(Value::as_bool)
-            .unwrap_or(total > 0 && done_total >= total);
-        let elapsed_s = wait_data
-            .get("elapsed_s")
-            .or_else(|| wait.get("elapsed_s"))
-            .and_then(Value::as_f64)
-            .unwrap_or_default();
-        let state = wait
-            .get("state")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("unknown");
-        let has_runs = wait_data
-            .get("run_ids")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                items
-                    .iter()
-                    .any(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
-            });
-        return Some(SwarmWaitSummary {
+    observation_payloads
+        .iter()
+        .rev()
+        .find_map(extract_swarm_wait_from_observation_payload)
+        .map(|parsed| parsed.summary)
+}
+
+fn extract_swarm_wait_summaries(observation_payloads: &[Value]) -> Vec<SwarmWaitSummary> {
+    observation_payloads
+        .iter()
+        .filter_map(extract_swarm_wait_from_observation_payload)
+        .map(|parsed| parsed.summary)
+        .collect::<Vec<_>>()
+}
+
+fn extract_latest_swarm_wait_run_ids(observation_payloads: &[Value]) -> Vec<String> {
+    observation_payloads
+        .iter()
+        .rev()
+        .find_map(|payload| {
+            let parsed = extract_swarm_wait_from_observation_payload(payload)?;
+            (!parsed.run_ids.is_empty()).then_some(parsed.run_ids)
+        })
+        .unwrap_or_default()
+}
+
+fn extract_swarm_wait_from_observation_payload(payload: &Value) -> Option<SwarmWaitParsed> {
+    parse_swarm_wait_candidate(payload.get("data")?, None)
+}
+
+fn parse_swarm_wait_candidate(value: &Value, state_hint: Option<&str>) -> Option<SwarmWaitParsed> {
+    let state_hint = value
+        .get("state")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(state_hint);
+
+    if let Some(wait) = value.get("wait") {
+        if let Some(parsed) = parse_swarm_wait_candidate(wait, state_hint) {
+            return Some(parsed);
+        }
+    }
+
+    if let Some(data) = value.get("data") {
+        if let Some(parsed) = parse_swarm_wait_candidate(data, state_hint) {
+            return Some(parsed);
+        }
+    }
+
+    let map = value.as_object()?;
+    if let Some(preview) = map.get("preview").and_then(Value::as_str) {
+        if let Some(parsed) = parse_swarm_wait_preview(preview, state_hint) {
+            return Some(parsed);
+        }
+    }
+
+    parse_swarm_wait_structured(map, state_hint)
+}
+
+fn parse_swarm_wait_structured(
+    map: &Map<String, Value>,
+    state_hint: Option<&str>,
+) -> Option<SwarmWaitParsed> {
+    let counts = map.get("counts").and_then(Value::as_object);
+    let has_wait_markers = map.contains_key("all_finished")
+        || map.contains_key("elapsed_s")
+        || map.contains_key("wait_seconds")
+        || map.contains_key("wait_forever")
+        || counts.is_some_and(|value| {
+            value.contains_key("done")
+                || value.contains_key("queued")
+                || value.contains_key("running")
+                || value.contains_key("success")
+        })
+        || state_hint.is_some();
+    if !has_wait_markers {
+        return None;
+    }
+
+    let total = counts
+        .and_then(|value| value.get("total"))
+        .and_then(Value::as_u64)
+        .or_else(|| map.get("total").and_then(Value::as_u64))
+        .unwrap_or(0) as usize;
+    let success_total = counts
+        .and_then(|value| value.get("success"))
+        .or_else(|| map.get("success_total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let failed_total = counts
+        .and_then(|value| value.get("failed"))
+        .or_else(|| map.get("failed_total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let done_total = counts
+        .and_then(|value| value.get("done"))
+        .or_else(|| map.get("done_total"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    let all_finished = map
+        .get("all_finished")
+        .and_then(Value::as_bool)
+        .unwrap_or(total > 0 && done_total >= total);
+    let elapsed_s = map
+        .get("elapsed_s")
+        .and_then(Value::as_f64)
+        .unwrap_or_default();
+    let run_ids = extract_swarm_run_ids_from_map(map);
+    let state = normalize_swarm_wait_state(state_hint, all_finished, failed_total);
+
+    Some(SwarmWaitParsed {
+        summary: SwarmWaitSummary {
             total,
             success_total,
             failed_total,
             all_finished,
             elapsed_s,
-            state: match state {
-                "completed" => "completed",
-                "partial" => "partial",
-                "timeout" => "timeout",
-                "running" => "running",
-                "error" => "error",
-                _ => "unknown",
-            },
-            has_runs,
-        });
+            state,
+            has_runs: !run_ids.is_empty(),
+        },
+        run_ids,
+    })
+}
+
+fn parse_swarm_wait_preview(preview: &str, state_hint: Option<&str>) -> Option<SwarmWaitParsed> {
+    if let Some(parsed) =
+        parse_json_payload(preview).and_then(|value| parse_swarm_wait_candidate(&value, state_hint))
+    {
+        return Some(parsed);
+    }
+
+    // Large agent_swarm observations may be compacted into a wrapper preview that
+    // is no longer valid JSON. Extract the wait-facing fields from the surviving
+    // tail so the mock mother still tracks round completion accurately.
+    let scope = preview
+        .rfind("\"wait\"")
+        .and_then(|index| preview.get(index..))
+        .unwrap_or(preview);
+    let has_wait_markers = scope.contains("\"all_finished\"")
+        || scope.contains("\"wait_seconds\"")
+        || scope.contains("\"wait_forever\"")
+        || scope.contains("\"done\"")
+        || scope.contains("\"run_ids_jsonl\"")
+        || scope.contains("\"items_jsonl\"")
+        || state_hint.is_some();
+    if !has_wait_markers {
+        return None;
+    }
+
+    let parsed_state = extract_last_json_string_field(scope, "state");
+    let total = extract_last_json_u64_field(scope, "total").unwrap_or(0) as usize;
+    let success_total = extract_last_json_u64_field(scope, "success").unwrap_or(0) as usize;
+    let failed_total = extract_last_json_u64_field(scope, "failed").unwrap_or(0) as usize;
+    let done_total = extract_last_json_u64_field(scope, "done").unwrap_or(0) as usize;
+    let all_finished = extract_last_json_bool_field(scope, "all_finished")
+        .or_else(|| {
+            parsed_state
+                .as_deref()
+                .filter(|state| matches!(*state, "completed" | "partial"))
+                .map(|_| true)
+        })
+        .unwrap_or(total > 0 && done_total >= total);
+    let elapsed_s = extract_last_json_f64_field(scope, "elapsed_s").unwrap_or_default();
+    let run_ids = extract_swarm_run_ids_from_preview(scope);
+    let state = normalize_swarm_wait_state(
+        parsed_state.as_deref().or(state_hint),
+        all_finished,
+        failed_total,
+    );
+
+    Some(SwarmWaitParsed {
+        summary: SwarmWaitSummary {
+            total,
+            success_total,
+            failed_total,
+            all_finished,
+            elapsed_s,
+            state,
+            has_runs: !run_ids.is_empty(),
+        },
+        run_ids,
+    })
+}
+
+fn normalize_swarm_wait_state(
+    raw_state: Option<&str>,
+    all_finished: bool,
+    failed_total: usize,
+) -> &'static str {
+    match raw_state.unwrap_or_default() {
+        "completed" => "completed",
+        "partial" => "partial",
+        "timeout" => "timeout",
+        "running" => "running",
+        "error" => "error",
+        _ if all_finished && failed_total > 0 => "partial",
+        _ if all_finished => "completed",
+        _ => "running",
+    }
+}
+
+fn extract_swarm_run_ids_from_map(map: &Map<String, Value>) -> Vec<String> {
+    let mut run_ids = map
+        .get("run_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !run_ids.is_empty() {
+        return dedupe_non_empty_strings_local(run_ids);
+    }
+
+    if let Some(text) = map.get("run_ids_jsonl").and_then(Value::as_str) {
+        run_ids.extend(extract_run_ids_from_jsonl(text));
+    }
+    if run_ids.is_empty() {
+        if let Some(items) = map.get("items").and_then(Value::as_array) {
+            for item in items {
+                if let Some(run_id) = first_non_empty_text(item, &["run_id", "runId"]) {
+                    run_ids.push(run_id.to_string());
+                }
+            }
+        }
+    }
+    if run_ids.is_empty() {
+        if let Some(text) = map.get("items_jsonl").and_then(Value::as_str) {
+            run_ids.extend(extract_run_ids_from_items_jsonl(text));
+        }
+    }
+    dedupe_non_empty_strings_local(run_ids)
+}
+
+fn extract_swarm_run_ids_from_preview(scope: &str) -> Vec<String> {
+    let mut run_ids = extract_last_json_string_array_field(scope, "run_ids").unwrap_or_default();
+    if run_ids.is_empty() {
+        run_ids = extract_last_json_string_field(scope, "run_ids_jsonl")
+            .map(|text| extract_run_ids_from_jsonl(&text))
+            .unwrap_or_default();
+    }
+    if run_ids.is_empty() {
+        if let Some(items_jsonl) = extract_last_json_string_field(scope, "items_jsonl") {
+            run_ids.extend(extract_run_ids_from_items_jsonl(&items_jsonl));
+        }
+    }
+    dedupe_non_empty_strings_local(run_ids)
+}
+
+fn extract_run_ids_from_jsonl(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter(|value| !value.contains("truncated"))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+}
+
+fn extract_run_ids_from_items_jsonl(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|item| {
+            first_non_empty_text(&item, &["run_id", "runId"]).map(ToString::to_string)
+        })
+        .collect::<Vec<_>>()
+}
+
+fn dedupe_non_empty_strings_local(items: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for item in items {
+        let cleaned = item.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !seen.insert(cleaned.to_string()) {
+            continue;
+        }
+        output.push(cleaned.to_string());
+    }
+    output
+}
+
+fn extract_last_json_bool_field(text: &str, field: &str) -> Option<bool> {
+    match extract_last_json_scalar_field(text, field)?.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn extract_last_json_u64_field(text: &str, field: &str) -> Option<u64> {
+    extract_last_json_scalar_field(text, field)?
+        .parse::<u64>()
+        .ok()
+}
+
+fn extract_last_json_f64_field(text: &str, field: &str) -> Option<f64> {
+    extract_last_json_scalar_field(text, field)?
+        .parse::<f64>()
+        .ok()
+}
+
+fn extract_last_json_scalar_field(text: &str, field: &str) -> Option<String> {
+    let marker = format!("\"{field}\":");
+    let start = text.rfind(&marker)?.saturating_add(marker.len());
+    let rest = text.get(start..)?.trim_start();
+    let token_len = rest.find([',', '}', ']']).unwrap_or(rest.len());
+    let token = rest.get(..token_len)?.trim();
+    (!token.is_empty()).then_some(token.to_string())
+}
+
+fn extract_last_json_string_field(text: &str, field: &str) -> Option<String> {
+    let marker = format!("\"{field}\":");
+    let start = text.rfind(&marker)?.saturating_add(marker.len());
+    let rest = text.get(start..)?.trim_start();
+    parse_json_string_prefix(rest)
+}
+
+fn extract_last_json_string_array_field(text: &str, field: &str) -> Option<Vec<String>> {
+    let marker = format!("\"{field}\":");
+    let start = text.rfind(&marker)?.saturating_add(marker.len());
+    let rest = text.get(start..)?.trim_start();
+    parse_json_string_array_prefix(rest)
+}
+
+fn parse_json_string_prefix(text: &str) -> Option<String> {
+    let mut chars = text.chars();
+    if chars.next()? != '"' {
+        return None;
+    }
+
+    let mut output = String::new();
+    let mut escape = false;
+    let mut unicode_digits = String::new();
+    let mut unicode_left = 0usize;
+
+    for ch in chars {
+        if unicode_left > 0 {
+            unicode_digits.push(ch);
+            unicode_left -= 1;
+            if unicode_left == 0 {
+                let code = u16::from_str_radix(&unicode_digits, 16).ok()?;
+                output.push(char::from_u32(code as u32)?);
+                unicode_digits.clear();
+                escape = false;
+            }
+            continue;
+        }
+
+        if escape {
+            match ch {
+                '"' => output.push('"'),
+                '\\' => output.push('\\'),
+                '/' => output.push('/'),
+                'b' => output.push('\u{0008}'),
+                'f' => output.push('\u{000c}'),
+                'n' => output.push('\n'),
+                'r' => output.push('\r'),
+                't' => output.push('\t'),
+                'u' => {
+                    unicode_left = 4;
+                    unicode_digits.clear();
+                    continue;
+                }
+                _ => return None,
+            }
+            escape = false;
+            continue;
+        }
+
+        match ch {
+            '\\' => escape = true,
+            '"' => return Some(output),
+            _ => output.push(ch),
+        }
     }
     None
 }
 
-fn extract_swarm_wait_summaries(observation_payloads: &[Value]) -> Vec<SwarmWaitSummary> {
-    let mut summaries = Vec::new();
-    for payload in observation_payloads {
-        let Some(data) = payload.get("data") else {
-            continue;
-        };
-        let Some(wait) = data.get("wait") else {
-            continue;
-        };
-        let wait_data = swarm_wait_payload_data(wait);
-        let counts = wait_data.get("counts").and_then(Value::as_object);
-        let total = counts
-            .and_then(|map| map.get("total"))
-            .and_then(Value::as_u64)
-            .or_else(|| wait_data.get("total").and_then(Value::as_u64))
-            .or_else(|| data.get("task_total").and_then(Value::as_u64))
-            .unwrap_or(0) as usize;
-        let success_total = counts
-            .and_then(|map| map.get("success"))
-            .or_else(|| wait_data.get("success_total"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let failed_total = counts
-            .and_then(|map| map.get("failed"))
-            .or_else(|| wait_data.get("failed_total"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let done_total = counts
-            .and_then(|map| map.get("done"))
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
-        let all_finished = wait_data
-            .get("all_finished")
-            .or_else(|| wait.get("all_finished"))
-            .and_then(Value::as_bool)
-            .unwrap_or(total > 0 && done_total >= total);
-        let elapsed_s = wait_data
-            .get("elapsed_s")
-            .or_else(|| wait.get("elapsed_s"))
-            .and_then(Value::as_f64)
-            .unwrap_or_default();
-        let state = wait
-            .get("state")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("unknown");
-        let has_runs = wait_data
-            .get("run_ids")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                items
-                    .iter()
-                    .any(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
-            });
-        summaries.push(SwarmWaitSummary {
-            total,
-            success_total,
-            failed_total,
-            all_finished,
-            elapsed_s,
-            state: match state {
-                "completed" => "completed",
-                "partial" => "partial",
-                "timeout" => "timeout",
-                "running" => "running",
-                "error" => "error",
-                _ => "unknown",
-            },
-            has_runs,
-        });
+fn parse_json_string_array_prefix(text: &str) -> Option<Vec<String>> {
+    let mut rest = text.trim_start();
+    if !rest.starts_with('[') {
+        return None;
     }
-    summaries
-}
+    rest = rest.get(1..)?.trim_start();
+    let mut items = Vec::new();
 
-fn swarm_wait_payload_data(wait: &Value) -> &Value {
-    wait.get("data").unwrap_or(wait)
-}
-
-fn extract_latest_swarm_wait_run_ids(observation_payloads: &[Value]) -> Vec<String> {
-    for payload in observation_payloads.iter().rev() {
-        let Some(wait) = payload.get("data").and_then(|data| data.get("wait")) else {
+    loop {
+        if let Some(stripped) = rest.strip_prefix(']') {
+            let _ = stripped;
+            return Some(items);
+        }
+        let value = parse_json_string_prefix(rest)?;
+        items.push(value);
+        let consumed = consumed_json_string_prefix_len(rest)?;
+        rest = rest.get(consumed..)?.trim_start();
+        if let Some(next) = rest.strip_prefix(',') {
+            rest = next.trim_start();
             continue;
-        };
-        let run_ids = swarm_wait_payload_data(wait)
-            .get("run_ids")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if !run_ids.is_empty() {
-            return run_ids;
+        }
+        if let Some(stripped) = rest.strip_prefix(']') {
+            let _ = stripped;
+            return Some(items);
+        }
+        return None;
+    }
+}
+
+fn consumed_json_string_prefix_len(text: &str) -> Option<usize> {
+    let mut chars = text.char_indices();
+    if chars.next()?.1 != '"' {
+        return None;
+    }
+    let mut escape = false;
+    let mut unicode_left = 0usize;
+
+    for (index, ch) in chars {
+        if unicode_left > 0 {
+            if !ch.is_ascii_hexdigit() {
+                return None;
+            }
+            unicode_left -= 1;
+            if unicode_left == 0 {
+                escape = false;
+            }
+            continue;
+        }
+        if escape {
+            match ch {
+                '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => {
+                    escape = false;
+                }
+                'u' => {
+                    unicode_left = 4;
+                }
+                _ => return None,
+            }
+            continue;
+        }
+        match ch {
+            '\\' => escape = true,
+            '"' => return Some(index + ch.len_utf8()),
+            _ => {}
         }
     }
-    Vec::new()
+    None
 }
 
 fn seed_swarm_workspace(
@@ -2522,7 +2806,8 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         extract_latest_swarm_wait_run_ids, extract_swarm_wait_summary, mother_mock_response,
-        worker_session_rows_from_tool_items, MockScenario, WorkerSessionRow,
+        parse_json_string_prefix, worker_session_rows_from_tool_items, MockScenario,
+        WorkerSessionRow,
     };
     use serde_json::{json, Value};
 
@@ -2685,6 +2970,223 @@ mod tests {
             run_ids,
             vec!["run_worker_a".to_string(), "run_worker_b".to_string()]
         );
+    }
+
+    #[test]
+    fn extract_swarm_wait_summary_supports_compacted_run_ids_jsonl() {
+        let summary = extract_swarm_wait_summary(&[json!({
+            "data": {
+                "wait": {
+                    "state": "completed",
+                    "data": {
+                        "counts": {
+                            "total": 31,
+                            "success": 31,
+                            "failed": 0,
+                            "done": 31
+                        },
+                        "elapsed_s": 3.75,
+                        "run_ids_jsonl": "run_worker_001\nrun_worker_002\nrun_worker_003"
+                    }
+                }
+            }
+        })])
+        .expect("compacted run_ids_jsonl summary");
+
+        assert_eq!(summary.total, 31);
+        assert_eq!(summary.success_total, 31);
+        assert!(summary.all_finished);
+        assert_eq!(summary.state, "completed");
+        assert!(summary.has_runs);
+    }
+
+    #[test]
+    fn extract_latest_swarm_wait_run_ids_supports_compacted_items_jsonl() {
+        let run_ids = extract_latest_swarm_wait_run_ids(&[json!({
+            "data": {
+                "wait": {
+                    "state": "running",
+                    "data": {
+                        "counts": {
+                            "total": 2,
+                            "success": 1,
+                            "failed": 0,
+                            "done": 1
+                        },
+                        "items_jsonl": "{\"run_id\":\"run_worker_a\",\"status\":\"success\"}\n{\"run_id\":\"run_worker_b\",\"status\":\"running\"}"
+                    }
+                }
+            }
+        })]);
+
+        assert_eq!(
+            run_ids,
+            vec!["run_worker_a".to_string(), "run_worker_b".to_string()]
+        );
+    }
+
+    #[test]
+    fn extract_swarm_wait_summary_supports_compacted_preview_wrapper() {
+        let preview = serde_json::to_string(&json!({
+            "run_ids_jsonl": "run_worker_a\nrun_worker_b",
+            "counts": {
+                "total": 2,
+                "done": 2,
+                "success": 2,
+                "failed": 0,
+                "queued": 0,
+                "running": 0
+            },
+            "elapsed_s": 2.5,
+            "all_finished": true,
+            "state": "completed"
+        }))
+        .expect("serialize preview");
+        let summary = extract_swarm_wait_summary(&[json!({
+            "data": {
+                "wait": {
+                    "state": "completed",
+                    "data": {
+                        "truncated": true,
+                        "original_chars": 22466,
+                        "preview": preview
+                    }
+                }
+            }
+        })])
+        .expect("compacted preview summary");
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.success_total, 2);
+        assert!(summary.all_finished);
+        assert_eq!(summary.state, "completed");
+        assert!(summary.has_runs);
+    }
+
+    #[test]
+    fn extract_swarm_wait_summary_supports_compacted_preview_with_run_id_array_only() {
+        let preview = serde_json::to_string(&json!({
+            "run_ids": ["run_worker_a", "run_worker_b"],
+            "counts": {
+                "total": 2,
+                "success": 2,
+                "failed": 0
+            },
+            "state": "completed"
+        }))
+        .expect("serialize preview");
+        let summary = extract_swarm_wait_summary(&[json!({
+            "data": {
+                "original_chars": 29580,
+                "preview": preview
+            },
+            "state": "completed"
+        })])
+        .expect("compacted preview summary");
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.success_total, 2);
+        assert!(summary.all_finished);
+        assert_eq!(summary.state, "completed");
+        assert!(summary.has_runs);
+    }
+
+    #[test]
+    fn mother_mock_response_advances_round_when_latest_wait_is_compacted_preview() {
+        let scenario = MockScenario {
+            worker_agent_ids: vec!["worker_a".to_string(), "worker_b".to_string()],
+            mother_wait_s: 12.5,
+            worker_task_rounds: 3,
+            run_seed: 7,
+        };
+        let round_one_preview = serde_json::to_string(&json!({
+            "run_ids_jsonl": "run_worker_a_r1\nrun_worker_b_r1",
+            "counts": {
+                "total": 2,
+                "done": 2,
+                "success": 2,
+                "failed": 0,
+                "queued": 0,
+                "running": 0
+            },
+            "elapsed_s": 2.5,
+            "all_finished": true,
+            "state": "completed"
+        }))
+        .expect("serialize preview");
+        let response = mother_mock_response(
+            &scenario,
+            &[json!({
+                "data": {
+                    "wait": {
+                        "state": "completed",
+                        "data": {
+                            "truncated": true,
+                            "original_chars": 22466,
+                            "preview": round_one_preview
+                        }
+                    }
+                }
+            })],
+        );
+
+        assert_eq!(
+            response
+                .pointer("/choices/0/message/content")
+                .and_then(Value::as_str),
+            Some("Mother preset round-2/3: dispatching worker swarm and waiting for completion.")
+        );
+    }
+
+    #[test]
+    fn mother_mock_response_finishes_when_compacted_preview_marks_completed_state_only() {
+        let scenario = MockScenario {
+            worker_agent_ids: vec!["worker_a".to_string(), "worker_b".to_string()],
+            mother_wait_s: 12.5,
+            worker_task_rounds: 1,
+            run_seed: 7,
+        };
+        let preview = serde_json::to_string(&json!({
+            "run_ids": ["run_worker_a", "run_worker_b"],
+            "counts": {
+                "total": 2,
+                "success": 2,
+                "failed": 0
+            },
+            "state": "completed"
+        }))
+        .expect("serialize preview");
+        let response = mother_mock_response(
+            &scenario,
+            &[json!({
+                "data": {
+                    "original_chars": 29580,
+                    "preview": preview
+                },
+                "state": "completed"
+            })],
+        );
+
+        assert_eq!(
+            response
+                .pointer("/choices/0/message/tool_calls")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            None
+        );
+        assert_eq!(
+            response
+                .pointer("/choices/0/message/content")
+                .and_then(Value::as_str),
+            Some("Mother preset final: swarm rounds done 1/1. last_round_success=2/2 last_round_failed=0 last_round_all_finished=true last_round_elapsed_s=0.000.")
+        );
+    }
+
+    #[test]
+    fn parse_json_string_prefix_decodes_common_escapes() {
+        let parsed = parse_json_string_prefix("\"line1\\nline2\\u4f60\\u597d\",tail")
+            .expect("parse json string prefix");
+        assert_eq!(parsed, "line1\nline2你好");
     }
 
     #[test]

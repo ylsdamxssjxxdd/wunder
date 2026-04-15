@@ -997,6 +997,7 @@ pub trait StorageBackend: Send + Sync {
     fn touch_session_lock(&self, session_id: &str, ttl_s: f64) -> Result<()>;
     fn release_session_lock(&self, session_id: &str) -> Result<()>;
     fn delete_session_locks_by_user(&self, user_id: &str) -> Result<i64>;
+    fn count_session_locks(&self) -> Result<i64>;
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>>;
 
     fn upsert_agent_thread(&self, record: &AgentThreadRecord) -> Result<()>;
@@ -1006,6 +1007,13 @@ pub trait StorageBackend: Send + Sync {
     fn insert_agent_task(&self, record: &AgentTaskRecord) -> Result<()>;
     fn get_agent_task(&self, task_id: &str) -> Result<Option<AgentTaskRecord>>;
     fn list_pending_agent_tasks(&self, limit: i64) -> Result<Vec<AgentTaskRecord>>;
+    fn count_pending_agent_tasks(&self) -> Result<i64>;
+    fn count_pending_agent_tasks_ahead(
+        &self,
+        retry_at: f64,
+        created_at: f64,
+        task_id: &str,
+    ) -> Result<i64>;
     fn list_agent_tasks_by_thread(
         &self,
         thread_id: &str,

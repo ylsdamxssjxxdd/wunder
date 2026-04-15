@@ -1280,6 +1280,8 @@ async fn send_message(
                 "queue_id": info.task_id,
                 "thread_id": info.thread_id,
                 "session_id": info.session_id,
+                "queue_ahead": info.queue_ahead,
+                "queue_total": info.queue_total,
             });
             if wants_stream {
                 let mapped = tokio_stream::iter(vec![Ok::<Event, std::convert::Infallible>(
@@ -1744,6 +1746,16 @@ fn build_projected_queue_workflow_event(
     event_type: &str,
     timestamp: f64,
 ) -> Value {
+    let queue_ahead = task
+        .request_payload
+        .get("queue_ahead")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let queue_total = task
+        .request_payload
+        .get("queue_total")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     let mut data = json!({
         "queue_id": task.task_id,
         "thread_id": task.thread_id,
@@ -1751,6 +1763,8 @@ fn build_projected_queue_workflow_event(
         "agent_id": task.agent_id,
         "user_id": task.user_id,
         "retry_count": task.retry_count,
+        "queue_ahead": queue_ahead,
+        "queue_total": queue_total,
     });
     if let Value::Object(ref mut map) = data {
         map.insert("status".to_string(), json!(task.status));
@@ -3804,6 +3818,8 @@ mod tests {
             status: status.to_string(),
             request_payload: json!({
                 "question": question,
+                "queue_ahead": 2,
+                "queue_total": 3,
                 "attachments": [
                     {
                         "name": "note.txt",
@@ -3933,6 +3949,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["event"], json!("queue_enter"));
         assert_eq!(events[0]["data"]["queue_id"], json!("task_proj_4"));
+        assert_eq!(events[0]["data"]["queue_ahead"], json!(2));
+        assert_eq!(events[0]["data"]["queue_total"], json!(3));
     }
 
     #[test]

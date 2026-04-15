@@ -2711,6 +2711,18 @@ impl StorageBackend for SqliteStorage {
         Ok(affected as i64)
     }
 
+    fn count_session_locks(&self) -> Result<i64> {
+        self.ensure_initialized()?;
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        let total = conn.query_row(
+            "SELECT COUNT(*) FROM session_locks WHERE expires_at > ?",
+            params![now],
+            |row| row.get(0),
+        )?;
+        Ok(total)
+    }
+
     fn list_session_locks_by_user(&self, user_id: &str) -> Result<Vec<SessionLockRecord>> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
@@ -2913,6 +2925,37 @@ impl StorageBackend for SqliteStorage {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    fn count_pending_agent_tasks(&self) -> Result<i64> {
+        self.ensure_initialized()?;
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        let total = conn.query_row(
+            "SELECT COUNT(*) FROM agent_tasks WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ?",
+            params![now],
+            |row| row.get(0),
+        )?;
+        Ok(total)
+    }
+
+    fn count_pending_agent_tasks_ahead(
+        &self,
+        retry_at: f64,
+        created_at: f64,
+        task_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let now = Self::now_ts();
+        let conn = self.open()?;
+        let total = conn.query_row(
+            "SELECT COUNT(*) FROM agent_tasks \
+             WHERE (status = 'pending' OR status = 'retry') AND retry_at <= ? \
+               AND (retry_at < ? OR (retry_at = ? AND created_at < ?) OR (retry_at = ? AND created_at = ? AND task_id < ?))",
+            params![now, retry_at, retry_at, created_at, retry_at, created_at, task_id],
+            |row| row.get(0),
+        )?;
+        Ok(total)
     }
 
     fn list_agent_tasks_by_thread(
