@@ -907,33 +907,33 @@
   opacity: 0.62;
 }
 
-.messenger-list-insert-gap {
-  height: 0;
-  margin: 0 10px;
-  position: relative;
-  pointer-events: auto;
-  transition: opacity 0.12s ease;
-}
-
-.messenger-list-insert-gap::before {
+.messenger-list-item.is-drop-before::after,
+.messenger-list-item.is-drop-after::after {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  top: -1px;
+  left: 10px;
+  right: 10px;
   height: 2px;
   border-radius: 999px;
   background: var(--ui-accent);
-  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.12);
+  box-shadow:
+    0 0 0 1px rgba(var(--ui-accent-rgb), 0.12),
+    0 0 0 4px rgba(var(--ui-accent-rgb), 0.08);
+  z-index: 3;
+  pointer-events: none;
+}
+
+.messenger-list-item.is-drop-before::after {
+  top: -3px;
+}
+
+.messenger-list-item.is-drop-after::after {
+  bottom: -3px;
 }
 
 .messenger-list-item.is-drag-origin-hidden {
   opacity: 0;
   visibility: hidden;
-}
-
-.messenger-list-item.is-drag-origin {
-  opacity: 0;
 }
 
 .is-drag-ghost {
@@ -945,7 +945,6 @@
   border-color: var(--ui-accent-deep);
   background: var(--ui-accent-soft-4);
   box-shadow: inset 0 0 0 1px var(--ui-accent-deep);
-  overflow: hidden;
 }
 
 .messenger-conversation-item.is-running::before,

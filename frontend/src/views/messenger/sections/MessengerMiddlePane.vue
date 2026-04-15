@@ -169,12 +169,6 @@
     <template v-else-if="activeSection === 'messages'">
       <template v-for="(item, index) in displayedMixedConversations" :key="item.key">
         <div
-          v-if="shouldShowInsertGap('messages', index)"
-          class="messenger-list-insert-gap"
-          @dragover="handleConversationGapDragOver($event, index)"
-          @drop="handleConversationGapDrop($event)"
-        ></div>
-        <div
         class="messenger-list-item messenger-conversation-item"
         :class="{
           active: isGuidedDefaultConversation(item)
@@ -183,7 +177,8 @@
           'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
           'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running',
           'is-dragging': dragState.section === 'messages' && dragState.key === resolveConversationItemKey(item),
-          'is-drag-origin-hidden': isDragOriginItem('messages', index)
+          'is-drop-before': isDropBefore('messages', index),
+          'is-drop-after': isDropAfter('messages', index, displayedMixedConversations.length)
         }"
         role="button"
         tabindex="0"
@@ -230,12 +225,6 @@
         </button>
         </div>
       </template>
-      <div
-        v-if="shouldShowInsertGap('messages', displayedMixedConversations.length)"
-        class="messenger-list-insert-gap"
-        @dragover="handleConversationGapDragOver($event, displayedMixedConversations.length)"
-        @drop="handleConversationGapDrop($event)"
-      ></div>
       <div v-if="!displayedMixedConversations.length" class="messenger-list-empty">
         {{ t('messenger.empty.list') }}
       </div>
@@ -384,18 +373,13 @@
     <template v-else-if="activeSection === 'swarms'">
       <template v-for="(group, index) in filteredBeeroomGroups" :key="group.group_id">
         <div
-          v-if="shouldShowInsertGap('swarms', index)"
-          class="messenger-list-insert-gap"
-          @dragover="handleSwarmGapDragOver($event, index)"
-          @drop="handleSwarmGapDrop($event)"
-        ></div>
-        <div
         class="messenger-list-item messenger-agent-item messenger-swarm-item"
         :class="{
           active: selectedBeeroomGroupId === String(group.group_id || ''),
           'is-running': isBeeroomGroupRunning(group),
           'is-dragging': dragState.section === 'swarms' && dragState.key === resolveSwarmDragKey(group),
-          'is-drag-origin-hidden': isDragOriginItem('swarms', index)
+          'is-drop-before': isDropBefore('swarms', index),
+          'is-drop-after': isDropAfter('swarms', index, filteredBeeroomGroups.length)
         }"
         role="button"
         tabindex="0"
@@ -443,12 +427,6 @@
         </div>
         </div>
       </template>
-      <div
-        v-if="shouldShowInsertGap('swarms', filteredBeeroomGroups.length)"
-        class="messenger-list-insert-gap"
-        @dragover="handleSwarmGapDragOver($event, filteredBeeroomGroups.length)"
-        @drop="handleSwarmGapDrop($event)"
-      ></div>
       <div v-if="!filteredBeeroomGroups.length" class="messenger-list-empty">
         {{ t('messenger.empty.swarms') }}
       </div>
@@ -528,12 +506,6 @@
       </div>
 
       <template v-for="(agent, index) in orderedPrimaryAgents" :key="agent.renderKey">
-        <div
-          v-if="shouldShowInsertGap('agents-primary', index)"
-          class="messenger-list-insert-gap"
-          @dragover="handlePrimaryAgentGapDragOver($event, index)"
-          @drop="handlePrimaryAgentGapDrop($event)"
-        ></div>
         <button
         class="messenger-list-item messenger-agent-item"
         :class="{
@@ -541,7 +513,8 @@
           selected: isAgentMultiSelected(agent.agentId),
           'is-running': resolveAgentRuntimeState(agent.agentId) === 'running',
           'is-dragging': dragState.section === 'agents-primary' && dragState.key === resolveAgentDragKey(agent.agentId),
-          'is-drag-origin-hidden': isDragOriginItem('agents-primary', index)
+          'is-drop-before': isDropBefore('agents-primary', index),
+          'is-drop-after': isDropAfter('agents-primary', index, orderedPrimaryAgents.length)
         }"
         type="button"
         draggable="true"
@@ -572,22 +545,10 @@
         </div>
         </button>
       </template>
-      <div
-        v-if="shouldShowInsertGap('agents-primary', orderedPrimaryAgents.length)"
-        class="messenger-list-insert-gap"
-        @dragover="handlePrimaryAgentGapDragOver($event, orderedPrimaryAgents.length)"
-        @drop="handlePrimaryAgentGapDrop($event)"
-      ></div>
       <div v-if="filteredSharedAgents.length" class="messenger-block-title">
         {{ t('messenger.agent.shared') }}
       </div>
       <template v-for="(agent, index) in filteredSharedAgents" :key="`shared-${agent.id}`">
-        <div
-          v-if="shouldShowInsertGap('agents-shared', index)"
-          class="messenger-list-insert-gap"
-          @dragover="handleSharedAgentGapDragOver($event, index)"
-          @drop="handleSharedAgentGapDrop($event)"
-        ></div>
         <button
         class="messenger-list-item messenger-agent-item"
         :class="{
@@ -595,7 +556,8 @@
           selected: isAgentMultiSelected(agent.id),
           'is-running': resolveAgentRuntimeState(agent.id) === 'running',
           'is-dragging': dragState.section === 'agents-shared' && dragState.key === resolveAgentDragKey(agent.id),
-          'is-drag-origin-hidden': isDragOriginItem('agents-shared', index)
+          'is-drop-before': isDropBefore('agents-shared', index),
+          'is-drop-after': isDropAfter('agents-shared', index, filteredSharedAgents.length)
         }"
         type="button"
         draggable="true"
@@ -626,12 +588,6 @@
         </div>
         </button>
       </template>
-      <div
-        v-if="shouldShowInsertGap('agents-shared', filteredSharedAgents.length)"
-        class="messenger-list-insert-gap"
-        @dragover="handleSharedAgentGapDragOver($event, filteredSharedAgents.length)"
-        @drop="handleSharedAgentGapDrop($event)"
-      ></div>
       <div v-if="!orderedPrimaryAgents.length && !filteredSharedAgents.length" class="messenger-list-empty">
         {{ t('messenger.empty.agents') }}
       </div>
@@ -1003,6 +959,8 @@ const dragOverState = ref<{
   section: '',
   index: -1
 });
+let dragOriginElement: HTMLElement | null = null;
+let dragOriginHideFrame = 0;
 
 type ContainerEntry = {
   id: number;
@@ -1196,16 +1154,10 @@ type AgentSelectionEntry = {
 
 const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
   const output: AgentSelectionEntry[] = [];
-  if (showDefaultAgentEntry) {
-    const id = normalizeAgentId(defaultAgentKey);
-    if (id) {
-      output.push({ id, deletable: false });
-    }
-  }
-  (Array.isArray(filteredOwnedAgents) ? filteredOwnedAgents : []).forEach((agent) => {
-    const id = normalizeAgentId(agent?.id);
+  (Array.isArray(primaryAgentItems) ? primaryAgentItems : []).forEach((agent) => {
+    const id = normalizeAgentId(agent?.id || agent?.agentId);
     if (!id) return;
-    output.push({ id, deletable: true });
+    output.push({ id, deletable: id !== normalizeAgentId(defaultAgentKey) });
   });
   (Array.isArray(filteredSharedAgents) ? filteredSharedAgents : []).forEach((agent) => {
     const id = normalizeAgentId(agent?.id);
@@ -1216,13 +1168,16 @@ const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
 });
 
 const orderedPrimaryAgents = computed(() =>
-  (Array.isArray(primaryAgentItems) ? primaryAgentItems : []).map((agent, index) => ({
-    renderKey: String(agent?.renderKey || `primary:${index}`),
-    agentId: normalizeAgentId(agent?.id || agent?.agentId),
-    name: String(agent?.name || agent?.agentId || agent?.id || t('messenger.defaultAgent')),
-    description: String(agent?.description || t('messenger.preview.empty')),
-    icon: agent?.icon
-  }))
+  (Array.isArray(primaryAgentItems) ? primaryAgentItems : []).map((agent, index) => {
+    const agentId = normalizeAgentId(agent?.id || agent?.agentId);
+    return {
+      renderKey: String(agent?.renderKey || `primary:${agentId || index}`),
+      agentId,
+      name: String(agent?.name || agent?.agentId || agent?.id || t('messenger.defaultAgent')),
+      description: String(agent?.description || t('messenger.preview.empty')),
+      icon: agent?.icon
+    };
+  })
 );
 
 const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
@@ -1288,7 +1243,17 @@ const resolveSwarmDragKey = (group: Record<string, unknown> | null | undefined):
 
 const resolveAgentDragKey = (agentId: unknown): string => normalizeAgentId(agentId);
 
+const clearDragOriginElement = () => {
+  if (typeof window !== 'undefined' && dragOriginHideFrame > 0) {
+    window.cancelAnimationFrame(dragOriginHideFrame);
+  }
+  dragOriginHideFrame = 0;
+  dragOriginElement?.classList.remove('is-drag-origin-hidden');
+  dragOriginElement = null;
+};
+
 const resetDragState = () => {
+  clearDragOriginElement();
   dragState.value = { section: '', key: '', sourceIndex: -1 };
   dragOverState.value = { section: '', index: -1 };
 };
@@ -1313,10 +1278,11 @@ const beginDrag = (
     event.preventDefault();
     return;
   }
+  clearDragOriginElement();
   dragState.value = { section, key: normalizedKey, sourceIndex };
   dragOverState.value = { section: '', index: -1 };
   const target = event.currentTarget as HTMLElement | null;
-  target?.classList.add('is-drag-origin');
+  dragOriginElement = target;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', normalizedKey);
@@ -1335,6 +1301,18 @@ const beginDrag = (
       window.setTimeout(() => {
         dragGhost.remove();
       }, 0);
+    }
+  }
+  if (target) {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      dragOriginHideFrame = window.requestAnimationFrame(() => {
+        if (dragOriginElement === target) {
+          target.classList.add('is-drag-origin-hidden');
+        }
+        dragOriginHideFrame = 0;
+      });
+    } else {
+      target.classList.add('is-drag-origin-hidden');
     }
   }
 };
@@ -1410,17 +1388,6 @@ const handleConversationDrop = (event: DragEvent) =>
     moveMessageItem
   );
 
-const handleConversationGapDragOver = (event: DragEvent, index: number) =>
-  updateDragOver(event, 'messages', index);
-
-const handleConversationGapDrop = (event: DragEvent) =>
-  commitInsertMove(
-    event,
-    'messages',
-    displayedMixedConversations.value.map((entry) => resolveConversationItemKey(entry)),
-    moveMessageItem
-  );
-
 const handlePrimaryAgentDragStart = (event: DragEvent, agentId: unknown) =>
   beginDrag(
     event,
@@ -1433,17 +1400,6 @@ const handlePrimaryAgentDragOver = (event: DragEvent, index: number) =>
   updateDragOver(event, 'agents-primary', index);
 
 const handlePrimaryAgentDrop = (event: DragEvent) =>
-  commitInsertMove(
-    event,
-    'agents-primary',
-    orderedPrimaryAgents.value.map((entry) => entry.agentId),
-    moveAgentItem
-  );
-
-const handlePrimaryAgentGapDragOver = (event: DragEvent, index: number) =>
-  updateDragOver(event, 'agents-primary', index);
-
-const handlePrimaryAgentGapDrop = (event: DragEvent) =>
   commitInsertMove(
     event,
     'agents-primary',
@@ -1470,17 +1426,6 @@ const handleSharedAgentDrop = (event: DragEvent) =>
     moveAgentItem
   );
 
-const handleSharedAgentGapDragOver = (event: DragEvent, index: number) =>
-  updateDragOver(event, 'agents-shared', index);
-
-const handleSharedAgentGapDrop = (event: DragEvent) =>
-  commitInsertMove(
-    event,
-    'agents-shared',
-    filteredSharedAgents.map((entry) => resolveAgentDragKey(entry.id)),
-    moveAgentItem
-  );
-
 const handleSwarmDragStart = (event: DragEvent, group: Record<string, unknown>) =>
   beginDrag(
     event,
@@ -1499,26 +1444,20 @@ const handleSwarmDrop = (event: DragEvent) =>
     moveSwarmItem
   );
 
-const handleSwarmGapDragOver = (event: DragEvent, index: number) =>
-  updateDragOver(event, 'swarms', index);
-
-const handleSwarmGapDrop = (event: DragEvent) =>
-  commitInsertMove(
-    event,
-    'swarms',
-    filteredBeeroomGroups.map((entry) => resolveSwarmDragKey(entry)),
-    moveSwarmItem
-  );
-
-const shouldShowInsertGap = (
+const isDropBefore = (
   section: 'messages' | 'agents-primary' | 'agents-shared' | 'swarms',
   index: number
 ): boolean => dragOverState.value.section === section && dragOverState.value.index === index;
 
-const isDragOriginItem = (
+const isDropAfter = (
   section: 'messages' | 'agents-primary' | 'agents-shared' | 'swarms',
-  index: number
-): boolean => dragState.value.section === section && dragState.value.sourceIndex === index;
+  index: number,
+  total: number
+): boolean =>
+  total > 0 &&
+  index === total - 1 &&
+  dragOverState.value.section === section &&
+  dragOverState.value.index === total;
 
 const handleDragEnd = () => {
   resetDragState();
