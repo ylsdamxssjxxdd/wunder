@@ -11,6 +11,10 @@
   --ui-accent-deep: #e5792e;
   --user-edit-caret: var(--ui-accent-deep);
   --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
+  --user-edit-cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='24' viewBox='0 0 16 24'%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%230f172a' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M5 2.5h6M8 2.5v19M5 21.5h6' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+      8 12,
+    text;
   --ui-accent-soft: #fff3e8;
   --ui-accent-soft-2: #fff0e2;
   --ui-accent-soft-3: #fff8f1;
@@ -165,14 +169,15 @@ body {
 }
 
 :root :is(
-    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']),
-    textarea,
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']):not([readonly]):not(:disabled),
+    textarea:not([readonly]):not(:disabled),
     [contenteditable='true'],
     [contenteditable='plaintext-only'],
-    .el-input__inner,
-    .el-textarea__inner
+    .el-input__inner:not([readonly]):not(:disabled),
+    .el-textarea__inner:not([readonly]):not(:disabled)
   ) {
   caret-color: var(--user-edit-caret);
+  cursor: var(--user-edit-cursor);
 }
 
 :root :is(

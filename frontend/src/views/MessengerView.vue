@@ -1575,6 +1575,7 @@
     <AgentQuickCreateDialog
       v-model="agentQuickCreateVisible"
       :creating="quickCreatingAgent"
+      :copy-from-agents="quickCreateCopyFromAgents"
       @submit="submitAgentQuickCreate"
     />
     <input
@@ -2814,6 +2815,26 @@ const agentMap = computed(() => {
     }
   });
   return map;
+});
+
+const quickCreateCopyFromAgents = computed(() => {
+  const items: Array<{ id: string; name: string }> = [
+    {
+      id: DEFAULT_AGENT_KEY,
+      name: t('messenger.defaultAgent')
+    }
+  ];
+  const seenIds = new Set<string>([DEFAULT_AGENT_KEY]);
+  ownedAgents.value.forEach((item) => {
+    const id = normalizeAgentId(item?.id);
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+    items.push({
+      id,
+      name: String(item?.name || item?.id || id).trim()
+    });
+  });
+  return items;
 });
 
 const isSilentAgent = (agentId: unknown): boolean => {

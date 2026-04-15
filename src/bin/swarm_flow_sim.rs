@@ -223,7 +223,7 @@ struct SessionRunRow {
     finished_time: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct WorkerSessionRow {
     session_id: String,
     agent_id: String,
@@ -1120,6 +1120,59 @@ fn round_millis(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
 
+fn worker_session_rows_from_tool_items(
+    items: &[Value],
+    worker_agent_ids: &[String],
+) -> Vec<WorkerSessionRow> {
+    let expected_agents = worker_agent_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut rows = Vec::new();
+    let mut seen_sessions = HashSet::new();
+
+    for item in items {
+        let Some(agent_id) = first_non_empty_text(
+            item,
+            &["target_agent_id", "agent_id", "targetAgentId", "agentId"],
+        ) else {
+            continue;
+        };
+        if !expected_agents.contains(agent_id) {
+            continue;
+        }
+        let Some(session_id) = first_non_empty_text(
+            item,
+            &[
+                "target_session_id",
+                "session_id",
+                "targetSessionId",
+                "sessionId",
+            ],
+        ) else {
+            continue;
+        };
+        if !seen_sessions.insert(session_id.to_string()) {
+            continue;
+        }
+        rows.push(WorkerSessionRow {
+            session_id: session_id.to_string(),
+            agent_id: agent_id.to_string(),
+        });
+    }
+
+    rows
+}
+
+fn first_non_empty_text<'a>(item: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter().find_map(|key| {
+        item.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
 fn worker_sessions_from_mother_tool_result(
     state: &AppState,
     mother_session_id: &str,
@@ -1131,11 +1184,6 @@ fn worker_sessions_from_mother_tool_result(
     let Some(events) = record.get("events").and_then(Value::as_array) else {
         return Vec::new();
     };
-
-    let expected_agents = worker_agent_ids
-        .iter()
-        .map(String::as_str)
-        .collect::<HashSet<_>>();
 
     for event in events.iter().rev() {
         if event.get("type").and_then(Value::as_str) != Some("tool_result") {
@@ -1150,36 +1198,7 @@ fn worker_sessions_from_mother_tool_result(
             continue;
         };
 
-        let mut rows = Vec::new();
-        let mut seen_sessions = HashSet::new();
-        for item in items {
-            let Some(agent_id) = item
-                .get("agent_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
-            if !expected_agents.contains(agent_id) {
-                continue;
-            }
-            let Some(session_id) = item
-                .get("session_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
-            if !seen_sessions.insert(session_id.to_string()) {
-                continue;
-            }
-            rows.push(WorkerSessionRow {
-                session_id: session_id.to_string(),
-                agent_id: agent_id.to_string(),
-            });
-        }
+        let rows = worker_session_rows_from_tool_items(items, worker_agent_ids);
         if !rows.is_empty() {
             return rows;
         }

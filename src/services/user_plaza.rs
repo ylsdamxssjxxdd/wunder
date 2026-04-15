@@ -347,14 +347,8 @@ async fn publish_hive_pack(
     let title = request_title_or(&request.title, &hive.name);
     let summary = request_summary_or(&request.summary, &hive.description);
     let config = state.config_store.get().await;
-    let source_signature = compute_hive_pack_source_signature(
-        state,
-        &config,
-        user,
-        &hive,
-        &agents,
-    )
-    .await?;
+    let source_signature =
+        compute_hive_pack_source_signature(state, &config, user, &hive, &agents).await?;
     let metadata = json!({
         "group_id": hive.hive_id,
         "group_name": hive.name,
@@ -413,13 +407,8 @@ async fn publish_worker_card(
     )?;
     let title = request_title_or(&request.title, &record.name);
     let summary = request_summary_or(&request.summary, &record.description);
-    let source_signature = compute_worker_card_source_signature(
-        state,
-        user,
-        &record,
-        hive.as_ref(),
-    )
-    .await?;
+    let source_signature =
+        compute_worker_card_source_signature(state, user, &record, hive.as_ref()).await?;
     let metadata = json!({
         "agent_id": record.agent_id,
         "agent_name": record.name,
@@ -1092,22 +1081,23 @@ async fn compute_current_source_signature(
                     Ok(value) => value,
                     Err(_) => return Ok(None),
                 };
-            let hive = state.user_store.get_hive(&record.owner_user_id, &agent.hive_id)?;
+            let hive = state
+                .user_store
+                .get_hive(&record.owner_user_id, &agent.hive_id)?;
             let Some(user) = state.user_store.get_user_by_id(&record.owner_user_id)? else {
                 return Ok(None);
             };
             Ok(Some(
-                compute_worker_card_source_signature(
-                    state,
-                    &user,
-                    &agent,
-                    hive.as_ref(),
-                )
-                .await?,
+                compute_worker_card_source_signature(state, &user, &agent, hive.as_ref()).await?,
             ))
         }
         "skill_pack" => {
-            let spec = match resolve_custom_user_skill_spec(state, config, &record.owner_user_id, &record.source_key) {
+            let spec = match resolve_custom_user_skill_spec(
+                state,
+                config,
+                &record.owner_user_id,
+                &record.source_key,
+            ) {
                 Ok(value) => value,
                 Err(_) => return Ok(None),
             };

@@ -2500,7 +2500,7 @@ export default {
   'messenger.agentCreate.isShared': 'Shared',
   'messenger.agentCreate.sandbox': 'Agent Workspace Directory',
   'messenger.agentQuickCreate.title': 'Create Agent',
-  'messenger.agentQuickCreate.prompt': 'The new agent will be cloned from the default agent with the default tools and base configuration.',
+  'messenger.agentQuickCreate.prompt': 'The new agent will be cloned from the selected agent with its tools and base configuration.',
   'messenger.more.language': 'Switch language',
   'messenger.more.languageChanged': 'Language switched',
   'messenger.more.logoutConfirm': 'Are you sure you want to logout?',

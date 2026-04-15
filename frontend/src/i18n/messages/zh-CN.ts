@@ -2467,7 +2467,7 @@ export default {
   'messenger.agentCreate.isShared': '共享',
   'messenger.agentCreate.sandbox': '智能体工作目录',
   'messenger.agentQuickCreate.title': '新建智能体',
-  'messenger.agentQuickCreate.prompt': '将基于默认智能体创建，并自动继承默认工具与基础配置。',
+  'messenger.agentQuickCreate.prompt': '新智能体将基于所选智能体创建，并自动继承其工具与基础配置。',
   'messenger.more.language': '切换语言',
   'messenger.more.languageChanged': '语言已切换',
   'messenger.more.logoutConfirm': '确认退出登录吗？',

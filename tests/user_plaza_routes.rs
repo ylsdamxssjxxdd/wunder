@@ -887,7 +887,9 @@ async fn plaza_item_marks_skill_pack_outdated_until_republished() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        outdated_payload
+            .pointer("/data/freshness_status")
+            .and_then(Value::as_str),
         Some("outdated")
     );
 
@@ -901,7 +903,9 @@ async fn plaza_item_marks_skill_pack_outdated_until_republished() {
     .await;
     assert_eq!(item_id_from_payload(&republished), item_id);
     assert_eq!(
-        republished.pointer("/data/freshness_status").and_then(Value::as_str),
+        republished
+            .pointer("/data/freshness_status")
+            .and_then(Value::as_str),
         Some("current")
     );
 }
@@ -911,7 +915,13 @@ async fn plaza_item_marks_worker_card_outdated_and_missing_source() {
     let app = build_test_app().await;
     let owner = create_user_session(&app, "plaza_worker_refresh_owner");
 
-    let hive = create_hive(&app, &owner, "plaza_worker_refresh_hive", "Refresh Hive", "refresh");
+    let hive = create_hive(
+        &app,
+        &owner,
+        "plaza_worker_refresh_hive",
+        "Refresh Hive",
+        "refresh",
+    );
     let agent = create_agent(
         &app,
         &owner,
@@ -957,7 +967,9 @@ async fn plaza_item_marks_worker_card_outdated_and_missing_source() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        outdated_payload
+            .pointer("/data/freshness_status")
+            .and_then(Value::as_str),
         Some("outdated")
     );
 
@@ -976,7 +988,9 @@ async fn plaza_item_marks_worker_card_outdated_and_missing_source() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        missing_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        missing_payload
+            .pointer("/data/freshness_status")
+            .and_then(Value::as_str),
         Some("source_missing")
     );
 }
@@ -986,7 +1000,13 @@ async fn plaza_item_marks_hive_pack_outdated_after_member_change() {
     let app = build_test_app().await;
     let owner = create_user_session(&app, "plaza_hive_refresh_owner");
 
-    let hive = create_hive(&app, &owner, "plaza_hive_refresh", "Refresh Hive", "refresh hive");
+    let hive = create_hive(
+        &app,
+        &owner,
+        "plaza_hive_refresh",
+        "Refresh Hive",
+        "refresh hive",
+    );
     let mother = create_agent(
         &app,
         &owner,
@@ -1010,7 +1030,14 @@ async fn plaza_item_marks_hive_pack_outdated_after_member_change() {
         false,
     );
 
-    let published = publish_plaza_item(&app, &owner, "hive_pack", &hive.hive_id, "Refresh Hive Pack").await;
+    let published = publish_plaza_item(
+        &app,
+        &owner,
+        "hive_pack",
+        &hive.hive_id,
+        "Refresh Hive Pack",
+    )
+    .await;
     let item_id = item_id_from_payload(&published);
 
     let mut changed_mother = app
@@ -1037,7 +1064,9 @@ async fn plaza_item_marks_hive_pack_outdated_after_member_change() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        outdated_payload.pointer("/data/freshness_status").and_then(Value::as_str),
+        outdated_payload
+            .pointer("/data/freshness_status")
+            .and_then(Value::as_str),
         Some("outdated")
     );
 }

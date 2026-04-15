@@ -15,7 +15,24 @@
       </div>
     </template>
     <div class="messenger-dialog-body">
-      <div class="agent-quick-create-prompt">{{ t('messenger.agentQuickCreate.prompt') }}</div>
+      <el-form label-position="top" class="agent-quick-create-form">
+        <el-form-item :label="t('messenger.agentCreate.copyFrom')">
+          <el-select
+            v-model="selectedCopyFromAgentId"
+            filterable
+            class="messenger-form-full"
+            :placeholder="t('messenger.agentCreate.copyFromPlaceholder')"
+          >
+            <el-option
+              v-for="agent in copyFromAgents"
+              :key="agent.id"
+              :label="agent.name || agent.id"
+              :value="agent.id"
+            />
+          </el-select>
+        </el-form-item>
+        <div class="agent-quick-create-hint">{{ t('messenger.agentQuickCreate.prompt') }}</div>
+      </el-form>
     </div>
     <template #footer>
       <div class="messenger-dialog-footer">
@@ -29,19 +46,26 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
+
+type AgentOption = {
+  id: string;
+  name: string;
+};
 
 const props = withDefaults(
   defineProps<{
     modelValue?: boolean;
     creating?: boolean;
+    copyFromAgents?: AgentOption[];
   }>(),
   {
     modelValue: false,
-    creating: false
+    creating: false,
+    copyFromAgents: () => []
   }
 );
 
@@ -57,14 +81,42 @@ const visible = computed({
   set: (value: boolean) => emit('update:modelValue', value)
 });
 
+const selectedCopyFromAgentId = ref(DEFAULT_AGENT_KEY);
+
+const resolveInitialCopyFromAgentId = (): string => {
+  const availableIds = new Set(
+    (Array.isArray(props.copyFromAgents) ? props.copyFromAgents : [])
+      .map((agent) => String(agent?.id || '').trim())
+      .filter(Boolean)
+  );
+  if (availableIds.has(DEFAULT_AGENT_KEY)) {
+    return DEFAULT_AGENT_KEY;
+  }
+  return Array.from(availableIds)[0] || DEFAULT_AGENT_KEY;
+};
+
 const handleSubmit = () => {
   if (props.creating) return;
-  emit('submit', { copy_from_agent_id: DEFAULT_AGENT_KEY });
+  emit('submit', {
+    copy_from_agent_id: String(selectedCopyFromAgentId.value || '').trim() || resolveInitialCopyFromAgentId()
+  });
 };
+
+watch(
+  () => visible.value,
+  (value: boolean) => {
+    if (!value) return;
+    selectedCopyFromAgentId.value = resolveInitialCopyFromAgentId();
+  }
+);
 </script>
 
 <style scoped>
-.agent-quick-create-prompt {
+.agent-quick-create-form {
+  width: 100%;
+}
+
+.agent-quick-create-hint {
   font-size: 13px;
   color: #666666;
   line-height: 1.6;
