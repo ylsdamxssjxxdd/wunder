@@ -96,11 +96,11 @@ const ABILITY_RULES: AbilityRule[] = [
   { keywords: ['write_file', 'write file'], icon: 'fa-file-circle-plus', tone: 'file' },
   {
     keywords: ['skill', 'skills', 'prompt', 'workflow', 'template', 'agent preset', 'preset'],
-    icon: 'fa-wand-magic-sparkles',
+    icon: 'fa-book',
     tone: 'skill'
   },
-  { keywords: ['knowledge', 'rag', 'vector', 'embedding', 'document', 'kb'], icon: 'fa-book', tone: 'knowledge' },
-  { keywords: ['知识'], icon: 'fa-book', tone: 'knowledge' },
+  { keywords: ['knowledge', 'rag', 'vector', 'embedding', 'document', 'kb'], icon: 'fa-database', tone: 'knowledge' },
+  { keywords: ['知识'], icon: 'fa-database', tone: 'knowledge' },
   { keywords: ['mcp', 'connector', 'integration', 'endpoint'], icon: 'fa-plug', tone: 'mcp' },
   { keywords: ['shared', 'share'], icon: 'fa-wrench', tone: 'shared' },
   { keywords: ['search', 'query', 'retrieve'], icon: 'fa-magnifying-glass', tone: 'search' },
@@ -177,11 +177,11 @@ const resolvePreferredTone = (kind: AbilityKind, group: unknown, source: unknown
 const resolveDefaultIcon = (tone: AbilityVisualTone): string => {
   switch (tone) {
     case 'skill':
-      return 'fa-wand-magic-sparkles';
+      return 'fa-book';
     case 'mcp':
       return 'fa-plug';
     case 'knowledge':
-      return 'fa-book';
+      return 'fa-database';
     case 'shared':
       return 'fa-wrench';
     case 'automation':

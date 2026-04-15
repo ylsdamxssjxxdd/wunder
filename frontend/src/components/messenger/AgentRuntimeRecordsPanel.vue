@@ -542,7 +542,7 @@ function resolveToolIcon(name: string): string {
     matchesToolKeyword(lowerName, normalizedName, '知识') ||
     matchesToolKeyword(lowerName, normalizedName, 'knowledge')
   ) {
-    return 'fa-book';
+    return 'fa-database';
   }
   if (
     matchesToolKeyword(lowerName, normalizedName, '最终回复') ||

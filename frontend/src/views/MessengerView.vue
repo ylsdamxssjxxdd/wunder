@@ -211,6 +211,7 @@
           :move-message-item="moveMixedConversationItem"
           :move-agent-item="moveAgentListItem"
           :move-swarm-item="moveBeeroomGroupItem"
+          :after-hive-pack-imported="handleHivePackImportedFromMiddlePane"
           @activate-settings-panel="activateSettingsPanel"
       />
     </section>
@@ -1807,6 +1808,9 @@ import {
   saveMessengerOrderPreferences,
   type MessengerOrderPreferences
 } from '@/views/messenger/messengerOrderSync';
+import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
+import { clearCachedDispatchPreview } from '@/components/beeroom/useBeeroomDispatchSessionPreview';
 import {
   buildWorldVoicePayloadContent,
   formatWorldVoiceDuration,
@@ -2019,6 +2023,7 @@ const messengerOrderHydrating = ref(false);
 const messengerOrderReady = ref(false);
 const messengerOrderSaveTimer = ref<number | null>(null);
 const messengerOrderSnapshot = ref<MessengerOrderPreferences>(defaultMessengerOrderPreferences());
+const beeroomDispatchSessionIdsByGroup = ref<Record<string, string[]>>({});
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
@@ -8307,6 +8312,105 @@ const captureMessengerOrderPreferences = (): MessengerOrderPreferences => ({
   updatedAt: 0
 });
 
+const normalizeStringListUnique = (values: unknown[]): string[] => {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  values.forEach((value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    output.push(normalized);
+  });
+  return output;
+};
+
+const rememberBeeroomDispatchSessionIds = (groupId: unknown, values: unknown[]) => {
+  const normalizedGroupId = String(groupId || '').trim();
+  if (!normalizedGroupId) {
+    return;
+  }
+  const nextIds = normalizeStringListUnique(values);
+  if (!nextIds.length) {
+    return;
+  }
+  const currentIds = Array.isArray(beeroomDispatchSessionIdsByGroup.value[normalizedGroupId])
+    ? beeroomDispatchSessionIdsByGroup.value[normalizedGroupId]
+    : [];
+  beeroomDispatchSessionIdsByGroup.value = {
+    ...beeroomDispatchSessionIdsByGroup.value,
+    [normalizedGroupId]: normalizeStringListUnique([...currentIds, ...nextIds])
+  };
+};
+
+const clearBeeroomRuntimeCachesByGroup = (groupId: unknown) => {
+  const normalizedGroupId = String(groupId || '').trim();
+  if (!normalizedGroupId) {
+    return;
+  }
+  clearBeeroomMissionCanvasState(normalizedGroupId);
+  clearBeeroomMissionCanvasState(`chat:${normalizedGroupId}`);
+  clearBeeroomMissionCanvasState(`runtime:${normalizedGroupId}`);
+  clearBeeroomMissionChatState(`runtime:${normalizedGroupId}`);
+  const sessionIds = Array.isArray(beeroomDispatchSessionIdsByGroup.value[normalizedGroupId])
+    ? beeroomDispatchSessionIdsByGroup.value[normalizedGroupId]
+    : [];
+  sessionIds.forEach((sessionId) => {
+    clearCachedDispatchPreview(sessionId);
+  });
+  if (sessionIds.length > 0) {
+    const next = { ...beeroomDispatchSessionIdsByGroup.value };
+    delete next[normalizedGroupId];
+    beeroomDispatchSessionIdsByGroup.value = next;
+  }
+};
+
+const moveOwnedAgentsToFront = (agentIds: unknown[]) => {
+  const normalizedIds = normalizeStringListUnique(
+    (Array.isArray(agentIds) ? agentIds : []).map((agentId) => normalizeAgentId(agentId))
+  ).filter((agentId) => agentId && agentId !== DEFAULT_AGENT_KEY);
+  if (!normalizedIds.length) {
+    return;
+  }
+  const current = normalizeStringListUnique(orderedOwnedAgentsState.orderedKeys.value);
+  const pinned = normalizedIds.filter((agentId) => current.includes(agentId));
+  if (!pinned.length) {
+    return;
+  }
+  const nextOrder = [DEFAULT_AGENT_KEY, ...pinned, ...current.filter((agentId) => agentId !== DEFAULT_AGENT_KEY && !pinned.includes(agentId))];
+  orderedOwnedAgentsState.orderedKeys.value = normalizeStringListUnique(nextOrder);
+};
+
+const prioritizeImportedBeeroomAgents = async (report: unknown, groupId: unknown) => {
+  const normalizedGroupId = String(groupId || '').trim();
+  if (!normalizedGroupId) {
+    return;
+  }
+  const activeGroup = await beeroomStore.selectGroup(normalizedGroupId, { silent: true }).catch(() => null);
+  const groupMembers = Array.isArray(activeGroup?.members) ? activeGroup.members : [];
+  const reportRecord =
+    report && typeof report === 'object' && !Array.isArray(report)
+      ? (report as Record<string, unknown>)
+      : {};
+  const importedAgents = Array.isArray(reportRecord.agents)
+    ? reportRecord.agents
+        .map((item) =>
+          item && typeof item === 'object' && !Array.isArray(item)
+            ? String((item as Record<string, unknown>).agent_id || '').trim()
+            : ''
+        )
+        .filter(Boolean)
+    : [];
+  const motherAgentId = String(activeGroup?.mother_agent_id || '').trim();
+  const orderedImportedIds = normalizeStringListUnique([
+    motherAgentId,
+    ...importedAgents,
+    ...groupMembers.map((item) => String(item?.agent_id || '').trim())
+  ]);
+  moveOwnedAgentsToFront(orderedImportedIds);
+};
+
 const hydrateMessengerOrderPreferences = async () => {
   const scopedUserId = String(currentUserId.value || '').trim();
   messengerOrderReady.value = false;
@@ -8929,6 +9033,7 @@ const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
     return;
   }
   try {
+    clearBeeroomRuntimeCachesByGroup(groupId);
     await beeroomStore.deleteGroup(groupId);
     await Promise.all([
       agentStore.loadAgents().catch(() => null),
@@ -8937,6 +9042,34 @@ const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
     ElMessage.success(t('beeroom.message.hiveDeleted'));
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
+  }
+};
+
+const handleHivePackImportedFromMiddlePane = async (job: unknown) => {
+  const record =
+    job && typeof job === 'object' && !Array.isArray(job)
+      ? (job as Record<string, unknown>)
+      : {};
+  const report =
+    record.report && typeof record.report === 'object' && !Array.isArray(record.report)
+      ? (record.report as Record<string, unknown>)
+      : {};
+  const groupId = String(report.hive_id || '').trim();
+  if (!groupId) {
+    return;
+  }
+  clearBeeroomRuntimeCachesByGroup(groupId);
+  orderedBeeroomGroupsState.orderedKeys.value = normalizeStringListUnique([
+    groupId,
+    ...orderedBeeroomGroupsState.orderedKeys.value
+  ]);
+  await Promise.all([
+    beeroomStore.selectGroup(groupId, { silent: true }).catch(() => null),
+    agentStore.loadAgents().catch(() => null)
+  ]);
+  await prioritizeImportedBeeroomAgents(report, groupId);
+  if (sessionHub.activeSection === 'agents') {
+    selectedAgentHiveGroupId.value = groupId;
   }
 };
 
@@ -12438,6 +12571,21 @@ watch(
     if (sessionHub.activeSection !== 'swarms' || !String(value || '').trim()) return;
     void beeroomStore.loadActiveGroup({ silent: true }).catch(() => null);
   }
+);
+
+watch(
+  () => [
+    String(beeroomStore.activeGroupId || '').trim(),
+    String(beeroomStore.activeGroup?.latest_mission?.parent_session_id || '').trim(),
+    String(beeroomStore.activeGroup?.latest_mission?.team_run_id || '').trim()
+  ] as const,
+  ([groupId, parentSessionId]) => {
+    if (!groupId) {
+      return;
+    }
+    rememberBeeroomDispatchSessionIds(groupId, [parentSessionId]);
+  },
+  { immediate: true }
 );
 
 watch(plazaBrowseKind, (nextKind, previousKind) => {

@@ -16,6 +16,8 @@ import {
   updateBeeroomGroup
 } from '@/api/beeroom';
 import type { QueryParams } from '@/api/types';
+import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { invalidateAllUserToolsCaches } from '@/utils/userToolsCache';
 import {
@@ -453,6 +455,17 @@ export const useBeeroomStore = defineStore('beeroom', {
     }
   },
   actions: {
+    clearGroupRuntimeCaches(groupId: unknown) {
+      const normalizedGroupId = normalizeGroupId(groupId);
+      if (!normalizedGroupId) {
+        return;
+      }
+      clearBeeroomMissionCanvasState(normalizedGroupId);
+      clearBeeroomMissionCanvasState(`chat:${normalizedGroupId}`);
+      clearBeeroomMissionCanvasState(`runtime:${normalizedGroupId}`);
+      clearBeeroomMissionChatState(`runtime:${normalizedGroupId}`);
+    },
+
     resetState() {
       this.$reset();
     },
@@ -990,6 +1003,7 @@ export const useBeeroomStore = defineStore('beeroom', {
       }
       const { data } = await deleteBeeroomGroup(normalizedGroupId);
       const deleted = Number(data?.data?.deleted || 0);
+      this.clearGroupRuntimeCaches(normalizedGroupId);
       await this.loadGroups();
       if (this.activeGroupId) {
         await this.loadActiveGroup({ silent: true }).catch(() => null);
@@ -1114,6 +1128,9 @@ export const useBeeroomStore = defineStore('beeroom', {
           const targetHiveId = normalizeGroupId(
             resolvedJob.report?.hive_id || normalizedGroupId || this.activeGroupId
           );
+          if (targetHiveId) {
+            this.clearGroupRuntimeCaches(targetHiveId);
+          }
           await Promise.all([
             this.loadGroups().catch(() => null),
             agentStore.loadAgents().catch(() => null)

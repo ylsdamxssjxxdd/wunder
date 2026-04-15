@@ -837,27 +837,36 @@ async fn mock_chat_completions(
 fn mother_mock_response(scenario: &MockScenario, observation_payloads: &[Value]) -> Value {
     let total_rounds = scenario.worker_task_rounds.max(1);
     let summaries = extract_swarm_wait_summaries(observation_payloads);
-    let completed_rounds = summaries.len();
+    let completed_rounds = summaries
+        .iter()
+        .filter(|summary| summary.all_finished)
+        .count();
+
+    if let Some(summary) = summaries.last().copied() {
+        if summary.has_runs && !summary.all_finished {
+            let wait_args = json!({
+                "action": "wait",
+                "runIds": extract_latest_swarm_wait_run_ids(observation_payloads),
+                "waitSeconds": scenario.mother_wait_s,
+                "pollIntervalSeconds": 0.2
+            });
+            return openai_chat_response(
+                &format!(
+                    "Mother preset waiting: swarm round {}/{} still running. state={} success={}/{} failed={} elapsed_s={:.3}.",
+                    completed_rounds + 1,
+                    total_rounds,
+                    summary.state,
+                    summary.success_total,
+                    summary.total,
+                    summary.failed_total,
+                    summary.elapsed_s
+                ),
+                Some(vec![function_tool_call("agent_swarm", &wait_args)]),
+            );
+        }
+    }
 
     if completed_rounds < total_rounds {
-        if completed_rounds > 0 {
-            if let Some(summary) = summaries.last() {
-                if !summary.all_finished {
-                    return openai_chat_response(
-                        &format!(
-                            "Mother preset final: swarm round {completed_rounds}/{total_rounds} incomplete. success={}/{} failed={} all_finished={} elapsed_s={:.3}.",
-                            summary.success_total,
-                            summary.total,
-                            summary.failed_total,
-                            summary.all_finished,
-                            summary.elapsed_s
-                        ),
-                        None,
-                    );
-                }
-            }
-        }
-
         let round = completed_rounds + 1;
         let tasks = scenario
             .worker_agent_ids
@@ -1315,6 +1324,8 @@ struct SwarmWaitSummary {
     failed_total: usize,
     all_finished: bool,
     elapsed_s: f64,
+    state: &'static str,
+    has_runs: bool,
 }
 
 fn collect_observation_payloads(messages: &[Value]) -> Vec<Value> {
@@ -1440,37 +1451,67 @@ fn extract_swarm_wait_summary(observation_payloads: &[Value]) -> Option<SwarmWai
         let Some(wait) = data.get("wait") else {
             continue;
         };
-        if !wait.is_object() {
-            continue;
-        }
-
-        let total = wait
-            .get("total")
+        let wait_data = swarm_wait_payload_data(wait);
+        let counts = wait_data.get("counts").and_then(Value::as_object);
+        let total = counts
+            .and_then(|map| map.get("total"))
             .and_then(Value::as_u64)
+            .or_else(|| wait_data.get("total").and_then(Value::as_u64))
             .or_else(|| data.get("task_total").and_then(Value::as_u64))
             .unwrap_or(0) as usize;
-        let success_total = wait
-            .get("success_total")
+        let success_total = counts
+            .and_then(|map| map.get("success"))
+            .or_else(|| wait_data.get("success_total"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        let failed_total = wait
-            .get("failed_total")
+        let failed_total = counts
+            .and_then(|map| map.get("failed"))
+            .or_else(|| wait_data.get("failed_total"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        let all_finished = wait
+        let done_total = counts
+            .and_then(|map| map.get("done"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let all_finished = wait_data
             .get("all_finished")
+            .or_else(|| wait.get("all_finished"))
             .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let elapsed_s = wait
+            .unwrap_or(total > 0 && done_total >= total);
+        let elapsed_s = wait_data
             .get("elapsed_s")
+            .or_else(|| wait.get("elapsed_s"))
             .and_then(Value::as_f64)
             .unwrap_or_default();
+        let state = wait
+            .get("state")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown");
+        let has_runs = wait_data
+            .get("run_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
+            });
         return Some(SwarmWaitSummary {
             total,
             success_total,
             failed_total,
             all_finished,
             elapsed_s,
+            state: match state {
+                "completed" => "completed",
+                "partial" => "partial",
+                "timeout" => "timeout",
+                "running" => "running",
+                "error" => "error",
+                _ => "unknown",
+            },
+            has_runs,
         });
     }
     None
@@ -1485,40 +1526,99 @@ fn extract_swarm_wait_summaries(observation_payloads: &[Value]) -> Vec<SwarmWait
         let Some(wait) = data.get("wait") else {
             continue;
         };
-        if !wait.is_object() {
-            continue;
-        }
-
-        let total = wait
-            .get("total")
+        let wait_data = swarm_wait_payload_data(wait);
+        let counts = wait_data.get("counts").and_then(Value::as_object);
+        let total = counts
+            .and_then(|map| map.get("total"))
             .and_then(Value::as_u64)
+            .or_else(|| wait_data.get("total").and_then(Value::as_u64))
             .or_else(|| data.get("task_total").and_then(Value::as_u64))
             .unwrap_or(0) as usize;
-        let success_total = wait
-            .get("success_total")
+        let success_total = counts
+            .and_then(|map| map.get("success"))
+            .or_else(|| wait_data.get("success_total"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        let failed_total = wait
-            .get("failed_total")
+        let failed_total = counts
+            .and_then(|map| map.get("failed"))
+            .or_else(|| wait_data.get("failed_total"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        let all_finished = wait
+        let done_total = counts
+            .and_then(|map| map.get("done"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let all_finished = wait_data
             .get("all_finished")
+            .or_else(|| wait.get("all_finished"))
             .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let elapsed_s = wait
+            .unwrap_or(total > 0 && done_total >= total);
+        let elapsed_s = wait_data
             .get("elapsed_s")
+            .or_else(|| wait.get("elapsed_s"))
             .and_then(Value::as_f64)
             .unwrap_or_default();
+        let state = wait
+            .get("state")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown");
+        let has_runs = wait_data
+            .get("run_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
+            });
         summaries.push(SwarmWaitSummary {
             total,
             success_total,
             failed_total,
             all_finished,
             elapsed_s,
+            state: match state {
+                "completed" => "completed",
+                "partial" => "partial",
+                "timeout" => "timeout",
+                "running" => "running",
+                "error" => "error",
+                _ => "unknown",
+            },
+            has_runs,
         });
     }
     summaries
+}
+
+fn swarm_wait_payload_data(wait: &Value) -> &Value {
+    wait.get("data").unwrap_or(wait)
+}
+
+fn extract_latest_swarm_wait_run_ids(observation_payloads: &[Value]) -> Vec<String> {
+    for payload in observation_payloads.iter().rev() {
+        let Some(wait) = payload.get("data").and_then(|data| data.get("wait")) else {
+            continue;
+        };
+        let run_ids = swarm_wait_payload_data(wait)
+            .get("run_ids")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !run_ids.is_empty() {
+            return run_ids;
+        }
+    }
+    Vec::new()
 }
 
 fn seed_swarm_workspace(
@@ -1693,6 +1793,45 @@ async fn wait_until_no_active_runs(
             apply_cancel_signal(state, run_control);
         }
 
+        let mother_session_id = run_control.mother_session_id.lock().clone();
+        let (team_runs, _) = if let Some(ref mother_session_id) = mother_session_id {
+            state
+                .user_store
+                .list_team_runs(user_id, None, Some(mother_session_id), 0, 4096)?
+        } else {
+            (Vec::new(), 0)
+        };
+        let mut active_team_runs = 0usize;
+        let mut active_team_tasks = 0usize;
+        let mut active_session_runs = 0usize;
+        for run in team_runs {
+            if !is_terminal_swarm_team_status(&run.status) {
+                active_team_runs += 1;
+            }
+            for task in state.user_store.list_team_tasks(&run.team_run_id)? {
+                let task_terminal = is_terminal_swarm_task_status(&task.status);
+                if !task_terminal {
+                    active_team_tasks += 1;
+                }
+                if let Some(session_run_id) = task
+                    .session_run_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some(record) = state.user_store.get_session_run(session_run_id)? {
+                        if !is_terminal_swarm_session_run_status(&record.status) {
+                            active_session_runs += 1;
+                        }
+                    } else if !task_terminal {
+                        active_session_runs += 1;
+                    }
+                } else if !task_terminal {
+                    active_session_runs += 1;
+                }
+            }
+        }
+
         let active_locks = state.user_store.list_session_locks_by_user(user_id)?.len();
         let active_sessions = state
             .monitor
@@ -1708,7 +1847,12 @@ async fn wait_until_no_active_runs(
             })
             .count();
 
-        if active_locks == 0 && active_sessions == 0 {
+        if active_locks == 0
+            && active_sessions == 0
+            && active_team_runs == 0
+            && active_team_tasks == 0
+            && active_session_runs == 0
+        {
             if cancelled {
                 return Err(cancelled_error());
             }
@@ -1716,7 +1860,7 @@ async fn wait_until_no_active_runs(
         }
         if Instant::now() >= deadline {
             return Err(anyhow!(
-                "timed out waiting active runs to settle, active_locks={active_locks}, active_sessions={active_sessions}"
+                "timed out waiting active runs to settle, active_locks={active_locks}, active_sessions={active_sessions}, active_team_runs={active_team_runs}, active_team_tasks={active_team_tasks}, active_session_runs={active_session_runs}"
             ));
         }
         sleep(Duration::from_millis(poll_ms)).await;
@@ -1739,8 +1883,16 @@ fn build_report(
     mother_result: &crate::schemas::WunderResponse,
     mock_state: &MockLlmState,
 ) -> Result<FlowReport> {
-    let mut worker_session_rows =
-        worker_sessions_from_mother_tool_result(state, mother_session_id, worker_agent_ids);
+    let mut worker_session_rows = load_worker_session_rows_from_team_tasks(
+        state,
+        user_id,
+        mother_session_id,
+        worker_agent_ids,
+    )?;
+    if worker_session_rows.is_empty() {
+        worker_session_rows =
+            worker_sessions_from_mother_tool_result(state, mother_session_id, worker_agent_ids);
+    }
     if worker_session_rows.is_empty() {
         let (worker_sessions, _) =
             state
@@ -1931,6 +2083,66 @@ fn load_session_runs_from_team_tasks(
     }
     output.sort_by(|left, right| left.queued_time.total_cmp(&right.queued_time));
     Ok(output)
+}
+
+fn load_worker_session_rows_from_team_tasks(
+    state: &AppState,
+    user_id: &str,
+    mother_session_id: &str,
+    worker_agent_ids: &[String],
+) -> Result<Vec<WorkerSessionRow>> {
+    let (team_runs, _) =
+        state
+            .user_store
+            .list_team_runs(user_id, None, Some(mother_session_id), 0, 4096)?;
+    if team_runs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let expected_agents = worker_agent_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut rows = Vec::new();
+    let mut seen_sessions = HashSet::new();
+
+    for run in team_runs {
+        for task in state.user_store.list_team_tasks(&run.team_run_id)? {
+            let agent_id = task.agent_id.trim();
+            if agent_id.is_empty() || !expected_agents.contains(agent_id) {
+                continue;
+            }
+
+            let mut session_id = task
+                .target_session_id
+                .clone()
+                .or(task.spawned_session_id.clone())
+                .unwrap_or_default();
+            if session_id.trim().is_empty() {
+                if let Some(session_run_id) = task
+                    .session_run_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some(session_run) = state.user_store.get_session_run(session_run_id)? {
+                        session_id = session_run.session_id;
+                    }
+                }
+            }
+            let session_id = session_id.trim();
+            if session_id.is_empty() || !seen_sessions.insert(session_id.to_string()) {
+                continue;
+            }
+            rows.push(WorkerSessionRow {
+                session_id: session_id.to_string(),
+                agent_id: agent_id.to_string(),
+            });
+        }
+    }
+
+    rows.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+    Ok(rows)
 }
 
 fn load_session_runs_from_monitor(state: &AppState, user_id: &str) -> Result<Vec<SessionRunRow>> {
@@ -2281,14 +2493,38 @@ fn normalize_status(status: String) -> String {
     }
 }
 
+fn is_terminal_swarm_team_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "completed" | "failed" | "cancelled" | "timeout" | "error"
+    )
+}
+
+fn is_terminal_swarm_task_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "success" | "failed" | "error" | "cancelled" | "timeout"
+    )
+}
+
+fn is_terminal_swarm_session_run_status(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "success" | "failed" | "error" | "cancelled" | "timeout"
+    )
+}
+
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{worker_session_rows_from_tool_items, WorkerSessionRow};
-    use serde_json::json;
+    use super::{
+        extract_latest_swarm_wait_run_ids, extract_swarm_wait_summary, mother_mock_response,
+        worker_session_rows_from_tool_items, MockScenario, WorkerSessionRow,
+    };
+    use serde_json::{json, Value};
 
     #[test]
     fn worker_session_rows_support_new_target_fields() {
@@ -2363,5 +2599,139 @@ mod tests {
                 session_id: "sess_worker_a".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn extract_swarm_wait_summary_supports_nested_wait_data_counts() {
+        let summary = extract_swarm_wait_summary(&[json!({
+            "data": {
+                "wait": {
+                    "state": "running",
+                    "data": {
+                        "counts": {
+                            "total": 2,
+                            "success": 1,
+                            "failed": 0,
+                            "done": 1
+                        },
+                        "elapsed_s": 1.25,
+                        "run_ids": ["run_worker_a", "run_worker_b"]
+                    }
+                }
+            }
+        })])
+        .expect("nested wait summary");
+
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.success_total, 1);
+        assert_eq!(summary.failed_total, 0);
+        assert!(!summary.all_finished);
+        assert_eq!(summary.elapsed_s, 1.25);
+        assert_eq!(summary.state, "running");
+        assert!(summary.has_runs);
+    }
+
+    #[test]
+    fn extract_swarm_wait_summary_derives_finished_flag_from_done_count() {
+        let summary = extract_swarm_wait_summary(&[json!({
+            "data": {
+                "wait": {
+                    "state": "completed",
+                    "data": {
+                        "counts": {
+                            "total": 2,
+                            "success": 2,
+                            "failed": 0,
+                            "done": 2
+                        },
+                        "elapsed_s": 0.42,
+                        "run_ids": ["run_worker_a", "run_worker_b"]
+                    }
+                }
+            }
+        })])
+        .expect("completed wait summary");
+
+        assert!(summary.all_finished);
+        assert_eq!(summary.state, "completed");
+    }
+
+    #[test]
+    fn extract_latest_swarm_wait_run_ids_supports_nested_wait_data() {
+        let run_ids = extract_latest_swarm_wait_run_ids(&[
+            json!({
+                "data": {
+                    "wait": {
+                        "state": "running",
+                        "data": {
+                            "run_ids": []
+                        }
+                    }
+                }
+            }),
+            json!({
+                "data": {
+                    "wait": {
+                        "state": "running",
+                        "data": {
+                            "run_ids": ["run_worker_a", "run_worker_b"]
+                        }
+                    }
+                }
+            }),
+        ]);
+
+        assert_eq!(
+            run_ids,
+            vec!["run_worker_a".to_string(), "run_worker_b".to_string()]
+        );
+    }
+
+    #[test]
+    fn mother_mock_response_rewaits_when_latest_swarm_wait_is_still_running() {
+        let scenario = MockScenario {
+            worker_agent_ids: vec!["worker_a".to_string(), "worker_b".to_string()],
+            mother_wait_s: 12.5,
+            worker_task_rounds: 1,
+            run_seed: 7,
+        };
+        let response = mother_mock_response(
+            &scenario,
+            &[json!({
+                "data": {
+                    "wait": {
+                        "state": "running",
+                        "data": {
+                            "counts": {
+                                "total": 2,
+                                "success": 1,
+                                "failed": 0,
+                                "done": 1
+                            },
+                            "elapsed_s": 1.25,
+                            "run_ids": ["run_worker_a", "run_worker_b"]
+                        }
+                    }
+                }
+            })],
+        );
+
+        assert_eq!(
+            response
+                .pointer("/choices/0/message/tool_calls/0/function/name")
+                .and_then(Value::as_str),
+            Some("agent_swarm")
+        );
+        let args_text = response
+            .pointer("/choices/0/message/tool_calls/0/function/arguments")
+            .and_then(Value::as_str)
+            .expect("wait arguments");
+        let args: Value = serde_json::from_str(args_text).expect("parse wait args");
+        assert_eq!(args.get("action").and_then(Value::as_str), Some("wait"));
+        assert_eq!(
+            args.get("runIds").and_then(Value::as_array),
+            Some(&vec![json!("run_worker_a"), json!("run_worker_b")])
+        );
+        assert_eq!(args.get("waitSeconds").and_then(Value::as_f64), Some(12.5));
     }
 }

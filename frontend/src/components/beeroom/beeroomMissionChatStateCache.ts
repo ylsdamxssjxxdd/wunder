@@ -213,3 +213,12 @@ export const setBeeroomMissionChatState = (
   }
   persistCache();
 };
+
+export const clearBeeroomMissionChatState = (scopeKey: unknown) => {
+  hydrateCache();
+  const key = normalizeScopeKey(scopeKey);
+  if (!missionChatStateCache.delete(key)) {
+    return;
+  }
+  persistCache();
+};

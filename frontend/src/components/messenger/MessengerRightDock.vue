@@ -43,7 +43,7 @@
       >
         <div class="messenger-right-section-title messenger-right-section-title--with-actions">
           <span class="messenger-right-section-title-main">
-            <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+            <i class="fa-solid fa-book" aria-hidden="true"></i>
             <span>技能 skill</span>
           </span>
         </div>

@@ -286,6 +286,16 @@ const setCachedDispatchPreview = (
   persistDispatchPreviewCache();
 };
 
+export const clearCachedDispatchPreview = (sessionId: string) => {
+  hydrateDispatchPreviewCache();
+  const normalizedSessionId = normalizeText(sessionId);
+  if (!normalizedSessionId) return;
+  if (!dispatchPreviewCache.delete(normalizedSessionId)) {
+    return;
+  }
+  persistDispatchPreviewCache();
+};
+
 const resolveEventName = (event: SessionEventRecord): string =>
   normalizeText(event?.event ?? event?.type).toLowerCase();
 

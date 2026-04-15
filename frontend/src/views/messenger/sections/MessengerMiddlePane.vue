@@ -5,7 +5,37 @@
   </header>
 
   <div v-if="showMiddlePaneSearch" class="messenger-search-row">
-    <label class="messenger-search">
+    <el-dropdown
+      v-if="activeSection === 'agents'"
+      trigger="click"
+      placement="bottom-start"
+      @command="handleAgentFilterCommand"
+    >
+      <button class="messenger-search messenger-search-select" type="button">
+        <i class="fa-solid fa-hexagon-nodes" aria-hidden="true"></i>
+        <span>{{ selectedAgentHiveGroupLabel }}</span>
+        <i class="fa-solid fa-chevron-down messenger-search-select-caret" aria-hidden="true"></i>
+      </button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item command="__all__">
+            {{ t('messenger.agents.hiveAll') }}
+          </el-dropdown-item>
+          <el-dropdown-item
+            v-for="row in agentHiveTreeRows"
+            :key="`agent-filter-${row.id}`"
+            :command="`hive:${row.id}`"
+          >
+            {{ row.label }}
+          </el-dropdown-item>
+          <el-dropdown-item divided command="__search__">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            {{ t('common.search') }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
+    <label v-if="activeSection !== 'agents' || agentSearchMode === 'search'" class="messenger-search">
       <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
       <input
         :value="keyword"
@@ -16,6 +46,16 @@
         @input="updateKeyword(($event.target as HTMLInputElement).value)"
       />
     </label>
+    <button
+      v-if="activeSection === 'agents' && agentSearchMode === 'search'"
+      class="messenger-plus-btn"
+      type="button"
+      :title="t('common.clear')"
+      :aria-label="t('common.clear')"
+      @click="closeAgentSearchMode"
+    >
+      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+    </button>
     <el-dropdown
       v-if="activeSection === 'swarms'"
       trigger="click"
@@ -639,7 +679,7 @@
         type="button"
         @click="selectToolCategory('skills')"
       >
-        <div class="messenger-list-avatar"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></div>
+        <div class="messenger-list-avatar"><i class="fa-solid fa-book" aria-hidden="true"></i></div>
         <div class="messenger-list-main">
           <div class="messenger-list-row">
             <span class="messenger-list-name">{{ t('toolManager.system.skills') }}</span>
@@ -943,6 +983,7 @@ const swarmEditDeleting = ref(false);
 const swarmEditingGroup = ref<Record<string, any> | null>(null);
 const packOverlayMode = ref<'import' | 'export'>('export');
 const packOverlayTargetName = ref('');
+const agentSearchMode = ref<'filter' | 'search'>('filter');
 const selectedAgentIds = ref<string[]>([]);
 const agentSelectionAnchorId = ref('');
 const agentContextMenuVisible = ref(false);
@@ -1065,7 +1106,8 @@ const {
   handleSettingsLogout,
   moveMessageItem,
   moveAgentItem,
-  moveSwarmItem
+  moveSwarmItem,
+  afterHivePackImported
 } = defineProps<{
   activeSection: string;
   activeSectionTitle: string;
@@ -1154,6 +1196,7 @@ const {
   moveMessageItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
   moveAgentItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
   moveSwarmItem: (draggedKey: string, targetKey: string, position: 'before' | 'after', visibleKeys: string[]) => void;
+  afterHivePackImported?: (job: unknown) => void | Promise<void>;
 }>();
 
 
@@ -1189,6 +1232,19 @@ const orderedPrimaryAgents = computed(() =>
     };
   })
 );
+
+const selectedAgentHiveGroupLabel = computed(() => {
+  if (agentSearchMode.value === 'search') {
+    return t('common.search');
+  }
+  if (!selectedAgentHiveGroupId) {
+    return t('messenger.agents.hiveAll');
+  }
+  const matched = (Array.isArray(agentHiveTreeRows) ? agentHiveTreeRows : []).find(
+    (row) => String(row?.id || '').trim() === String(selectedAgentHiveGroupId || '').trim()
+  );
+  return String(matched?.label || t('messenger.agents.hiveAll')).trim();
+});
 
 const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
 const showMiddlePaneSearch = computed(
@@ -1673,6 +1729,7 @@ watch(
     resetDragState();
     if (value !== 'agents') {
       clearAgentSelection();
+      agentSearchMode.value = 'filter';
     }
   }
 );
@@ -1700,6 +1757,28 @@ const emit = defineEmits<{
 
 const updateKeyword = (value: string) => {
   emit('update:keyword', value);
+};
+
+const handleAgentFilterCommand = (command: string | number | Record<string, unknown>) => {
+  const normalized = String(command || '').trim();
+  if (normalized === '__search__') {
+    agentSearchMode.value = 'search';
+    return;
+  }
+  agentSearchMode.value = 'filter';
+  updateKeyword('');
+  if (normalized === '__all__') {
+    updateSelectedAgentHiveGroupId('');
+    return;
+  }
+  if (normalized.startsWith('hive:')) {
+    updateSelectedAgentHiveGroupId(normalized.slice(5));
+  }
+};
+
+const closeAgentSearchMode = () => {
+  agentSearchMode.value = 'filter';
+  updateKeyword('');
 };
 
 const updateSelectedContactUnitId = (value: string) => {
@@ -2023,6 +2102,7 @@ const handleSwarmPackFileChange = async (event: Event) => {
     const importedName = String(job?.report?.hive_name || '').trim() || file.name;
     const renamedTotal = resolveImportRenameTotal(job?.report);
     if (status === 'completed') {
+      await Promise.resolve(afterHivePackImported?.(job));
       if (renamedTotal > 0) {
         ElMessage.success(
           t('beeroom.pack.message.importSuccessRenamed', {
@@ -2124,6 +2204,27 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.messenger-search-select {
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-search-select span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-search-select-caret {
+  color: rgba(100, 116, 139, 0.88);
+  font-size: 12px;
 }
 </style>
 

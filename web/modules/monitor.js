@@ -1056,10 +1056,10 @@ const resolveToolIcon = (name, category) => {
     return "fa-plug";
   }
   if (category === "knowledge") {
-    return "fa-book";
+    return "fa-database";
   }
   if (category === "skill") {
-    return "fa-wand-magic-sparkles";
+    return "fa-book";
   }
   if (category === "user" || category === "shared") {
     return "fa-wrench";
@@ -1118,7 +1118,7 @@ const resolveToolIcon = (name, category) => {
     matchesToolKeyword(lowerName, normalizedName, "知识") ||
     matchesToolKeyword(lowerName, normalizedName, "knowledge")
   ) {
-    return "fa-book";
+    return "fa-database";
   }
   if (
     matchesToolKeyword(lowerName, normalizedName, "最终回复") ||

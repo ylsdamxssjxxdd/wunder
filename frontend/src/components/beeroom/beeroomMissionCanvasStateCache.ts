@@ -207,3 +207,12 @@ export const mergeBeeroomMissionCanvasState = (
       nextPatch.viewport !== undefined ? cloneViewport(nextPatch.viewport || null) : current.viewport
   });
 };
+
+export const clearBeeroomMissionCanvasState = (scopeKey: unknown) => {
+  hydrateMissionCanvasStateCache();
+  const key = normalizeScopeKey(scopeKey);
+  if (!missionCanvasStateCache.delete(key)) {
+    return;
+  }
+  persistMissionCanvasStateCache();
+};

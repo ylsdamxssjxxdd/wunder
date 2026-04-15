@@ -245,6 +245,12 @@ pub(crate) fn tool_result_field<'a>(value: &'a Value, key: &str) -> Option<&'a V
     tool_result_data(value).get(key).or_else(|| value.get(key))
 }
 
+fn tool_result_field_or_null(value: &Value, key: &str) -> Value {
+    tool_result_field(value, key)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
 fn compact_cron_jobs(value: &Value) -> Value {
     let Some(items) = value.as_array() else {
         return Value::Array(Vec::new());
@@ -3030,8 +3036,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     while let Some((index, result)) = dispatches.next().await {
         match result {
             Ok(result) => {
-                let run_id = result
-                    .get("run_id")
+                let run_id = tool_result_field(&result, "run_id")
                     .and_then(Value::as_str)
                     .map(str::trim)
                     .unwrap_or("")
@@ -3048,22 +3053,19 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                             }
                         }
                     }
-                    let status = result
-                        .get("status")
+                    let status = tool_result_field(&result, "status")
                         .and_then(Value::as_str)
                         .map(str::trim)
                         .unwrap_or("accepted")
                         .to_ascii_lowercase();
                     if status == "error" && run_id.is_empty() {
                         task_record.status = "error".to_string();
-                        task_record.error = result
-                            .get("error")
+                        task_record.error = tool_result_field(&result, "error")
                             .and_then(Value::as_str)
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
                             .map(truncate_tool_result_text);
-                        task_record.elapsed_s = result
-                            .get("elapsed_s")
+                        task_record.elapsed_s = tool_result_field(&result, "elapsed_s")
                             .and_then(Value::as_f64)
                             .filter(|value| value.is_finite() && *value >= 0.0);
                     }
@@ -3074,30 +3076,32 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     context.storage.upsert_team_task(task_record)?;
                     emit_swarm_task_updated(context, &run_record, task_record);
                 }
-                let task_id = result.get("task_id").cloned().unwrap_or_else(|| {
-                    task_records_by_index
-                        .get(&index)
-                        .map(|item| json!(item.task_id))
-                        .unwrap_or(Value::Null)
-                });
+                let task_id = tool_result_field(&result, "task_id")
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        task_records_by_index
+                            .get(&index)
+                            .map(|item| json!(item.task_id))
+                            .unwrap_or(Value::Null)
+                    });
                 let mut item = json!({
                     "index": index,
-                    "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
+                    "status": tool_result_field(&result, "status")
+                        .cloned()
+                        .unwrap_or_else(|| json!("accepted")),
                     "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
-                    "target_agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
-                    "target_agent_name": result.get("agent_name").cloned().unwrap_or(Value::Null),
-                    "target_session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                    "target_agent_id": tool_result_field_or_null(&result, "agent_id"),
+                    "target_agent_name": tool_result_field_or_null(&result, "agent_name"),
+                    "target_session_id": tool_result_field_or_null(&result, "session_id"),
                     "task_id": task_id,
-                    "created_session": result
-                        .get("created_session")
+                    "created_session": tool_result_field(&result, "created_session")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
-                    "thread_strategy": result
-                        .get("thread_strategy")
+                    "thread_strategy": tool_result_field(&result, "thread_strategy")
                         .cloned()
                         .unwrap_or_else(|| json!(shared_thread_strategy.as_tool_value())),
                 });
-                if let Some(error) = result.get("error") {
+                if let Some(error) = tool_result_field(&result, "error") {
                     if let Value::Object(ref mut map) = item {
                         map.insert("error".to_string(), error.clone());
                     }
@@ -11567,6 +11571,53 @@ PATCH"#;
         .expect("parse canonical wait args");
         assert_eq!(payload.run_ids, Some(vec!["run_demo_1".to_string()]));
         assert_eq!(payload.wait_seconds, Some(3.0));
+    }
+
+    #[test]
+    fn tool_result_field_reads_nested_data_before_top_level() {
+        let result = json!({
+            "status": "top-level-status",
+            "data": {
+                "status": "accepted",
+                "run_id": "run_worker_a",
+                "agent_id": "worker_a",
+                "agent_name": "Worker A",
+                "session_id": "sess_worker_a",
+                "created_session": true,
+                "thread_strategy": "main_thread",
+                "error": "nested error"
+            }
+        });
+
+        assert_eq!(
+            tool_result_field(&result, "status").and_then(Value::as_str),
+            Some("accepted")
+        );
+        assert_eq!(
+            tool_result_field(&result, "run_id").and_then(Value::as_str),
+            Some("run_worker_a")
+        );
+        assert_eq!(
+            tool_result_field(&result, "agent_id").and_then(Value::as_str),
+            Some("worker_a")
+        );
+        assert_eq!(
+            tool_result_field(&result, "session_id").and_then(Value::as_str),
+            Some("sess_worker_a")
+        );
+        assert_eq!(
+            tool_result_field(&result, "created_session").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            tool_result_field_or_null(&result, "thread_strategy").as_str(),
+            Some("main_thread")
+        );
+        assert_eq!(tool_result_field_or_null(&result, "missing"), Value::Null);
+        assert_eq!(
+            tool_result_field(&result, "error").and_then(Value::as_str),
+            Some("nested error")
+        );
     }
 
     #[test]
