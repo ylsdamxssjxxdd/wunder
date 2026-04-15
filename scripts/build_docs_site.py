@@ -4,6 +4,7 @@ import html
 import json
 import re
 import shutil
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ DOCS_SOURCE_DIR = REPO_ROOT / "docs" / "使用说明书"
 SITE_CONFIG_PATH = DOCS_SOURCE_DIR / "site.json"
 SITE_ASSET_DIR = Path(__file__).resolve().parent / "docs_site"
 OUTPUT_DIR = REPO_ROOT / "web" / "docs"
+DESKTOP_ELECTRON_DOCS_OUTPUT_DIR = REPO_ROOT / "desktop" / "electron" / "resources" / "frontend-dist" / "docs"
 GENERATOR_NAME = "wunder-static-docs-v1"
 ROOT_GENERATED_FILES = [
     "index.html",
@@ -55,6 +57,16 @@ def inline_json(data: Any) -> str:
 
 def pretty_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def compute_asset_version(*paths: Path) -> str:
+    digest = hashlib.sha256()
+    for path in paths:
+        if not path.exists():
+            continue
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:12] or "dev"
 
 
 def parse_scalar(raw: str) -> Any:
@@ -332,7 +344,7 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
     return pages, page_order, resolved_languages
 
 
-def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
+def render_page_html(site_meta: dict[str, Any], page: dict[str, Any], asset_version: str) -> str:
     page_data = {
         "slug": page["slug"],
         "language": page["language"],
@@ -364,8 +376,8 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{page_title}</title>
   <meta name="description" content="{description}">
-  <link rel="stylesheet" href="/docs/site.css">
-  <script type="module" src="/docs/site.js"></script>
+  <link rel="stylesheet" href="/docs/site.css?v={asset_version}">
+  <script type="module" src="/docs/site.js?v={asset_version}"></script>
 </head>
 <body>
   <div class="docs-app">
@@ -479,6 +491,13 @@ def copy_docs_assets() -> None:
         shutil.copy2(source_path, target_path)
 
 
+def sync_desktop_docs_output() -> None:
+    if not OUTPUT_DIR.exists():
+        return
+    DESKTOP_ELECTRON_DOCS_OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(OUTPUT_DIR, DESKTOP_ELECTRON_DOCS_OUTPUT_DIR, dirs_exist_ok=True)
+
+
 def build() -> None:
     site_config = load_json(SITE_CONFIG_PATH)
     pages, page_order, resolved_languages = load_pages(site_config)
@@ -498,9 +517,10 @@ def build() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     copy_site_assets()
     copy_docs_assets()
+    asset_version = compute_asset_version(OUTPUT_DIR / "site.js", OUTPUT_DIR / "site.css")
 
     for page in pages.values():
-        write_text(OUTPUT_DIR / page["output_path"], render_page_html(site_meta, page))
+        write_text(OUTPUT_DIR / page["output_path"], render_page_html(site_meta, page, asset_version))
 
     generated_paths = [*ROOT_GENERATED_FILES, *[item["language"] for item in resolved_languages]]
     manifest = {
@@ -549,6 +569,7 @@ def build() -> None:
 
     write_text(OUTPUT_DIR / "manifest.json", pretty_json(manifest))
     write_text(OUTPUT_DIR / "search.json", pretty_json(search_entries))
+    sync_desktop_docs_output()
     print(f"Built docs site: {len(pages)} pages -> {OUTPUT_DIR}")
 
 

@@ -16,12 +16,14 @@ import { computed, onMounted, watch } from 'vue';
 
 import { resolveApiBase } from '@/config/runtime';
 
+const DOCS_SITE_VERSION = '20260415-01';
+
 const emit = defineEmits<{
   'loading-change': [loading: boolean];
 }>();
 
 const docsSiteSrc = computed(() => {
-  const fallback = '/docs/?embed=user';
+  const fallback = `/docs/?embed=user&v=${DOCS_SITE_VERSION}`;
   const apiBase = String(resolveApiBase() || '').trim();
   if (!apiBase) {
     return fallback;
@@ -31,7 +33,7 @@ const docsSiteSrc = computed(() => {
   }
   try {
     const url = new URL(apiBase);
-    return `${url.origin}/docs/?embed=user`;
+    return `${url.origin}/docs/?embed=user&v=${DOCS_SITE_VERSION}`;
   } catch {
     return fallback;
   }

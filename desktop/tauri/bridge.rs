@@ -11,7 +11,7 @@ use axum::{Extension, Json, Router};
 use serde::Serialize;
 use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::oneshot;
@@ -121,7 +121,9 @@ impl DesktopBridge {
             .route("/wunder/desktop/bootstrap", get(bootstrap_handler));
 
         if let Some(frontend_root) = runtime.frontend_root.as_ref() {
-            app = app.merge(build_frontend_router(frontend_root));
+            let docs_root =
+                resolve_docs_root(&runtime).unwrap_or_else(|| frontend_root.join("docs"));
+            app = app.merge(build_frontend_router(frontend_root, &docs_root));
         } else {
             app = app
                 .route("/", get(frontend_missing_handler))
@@ -278,7 +280,22 @@ fn inject_script_before_head_end(template: &str, script: &str) -> String {
     format!("{script}\n{template}")
 }
 
-fn build_frontend_router(frontend_root: &Path) -> Router {
+fn resolve_docs_root(runtime: &DesktopRuntime) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    candidates.push(runtime.repo_root.join("web/docs"));
+    if let Some(frontend_root) = runtime.frontend_root.as_ref() {
+        candidates.push(frontend_root.join("docs"));
+    }
+    candidates.push(runtime.repo_root.join("frontend-dist/docs"));
+    candidates.push(runtime.app_dir.join("frontend-dist/docs"));
+    candidates.push(runtime.app_dir.join("resources/frontend-dist/docs"));
+    if let Some(parent) = runtime.app_dir.parent() {
+        candidates.push(parent.join("Resources/frontend-dist/docs"));
+    }
+    candidates.into_iter().find(|candidate| candidate.is_dir())
+}
+
+fn build_frontend_router(frontend_root: &Path, docs_root: &Path) -> Router {
     Router::new()
         .route(
             "/favicon.svg",
@@ -294,7 +311,7 @@ fn build_frontend_router(frontend_root: &Path) -> Router {
         )
         .nest_service(
             "/docs",
-            ServeDir::new(frontend_root.join("docs")).append_index_html_on_directories(true),
+            ServeDir::new(docs_root).append_index_html_on_directories(true),
         )
         .nest_service("/assets", ServeDir::new(frontend_root.join("assets")))
         .nest_service("/third", ServeDir::new(frontend_root.join("third")))
