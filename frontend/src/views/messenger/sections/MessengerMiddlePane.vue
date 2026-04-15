@@ -5,37 +5,33 @@
   </header>
 
   <div v-if="showMiddlePaneSearch" class="messenger-search-row">
-    <el-dropdown
-      v-if="activeSection === 'agents'"
-      trigger="click"
-      placement="bottom-start"
-      @command="handleAgentFilterCommand"
-    >
-      <button class="messenger-search messenger-search-select" type="button">
-        <i class="fa-solid fa-hexagon-nodes" aria-hidden="true"></i>
-        <span>{{ selectedAgentHiveGroupLabel }}</span>
-        <i class="fa-solid fa-chevron-down messenger-search-select-caret" aria-hidden="true"></i>
-      </button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item command="__all__">
-            {{ t('messenger.agents.hiveAll') }}
-          </el-dropdown-item>
-          <el-dropdown-item
-            v-for="row in agentHiveTreeRows"
-            :key="`agent-filter-${row.id}`"
-            :command="`hive:${row.id}`"
-          >
-            {{ row.label }}
-          </el-dropdown-item>
-          <el-dropdown-item divided command="__search__">
-            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-            {{ t('common.search') }}
-          </el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
-    <label v-if="activeSection !== 'agents' || agentSearchMode === 'search'" class="messenger-search">
+    <div v-if="activeSection === 'agents'" class="messenger-search-slot">
+      <el-dropdown
+        trigger="click"
+        placement="bottom-start"
+        @command="handleAgentFilterCommand"
+      >
+        <button class="messenger-search messenger-search-select" type="button">
+          <span class="messenger-search-select-label">{{ selectedAgentHiveGroupLabel }}</span>
+          <i class="fa-solid fa-chevron-down messenger-search-select-caret" aria-hidden="true"></i>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="__all__">
+              {{ t('messenger.agents.hiveAll') }}
+            </el-dropdown-item>
+            <el-dropdown-item
+              v-for="row in agentHiveTreeRows"
+              :key="`agent-filter-${row.id}`"
+              :command="`hive:${row.id}`"
+            >
+              {{ row.label }}
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+    </div>
+    <label v-if="activeSection !== 'agents'" class="messenger-search">
       <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
       <input
         :value="keyword"
@@ -46,16 +42,6 @@
         @input="updateKeyword(($event.target as HTMLInputElement).value)"
       />
     </label>
-    <button
-      v-if="activeSection === 'agents' && agentSearchMode === 'search'"
-      class="messenger-plus-btn"
-      type="button"
-      :title="t('common.clear')"
-      :aria-label="t('common.clear')"
-      @click="closeAgentSearchMode"
-    >
-      <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-    </button>
     <el-dropdown
       v-if="activeSection === 'swarms'"
       trigger="click"
@@ -84,27 +70,46 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
-    <el-dropdown
-      v-else-if="activeSection === 'agents'"
-      trigger="click"
-      placement="bottom-end"
-      @command="handleAgentPlusCommand"
-    >
+    <div v-if="activeSection === 'agents'" class="messenger-search-actions">
+      <el-dropdown
+        trigger="click"
+        placement="bottom-end"
+        @command="handleAgentPlusCommand"
+      >
+        <button
+          class="messenger-plus-btn"
+          type="button"
+          :title="resolvePlusActionLabel()"
+          :aria-label="resolvePlusActionLabel()"
+        >
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="create">{{ t('messenger.action.newAgent') }}</el-dropdown-item>
+            <el-dropdown-item command="import_worker_card">{{ t('portal.agent.importWorkerCard') }}</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <button
         class="messenger-plus-btn"
+        :class="{ active: agentOverviewMode === 'grid' }"
         type="button"
-        :title="resolvePlusActionLabel()"
-        :aria-label="resolvePlusActionLabel()"
+        :title="
+          agentOverviewMode === 'grid'
+            ? t('messenger.agent.listView')
+            : t('messenger.agent.gridView')
+        "
+        :aria-label="
+          agentOverviewMode === 'grid'
+            ? t('messenger.agent.listView')
+            : t('messenger.agent.gridView')
+        "
+        @click="toggleAgentOverviewMode"
       >
-        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+        <i class="fa-solid fa-table-cells-large" aria-hidden="true"></i>
       </button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item command="create">{{ t('messenger.action.newAgent') }}</el-dropdown-item>
-          <el-dropdown-item command="import_worker_card">{{ t('portal.agent.importWorkerCard') }}</el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
+    </div>
     <button
       v-else-if="activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace"
       class="messenger-plus-btn"
@@ -114,25 +119,6 @@
       @click="handlePlusAction"
     >
       <i class="fa-solid fa-plus" aria-hidden="true"></i>
-    </button>
-    <button
-      v-if="activeSection === 'agents'"
-      class="messenger-plus-btn"
-      :class="{ active: agentOverviewMode === 'grid' }"
-      type="button"
-      :title="
-        agentOverviewMode === 'grid'
-          ? t('messenger.agent.listView')
-          : t('messenger.agent.gridView')
-      "
-      :aria-label="
-        agentOverviewMode === 'grid'
-          ? t('messenger.agent.listView')
-          : t('messenger.agent.gridView')
-      "
-      @click="toggleAgentOverviewMode"
-    >
-      <i class="fa-solid fa-table-cells-large" aria-hidden="true"></i>
     </button>
   </div>
 
@@ -983,7 +969,6 @@ const swarmEditDeleting = ref(false);
 const swarmEditingGroup = ref<Record<string, any> | null>(null);
 const packOverlayMode = ref<'import' | 'export'>('export');
 const packOverlayTargetName = ref('');
-const agentSearchMode = ref<'filter' | 'search'>('filter');
 const selectedAgentIds = ref<string[]>([]);
 const agentSelectionAnchorId = ref('');
 const agentContextMenuVisible = ref(false);
@@ -1234,9 +1219,6 @@ const orderedPrimaryAgents = computed(() =>
 );
 
 const selectedAgentHiveGroupLabel = computed(() => {
-  if (agentSearchMode.value === 'search') {
-    return t('common.search');
-  }
   if (!selectedAgentHiveGroupId) {
     return t('messenger.agents.hiveAll');
   }
@@ -1729,7 +1711,6 @@ watch(
     resetDragState();
     if (value !== 'agents') {
       clearAgentSelection();
-      agentSearchMode.value = 'filter';
     }
   }
 );
@@ -1761,12 +1742,6 @@ const updateKeyword = (value: string) => {
 
 const handleAgentFilterCommand = (command: string | number | Record<string, unknown>) => {
   const normalized = String(command || '').trim();
-  if (normalized === '__search__') {
-    agentSearchMode.value = 'search';
-    return;
-  }
-  agentSearchMode.value = 'filter';
-  updateKeyword('');
   if (normalized === '__all__') {
     updateSelectedAgentHiveGroupId('');
     return;
@@ -1774,11 +1749,6 @@ const handleAgentFilterCommand = (command: string | number | Record<string, unkn
   if (normalized.startsWith('hive:')) {
     updateSelectedAgentHiveGroupId(normalized.slice(5));
   }
-};
-
-const closeAgentSearchMode = () => {
-  agentSearchMode.value = 'filter';
-  updateKeyword('');
 };
 
 const updateSelectedContactUnitId = (value: string) => {
@@ -2207,24 +2177,69 @@ const handleSwarmExport = async (group: Record<string, any>) => {
 }
 
 .messenger-search-select {
-  gap: 10px;
-  justify-content: space-between;
   min-width: 0;
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 30px 0 10px;
   text-align: left;
   cursor: pointer;
+  line-height: 34px;
+  overflow: hidden;
 }
 
-.messenger-search-select span {
-  flex: 1;
+.messenger-search-slot {
+  display: flex;
+  flex: 1 1 0;
   min-width: 0;
+}
+
+.messenger-search-slot :deep(.el-dropdown) {
+  display: flex;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.messenger-search-select-label {
+  display: block;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .messenger-search-select-caret {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  pointer-events: none;
   color: rgba(100, 116, 139, 0.88);
   font-size: 12px;
+}
+
+.messenger-search-actions {
+  flex: 0 0 68px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 68px;
+}
+
+.messenger-search-actions :deep(.el-dropdown) {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.messenger-search-actions .messenger-plus-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
 }
 </style>
 
