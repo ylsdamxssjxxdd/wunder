@@ -157,6 +157,20 @@ struct UpdateMyPreferencesRequest {
     avatar_icon: Option<String>,
     #[serde(default)]
     avatar_color: Option<String>,
+    #[serde(default)]
+    messenger_order: Option<UserMessengerOrderPreferences>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+struct UserMessengerOrderPreferences {
+    #[serde(default)]
+    messages: Vec<String>,
+    #[serde(default)]
+    agents_owned: Vec<String>,
+    #[serde(default)]
+    agents_shared: Vec<String>,
+    #[serde(default)]
+    swarms: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,6 +183,8 @@ struct UserPreferenceRecord {
     avatar_icon: String,
     #[serde(default = "default_avatar_color")]
     avatar_color: String,
+    #[serde(default)]
+    messenger_order: UserMessengerOrderPreferences,
     #[serde(default)]
     updated_at: f64,
 }
@@ -950,6 +966,9 @@ async fn update_me_preferences(
     if let Some(avatar_color) = payload.avatar_color {
         record.avatar_color = normalize_avatar_color(&avatar_color);
     }
+    if let Some(messenger_order) = payload.messenger_order {
+        record.messenger_order = messenger_order;
+    }
     normalize_user_preferences_in_place(&mut record);
 
     if record != before {
@@ -1325,6 +1344,7 @@ impl Default for UserPreferenceRecord {
             theme_palette: default_theme_palette(),
             avatar_icon: default_avatar_icon(),
             avatar_color: default_avatar_color(),
+            messenger_order: UserMessengerOrderPreferences::default(),
             updated_at: 0.0,
         }
     }
@@ -1370,9 +1390,27 @@ fn normalize_user_preferences_in_place(record: &mut UserPreferenceRecord) {
     record.theme_palette = normalize_theme_palette(&record.theme_palette);
     record.avatar_icon = normalize_avatar_icon(&record.avatar_icon);
     record.avatar_color = normalize_avatar_color(&record.avatar_color);
+    record.messenger_order.messages = normalize_string_order_list(&record.messenger_order.messages);
+    record.messenger_order.agents_owned =
+        normalize_string_order_list(&record.messenger_order.agents_owned);
+    record.messenger_order.agents_shared =
+        normalize_string_order_list(&record.messenger_order.agents_shared);
+    record.messenger_order.swarms = normalize_string_order_list(&record.messenger_order.swarms);
     if !record.updated_at.is_finite() || record.updated_at < 0.0 {
         record.updated_at = 0.0;
     }
+}
+
+fn normalize_string_order_list(items: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    for item in items {
+        let normalized = item.trim();
+        if normalized.is_empty() || result.iter().any(|existing| existing == normalized) {
+            continue;
+        }
+        result.push(normalized.to_string());
+    }
+    result
 }
 
 fn normalize_theme_mode(value: &str) -> String {

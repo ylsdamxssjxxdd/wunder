@@ -932,8 +932,27 @@
 }
 
 .messenger-list-item.is-drag-origin-hidden {
+  opacity: 1;
+  visibility: visible;
+  border-color: rgba(var(--ui-accent-rgb), 0.24);
+  background:
+    linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.08), rgba(var(--ui-accent-rgb), 0.04));
+  box-shadow: inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.1);
+  pointer-events: none;
+}
+
+.messenger-list-item.is-drag-origin-hidden > * {
   opacity: 0;
-  visibility: hidden;
+}
+
+.messenger-list-item.is-drag-origin-hidden::before {
+  content: '';
+  position: absolute;
+  inset: 8px 10px;
+  border-radius: 8px;
+  border: 1px dashed rgba(var(--ui-accent-rgb), 0.28);
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
 }
 
 .is-drag-ghost {

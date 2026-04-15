@@ -177,6 +177,7 @@
           'messenger-conversation-item--guided': isGuidedDefaultConversation(item),
           'is-running': item.kind === 'agent' && resolveAgentRuntimeState(item.agentId) === 'running',
           'is-dragging': dragState.section === 'messages' && dragState.key === resolveConversationItemKey(item),
+          'is-drag-origin-hidden': isDragOriginHidden('messages', resolveConversationItemKey(item)),
           'is-drop-before': isDropBefore('messages', index),
           'is-drop-after': isDropAfter('messages', index, displayedMixedConversations.length)
         }"
@@ -378,6 +379,7 @@
           active: selectedBeeroomGroupId === String(group.group_id || ''),
           'is-running': isBeeroomGroupRunning(group),
           'is-dragging': dragState.section === 'swarms' && dragState.key === resolveSwarmDragKey(group),
+          'is-drag-origin-hidden': isDragOriginHidden('swarms', resolveSwarmDragKey(group)),
           'is-drop-before': isDropBefore('swarms', index),
           'is-drop-after': isDropAfter('swarms', index, filteredBeeroomGroups.length)
         }"
@@ -513,6 +515,7 @@
           selected: isAgentMultiSelected(agent.agentId),
           'is-running': resolveAgentRuntimeState(agent.agentId) === 'running',
           'is-dragging': dragState.section === 'agents-primary' && dragState.key === resolveAgentDragKey(agent.agentId),
+          'is-drag-origin-hidden': isDragOriginHidden('agents-primary', resolveAgentDragKey(agent.agentId)),
           'is-drop-before': isDropBefore('agents-primary', index),
           'is-drop-after': isDropAfter('agents-primary', index, orderedPrimaryAgents.length)
         }"
@@ -556,6 +559,7 @@
           selected: isAgentMultiSelected(agent.id),
           'is-running': resolveAgentRuntimeState(agent.id) === 'running',
           'is-dragging': dragState.section === 'agents-shared' && dragState.key === resolveAgentDragKey(agent.id),
+          'is-drag-origin-hidden': isDragOriginHidden('agents-shared', resolveAgentDragKey(agent.id)),
           'is-drop-before': isDropBefore('agents-shared', index),
           'is-drop-after': isDropAfter('agents-shared', index, filteredSharedAgents.length)
         }"
@@ -959,7 +963,13 @@ const dragOverState = ref<{
   section: '',
   index: -1
 });
-let dragOriginElement: HTMLElement | null = null;
+const dragOriginHiddenState = ref<{
+  section: 'messages' | 'agents-primary' | 'agents-shared' | 'swarms' | '';
+  key: string;
+}>({
+  section: '',
+  key: ''
+});
 let dragOriginHideFrame = 0;
 
 type ContainerEntry = {
@@ -1243,17 +1253,28 @@ const resolveSwarmDragKey = (group: Record<string, unknown> | null | undefined):
 
 const resolveAgentDragKey = (agentId: unknown): string => normalizeAgentId(agentId);
 
-const clearDragOriginElement = () => {
+const clearDragOriginHiddenState = () => {
   if (typeof window !== 'undefined' && dragOriginHideFrame > 0) {
     window.cancelAnimationFrame(dragOriginHideFrame);
   }
   dragOriginHideFrame = 0;
-  dragOriginElement?.classList.remove('is-drag-origin-hidden');
-  dragOriginElement = null;
+  dragOriginHiddenState.value = { section: '', key: '' };
+};
+
+const isDragOriginHidden = (
+  section: 'messages' | 'agents-primary' | 'agents-shared' | 'swarms',
+  key: string
+): boolean => {
+  const normalizedKey = String(key || '').trim();
+  return (
+    !!normalizedKey &&
+    dragOriginHiddenState.value.section === section &&
+    dragOriginHiddenState.value.key === normalizedKey
+  );
 };
 
 const resetDragState = () => {
-  clearDragOriginElement();
+  clearDragOriginHiddenState();
   dragState.value = { section: '', key: '', sourceIndex: -1 };
   dragOverState.value = { section: '', index: -1 };
 };
@@ -1278,11 +1299,10 @@ const beginDrag = (
     event.preventDefault();
     return;
   }
-  clearDragOriginElement();
+  clearDragOriginHiddenState();
   dragState.value = { section, key: normalizedKey, sourceIndex };
   dragOverState.value = { section: '', index: -1 };
   const target = event.currentTarget as HTMLElement | null;
-  dragOriginElement = target;
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', normalizedKey);
@@ -1303,17 +1323,13 @@ const beginDrag = (
       }, 0);
     }
   }
-  if (target) {
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      dragOriginHideFrame = window.requestAnimationFrame(() => {
-        if (dragOriginElement === target) {
-          target.classList.add('is-drag-origin-hidden');
-        }
-        dragOriginHideFrame = 0;
-      });
-    } else {
-      target.classList.add('is-drag-origin-hidden');
-    }
+  if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    dragOriginHideFrame = window.requestAnimationFrame(() => {
+      dragOriginHiddenState.value = { section, key: normalizedKey };
+      dragOriginHideFrame = 0;
+    });
+  } else {
+    dragOriginHiddenState.value = { section, key: normalizedKey };
   }
 };
 
@@ -1349,16 +1365,19 @@ const commitInsertMove = (
     return;
   }
   const normalizedVisibleKeys = visibleKeys.map((key) => String(key || '').trim()).filter(Boolean);
-  const insertionIndex =
+  const rawInsertionIndex =
     dragOverState.value.section === section && dragOverState.value.index >= 0
       ? Math.min(dragOverState.value.index, normalizedVisibleKeys.length)
       : normalizedVisibleKeys.length;
+  const sourceVisibleIndex = normalizedVisibleKeys.indexOf(dragState.value.key);
   const withoutDragged = normalizedVisibleKeys.filter((key) => key !== dragState.value.key);
   if (!withoutDragged.length) {
     resetDragState();
     return;
   }
-  const anchorIndex = Math.max(0, Math.min(insertionIndex, withoutDragged.length));
+  const normalizedInsertionIndex =
+    sourceVisibleIndex >= 0 && rawInsertionIndex > sourceVisibleIndex ? rawInsertionIndex - 1 : rawInsertionIndex;
+  const anchorIndex = Math.max(0, Math.min(normalizedInsertionIndex, withoutDragged.length));
   const previousKey = withoutDragged[anchorIndex - 1] || '';
   const nextKey = withoutDragged[anchorIndex] || '';
   event.preventDefault();

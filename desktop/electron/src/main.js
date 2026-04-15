@@ -18,6 +18,10 @@ const fs = require('fs')
 const net = require('net')
 const Module = require('module')
 const path = require('path')
+const {
+  DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS,
+  createWindowVisibilityGuard
+} = require('./windowVisibilityGuard')
 
 const resolveRuntimeModuleRoots = () => {
   const roots = []
@@ -145,6 +149,13 @@ const loadingShellDelayMs = parseEnvNonNegativeNumber(
   process.env.WUNDER_LOADING_SHELL_DELAY_MS,
   defaultLoadingShellDelayMs
 )
+const mainWindowMinimizeRestoreCooldownMs = parseEnvNonNegativeNumber(
+  process.env.WUNDER_MAIN_WINDOW_MINIMIZE_GUARD_MS,
+  DEFAULT_MINIMIZE_RESTORE_COOLDOWN_MS
+)
+const mainWindowVisibilityGuard = createWindowVisibilityGuard({
+  minimizeRestoreCooldownMs: mainWindowMinimizeRestoreCooldownMs
+})
 
 const SCREENSHOT_HIDE_DELAY_MS = 220
 const SCREENSHOT_SELECTOR_RESULT_CHANNEL = 'wunder:screenshot-region-selected'
@@ -2200,7 +2211,12 @@ const captureDesktopScreenshot = async (options = {}) => {
       message: String(error?.message || error || 'failed to capture screenshot')
     }
   } finally {
-    if (shouldRestore && window && !window.isDestroyed()) {
+    if (
+      shouldRestore &&
+      window &&
+      !window.isDestroyed() &&
+      mainWindowVisibilityGuard.shouldRestoreAfterHiddenCapture({ window })
+    ) {
       window.show()
       window.focus()
     }
@@ -2542,8 +2558,11 @@ const withMainWindow = (handler, fallback) => {
   return handler(mainWindow)
 }
 
-const showMainWindow = () =>
+const showMainWindow = (options = {}) =>
   withMainWindow((window) => {
+    if (mainWindowVisibilityGuard.isAutoShowBlocked({ explicit: options.explicit === true })) {
+      return false
+    }
     if (window.isMinimized()) {
       window.restore()
     }
@@ -2551,6 +2570,7 @@ const showMainWindow = () =>
       window.show()
     }
     window.focus()
+    mainWindowVisibilityGuard.clearManualMinimize()
     // Force an immediate repaint after restore/show to avoid stale blank frames.
     if (!window.webContents.isDestroyed()) {
       window.webContents.invalidate()
@@ -2591,7 +2611,7 @@ const createTray = () => {
     {
       label: '打开 Wunder Desktop',
       click: () => {
-        showMainWindow()
+        showMainWindow({ explicit: true })
       }
     },
     { type: 'separator' },
@@ -2608,7 +2628,7 @@ const createTray = () => {
     showMainWindow()
   })
   tray.on('double-click', () => {
-    showMainWindow()
+    showMainWindow({ explicit: true })
   })
   return tray
 }
@@ -2782,8 +2802,17 @@ const createWindow = async () => {
     scheduleWindowRepaint()
     scheduleLinuxDesktopIntegration()
   })
-  mainWindow.on('show', scheduleWindowRepaint)
-  mainWindow.on('restore', scheduleWindowRepaint)
+  mainWindow.on('show', () => {
+    mainWindowVisibilityGuard.clearManualMinimize()
+    scheduleWindowRepaint()
+  })
+  mainWindow.on('restore', () => {
+    mainWindowVisibilityGuard.clearManualMinimize()
+    scheduleWindowRepaint()
+  })
+  mainWindow.on('minimize', () => {
+    mainWindowVisibilityGuard.markManualMinimize()
+  })
   mainWindow.on('close', (event) => {
     handleMainWindowClose(mainWindow, event)
   })
@@ -2875,7 +2904,7 @@ if (!gotLock) {
 } else {
   const appWhenReadyWaitNs = process.hrtime.bigint()
   app.on('second-instance', () => {
-    showMainWindow()
+    showMainWindow({ explicit: true })
   })
 
   app.whenReady().then(async () => {
@@ -2893,6 +2922,7 @@ if (!gotLock) {
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
+          mainWindowVisibilityGuard.markManualMinimize()
           window.minimize()
           return true
         }, false)

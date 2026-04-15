@@ -1,6 +1,7 @@
 import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue';
 
 type KeySource = string | Readonly<Ref<string>> | ComputedRef<string>;
+type KeyListSource = string[] | Readonly<Ref<string[]>> | ComputedRef<string[]>;
 type MovePosition = 'before' | 'after';
 
 const normalizeKey = (value: unknown): string => String(value || '').trim();
@@ -24,6 +25,16 @@ const resolveKeySource = (value: KeySource): string => {
     return value;
   }
   return normalizeKey(value.value);
+};
+
+const resolveKeyListSource = (value?: KeyListSource): string[] => {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return normalizeKeyList(value);
+  }
+  return normalizeKeyList(Array.isArray(value.value) ? value.value : []);
 };
 
 const readStoredKeys = (storageKey: string): string[] => {
@@ -64,6 +75,20 @@ const writeStoredKeys = (storageKey: string, keys: string[]): void => {
   }
 };
 
+const readStoredKeysFromCandidates = (
+  primaryStorageKey: string,
+  fallbackStorageKeys: string[]
+): { keys: string[]; matchedKey: string } => {
+  const candidates = normalizeKeyList([primaryStorageKey, ...fallbackStorageKeys]);
+  for (const candidate of candidates) {
+    const keys = readStoredKeys(candidate);
+    if (keys.length > 0) {
+      return { keys, matchedKey: candidate };
+    }
+  }
+  return { keys: [], matchedKey: '' };
+};
+
 const sameKeyList = (left: string[], right: string[]): boolean => {
   if (left.length !== right.length) {
     return false;
@@ -78,10 +103,10 @@ const sameKeyList = (left: string[], right: string[]): boolean => {
 
 export const stabilizeKeyOrder = (previousKeys: string[], incomingKeys: string[]): string[] => {
   const normalizedIncoming = normalizeKeyList(incomingKeys);
-  if (!normalizedIncoming.length) {
-    return [];
-  }
   const normalizedPrevious = normalizeKeyList(previousKeys);
+  if (!normalizedIncoming.length) {
+    return normalizedPrevious;
+  }
   if (!normalizedPrevious.length) {
     return normalizedIncoming;
   }
@@ -91,6 +116,21 @@ export const stabilizeKeyOrder = (previousKeys: string[], incomingKeys: string[]
   const additions = normalizedIncoming.filter((key) => !previousSet.has(key));
   const existing = normalizedPrevious.filter((key) => incomingSet.has(key));
   return [...additions, ...existing];
+};
+
+const mergeKeyOrderPreservingMissing = (previousKeys: string[], incomingKeys: string[]): string[] => {
+  const normalizedIncoming = normalizeKeyList(incomingKeys);
+  const normalizedPrevious = normalizeKeyList(previousKeys);
+  if (!normalizedIncoming.length) {
+    return normalizedPrevious;
+  }
+  if (!normalizedPrevious.length) {
+    return normalizedIncoming;
+  }
+
+  const previousSet = new Set(normalizedPrevious);
+  const additions = normalizedIncoming.filter((key) => !previousSet.has(key));
+  return [...additions, ...normalizedPrevious];
 };
 
 export const moveKeyWithinOrder = (
@@ -161,6 +201,7 @@ export function usePersistentStableListOrder<T>(
   options: {
     getKey: (item: T) => string;
     storageKey: KeySource;
+    storageFallbackKeys?: KeyListSource;
   }
 ) {
   const orderedKeys = shallowRef<string[]>([]);
@@ -168,7 +209,7 @@ export function usePersistentStableListOrder<T>(
 
   const syncFromSource = (items: T[], storageKey: string) => {
     const incomingKeys = normalizeKeyList((Array.isArray(items) ? items : []).map((item) => options.getKey(item)));
-    const nextOrder = stabilizeKeyOrder(orderedKeys.value, incomingKeys);
+    const nextOrder = mergeKeyOrderPreservingMissing(orderedKeys.value, incomingKeys);
     if (!sameKeyList(nextOrder, orderedKeys.value)) {
       orderedKeys.value = nextOrder;
     }
@@ -178,11 +219,15 @@ export function usePersistentStableListOrder<T>(
   };
 
   watch(
-    [source, () => resolveKeySource(options.storageKey)],
-    ([items, storageKey]) => {
+    [source, () => resolveKeySource(options.storageKey), () => resolveKeyListSource(options.storageFallbackKeys)],
+    ([items, storageKey, fallbackStorageKeys]) => {
       if (storageKey !== activeStorageKey.value) {
         activeStorageKey.value = storageKey;
-        orderedKeys.value = readStoredKeys(storageKey);
+        const { keys, matchedKey } = readStoredKeysFromCandidates(storageKey, fallbackStorageKeys);
+        orderedKeys.value = keys;
+        if (storageKey && matchedKey && matchedKey !== storageKey && keys.length > 0) {
+          writeStoredKeys(storageKey, keys);
+        }
       }
       syncFromSource(Array.isArray(items) ? items : [], storageKey);
     },

@@ -9,6 +9,8 @@
   --ui-accent-secondary: #ffb26f;
   --ui-accent-secondary-rgb: 255, 178, 111;
   --ui-accent-deep: #e5792e;
+  --user-edit-caret: var(--ui-accent-deep);
+  --user-edit-selection-bg: rgba(var(--ui-accent-rgb), 0.24);
   --ui-accent-soft: #fff3e8;
   --ui-accent-soft-2: #fff0e2;
   --ui-accent-soft-3: #fff8f1;
@@ -136,6 +138,14 @@
   --ui-accent-link-hover: #c2eeff;
 }
 
+:root[data-user-theme='light'] {
+  color-scheme: light;
+}
+
+:root[data-user-theme='dark'] {
+  color-scheme: dark;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -152,6 +162,28 @@ body {
   font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   background: var(--dark-bg);
   color: var(--dark-text);
+}
+
+:root :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']),
+    textarea,
+    [contenteditable='true'],
+    [contenteditable='plaintext-only'],
+    .el-input__inner,
+    .el-textarea__inner
+  ) {
+  caret-color: var(--user-edit-caret);
+}
+
+:root :is(
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']):not([type='button']):not([type='submit']):not([type='reset']),
+    textarea,
+    [contenteditable='true'],
+    [contenteditable='plaintext-only'],
+    .el-input__inner,
+    .el-textarea__inner
+  )::selection {
+  background: var(--user-edit-selection-bg);
 }
 
 ::-webkit-scrollbar {

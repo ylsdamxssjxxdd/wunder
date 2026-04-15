@@ -1801,6 +1801,12 @@ import {
 } from '@/views/messenger/worldHistory';
 import { loadUserAppearance, saveUserAppearance } from '@/views/messenger/userAppearanceSync';
 import {
+  defaultMessengerOrderPreferences,
+  loadMessengerOrderPreferences,
+  saveMessengerOrderPreferences,
+  type MessengerOrderPreferences
+} from '@/views/messenger/messengerOrderSync';
+import {
   buildWorldVoicePayloadContent,
   formatWorldVoiceDuration,
   isWorldVoiceContentType,
@@ -2008,6 +2014,10 @@ const messageVirtualLayoutVersion = ref(0);
 const messageVirtualHeightCache = new Map<string, number>();
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const agentUserRoundsMap = ref<Map<string, number>>(new Map());
+const messengerOrderHydrating = ref(false);
+const messengerOrderReady = ref(false);
+const messengerOrderSaveTimer = ref<number | null>(null);
+const messengerOrderSnapshot = ref<MessengerOrderPreferences>(defaultMessengerOrderPreferences());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
@@ -2488,11 +2498,11 @@ const keyword = computed(() => sessionHub.keyword);
 
 const currentUsername = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
-  return String(user?.username || user?.id || t('user.guest'));
+  return String(user?.username || user?.id || user?.user_id || t('user.guest'));
 });
 const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
-  return String(user?.id || '');
+  return String(user?.id || user?.user_id || user?.username || '');
 });
 let currentUserContextInitialized = false;
 const buildProfileAvatarOptionLabel = (key: string): string => {
@@ -3366,6 +3376,23 @@ const streamingAgentIdSet = computed(() => {
 });
 
 const resolveCurrentUserScope = (): string => String(currentUserId.value || '').trim() || 'guest';
+const resolveCurrentUserScopeAliases = (): string[] => {
+  const user = authStore.user as Record<string, unknown> | null;
+  if (!user) {
+    return ['guest'];
+  }
+  const rawIds = [user?.id, user?.user_id, user?.username];
+  const aliases: string[] = [];
+  rawIds.forEach((value) => {
+    const normalized = String(value || '').trim();
+    if (normalized && !aliases.includes(normalized)) {
+      aliases.push(normalized);
+    }
+  });
+  return aliases.length ? aliases : ['guest'];
+};
+const createScopedStorageKeys = (prefix: string): string[] =>
+  resolveCurrentUserScopeAliases().map((scope) => `${prefix}:${scope}`);
 
 const resolveAgentDraftIdentity = (): string => {
   const identity = activeConversation.value;
@@ -3981,7 +4008,7 @@ const filteredOwnedAgents = computed(() => {
   );
 });
 
-const primaryAgentList = computed(() => {
+const fullPrimaryAgentList = computed(() => {
   const items: Array<Record<string, unknown>> = [];
   if (showDefaultAgentEntry.value) {
     items.push({
@@ -3991,12 +4018,13 @@ const primaryAgentList = computed(() => {
       icon: (defaultAgentProfile.value as Record<string, unknown> | null)?.icon
     });
   }
-  return [...items, ...filteredOwnedAgents.value];
+  return [...items, ...ownedAgents.value];
 });
 
-const orderedOwnedAgentsState = usePersistentStableListOrder(primaryAgentList, {
+const orderedOwnedAgentsState = usePersistentStableListOrder(fullPrimaryAgentList, {
   getKey: (agent) => normalizeAgentId(agent?.id),
-  storageKey: computed(() => `messenger:agents:owned:${resolveCurrentUserScope()}`)
+  storageKey: computed(() => `messenger:agents:owned:${resolveCurrentUserScope()}`),
+  storageFallbackKeys: computed(() => createScopedStorageKeys('messenger:agents:owned'))
 });
 
 watch(
@@ -4018,16 +4046,38 @@ const filteredSharedAgents = computed(() => {
   );
 });
 
-const orderedSharedAgentsState = usePersistentStableListOrder(filteredSharedAgents, {
+const orderedSharedAgentsState = usePersistentStableListOrder(sharedAgents, {
   getKey: (agent) => normalizeAgentId(agent?.id),
-  storageKey: computed(() => `messenger:agents:shared:${resolveCurrentUserScope()}`)
+  storageKey: computed(() => `messenger:agents:shared:${resolveCurrentUserScope()}`),
+  storageFallbackKeys: computed(() => createScopedStorageKeys('messenger:agents:shared'))
 });
 
-const filteredOwnedAgentsOrdered = computed(() =>
-  orderedOwnedAgentsState.orderedItems.value.filter((agent) => normalizeAgentId(agent?.id) !== DEFAULT_AGENT_KEY)
+const filteredOwnedAgentIdSet = computed(
+  () => new Set(filteredOwnedAgents.value.map((agent) => normalizeAgentId(agent?.id)).filter(Boolean))
 );
-const orderedPrimaryAgents = computed(() => orderedOwnedAgentsState.orderedItems.value);
-const filteredSharedAgentsOrdered = computed(() => orderedSharedAgentsState.orderedItems.value);
+const filteredSharedAgentIdSet = computed(
+  () => new Set(filteredSharedAgents.value.map((agent) => normalizeAgentId(agent?.id)).filter(Boolean))
+);
+const orderedPrimaryAgents = computed(() =>
+  orderedOwnedAgentsState.orderedItems.value.filter((agent) => {
+    const agentId = normalizeAgentId(agent?.id);
+    if (!agentId) {
+      return false;
+    }
+    if (agentId === DEFAULT_AGENT_KEY) {
+      return showDefaultAgentEntry.value;
+    }
+    return filteredOwnedAgentIdSet.value.has(agentId);
+  })
+);
+const filteredOwnedAgentsOrdered = computed(() =>
+  orderedPrimaryAgents.value.filter((agent) => normalizeAgentId(agent?.id) !== DEFAULT_AGENT_KEY)
+);
+const filteredSharedAgentsOrdered = computed(() =>
+  orderedSharedAgentsState.orderedItems.value.filter((agent) =>
+    filteredSharedAgentIdSet.value.has(normalizeAgentId(agent?.id))
+  )
+);
 
 const visibleAgentIdsForSelection = computed(() => {
   const ids: string[] = [];
@@ -4348,12 +4398,28 @@ const filteredBeeroomGroups = computed(() => {
   });
 });
 
-const orderedBeeroomGroupsState = usePersistentStableListOrder(filteredBeeroomGroups, {
+const orderedBeeroomGroupsState = usePersistentStableListOrder(
+  computed(() => (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : [])),
+  {
   getKey: (group) => String(group?.group_id || group?.hive_id || '').trim(),
-  storageKey: computed(() => `messenger:swarms:${resolveCurrentUserScope()}`)
-});
+  storageKey: computed(() => `messenger:swarms:${resolveCurrentUserScope()}`),
+  storageFallbackKeys: computed(() => createScopedStorageKeys('messenger:swarms'))
+  }
+);
 
-const filteredBeeroomGroupsOrdered = computed(() => orderedBeeroomGroupsState.orderedItems.value);
+const filteredBeeroomGroupIdSet = computed(
+  () =>
+    new Set(
+      filteredBeeroomGroups.value
+        .map((group) => String(group?.group_id || group?.hive_id || '').trim())
+        .filter(Boolean)
+    )
+);
+const filteredBeeroomGroupsOrdered = computed(() =>
+  orderedBeeroomGroupsState.orderedItems.value.filter((group) =>
+    filteredBeeroomGroupIdSet.value.has(String(group?.group_id || group?.hive_id || '').trim())
+  )
+);
 
 const beeroomGroupOptions = computed(() =>
   (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((item) => {
@@ -4565,7 +4631,8 @@ const mixedConversations = useStableMixedConversationOrder(sortedMixedConversati
 
 const orderedMixedConversationsState = usePersistentStableListOrder(mixedConversations, {
   getKey: (item) => String(item?.key || '').trim(),
-  storageKey: computed(() => `messenger:messages:${resolveCurrentUserScope()}`)
+  storageKey: computed(() => `messenger:messages:${resolveCurrentUserScope()}`),
+  storageFallbackKeys: computed(() => createScopedStorageKeys('messenger:messages'))
 });
 
 const filteredMixedConversations = computed(() => {
@@ -8180,6 +8247,139 @@ const persistCurrentUserAppearance = async () => {
   const persisted = await saveUserAppearance(scopedUserId, appearance, PROFILE_AVATAR_OPTION_KEYS);
   if (String(currentUserId.value || '').trim() !== scopedUserId) return;
   applyCurrentUserAppearance(persisted);
+};
+
+const applyMessengerOrderPreferences = (value: MessengerOrderPreferences) => {
+  messengerOrderHydrating.value = true;
+  orderedMixedConversationsState.orderedKeys.value = value.messages.slice();
+  orderedOwnedAgentsState.orderedKeys.value = value.agentsOwned.slice();
+  orderedSharedAgentsState.orderedKeys.value = value.agentsShared.slice();
+  orderedBeeroomGroupsState.orderedKeys.value = value.swarms.slice();
+  messengerOrderSnapshot.value = {
+    messages: value.messages.slice(),
+    agentsOwned: value.agentsOwned.slice(),
+    agentsShared: value.agentsShared.slice(),
+    swarms: value.swarms.slice(),
+    updatedAt: value.updatedAt
+  };
+  messengerOrderHydrating.value = false;
+  chatDebugLog('messenger.order', 'apply', {
+    messages: value.messages.slice(),
+    agentsOwned: value.agentsOwned.slice(),
+    agentsShared: value.agentsShared.slice(),
+    swarms: value.swarms.slice(),
+    updatedAt: value.updatedAt
+  });
+};
+
+const hasMessengerOrderEntries = (value: MessengerOrderPreferences): boolean =>
+  value.messages.length > 0 ||
+  value.agentsOwned.length > 0 ||
+  value.agentsShared.length > 0 ||
+  value.swarms.length > 0;
+
+const captureMessengerOrderPreferences = (): MessengerOrderPreferences => ({
+  messages: orderedMixedConversationsState.orderedKeys.value.slice(),
+  agentsOwned: orderedOwnedAgentsState.orderedKeys.value.slice(),
+  agentsShared: orderedSharedAgentsState.orderedKeys.value.slice(),
+  swarms: orderedBeeroomGroupsState.orderedKeys.value.slice(),
+  updatedAt: 0
+});
+
+const hydrateMessengerOrderPreferences = async () => {
+  const scopedUserId = String(currentUserId.value || '').trim();
+  messengerOrderReady.value = false;
+  if (!scopedUserId) {
+    chatDebugLog('messenger.order', 'hydrate-skip-no-user', {});
+    applyMessengerOrderPreferences(defaultMessengerOrderPreferences());
+    messengerOrderReady.value = true;
+    return;
+  }
+  messengerOrderHydrating.value = true;
+  let shouldBackfillLocalOrder = false;
+  try {
+    const localPreferences = captureMessengerOrderPreferences();
+    const preferences = await loadMessengerOrderPreferences();
+    if (String(currentUserId.value || '').trim() !== scopedUserId) return;
+    const shouldPreferLocalFallback =
+      !hasMessengerOrderEntries(preferences) &&
+      preferences.updatedAt <= 0 &&
+      hasMessengerOrderEntries(localPreferences);
+    chatDebugLog('messenger.order', 'hydrate-loaded', {
+      userId: scopedUserId,
+      remote: preferences,
+      local: localPreferences,
+      shouldPreferLocalFallback
+    });
+    applyMessengerOrderPreferences(shouldPreferLocalFallback ? localPreferences : preferences);
+    shouldBackfillLocalOrder = shouldPreferLocalFallback;
+  } finally {
+    messengerOrderHydrating.value = false;
+    if (String(currentUserId.value || '').trim() === scopedUserId) {
+      messengerOrderReady.value = true;
+      if (shouldBackfillLocalOrder) {
+        chatDebugLog('messenger.order', 'hydrate-backfill-local', {
+          userId: scopedUserId,
+          current: captureMessengerOrderPreferences()
+        });
+        scheduleMessengerOrderPersist();
+      }
+    }
+  }
+};
+
+const persistMessengerOrderPreferences = async () => {
+  if (messengerOrderHydrating.value || !messengerOrderReady.value) {
+    chatDebugLog('messenger.order', 'persist-skip-not-ready', {
+      hydrating: messengerOrderHydrating.value,
+      ready: messengerOrderReady.value
+    });
+    return;
+  }
+  const scopedUserId = String(currentUserId.value || '').trim();
+  if (!scopedUserId) {
+    chatDebugLog('messenger.order', 'persist-skip-no-user', {});
+    return;
+  }
+  const current = captureMessengerOrderPreferences();
+  chatDebugLog('messenger.order', 'persist-start', {
+    userId: scopedUserId,
+    current
+  });
+  const persisted = await saveMessengerOrderPreferences(current);
+  if (String(currentUserId.value || '').trim() !== scopedUserId) return;
+  messengerOrderSnapshot.value = {
+    messages: persisted.messages.slice(),
+    agentsOwned: persisted.agentsOwned.slice(),
+    agentsShared: persisted.agentsShared.slice(),
+    swarms: persisted.swarms.slice(),
+    updatedAt: persisted.updatedAt
+  };
+  chatDebugLog('messenger.order', 'persist-finish', {
+    userId: scopedUserId,
+    persisted
+  });
+};
+
+const scheduleMessengerOrderPersist = () => {
+  if (messengerOrderHydrating.value || !messengerOrderReady.value || typeof window === 'undefined') {
+    chatDebugLog('messenger.order', 'schedule-skip', {
+      hydrating: messengerOrderHydrating.value,
+      ready: messengerOrderReady.value,
+      hasWindow: typeof window !== 'undefined'
+    });
+    return;
+  }
+  if (messengerOrderSaveTimer.value !== null) {
+    window.clearTimeout(messengerOrderSaveTimer.value);
+  }
+  chatDebugLog('messenger.order', 'schedule', {
+    current: captureMessengerOrderPreferences()
+  });
+  messengerOrderSaveTimer.value = window.setTimeout(() => {
+    messengerOrderSaveTimer.value = null;
+    void persistMessengerOrderPreferences();
+  }, 220);
 };
 
 const updateCurrentUserAvatarIcon = (value: unknown) => {
@@ -11871,6 +12071,7 @@ const bootstrap = async () => {
       }
     }
   }
+  await Promise.all([hydrateCurrentUserAppearance(), hydrateMessengerOrderPreferences()]);
   const initialSection = desktopMode.value
     ? ('messages' as MessengerSection)
     : resolveSectionFromRoute(route.path, route.query.section);
@@ -12044,6 +12245,7 @@ watch(
     beeroomGroupsLastRefreshAt = 0;
     selectedAgentHiveGroupId.value = '';
     void hydrateCurrentUserAppearance();
+    void hydrateMessengerOrderPreferences();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
     timelineDialogVisible.value = false;
@@ -12096,6 +12298,44 @@ watch(
     if (appearanceHydrating.value) return;
     void persistCurrentUserAppearance();
   }
+);
+
+watch(
+  () => [
+    orderedMixedConversationsState.orderedKeys.value.join('\n'),
+    orderedOwnedAgentsState.orderedKeys.value.join('\n'),
+    orderedSharedAgentsState.orderedKeys.value.join('\n'),
+    orderedBeeroomGroupsState.orderedKeys.value.join('\n')
+  ],
+  () => {
+    if (messengerOrderHydrating.value || !messengerOrderReady.value) {
+      chatDebugLog('messenger.order', 'watch-skip', {
+        hydrating: messengerOrderHydrating.value,
+        ready: messengerOrderReady.value
+      });
+      return;
+    }
+    const current = captureMessengerOrderPreferences();
+    const snapshot = messengerOrderSnapshot.value;
+    if (
+      current.messages.join('\n') === snapshot.messages.join('\n') &&
+      current.agentsOwned.join('\n') === snapshot.agentsOwned.join('\n') &&
+      current.agentsShared.join('\n') === snapshot.agentsShared.join('\n') &&
+      current.swarms.join('\n') === snapshot.swarms.join('\n')
+    ) {
+      chatDebugLog('messenger.order', 'watch-no-change', {
+        current,
+        snapshot
+      });
+      return;
+    }
+    chatDebugLog('messenger.order', 'watch-change', {
+      current,
+      snapshot
+    });
+    scheduleMessengerOrderPersist();
+  },
+  { deep: false }
 );
 
 watch(
@@ -12751,6 +12991,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   sectionRouteSyncToken += 1;
   if (typeof window !== 'undefined') {
+    if (messengerOrderSaveTimer.value !== null) {
+      window.clearTimeout(messengerOrderSaveTimer.value);
+      messengerOrderSaveTimer.value = null;
+    }
     if (viewportResizeHandler) {
       window.removeEventListener('resize', viewportResizeHandler);
       viewportResizeHandler = null;

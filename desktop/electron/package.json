@@ -9,6 +9,7 @@
     "prepare:runtime-deps": "node scripts/ensure-runtime-deps.js",
     "prepare:icons": "node scripts/sync-icons.js",
     "prepare:resources": "npm run prepare:icons && node scripts/prepare-resources.js",
+    "test:window-visibility": "node --test src/windowVisibilityGuard.test.js",
     "pack": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --dir --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
     "build:linux": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --linux --x64 --arm64 --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
     "build:linux:x64": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --linux --x64 --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
