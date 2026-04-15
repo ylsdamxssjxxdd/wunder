@@ -183,6 +183,7 @@
           :select-group="selectGroupFromMiddlePane"
           :agent-hive-total-count="agentHiveTotalCount"
           :agent-hive-tree-rows="agentHiveTreeRows"
+          :primary-agent-items="orderedPrimaryAgents"
           :filtered-owned-agents="filteredOwnedAgentsOrdered"
           :filtered-shared-agents="filteredSharedAgentsOrdered"
           :show-default-agent-entry="showDefaultAgentEntry"

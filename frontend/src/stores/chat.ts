@@ -300,6 +300,7 @@ const buildMessageStats = () => ({
   avg_model_round_speed_tps: null,
   avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
+  partialQuotaConsumed: 0,
   quotaSnapshot: null,
   contextTokens: null,
   contextTotalTokens: null,
@@ -656,6 +657,12 @@ const normalizeQuotaConsumed = (value) => {
     );
   }
   return normalizeStatsCount(value);
+};
+
+const resolveUsageConsumedTokensFromPayload = (value) => {
+  const usage = normalizeUsagePayload(value);
+  if (!usage) return 0;
+  return normalizeStatsCount(usage.total ?? usage.input);
 };
 
 const normalizeQuotaSnapshot = (value) => {
@@ -1146,6 +1153,12 @@ const normalizeMessageStats = (stats) => {
         stats.consumedTokens ??
         stats.quota
     ),
+    partialQuotaConsumed: normalizeQuotaConsumed(
+      stats.partialQuotaConsumed ??
+        stats.partial_quota_consumed ??
+        stats.partialConsumedTokens ??
+        stats.partial_consumed_tokens
+    ),
     quotaSnapshot,
     contextTokens,
     contextTotalTokens,
@@ -1251,6 +1264,7 @@ const mergeMessageStats = (base, incoming) => {
       rightAverageSpeedRounds
     ),
     quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
+    partialQuotaConsumed: Math.max(left.partialQuotaConsumed, right.partialQuotaConsumed),
     quotaSnapshot,
     contextTokens,
     contextTotalTokens,
@@ -6941,6 +6955,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     number,
     { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
   >();
+  const partialConsumedRoundMap = new Map<number, number>();
   const modelRoundUsagePayloadMap = new Map<number, unknown>();
   let outputItemId = null;
   const blockedRounds = new Set();
@@ -6990,6 +7005,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         decode: seededDecode,
         usage: seededUsage
       });
+    }
+    const seededPartialConsumed = normalizeStatsCount(stats.partialQuotaConsumed);
+    if (seededRound > 0 && seededPartialConsumed > 0) {
+      partialConsumedRoundMap.set(seededRound, seededPartialConsumed);
     }
   }
   let contextEstimateBaseTokens = normalizeContextTokens(stats?.contextTokens);
@@ -7269,6 +7288,27 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (avgRounds > 0) {
       stats.avg_model_round_speed_rounds = avgRounds;
     }
+  };
+
+  const recomputePartialConsumedTotal = () => {
+    if (!stats) return;
+    let total = 0;
+    partialConsumedRoundMap.forEach((value) => {
+      total += normalizeStatsCount(value);
+    });
+    stats.partialQuotaConsumed = total;
+  };
+
+  const updatePartialConsumedFromUsage = (usagePayload, roundValue) => {
+    if (!stats) return;
+    const roundNumber = normalizeStreamRound(roundValue);
+    if (roundNumber === null) return;
+    const consumed = resolveUsageConsumedTokensFromPayload(usagePayload);
+    if (consumed <= 0) return;
+    const previous = partialConsumedRoundMap.get(roundNumber) ?? 0;
+    if (consumed <= previous) return;
+    partialConsumedRoundMap.set(roundNumber, consumed);
+    recomputePartialConsumedTotal();
   };
 
   const updateUsageStats = (
@@ -9322,6 +9362,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'llm_output': {
         const round = resolveRound(payload, data);
+        updatePartialConsumedFromUsage(data?.usage ?? payload?.usage ?? data, round);
         clearAssistantRetryState(assistantMessage);
         const outputPurpose = String(data?.purpose ?? payload?.purpose ?? '').trim().toLowerCase();
         if (outputPurpose === 'compaction_summary') {
@@ -9423,6 +9464,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'token_usage': {
         const round = resolveRound(payload, data);
+        updatePartialConsumedFromUsage(data?.usage ?? payload?.usage ?? data, round);
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data,
           null,

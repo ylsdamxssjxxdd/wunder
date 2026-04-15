@@ -257,13 +257,14 @@ test('message stats interrupted response falls back to round usage instead of us
   assert.equal(findEntryValue(entries, 'Context'), '6200');
 });
 
-test('message stats does not treat usage snapshot as quota when interrupted response lacks round totals', () => {
+test('message stats interrupted response falls back to completed model-round usage when round totals are missing', () => {
   const t = createTranslator();
   const entries = buildAssistantMessageStatsEntries(
     {
       role: 'assistant',
       stop_reason: 'interrupted',
       stats: {
+        partialQuotaConsumed: 4224,
         usage: {
           input_tokens: 4096,
           output_tokens: 128,
@@ -275,8 +276,36 @@ test('message stats does not treat usage snapshot as quota when interrupted resp
     t
   );
 
-  assert.equal(findEntryValue(entries, 'Quota'), '-');
+  assert.equal(findEntryValue(entries, 'Quota'), '4224');
   assert.equal(findEntryValue(entries, 'Context'), '4224');
+});
+
+test('message stats sums explicit and partial consumed tokens across assistant messages in the same user turn', () => {
+  const t = createTranslator();
+  const messages = [
+    {
+      role: 'user',
+      content: 'draw a heart'
+    },
+    {
+      role: 'assistant',
+      content: 'first model round finished',
+      stop_reason: 'interrupted',
+      stats: {
+        partialQuotaConsumed: 6805,
+        usage: {
+          input_tokens: 6477,
+          output_tokens: 328,
+          total_tokens: 6805
+        },
+        contextTokens: 6805
+      }
+    }
+  ];
+
+  const entries = buildAssistantMessageStatsEntries(messages[1], t, messages);
+  assert.equal(findEntryValue(entries, 'Quota'), '6805');
+  assert.equal(sumConversationConsumedTokens(messages), 6805);
 });
 
 test('message stats falls back to user-round total tokens when quota event is missing', () => {

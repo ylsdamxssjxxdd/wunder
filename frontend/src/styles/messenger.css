@@ -907,42 +907,37 @@
   opacity: 0.62;
 }
 
-.messenger-list-item.is-drag-over {
-  border-color: rgba(var(--ui-accent-rgb), 0.5);
-  background: rgba(var(--ui-accent-rgb), 0.08);
+.messenger-list-insert-gap {
+  height: 0;
+  margin: 0 10px;
+  position: relative;
+  pointer-events: auto;
+  transition: opacity 0.12s ease;
 }
 
-.messenger-list-drag-handle {
-  width: 18px;
-  min-width: 18px;
-  height: 32px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--hula-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-  flex-shrink: 0;
-  align-self: center;
-  opacity: 0.46;
-  transition: color 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+.messenger-list-insert-gap::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--ui-accent);
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.12);
 }
 
-.messenger-list-item:hover .messenger-list-drag-handle,
-.messenger-list-item:focus-within .messenger-list-drag-handle,
-.messenger-list-item.is-dragging .messenger-list-drag-handle {
-  opacity: 0.95;
+.messenger-list-item.is-drag-origin-hidden {
+  opacity: 0;
+  visibility: hidden;
 }
 
-.messenger-list-drag-handle:hover {
-  color: var(--ui-accent);
-  background: rgba(var(--ui-accent-rgb), 0.08);
+.messenger-list-item.is-drag-origin {
+  opacity: 0;
 }
 
-.messenger-list-drag-handle:active {
-  cursor: grabbing;
+.is-drag-ghost {
+  opacity: 0.72;
 }
 
 .messenger-conversation-item.is-running,

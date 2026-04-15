@@ -125,6 +125,16 @@ const resolveRoundConsumedTokens = (source: Record<string, any> | null | undefin
   );
 };
 
+const resolvePartialConsumedTokens = (source: Record<string, any> | null | undefined): number | null => {
+  if (!source || typeof source !== 'object') return null;
+  return parsePositiveInteger(
+    source.partialQuotaConsumed ??
+      source.partial_quota_consumed ??
+      source.partialConsumedTokens ??
+      source.partial_consumed_tokens
+  );
+};
+
 const resolveExplicitContextTokens = (stats: Record<string, any> | null | undefined): number | null => {
   if (!stats || typeof stats !== 'object') return null;
   return parsePositiveInteger(
@@ -192,7 +202,11 @@ const resolveAssistantConsumedTokens = (
   const aggregatedTurnConsumedTokens = resolveAssistantTurnConsumedTokens(message, allMessages);
   const directConsumedTokens =
     resolveExplicitConsumedTokens(stats) ?? resolveExplicitConsumedTokens(message);
-  const fallbackConsumedTokens = resolveRoundConsumedTokens(stats) ?? resolveRoundConsumedTokens(message);
+  const fallbackConsumedTokens =
+    resolveRoundConsumedTokens(stats) ??
+    resolveRoundConsumedTokens(message) ??
+    resolvePartialConsumedTokens(stats) ??
+    resolvePartialConsumedTokens(message);
   const explicitConsumedTokens = aggregatedTurnConsumedTokens ?? directConsumedTokens;
   if (isMeaningfulConsumedTokens(explicitConsumedTokens)) {
     return explicitConsumedTokens;
