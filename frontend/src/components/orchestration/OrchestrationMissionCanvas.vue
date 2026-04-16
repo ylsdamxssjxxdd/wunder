@@ -41,18 +41,24 @@
 
           <div class="orchestration-timeline-shell" :class="{ collapsed: timelineCollapsed }">
             <div v-if="!timelineCollapsed" class="orchestration-timeline-dock">
-              <div class="orchestration-timeline-track">
-                <button
-                  v-for="round in rounds"
-                  :key="round.id"
-                  class="orchestration-round-chip"
-                  :class="{ active: round.id === activeRound?.id }"
-                  type="button"
-                  @click="emit('select-round', round.id)"
-                >
-                  <span>{{ t('orchestration.timeline.round', { round: round.index }) }}</span>
-                  <small>{{ round.situation || t('orchestration.timeline.noSituation') }}</small>
-                </button>
+              <div class="orchestration-timeline-rail">
+                <div class="orchestration-timeline-track" :aria-label="t('orchestration.timeline.title')">
+                  <button
+                    v-for="round in rounds"
+                    :key="round.id"
+                    class="orchestration-round-chip"
+                    :class="{ active: round.id === activeRound?.id }"
+                    type="button"
+                    :title="t('orchestration.timeline.round', { round: round.index })"
+                    :aria-label="t('orchestration.timeline.round', { round: round.index })"
+                    :aria-current="round.id === activeRound?.id ? 'step' : undefined"
+                    @click="emit('select-round', round.id)"
+                  >
+                    <span class="orchestration-round-chip-node" aria-hidden="true">
+                      <span class="orchestration-round-chip-index">{{ round.index }}</span>
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
             <button
@@ -91,15 +97,16 @@
           :composer-target-options="composerTargetOptions"
           :composer-sending="composerSending"
           :composer-can-send="canSend"
+          :composer-disabled="composerDisabled"
           :composer-error="''"
           :title="group?.name || t('beeroom.canvas.chatTitle')"
           :artifacts-enabled="Boolean(activeArtifactWorkspace)"
           :show-artifacts-button="false"
+          :show-clear-button="false"
           :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
           @update:composer-text="emit('update:composer-text', $event)"
-          @clear="emit('clear-chat')"
           @send="emit('send')"
           @open-agent="emit('open-agent', $event)"
         >
@@ -117,22 +124,32 @@
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
               type="button"
+              :title="t('orchestration.action.history')"
+              :aria-label="t('orchestration.action.history')"
+              :disabled="historyLoading"
+              @click="emit('open-history')"
+            >
+              <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+            </button>
+            <button
+              class="beeroom-canvas-icon-btn orchestration-panel-action"
+              type="button"
+              :title="t('common.close')"
+              :aria-label="t('common.close')"
+              :disabled="!isReady"
+              @click="emit('exit-run')"
+            >
+              <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+            </button>
+            <button
+              class="beeroom-canvas-icon-btn orchestration-panel-action"
+              type="button"
               :title="t('orchestration.action.situation')"
               :aria-label="t('orchestration.action.situation')"
               :disabled="!isReady"
               @click="emit('open-situation')"
             >
               <i class="fa-solid fa-wave-square" aria-hidden="true"></i>
-            </button>
-            <button
-              class="beeroom-canvas-icon-btn orchestration-panel-action"
-              type="button"
-              :title="t('common.refresh')"
-              :aria-label="t('common.refresh')"
-              :disabled="refreshing"
-              @click="emit('refresh')"
-            >
-              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
             </button>
           </template>
         </BeeroomCanvasChatPanel>
@@ -153,6 +170,7 @@
           v-if="artifactWorkspaceVisible && activeArtifactWorkspace"
           :agent-id="activeArtifactWorkspace.agentId"
           :container-id="activeArtifactWorkspace.containerId"
+          :initial-focus-path="activeArtifactWorkspace.path"
           :title="artifactWorkspaceDialogTitle"
         />
       </div>
@@ -208,8 +226,9 @@ const props = defineProps<{
   composerText: string;
   composerSending: boolean;
   canSend: boolean;
+  composerDisabled: boolean;
   initializing: boolean;
-  refreshing: boolean;
+  historyLoading: boolean;
   isReady: boolean;
   groupDescription: string;
   resolveWorkerOutputs: (agentId: string) => MissionChatMessage[];
@@ -221,11 +240,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
   (event: 'update:composer-text', value: string): void;
-  (event: 'clear-chat'): void;
   (event: 'send'): void;
   (event: 'create-run'): void;
+  (event: 'exit-run'): void;
+  (event: 'open-history'): void;
   (event: 'open-situation'): void;
-  (event: 'refresh'): void;
   (event: 'select-round', roundId: string): void;
 }>();
 
@@ -277,7 +296,7 @@ const canvasProjection = computed(() =>
         resolveWorkerOutputs: props.resolveWorkerOutputs,
         resolveWorkerThreadSessionId: props.resolveWorkerThreadSessionId,
         selectedNodeId: selectedArtifactAgentId.value ? `artifact:${selectedArtifactAgentId.value}` : '',
-        nodePositionOverrides: getBeeroomMissionCanvasState(canvasScopeKey.value)?.nodePositionOverrides || {},
+        nodePositionOverrides: {},
         t
       })
     : {
@@ -309,6 +328,7 @@ const activeArtifactWorkspace = computed(() => {
   return {
     agentId,
     containerId,
+    path: String(card.path || '').trim(),
     title: `${card.agentName} · ${card.path}`
   };
 });
@@ -721,15 +741,16 @@ watch(
 .orchestration-timeline-dock {
   position: relative;
   z-index: 1;
-  display: grid;
-  gap: 0;
+  display: flex;
+  align-items: center;
   width: calc(100% - 28px);
   margin: 0 14px;
+  min-height: 88px;
   padding: 18px 16px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
   background:
-    linear-gradient(180deg, rgba(11, 14, 21, 0.92), rgba(8, 10, 15, 0.96)),
-    linear-gradient(90deg, rgba(56, 189, 248, 0.04), rgba(245, 158, 11, 0.03));
+    linear-gradient(180deg, rgba(14, 18, 27, 0.86), rgba(9, 12, 18, 0.94)),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.03), rgba(251, 191, 36, 0.04));
   box-shadow:
     0 -12px 28px rgba(2, 6, 23, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.03);
@@ -737,91 +758,180 @@ watch(
   pointer-events: auto;
 }
 
+.orchestration-timeline-rail {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 14px 6px 6px;
+  overflow: visible;
+}
+
+.orchestration-timeline-rail::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 34px;
+  height: 2px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, rgba(56, 189, 248, 0.16), rgba(251, 191, 36, 0.2), rgba(45, 212, 191, 0.16));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 0 18px rgba(56, 189, 248, 0.08);
+  pointer-events: none;
+}
+
 .orchestration-timeline-handle {
   position: absolute;
   left: 50%;
-  top: -12px;
+  top: 0;
   z-index: 3;
-  width: 46px;
-  height: 22px;
+  width: 64px;
+  height: 18px;
   padding: 0;
   transform: translateX(-50%);
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.36);
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.94));
-  color: #cbd5e1;
+  border-radius: 0 0 999px 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-top: 0;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.82));
+  color: rgba(203, 213, 225, 0.78);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   pointer-events: auto;
-  opacity: 0.82;
-  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.3);
+  opacity: 0.72;
+  box-shadow: 0 8px 18px rgba(2, 6, 23, 0.18);
   transition:
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1),
     border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
     background 160ms cubic-bezier(0.22, 1, 0.36, 1),
     color 160ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.orchestration-timeline-handle i {
+  font-size: 11px;
+}
+
 .orchestration-timeline-shell.collapsed .orchestration-timeline-handle {
   top: auto;
-  bottom: -12px;
+  bottom: 0;
   transform: translateX(-50%);
-  width: 22px;
+  width: 64px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  border-bottom: 0;
   border-radius: 999px 999px 0 0;
 }
 
 .orchestration-timeline-handle:hover,
 .orchestration-timeline-handle:focus-visible {
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
-  border-color: rgba(148, 163, 184, 0.56);
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.94), rgba(15, 23, 42, 0.88));
+  border-color: rgba(148, 163, 184, 0.4);
+  color: rgba(226, 232, 240, 0.9);
+  opacity: 0.92;
   transform: translateX(-50%) translateY(-1px);
   outline: none;
 }
 
+.orchestration-timeline-shell.collapsed .orchestration-timeline-handle:hover,
+.orchestration-timeline-shell.collapsed .orchestration-timeline-handle:focus-visible {
+  transform: translateX(-50%) translateY(1px);
+}
+
 .orchestration-timeline-track {
   display: flex;
-  gap: 10px;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0;
   overflow: auto;
-  padding-bottom: 2px;
+  padding: 2px 2px 8px;
+  scrollbar-width: thin;
 }
 
 .orchestration-round-chip {
+  position: relative;
   display: inline-flex;
-  min-width: 152px;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(15, 23, 42, 0.72);
+  min-width: 68px;
+  width: 68px;
+  flex: 0 0 68px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #dbeafe;
   cursor: pointer;
   transition:
-    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
-    background 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms cubic-bezier(0.22, 1, 0.36, 1),
     transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .orchestration-round-chip:hover,
 .orchestration-round-chip:focus-visible {
-  border-color: rgba(96, 165, 250, 0.42);
-  background: rgba(12, 74, 110, 0.26);
-  transform: translateY(-1px);
+  color: #f8fafc;
+  transform: translateY(-2px);
   outline: none;
 }
 
-.orchestration-round-chip small {
-  color: rgba(191, 219, 254, 0.64);
-  font-size: 11px;
-  line-height: 1.45;
+.orchestration-round-chip-node {
+  position: relative;
+  z-index: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.16), transparent 38%),
+    linear-gradient(180deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.94));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 4px 14px rgba(2, 6, 23, 0.18);
+  transition:
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.orchestration-round-chip-index {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(226, 232, 240, 0.92);
 }
 
 .orchestration-round-chip.active {
-  border-color: rgba(56, 189, 248, 0.42);
-  background: rgba(12, 74, 110, 0.34);
+  color: #fff8eb;
+}
+
+.orchestration-round-chip.active .orchestration-round-chip-node {
+  border-color: rgba(251, 191, 36, 0.5);
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 251, 235, 0.28), transparent 40%),
+    linear-gradient(180deg, rgba(234, 179, 8, 0.86), rgba(180, 83, 9, 0.84));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 251, 235, 0.24),
+    0 0 0 3px rgba(251, 191, 36, 0.12),
+    0 10px 24px rgba(120, 53, 15, 0.2);
+  transform: scale(1.04);
+}
+
+.orchestration-round-chip.active .orchestration-round-chip-index {
+  color: #3f2207;
+}
+
+.orchestration-round-chip:hover .orchestration-round-chip-node,
+.orchestration-round-chip:focus-visible .orchestration-round-chip-node {
+  border-color: rgba(125, 211, 252, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 8px 18px rgba(8, 47, 73, 0.18);
 }
 
 .orchestration-panel-action {

@@ -106,6 +106,24 @@ export const getBeeroomMission = (groupId: ApiId, missionId: ApiId) =>
 export const fetchBeeroomOrchestrationPrompts = () =>
   api.get('/beeroom/orchestration/prompts', { timeout: 60000 });
 
+export const updateBeeroomOrchestrationSessionContext = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/session-context', payload, { timeout: 60000 });
+
+export const getBeeroomOrchestrationState = (params: QueryParams = {}) =>
+  api.get('/beeroom/orchestration/state', { params, timeout: 60000 });
+
+export const createBeeroomOrchestrationState = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/state/create', payload, { timeout: 60000 });
+
+export const exitBeeroomOrchestrationState = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/state/exit', payload, { timeout: 60000 });
+
+export const listBeeroomOrchestrationHistory = (params: QueryParams = {}) =>
+  api.get('/beeroom/orchestration/history', { params, timeout: 60000 });
+
+export const restoreBeeroomOrchestrationHistory = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/history/restore', payload, { timeout: 60000 });
+
 export type StartBeeroomDemoRunRequest = {
   seed?: number;
   worker_count_mode?: 'random' | 'all' | string;

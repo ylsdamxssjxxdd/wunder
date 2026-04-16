@@ -1,11 +1,20 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
-import { createSession, renameSession as renameChatSession } from '@/api/chat';
+import {
+  createBeeroomOrchestrationState,
+  exitBeeroomOrchestrationState,
+  getBeeroomOrchestrationState,
+  listBeeroomOrchestrationHistory,
+  restoreBeeroomOrchestrationHistory
+} from '@/api/beeroom';
+import { getSessionHistoryPage } from '@/api/chat';
 import { setDefaultSession } from '@/api/agents';
 import {
   createWunderWorkspaceDir,
+  deleteWunderWorkspaceEntry,
   listWunderWorkspace,
-  fetchWunderWorkspaceContent
+  fetchWunderWorkspaceContent,
+  saveWunderWorkspaceFile
 } from '@/api/workspace';
 import { listRecentBeeroomAgentOutputs } from '@/components/beeroom/beeroomAgentOutputPreview';
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
@@ -42,14 +51,29 @@ export type OrchestrationArtifactCard = {
   error: string;
 };
 
+export type OrchestrationHistoryItem = {
+  orchestrationId: string;
+  runId: string;
+  groupId: string;
+  motherAgentId: string;
+  motherAgentName: string;
+  motherSessionId: string;
+  status: string;
+  latestRoundIndex: number;
+  enteredAt: number;
+  updatedAt: number;
+  exitedAt: number;
+  restoredAt: number;
+};
+
 type OrchestrationMemberThread = {
   agentId: string;
   sessionId: string;
 };
 
-type OrchestrationCreatedThread = OrchestrationMemberThread & {
-  agentName: string;
-  title: string;
+type OrchestrationSuppressedMessageRange = {
+  startAt: number;
+  endAt: number;
 };
 
 type PersistedRuntime = {
@@ -65,6 +89,10 @@ type PersistedRuntime = {
   activeRoundId: string;
   memberThreads: OrchestrationMemberThread[];
   motherPrimerInjected: boolean;
+  pendingRoundId?: string;
+  pendingRoundCreated?: boolean;
+  pendingMessageStartedAt?: number;
+  suppressedMessageRanges?: OrchestrationSuppressedMessageRange[];
 };
 
 type WorkspaceEntryLike = {
@@ -143,6 +171,25 @@ const normalizeMsTime = (value: unknown): number => {
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
+const normalizeSuppressedMessageRanges = (value: unknown): OrchestrationSuppressedMessageRange[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+          const record = item as Record<string, unknown>;
+          const startAt = normalizeMsTime(record.startAt);
+          const endAt = normalizeMsTime(record.endAt);
+          if (!startAt || !endAt || endAt < startAt) return null;
+          return { startAt, endAt } satisfies OrchestrationSuppressedMessageRange;
+        })
+        .filter((item): item is OrchestrationSuppressedMessageRange => Boolean(item))
+    : [];
+
+const normalizeSecondsTime = (value: unknown): number => {
+  const ms = normalizeMsTime(value);
+  return ms > 0 ? Math.floor(ms / 1000) : 0;
+};
+
 const buildScopeKey = (groupId: unknown) => normalizeText(groupId) || 'standby';
 
 const buildStorageKey = (groupId: unknown) => `${ORCHESTRATION_STORAGE_PREFIX}:${buildScopeKey(groupId)}`;
@@ -150,9 +197,6 @@ const buildStorageKey = (groupId: unknown) => `${ORCHESTRATION_STORAGE_PREFIX}:$
 const buildRuntimeScopeKey = (runId: string) => `runtime:orchestration:${normalizeText(runId)}`;
 
 const buildClearScopeKey = (runId: string) => `chat:orchestration:${normalizeText(runId)}`;
-
-const buildRunId = () =>
-  `orch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const buildRoundId = (index: number) => `round_${String(index).padStart(4, '0')}`;
 
@@ -163,7 +207,10 @@ const buildAgentArtifactPath = (runId: string, roundIndex: number, agentId: stri
     .filter(Boolean)
     .join('/');
 
-const toApiAgentId = (agentId: string) => (agentId === DEFAULT_AGENT_KEY ? '' : agentId);
+const buildRoundSituationPath = (runId: string, roundIndex: number) =>
+  ['orchestration', runId, buildRoundDirName(roundIndex), 'situation.txt']
+    .filter(Boolean)
+    .join('/');
 
 const resolveWorkspaceAgentId = (agentId: string) => {
   const normalized = normalizeText(agentId);
@@ -230,7 +277,11 @@ const normalizePersistedRuntime = (value: unknown, groupId: unknown): PersistedR
     activeRoundId:
       normalizeText(record.activeRoundId) || (rounds.length ? rounds[rounds.length - 1].id : ''),
     memberThreads,
-    motherPrimerInjected: record.motherPrimerInjected === true
+    motherPrimerInjected: record.motherPrimerInjected === true,
+    pendingRoundId: normalizeText(record.pendingRoundId),
+    pendingRoundCreated: record.pendingRoundCreated === true,
+    pendingMessageStartedAt: normalizeMsTime(record.pendingMessageStartedAt),
+    suppressedMessageRanges: normalizeSuppressedMessageRanges(record.suppressedMessageRanges)
   };
 };
 
@@ -259,25 +310,6 @@ const writePersistedRuntime = (groupId: unknown, state: PersistedRuntime | null)
   }
 };
 
-const createFreshMainSession = async (agentId: string, title = '') => {
-  const apiAgentId = agentId === DEFAULT_AGENT_KEY ? '' : agentId;
-  const created = await createSession(agentId === DEFAULT_AGENT_KEY ? {} : { agent_id: agentId });
-  const createdSession =
-    created?.data?.data && typeof created.data.data === 'object' && !Array.isArray(created.data.data)
-      ? (created.data.data as Record<string, unknown>)
-      : null;
-  const createdId = normalizeText(createdSession?.id);
-  if (!createdId) {
-    throw new Error('orchestration_main_session_missing');
-  }
-  await setDefaultSession(apiAgentId || DEFAULT_AGENT_KEY, { session_id: createdId });
-  const nextTitle = normalizeText(title);
-  if (nextTitle) {
-    await renameChatSession(createdId, { title: nextTitle }).catch(() => null);
-  }
-  return createdId;
-};
-
 const shouldPreviewFile = (name: string) => {
   const extension = name.split('.').pop()?.toLowerCase() || '';
   return ['md', 'txt', 'json', 'yaml', 'yml', 'toml', 'csv', 'log', 'html', 'xml'].includes(extension);
@@ -304,6 +336,8 @@ export const useOrchestrationRuntimeState = (options: {
   const artifactLoading = ref(false);
   const artifactError = ref('');
   const artifactCards = ref<OrchestrationArtifactCard[]>([]);
+  const historyLoading = ref(false);
+  const historyItems = ref<OrchestrationHistoryItem[]>([]);
   let artifactReloadTimer: number | null = null;
 
   const groupId = computed(() => buildScopeKey(options.group.value?.group_id || options.group.value?.hive_id));
@@ -317,19 +351,6 @@ export const useOrchestrationRuntimeState = (options: {
     });
   });
 
-  const orderedAgents = computed(() => {
-    const motherId = motherAgentId.value;
-    const members = Array.isArray(options.agents.value) ? options.agents.value : [];
-    const result: BeeroomMember[] = [];
-    if (motherId) {
-      const mother = members.find((item) => normalizeText(item?.agent_id) === motherId);
-      if (mother) {
-        result.push(mother);
-      }
-    }
-    return [...result, ...visibleWorkers.value];
-  });
-
   const activeRound = computed(() => {
     const rounds = runtimeState.value?.rounds || [];
     const activeRoundId = normalizeText(runtimeState.value?.activeRoundId);
@@ -339,6 +360,12 @@ export const useOrchestrationRuntimeState = (options: {
   const latestRound = computed(() => {
     const rounds = runtimeState.value?.rounds || [];
     return rounds[rounds.length - 1] || null;
+  });
+  const pendingRound = computed(() => {
+    const current = runtimeState.value;
+    const pendingRoundId = normalizeText(current?.pendingRoundId);
+    if (!current || !pendingRoundId) return null;
+    return current.rounds.find((item) => item.id === pendingRoundId) || null;
   });
 
   const isReady = computed(() => Boolean(runtimeState.value?.runId));
@@ -370,9 +397,35 @@ export const useOrchestrationRuntimeState = (options: {
       if (nextRoundStart > 0 && timeMs >= nextRoundStart) {
         return false;
       }
+      if ((current.suppressedMessageRanges || []).some((range) => timeMs >= range.startAt && timeMs <= range.endAt)) {
+        return false;
+      }
       return true;
     });
   });
+
+  const normalizeHistoryItem = (value: unknown): OrchestrationHistoryItem | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const orchestrationId = normalizeText(record.orchestration_id);
+    const runId = normalizeText(record.run_id);
+    const motherSessionId = normalizeText(record.mother_session_id);
+    if (!orchestrationId || !runId || !motherSessionId) return null;
+    return {
+      orchestrationId,
+      runId,
+      groupId: normalizeText(record.group_id),
+      motherAgentId: normalizeText(record.mother_agent_id),
+      motherAgentName: normalizeText(record.mother_agent_name),
+      motherSessionId,
+      status: normalizeText(record.status),
+      latestRoundIndex: Math.max(1, Number.parseInt(String(record.latest_round_index ?? ''), 10) || 1),
+      enteredAt: normalizeMsTime(record.entered_at),
+      updatedAt: normalizeMsTime(record.updated_at),
+      exitedAt: normalizeMsTime(record.exited_at),
+      restoredAt: normalizeMsTime(record.restored_at)
+    };
+  };
 
   const rememberRuntime = () => {
     writePersistedRuntime(groupId.value, runtimeState.value);
@@ -399,15 +452,257 @@ export const useOrchestrationRuntimeState = (options: {
     );
   };
 
+  const ensureMotherRoundDir = async (state: PersistedRuntime, round: OrchestrationRound) => {
+    const motherId = normalizeText(state.motherAgentId);
+    if (!motherId) return;
+    await createWunderWorkspaceDir({
+      agent_id: resolveWorkspaceAgentId(motherId),
+      path: ['orchestration', state.runId, buildRoundDirName(round.index)].filter(Boolean).join('/')
+    }).catch(() => null);
+  };
+
+  const saveRoundSituationFile = async (
+    state: PersistedRuntime,
+    roundIndex: number,
+    situation: string
+  ) => {
+    const motherId = normalizeText(state.motherAgentId);
+    const runId = normalizeText(state.runId);
+    if (!motherId || !runId || !Number.isFinite(roundIndex) || roundIndex <= 0) return;
+    await createWunderWorkspaceDir({
+      agent_id: resolveWorkspaceAgentId(motherId),
+      path: ['orchestration', runId, buildRoundDirName(roundIndex)].filter(Boolean).join('/')
+    }).catch(() => null);
+    await saveWunderWorkspaceFile({
+      agent_id: resolveWorkspaceAgentId(motherId),
+      path: buildRoundSituationPath(runId, roundIndex),
+      content: String(situation || ''),
+      create_if_missing: true
+    });
+  };
+
+  const loadRoundSituationFile = async (
+    state: PersistedRuntime,
+    roundIndex: number
+  ): Promise<string | null> => {
+    const motherId = normalizeText(state.motherAgentId);
+    const runId = normalizeText(state.runId);
+    if (!motherId || !runId || !Number.isFinite(roundIndex) || roundIndex <= 0) return null;
+    try {
+      const response = await fetchWunderWorkspaceContent({
+        agent_id: resolveWorkspaceAgentId(motherId),
+        path: buildRoundSituationPath(runId, roundIndex),
+        include_content: true,
+        max_bytes: ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES
+      });
+      return String(response?.data?.content || '').trim();
+    } catch {
+      return null;
+    }
+  };
+
+  const syncSituationFiles = async (
+    state: PersistedRuntime,
+    entries: Record<string, string>,
+    rounds: OrchestrationRound[] = state.rounds
+  ) => {
+    const roundIndexes = new Set<number>();
+    Object.keys(entries || {}).forEach((key) => {
+      const parsed = Number.parseInt(key, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        roundIndexes.add(parsed);
+      }
+    });
+    rounds.forEach((round) => {
+      if (Number.isFinite(round.index) && round.index > 0) {
+        roundIndexes.add(round.index);
+      }
+    });
+    await Promise.all(
+      Array.from(roundIndexes).map((roundIndex) => {
+        const value =
+          String(entries[String(roundIndex)] || '').trim() ||
+          String(rounds.find((round) => round.index === roundIndex)?.situation || '').trim();
+        return saveRoundSituationFile(state, roundIndex, value);
+      })
+    );
+  };
+
+  const hydrateSituationFiles = async (state: PersistedRuntime) => {
+    const plannedSituations = { ...(state.plannedSituations || {}) };
+    let changed = false;
+    await Promise.all(
+      (state.rounds || []).map(async (round) => {
+        const fileSituation = await loadRoundSituationFile(state, round.index);
+        if (fileSituation === null) return;
+        const key = normalizeRoundIndexKey(round.index);
+        if (!key) return;
+        const currentValue = String(plannedSituations[key] || '').trim();
+        if (currentValue === fileSituation) return;
+        if (fileSituation) {
+          plannedSituations[key] = fileSituation;
+        } else {
+          delete plannedSituations[key];
+        }
+        changed = true;
+      })
+    );
+    if (!changed) return state;
+    const rounds = applyPlannedSituationsToRounds(state.rounds, plannedSituations);
+    const activeRoundId = normalizeText(state.activeRoundId);
+    const currentActiveRound = rounds.find((item) => item.id === activeRoundId) || rounds[rounds.length - 1] || null;
+    return {
+      ...state,
+      currentSituation: String(currentActiveRound?.situation || '').trim(),
+      plannedSituations,
+      rounds
+    } satisfies PersistedRuntime;
+  };
+
   const bindMemberThreadsAsMain = async (state: PersistedRuntime) => {
     await Promise.all(
       (Array.isArray(state.memberThreads) ? state.memberThreads : []).map((item) => {
         const agentId = normalizeText(item.agentId);
         const sessionId = normalizeText(item.sessionId);
         if (!agentId || !sessionId) return Promise.resolve();
-        return setDefaultSession(toApiAgentId(agentId) || DEFAULT_AGENT_KEY, { session_id: sessionId }).catch(() => null);
+        return setDefaultSession(agentId || DEFAULT_AGENT_KEY, { session_id: sessionId }).catch(() => null);
       })
     );
+  };
+
+  const buildInitialRuntime = (payload: {
+    runId: string;
+    motherSessionId: string;
+    memberThreads: OrchestrationMemberThread[];
+  }): PersistedRuntime => {
+    const firstRound: OrchestrationRound = {
+      id: buildRoundId(1),
+      index: 1,
+      situation: '',
+      userMessage: '',
+      createdAt: Date.now(),
+      missionIds: []
+    };
+    return {
+      version: ORCHESTRATION_RUNTIME_VERSION,
+      groupId: groupId.value,
+      runId: payload.runId,
+      createdAt: Date.now(),
+      motherAgentId: motherAgentId.value,
+      motherSessionId: payload.motherSessionId,
+      currentSituation: '',
+      plannedSituations: {},
+      rounds: [firstRound],
+      activeRoundId: firstRound.id,
+      memberThreads: payload.memberThreads,
+      motherPrimerInjected: false,
+      pendingRoundId: '',
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: 0,
+      suppressedMessageRanges: []
+    };
+  };
+
+  const applyRemoteState = async (remoteState: Record<string, unknown> | null, preserveExisting = true) => {
+    if (!remoteState) {
+      setRuntime(null);
+      return null;
+    }
+    const runId = normalizeText(remoteState.run_id);
+    const motherSessionId = normalizeText(remoteState.mother_session_id);
+    if (!runId || !motherSessionId) {
+      setRuntime(null);
+      return null;
+    }
+    const memberThreadsRaw = Array.isArray((remoteState as Record<string, unknown>).member_threads)
+      ? ((remoteState as Record<string, unknown>).member_threads as Array<Record<string, unknown>>)
+      : [];
+    const memberThreads = memberThreadsRaw
+      .map((item) => ({
+        agentId: normalizeText(item?.agent_id),
+        sessionId: normalizeText(item?.session_id)
+      }))
+      .filter((item) => item.agentId && item.sessionId);
+    const existing = preserveExisting ? runtimeState.value || readPersistedRuntime(groupId.value) : null;
+    const nextState =
+      existing && normalizeText(existing.runId) === runId
+        ? {
+            ...existing,
+            groupId: groupId.value,
+            runId,
+            motherAgentId: motherAgentId.value,
+            motherSessionId,
+            memberThreads
+          }
+        : buildInitialRuntime({
+            runId,
+            motherSessionId,
+            memberThreads
+          });
+    await bindMemberThreadsAsMain(nextState);
+    await ensureRoundArtifactDirs(nextState, nextState.rounds[0]);
+    await ensureMotherRoundDir(nextState, nextState.rounds[0]);
+    await saveRoundSituationFile(nextState, nextState.rounds[0].index, nextState.rounds[0].situation);
+    setRuntime(nextState);
+    return nextState;
+  };
+
+  const rebuildRoundsFromMotherHistory = async (
+    state: PersistedRuntime,
+    motherSessionId: string,
+    latestRoundIndexHint = 1
+  ) => {
+    const normalizedSessionId = normalizeText(motherSessionId);
+    if (!normalizedSessionId) return state;
+    try {
+      const response = await getSessionHistoryPage(normalizedSessionId, { limit: 400 });
+      const messages = Array.isArray(response?.data?.data?.messages) ? response.data.data.messages : [];
+      const nextRounds: OrchestrationRound[] = [];
+      messages.forEach((message) => {
+        if (!message || typeof message !== 'object' || Array.isArray(message)) return;
+        const role = normalizeText((message as Record<string, unknown>).role).toLowerCase();
+        if (role !== 'user') return;
+        const index = nextRounds.length + 1;
+        nextRounds.push({
+          id: buildRoundId(index),
+          index,
+          situation: '',
+          userMessage: String((message as Record<string, unknown>).content || '').trim(),
+          createdAt: normalizeMsTime((message as Record<string, unknown>).created_at) || Date.now(),
+          missionIds: []
+        });
+      });
+      const fallbackCount = Math.max(latestRoundIndexHint, nextRounds.length, 1);
+      if (!nextRounds.length) {
+        nextRounds.push({
+          id: buildRoundId(1),
+          index: 1,
+          situation: '',
+          userMessage: '',
+          createdAt: Date.now(),
+          missionIds: []
+        });
+      } else if (nextRounds.length < fallbackCount) {
+        for (let index = nextRounds.length + 1; index <= fallbackCount; index += 1) {
+          nextRounds.push({
+            id: buildRoundId(index),
+            index,
+            situation: '',
+            userMessage: '',
+            createdAt: Date.now() + index,
+            missionIds: []
+          });
+        }
+      }
+      const hydrated = {
+        ...state,
+        rounds: nextRounds,
+        activeRoundId: buildRoundId(Math.max(1, fallbackCount))
+      };
+      return await hydrateSituationFiles(hydrated);
+    } catch {
+      return state;
+    }
   };
 
   const initializeRun = async () => {
@@ -419,51 +714,40 @@ export const useOrchestrationRuntimeState = (options: {
     initializing.value = true;
     initError.value = '';
     try {
-      const createdThreads = await Promise.all(
-        orderedAgents.value.map(async (member) => {
-          const agentId = normalizeText(member?.agent_id);
-          if (!agentId) return null;
-          const agentName = normalizeText(member?.name) || agentId;
-          const title = `\u7f16\u6392+${agentName}`;
-          const sessionId = await createFreshMainSession(agentId, title);
-          return { agentId, agentName, sessionId, title } satisfies OrchestrationCreatedThread;
-        })
+      const response = await createBeeroomOrchestrationState({
+        group_id: currentGroupId,
+        mother_agent_id: currentMotherAgentId
+      });
+      const stateRecord =
+        response?.data?.data?.state && typeof response.data.data.state === 'object'
+          ? (response.data.data.state as Record<string, unknown>)
+          : null;
+      const memberThreadsRaw = Array.isArray(response?.data?.data?.member_threads)
+        ? (response.data.data.member_threads as Array<Record<string, unknown>>)
+        : [];
+      const memberThreads = memberThreadsRaw
+        .map((item) => ({
+          agentId: normalizeText(item?.agent_id),
+          sessionId: normalizeText(item?.session_id)
+        }))
+        .filter((item) => item.agentId && item.sessionId);
+      const nextState = await applyRemoteState(
+        stateRecord
+          ? {
+              ...stateRecord,
+              member_threads: memberThreadsRaw
+            }
+          : null,
+        false
       );
-      const runId = buildRunId();
-      const firstRound: OrchestrationRound = {
-        id: buildRoundId(1),
-        index: 1,
-        situation: '',
-        userMessage: '',
-        createdAt: Date.now(),
-        missionIds: []
-      };
-      const nextState: PersistedRuntime = {
-        version: ORCHESTRATION_RUNTIME_VERSION,
-        groupId: currentGroupId,
-        runId,
-        createdAt: Date.now(),
-        motherAgentId: currentMotherAgentId,
-        motherSessionId:
-          createdThreads.find((item) => item?.agentId === currentMotherAgentId)?.sessionId || '',
-        currentSituation: '',
-        plannedSituations: {},
-        rounds: [firstRound],
-        activeRoundId: firstRound.id,
-        memberThreads: createdThreads.filter((item): item is OrchestrationCreatedThread => Boolean(item)),
-        motherPrimerInjected: false
-      };
-      await bindMemberThreadsAsMain(nextState);
-      await ensureRoundArtifactDirs(nextState, firstRound);
-      setRuntime(nextState);
-      createdThreads.forEach((item) => {
-        if (!item?.agentId || !item?.sessionId) return;
+      memberThreads.forEach((item) => {
+        if (!item.agentId || !item.sessionId) return;
         chatStore.syncSessionSummary(
           {
             id: item.sessionId,
             agent_id: item.agentId,
             is_main: true,
-            title: item.title
+            title: ''
           },
           {
             agentId: item.agentId,
@@ -477,8 +761,112 @@ export const useOrchestrationRuntimeState = (options: {
     }
   };
 
+  const exitRun = async () => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) return;
+    await exitBeeroomOrchestrationState({ group_id: currentGroupId });
+    setRuntime(null);
+  };
+
+  const loadHistory = async () => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) {
+      historyItems.value = [];
+      return [];
+    }
+    historyLoading.value = true;
+    try {
+      const response = await listBeeroomOrchestrationHistory({ group_id: currentGroupId });
+      const items = Array.isArray(response?.data?.data?.items)
+        ? response.data.data.items.map(normalizeHistoryItem).filter((item): item is OrchestrationHistoryItem => Boolean(item))
+        : [];
+      historyItems.value = items;
+      return items;
+    } finally {
+      historyLoading.value = false;
+    }
+  };
+
+  const restoreHistory = async (orchestrationId: string) => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) {
+      throw new Error('orchestration_group_missing');
+    }
+    const normalizedOrchestrationId = normalizeText(orchestrationId);
+    if (!normalizedOrchestrationId) {
+      throw new Error('orchestration_history_missing');
+    }
+    const response = await restoreBeeroomOrchestrationHistory({
+      group_id: currentGroupId,
+      orchestration_id: normalizedOrchestrationId
+    });
+    const stateRecord =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    const historyRecord =
+      response?.data?.data?.history && typeof response.data.data.history === 'object'
+        ? normalizeHistoryItem(response.data.data.history)
+        : null;
+    const memberThreads = Array.isArray(response?.data?.data?.member_threads)
+      ? (response.data.data.member_threads as Array<Record<string, unknown>>)
+      : [];
+    const nextState = await applyRemoteState(
+      stateRecord
+        ? {
+            ...stateRecord,
+            member_threads: memberThreads
+          }
+        : null,
+      false
+    );
+    if (!nextState) {
+      return null;
+    }
+    const rebuilt = await rebuildRoundsFromMotherHistory(
+      nextState,
+      nextState.motherSessionId,
+      historyRecord?.latestRoundIndex || 1
+    );
+    setRuntime(rebuilt);
+    await loadHistory().catch(() => []);
+    return rebuilt;
+  };
+
   const ensureRuntime = async () => {
     if (runtimeState.value?.runId) return runtimeState.value;
+    const currentGroupId = groupId.value;
+    if (!currentGroupId || !motherAgentId.value) {
+      return null;
+    }
+    try {
+      const remote = await getBeeroomOrchestrationState({ group_id: currentGroupId });
+      const remoteState =
+        remote?.data?.data?.state && typeof remote.data.data.state === 'object'
+          ? (remote.data.data.state as Record<string, unknown>)
+          : null;
+      const memberThreads = Array.isArray(remote?.data?.data?.member_threads)
+        ? (remote.data.data.member_threads as Array<Record<string, unknown>>)
+        : [];
+      if (remoteState) {
+        const hydrated = await applyRemoteState(
+          {
+            ...remoteState,
+            member_threads: memberThreads
+          },
+          true
+        );
+        if (hydrated) {
+          const nextHydrated = await hydrateSituationFiles(hydrated);
+          if (nextHydrated !== hydrated) {
+            setRuntime(nextHydrated);
+          }
+          return nextHydrated;
+        }
+      }
+    } catch {
+      // Fall through to local cache / creation path.
+    }
     const persisted = readPersistedRuntime(groupId.value);
     if (
       persisted &&
@@ -487,7 +875,11 @@ export const useOrchestrationRuntimeState = (options: {
     ) {
       runtimeState.value = persisted;
       await bindMemberThreadsAsMain(persisted);
-      return persisted;
+      const hydrated = await hydrateSituationFiles(persisted);
+      if (hydrated !== persisted) {
+        setRuntime(hydrated);
+      }
+      return hydrated;
     }
     return initializeRun();
   };
@@ -512,8 +904,60 @@ export const useOrchestrationRuntimeState = (options: {
       activeRoundId: round.id
     };
     await ensureRoundArtifactDirs(nextState, round);
+    await ensureMotherRoundDir(nextState, round);
+    await saveRoundSituationFile(nextState, round.index, resolvedSituation);
     setRuntime(nextState);
     return round;
+  };
+
+  const reserveUserRound = async (payload: { situation?: string; userMessage: string; targetRoundId?: string }) => {
+    const current = await ensureRuntime();
+    if (!current) return null;
+    const targetRoundId = normalizeText(payload.targetRoundId);
+    const normalizedMessage = String(payload.userMessage || '').trim();
+    const currentRound =
+      current.rounds.find((item) => item.id === targetRoundId) ||
+      current.rounds.find((item) => item.id === current.activeRoundId) ||
+      current.rounds[current.rounds.length - 1];
+    const normalizedSituation =
+      String(payload.situation || '').trim() ||
+      resolveSituationByRoundIndex(current.plannedSituations, Number(currentRound?.index || 0));
+    if (!currentRound || normalizeText(currentRound.userMessage)) {
+      const round = await createRound(normalizedSituation, normalizedMessage);
+      if (!round) return null;
+      const latestState = runtimeState.value;
+      if (!latestState) return round;
+      setRuntime({
+        ...latestState,
+        currentSituation: normalizedSituation,
+        activeRoundId: round.id,
+        pendingRoundId: round.id,
+        pendingRoundCreated: true,
+        pendingMessageStartedAt: Date.now()
+      });
+      return round;
+    }
+    const nextRounds = current.rounds.map((item) =>
+      item.id === currentRound.id
+        ? {
+            ...item,
+            situation: normalizedSituation,
+            userMessage: normalizedMessage || item.userMessage
+          }
+        : item
+    );
+    const nextState = {
+      ...current,
+      currentSituation: normalizedSituation,
+      rounds: nextRounds,
+      activeRoundId: currentRound.id,
+      pendingRoundId: currentRound.id,
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: Date.now()
+    };
+    await saveRoundSituationFile(nextState, currentRound.index, normalizedSituation);
+    setRuntime(nextState);
+    return nextRounds.find((item) => item.id === currentRound.id) || null;
   };
 
   const commitUserRound = async (payload: { situation?: string; userMessage: string; targetRoundId?: string }) => {
@@ -540,12 +984,157 @@ export const useOrchestrationRuntimeState = (options: {
           }
         : item
     );
-    setRuntime({
+    const nextState = {
       ...current,
       currentSituation: normalizedSituation,
-      rounds: nextRounds
-    });
+      rounds: nextRounds,
+      activeRoundId: currentRound.id,
+      pendingRoundId: ''
+    };
+    await saveRoundSituationFile(nextState, currentRound.index, normalizedSituation);
+    setRuntime(nextState);
     return nextRounds.find((item) => item.id === currentRound.id) || null;
+  };
+
+  const finalizePendingRound = async (roundId?: string) => {
+    const current = runtimeState.value;
+    if (!current) return null;
+    const resolvedRoundId = normalizeText(roundId) || normalizeText(current.pendingRoundId);
+    if (!resolvedRoundId) return null;
+    if (!current.rounds.some((item) => item.id === resolvedRoundId)) return null;
+    if (current.pendingRoundId !== resolvedRoundId) {
+      return current.rounds.find((item) => item.id === resolvedRoundId) || null;
+    }
+    setRuntime({
+      ...current,
+      pendingRoundId: '',
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: 0
+    });
+    return current.rounds.find((item) => item.id === resolvedRoundId) || null;
+  };
+
+  const discardPendingRound = async (roundId?: string) => {
+    const current = runtimeState.value;
+    if (!current) return null;
+    const resolvedRoundId = normalizeText(roundId) || normalizeText(current.pendingRoundId);
+    if (!resolvedRoundId) return null;
+    const round = current.rounds.find((item) => item.id === resolvedRoundId) || null;
+    if (!round) return null;
+    const currentPendingId = normalizeText(current.pendingRoundId);
+    const pendingMessageStartedAt = normalizeMsTime(current.pendingMessageStartedAt);
+    const discardCompletedAt = Date.now();
+    const removeWholeRound =
+      currentPendingId === resolvedRoundId &&
+      current.pendingRoundCreated === true &&
+      normalizeText(round.userMessage) &&
+      current.rounds[current.rounds.length - 1]?.id === resolvedRoundId;
+    const nextRounds = removeWholeRound
+      ? current.rounds.filter((item) => item.id !== resolvedRoundId)
+      : current.rounds.map((item) =>
+          item.id === resolvedRoundId
+            ? {
+                ...item,
+                userMessage: ''
+              }
+            : item
+        );
+    const fallbackRound = nextRounds.find((item) => item.id === current.activeRoundId) || nextRounds[nextRounds.length - 1] || null;
+    const nextSuppressedRanges = [...(current.suppressedMessageRanges || [])];
+    if (pendingMessageStartedAt > 0) {
+      nextSuppressedRanges.push({
+        startAt: pendingMessageStartedAt,
+        endAt: Math.max(pendingMessageStartedAt, discardCompletedAt)
+      });
+    }
+    const nextState: PersistedRuntime = {
+      ...current,
+      rounds: nextRounds.length ? nextRounds : [buildInitialRuntime({
+        runId: current.runId,
+        motherSessionId: current.motherSessionId,
+        memberThreads: current.memberThreads
+      }).rounds[0]],
+      activeRoundId: fallbackRound?.id || buildRoundId(1),
+      currentSituation: String(fallbackRound?.situation || '').trim(),
+      pendingRoundId: '',
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: 0,
+      suppressedMessageRanges: nextSuppressedRanges.slice(-24)
+    };
+    setRuntime(nextState);
+    if (removeWholeRound) {
+      const motherId = normalizeText(current.motherAgentId);
+      const roundPath = ['orchestration', current.runId, buildRoundDirName(round.index)].filter(Boolean).join('/');
+      if (motherId && roundPath) {
+        await deleteWunderWorkspaceEntry({
+          agent_id: resolveWorkspaceAgentId(motherId),
+          path: roundPath
+        }).catch(() => null);
+      }
+      await Promise.all(
+        visibleWorkers.value.map((member) => {
+          const agentId = normalizeText(member?.agent_id);
+          if (!agentId) return Promise.resolve();
+          return deleteWunderWorkspaceEntry({
+            agent_id: resolveWorkspaceAgentId(agentId),
+            container_id: resolveWorkspaceContainerId(member),
+            path: buildAgentArtifactPath(current.runId, round.index, agentId)
+          }).catch(() => null);
+        })
+      );
+    } else {
+      await saveRoundSituationFile(nextState, round.index, round.situation);
+    }
+    return nextState.rounds.find((item) => item.id === nextState.activeRoundId) || null;
+  };
+
+  const resolveRoundSituation = async (roundIndex: number) => {
+    const current = await ensureRuntime();
+    if (!current || !Number.isFinite(roundIndex) || roundIndex <= 0) {
+      return '';
+    }
+    const roundKey = normalizeRoundIndexKey(roundIndex);
+    if (!roundKey) {
+      return '';
+    }
+    const fileSituation = await loadRoundSituationFile(current, roundIndex);
+    const currentPlanned = String(current.plannedSituations[roundKey] || '').trim();
+    const currentRoundSituation = String(
+      current.rounds.find((item) => item.index === roundIndex)?.situation || ''
+    ).trim();
+    const resolvedSituation =
+      fileSituation !== null ? fileSituation : currentPlanned || currentRoundSituation;
+    if (fileSituation === null) {
+      return resolvedSituation;
+    }
+    const nextPlannedSituations = { ...(current.plannedSituations || {}) };
+    if (resolvedSituation) {
+      nextPlannedSituations[roundKey] = resolvedSituation;
+    } else {
+      delete nextPlannedSituations[roundKey];
+    }
+    const nextRounds = applyPlannedSituationsToRounds(current.rounds, nextPlannedSituations);
+    const activeRoundId = normalizeText(current.activeRoundId);
+    const currentActiveRound =
+      nextRounds.find((item) => item.id === activeRoundId) || nextRounds[nextRounds.length - 1] || null;
+    const nextCurrentSituation =
+      currentActiveRound?.index === roundIndex
+        ? resolvedSituation
+        : String(currentActiveRound?.situation || '').trim();
+    const plannedChanged = currentPlanned !== resolvedSituation;
+    const roundsChanged = nextRounds.some((round, index) => {
+      const previous = current.rounds[index];
+      return previous?.situation !== round.situation;
+    });
+    if (plannedChanged || roundsChanged || current.currentSituation !== nextCurrentSituation) {
+      setRuntime({
+        ...current,
+        currentSituation: nextCurrentSituation,
+        plannedSituations: nextPlannedSituations,
+        rounds: nextRounds
+      });
+    }
+    return resolvedSituation;
   };
 
   const markMotherPrimerInjected = () => {
@@ -557,7 +1146,7 @@ export const useOrchestrationRuntimeState = (options: {
     });
   };
 
-  const updateSituation = (value: string) => {
+  const updateSituation = async (value: string) => {
     const current = runtimeState.value;
     if (!current) return;
     const round = activeRound.value;
@@ -578,27 +1167,31 @@ export const useOrchestrationRuntimeState = (options: {
           ? { ...item, situation: normalizedValue }
           : item
     );
-    setRuntime({
+    const nextState = {
       ...current,
       currentSituation: normalizedValue,
       plannedSituations,
       rounds: nextRounds
-    });
+    };
+    setRuntime(nextState);
+    await saveRoundSituationFile(nextState, round.index, normalizedValue);
   };
 
-  const updatePlannedSituations = (entries: Record<string, string>) => {
+  const updatePlannedSituations = async (entries: Record<string, string>) => {
     const current = runtimeState.value;
     if (!current) return;
     const plannedSituations = normalizePlannedSituations(entries);
     const nextRounds = applyPlannedSituationsToRounds(current.rounds, plannedSituations);
     const activeRoundId = normalizeText(current.activeRoundId);
     const currentActiveRound = nextRounds.find((item) => item.id === activeRoundId) || nextRounds[nextRounds.length - 1] || null;
-    setRuntime({
+    const nextState = {
       ...current,
       currentSituation: String(currentActiveRound?.situation || '').trim(),
       plannedSituations,
       rounds: nextRounds
-    });
+    };
+    setRuntime(nextState);
+    await syncSituationFiles(nextState, plannedSituations, nextRounds);
   };
 
   const updateRoundMissionIds = () => {
@@ -781,6 +1374,8 @@ export const useOrchestrationRuntimeState = (options: {
       runtimeState.value =
         persisted && persisted.motherAgentId === motherAgentId.value ? persisted : null;
       artifactCards.value = [];
+      historyItems.value = [];
+      void loadHistory().catch(() => []);
     },
     { immediate: true }
   );
@@ -831,24 +1426,34 @@ export const useOrchestrationRuntimeState = (options: {
     clearArtifactReloadTimer();
   });
 
-  return {
-    runtimeState,
+    return {
+      runtimeState,
     runtimeScopeKey,
     clearScopeKey,
     activeRound,
     latestRound,
+    pendingRound,
     activeRoundChatMessages,
     visibleWorkers,
     artifactCards,
     artifactLoading,
     artifactError,
+    historyLoading,
+    historyItems,
     initializing,
     initError,
     isReady,
     ensureRuntime,
     initializeRun,
+    exitRun,
+    loadHistory,
+    restoreHistory,
     createRound,
+    reserveUserRound,
     commitUserRound,
+    finalizePendingRound,
+    discardPendingRound,
+    resolveRoundSituation,
     markMotherPrimerInjected,
     updateSituation,
     updatePlannedSituations,

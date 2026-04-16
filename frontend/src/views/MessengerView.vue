@@ -349,7 +349,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
             type="button"
-            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy"
+            :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="startNewSession"
@@ -361,6 +361,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
+            :disabled="activeSessionOrchestrationLocked"
             :title="t('chat.history')"
             :aria-label="t('chat.history')"
             @click="timelineDialogVisible = true"
@@ -485,8 +486,6 @@
               :refreshing="beeroomStore.refreshing"
               :error="beeroomStore.error"
               @refresh="refreshActiveOrchestration"
-              @create="handleCreateOrchestration"
-              @edit-situation="handleEditOrchestrationSituation"
               @open-agent="openAgentById"
             />
           </div>
@@ -3331,6 +3330,33 @@ const activeSessionApproval = computed(() => {
     ) || null
   );
 });
+
+const activeSessionRecord = computed<Record<string, unknown> | null>(() => {
+  if (!isAgentConversationActive.value) return null;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return null;
+  return (
+    (Array.isArray(chatStore.sessions)
+      ? chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId)
+      : null) || null
+  ) as Record<string, unknown> | null;
+});
+
+const activeSessionOrchestrationLock = computed<Record<string, unknown> | null>(() => {
+  const session = activeSessionRecord.value;
+  const lock =
+    session && typeof session === 'object' && !Array.isArray(session)
+      ? (session.orchestration_lock as Record<string, unknown> | null | undefined)
+      : null;
+  if (!lock || typeof lock !== 'object' || Array.isArray(lock)) {
+    return null;
+  }
+  return lock.active === true ? lock : null;
+});
+
+const activeSessionOrchestrationLocked = computed(
+  () => Boolean(activeSessionOrchestrationLock.value)
+);
 
 const buildSessionAgentMap = (): Map<string, string> => {
   const sessionAgentMap = new Map<string, string>();
@@ -6197,7 +6223,11 @@ const rightPanelSessionHistory = computed(() => {
       title: String(session?.title || t('chat.newSession')),
       preview: resolveSessionTimelinePreview(session as Record<string, unknown>),
       lastAt: resolveSessionActivityTimestamp((session || {}) as Record<string, unknown>),
-      isMain: Boolean(session?.is_main)
+      isMain: Boolean(session?.is_main),
+      orchestrationLock:
+        session && typeof session === 'object' && !Array.isArray(session)
+          ? ((session as Record<string, unknown>).orchestration_lock as Record<string, unknown> | null | undefined)
+          : null
     }))
     .filter((item) => item.id)
     .sort((left, right) => {
@@ -8811,14 +8841,6 @@ const handleBeeroomMoveAgents = async (agentIds: string[]) => {
   }
 };
 
-const handleCreateOrchestration = () => {
-  ElMessage.info(t('orchestration.panel.pending'));
-};
-
-const handleEditOrchestrationSituation = () => {
-  ElMessage.info(t('orchestration.panel.pending'));
-};
-
 const refreshAgentMutationState = async () => {
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
@@ -9951,6 +9973,14 @@ const setTimelineSessionMain = async (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return false;
   const targetSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
+  const targetLock =
+    targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
+      ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
+      : null;
+  if (targetLock?.active === true) {
+    ElMessage.warning(t('orchestration.chat.lockedInMessenger'));
+    return false;
+  }
   if (targetSession?.is_main) {
     return true;
   }
@@ -9966,6 +9996,15 @@ const setTimelineSessionMain = async (sessionId: string) => {
 const handleTimelineDialogActivateSession = async (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return;
+  const targetSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
+  const targetLock =
+    targetSession && typeof targetSession === 'object' && !Array.isArray(targetSession)
+      ? (targetSession.orchestration_lock as Record<string, unknown> | null | undefined)
+      : null;
+  if (targetLock?.active === true) {
+    ElMessage.warning(t('orchestration.chat.lockedInMessenger'));
+    return;
+  }
   timelineDialogVisible.value = false;
   await setTimelineSessionMain(targetId);
   await restoreTimelineSession(targetId);
@@ -10607,6 +10646,10 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
 const sendAgentMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
   if (isMessengerInteractionBlocked.value) {
     chatDebugLog('messenger.send', 'blocked-send-during-interaction-lock', buildActiveSessionBusyDebugSnapshot());
+    return;
+  }
+  if (activeSessionOrchestrationLocked.value) {
+    ElMessage.warning(t('orchestration.chat.lockedInMessenger'));
     return;
   }
   const content = String(payload?.content || '').trim();
@@ -11470,7 +11513,8 @@ async function runStartNewSession(options: { notify?: boolean } = {}): Promise<S
     !isAgentConversationActive.value ||
     creatingAgentSession.value ||
     isMessengerInteractionBlocked.value ||
-    activeMessengerSessionBusy.value
+    activeMessengerSessionBusy.value ||
+    activeSessionOrchestrationLocked.value
   ) {
     return 'noop';
   }

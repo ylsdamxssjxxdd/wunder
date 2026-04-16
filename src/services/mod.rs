@@ -29,6 +29,7 @@ pub mod memory_agent_settings;
 pub mod memory_auto_extract;
 pub mod memory_fragments;
 pub mod org_units;
+pub mod orchestration_context;
 pub mod output_quality;
 pub mod presence;
 pub mod preset_worker_cards;

@@ -79,6 +79,7 @@
             selectedEntry && selectedEntry.path === item.entry.path ? 'active' : ''
           ]"
           :style="{ '--workspace-indent': `${item.depth * 16}px` }"
+          :data-workspace-path="item.entry.path"
           draggable="true"
           @click="handleWorkspaceItemClick($event, item.entry)"
           @dblclick="handleWorkspaceItemDoubleClick(item.entry)"
@@ -308,6 +309,10 @@ const props = defineProps({
     default: 1
   },
   title: {
+    type: String,
+    default: ''
+  },
+  initialFocusPath: {
     type: String,
     default: ''
   },
@@ -615,6 +620,100 @@ const syncWorkspaceListViewport = async ({ reset = false } = {}) => {
     listElement.scrollTop = maxScrollTop;
   }
   listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+};
+
+const buildWorkspacePathChain = (path) => {
+  const normalized = normalizeWorkspacePath(path);
+  if (!normalized) return [];
+  const parts = normalized.split('/').filter(Boolean);
+  const chain = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    chain.push(parts.slice(0, index + 1).join('/'));
+  }
+  return chain;
+};
+
+const scrollWorkspaceEntryIntoView = async (path) => {
+  const targetPath = normalizeWorkspacePath(path);
+  if (!targetPath) return;
+  await nextTick();
+  const listElement = listRef.value as HTMLElement | null;
+  if (!listElement) return;
+  const targetElement = Array.from(listElement.querySelectorAll('.workspace-item') as NodeListOf<HTMLElement>).find(
+    (node) => node.getAttribute('data-workspace-path') === targetPath
+  );
+  if (targetElement?.scrollIntoView) {
+    targetElement.scrollIntoView({ block: 'nearest' });
+    listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+    return;
+  }
+  const targetIndex = displayEntries.value.findIndex((item) => item.entry.path === targetPath);
+  if (targetIndex < 0) return;
+  listElement.scrollTop = Math.max(0, targetIndex * WORKSPACE_ROW_HEIGHT - WORKSPACE_ROW_HEIGHT * 2);
+  listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+};
+
+// Reveal a nested artifact path from the workspace root without changing the panel's current route.
+const revealWorkspacePath = async (rawPath, options: { scroll?: boolean } = {}) => {
+  const targetPath = normalizeWorkspacePath(rawPath);
+  if (!targetPath || state.searchMode) return false;
+  const chain = buildWorkspacePathChain(targetPath);
+  if (!chain.length) return false;
+  for (let index = 0; index < chain.length - 1; index += 1) {
+    const dirPath = chain[index];
+    const entry = findWorkspaceEntryByPath(state.entries, dirPath);
+    if (!entry || entry.type !== 'dir') return false;
+    if (!state.expanded.has(dirPath)) {
+      state.expanded.add(dirPath);
+      state.expanded = new Set(state.expanded);
+    }
+    if (entry.childrenLoaded) continue;
+    try {
+      const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+        path: dirPath,
+        include_content: true,
+        depth: 1,
+        sort_by: state.sortBy,
+        order: state.sortOrder
+      }));
+      attachWorkspaceChildren(state.entries, dirPath, data.entries || []);
+      emitWorkspaceStats(state.entries);
+    } catch (error) {
+      state.expanded.delete(dirPath);
+      state.expanded = new Set(state.expanded);
+      return false;
+    }
+  }
+  const targetEntry = findWorkspaceEntryByPath(state.entries, targetPath);
+  if (!targetEntry) return false;
+  if (targetEntry.type === 'dir') {
+    if (!state.expanded.has(targetPath)) {
+      state.expanded.add(targetPath);
+      state.expanded = new Set(state.expanded);
+    }
+    if (!targetEntry.childrenLoaded) {
+      try {
+        const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+          path: targetPath,
+          include_content: true,
+          depth: 1,
+          sort_by: state.sortBy,
+          order: state.sortOrder
+        }));
+        attachWorkspaceChildren(state.entries, targetPath, data.entries || []);
+        emitWorkspaceStats(state.entries);
+      } catch (error) {
+        state.expanded.delete(targetPath);
+        state.expanded = new Set(state.expanded);
+        return false;
+      }
+    }
+  }
+  setWorkspaceSelection([targetPath], targetPath);
+  if (options.scroll !== false) {
+    await scrollWorkspaceEntryIntoView(targetPath);
+  }
+  return true;
 };
 const flatEntries = computed(() => displayEntries.value.map((item) => item.entry));
 const singleSelectedEntry = computed(() => {
@@ -2644,6 +2743,7 @@ const handleDocumentVisibilityChange = () => {
 onMounted(async () => {
   scheduleWorkspaceThemeIconWarmup();
   await loadWorkspace();
+  await revealWorkspacePath(props.initialFocusPath);
   stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
     const detail =
       event?.detail && typeof event.detail === 'object'
@@ -2680,6 +2780,7 @@ watch(
     state.parent = null;
     state.expanded = new Set();
     await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+    await revealWorkspacePath(props.initialFocusPath);
   }
 );
 
@@ -2691,6 +2792,15 @@ watch(
     state.parent = null;
     state.expanded = new Set();
     await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+    await revealWorkspacePath(props.initialFocusPath);
+  }
+);
+
+watch(
+  () => String(props.initialFocusPath || '').trim(),
+  async (value, oldValue) => {
+    if (!value || value === oldValue) return;
+    await revealWorkspacePath(value);
   }
 );
 
@@ -2735,6 +2845,7 @@ onBeforeUnmount(() => {
 });
 
 defineExpose({
-  refreshView: reloadWorkspaceView
+  refreshView: reloadWorkspaceView,
+  revealPath: revealWorkspacePath
 });
 </script>

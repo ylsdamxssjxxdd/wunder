@@ -427,13 +427,14 @@ onBeforeUnmount(() => {
 .beeroom-node-card.is-artifact-container {
   gap: 0;
   padding: 12px;
-  border-color: rgba(16, 185, 129, 0.26);
+  border-color: rgba(245, 158, 11, 0.38);
   background:
-    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 38%),
-    linear-gradient(180deg, rgba(8, 14, 20, 0.98), rgba(5, 10, 16, 0.99));
+    radial-gradient(circle at 18% 16%, rgba(251, 191, 36, 0.22), transparent 38%),
+    radial-gradient(circle at 92% 90%, rgba(16, 185, 129, 0.1), transparent 40%),
+    linear-gradient(180deg, rgba(109, 76, 29, 0.78), rgba(57, 47, 28, 0.9));
   box-shadow:
-    0 12px 24px rgba(2, 6, 23, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    0 12px 24px rgba(120, 53, 15, 0.12),
+    inset 0 1px 0 rgba(255, 247, 237, 0.12);
 }
 
 .beeroom-node-card.is-artifact-container::before {
@@ -441,10 +442,10 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-node-card.is-artifact-container.is-selected {
-  border-color: rgba(52, 211, 153, 0.42);
+  border-color: rgba(251, 191, 36, 0.58);
   box-shadow:
-    inset 0 0 0 1px rgba(16, 185, 129, 0.18),
-    0 12px 24px rgba(2, 6, 23, 0.18);
+    inset 0 0 0 1px rgba(251, 191, 36, 0.22),
+    0 14px 26px rgba(120, 53, 15, 0.16);
 }
 
 .beeroom-node-card.is-live-activity {
@@ -817,10 +818,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 10px;
   border-radius: 16px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background:
-    linear-gradient(180deg, rgba(9, 15, 22, 0.88), rgba(6, 10, 16, 0.94)),
-    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 54%);
+  background: rgba(255, 248, 235, 0.04);
   overflow: hidden;
 }
 
@@ -828,7 +826,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -846,45 +844,40 @@ onBeforeUnmount(() => {
 .beeroom-node-artifact-slot-frame {
   width: 100%;
   height: 100%;
-  border-radius: 12px;
+  border-radius: 10px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #dbeafe;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(7, 11, 18, 0.98));
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    inset 0 0 0 1px rgba(15, 23, 42, 0.14);
+  color: #fff7ed;
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(253, 230, 138, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 251, 235, 0.08);
   font-size: 17px;
 }
 
 .beeroom-node-artifact-slot:not(.is-empty) .beeroom-node-artifact-slot-frame {
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 8px 16px rgba(2, 6, 23, 0.16);
+    inset 0 1px 0 rgba(255, 251, 235, 0.08),
+    0 4px 8px rgba(15, 23, 42, 0.08);
 }
 
 .beeroom-node-artifact-slot-frame.is-dir {
-  color: #fcd34d;
-  background: linear-gradient(180deg, rgba(60, 39, 12, 0.94), rgba(31, 21, 10, 0.98));
-  border-color: rgba(245, 158, 11, 0.28);
+  color: #fef3c7;
+  background: rgba(245, 158, 11, 0.2);
+  border-color: rgba(252, 211, 77, 0.24);
 }
 
 .beeroom-node-artifact-slot-frame.is-file {
-  color: #c7d2fe;
+  color: #ecfeff;
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(153, 246, 228, 0.2);
 }
 
 .beeroom-node-artifact-slot-frame.is-empty {
-  color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.48), rgba(7, 11, 18, 0.58)),
-    repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0 1px, transparent 1px 7px);
-  border-color: rgba(148, 163, 184, 0.1);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.025),
-    inset 0 0 18px rgba(2, 6, 23, 0.26);
+  color: rgba(251, 191, 36, 0.22);
+  background: rgba(255, 248, 235, 0.04);
+  border-color: rgba(251, 191, 36, 0.1);
+  box-shadow: none;
 }
 
 .beeroom-node-artifact-slot-frame i {

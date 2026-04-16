@@ -4,6 +4,7 @@ export type OrchestrationPromptTemplates = {
   mother_runtime: string;
   round_artifacts: string;
   worker_first_dispatch: string;
+  worker_round_artifacts: string;
   worker_guide: string;
   situation_context: string;
   user_message: string;
@@ -82,6 +83,10 @@ export const buildMotherOrchestrationPrimer = (options: {
   const workers = resolveWorkerArtifactLines(options);
   return renderTemplate(options.templates.mother_runtime, {
     mother_name: motherName,
+    run_id: normalizeText(options.runId),
+    situation_file_path: ['orchestration', normalizeText(options.runId), buildRoundDirName(options.roundIndex), 'situation.txt']
+      .filter(Boolean)
+      .join('/'),
     worker_directory_lines: workers.map((item) => item.line).join('\n')
   }).trim();
 };
@@ -108,15 +113,6 @@ export const buildMotherDispatchEnvelope = (options: {
       })
     );
   }
-  blocks.push(
-    buildMotherRoundArtifactInstructions({
-      group: options.group,
-      agents: options.agents,
-      runId: options.runId,
-      roundIndex: options.roundIndex,
-      templates: options.templates
-    })
-  );
   if (normalizeText(options.situation)) {
     blocks.push(
       renderTemplate(options.templates.situation_context, {

@@ -29,7 +29,13 @@
           >
             <i class="fa-solid fa-folder-open" aria-hidden="true"></i>
           </button>
-          <button class="beeroom-canvas-icon-btn" type="button" :title="t('common.clear')" @click="emit('clear')">
+          <button
+            v-if="showClearButton !== false"
+            class="beeroom-canvas-icon-btn"
+            type="button"
+            :title="t('common.clear')"
+            @click="emit('clear')"
+          >
             <i class="fa-solid fa-broom" aria-hidden="true"></i>
           </button>
         </div>
@@ -155,10 +161,11 @@
           class="beeroom-canvas-chat-textarea"
           data-testid="beeroom-chat-textarea"
           :value="composerText"
+          :disabled="composerDisabled"
           :placeholder="t('beeroom.canvas.chatInputPlaceholder')"
           rows="3"
           @input="emit('update:composerText', ($event.target as HTMLTextAreaElement).value)"
-          @keydown.enter.exact.prevent="!composerSending && emit('send')"
+          @keydown.enter.exact.prevent="!composerSending && !composerDisabled && emit('send')"
         ></textarea>
         <div class="beeroom-canvas-chat-compose-foot">
           <el-select
@@ -167,6 +174,7 @@
             class="beeroom-canvas-chat-select"
             popper-class="beeroom-canvas-chat-select-popper"
             :placeholder="t('beeroom.canvas.chatTarget')"
+            :disabled="composerDisabled"
             @update:model-value="emit('update:composerTargetAgentId', String($event || ''))"
           >
             <el-option
@@ -181,7 +189,7 @@
             :class="{ 'is-stop': composerSending }"
             data-testid="beeroom-chat-send"
             type="button"
-            :disabled="composerSending ? !dispatchCanStop : !composerCanSend"
+            :disabled="composerSending ? !dispatchCanStop : composerDisabled || !composerCanSend"
             @click="emit('send')"
           >
             {{ composerSending ? t('common.stop') : t('chat.input.send') }}
@@ -222,6 +230,8 @@ const props = defineProps<{
   composerError: string;
   artifactsEnabled: boolean;
   showArtifactsButton?: boolean;
+  showClearButton?: boolean;
+  composerDisabled?: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>();

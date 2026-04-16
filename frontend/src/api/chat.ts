@@ -13,6 +13,7 @@ type SocketProtocolOptions = {
 
 type StreamRequestOptions = {
   signal?: AbortSignal;
+  orchestrationSource?: string;
 };
 
 type ResumeRequestOptions = StreamRequestOptions & {
@@ -159,6 +160,9 @@ export const sendMessageStream = (
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(options.orchestrationSource
+        ? { 'x-wunder-orchestration-source': options.orchestrationSource }
+        : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
     body: JSON.stringify(payload),

@@ -10,6 +10,9 @@ use crate::services::agent_abilities::{
 use crate::services::default_agent_protocol::{
     default_agent_config_from_record, default_agent_meta_key, DefaultAgentConfig,
 };
+use crate::services::orchestration_context::{
+    active_orchestration_for_agent, build_locked_thread_message, ORCHESTRATION_THREAD_LOCKED_CODE,
+};
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
 use crate::services::user_store::build_default_agent_record_from_storage;
@@ -1358,6 +1361,26 @@ async fn set_default_session(
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let normalized_agent = normalize_agent_id(&agent_id);
+    if !normalized_agent.is_empty() {
+        if let Some((lock_state, lock_binding)) =
+            active_orchestration_for_agent(state.storage.as_ref(), &user_id, &normalized_agent)
+        {
+            return Err(crate::api::errors::error_response_with_detail(
+                StatusCode::CONFLICT,
+                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
+                build_locked_thread_message(&lock_state, &lock_binding),
+                Some("Use the orchestration page to continue this orchestration thread."),
+                Some(json!({
+                    "group_id": lock_state.group_id,
+                    "orchestration_id": lock_state.orchestration_id,
+                    "run_id": lock_state.run_id,
+                    "session_id": lock_binding.session_id,
+                    "agent_id": lock_binding.agent_id,
+                    "role": lock_binding.role,
+                })),
+            ));
+        }
+    }
     if !normalized_agent.is_empty() {
         let record = state
             .user_store

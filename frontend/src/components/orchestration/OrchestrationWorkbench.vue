@@ -15,7 +15,7 @@
         :active-round-missions="activeRoundMissions"
         :artifact-cards="artifactCards"
         :visible-workers="visibleWorkers"
-        :visible-chat-messages="visibleChatMessages"
+        :visible-chat-messages="activeRoundChatMessages"
         :mother-agent-id="motherAgentId"
         :mother-name="motherName"
         :mother-session-id="motherSessionId"
@@ -23,9 +23,10 @@
         :dispatch-preview="liveDispatchPreview"
         :composer-text="composerText"
         :composer-sending="composerSending"
-        :can-send="canSend"
+        :can-send="orchestrationCanSend"
+        :composer-disabled="orchestrationComposerDisabled"
         :initializing="initializing"
-        :refreshing="refreshing"
+        :history-loading="historyLoading"
         :is-ready="isReady"
         :group-description="group.description || t('orchestration.empty.description')"
         :resolve-worker-outputs="resolveWorkerOutputs"
@@ -34,13 +35,50 @@
         :avatar-label="avatarLabel"
         @open-agent="emit('open-agent', $event)"
         @update:composer-text="composerText = $event"
-        @clear-chat="handleClearChat"
         @send="handleSendToMother"
         @create-run="handleCreateRun"
+        @exit-run="handleExitRun"
+        @open-history="historyDialogVisible = true"
         @open-situation="situationDialogVisible = true"
-        @refresh="emit('refresh')"
         @select-round="selectRound($event)"
       />
+
+      <el-dialog
+        v-model="historyDialogVisible"
+        width="520px"
+        append-to-body
+        class="messenger-modal messenger-modal--beeroom"
+      >
+        <template #header>
+          <div class="messenger-modal-header">
+            <div>
+              <div class="messenger-modal-title">{{ t('orchestration.dialog.historyTitle') }}</div>
+              <div class="messenger-modal-subtitle">{{ t('orchestration.dialog.historySubtitle') }}</div>
+            </div>
+          </div>
+        </template>
+
+        <div v-if="historyLoading" class="messenger-list-empty">
+          {{ t('common.loading') }}
+        </div>
+        <div v-else-if="!historyItems.length" class="messenger-list-empty">
+          {{ t('orchestration.dialog.historyEmpty') }}
+        </div>
+        <div v-else class="orchestration-history-list">
+          <button
+            v-for="item in historyItems"
+            :key="item.orchestrationId"
+            class="orchestration-history-item"
+            type="button"
+            @click="handleRestoreHistory(item.orchestrationId)"
+          >
+            <span class="orchestration-history-item-title">{{ item.runId }}</span>
+            <span class="orchestration-history-item-meta">
+              {{ t('orchestration.timeline.round', { round: item.latestRoundIndex }) }}
+            </span>
+          </button>
+        </div>
+      </el-dialog>
 
       <el-dialog
         v-model="situationDialogVisible"
@@ -105,16 +143,22 @@ import { computed, ref, toRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
-import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
+import {
+  clearBeeroomMissionChatState,
+  getBeeroomMissionChatState,
+  setBeeroomMissionChatState
+} from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { useBeeroomMissionCanvasRuntime } from '@/components/beeroom/useBeeroomMissionCanvasRuntime';
-import { fetchBeeroomOrchestrationPrompts } from '@/api/beeroom';
+import {
+  fetchBeeroomOrchestrationPrompts,
+  updateBeeroomOrchestrationSessionContext
+} from '@/api/beeroom';
 import OrchestrationMissionCanvas from '@/components/orchestration/OrchestrationMissionCanvas.vue';
 import {
   type OrchestrationPromptTemplates,
-  buildMotherDispatchEnvelope,
-  buildMotherWorkerPrimerGuide
+  buildMotherDispatchEnvelope
 } from '@/components/orchestration/orchestrationPrompting';
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
@@ -150,13 +194,23 @@ const {
   clearScopeKey,
   activeRound,
   latestRound,
+  pendingRound,
+  activeRoundChatMessages,
   visibleWorkers,
   artifactCards,
+  historyLoading,
+  historyItems,
   initializing,
   isReady,
   ensureRuntime,
   initializeRun,
-  commitUserRound,
+  exitRun,
+  loadHistory,
+  restoreHistory,
+  reserveUserRound,
+  finalizePendingRound,
+  discardPendingRound,
+  resolveRoundSituation,
   markMotherPrimerInjected,
   updatePlannedSituations,
   selectRound,
@@ -175,8 +229,8 @@ const {
   composerSending,
   dispatchPreview,
   displayChatMessages,
-  clearManualChatHistory,
   handleComposerSend,
+  handleDispatchStop,
   resolveMessageAvatarImage,
   avatarLabel
 } = useBeeroomMissionCanvasRuntime({
@@ -195,6 +249,7 @@ const {
 });
 
 const situationDialogVisible = ref(false);
+const historyDialogVisible = ref(false);
 const situationPlanDraft = ref<Record<string, string>>({});
 const orchestrationPromptTemplates = ref<OrchestrationPromptTemplates | null>(null);
 const orchestrationPromptLanguage = ref('');
@@ -204,6 +259,7 @@ const ORCHESTRATION_PROMPT_TEMPLATE_KEYS = [
   'mother_runtime',
   'round_artifacts',
   'worker_first_dispatch',
+  'worker_round_artifacts',
   'worker_guide',
   'situation_context',
   'user_message'
@@ -212,6 +268,13 @@ const ORCHESTRATION_PROMPT_TEMPLATE_KEYS = [
 const rounds = computed(() => runtimeState.value?.rounds || []);
 const runId = computed(() => String(runtimeState.value?.runId || '').trim());
 const motherSessionId = computed(() => String(runtimeState.value?.motherSessionId || '').trim());
+const isViewingLatestRound = computed(() => {
+  const latestId = String(latestRound.value?.id || '').trim();
+  const activeId = String(activeRound.value?.id || '').trim();
+  return Boolean(latestId && activeId && latestId === activeId);
+});
+const orchestrationCanSend = computed(() => Boolean(isReady.value && isViewingLatestRound.value && String(composerText.value || '').trim()) && !composerSending.value);
+const orchestrationComposerDisabled = computed(() => !isReady.value || (!isViewingLatestRound.value && !composerSending.value));
 
 const motherName = computed(() => {
   const motherId = motherAgentId.value;
@@ -258,9 +321,7 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
   return dispatchPreview.value || null;
 });
 
-const visibleChatMessages = computed(() => displayChatMessages.value);
-
-const canSend = computed(() => Boolean(isReady.value && String(composerText.value || '').trim()) && !composerSending.value);
+const visibleChatMessages = computed(() => activeRoundChatMessages.value);
 
 const normalizePromptTemplates = (value: unknown): OrchestrationPromptTemplates => {
   const record = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -311,6 +372,7 @@ const handleCreateRun = async () => {
     situationPlanDraft.value = {};
     situationDialogVisible.value = false;
     await initializeRun();
+    await syncMotherSessionContext(1);
     emit('create');
     ElMessage.success(t('orchestration.message.created'));
   } catch (error: any) {
@@ -318,79 +380,126 @@ const handleCreateRun = async () => {
   }
 };
 
-const handleSaveSituation = () => {
-  const nextDraft = Object.fromEntries(
-    Object.entries(situationPlanDraft.value || {}).map(([key, value]) => [key, String(value || '').trim()]).filter(([, value]) => Boolean(value))
-  );
-  updatePlannedSituations(nextDraft);
-  situationDialogVisible.value = false;
-  emit('edit-situation');
-};
-
-const handleSendToMother = async () => {
-  const content = String(composerText.value || '').trim();
-  if (!content) return;
+const handleExitRun = async () => {
   try {
-    const state = await ensureRuntime();
-    if (!String(state?.motherSessionId || '').trim()) {
-      throw new Error(t('orchestration.panel.pending'));
-    }
-    const latest = latestRound.value;
-    const targetRound =
-      latest && !String(latest.userMessage || '').trim() ? latest : null;
-    const nextRoundIndex = targetRound ? targetRound.index : latestRoundIndex.value + 1;
-    const roundSituation =
-      String(plannedSituations.value[String(nextRoundIndex)] || '').trim() ||
-      (targetRound ? String(targetRound.situation || '').trim() : '');
-    const includePrimer = runtimeState.value?.motherPrimerInjected !== true;
-    const templates = await ensureOrchestrationPromptTemplates();
-    const dispatchContentBlocks = [
-      buildMotherDispatchEnvelope({
-        group: props.group,
-        agents: props.agents,
-        runId: runId.value,
-        roundIndex: nextRoundIndex,
-        userMessage: content,
-        situation: roundSituation,
-        includePrimer,
-        templates
-      }),
-      includePrimer
-        ? buildMotherWorkerPrimerGuide({
-            group: props.group,
-            agents: props.agents,
-            runId: runId.value,
-            roundIndex: nextRoundIndex,
-            templates
-          })
-        : ''
-    ].filter((item) => String(item || '').trim());
-    const dispatchContent = dispatchContentBlocks.join('\n\n');
-    await commitUserRound({
-      targetRoundId: targetRound?.id || '',
-      situation: roundSituation,
-      userMessage: content
-    });
-    await handleComposerSend({
-      content: dispatchContent,
-      displayContent: content
-    });
-    if (includePrimer) {
-      markMotherPrimerInjected();
-    }
+    await exitRun();
+    composerText.value = '';
+    situationPlanDraft.value = {};
+    situationDialogVisible.value = false;
+    emit('refresh');
+    ElMessage.success(t('common.success'));
   } catch (error: any) {
     ElMessage.error(String(error?.message || t('common.requestFailed')));
   }
 };
 
-const handleClearChat = async () => {
-  await clearManualChatHistory();
+const handleRestoreHistory = async (orchestrationId: string) => {
+  try {
+    await restoreHistory(orchestrationId);
+    await syncMotherSessionContext(Number(latestRound.value?.index || 1));
+    historyDialogVisible.value = false;
+    emit('refresh');
+    ElMessage.success(t('chat.history.restoreSuccess'));
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || t('chat.history.restoreFailed')));
+  }
+};
+
+const handleSaveSituation = () => {
+  const nextDraft = Object.fromEntries(
+    Object.entries(situationPlanDraft.value || {}).map(([key, value]) => [key, String(value || '').trim()]).filter(([, value]) => Boolean(value))
+  );
+  void updatePlannedSituations(nextDraft)
+    .then(() => {
+      situationDialogVisible.value = false;
+      emit('edit-situation');
+    })
+    .catch((error: any) => {
+      ElMessage.error(String(error?.message || t('common.requestFailed')));
+    });
+};
+
+const syncMotherSessionContext = async (roundIndex: number) => {
+  const sessionId = String(runtimeState.value?.motherSessionId || '').trim();
+  const nextRunId = String(runId.value || '').trim();
+  if (!sessionId || !nextRunId) return;
+  await updateBeeroomOrchestrationSessionContext({
+    session_id: sessionId,
+    run_id: nextRunId,
+    group_id: String(props.group?.group_id || props.group?.hive_id || '').trim(),
+    role: 'mother',
+    round_index: Math.max(1, Number(roundIndex) || 1),
+    mother_agent_id: String(motherAgentId.value || '').trim()
+  });
+};
+
+const handleSendToMother = async () => {
+  if (composerSending.value) {
+    const pending = pendingRound.value;
+    await handleDispatchStop();
+    if (pending?.id) {
+      await discardPendingRound(pending.id);
+    }
+    return;
+  }
+  const content = String(composerText.value || '').trim();
+  if (!content) return;
+  if (!isViewingLatestRound.value) {
+    ElMessage.warning(t('orchestration.message.historyRoundReadonly'));
+    return;
+  }
+  try {
+    const state = await ensureRuntime();
+    if (!String(state?.motherSessionId || '').trim()) {
+      throw new Error(t('orchestration.message.createRunRequired'));
+    }
+    const latest = latestRound.value;
+    const targetRound =
+      latest && !String(latest.userMessage || '').trim() ? latest : null;
+    const nextRoundIndex = targetRound ? targetRound.index : latestRoundIndex.value + 1;
+    const roundSituation = await resolveRoundSituation(nextRoundIndex);
+    const includePrimer = runtimeState.value?.motherPrimerInjected !== true;
+    const templates = await ensureOrchestrationPromptTemplates();
+    const dispatchContent = buildMotherDispatchEnvelope({
+      group: props.group,
+      agents: props.agents,
+      runId: runId.value,
+      roundIndex: nextRoundIndex,
+      userMessage: content,
+      situation: roundSituation,
+      includePrimer,
+      templates
+    });
+    const reservedRound = await reserveUserRound({
+      targetRoundId: targetRound?.id || '',
+      situation: roundSituation,
+      userMessage: content
+    });
+    await syncMotherSessionContext(nextRoundIndex);
+    await handleComposerSend({
+      content: dispatchContent,
+      displayContent: content
+    });
+    await finalizePendingRound(reservedRound?.id);
+    if (includePrimer) {
+      markMotherPrimerInjected();
+    }
+  } catch (error: any) {
+    const pending = pendingRound.value;
+    if (pending?.id) {
+      await discardPendingRound(pending.id).catch(() => null);
+    }
+    ElMessage.error(String(error?.message || t('common.requestFailed')));
+  }
 };
 
 watch(
   () => props.group?.group_id,
   () => {
     situationPlanDraft.value = {};
+    historyDialogVisible.value = false;
+    void loadHistory().catch(() => []);
+    void ensureRuntime().catch(() => null);
   },
   { immediate: true }
 );
@@ -411,6 +520,20 @@ watch(
   displayChatMessages,
   (value) => {
     displayChatMessagesSeed.value = value;
+  },
+  { immediate: true }
+);
+
+watch(
+  [runtimeScopeKey, activeRoundChatMessages],
+  ([scopeKey, messages]) => {
+    const resolvedScopeKey = String(scopeKey || '').trim();
+    if (!resolvedScopeKey) return;
+    const cached = getBeeroomMissionChatState(resolvedScopeKey);
+    setBeeroomMissionChatState(resolvedScopeKey, {
+      ...(cached || { version: 2, manualMessages: [], runtimeRelayMessages: [], dispatch: null }),
+      manualMessages: Array.isArray(messages) ? messages : []
+    });
   },
   { immediate: true }
 );
@@ -509,5 +632,37 @@ watch(
   color: rgba(191, 219, 254, 0.7);
   background: rgba(30, 41, 59, 0.72);
   border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.orchestration-history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.orchestration-history-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(12, 16, 24, 0.94), rgba(9, 12, 19, 0.92));
+  color: #f8fafc;
+}
+
+.orchestration-history-item:hover,
+.orchestration-history-item:focus-visible {
+  border-color: rgba(96, 165, 250, 0.38);
+}
+
+.orchestration-history-item-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.orchestration-history-item-meta {
+  font-size: 12px;
+  color: rgba(191, 219, 254, 0.72);
 }
 </style>

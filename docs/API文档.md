@@ -2564,3 +2564,123 @@
   - 蜂群成员 `agents[]` 现包含 `silent` / `prefer_mother`。
   - 当蜂群未显式绑定 `mother_agent_id` 时，服务端会优先回退到首个 `prefer_mother=true` 的成员作为默认母蜂。
 
+## 2026-04-16 增补：beeroom 编排提示词模板
+
+### `GET /wunder/beeroom/orchestration/prompts`
+
+- 用途：用户侧编排页发送母蜂消息前加载编排注入模板，模板正文以 `config/prompts/<zh|en>/orchestration/*.txt` 为准，避免前端硬编码编排运行说明。
+- 鉴权：用户端 Bearer Token，与 `/wunder/beeroom/groups` 一致。
+- 语言：服务端根据 `x-wunder-language` / `accept-language` 解析语言，优先返回 `zh` 或 `en` 下的模板；非默认系统模板包仍沿用 active prompt pack 的覆盖规则。
+- 返回：`data.prompts` 对象包含以下字符串键：
+  - `mother_runtime`
+  - `round_artifacts`
+  - `worker_first_dispatch`
+  - `worker_round_artifacts`
+  - `worker_guide`
+  - `situation_context`
+  - `user_message`
+- 示例响应：
+
+```json
+{
+  "data": {
+    "prompts": {
+      "mother_runtime": "...",
+      "round_artifacts": "...",
+      "worker_first_dispatch": "...",
+      "worker_round_artifacts": "...",
+      "worker_guide": "...",
+      "situation_context": "...",
+      "user_message": "..."
+    }
+  }
+}
+```
+
+### `POST /wunder/beeroom/orchestration/session-context`
+
+- 用途：用户侧编排页在“新建编排”或每次向母蜂发送用户消息前，同步当前母蜂线程对应的编排运行状态，供后端在编排态下识别这条线程不是普通对话。
+- 鉴权：用户端 Bearer Token，与 `/wunder/beeroom/groups` 一致。
+- 请求体：
+  - `session_id: string`，必填，母蜂主线程会话 ID。
+  - `run_id: string`，必填，当前编排 run id。
+  - `group_id?: string`，可选，蜂群 ID / hive_id。
+  - `role?: string`，可选，默认 `mother`。
+  - `round_index?: number`，可选，默认 `1`，表示当前母蜂用户轮次。
+  - `mother_agent_id?: string`，可选，未传时服务端回退到该会话绑定的 `agent_id`。
+- 返回：`data` 回显当前持久化的线程级编排状态：
+  - `session_id`
+  - `mode`：固定为 `orchestration`
+  - `run_id`
+  - `group_id`
+  - `role`
+  - `round_index`
+  - `mother_agent_id`
+- 说明：
+  - 该状态保存在线程级 meta 中，不改动 chat session 表结构。
+  - 当母蜂在该线程里调用 `agent_swarm` 时，后端会读取对应 `orchestration/<run_id>/round_000x/situation.txt`，并把当前轮次态势与工蜂产物目录提示自动注入给工蜂。
+
+### `GET /wunder/beeroom/orchestration/state`
+
+- 用途：查询指定蜂群当前是否处于编排态，以及当前活跃编排态的母蜂线程和成员线程绑定。
+- 鉴权：用户端 Bearer Token。
+- Query：
+  - `group_id: string`，必填，蜂群 ID / hive_id。
+- 返回：
+  - `data.active: boolean`
+  - `data.state?: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, active, entered_at, updated_at }`
+  - `data.member_threads[]: { orchestration_id, run_id, group_id, agent_id, agent_name, role, session_id, title, created_at }`
+
+### `POST /wunder/beeroom/orchestration/state/create`
+
+- 用途：为指定蜂群新建一次编排态，强制为母蜂与全部工蜂创建新的编排主线程，并将整群切换到该编排现实。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `mother_agent_id?: string`，可选，未传时服务端按当前蜂群母蜂决策逻辑选择。
+  - `run_id?: string`，可选，未传时服务端自动生成。
+- 返回：
+  - `data.state`：当前活跃编排态。
+  - `data.member_threads[]`：新建后的母蜂/工蜂编排线程绑定。
+- 说明：
+  - 若该蜂群已有活跃编排态，服务端会先将旧活跃编排态转入历史，再创建新的活跃编排态。
+
+### `POST /wunder/beeroom/orchestration/state/exit`
+
+- 用途：解除指定蜂群的编排态，并为整群智能体切换到新的普通主线程。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+- 返回：
+  - `data.group_id`
+  - `data.active: false`
+  - `data.member_threads[]`：解除后各智能体新建的普通主线程。
+- 说明：
+  - 被解除的编排态会保留为历史可恢复对象；原编排线程不再是当前活跃编排态的一部分。
+
+### `GET /wunder/beeroom/orchestration/history`
+
+- 用途：列出指定蜂群可恢复的编排态历史。
+- 鉴权：用户端 Bearer Token。
+- Query：
+  - `group_id: string`，必填。
+- 返回：
+  - `data.items[]: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, status, latest_round_index, entered_at, updated_at, exited_at, restored_at }`
+- 说明：
+  - 历史项以母蜂编排线程为核心，可用于编排页“历史”面板恢复。
+
+### `POST /wunder/beeroom/orchestration/history/restore`
+
+- 用途：按指定历史编排态恢复当前蜂群的编排现实。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `orchestration_id: string`，必填，要恢复的历史编排态 ID。
+- 返回：
+  - `data.state`：恢复后的当前活跃编排态。
+  - `data.history`：被恢复的历史记录快照。
+  - `data.member_threads[]`：恢复后母蜂/工蜂线程绑定。
+- 说明：
+  - 母蜂优先复用原历史编排线程。
+  - 工蜂若历史编排线程仍存在则复用；若缺失则自动补建新的编排线程后重新加入当前编排态。
+

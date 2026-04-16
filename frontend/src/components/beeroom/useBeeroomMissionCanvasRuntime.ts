@@ -2153,7 +2153,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         : await sendMessageStream(
             sessionId,
             { content: String(payload.content || ''), stream: true },
-            { signal: controller.signal }
+            {
+              signal: controller.signal,
+              orchestrationSource: 'beeroom_orchestration'
+            }
           );
 
     if (!response.ok) {

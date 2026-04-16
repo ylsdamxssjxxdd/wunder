@@ -108,6 +108,17 @@ export type BeeroomGroup = {
   mother_agent_name?: string | null;
   members?: BeeroomMember[];
   latest_mission?: BeeroomMission | null;
+  active_orchestration?: {
+    orchestration_id?: string;
+    run_id?: string;
+    group_id?: string;
+    mother_agent_id?: string | null;
+    mother_agent_name?: string | null;
+    mother_session_id?: string | null;
+    active?: boolean;
+    entered_at?: number;
+    updated_at?: number;
+  } | null;
 };
 
 export type BeeroomPackArtifact = {
@@ -247,6 +258,27 @@ const resolveFilenameFromDisposition = (headers: unknown, fallback: string): str
 
 const normalizeScalar = (value: unknown): string => String(value ?? '').trim();
 
+const normalizeActiveOrchestration = (value: unknown): BeeroomGroup['active_orchestration'] => {
+  const source = resolveRecord(value);
+  if (!source) return null;
+  const runId = String(source.run_id || '').trim();
+  const orchestrationId = String(source.orchestration_id || '').trim();
+  if (!runId || !orchestrationId) {
+    return null;
+  }
+  return {
+    orchestration_id: orchestrationId,
+    run_id: runId,
+    group_id: String(source.group_id || '').trim() || undefined,
+    mother_agent_id: String(source.mother_agent_id || '').trim() || null,
+    mother_agent_name: String(source.mother_agent_name || '').trim() || null,
+    mother_session_id: String(source.mother_session_id || '').trim() || null,
+    active: source.active === true,
+    entered_at: Number(source.entered_at || 0) || undefined,
+    updated_at: Number(source.updated_at || 0) || undefined
+  };
+};
+
 const stableMissionTaskFingerprint = (task: BeeroomMissionTask): string =>
   [
     normalizeScalar(task.task_id),
@@ -324,6 +356,10 @@ const stableGroupFingerprint = (group: BeeroomGroup | null | undefined): string 
     normalizeScalar(group.mission_total),
     normalizeScalar(group.mother_agent_id),
     normalizeScalar(group.mother_agent_name),
+    normalizeScalar(group.active_orchestration?.orchestration_id),
+    normalizeScalar(group.active_orchestration?.run_id),
+    normalizeScalar(group.active_orchestration?.mother_session_id),
+    normalizeScalar(group.active_orchestration?.updated_at),
     latestMissionFingerprint,
     membersFingerprint
   ].join('|');
@@ -484,7 +520,12 @@ export const useBeeroomStore = defineStore('beeroom', {
       if (!group) return;
       const groupId = normalizeGroupId(group.group_id || group.hive_id);
       if (!groupId) return;
-      const nextGroup = { ...group, group_id: groupId, hive_id: group.hive_id || groupId };
+      const nextGroup = {
+        ...group,
+        group_id: groupId,
+        hive_id: group.hive_id || groupId,
+        active_orchestration: normalizeActiveOrchestration(group.active_orchestration)
+      };
       const index = this.groups.findIndex(
         (item) => normalizeGroupId(item.group_id || item.hive_id) === groupId
       );
@@ -501,7 +542,13 @@ export const useBeeroomStore = defineStore('beeroom', {
 
     hydrateActivePayload(payload: unknown) {
       const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-      const group = (source.group || source) as BeeroomGroup | null;
+      const rawGroup = (source.group || source) as BeeroomGroup | null;
+      const group = rawGroup
+        ? {
+            ...rawGroup,
+            active_orchestration: normalizeActiveOrchestration(rawGroup.active_orchestration)
+          }
+        : null;
       const agents = asArray<BeeroomMember>(source.agents);
       const missions = asArray<BeeroomMission>(source.missions);
       const nextGroup = group && normalizeGroupId(group.group_id || group.hive_id) ? group : null;
@@ -850,7 +897,8 @@ export const useBeeroomStore = defineStore('beeroom', {
           const items = asArray<BeeroomGroup>(data?.data?.items).map((item) => ({
             ...item,
             group_id: normalizeGroupId(item.group_id || item.hive_id),
-            hive_id: String(item.hive_id || item.group_id || '').trim()
+            hive_id: String(item.hive_id || item.group_id || '').trim(),
+            active_orchestration: normalizeActiveOrchestration(item.active_orchestration)
           }));
 
           // Ignore stale responses when multiple panels trigger refresh together.

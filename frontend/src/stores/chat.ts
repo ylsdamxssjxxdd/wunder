@@ -289,6 +289,15 @@ type PendingApproval = {
   created_at: string;
 };
 
+type SessionOrchestrationLock = {
+  active: boolean;
+  group_id: string;
+  orchestration_id: string;
+  run_id: string;
+  mother_agent_id: string;
+  role: string;
+};
+
 const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
@@ -1444,6 +1453,57 @@ const updateAgentSessionMap = (map, agentId, sessionId) => {
   return nextMap;
 };
 
+const normalizeSessionOrchestrationLock = (value): SessionOrchestrationLock | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const source = value as Record<string, unknown>;
+  const orchestrationId = String(source.orchestration_id || '').trim();
+  const runId = String(source.run_id || '').trim();
+  if (!orchestrationId || !runId) {
+    return null;
+  }
+  return {
+    active: source.active === true,
+    group_id: String(source.group_id || '').trim(),
+    orchestration_id: orchestrationId,
+    run_id: runId,
+    mother_agent_id: String(source.mother_agent_id || '').trim(),
+    role: String(source.role || '').trim()
+  };
+};
+
+const patchSessionOrchestrationLock = (session) => {
+  if (!session || typeof session !== 'object') {
+    return session;
+  }
+  const normalizedLock = normalizeSessionOrchestrationLock(
+    (session as Record<string, unknown>).orchestration_lock
+  );
+  if (!normalizedLock) {
+    if (Object.prototype.hasOwnProperty.call(session, 'orchestration_lock')) {
+      const next = { ...(session as Record<string, unknown>) };
+      delete next.orchestration_lock;
+      return next;
+    }
+    return session;
+  }
+  return {
+    ...(session as Record<string, unknown>),
+    orchestration_lock: normalizedLock
+  };
+};
+
+const resolveErrorCode = (error) =>
+  String(
+    error?.response?.data?.error?.code ||
+      error?.response?.data?.detail?.code ||
+      error?.response?.data?.code ||
+      ''
+  )
+    .trim()
+    .toUpperCase();
+
 const persistAgentSession = (agentId, sessionId) => {
   updateChatPersistState((current) => ({
     ...current,
@@ -2454,7 +2514,7 @@ const resolveSessionActivityTime = (session) =>
 
 const sortSessionsByActivity = (sessions = []) =>
   (Array.isArray(sessions) ? sessions.slice() : [])
-    .map((session, index) => ({ session, index }))
+    .map((session, index) => ({ session: patchSessionOrchestrationLock(session), index }))
     .sort((a, b) => {
       const aTime = resolveSessionActivityTime(a.session);
       const bTime = resolveSessionActivityTime(b.session);
@@ -4363,14 +4423,14 @@ const applyThreadControlSessionPatch = (store, session, options: { allowArchived
   );
   if (index >= 0) {
     const current = store.sessions[index] || {};
-    store.sessions[index] = {
+    store.sessions[index] = patchSessionOrchestrationLock({
       ...current,
       ...normalized,
       id: targetId
-    };
+    });
     return store.sessions[index];
   }
-  const merged = { ...normalized, id: targetId };
+  const merged = patchSessionOrchestrationLock({ ...normalized, id: targetId });
   store.sessions.unshift(merged);
   return merged;
 };
@@ -10133,16 +10193,17 @@ export const useChatStore = defineStore('chat', {
         id: targetSessionId,
         agent_id: targetAgentId
       };
+      const patchedSession = patchSessionOrchestrationLock(nextSession) as Record<string, unknown>;
       const targetIndex = this.sessions.findIndex((item) => resolveSessionKey(item?.id) === targetSessionId);
       if (targetIndex >= 0) {
         this.sessions[targetIndex] = {
           ...this.sessions[targetIndex],
-          ...nextSession
+          ...patchedSession
         };
       } else {
-        this.sessions.unshift(nextSession);
+        this.sessions.unshift(patchedSession);
       }
-      if (nextSession.is_main === true) {
+      if (patchedSession.is_main === true) {
         this.sessions = applyMainSession(this.sessions, targetAgentId, targetSessionId);
       }
       this.sessions = sortSessionsByActivity(this.sessions);
@@ -10151,7 +10212,7 @@ export const useChatStore = defineStore('chat', {
         persistAgentSession(targetAgentId, targetSessionId);
       }
       syncDemoChatCache({ sessions: this.sessions });
-      return nextSession;
+      return patchedSession;
     },
     hasSessionMessages(sessionId) {
       const cached = getSessionMessages(sessionId);
@@ -10694,7 +10755,7 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(this.activeSessionId);
       clearSessionWatcher();
       const { data } = await createSession(payload);
-      const session = data.data;
+      const session = patchSessionOrchestrationLock(data.data);
       this.sessions.unshift(session);
       if (session?.is_main === true) {
         this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);

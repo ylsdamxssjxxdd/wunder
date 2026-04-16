@@ -14,6 +14,9 @@ use crate::services::chat_media::{
     process_chat_media_upload, reprocess_chat_media_source, ChatMediaUpload,
 };
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
+use crate::services::orchestration_context::{
+    build_locked_thread_message, session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
+};
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
 use crate::state::AppState;
@@ -45,6 +48,8 @@ const MAX_MEDIA_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
 const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
+const ORCHESTRATION_SOURCE_HEADER: &str = "x-wunder-orchestration-source";
+const ORCHESTRATION_SOURCE_ALLOW: &str = "beeroom_orchestration";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -328,6 +333,30 @@ async fn create_session(
         .as_deref()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    if let Some(agent_id) = agent_id.as_deref() {
+        if let Some((lock_state, lock_binding)) =
+            crate::services::orchestration_context::active_orchestration_for_agent(
+                state.storage.as_ref(),
+                &resolved.user.user_id,
+                agent_id,
+            )
+        {
+            return Err(crate::api::errors::error_response_with_detail(
+                StatusCode::CONFLICT,
+                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
+                build_locked_thread_message(&lock_state, &lock_binding),
+                Some("Use the orchestration page to continue this orchestration thread."),
+                Some(json!({
+                    "group_id": lock_state.group_id,
+                    "orchestration_id": lock_state.orchestration_id,
+                    "run_id": lock_state.run_id,
+                    "session_id": lock_binding.session_id,
+                    "agent_id": lock_binding.agent_id,
+                    "role": lock_binding.role,
+                })),
+            ));
+        }
+    }
     fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
     let record = crate::storage::ChatSessionRecord {
         session_id: session_id.clone(),
@@ -366,6 +395,12 @@ async fn create_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
+    insert_session_orchestration_lock_fields(
+        &mut payload,
+        &state,
+        &resolved.user.user_id,
+        &session_id,
+    );
     insert_session_runtime_fields(
         &mut payload,
         model_name.as_deref(),
@@ -429,6 +464,12 @@ async fn list_sessions(
                 .map(|session_id| session_id == &record.session_id)
                 .unwrap_or(false);
             let mut payload = session_payload_with_main(record, is_main);
+            insert_session_orchestration_lock_fields(
+                &mut payload,
+                &state,
+                &resolved.user.user_id,
+                &record.session_id,
+            );
             insert_session_runtime_fields(
                 &mut payload,
                 model_name.as_deref(),
@@ -982,6 +1023,7 @@ async fn delete_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
     state
         .workspace
         .purge_session_data(&resolved.user.user_id, &session_id);
@@ -1047,6 +1089,12 @@ async fn update_session_title(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
+    insert_session_orchestration_lock_fields(
+        &mut payload,
+        &state,
+        &resolved.user.user_id,
+        &session_id,
+    );
     insert_session_runtime_fields(
         &mut payload,
         model_name.as_deref(),
@@ -1075,6 +1123,7 @@ async fn archive_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
     let now = now_ts();
     record.status = CHAT_SESSION_STATUS_ARCHIVED.to_string();
     record.updated_at = now;
@@ -1127,6 +1176,12 @@ async fn archive_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
+    insert_session_orchestration_lock_fields(
+        &mut payload,
+        &state,
+        &resolved.user.user_id,
+        &session_id,
+    );
     insert_session_runtime_fields(
         &mut payload,
         model_name.as_deref(),
@@ -1155,6 +1210,7 @@ async fn restore_session(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
     let now = now_ts();
     record.status = CHAT_SESSION_STATUS_ACTIVE.to_string();
     record.updated_at = now;
@@ -1214,6 +1270,12 @@ async fn restore_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
+    insert_session_orchestration_lock_fields(
+        &mut payload,
+        &state,
+        &resolved.user.user_id,
+        &session_id,
+    );
     insert_session_runtime_fields(
         &mut payload,
         model_name.as_deref(),
@@ -1245,6 +1307,15 @@ async fn send_message(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
         ));
+    }
+    let orchestration_source = headers
+        .get(ORCHESTRATION_SOURCE_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .unwrap_or_default();
+    let allow_orchestration_send = orchestration_source == ORCHESTRATION_SOURCE_ALLOW;
+    if !allow_orchestration_send {
+        reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
     }
     let request = build_chat_request(
         &state,
@@ -2856,6 +2927,58 @@ fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main
         map.insert("is_main".to_string(), json!(is_main));
     }
     payload
+}
+
+fn insert_session_orchestration_lock_fields(
+    payload: &mut Value,
+    state: &Arc<AppState>,
+    user_id: &str,
+    session_id: &str,
+) {
+    let Value::Object(map) = payload else {
+        return;
+    };
+    if let Some((lock_state, lock_binding)) =
+        session_orchestration_lock_info(state.storage.as_ref(), user_id, session_id)
+    {
+        map.insert(
+            "orchestration_lock".to_string(),
+            json!({
+                "active": true,
+                "group_id": lock_state.group_id,
+                "orchestration_id": lock_state.orchestration_id,
+                "run_id": lock_state.run_id,
+                "mother_agent_id": lock_state.mother_agent_id,
+                "role": lock_binding.role,
+            }),
+        );
+    }
+}
+
+fn reject_locked_orchestration_session(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+) -> Result<(), Response> {
+    if let Some((lock_state, lock_binding)) =
+        session_orchestration_lock_info(state.storage.as_ref(), user_id, session_id)
+    {
+        return Err(crate::api::errors::error_response_with_detail(
+            StatusCode::CONFLICT,
+            Some(ORCHESTRATION_THREAD_LOCKED_CODE),
+            build_locked_thread_message(&lock_state, &lock_binding),
+            Some("Use the orchestration page to continue this orchestration thread."),
+            Some(json!({
+                "group_id": lock_state.group_id,
+                "orchestration_id": lock_state.orchestration_id,
+                "run_id": lock_state.run_id,
+                "session_id": lock_binding.session_id,
+                "agent_id": lock_binding.agent_id,
+                "role": lock_binding.role,
+            })),
+        ));
+    }
+    Ok(())
 }
 
 fn insert_session_runtime_fields(

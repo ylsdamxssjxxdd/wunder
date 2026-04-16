@@ -27,6 +27,14 @@
           <div class="messenger-timeline-title">{{ item.title }}</div>
           <div class="messenger-timeline-actions" :class="{ 'messenger-timeline-actions--main': item.isMain }">
             <span
+              v-if="item.orchestrationLock?.active"
+              class="messenger-timeline-main-badge messenger-timeline-main-badge--orchestration"
+              :title="t('orchestration.chat.timelineBadge')"
+            >
+              <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
+              <span>{{ t('orchestration.chat.timelineBadge') }}</span>
+            </span>
+            <span
               v-if="item.isMain"
               class="messenger-timeline-main-badge"
               :title="t('chat.history.main')"
@@ -35,7 +43,7 @@
               <span>{{ t('chat.history.main') }}</span>
             </span>
             <button
-              v-if="!item.isMain"
+              v-if="!item.isMain && !item.orchestrationLock?.active"
               class="messenger-timeline-rename-btn"
               type="button"
               :title="t('chat.history.rename')"
@@ -54,7 +62,7 @@
               <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
             </button>
             <button
-              v-if="!item.isMain"
+              v-if="!item.isMain && !item.orchestrationLock?.active"
               class="messenger-timeline-archive-btn"
               type="button"
               :title="t('chat.history.archive')"
@@ -83,6 +91,11 @@ type TimelineSessionItem = {
   preview: string;
   lastAt: unknown;
   isMain: boolean;
+  orchestrationLock?: {
+    active?: boolean;
+    role?: string;
+    run_id?: string;
+  } | null;
 };
 
 defineProps<{

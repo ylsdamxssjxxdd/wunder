@@ -82,6 +82,10 @@ use crate::path_utils::{
 use crate::sandbox;
 use crate::schemas::WunderRequest;
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
+use crate::services::orchestration_context::{
+    active_orchestration_for_agent, build_worker_dispatch_message,
+    ensure_orchestration_member_session, load_dispatch_context, session_has_visible_history,
+};
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
@@ -2370,12 +2374,31 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         .ok_or_else(|| anyhow!("agent_swarm send requires agent_id/agent_name or session_id"))?;
         match thread_strategy {
             SwarmWorkerThreadStrategy::MainThread => {
-                let (main_session, created_main_session) =
+                let (main_session, created_main_session) = if let Some((orchestration_state, _)) =
+                    active_orchestration_for_agent(
+                        context.storage.as_ref(),
+                        user_id,
+                        &target_agent.agent_id,
+                    )
+                {
+                    let (binding, created) = ensure_orchestration_member_session(
+                        context.storage.as_ref(),
+                        user_id,
+                        &orchestration_state,
+                        &target_agent,
+                    )?;
+                    let session = context
+                        .storage
+                        .get_chat_session(user_id, &binding.session_id)?
+                        .ok_or_else(|| anyhow!("orchestration worker session not found"))?;
+                    (session, created)
+                } else {
                     crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
                         context.storage.as_ref(),
                         user_id,
                         &target_agent,
-                    )?;
+                    )?
+                };
                 (target_agent, main_session.session_id, created_main_session)
             }
             SwarmWorkerThreadStrategy::FreshMainThread => {
@@ -2403,6 +2426,13 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         }
     };
     let target_agent_id = target_agent.agent_id.clone();
+    let orchestration_context = load_dispatch_context(
+        context.storage.as_ref(),
+        context.workspace.as_ref(),
+        context.workspace_id,
+        user_id,
+        context.session_id,
+    );
 
     let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
     let mut run_record = create_swarm_team_run_record(
@@ -2434,6 +2464,15 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         Some(&task_record.task_id),
         &message,
     )?;
+    let dispatch_message = build_worker_dispatch_message(
+        context.config,
+        &dispatch_message,
+        orchestration_context.as_ref(),
+        &target_agent_id,
+        &target_agent.name,
+        created_session
+            || !session_has_visible_history(context.storage.as_ref(), user_id, &target_session_id),
+    );
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
@@ -2745,6 +2784,13 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     let current_agent_id = current_agent_id(context);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
+    let orchestration_context = load_dispatch_context(
+        context.storage.as_ref(),
+        context.workspace.as_ref(),
+        context.workspace_id,
+        user_id,
+        context.session_id,
+    );
     let mut run_record = create_swarm_team_run_record(
         context,
         user_id,
@@ -2951,11 +2997,29 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             match task_thread_strategy {
                 SwarmWorkerThreadStrategy::MainThread => {
                     let (main_session, created_main_session) =
-                        crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                        if let Some((orchestration_state, _)) = active_orchestration_for_agent(
                             context.storage.as_ref(),
                             user_id,
-                            &agent_record,
-                        )?;
+                            &agent_record.agent_id,
+                        ) {
+                            let (binding, created) = ensure_orchestration_member_session(
+                                context.storage.as_ref(),
+                                user_id,
+                                &orchestration_state,
+                                &agent_record,
+                            )?;
+                            let session = context
+                                .storage
+                                .get_chat_session(user_id, &binding.session_id)?
+                                .ok_or_else(|| anyhow!("orchestration worker session not found"))?;
+                            (session, created)
+                        } else {
+                            crate::services::swarm::beeroom::resolve_or_create_agent_main_session(
+                                context.storage.as_ref(),
+                                user_id,
+                                &agent_record,
+                            )?
+                        };
                     let tool_names = resolve_swarm_batch_tool_names(
                         context,
                         context.config,
@@ -3001,6 +3065,15 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 }
             }
         };
+        let dispatch_message = build_worker_dispatch_message(
+            context.config,
+            &dispatch_message,
+            orchestration_context.as_ref(),
+            &agent_record.agent_id,
+            &agent_record.name,
+            created_session
+                || !session_has_visible_history(context.storage.as_ref(), user_id, &session_id),
+        );
         task_record.target_session_id = Some(session_id.clone());
         task_record.spawned_session_id = created_session.then_some(session_id.clone());
         context.storage.upsert_team_task(&task_record)?;
