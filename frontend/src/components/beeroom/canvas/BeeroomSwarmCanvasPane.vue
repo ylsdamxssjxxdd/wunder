@@ -146,6 +146,16 @@
       </button>
       <button
         class="beeroom-canvas-tool-btn"
+        type="button"
+        :title="canvasControlLabels.regularize"
+        :aria-label="canvasControlLabels.regularize"
+        @click="regularizeLayout"
+      >
+        <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+        <span class="beeroom-visually-hidden">{{ canvasControlLabels.regularize }}</span>
+      </button>
+      <button
+        class="beeroom-canvas-tool-btn"
         :class="{ 'is-active': fullscreen }"
         type="button"
         :title="fullscreen ? canvasControlLabels.exitFullscreen : canvasControlLabels.enterFullscreen"
@@ -160,7 +170,7 @@
       </button>
     </div>
 
-    <div class="beeroom-canvas-minimap-shell">
+    <div v-if="props.showMinimap !== false" class="beeroom-canvas-minimap-shell">
       <div class="beeroom-canvas-minimap-label">{{ t('beeroom.canvas.minimap') }}</div>
       <button class="beeroom-canvas-minimap" type="button" @click="handleMinimapClick">
         <svg
@@ -209,6 +219,7 @@ import { chatDebugLog } from '@/utils/chatDebug';
 import {
   getBeeroomMissionCanvasState,
   mergeBeeroomMissionCanvasState,
+  clearBeeroomMissionCanvasState,
   type BeeroomCanvasPositionOverride,
   type BeeroomCanvasViewportState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
@@ -225,6 +236,7 @@ import {
   NODE_HEIGHT,
   NODE_WIDTH,
   WORLD_PADDING,
+  type SwarmProjection,
   type BeeroomSwarmDispatchPreview,
   buildBeeroomSwarmProjection,
   hasBeeroomSwarmNodes,
@@ -258,6 +270,10 @@ const props = defineProps<{
   resolveAgentAvatarImageByAgentId?: (agentId: unknown) => string;
   resolveAgentAvatarColorByAgentId?: (agentId: unknown) => string;
   fullscreen?: boolean;
+  externalProjection?: SwarmProjection | null;
+  externalScopeKey?: string;
+  externalHasNodes?: boolean;
+  showMinimap?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -292,7 +308,7 @@ type PanState = {
 };
 
 const { t } = useI18n();
-const canvasControlLabels = {
+const __canvasControlLabelsLegacy = {
   toolbar: '画布工具',
   zoomIn: '放大',
   zoomOut: '缩小',
@@ -300,6 +316,15 @@ const canvasControlLabels = {
   enterFullscreen: '进入全屏',
   exitFullscreen: '退出全屏'
 } as const;
+const canvasControlLabels = computed(() => ({
+  toolbar: t('beeroom.canvas.toolbar'),
+  zoomIn: t('beeroom.canvas.zoomIn'),
+  zoomOut: t('beeroom.canvas.zoomOut'),
+  fitView: t('beeroom.canvas.fitView'),
+  regularize: t('beeroom.canvas.regularize'),
+  enterFullscreen: t('beeroom.canvas.enterFullscreen'),
+  exitFullscreen: t('beeroom.canvas.exitFullscreen')
+}));
 const viewportRef = ref<HTMLDivElement | null>(null);
 const containerSize = ref(normalizeSwarmViewportSize({ width: 0, height: 0 }));
 const selectedNodeId = ref('');
@@ -322,6 +347,7 @@ const knownProjectionNodeDispatchActivity = new Map<string, boolean>();
 const revealCleanupTimers = new Map<string, number>();
 
 const scopeKey = computed(() =>
+  String(props.externalScopeKey || '').trim() ||
   resolveBeeroomSwarmScopeKey({
     missionId: props.mission?.mission_id,
     teamRunId: props.mission?.team_run_id,
@@ -329,8 +355,78 @@ const scopeKey = computed(() =>
   })
 );
 
-const projection = computed(() =>
-  buildBeeroomSwarmProjection({
+const applyProjectionInteractionOverrides = (
+  source: SwarmProjection | null | undefined,
+  options: {
+    selectedNodeId: string;
+    nodePositionOverrides: Record<string, BeeroomCanvasPositionOverride>;
+  }
+): SwarmProjection => {
+  const base = source || {
+    nodes: [],
+    edges: [],
+    nodeMetaMap: new Map(),
+    memberMap: new Map(),
+    tasksByAgent: new Map(),
+    motherNodeId: '',
+    bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 }
+  };
+  const selectedNodeId = String(options.selectedNodeId || '').trim();
+  const nodes = base.nodes.map((node) => {
+    const override = options.nodePositionOverrides[node.id];
+    const x = Number.isFinite(Number(override?.x)) ? Math.round(Number(override.x)) : node.x;
+    const y = Number.isFinite(Number(override?.y)) ? Math.round(Number(override.y)) : node.y;
+    return {
+      ...node,
+      x,
+      y,
+      selected: node.id === selectedNodeId
+    };
+  });
+  if (!nodes.length) {
+    return {
+      ...base,
+      nodes,
+      edges: base.edges.map((edge) => ({ ...edge, selected: false })),
+      bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 }
+    };
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  nodes.forEach((node) => {
+    minX = Math.min(minX, node.x - node.width / 2);
+    minY = Math.min(minY, node.y - node.height / 2);
+    maxX = Math.max(maxX, node.x + node.width / 2);
+    maxY = Math.max(maxY, node.y + node.height / 2);
+  });
+  return {
+    ...base,
+    nodes,
+    edges: base.edges.map((edge) => ({
+      ...edge,
+      selected: Boolean(selectedNodeId) && (edge.source === selectedNodeId || edge.target === selectedNodeId)
+    })),
+    bounds: {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: Math.max(0, maxX - minX),
+      height: Math.max(0, maxY - minY)
+    }
+  };
+};
+
+const projection = computed(() => {
+  if (props.externalProjection) {
+    return applyProjectionInteractionOverrides(props.externalProjection, {
+      selectedNodeId: selectedNodeId.value,
+      nodePositionOverrides: nodePositionOverrides.value
+    });
+  }
+  return buildBeeroomSwarmProjection({
     group: props.group,
     mission: props.mission,
     agents: props.agents,
@@ -344,14 +440,20 @@ const projection = computed(() =>
     resolveAgentAvatarImageByAgentId: props.resolveAgentAvatarImageByAgentId,
     resolveAgentAvatarColorByAgentId: props.resolveAgentAvatarColorByAgentId,
     t
-  })
-);
+  });
+});
 const swarmTaskProjectionContext = computed(() =>
   buildBeeroomSwarmSubagentProjectionContext(Array.isArray(props.mission?.tasks) ? props.mission.tasks : [])
 );
 
-const baseProjection = computed(() =>
-  buildBeeroomSwarmProjection({
+const baseProjection = computed(() => {
+  if (props.externalProjection) {
+    return applyProjectionInteractionOverrides(props.externalProjection, {
+      selectedNodeId: '',
+      nodePositionOverrides: {}
+    });
+  }
+  return buildBeeroomSwarmProjection({
     group: props.group,
     mission: props.mission,
     agents: props.agents,
@@ -365,10 +467,11 @@ const baseProjection = computed(() =>
     resolveAgentAvatarImageByAgentId: props.resolveAgentAvatarImageByAgentId,
     resolveAgentAvatarColorByAgentId: props.resolveAgentAvatarColorByAgentId,
     t
-  })
-);
+  });
+});
 
 const hasNodes = computed(() =>
+  props.externalHasNodes === true ||
   hasBeeroomSwarmNodes({
     group: props.group,
     mission: props.mission,
@@ -825,6 +928,16 @@ const hydrateCanvasState = () => {
   selectedNodeId.value = String(cached?.activeNodeId || '').trim();
   pendingViewportRestore.value = cached?.viewport || null;
   pendingFitView.value = !cached?.viewport;
+};
+
+const regularizeLayout = async () => {
+  clearPendingNodeOutputPreview();
+  clearInteractions();
+  clearBeeroomMissionCanvasState(scopeKey.value);
+  nodePositionOverrides.value = {};
+  pendingViewportRestore.value = null;
+  pendingFitView.value = false;
+  await fitView(true);
 };
 
 const fitView = async (force = false) => {

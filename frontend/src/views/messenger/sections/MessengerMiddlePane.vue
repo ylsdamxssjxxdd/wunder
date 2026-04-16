@@ -43,7 +43,7 @@
       />
     </label>
     <el-dropdown
-      v-if="activeSection === 'swarms'"
+      v-if="activeSection === 'swarms' || activeSection === 'orchestrations'"
       trigger="click"
       placement="bottom-end"
       @command="handleSwarmPlusCommand"
@@ -397,7 +397,7 @@
       </template>
     </template>
 
-    <template v-else-if="activeSection === 'swarms'">
+    <template v-else-if="activeSection === 'swarms' || activeSection === 'orchestrations'">
       <template v-for="(group, index) in filteredBeeroomGroups" :key="group.group_id">
         <div
         class="messenger-list-item messenger-agent-item messenger-swarm-item"

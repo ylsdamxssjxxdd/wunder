@@ -103,6 +103,9 @@ export const getBeeroomMission = (groupId: ApiId, missionId: ApiId) =>
     timeout: 60000
   });
 
+export const fetchBeeroomOrchestrationPrompts = () =>
+  api.get('/beeroom/orchestration/prompts', { timeout: 60000 });
+
 export type StartBeeroomDemoRunRequest = {
   seed?: number;
   worker_count_mode?: 'random' | 'all' | string;

@@ -12,9 +12,14 @@
 
     <template v-if="!collapsed">
       <div class="beeroom-canvas-chat-head">
-        <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
+        <div class="beeroom-canvas-chat-head-main">
+          <div class="beeroom-canvas-chat-title">{{ resolvedTitle }}</div>
+          <slot name="head-main"></slot>
+        </div>
         <div class="beeroom-canvas-chat-head-actions">
+          <slot name="head-actions"></slot>
           <button
+            v-if="showArtifactsButton !== false"
             class="beeroom-canvas-icon-btn"
             type="button"
             :title="t('beeroom.canvas.artifacts')"
@@ -29,6 +34,8 @@
           </button>
         </div>
       </div>
+
+      <slot name="head-secondary"></slot>
 
       <section
         ref="chatStreamRef"
@@ -181,12 +188,14 @@
           </button>
         </div>
       </section>
+
+      <slot name="footer"></slot>
     </template>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { chatDebugLog } from '@/utils/chatDebug';
@@ -204,6 +213,7 @@ const props = defineProps<{
   approvals: DispatchApprovalItem[];
   dispatchCanStop: boolean;
   dispatchApprovalBusy: boolean;
+  title?: string;
   composerText: string;
   composerTargetAgentId: string;
   composerTargetOptions: ComposerTargetOption[];
@@ -211,6 +221,7 @@ const props = defineProps<{
   composerCanSend: boolean;
   composerError: string;
   artifactsEnabled: boolean;
+  showArtifactsButton?: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
 }>();
@@ -230,6 +241,7 @@ const { t } = useI18n();
 const chatStreamRef = ref<HTMLElement | null>(null);
 const CHAT_SCROLL_STICKY_THRESHOLD_PX = 36;
 const shouldStickToBottom = ref(true);
+const resolvedTitle = computed(() => String(props.title || '').trim() || t('beeroom.canvas.chatTitle'));
 const logChatPanel = (event: string, payload?: unknown) => {
   chatDebugLog('beeroom.chat-panel', event, payload);
 };
@@ -434,9 +446,18 @@ watch(
   border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
+.beeroom-canvas-chat-head-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
 .beeroom-canvas-chat-head-actions {
   display: inline-flex;
   align-items: center;
+  align-self: flex-start;
+  flex-wrap: wrap;
   gap: 8px;
 }
 

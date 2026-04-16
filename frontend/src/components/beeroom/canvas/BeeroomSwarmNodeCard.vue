@@ -7,6 +7,7 @@
       `is-emphasis-${node.emphasis}`,
       {
         'is-mother': node.role === 'mother',
+        'is-artifact-container': node.renderKind === 'artifact-container',
         'is-selected': node.selected,
         'is-condensed': condensed,
         'is-revealing': !!reveal,
@@ -29,44 +30,63 @@
     @keydown.space.prevent="emit('click')"
     @dragstart.prevent
   >
-    <div class="beeroom-node-card-body">
-      <div class="beeroom-node-card-head">
-        <span class="beeroom-node-avatar">
-          <img v-if="node.avatarImageUrl" class="beeroom-node-avatar-img" :src="node.avatarImageUrl" alt="" />
-          <span v-else class="beeroom-node-avatar-text">{{ node.avatarInitial }}</span>
-        </span>
-        <div class="beeroom-node-title-group">
-          <div class="beeroom-node-title" :title="node.name">{{ node.displayName }}</div>
-          <div class="beeroom-node-role-chip">{{ node.roleLabel }}</div>
+    <template v-if="node.renderKind === 'artifact-container'">
+      <div class="beeroom-node-artifact-container">
+        <div class="beeroom-node-artifact-grid">
+          <div
+            v-for="slot in visibleArtifactSlots"
+            :key="slot.key"
+            class="beeroom-node-artifact-slot"
+            :class="{ 'is-empty': !slot.item }"
+            :title="slot.item?.title || ''"
+          >
+            <span class="beeroom-node-artifact-slot-frame" :class="slot.item ? `is-${slot.item.kind}` : 'is-empty'">
+              <i v-if="slot.item" class="fa-solid" :class="slot.item.iconClass" aria-hidden="true"></i>
+            </span>
+          </div>
         </div>
-        <span class="beeroom-node-status">
-          <i class="beeroom-node-status-dot"></i>
-          <span>{{ node.statusLabel }}</span>
-        </span>
       </div>
-    </div>
-
-    <div
-      ref="workflowContainerRef"
-      class="beeroom-node-workflow"
-      :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]"
-    >
-      <div v-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
-        <div
-          v-for="line in visibleWorkflowLines"
-          :key="line.key"
-          class="beeroom-node-workflow-step"
-          :title="line.title"
-        >
-          <span class="beeroom-node-workflow-step-dot"></span>
-          <span class="beeroom-node-workflow-step-text">
-            <span class="beeroom-node-workflow-step-main">{{ line.main }}</span>
-            <span v-if="line.detail" class="beeroom-node-workflow-step-detail">{{ line.detail }}</span>
+    </template>
+    <template v-else>
+      <div class="beeroom-node-card-body">
+        <div class="beeroom-node-card-head">
+          <span class="beeroom-node-avatar">
+            <img v-if="node.avatarImageUrl" class="beeroom-node-avatar-img" :src="node.avatarImageUrl" alt="" />
+            <span v-else class="beeroom-node-avatar-text">{{ node.avatarInitial }}</span>
+          </span>
+          <div class="beeroom-node-title-group">
+            <div class="beeroom-node-title" :title="node.name">{{ node.displayName }}</div>
+            <div class="beeroom-node-role-chip">{{ node.roleLabel }}</div>
+          </div>
+          <span class="beeroom-node-status">
+            <i class="beeroom-node-status-dot"></i>
+            <span>{{ node.statusLabel }}</span>
           </span>
         </div>
       </div>
-      <div v-else class="beeroom-node-workflow-empty">{{ emptyLabel }}</div>
-    </div>
+
+      <div
+        ref="workflowContainerRef"
+        class="beeroom-node-workflow"
+        :class="[`is-${node.workflowTone}`, { 'is-empty': !visibleWorkflowLines.length }]"
+      >
+        <div v-if="visibleWorkflowLines.length" ref="workflowStepsRef" class="beeroom-node-workflow-steps">
+          <div
+            v-for="line in visibleWorkflowLines"
+            :key="line.key"
+            class="beeroom-node-workflow-step"
+            :title="line.title"
+          >
+            <span class="beeroom-node-workflow-step-dot"></span>
+            <span class="beeroom-node-workflow-step-text">
+              <span class="beeroom-node-workflow-step-main">{{ line.main }}</span>
+              <span v-if="line.detail" class="beeroom-node-workflow-step-detail">{{ line.detail }}</span>
+            </span>
+          </div>
+        </div>
+        <div v-else class="beeroom-node-workflow-empty">{{ emptyLabel }}</div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -146,6 +166,14 @@ const cardStyle = computed(() => {
 });
 
 const visibleWorkflowLines = computed(() => (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : []));
+const visibleArtifactItems = computed(() => (Array.isArray(props.node.artifactItems) ? props.node.artifactItems : []));
+const visibleArtifactSlots = computed(() => {
+  const items = visibleArtifactItems.value.slice(0, 8);
+  return Array.from({ length: 8 }, (_, index) => ({
+    key: items[index]?.key || `empty:${props.node.id}:${index}`,
+    item: items[index] || null
+  }));
+});
 const hasLiveActivity = computed(() => {
   const normalizedStatus = String(props.node.status || '').trim().toLowerCase();
   if (normalizedStatus === 'running' || normalizedStatus === 'queued' || normalizedStatus === 'awaiting_idle') {
@@ -394,6 +422,29 @@ onBeforeUnmount(() => {
     radial-gradient(circle at top left, rgba(var(--node-accent-rgb), 0.08), transparent 44%),
     linear-gradient(180deg, rgba(18, 24, 34, 0.94), rgba(12, 16, 24, 0.96));
   box-shadow: 0 8px 16px rgba(2, 6, 23, 0.1);
+}
+
+.beeroom-node-card.is-artifact-container {
+  gap: 0;
+  padding: 12px;
+  border-color: rgba(16, 185, 129, 0.26);
+  background:
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(8, 14, 20, 0.98), rgba(5, 10, 16, 0.99));
+  box-shadow:
+    0 12px 24px rgba(2, 6, 23, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.beeroom-node-card.is-artifact-container::before {
+  display: none;
+}
+
+.beeroom-node-card.is-artifact-container.is-selected {
+  border-color: rgba(52, 211, 153, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(16, 185, 129, 0.18),
+    0 12px 24px rgba(2, 6, 23, 0.18);
 }
 
 .beeroom-node-card.is-live-activity {
@@ -756,6 +807,88 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.beeroom-node-artifact-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background:
+    linear-gradient(180deg, rgba(9, 15, 22, 0.88), rgba(6, 10, 16, 0.94)),
+    radial-gradient(circle at top left, rgba(16, 185, 129, 0.08), transparent 54%);
+  overflow: hidden;
+}
+
+.beeroom-node-artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.beeroom-node-artifact-slot {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.beeroom-node-artifact-slot-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #dbeafe;
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(7, 11, 18, 0.98));
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 0 0 1px rgba(15, 23, 42, 0.14);
+  font-size: 17px;
+}
+
+.beeroom-node-artifact-slot:not(.is-empty) .beeroom-node-artifact-slot-frame {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 16px rgba(2, 6, 23, 0.16);
+}
+
+.beeroom-node-artifact-slot-frame.is-dir {
+  color: #fcd34d;
+  background: linear-gradient(180deg, rgba(60, 39, 12, 0.94), rgba(31, 21, 10, 0.98));
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.beeroom-node-artifact-slot-frame.is-file {
+  color: #c7d2fe;
+}
+
+.beeroom-node-artifact-slot-frame.is-empty {
+  color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.48), rgba(7, 11, 18, 0.58)),
+    repeating-linear-gradient(135deg, rgba(148, 163, 184, 0.05) 0 1px, transparent 1px 7px);
+  border-color: rgba(148, 163, 184, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset 0 0 18px rgba(2, 6, 23, 0.26);
+}
+
+.beeroom-node-artifact-slot-frame i {
+  font-size: 16px;
 }
 
 .beeroom-node-card.is-condensed {

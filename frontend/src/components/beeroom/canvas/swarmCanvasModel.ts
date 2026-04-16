@@ -33,6 +33,16 @@ export type TranslationFn = (key: string, params?: Record<string, unknown>) => s
 
 export type SwarmNodeRole = 'mother' | 'worker' | 'subagent';
 export type SwarmNodeEmphasis = 'default' | 'active' | 'dormant';
+export type SwarmNodeRenderKind = 'default' | 'artifact-container';
+
+export type SwarmProjectionArtifactItem = {
+  key: string;
+  label: string;
+  title: string;
+  meta: string;
+  kind: 'file' | 'dir';
+  iconClass: string;
+};
 
 export type CanvasNodeMeta = {
   id: string;
@@ -55,6 +65,7 @@ export type SwarmProjectionNode = {
   agentId: string;
   name: string;
   displayName: string;
+  renderKind?: SwarmNodeRenderKind;
   role: SwarmNodeRole;
   roleLabel: string;
   status: string;
@@ -71,6 +82,9 @@ export type SwarmProjectionNode = {
   workflowTaskId: string;
   workflowTone: BeeroomWorkflowTone;
   workflowLines: BeeroomNodeWorkflowLine[];
+  artifactItems?: SwarmProjectionArtifactItem[];
+  artifactPath?: string;
+  artifactCount?: number;
   parentId: string;
   emphasis: SwarmNodeEmphasis;
   introFromId: string;

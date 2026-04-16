@@ -240,7 +240,7 @@
     <section class="messenger-chat chat-shell">
       <header
         v-if="
-          sessionHub.activeSection !== 'swarms' &&
+          !['swarms', 'orchestrations'].includes(sessionHub.activeSection) &&
           !(sessionHub.activeSection === 'more' && settingsPanelMode === 'help-manual')
         "
         class="messenger-chat-header"
@@ -408,8 +408,8 @@
           'is-settings': showChatSettingsView && !showHelperAppsWorkspace,
           'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
           'is-helper-workspace': showHelperAppsWorkspace,
-          'is-beeroom': sessionHub.activeSection === 'swarms',
-          'is-beeroom-canvas': sessionHub.activeSection === 'swarms',
+          'is-beeroom': ['swarms', 'orchestrations'].includes(sessionHub.activeSection),
+          'is-beeroom-canvas': ['swarms', 'orchestrations'].includes(sessionHub.activeSection),
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
@@ -468,6 +468,25 @@
               :error="beeroomStore.error"
               @refresh="refreshActiveBeeroom"
               @move-agents="handleBeeroomMoveAgents"
+              @open-agent="openAgentById"
+            />
+          </div>
+        </template>
+
+        <template v-else-if="sessionHub.activeSection === 'orchestrations'">
+          <div
+            class="messenger-chat-settings messenger-chat-settings--beeroom messenger-chat-settings--beeroom-canvas"
+          >
+            <OrchestrationWorkbench
+              :group="selectedBeeroomGroup"
+              :agents="beeroomStore.activeAgents"
+              :missions="beeroomStore.activeMissions"
+              :loading="beeroomStore.detailLoading || beeroomStore.loading"
+              :refreshing="beeroomStore.refreshing"
+              :error="beeroomStore.error"
+              @refresh="refreshActiveOrchestration"
+              @create="handleCreateOrchestration"
+              @edit-situation="handleEditOrchestrationSituation"
               @open-agent="openAgentById"
             />
           </div>
@@ -1628,6 +1647,7 @@ import {
 } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
+import OrchestrationWorkbench from '@/components/orchestration/OrchestrationWorkbench.vue';
 import AbilityTooltipListItem from '@/components/common/AbilityTooltipListItem.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import AgentQuickCreateDialog from '@/components/messenger/AgentQuickCreateDialog.vue';
@@ -2363,6 +2383,11 @@ const sectionOptions = computed(() => {
     { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
     { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
     { key: 'swarms' as MessengerSection, icon: 'fa-solid fa-bee', label: t('messenger.section.swarms') },
+    {
+      key: 'orchestrations' as MessengerSection,
+      icon: 'fa-solid fa-diagram-project',
+      label: t('messenger.section.orchestrations')
+    },
     { key: 'plaza' as MessengerSection, icon: 'fa-solid fa-store', label: t('messenger.section.plaza') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
     { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
@@ -2378,6 +2403,7 @@ const leftRailMainSectionOptions = computed(() =>
       item.key === 'messages' ||
       item.key === 'agents' ||
       item.key === 'swarms' ||
+      item.key === 'orchestrations' ||
       item.key === 'plaza'
   )
 );
@@ -2566,7 +2592,7 @@ const activeSectionSubtitle = computed(() => {
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
-const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'orchestrations', 'agents']);
 const isSearchableMiddlePaneSection = (section: string): boolean =>
   searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
@@ -8149,7 +8175,9 @@ const selectPlazaBrowseKindFromMiddlePane = (kind: PlazaBrowseKind) => {
 };
 
 const selectBeeroomGroupFromMiddlePane = async (group: Record<string, unknown>) => {
-  ensureMiddlePaneSection('swarms');
+  const currentBeeroomSection =
+    sessionHub.activeSection === 'orchestrations' ? 'orchestrations' : 'swarms';
+  ensureMiddlePaneSection(currentBeeroomSection);
   await selectBeeroomGroup(group);
 };
 
@@ -8690,7 +8718,12 @@ const submitAgentCreate = async (payload: Record<string, unknown>): Promise<bool
     }
     await Promise.all(tasks);
     const createdHiveId = String(created?.hive_id || payload.hive_id || '').trim();
-    if (sessionHub.activeSection === 'swarms' || createdHiveId || String(payload.hive_name || '').trim()) {
+    if (
+      sessionHub.activeSection === 'swarms' ||
+      sessionHub.activeSection === 'orchestrations' ||
+      createdHiveId ||
+      String(payload.hive_name || '').trim()
+    ) {
       if (createdHiveId) {
         beeroomStore.setActiveGroup(createdHiveId);
       }
@@ -8710,6 +8743,24 @@ const submitAgentCreate = async (payload: Record<string, unknown>): Promise<bool
 
 const refreshActiveBeeroom = async () => {
   if (sessionHub.activeSection !== 'swarms') {
+    return;
+  }
+  try {
+    if (String(beeroomStore.activeGroupId || '').trim()) {
+      await beeroomStore.loadActiveGroup({ silent: true });
+      return;
+    }
+    await beeroomStore.loadGroups();
+    if (String(beeroomStore.activeGroupId || '').trim()) {
+      await beeroomStore.loadActiveGroup({ silent: true });
+    }
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+};
+
+const refreshActiveOrchestration = async () => {
+  if (sessionHub.activeSection !== 'orchestrations') {
     return;
   }
   try {
@@ -8758,6 +8809,14 @@ const handleBeeroomMoveAgents = async (agentIds: string[]) => {
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
+};
+
+const handleCreateOrchestration = () => {
+  ElMessage.info(t('orchestration.panel.pending'));
+};
+
+const handleEditOrchestrationSituation = () => {
+  ElMessage.info(t('orchestration.panel.pending'));
 };
 
 const refreshAgentMutationState = async () => {
@@ -8964,7 +9023,7 @@ const handleSearchCreateAction = async (command?: string) => {
     groupCreateVisible.value = true;
     return;
   }
-  if (sessionHub.activeSection === 'swarms') {
+  if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
     return;
   }
   if (sessionHub.activeSection === 'agents') {
@@ -10395,7 +10454,7 @@ const ensureSectionSelection = () => {
     return;
   }
 
-  if (sessionHub.activeSection === 'swarms') {
+  if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
     if (!beeroomStore.activeGroupId && filteredBeeroomGroupsOrdered.value.length > 0) {
       const preferredGroup = preferredBeeroomGroupId.value;
       const matchedGroup = preferredGroup
@@ -12568,7 +12627,7 @@ watch(
 watch(
   () => beeroomStore.activeGroupId,
   (value) => {
-    if (sessionHub.activeSection !== 'swarms' || !String(value || '').trim()) return;
+    if (!['swarms', 'orchestrations'].includes(sessionHub.activeSection) || !String(value || '').trim()) return;
     void beeroomStore.loadActiveGroup({ silent: true }).catch(() => null);
   }
 );
@@ -12616,7 +12675,7 @@ watch(
   () => hasHotRuntimeState.value,
   (hot) => {
     if (!hot) return;
-    if (sessionHub.activeSection === 'swarms') {
+    if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
       triggerBeeroomRealtimeSyncRefresh?.('hot-runtime');
       return;
     }
@@ -12627,7 +12686,7 @@ watch(
 watch(
   () => hasHotBeeroomRuntimeState.value,
   (hot) => {
-    if (!hot || sessionHub.activeSection !== 'swarms') return;
+    if (!hot || !['swarms', 'orchestrations'].includes(sessionHub.activeSection)) return;
     triggerBeeroomRealtimeSyncRefresh?.('hot-beeroom');
   }
 );
@@ -12676,7 +12735,7 @@ watch(
       .map((item) => String(item?.group_id || item?.hive_id || ''))
       .join('|'),
   () => {
-    if (sessionHub.activeSection !== 'swarms') return;
+    if (!['swarms', 'orchestrations'].includes(sessionHub.activeSection)) return;
     ensureSectionSelection();
   }
 );
@@ -13141,7 +13200,7 @@ onMounted(async () => {
     refreshBeeroomGroups: refreshBeeroomRealtimeGroups,
     refreshBeeroomActiveGroup: refreshBeeroomRealtimeActiveGroup,
     isHotState: () => hasHotBeeroomRuntimeState.value,
-    shouldSync: () => sessionHub.activeSection === 'swarms',
+    shouldSync: () => ['swarms', 'orchestrations'].includes(sessionHub.activeSection),
     refreshRunningAgents: loadRunningAgents
   });
   startRealtimePulse = () => realtimePulse.start();
@@ -13150,7 +13209,7 @@ onMounted(async () => {
   startBeeroomRealtimeSync = () => beeroomRealtimeSync.start();
   stopBeeroomRealtimeSync = () => beeroomRealtimeSync.stop();
   triggerBeeroomRealtimeSyncRefresh = (reason = '') => beeroomRealtimeSync.trigger(reason);
-  if (sessionHub.activeSection === 'swarms') {
+  if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
     beeroomRealtimeSync.start();
   } else {
     realtimePulse.start();

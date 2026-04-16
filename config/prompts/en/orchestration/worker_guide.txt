@@ -1,0 +1,4 @@
+[First Worker Message Guide]
+When you dispatch a worker for the first time, explicitly include the matching guidance in that task. You can use the following template fragments:
+
+{{worker_first_dispatch_blocks}}

@@ -1,4 +1,6 @@
 use crate::api::user_context::resolve_user;
+use crate::prompting::read_prompt_template_from_active_pack;
+use crate::i18n;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
     resolve_preferred_mother_agent_id, set_mother_agent, snapshot_team_run,
@@ -11,6 +13,7 @@ use axum::response::Response;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -38,6 +41,63 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/beeroom/groups/{group_id}/missions/{mission_id}",
             get(get_beeroom_mission),
         )
+        .route(
+            "/wunder/beeroom/orchestration/prompts",
+            get(get_orchestration_prompts),
+        )
+}
+
+async fn get_orchestration_prompts(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let _resolved = resolve_user(&state, &headers, None).await?;
+    let config = state.config_store.get().await;
+    let locale = if i18n::get_language().to_ascii_lowercase().starts_with("en") {
+        "en"
+    } else {
+        "zh"
+    };
+    let templates = [
+        ("mother_runtime", "prompts/orchestration/mother_runtime.txt"),
+        ("round_artifacts", "prompts/orchestration/round_artifacts.txt"),
+        (
+            "worker_first_dispatch",
+            "prompts/orchestration/worker_first_dispatch.txt",
+        ),
+        ("worker_guide", "prompts/orchestration/worker_guide.txt"),
+        (
+            "situation_context",
+            "prompts/orchestration/situation_context.txt",
+        ),
+        ("user_message", "prompts/orchestration/user_message.txt"),
+    ];
+    let prompts = templates
+        .into_iter()
+        .map(|(key, path)| {
+            let localized_path = Path::new("prompts").join(locale).join(
+                Path::new(path)
+                    .strip_prefix("prompts")
+                    .unwrap_or_else(|_| Path::new(path)),
+            );
+            let localized_template =
+                read_prompt_template_from_active_pack(&config, localized_path.as_path());
+            let template = if localized_template.trim().is_empty() {
+                read_prompt_template_from_active_pack(&config, Path::new(path))
+            } else {
+                localized_template
+            };
+            (
+                key.to_string(),
+                json!(template),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Ok(Json(json!({
+        "data": {
+            "prompts": prompts,
+        }
+    })))
 }
 
 async fn list_beeroom_groups(

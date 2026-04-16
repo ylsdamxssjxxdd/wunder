@@ -15,12 +15,13 @@ export type BeeroomMissionCanvasState = {
   activeNodeId: string;
   chatCollapsed: boolean;
   chatWidth: number;
+  timelineCollapsed: boolean;
   chatClearedAfter: number;
   viewport: BeeroomCanvasViewportState | null;
 };
 
 const MAX_CACHE_ENTRIES = 48;
-const MISSION_CANVAS_STATE_VERSION = 4;
+const MISSION_CANVAS_STATE_VERSION = 5;
 const MISSION_CANVAS_STATE_STORAGE_KEY = 'wunder:beeroom-mission-canvas-state';
 const missionCanvasStateCache = new Map<string, BeeroomMissionCanvasState>();
 let missionCanvasStateHydrated = false;
@@ -85,6 +86,7 @@ const cloneState = (state: BeeroomMissionCanvasState): BeeroomMissionCanvasState
   activeNodeId: String(state.activeNodeId || '').trim(),
   chatCollapsed: !!state.chatCollapsed,
   chatWidth: normalizeChatWidth(state.chatWidth),
+  timelineCollapsed: !!state.timelineCollapsed,
   chatClearedAfter: normalizeChatClearedAfter(state.chatClearedAfter),
   viewport: cloneViewport(state.viewport)
 });
@@ -95,6 +97,7 @@ const normalizeState = (state: Partial<BeeroomMissionCanvasState> | null | undef
   activeNodeId: String(state?.activeNodeId || '').trim(),
   chatCollapsed: !!state?.chatCollapsed,
   chatWidth: normalizeChatWidth(state?.chatWidth),
+  timelineCollapsed: !!state?.timelineCollapsed,
   chatClearedAfter: normalizeChatClearedAfter(state?.chatClearedAfter),
   viewport: cloneViewport(state?.viewport || null)
 });
@@ -199,6 +202,8 @@ export const mergeBeeroomMissionCanvasState = (
       nextPatch.chatCollapsed !== undefined ? !!nextPatch.chatCollapsed : current.chatCollapsed,
     chatWidth:
       nextPatch.chatWidth !== undefined ? normalizeChatWidth(nextPatch.chatWidth) : current.chatWidth,
+    timelineCollapsed:
+      nextPatch.timelineCollapsed !== undefined ? !!nextPatch.timelineCollapsed : current.timelineCollapsed,
     chatClearedAfter:
       nextPatch.chatClearedAfter !== undefined
         ? normalizeChatClearedAfter(nextPatch.chatClearedAfter)
