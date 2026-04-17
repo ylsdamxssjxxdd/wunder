@@ -16,12 +16,16 @@
         v-for="item in sessionHistory"
         :key="item.id"
         class="messenger-timeline-item"
-        :class="{ active: activeSessionId === item.id, 'is-main': item.isMain }"
-        role="button"
-        tabindex="0"
-        @click="emit('activate-session', item.id)"
-        @keydown.enter.prevent="emit('activate-session', item.id)"
-        @keydown.space.prevent="emit('activate-session', item.id)"
+        :class="{
+          active: activeSessionId === item.id,
+          'is-main': item.isMain,
+          'is-readonly': timelineReadonly
+        }"
+        :role="timelineReadonly ? undefined : 'button'"
+        :tabindex="timelineReadonly ? -1 : 0"
+        @click="!timelineReadonly && emit('activate-session', item.id)"
+        @keydown.enter.prevent="!timelineReadonly && emit('activate-session', item.id)"
+        @keydown.space.prevent="!timelineReadonly && emit('activate-session', item.id)"
       >
         <div class="messenger-timeline-title-row">
           <div class="messenger-timeline-title">{{ item.title }}</div>
@@ -102,6 +106,7 @@ defineProps<{
   visible: boolean;
   activeSessionId: string;
   sessionHistory: TimelineSessionItem[];
+  timelineReadonly?: boolean;
 }>();
 
 const emit = defineEmits<{

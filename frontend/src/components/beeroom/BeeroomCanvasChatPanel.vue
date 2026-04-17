@@ -457,8 +457,9 @@ watch(
 }
 
 .beeroom-canvas-chat-head-main {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   flex: 1;
 }
@@ -472,6 +473,7 @@ watch(
 }
 
 .beeroom-canvas-chat-title {
+  min-width: 0;
   color: #f3f4f6;
   font-size: 16px;
   font-weight: 700;

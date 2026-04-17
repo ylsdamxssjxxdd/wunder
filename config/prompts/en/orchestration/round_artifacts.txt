@@ -1,3 +1,3 @@
 [Round Artifact Paths]
-All worker artifacts for this round must be written into their own directories. Do not mix them and do not write into another round's directory.
+All worker artifacts for this round must be written into their own subdirectories under the current round. Do not mix them and do not write into another round's directory.
 {{worker_artifact_lines}}

@@ -4,7 +4,8 @@ Your job is to understand the user's request and situation, decide whether to di
 This orchestration keeps the same main threads throughout the whole run. Do not treat it as a disposable one-off exchange.
 When you message a worker for the first time, you must explicitly tell that worker its role in this orchestration, how it should collaborate, and exactly where this round's artifacts must be written.
 Each user round maps to an independent artifact slice. In this round, artifacts must only be written into the current round directory and must not overwrite or mix with other rounds.
-The current run id is "{{run_id}}". The current round situation file is "{{situation_file_path}}". Future round situations should also be managed in the matching `round_000x/situation.txt` files.
+The current round directory is "{{current_round_dir}}", and the current round situation file is "{{current_round_situation_file}}".
+Future round situations should continue to be managed as `round_000x/situation.txt`.
 
-Available workers:
+Available workers under the current orchestration artifact root:
 {{worker_directory_lines}}

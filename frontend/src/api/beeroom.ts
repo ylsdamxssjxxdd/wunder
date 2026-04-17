@@ -124,6 +124,15 @@ export const listBeeroomOrchestrationHistory = (params: QueryParams = {}) =>
 export const restoreBeeroomOrchestrationHistory = (payload: ApiPayload) =>
   api.post('/beeroom/orchestration/history/restore', payload, { timeout: 60000 });
 
+export const reserveBeeroomOrchestrationRound = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/rounds/reserve', payload, { timeout: 60000 });
+
+export const finalizeBeeroomOrchestrationRound = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/rounds/finalize', payload, { timeout: 60000 });
+
+export const cancelBeeroomOrchestrationRound = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/rounds/cancel', payload, { timeout: 60000 });
+
 export type StartBeeroomDemoRunRequest = {
   seed?: number;
   worker_count_mode?: 'random' | 'all' | string;

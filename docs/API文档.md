@@ -2628,8 +2628,15 @@
   - `group_id: string`，必填，蜂群 ID / hive_id。
 - 返回：
   - `data.active: boolean`
-  - `data.state?: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, active, entered_at, updated_at }`
+  - `data.state?: { orchestration_id, run_id, group_id, mother_agent_id, mother_agent_name, mother_session_id, active, entered_at, updated_at, round_state }`
   - `data.member_threads[]: { orchestration_id, run_id, group_id, agent_id, agent_name, role, session_id, title, created_at }`
+- `round_state` 结构：
+  - `orchestration_id / run_id / group_id`
+  - `rounds[]: { id, index, situation, user_message, created_at, finalized_at }`
+  - `suppressed_message_ranges[]: { start_at, end_at }`
+  - `updated_at`
+- 说明：
+  - 编排页时间线、历史消息过滤与“停止后不计入正式轮次”统一以 `round_state` 为真相来源，不再依赖母蜂线程历史重建或 round 目录扫描推断。
 
 ### `POST /wunder/beeroom/orchestration/state/create`
 
@@ -2683,4 +2690,51 @@
 - 说明：
   - 母蜂优先复用原历史编排线程。
   - 工蜂若历史编排线程仍存在则复用；若缺失则自动补建新的编排线程后重新加入当前编排态。
+  - 历史编排的正式轮次状态会一并恢复；老历史若尚未落过 `round_state`，服务端会按母蜂历史做一次兼容迁移并写回。
+
+### `POST /wunder/beeroom/orchestration/rounds/reserve`
+
+- 用途：为当前活跃编排态预留或更新一个待提交用户轮次，供前端在真正发给母蜂前先占位。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`，可选，已有轮次时更新该轮次。
+  - `round_index?: number`，可选，显式指定轮次序号。
+  - `situation?: string`，可选，本轮态势。
+  - `user_message?: string`，可选，用户原始消息。
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
+
+### `POST /wunder/beeroom/orchestration/rounds/finalize`
+
+- 用途：将一个待提交轮次转为正式轮次。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`
+  - `round_index?: number`
+  - `situation?: string`
+  - `user_message?: string`
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
+
+### `POST /wunder/beeroom/orchestration/rounds/cancel`
+
+- 用途：取消一个待提交轮次，并把该次发送期间母蜂线程产生的消息时间段写入屏蔽区间，保证停止后刷新、恢复历史或重新进入编排页时都不会再把该轮当作正式轮次。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `round_id?: string`
+  - `round_index?: number`
+  - `message_started_at?: number`，可选，秒或毫秒时间戳。
+  - `message_ended_at?: number`，可选，秒或毫秒时间戳。
+  - `remove_round?: boolean`，可选；若该轮是新预留轮次，可直接从正式轮次列表中移除。
+- 返回：
+  - `data.round`
+  - `data.round_state`
+  - `data.state`
 

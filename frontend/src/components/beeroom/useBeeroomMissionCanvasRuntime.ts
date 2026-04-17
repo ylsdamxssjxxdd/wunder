@@ -745,12 +745,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       payload.created_at ?? payload.createdAt ?? payload.updated_at ?? payload.updatedAt ?? payload.time
     );
     if (!Number.isFinite(timeMs) || timeMs <= 0) return null;
-    const time = Math.floor(timeMs / 1000);
+    const time = timeMs / 1000;
     const historyId = String(payload.history_id ?? payload.historyId ?? '').trim();
     const streamEventId = normalizeStreamEventId(payload.stream_event_id ?? payload.streamEventId);
     const key =
       historyId ||
-      (streamEventId > 0 ? `event:${streamEventId}` : `message:${role}:${time}:${index}`);
+      (streamEventId > 0 ? `event:${streamEventId}` : `message:${role}:${Math.round(timeMs)}:${index}`);
     return {
       key: `session:${sessionId}:${key}`,
       senderName:
@@ -1736,7 +1736,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const buildVisibleChatMessage = (
     role: 'user' | 'assistant',
     body: string,
-    createdAt = Math.floor(Date.now() / 1000)
+    createdAt = Date.now() / 1000
   ): MissionChatMessage | null => {
     const text = String(body || '').trim();
     if (!text) return null;
@@ -2180,7 +2180,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return consumeDispatchStream(response);
   };
 
-  const handleComposerSend = async (payload?: { content?: string; displayContent?: string }) => {
+  const handleComposerSend = async (payload?: {
+    content?: string;
+    displayContent?: string;
+    displayCreatedAt?: number;
+  }) => {
     if (composerSending.value) {
       await handleDispatchStop();
       return;
@@ -2205,7 +2209,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
 
     const targetName = resolveAgentNameById(target.agentId);
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now() / 1000;
     const dispatchBody = String(body || content).trim();
     const visibleBody = String(payload?.displayContent ?? dispatchBody).trim() || dispatchBody;
     dispatchLabelPreview.value = visibleBody;
@@ -2231,7 +2235,13 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchTargetAgentId.value = target.agentId;
     dispatchTargetName.value = targetName;
     dispatchTargetTone.value = targetTone;
-    const localUserMessage = buildVisibleChatMessage('user', visibleBody, now);
+    const localUserMessage = buildVisibleChatMessage(
+      'user',
+      visibleBody,
+      Number.isFinite(payload?.displayCreatedAt) && Number(payload?.displayCreatedAt) > 0
+        ? Number(payload?.displayCreatedAt)
+        : now
+    );
     let localUserAccepted = false;
     let terminalReplyText = '';
     let reachedTerminalReply = false;
@@ -2338,15 +2348,20 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     }
   };
 
-  const handleDispatchStop = async () => {
-    if (!dispatchCanStop.value) return;
-    const sessionId = String(dispatchSessionId.value || '').trim();
+  const handleDispatchStop = async (options: { force?: boolean; sessionId?: string } = {}) => {
+    const force = options.force === true;
+    const sessionId = String(options.sessionId || dispatchSessionId.value || '').trim();
     if (!sessionId) return;
+    if (!force && !dispatchCanStop.value) return;
     logBeeroomRuntime('dispatch-stop:start', {
-      sessionId
+      sessionId,
+      force
     });
     dispatchStopRequested = true;
     dispatchRuntimeStatus.value = 'stopped';
+    if (force && String(dispatchSessionId.value || '').trim() !== sessionId) {
+      dispatchSessionId.value = sessionId;
+    }
     if (dispatchStreamController) {
       dispatchStreamController.abort();
       dispatchStreamController = null;
@@ -2357,9 +2372,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       // Keep local interrupt behavior even if cancel API fails.
     } finally {
       composerSending.value = false;
-      await syncDispatchSessionMessages({ hydrate: true });
+      if (String(dispatchSessionId.value || '').trim() === sessionId) {
+        await syncDispatchSessionMessages({ hydrate: true });
+      } else {
+        await chatStore.preloadSessionDetail(sessionId, { force: true, syncActive: false }).catch(() => null);
+      }
       logBeeroomRuntime('dispatch-stop:done', {
         sessionId,
+        force,
         runtimeStatus: dispatchRuntimeStatus.value
       });
     }

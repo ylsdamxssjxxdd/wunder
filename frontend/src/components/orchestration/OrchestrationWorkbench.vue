@@ -22,11 +22,12 @@
         :run-id="runId"
         :dispatch-preview="liveDispatchPreview"
         :composer-text="composerText"
-        :composer-sending="composerSending"
+        :composer-sending="orchestrationStopBusy"
         :can-send="orchestrationCanSend"
         :composer-disabled="orchestrationComposerDisabled"
         :initializing="initializing"
         :history-loading="historyLoading"
+        :is-active="isActive"
         :is-ready="isReady"
         :group-description="group.description || t('orchestration.empty.description')"
         :resolve-worker-outputs="resolveWorkerOutputs"
@@ -37,7 +38,8 @@
         @update:composer-text="composerText = $event"
         @send="handleSendToMother"
         @create-run="handleCreateRun"
-        @exit-run="handleExitRun"
+        @start-run="handleStartRun"
+        @exit-run="handleStopRun"
         @open-history="historyDialogVisible = true"
         @open-situation="situationDialogVisible = true"
         @select-round="selectRound($event)"
@@ -70,7 +72,7 @@
             :key="item.orchestrationId"
             class="orchestration-history-item"
             type="button"
-            @click="handleRestoreHistory(item.orchestrationId)"
+            @click="handleRestoreHistoryAction(item.orchestrationId)"
           >
             <span class="orchestration-history-item-title">{{ item.runId }}</span>
             <span class="orchestration-history-item-meta">
@@ -155,6 +157,7 @@ import {
   fetchBeeroomOrchestrationPrompts,
   updateBeeroomOrchestrationSessionContext
 } from '@/api/beeroom';
+import { cancelTeamRun, listSessionTeamRuns } from '@/api/swarm';
 import OrchestrationMissionCanvas from '@/components/orchestration/OrchestrationMissionCanvas.vue';
 import {
   type OrchestrationPromptTemplates,
@@ -201,9 +204,11 @@ const {
   historyLoading,
   historyItems,
   initializing,
+  isActive,
   isReady,
   ensureRuntime,
   initializeRun,
+  startRun,
   exitRun,
   loadHistory,
   restoreHistory,
@@ -273,8 +278,18 @@ const isViewingLatestRound = computed(() => {
   const activeId = String(activeRound.value?.id || '').trim();
   return Boolean(latestId && activeId && latestId === activeId);
 });
-const orchestrationCanSend = computed(() => Boolean(isReady.value && isViewingLatestRound.value && String(composerText.value || '').trim()) && !composerSending.value);
-const orchestrationComposerDisabled = computed(() => !isReady.value || (!isViewingLatestRound.value && !composerSending.value));
+const orchestrationCanSend = computed(
+  () =>
+    Boolean(
+      isReady.value &&
+        isActive.value &&
+        isViewingLatestRound.value &&
+        String(composerText.value || '').trim()
+    ) && !orchestrationStopBusy.value
+);
+const orchestrationComposerDisabled = computed(
+  () => !isReady.value || !isActive.value || (!isViewingLatestRound.value && !orchestrationStopBusy.value)
+);
 
 const motherName = computed(() => {
   const motherId = motherAgentId.value;
@@ -312,6 +327,17 @@ const activeRoundMissions = computed(() => {
     missionIds.has(String(item?.mission_id || item?.team_run_id || '').trim())
   );
 });
+
+const activeRoundRunningMissions = computed(() =>
+  activeRoundMissions.value.filter((item) => {
+    const status = String(item?.status || '').trim().toLowerCase();
+    return Boolean(status) && !['success', 'completed', 'failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(status);
+  })
+);
+
+const orchestrationStopBusy = computed(
+  () => composerSending.value || activeRoundRunningMissions.value.length > 0
+);
 
 const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
   const latestRound = rounds.value[rounds.value.length - 1] || null;
@@ -380,31 +406,6 @@ const handleCreateRun = async () => {
   }
 };
 
-const handleExitRun = async () => {
-  try {
-    await exitRun();
-    composerText.value = '';
-    situationPlanDraft.value = {};
-    situationDialogVisible.value = false;
-    emit('refresh');
-    ElMessage.success(t('common.success'));
-  } catch (error: any) {
-    ElMessage.error(String(error?.message || t('common.requestFailed')));
-  }
-};
-
-const handleRestoreHistory = async (orchestrationId: string) => {
-  try {
-    await restoreHistory(orchestrationId);
-    await syncMotherSessionContext(Number(latestRound.value?.index || 1));
-    historyDialogVisible.value = false;
-    emit('refresh');
-    ElMessage.success(t('chat.history.restoreSuccess'));
-  } catch (error: any) {
-    ElMessage.error(String(error?.message || t('chat.history.restoreFailed')));
-  }
-};
-
 const handleSaveSituation = () => {
   const nextDraft = Object.fromEntries(
     Object.entries(situationPlanDraft.value || {}).map(([key, value]) => [key, String(value || '').trim()]).filter(([, value]) => Boolean(value))
@@ -417,6 +418,44 @@ const handleSaveSituation = () => {
     .catch((error: any) => {
       ElMessage.error(String(error?.message || t('common.requestFailed')));
     });
+};
+
+const handleStopRun = async () => {
+  try {
+    await exitRun();
+    composerText.value = '';
+    situationDialogVisible.value = false;
+    historyDialogVisible.value = false;
+    emit('refresh');
+    ElMessage.success(t('orchestration.message.stopped'));
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || t('common.requestFailed')));
+  }
+};
+
+const handleStartRun = async () => {
+  try {
+    await startRun();
+    await syncMotherSessionContext(Number(latestRound.value?.index || 1));
+    emit('refresh');
+    ElMessage.success(t('orchestration.message.started'));
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || t('common.requestFailed')));
+  }
+};
+
+const handleRestoreHistoryAction = async (orchestrationId: string) => {
+  try {
+    const nextState = await restoreHistory(orchestrationId, { activate: isActive.value });
+    if (nextState?.active) {
+      await syncMotherSessionContext(Number(latestRound.value?.index || 1));
+    }
+    historyDialogVisible.value = false;
+    emit('refresh');
+    ElMessage.success(t('chat.history.restoreSuccess'));
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || t('chat.history.restoreFailed')));
+  }
 };
 
 const syncMotherSessionContext = async (roundIndex: number) => {
@@ -433,10 +472,48 @@ const syncMotherSessionContext = async (roundIndex: number) => {
   });
 };
 
+const stopActiveRoundMissions = async () => {
+  const sessionId = String(motherSessionId.value || '').trim();
+  if (!sessionId) return;
+  const missionIds = new Set(
+    activeRoundRunningMissions.value
+      .map((item) => String(item?.mission_id || item?.team_run_id || '').trim())
+      .filter(Boolean)
+  );
+  if (!missionIds.size) {
+    const response = await listSessionTeamRuns(sessionId, { limit: 100 }).catch(() => null);
+    const runs = Array.isArray(response?.data?.data?.items) ? response?.data?.data?.items : [];
+    runs.forEach((item: Record<string, unknown>) => {
+      const teamRunId = String(item?.team_run_id || item?.teamRunId || '').trim();
+      const status = String(item?.status || '').trim().toLowerCase();
+      if (!teamRunId) return;
+      if (['success', 'completed', 'failed', 'error', 'timeout', 'cancelled', 'canceled'].includes(status)) {
+        return;
+      }
+      missionIds.add(teamRunId);
+    });
+  }
+  if (!missionIds.size) return;
+  await Promise.all(
+    Array.from(missionIds).map((teamRunId) =>
+      cancelTeamRun(teamRunId).catch(() => null)
+    )
+  );
+};
+
+const stopOrchestrationDispatch = async () => {
+  const sessionId = String(motherSessionId.value || '').trim();
+  await handleDispatchStop({
+    force: true,
+    sessionId
+  }).catch(() => null);
+  await stopActiveRoundMissions().catch(() => null);
+};
+
 const handleSendToMother = async () => {
-  if (composerSending.value) {
+  if (orchestrationStopBusy.value) {
     const pending = pendingRound.value;
-    await handleDispatchStop();
+    await stopOrchestrationDispatch();
     if (pending?.id) {
       await discardPendingRound(pending.id);
     }
@@ -446,6 +523,10 @@ const handleSendToMother = async () => {
   if (!content) return;
   if (!isViewingLatestRound.value) {
     ElMessage.warning(t('orchestration.message.historyRoundReadonly'));
+    return;
+  }
+  if (!isActive.value) {
+    ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
   try {
@@ -478,7 +559,10 @@ const handleSendToMother = async () => {
     await syncMotherSessionContext(nextRoundIndex);
     await handleComposerSend({
       content: dispatchContent,
-      displayContent: content
+      displayContent: content,
+      displayCreatedAt: Number(reservedRound?.createdAt || 0) > 0
+        ? Number(reservedRound?.createdAt || 0) / 1000
+        : undefined
     });
     await finalizePendingRound(reservedRound?.id);
     if (includePrimer) {
@@ -499,7 +583,9 @@ watch(
     situationPlanDraft.value = {};
     historyDialogVisible.value = false;
     void loadHistory().catch(() => []);
-    void ensureRuntime().catch(() => null);
+    if (runtimeState.value?.runId) {
+      void ensureRuntime().catch(() => null);
+    }
   },
   { immediate: true }
 );

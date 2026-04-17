@@ -110,6 +110,15 @@
           @send="emit('send')"
           @open-agent="emit('open-agent', $event)"
         >
+          <template #head-main>
+            <span
+              class="orchestration-panel-status-lamp"
+              :class="{ 'is-active': isActive, 'is-busy': isBusy }"
+              role="status"
+              :title="statusLampLabel"
+              :aria-label="statusLampLabel"
+            ></span>
+          </template>
           <template #head-actions>
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
@@ -134,12 +143,12 @@
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
               type="button"
-              :title="t('common.close')"
-              :aria-label="t('common.close')"
-              :disabled="!isReady"
-              @click="emit('exit-run')"
+              :title="isActive ? t('common.close') : t('common.enable')"
+              :aria-label="isActive ? t('common.close') : t('common.enable')"
+              :disabled="!isReady || (isActive && isBusy)"
+              @click="isActive ? emit('exit-run') : emit('start-run')"
             >
-              <i class="fa-solid fa-link-slash" aria-hidden="true"></i>
+              <i class="fa-solid" :class="isActive ? 'fa-link-slash' : 'fa-play'" aria-hidden="true"></i>
             </button>
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
@@ -229,6 +238,8 @@ const props = defineProps<{
   composerDisabled: boolean;
   initializing: boolean;
   historyLoading: boolean;
+  isActive: boolean;
+  isBusy: boolean;
   isReady: boolean;
   groupDescription: string;
   resolveWorkerOutputs: (agentId: string) => MissionChatMessage[];
@@ -242,6 +253,7 @@ const emit = defineEmits<{
   (event: 'update:composer-text', value: string): void;
   (event: 'send'): void;
   (event: 'create-run'): void;
+  (event: 'start-run'): void;
   (event: 'exit-run'): void;
   (event: 'open-history'): void;
   (event: 'open-situation'): void;
@@ -317,6 +329,13 @@ const composerTargetOptions = computed(() => [
     role: 'mother' as const
   }
 ]);
+
+const statusLampLabel = computed(() => {
+  if (props.isBusy) {
+    return t('orchestration.run.busy');
+  }
+  return props.isActive ? t('orchestration.run.active') : t('orchestration.run.idle');
+});
 
 const activeArtifactWorkspace = computed(() => {
   const agentId = String(selectedArtifactAgentId.value || '').trim();
@@ -958,6 +977,26 @@ watch(
 .orchestration-panel-action[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.orchestration-panel-status-lamp {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #64748b;
+  box-shadow: 0 0 0 4px rgba(100, 116, 139, 0.14);
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.orchestration-panel-status-lamp.is-active {
+  background: #4ade80;
+  box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.14);
+  transform: scale(1.02);
 }
 
 .beeroom-canvas-chat-resizer {

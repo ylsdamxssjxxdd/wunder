@@ -3,10 +3,12 @@ use crate::i18n;
 use crate::prompting::read_prompt_template_from_active_pack;
 use crate::services::orchestration_context::{
     build_chat_session_with_title, build_history_record_from_state, build_orchestration_thread_title,
-    clear_hive_state, clear_session_context, list_history_records,
-    load_hive_state, load_history_record, persist_hive_state, persist_history_record,
-    persist_member_binding, persist_session_context, OrchestrationHiveState, OrchestrationHistoryRecord,
-    OrchestrationMemberBinding, OrchestrationSessionContext, ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+    build_initial_round_state, clear_hive_state, clear_session_context, latest_formal_round_index,
+    list_history_records, load_hive_state, load_history_record, load_round_state, persist_hive_state,
+    persist_history_record, persist_member_binding, persist_round_state, persist_session_context,
+    round_id, OrchestrationHiveState, OrchestrationHistoryRecord, OrchestrationMemberBinding,
+    OrchestrationRoundRecord, OrchestrationRoundState, OrchestrationSessionContext,
+    OrchestrationSuppressedMessageRange, ORCHESTRATION_HISTORY_STATUS_ACTIVE,
     ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
 };
 use crate::services::swarm::beeroom::{
@@ -76,6 +78,18 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/beeroom/orchestration/history/restore",
             axum::routing::post(restore_orchestration_history),
+        )
+        .route(
+            "/wunder/beeroom/orchestration/rounds/reserve",
+            axum::routing::post(reserve_orchestration_round),
+        )
+        .route(
+            "/wunder/beeroom/orchestration/rounds/finalize",
+            axum::routing::post(finalize_orchestration_round),
+        )
+        .route(
+            "/wunder/beeroom/orchestration/rounds/cancel",
+            axum::routing::post(cancel_orchestration_round),
         )
 }
 
@@ -165,10 +179,15 @@ async fn get_orchestration_state(
             .unwrap_or_default()
         })
         .unwrap_or_default();
+    let round_state = state_value
+        .as_ref()
+        .and_then(|item| load_or_migrate_round_state(state.as_ref(), &user_id, item));
     Ok(Json(json!({
         "data": {
             "active": state_value.is_some(),
-            "state": state_value.as_ref().map(orchestration_state_payload),
+            "state": state_value
+                .as_ref()
+                .map(|item| orchestration_state_payload(item, round_state.as_ref())),
             "member_threads": bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
         }
     })))
@@ -243,7 +262,9 @@ async fn create_orchestration_state(
             &previous.orchestration_id,
         )
         .unwrap_or_default();
-        let latest_round_index = detect_latest_round_index(state.as_ref(), &user_id, &previous);
+        let latest_round_index = latest_formal_round_index(
+            load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
+        );
         let mut history =
             build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
         history.updated_at = now;
@@ -324,12 +345,15 @@ async fn create_orchestration_state(
     };
     persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let round_state = build_initial_round_state(&hive_state);
+    persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let history = build_history_record_from_state(&hive_state, ORCHESTRATION_HISTORY_STATUS_ACTIVE, 1);
     persist_history_record(state.storage.as_ref(), &user_id, &history)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
-            "state": orchestration_state_payload(&hive_state),
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
             "member_threads": member_bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
         }
     })))
@@ -386,7 +410,9 @@ async fn exit_orchestration_state(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
     if let Some(active_state) = active_state {
-        let latest_round_index = detect_latest_round_index(state.as_ref(), &user_id, &active_state);
+        let latest_round_index = latest_formal_round_index(
+            load_or_migrate_round_state(state.as_ref(), &user_id, &active_state).as_ref(),
+        );
         let mut history = build_history_record_from_state(
             &active_state,
             ORCHESTRATION_HISTORY_STATUS_CLOSED,
@@ -439,6 +465,7 @@ async fn restore_orchestration_history(
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id;
     let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    let activate = payload.activate.unwrap_or(true);
     let orchestration_id = payload
         .orchestration_id
         .as_deref()
@@ -474,31 +501,59 @@ async fn restore_orchestration_history(
         .find(|item| item.agent_id.trim() == history.mother_agent_id.trim())
         .cloned()
         .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "mother agent not found".to_string()))?;
-    if let Some(previous) = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id) {
-        let previous_bindings = crate::services::orchestration_context::list_member_bindings(
-            state.storage.as_ref(),
-            &previous.orchestration_id,
-        )
-        .unwrap_or_default();
-        let latest_round_index = detect_latest_round_index(state.as_ref(), &user_id, &previous);
-        let mut previous_history =
-            build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
-        previous_history.updated_at = now_ts();
-        previous_history.exited_at = previous_history.updated_at;
-        persist_history_record(state.storage.as_ref(), &user_id, &previous_history)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        for binding in &previous_bindings {
-            clear_session_context(state.storage.as_ref(), &user_id, &binding.session_id)
+    if activate {
+        if let Some(previous) = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id) {
+            let previous_bindings = crate::services::orchestration_context::list_member_bindings(
+                state.storage.as_ref(),
+                &previous.orchestration_id,
+            )
+            .unwrap_or_default();
+            let latest_round_index = latest_formal_round_index(
+                load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
+            );
+            let mut previous_history =
+                build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
+            previous_history.updated_at = now_ts();
+            previous_history.exited_at = previous_history.updated_at;
+            persist_history_record(state.storage.as_ref(), &user_id, &previous_history)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            for binding in &previous_bindings {
+                clear_session_context(state.storage.as_ref(), &user_id, &binding.session_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+            clear_hive_state(state.storage.as_ref(), &user_id, &group.hive_id)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
-        clear_hive_state(state.storage.as_ref(), &user_id, &group.hive_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
 
     let history_bindings =
         crate::services::orchestration_context::list_member_bindings(state.storage.as_ref(), &orchestration_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let latest_round_index = history.latest_round_index.max(1);
+    let round_state = load_or_migrate_round_state_by_orchestration_id(
+        state.as_ref(),
+        &user_id,
+        &group.hive_id,
+        &history.orchestration_id,
+        &history.run_id,
+        &history.mother_session_id,
+        history.latest_round_index,
+    )
+    .unwrap_or_else(|| OrchestrationRoundState {
+        orchestration_id: history.orchestration_id.clone(),
+        run_id: history.run_id.clone(),
+        group_id: group.hive_id.clone(),
+        rounds: vec![OrchestrationRoundRecord {
+            id: round_id(1),
+            index: 1,
+            situation: String::new(),
+            user_message: String::new(),
+            created_at: now_ts(),
+            finalized_at: 0.0,
+        }],
+        suppressed_message_ranges: Vec::new(),
+        updated_at: now_ts(),
+    });
+    let latest_round_index = latest_formal_round_index(Some(&round_state));
     let now = now_ts();
     let hive_state = OrchestrationHiveState {
         orchestration_id: history.orchestration_id.clone(),
@@ -507,7 +562,7 @@ async fn restore_orchestration_history(
         mother_agent_id: history.mother_agent_id.clone(),
         mother_agent_name: mother_agent.name.clone(),
         mother_session_id: history.mother_session_id.clone(),
-        active: true,
+        active: activate,
         entered_at: history.entered_at.max(now),
         updated_at: now,
     };
@@ -583,43 +638,340 @@ async fn restore_orchestration_history(
         };
         persist_member_binding(state.storage.as_ref(), &binding)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        persist_session_context(
-            state.storage.as_ref(),
-            &user_id,
-            &binding.session_id,
-            &OrchestrationSessionContext {
-                mode: ORCHESTRATION_MODE.to_string(),
-                run_id: hive_state.run_id.clone(),
-                group_id: hive_state.group_id.clone(),
-                role: role.to_string(),
-                round_index: latest_round_index,
-                mother_agent_id: hive_state.mother_agent_id.clone(),
-            },
-        )
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        state
-            .kernel
-            .thread_runtime
-            .set_main_session(&user_id, &agent.agent_id, &binding.session_id, "orchestration_restore")
-            .await
+        if activate {
+            persist_session_context(
+                state.storage.as_ref(),
+                &user_id,
+                &binding.session_id,
+                &OrchestrationSessionContext {
+                    mode: ORCHESTRATION_MODE.to_string(),
+                    run_id: hive_state.run_id.clone(),
+                    group_id: hive_state.group_id.clone(),
+                    role: role.to_string(),
+                    round_index: latest_round_index,
+                    mother_agent_id: hive_state.mother_agent_id.clone(),
+                },
+            )
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            state
+                .kernel
+                .thread_runtime
+                .set_main_session(&user_id, &agent.agent_id, &binding.session_id, "orchestration_restore")
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
         member_bindings.push(binding);
     }
-    persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if activate {
+        persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
     let mut next_history = history.clone();
-    next_history.status = ORCHESTRATION_HISTORY_STATUS_ACTIVE.to_string();
-    next_history.updated_at = now;
-    next_history.restored_at = now;
+    if activate {
+        next_history.status = ORCHESTRATION_HISTORY_STATUS_ACTIVE.to_string();
+        next_history.updated_at = now;
+        next_history.restored_at = now;
+    }
     next_history.latest_round_index = latest_round_index;
     next_history.mother_agent_name = mother_agent.name.clone();
-    persist_history_record(state.storage.as_ref(), &user_id, &next_history)
+    if activate {
+        persist_history_record(state.storage.as_ref(), &user_id, &next_history)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    Ok(Json(json!({
+        "data": {
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
+            "history": orchestration_history_payload(&next_history),
+            "member_threads": member_bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
+        }
+    })))
+}
+
+async fn reserve_orchestration_round(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<ReserveOrchestrationRoundRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    if group_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id is required".to_string(),
+        ));
+    }
+    let hive_state = load_hive_state(state.storage.as_ref(), &user_id, &group_id)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration state not found".to_string()))?;
+    let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
+        .unwrap_or_else(|| build_initial_round_state(&hive_state));
+    let requested_round_id = payload
+        .round_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let requested_index = payload.round_index.unwrap_or(0).max(0);
+    let situation = payload
+        .situation
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let user_message = payload
+        .user_message
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let now = now_ts();
+    let target_index = if requested_index > 0 {
+        requested_index
+    } else if !requested_round_id.is_empty() {
+        round_state
+            .rounds
+            .iter()
+            .find(|round| round.id.trim() == requested_round_id)
+            .map(|round| round.index)
+            .unwrap_or_else(|| latest_formal_round_index(Some(&round_state)).saturating_add(1))
+    } else {
+        latest_formal_round_index(Some(&round_state)).saturating_add(1)
+    };
+    let normalized_target_index = target_index.max(1);
+    if let Some(existing) = round_state
+        .rounds
+        .iter_mut()
+        .find(|round| round.index == normalized_target_index)
+    {
+        if !situation.is_empty() {
+            existing.situation = situation;
+        }
+        if !user_message.is_empty() {
+            existing.user_message = user_message;
+        }
+        if existing.created_at <= 0.0 {
+            existing.created_at = now;
+        }
+    } else {
+        round_state.rounds.push(OrchestrationRoundRecord {
+            id: round_id(normalized_target_index),
+            index: normalized_target_index,
+            situation,
+            user_message,
+            created_at: now,
+            finalized_at: 0.0,
+        });
+    }
+    round_state.updated_at = now;
+    persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let latest_round_index = latest_formal_round_index(Some(&round_state));
+    let mut history = load_history_record(
+        state.storage.as_ref(),
+        &user_id,
+        &group_id,
+        &hive_state.orchestration_id,
+    )
+    .unwrap_or_else(|| {
+        build_history_record_from_state(
+            &hive_state,
+            ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+            latest_round_index,
+        )
+    });
+    history.latest_round_index = latest_round_index;
+    history.updated_at = now;
+    persist_history_record(state.storage.as_ref(), &user_id, &history)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let round = round_state
+        .rounds
+        .iter()
+        .find(|round| round.index == normalized_target_index)
+        .cloned()
+        .ok_or_else(|| error_response(StatusCode::INTERNAL_SERVER_ERROR, "round reserve failed".to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "round": orchestration_round_payload(&round),
+            "round_state": orchestration_round_state_payload(&round_state),
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
+        }
+    })))
+}
+
+async fn finalize_orchestration_round(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<FinalizeOrchestrationRoundRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    if group_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id is required".to_string(),
+        ));
+    }
+    let hive_state = load_hive_state(state.storage.as_ref(), &user_id, &group_id)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration state not found".to_string()))?;
+    let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
+        .unwrap_or_else(|| build_initial_round_state(&hive_state));
+    let target_round_id = payload
+        .round_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let target_round_index = payload.round_index.unwrap_or(0).max(0);
+    let target_position = round_state
+        .rounds
+        .iter()
+        .position(|round| {
+            (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+                || (target_round_index > 0 && round.index == target_round_index)
+        })
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "round not found".to_string()))?;
+    if let Some(situation) = payload.situation.as_deref().map(str::trim) {
+        if !situation.is_empty() {
+            round_state.rounds[target_position].situation = situation.to_string();
+        }
+    }
+    if let Some(user_message) = payload.user_message.as_deref().map(str::trim) {
+        if !user_message.is_empty() {
+            round_state.rounds[target_position].user_message = user_message.to_string();
+        }
+    }
+    round_state.rounds[target_position].finalized_at = now_ts();
+    round_state.updated_at = round_state.rounds[target_position].finalized_at;
+    persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let latest_round_index = latest_formal_round_index(Some(&round_state));
+    let mut history = load_history_record(
+        state.storage.as_ref(),
+        &user_id,
+        &group_id,
+        &hive_state.orchestration_id,
+    )
+    .unwrap_or_else(|| {
+        build_history_record_from_state(
+            &hive_state,
+            ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+            latest_round_index,
+        )
+    });
+    history.latest_round_index = latest_round_index;
+    history.updated_at = round_state.updated_at;
+    persist_history_record(state.storage.as_ref(), &user_id, &history)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let response_round = round_state.rounds[target_position].clone();
+    Ok(Json(json!({
+        "data": {
+            "round": orchestration_round_payload(&response_round),
+            "round_state": orchestration_round_state_payload(&round_state),
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
+        }
+    })))
+}
+
+async fn cancel_orchestration_round(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<CancelOrchestrationRoundRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    if group_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id is required".to_string(),
+        ));
+    }
+    let hive_state = load_hive_state(state.storage.as_ref(), &user_id, &group_id)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration state not found".to_string()))?;
+    let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
+        .unwrap_or_else(|| build_initial_round_state(&hive_state));
+    let target_round_id = payload
+        .round_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let target_round_index = payload.round_index.unwrap_or(0).max(0);
+    let start_at = payload.message_started_at.unwrap_or(0.0).max(0.0);
+    let end_at = payload.message_ended_at.unwrap_or_else(now_ts).max(start_at);
+    let remove_round = payload.remove_round.unwrap_or(false);
+    let mut cancelled_round: Option<OrchestrationRoundRecord> = None;
+    if remove_round {
+        let mut retained = Vec::with_capacity(round_state.rounds.len());
+        for round in round_state.rounds.drain(..) {
+            let matches = (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+                || (target_round_index > 0 && round.index == target_round_index);
+            if matches && cancelled_round.is_none() {
+                cancelled_round = Some(round);
+                continue;
+            }
+            retained.push(round);
+        }
+        if retained.is_empty() {
+            retained.push(OrchestrationRoundRecord {
+                id: round_id(1),
+                index: 1,
+                situation: String::new(),
+                user_message: String::new(),
+                created_at: now_ts(),
+                finalized_at: 0.0,
+            });
+        }
+        round_state.rounds = retained;
+    } else if let Some(round) = round_state.rounds.iter_mut().find(|round| {
+        (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+            || (target_round_index > 0 && round.index == target_round_index)
+    }) {
+        round.user_message.clear();
+        round.finalized_at = 0.0;
+        cancelled_round = Some(round.clone());
+    }
+    if cancelled_round.is_none() {
+        return Err(error_response(StatusCode::NOT_FOUND, "round not found".to_string()));
+    }
+    if start_at > 0.0 {
+        round_state
+            .suppressed_message_ranges
+            .push(OrchestrationSuppressedMessageRange { start_at, end_at });
+        if round_state.suppressed_message_ranges.len() > 24 {
+            let trim_from = round_state.suppressed_message_ranges.len() - 24;
+            round_state.suppressed_message_ranges.drain(0..trim_from);
+        }
+    }
+    round_state.updated_at = now_ts();
+    persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let latest_round_index = latest_formal_round_index(Some(&round_state));
+    let mut history = load_history_record(
+        state.storage.as_ref(),
+        &user_id,
+        &group_id,
+        &hive_state.orchestration_id,
+    )
+    .unwrap_or_else(|| {
+        build_history_record_from_state(
+            &hive_state,
+            ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+            latest_round_index,
+        )
+    });
+    history.latest_round_index = latest_round_index;
+    history.updated_at = round_state.updated_at;
+    persist_history_record(state.storage.as_ref(), &user_id, &history)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
-            "state": orchestration_state_payload(&hive_state),
-            "history": orchestration_history_payload(&next_history),
-            "member_threads": member_bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
+            "round": cancelled_round.as_ref().map(orchestration_round_payload),
+            "round_state": orchestration_round_state_payload(&round_state),
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
         }
     })))
 }
@@ -1169,7 +1521,9 @@ fn group_payload(
             .map(|agent| agent_payload(agent, activity.get(&agent.agent_id)))
             .collect::<Vec<_>>(),
         "latest_mission": missions.first().cloned(),
-        "active_orchestration": orchestration_state.as_ref().map(orchestration_state_payload),
+        "active_orchestration": orchestration_state
+            .as_ref()
+            .map(|item| orchestration_state_payload(item, None)),
     }))
 }
 
@@ -1250,7 +1604,37 @@ fn agent_payload(
     })
 }
 
-fn orchestration_state_payload(state: &OrchestrationHiveState) -> Value {
+fn orchestration_round_payload(round: &OrchestrationRoundRecord) -> Value {
+    json!({
+        "id": round.id,
+        "index": round.index,
+        "situation": round.situation,
+        "user_message": round.user_message,
+        "created_at": round.created_at,
+        "finalized_at": round.finalized_at,
+    })
+}
+
+fn orchestration_round_state_payload(round_state: &OrchestrationRoundState) -> Value {
+    json!({
+        "orchestration_id": round_state.orchestration_id,
+        "run_id": round_state.run_id,
+        "group_id": round_state.group_id,
+        "rounds": round_state.rounds.iter().map(orchestration_round_payload).collect::<Vec<_>>(),
+        "suppressed_message_ranges": round_state.suppressed_message_ranges.iter().map(|range| {
+            json!({
+                "start_at": range.start_at,
+                "end_at": range.end_at,
+            })
+        }).collect::<Vec<_>>(),
+        "updated_at": round_state.updated_at,
+    })
+}
+
+fn orchestration_state_payload(
+    state: &OrchestrationHiveState,
+    round_state: Option<&OrchestrationRoundState>,
+) -> Value {
     json!({
         "orchestration_id": state.orchestration_id,
         "run_id": state.run_id,
@@ -1261,6 +1645,7 @@ fn orchestration_state_payload(state: &OrchestrationHiveState) -> Value {
         "active": state.active,
         "entered_at": state.entered_at,
         "updated_at": state.updated_at,
+        "round_state": round_state.map(orchestration_round_state_payload),
     })
 }
 
@@ -1295,31 +1680,103 @@ fn orchestration_history_payload(record: &OrchestrationHistoryRecord) -> Value {
     })
 }
 
-fn detect_latest_round_index(
+fn load_or_migrate_round_state(
     state: &AppState,
     user_id: &str,
-    orchestration_state: &OrchestrationHiveState,
-) -> i64 {
-    let workspace_id = state
-        .workspace
-        .scoped_user_id(user_id, Some(orchestration_state.mother_agent_id.trim()));
-    let base = ["orchestration", orchestration_state.run_id.trim()].join("/");
-    let entries = state
-        .workspace
-        .list_workspace_entries(&workspace_id, &base, None, 0, 0, "name", "asc")
-        .map(|(entries, _, _, _, _)| entries)
+    hive_state: &OrchestrationHiveState,
+) -> Option<OrchestrationRoundState> {
+    load_or_migrate_round_state_by_orchestration_id(
+        state,
+        user_id,
+        &hive_state.group_id,
+        &hive_state.orchestration_id,
+        &hive_state.run_id,
+        &hive_state.mother_session_id,
+        1,
+    )
+}
+
+fn load_or_migrate_round_state_by_orchestration_id(
+    state: &AppState,
+    user_id: &str,
+    group_id: &str,
+    orchestration_id: &str,
+    run_id: &str,
+    mother_session_id: &str,
+    latest_round_index_hint: i64,
+) -> Option<OrchestrationRoundState> {
+    if let Some(existing) = load_round_state(state.storage.as_ref(), user_id, orchestration_id) {
+        return Some(existing);
+    }
+    let messages = state
+        .storage
+        .load_chat_history(user_id.trim(), mother_session_id.trim(), Some(400))
+        .ok()
         .unwrap_or_default();
-    entries
-        .into_iter()
-        .filter_map(|entry| {
-            let name = entry.name.trim();
-            if !name.starts_with("round_") {
-                return None;
-            }
-            name.trim_start_matches("round_").parse::<i64>().ok()
-        })
-        .max()
-        .unwrap_or(1)
+    let mut rounds = Vec::new();
+    for message in messages {
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if role != "user" {
+            continue;
+        }
+        let index = rounds.len() as i64 + 1;
+        rounds.push(OrchestrationRoundRecord {
+            id: round_id(index),
+            index,
+            situation: String::new(),
+            user_message: message
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            created_at: message
+                .get("created_at")
+                .and_then(Value::as_f64)
+                .unwrap_or_else(now_ts),
+            finalized_at: message
+                .get("created_at")
+                .and_then(Value::as_f64)
+                .unwrap_or_else(now_ts),
+        });
+    }
+    let fallback_count = latest_round_index_hint.max(1).max(rounds.len() as i64);
+    if rounds.is_empty() {
+        rounds.push(OrchestrationRoundRecord {
+            id: round_id(1),
+            index: 1,
+            situation: String::new(),
+            user_message: String::new(),
+            created_at: now_ts(),
+            finalized_at: 0.0,
+        });
+    } else if rounds.len() < fallback_count as usize {
+        for index in (rounds.len() as i64 + 1)..=fallback_count {
+            rounds.push(OrchestrationRoundRecord {
+                id: round_id(index),
+                index,
+                situation: String::new(),
+                user_message: String::new(),
+                created_at: now_ts(),
+                finalized_at: 0.0,
+            });
+        }
+    }
+    let migrated = OrchestrationRoundState {
+        orchestration_id: orchestration_id.trim().to_string(),
+        run_id: run_id.trim().to_string(),
+        group_id: group_id.trim().to_string(),
+        rounds,
+        suppressed_message_ranges: Vec::new(),
+        updated_at: now_ts(),
+    };
+    let _ = persist_round_state(state.storage.as_ref(), user_id, &migrated);
+    Some(migrated)
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
@@ -1414,6 +1871,52 @@ struct RestoreOrchestrationHistoryRequest {
     group_id: Option<String>,
     #[serde(default, alias = "orchestrationId", alias = "orchestration_id")]
     orchestration_id: Option<String>,
+    #[serde(default)]
+    activate: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReserveOrchestrationRoundRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "roundId", alias = "round_id")]
+    round_id: Option<String>,
+    #[serde(default, alias = "roundIndex", alias = "round_index")]
+    round_index: Option<i64>,
+    #[serde(default)]
+    situation: Option<String>,
+    #[serde(default, alias = "userMessage", alias = "user_message")]
+    user_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FinalizeOrchestrationRoundRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "roundId", alias = "round_id")]
+    round_id: Option<String>,
+    #[serde(default, alias = "roundIndex", alias = "round_index")]
+    round_index: Option<i64>,
+    #[serde(default)]
+    situation: Option<String>,
+    #[serde(default, alias = "userMessage", alias = "user_message")]
+    user_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CancelOrchestrationRoundRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "roundId", alias = "round_id")]
+    round_id: Option<String>,
+    #[serde(default, alias = "roundIndex", alias = "round_index")]
+    round_index: Option<i64>,
+    #[serde(default, alias = "messageStartedAt", alias = "message_started_at")]
+    message_started_at: Option<f64>,
+    #[serde(default, alias = "messageEndedAt", alias = "message_ended_at")]
+    message_ended_at: Option<f64>,
+    #[serde(default, alias = "removeRound", alias = "remove_round")]
+    remove_round: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

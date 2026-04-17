@@ -2275,6 +2275,9 @@ export default {
   'orchestration.run.active': 'Running',
   'orchestration.run.idle': 'Idle',
   'orchestration.message.created': 'Orchestration initialized',
+  'orchestration.message.started': 'Orchestration activated',
+  'orchestration.message.stopped': 'Orchestration disconnected',
+  'orchestration.message.startRunRequired': 'Start orchestration before sending a message to the mother agent.',
   'orchestration.empty.createRun': 'This swarm has no orchestration run yet',
   'orchestration.empty.createRunHint':
     'Create a new orchestration run to give the mother and workers fresh main threads.',

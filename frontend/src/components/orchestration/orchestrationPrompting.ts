@@ -19,6 +19,13 @@ const buildAgentArtifactPath = (runId: string, roundIndex: number, agentId: stri
     .filter(Boolean)
     .join('/');
 
+const buildRoundPromptDirectory = (roundIndex: number) => buildRoundDirName(roundIndex);
+
+const buildPromptArtifactPath = (roundIndex: number, agentId: string) =>
+  [buildRoundDirName(roundIndex), normalizeText(agentId)]
+    .filter(Boolean)
+    .join('/');
+
 const resolveMotherName = (group: BeeroomGroup | null, motherAgentId: string, agents: BeeroomMember[]) => {
   const member = agents.find((item) => normalizeText(item.agent_id) === normalizeText(motherAgentId));
   return normalizeText(member?.name || group?.mother_agent_name || motherAgentId) || motherAgentId;
@@ -46,7 +53,7 @@ const resolveWorkerArtifactLines = (options: {
   resolveWorkerMembers(options.group, options.agents).map((worker, index) => {
     const agentId = normalizeText(worker.agent_id);
     const workerName = normalizeText(worker.name || agentId) || agentId;
-    const artifactPath = buildAgentArtifactPath(options.runId, options.roundIndex, agentId);
+    const artifactPath = buildPromptArtifactPath(options.roundIndex, agentId);
     return {
       agentId,
       workerName,
@@ -84,9 +91,8 @@ export const buildMotherOrchestrationPrimer = (options: {
   return renderTemplate(options.templates.mother_runtime, {
     mother_name: motherName,
     run_id: normalizeText(options.runId),
-    situation_file_path: ['orchestration', normalizeText(options.runId), buildRoundDirName(options.roundIndex), 'situation.txt']
-      .filter(Boolean)
-      .join('/'),
+    current_round_dir: buildRoundPromptDirectory(options.roundIndex),
+    current_round_situation_file: `${buildRoundDirName(options.roundIndex)}/situation.txt`,
     worker_directory_lines: workers.map((item) => item.line).join('\n')
   }).trim();
 };

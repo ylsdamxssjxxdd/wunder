@@ -3504,6 +3504,23 @@ button.messenger-chat-header-model {
   border-color: rgba(var(--ui-accent-rgb), 0.45);
 }
 
+.messenger-timeline-item.is-readonly {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.messenger-timeline-item.is-readonly:hover,
+.messenger-timeline-item.is-readonly:focus-within {
+  border-color: transparent;
+  background: transparent;
+}
+
+.messenger-timeline-item.is-readonly.active:hover,
+.messenger-timeline-item.is-readonly.active:focus-within {
+  border-color: transparent;
+  background: var(--ui-accent-soft-3);
+}
+
 .messenger-timeline-title-row {
   display: flex;
   align-items: center;
@@ -3638,6 +3655,39 @@ button.messenger-chat-header-model {
 .messenger-timeline-item.is-main:hover .messenger-timeline-detail-btn,
 .messenger-timeline-item.is-main:focus-within .messenger-timeline-detail-btn {
   display: inline-flex;
+}
+
+.messenger-timeline-item.is-readonly .messenger-timeline-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messenger-timeline-item.is-readonly .messenger-timeline-rename-btn,
+.messenger-timeline-item.is-readonly .messenger-timeline-archive-btn {
+  opacity: 0.34;
+  pointer-events: none;
+}
+
+.messenger-header-btn.is-orchestration-disabled,
+.messenger-header-btn--text.is-orchestration-disabled {
+  opacity: 0.5;
+  filter: grayscale(0.24);
+}
+
+.messenger-agent-composer-lock {
+  opacity: 0.72;
+}
+
+.messenger-agent-composer-lock .input-box,
+.messenger-agent-composer-lock .messenger-world-toolbar,
+.messenger-agent-composer-lock .messenger-world-footer {
+  filter: saturate(0.62);
+}
+
+.messenger-agent-composer-lock textarea,
+.messenger-agent-composer-lock button,
+.messenger-agent-composer-lock select {
+  cursor: not-allowed;
 }
 
 .messenger-group-dock-error {

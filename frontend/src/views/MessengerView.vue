@@ -348,6 +348,7 @@
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
+            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
             type="button"
             :disabled="creatingAgentSession || isMessengerInteractionBlocked || activeMessengerSessionBusy || activeSessionOrchestrationLocked"
             :title="t('chat.newSession')"
@@ -360,8 +361,8 @@
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
+            :class="{ 'is-orchestration-disabled': activeSessionOrchestrationLocked }"
             type="button"
-            :disabled="activeSessionOrchestrationLocked"
             :title="t('chat.history')"
             :aria-label="t('chat.history')"
             @click="timelineDialogVisible = true"
@@ -1385,6 +1386,7 @@
           <ChatComposer
             v-else
             world-style
+            :class="{ 'messenger-agent-composer-lock': activeSessionOrchestrationLocked }"
             :loading="agentSessionLoading"
             :send-key="messengerSendKey"
             :draft-key="agentComposerDraftKey"
@@ -1554,6 +1556,7 @@
       v-model:visible="timelineDialogVisible"
       :active-session-id="String(chatStore.activeSessionId || '')"
       :session-history="rightPanelSessionHistory"
+      :timeline-readonly="activeSessionOrchestrationLocked"
       @activate-session="handleTimelineDialogActivateSession"
       @open-session-detail="openTimelineSessionDetail"
       @archive-session="archiveTimelineSession"

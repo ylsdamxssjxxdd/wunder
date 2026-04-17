@@ -1228,7 +1228,7 @@ const selectedAgentHiveGroupLabel = computed(() => {
   return String(matched?.label || t('messenger.agents.hiveAll')).trim();
 });
 
-const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'orchestrations', 'agents']);
 const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );

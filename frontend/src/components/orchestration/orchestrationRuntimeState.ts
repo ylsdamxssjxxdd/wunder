@@ -1,14 +1,15 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
 import {
+  cancelBeeroomOrchestrationRound,
   createBeeroomOrchestrationState,
   exitBeeroomOrchestrationState,
+  finalizeBeeroomOrchestrationRound,
   getBeeroomOrchestrationState,
   listBeeroomOrchestrationHistory,
+  reserveBeeroomOrchestrationRound,
   restoreBeeroomOrchestrationHistory
 } from '@/api/beeroom';
-import { getSessionHistoryPage } from '@/api/chat';
-import { setDefaultSession } from '@/api/agents';
 import {
   createWunderWorkspaceDir,
   deleteWunderWorkspaceEntry,
@@ -77,9 +78,11 @@ type OrchestrationSuppressedMessageRange = {
 };
 
 type PersistedRuntime = {
-  version: 3;
+  version: 4;
   groupId: string;
+  orchestrationId: string;
   runId: string;
+  active: boolean;
   createdAt: number;
   motherAgentId: string;
   motherSessionId: string;
@@ -104,7 +107,7 @@ type WorkspaceEntryLike = {
 };
 
 const ORCHESTRATION_STORAGE_PREFIX = 'wunder:orchestration-runtime';
-const ORCHESTRATION_RUNTIME_VERSION = 3;
+const ORCHESTRATION_RUNTIME_VERSION = 4;
 const ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES = 4096;
 const ORCHESTRATION_ARTIFACT_CARD_LIMIT = 6;
 
@@ -177,8 +180,8 @@ const normalizeSuppressedMessageRanges = (value: unknown): OrchestrationSuppress
         .map((item) => {
           if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
           const record = item as Record<string, unknown>;
-          const startAt = normalizeMsTime(record.startAt);
-          const endAt = normalizeMsTime(record.endAt);
+          const startAt = normalizeMsTime(record.startAt ?? record.start_at);
+          const endAt = normalizeMsTime(record.endAt ?? record.end_at);
           if (!startAt || !endAt || endAt < startAt) return null;
           return { startAt, endAt } satisfies OrchestrationSuppressedMessageRange;
         })
@@ -231,11 +234,24 @@ const normalizeRound = (value: unknown): OrchestrationRound | null => {
     id,
     index,
     situation: String(record.situation || ''),
-    userMessage: String(record.userMessage || ''),
-    createdAt: Number(record.createdAt || Date.now()),
+    userMessage: String(record.userMessage ?? record.user_message ?? ''),
+    createdAt: normalizeMsTime(record.createdAt ?? record.created_at) || Date.now(),
     missionIds: Array.isArray(record.missionIds)
       ? record.missionIds.map((item) => normalizeText(item)).filter(Boolean)
       : []
+  };
+};
+
+const normalizeRemoteRoundState = (value: unknown) => {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const rounds = Array.isArray(record.rounds)
+    ? record.rounds.map(normalizeRound).filter((item): item is OrchestrationRound => Boolean(item))
+    : [];
+  return {
+    rounds,
+    suppressedMessageRanges: normalizeSuppressedMessageRanges(record.suppressed_message_ranges)
   };
 };
 
@@ -246,9 +262,10 @@ const normalizePersistedRuntime = (value: unknown, groupId: unknown): PersistedR
   const storedGroupId = buildScopeKey(record.groupId);
   if (storedGroupId !== normalizedGroupId) return null;
   const runId = normalizeText(record.runId);
+  const orchestrationId = normalizeText(record.orchestrationId);
   const motherSessionId = normalizeText(record.motherSessionId);
   const motherAgentId = normalizeText(record.motherAgentId);
-  if (!runId || !motherSessionId || !motherAgentId) return null;
+  if (!runId || !orchestrationId || !motherSessionId || !motherAgentId) return null;
   const rounds = Array.isArray(record.rounds)
     ? record.rounds.map(normalizeRound).filter((item): item is OrchestrationRound => Boolean(item))
     : [];
@@ -267,7 +284,9 @@ const normalizePersistedRuntime = (value: unknown, groupId: unknown): PersistedR
   return {
     version: ORCHESTRATION_RUNTIME_VERSION,
     groupId: normalizedGroupId,
+    orchestrationId,
     runId,
+    active: record.active !== false,
     createdAt: Number(record.createdAt || Date.now()),
     motherAgentId,
     motherSessionId,
@@ -368,7 +387,9 @@ export const useOrchestrationRuntimeState = (options: {
     return current.rounds.find((item) => item.id === pendingRoundId) || null;
   });
 
-  const isReady = computed(() => Boolean(runtimeState.value?.runId));
+  const hasRuntime = computed(() => Boolean(runtimeState.value?.runId && runtimeState.value?.orchestrationId));
+  const isActive = computed(() => runtimeState.value?.active === true);
+  const isReady = computed(() => hasRuntime.value);
   const runtimeScopeKey = computed(() =>
     runtimeState.value?.runId ? buildRuntimeScopeKey(runtimeState.value.runId) : ''
   );
@@ -560,17 +581,27 @@ export const useOrchestrationRuntimeState = (options: {
   };
 
   const bindMemberThreadsAsMain = async (state: PersistedRuntime) => {
-    await Promise.all(
-      (Array.isArray(state.memberThreads) ? state.memberThreads : []).map((item) => {
-        const agentId = normalizeText(item.agentId);
-        const sessionId = normalizeText(item.sessionId);
-        if (!agentId || !sessionId) return Promise.resolve();
-        return setDefaultSession(agentId || DEFAULT_AGENT_KEY, { session_id: sessionId }).catch(() => null);
-      })
-    );
+    (Array.isArray(state.memberThreads) ? state.memberThreads : []).forEach((item) => {
+      const agentId = normalizeText(item.agentId);
+      const sessionId = normalizeText(item.sessionId);
+      if (!agentId || !sessionId) return;
+      chatStore.syncSessionSummary(
+        {
+          id: sessionId,
+          agent_id: agentId,
+          is_main: true,
+          title: ''
+        },
+        {
+          agentId,
+          remember: true
+        }
+      );
+    });
   };
 
   const buildInitialRuntime = (payload: {
+    orchestrationId: string;
     runId: string;
     motherSessionId: string;
     memberThreads: OrchestrationMemberThread[];
@@ -586,7 +617,9 @@ export const useOrchestrationRuntimeState = (options: {
     return {
       version: ORCHESTRATION_RUNTIME_VERSION,
       groupId: groupId.value,
+      orchestrationId: payload.orchestrationId,
       runId: payload.runId,
+      active: true,
       createdAt: Date.now(),
       motherAgentId: motherAgentId.value,
       motherSessionId: payload.motherSessionId,
@@ -609,8 +642,13 @@ export const useOrchestrationRuntimeState = (options: {
       return null;
     }
     const runId = normalizeText(remoteState.run_id);
+    const orchestrationId = normalizeText(remoteState.orchestration_id);
     const motherSessionId = normalizeText(remoteState.mother_session_id);
     if (!runId || !motherSessionId) {
+      setRuntime(null);
+      return null;
+    }
+    if (!orchestrationId) {
       setRuntime(null);
       return null;
     }
@@ -623,86 +661,68 @@ export const useOrchestrationRuntimeState = (options: {
         sessionId: normalizeText(item?.session_id)
       }))
       .filter((item) => item.agentId && item.sessionId);
+    const remoteRoundState = normalizeRemoteRoundState(remoteState.round_state);
     const existing = preserveExisting ? runtimeState.value || readPersistedRuntime(groupId.value) : null;
+    const nextRounds = remoteRoundState.rounds.length
+      ? remoteRoundState.rounds
+      : existing && normalizeText(existing.runId) === runId && existing.rounds.length
+        ? existing.rounds
+        : buildInitialRuntime({
+            orchestrationId,
+            runId,
+            motherSessionId,
+            memberThreads
+          }).rounds;
+    const existingActiveRoundId =
+      existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
+    const activeRound =
+      nextRounds.find((item) => item.id === existingActiveRoundId) ||
+      nextRounds[nextRounds.length - 1] ||
+      null;
     const nextState =
       existing && normalizeText(existing.runId) === runId
         ? {
             ...existing,
             groupId: groupId.value,
+            orchestrationId,
             runId,
+            active: remoteState.active === true,
             motherAgentId: motherAgentId.value,
             motherSessionId,
-            memberThreads
+            currentSituation: String(activeRound?.situation || '').trim(),
+            rounds: nextRounds,
+            activeRoundId: activeRound?.id || '',
+            memberThreads,
+            pendingRoundId: '',
+            pendingRoundCreated: false,
+            pendingMessageStartedAt: 0,
+            suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
           }
-        : buildInitialRuntime({
-            runId,
-            motherSessionId,
-            memberThreads
-          });
-    await bindMemberThreadsAsMain(nextState);
-    await ensureRoundArtifactDirs(nextState, nextState.rounds[0]);
-    await ensureMotherRoundDir(nextState, nextState.rounds[0]);
-    await saveRoundSituationFile(nextState, nextState.rounds[0].index, nextState.rounds[0].situation);
+        : {
+            ...buildInitialRuntime({
+              orchestrationId,
+              runId,
+              motherSessionId,
+              memberThreads
+            }),
+            active: remoteState.active === true,
+            currentSituation: String(activeRound?.situation || '').trim(),
+            rounds: nextRounds,
+            activeRoundId: activeRound?.id || '',
+            suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
+          };
+    if (nextState.active) {
+      await bindMemberThreadsAsMain(nextState);
+    }
+    await Promise.all(
+      nextState.rounds.map(async (round) => {
+        await ensureRoundArtifactDirs(nextState, round);
+        await ensureMotherRoundDir(nextState, round);
+        await saveRoundSituationFile(nextState, round.index, round.situation);
+      })
+    );
     setRuntime(nextState);
     return nextState;
-  };
-
-  const rebuildRoundsFromMotherHistory = async (
-    state: PersistedRuntime,
-    motherSessionId: string,
-    latestRoundIndexHint = 1
-  ) => {
-    const normalizedSessionId = normalizeText(motherSessionId);
-    if (!normalizedSessionId) return state;
-    try {
-      const response = await getSessionHistoryPage(normalizedSessionId, { limit: 400 });
-      const messages = Array.isArray(response?.data?.data?.messages) ? response.data.data.messages : [];
-      const nextRounds: OrchestrationRound[] = [];
-      messages.forEach((message) => {
-        if (!message || typeof message !== 'object' || Array.isArray(message)) return;
-        const role = normalizeText((message as Record<string, unknown>).role).toLowerCase();
-        if (role !== 'user') return;
-        const index = nextRounds.length + 1;
-        nextRounds.push({
-          id: buildRoundId(index),
-          index,
-          situation: '',
-          userMessage: String((message as Record<string, unknown>).content || '').trim(),
-          createdAt: normalizeMsTime((message as Record<string, unknown>).created_at) || Date.now(),
-          missionIds: []
-        });
-      });
-      const fallbackCount = Math.max(latestRoundIndexHint, nextRounds.length, 1);
-      if (!nextRounds.length) {
-        nextRounds.push({
-          id: buildRoundId(1),
-          index: 1,
-          situation: '',
-          userMessage: '',
-          createdAt: Date.now(),
-          missionIds: []
-        });
-      } else if (nextRounds.length < fallbackCount) {
-        for (let index = nextRounds.length + 1; index <= fallbackCount; index += 1) {
-          nextRounds.push({
-            id: buildRoundId(index),
-            index,
-            situation: '',
-            userMessage: '',
-            createdAt: Date.now() + index,
-            missionIds: []
-          });
-        }
-      }
-      const hydrated = {
-        ...state,
-        rounds: nextRounds,
-        activeRoundId: buildRoundId(Math.max(1, fallbackCount))
-      };
-      return await hydrateSituationFiles(hydrated);
-    } catch {
-      return state;
-    }
   };
 
   const initializeRun = async () => {
@@ -763,9 +783,41 @@ export const useOrchestrationRuntimeState = (options: {
 
   const exitRun = async () => {
     const currentGroupId = groupId.value;
-    if (!currentGroupId) return;
-    await exitBeeroomOrchestrationState({ group_id: currentGroupId });
-    setRuntime(null);
+    const current = runtimeState.value;
+    if (!currentGroupId || !current) return null;
+    const response = await exitBeeroomOrchestrationState({ group_id: currentGroupId });
+    const freshThreads = Array.isArray(response?.data?.data?.member_threads)
+      ? (response.data.data.member_threads as Array<Record<string, unknown>>)
+          .map((item) => ({
+            agentId: normalizeText(item?.agent_id),
+            sessionId: normalizeText(item?.session_id)
+          }))
+          .filter((item) => item.agentId && item.sessionId)
+      : [];
+    freshThreads.forEach((item) => {
+      chatStore.syncSessionSummary(
+        {
+          id: item.sessionId,
+          agent_id: item.agentId,
+          is_main: true,
+          title: ''
+        },
+        {
+          agentId: item.agentId,
+          remember: true
+        }
+      );
+    });
+    const nextState = {
+      ...current,
+      active: false,
+      memberThreads: freshThreads.length ? freshThreads : current.memberThreads,
+      pendingRoundId: '',
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: 0
+    } satisfies PersistedRuntime;
+    setRuntime(nextState);
+    return nextState;
   };
 
   const loadHistory = async () => {
@@ -787,7 +839,7 @@ export const useOrchestrationRuntimeState = (options: {
     }
   };
 
-  const restoreHistory = async (orchestrationId: string) => {
+  const restoreHistory = async (orchestrationId: string, options: { activate?: boolean } = {}) => {
     const currentGroupId = groupId.value;
     if (!currentGroupId) {
       throw new Error('orchestration_group_missing');
@@ -798,15 +850,12 @@ export const useOrchestrationRuntimeState = (options: {
     }
     const response = await restoreBeeroomOrchestrationHistory({
       group_id: currentGroupId,
-      orchestration_id: normalizedOrchestrationId
+      orchestration_id: normalizedOrchestrationId,
+      activate: options.activate ?? isActive.value
     });
     const stateRecord =
       response?.data?.data?.state && typeof response.data.data.state === 'object'
         ? (response.data.data.state as Record<string, unknown>)
-        : null;
-    const historyRecord =
-      response?.data?.data?.history && typeof response.data.data.history === 'object'
-        ? normalizeHistoryItem(response.data.data.history)
         : null;
     const memberThreads = Array.isArray(response?.data?.data?.member_threads)
       ? (response.data.data.member_threads as Array<Record<string, unknown>>)
@@ -823,18 +872,16 @@ export const useOrchestrationRuntimeState = (options: {
     if (!nextState) {
       return null;
     }
-    const rebuilt = await rebuildRoundsFromMotherHistory(
-      nextState,
-      nextState.motherSessionId,
-      historyRecord?.latestRoundIndex || 1
-    );
-    setRuntime(rebuilt);
+    const hydrated = await hydrateSituationFiles(nextState);
+    if (hydrated !== nextState) {
+      setRuntime(hydrated);
+    }
     await loadHistory().catch(() => []);
-    return rebuilt;
+    return hydrated;
   };
 
   const ensureRuntime = async () => {
-    if (runtimeState.value?.runId) return runtimeState.value;
+    if (runtimeState.value?.runId && runtimeState.value?.orchestrationId) return runtimeState.value;
     const currentGroupId = groupId.value;
     if (!currentGroupId || !motherAgentId.value) {
       return null;
@@ -874,14 +921,16 @@ export const useOrchestrationRuntimeState = (options: {
       buildScopeKey(persisted.groupId) === groupId.value
     ) {
       runtimeState.value = persisted;
-      await bindMemberThreadsAsMain(persisted);
+      if (persisted.active) {
+        await bindMemberThreadsAsMain(persisted);
+      }
       const hydrated = await hydrateSituationFiles(persisted);
       if (hydrated !== persisted) {
         setRuntime(hydrated);
       }
       return hydrated;
     }
-    return initializeRun();
+    return null;
   };
 
   const createRound = async (situation: string, userMessage = '') => {
@@ -922,78 +971,54 @@ export const useOrchestrationRuntimeState = (options: {
     const normalizedSituation =
       String(payload.situation || '').trim() ||
       resolveSituationByRoundIndex(current.plannedSituations, Number(currentRound?.index || 0));
-    if (!currentRound || normalizeText(currentRound.userMessage)) {
-      const round = await createRound(normalizedSituation, normalizedMessage);
-      if (!round) return null;
-      const latestState = runtimeState.value;
-      if (!latestState) return round;
-      setRuntime({
-        ...latestState,
-        currentSituation: normalizedSituation,
-        activeRoundId: round.id,
-        pendingRoundId: round.id,
-        pendingRoundCreated: true,
-        pendingMessageStartedAt: Date.now()
-      });
-      return round;
-    }
-    const nextRounds = current.rounds.map((item) =>
-      item.id === currentRound.id
+    const shouldCreateRound = !currentRound || Boolean(normalizeText(currentRound.userMessage));
+    const targetRoundIndex = shouldCreateRound
+      ? Math.max(1, ...(current.rounds || []).map((item) => item.index)) + 1
+      : currentRound.index;
+    const response = await reserveBeeroomOrchestrationRound({
+      group_id: groupId.value,
+      round_id: shouldCreateRound ? '' : currentRound?.id || '',
+      round_index: targetRoundIndex,
+      situation: normalizedSituation,
+      user_message: normalizedMessage
+    });
+    const remoteState =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    const nextState = await applyRemoteState(
+      remoteState
         ? {
-            ...item,
-            situation: normalizedSituation,
-            userMessage: normalizedMessage || item.userMessage
+            ...remoteState,
+            member_threads: (current.memberThreads || []).map((item) => ({
+              agent_id: item.agentId,
+              session_id: item.sessionId
+            }))
           }
-        : item
+        : null,
+      true
     );
-    const nextState = {
-      ...current,
+    const reservedRound =
+      normalizeRound(response?.data?.data?.round) ||
+      nextState?.rounds.find((item) => item.index === targetRoundIndex) ||
+      null;
+    if (!nextState || !reservedRound) return reservedRound;
+    await saveRoundSituationFile(nextState, reservedRound.index, normalizedSituation);
+    setRuntime({
+      ...nextState,
       currentSituation: normalizedSituation,
-      rounds: nextRounds,
-      activeRoundId: currentRound.id,
-      pendingRoundId: currentRound.id,
-      pendingRoundCreated: false,
+      activeRoundId: reservedRound.id,
+      pendingRoundId: reservedRound.id,
+      pendingRoundCreated: shouldCreateRound,
       pendingMessageStartedAt: Date.now()
-    };
-    await saveRoundSituationFile(nextState, currentRound.index, normalizedSituation);
-    setRuntime(nextState);
-    return nextRounds.find((item) => item.id === currentRound.id) || null;
+    });
+    return reservedRound;
   };
 
   const commitUserRound = async (payload: { situation?: string; userMessage: string; targetRoundId?: string }) => {
-    const current = await ensureRuntime();
-    if (!current) return null;
-    const targetRoundId = normalizeText(payload.targetRoundId);
-    const normalizedMessage = String(payload.userMessage || '').trim();
-    const currentRound =
-      current.rounds.find((item) => item.id === targetRoundId) ||
-      current.rounds.find((item) => item.id === current.activeRoundId) ||
-      current.rounds[current.rounds.length - 1];
-    const normalizedSituation =
-      String(payload.situation || '').trim() ||
-      resolveSituationByRoundIndex(current.plannedSituations, Number(currentRound?.index || 0));
-    if (!currentRound || normalizeText(currentRound.userMessage)) {
-      return createRound(normalizedSituation, normalizedMessage);
-    }
-    const nextRounds = current.rounds.map((item) =>
-      item.id === currentRound.id
-        ? {
-            ...item,
-            situation: normalizedSituation,
-            userMessage: normalizedMessage || item.userMessage
-          }
-        : item
-    );
-    const nextState = {
-      ...current,
-      currentSituation: normalizedSituation,
-      rounds: nextRounds,
-      activeRoundId: currentRound.id,
-      pendingRoundId: ''
-    };
-    await saveRoundSituationFile(nextState, currentRound.index, normalizedSituation);
-    setRuntime(nextState);
-    return nextRounds.find((item) => item.id === currentRound.id) || null;
+    const reserved = await reserveUserRound(payload);
+    if (!reserved) return null;
+    return finalizePendingRound(reserved.id);
   };
 
   const finalizePendingRound = async (roundId?: string) => {
@@ -1002,16 +1027,34 @@ export const useOrchestrationRuntimeState = (options: {
     const resolvedRoundId = normalizeText(roundId) || normalizeText(current.pendingRoundId);
     if (!resolvedRoundId) return null;
     if (!current.rounds.some((item) => item.id === resolvedRoundId)) return null;
-    if (current.pendingRoundId !== resolvedRoundId) {
-      return current.rounds.find((item) => item.id === resolvedRoundId) || null;
-    }
+    const response = await finalizeBeeroomOrchestrationRound({
+      group_id: groupId.value,
+      round_id: resolvedRoundId
+    });
+    const remoteState =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    const nextState = await applyRemoteState(
+      remoteState
+        ? {
+            ...remoteState,
+            member_threads: (current.memberThreads || []).map((item) => ({
+              agent_id: item.agentId,
+              session_id: item.sessionId
+            }))
+          }
+        : null,
+      true
+    );
+    if (!nextState) return normalizeRound(response?.data?.data?.round);
     setRuntime({
-      ...current,
+      ...nextState,
       pendingRoundId: '',
       pendingRoundCreated: false,
       pendingMessageStartedAt: 0
     });
-    return current.rounds.find((item) => item.id === resolvedRoundId) || null;
+    return normalizeRound(response?.data?.data?.round) || nextState.rounds.find((item) => item.id === resolvedRoundId) || null;
   };
 
   const discardPendingRound = async (roundId?: string) => {
@@ -1040,27 +1083,51 @@ export const useOrchestrationRuntimeState = (options: {
             : item
         );
     const fallbackRound = nextRounds.find((item) => item.id === current.activeRoundId) || nextRounds[nextRounds.length - 1] || null;
-    const nextSuppressedRanges = [...(current.suppressedMessageRanges || [])];
-    if (pendingMessageStartedAt > 0) {
-      nextSuppressedRanges.push({
-        startAt: pendingMessageStartedAt,
-        endAt: Math.max(pendingMessageStartedAt, discardCompletedAt)
-      });
-    }
-    const nextState: PersistedRuntime = {
-      ...current,
-      rounds: nextRounds.length ? nextRounds : [buildInitialRuntime({
-        runId: current.runId,
-        motherSessionId: current.motherSessionId,
-        memberThreads: current.memberThreads
-      }).rounds[0]],
-      activeRoundId: fallbackRound?.id || buildRoundId(1),
-      currentSituation: String(fallbackRound?.situation || '').trim(),
-      pendingRoundId: '',
-      pendingRoundCreated: false,
-      pendingMessageStartedAt: 0,
-      suppressedMessageRanges: nextSuppressedRanges.slice(-24)
-    };
+    const response = await cancelBeeroomOrchestrationRound({
+      group_id: groupId.value,
+      round_id: resolvedRoundId,
+      message_started_at: pendingMessageStartedAt || undefined,
+      message_ended_at: discardCompletedAt,
+      remove_round: removeWholeRound
+    });
+    const remoteState =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    const appliedState = await applyRemoteState(
+      remoteState
+        ? {
+            ...remoteState,
+            member_threads: (current.memberThreads || []).map((item) => ({
+              agent_id: item.agentId,
+              session_id: item.sessionId
+            }))
+          }
+        : null,
+      true
+    );
+    const nextState = appliedState
+      ? {
+          ...appliedState,
+          activeRoundId: appliedState.rounds.find((item) => item.id === fallbackRound?.id)?.id || appliedState.activeRoundId,
+          pendingRoundId: '',
+          pendingRoundCreated: false,
+          pendingMessageStartedAt: 0
+        }
+      : {
+          ...current,
+        rounds: nextRounds.length ? nextRounds : [buildInitialRuntime({
+          orchestrationId: current.orchestrationId,
+          runId: current.runId,
+          motherSessionId: current.motherSessionId,
+          memberThreads: current.memberThreads
+        }).rounds[0]],
+          activeRoundId: fallbackRound?.id || buildRoundId(1),
+          currentSituation: String(fallbackRound?.situation || '').trim(),
+          pendingRoundId: '',
+          pendingRoundCreated: false,
+          pendingMessageStartedAt: 0
+        };
     setRuntime(nextState);
     if (removeWholeRound) {
       const motherId = normalizeText(current.motherAgentId);
@@ -1086,6 +1153,15 @@ export const useOrchestrationRuntimeState = (options: {
       await saveRoundSituationFile(nextState, round.index, round.situation);
     }
     return nextState.rounds.find((item) => item.id === nextState.activeRoundId) || null;
+  };
+
+  const startRun = async () => {
+    const current = runtimeState.value;
+    const currentGroupId = groupId.value;
+    if (!current || !currentGroupId || current.active) {
+      return current;
+    }
+    return restoreHistory(current.orchestrationId, { activate: true });
   };
 
   const resolveRoundSituation = async (roundIndex: number) => {
@@ -1442,9 +1518,12 @@ export const useOrchestrationRuntimeState = (options: {
     historyItems,
     initializing,
     initError,
+    hasRuntime,
+    isActive,
     isReady,
     ensureRuntime,
     initializeRun,
+    startRun,
     exitRun,
     loadHistory,
     restoreHistory,

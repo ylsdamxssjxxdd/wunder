@@ -12,6 +12,7 @@ const SESSION_META_PREFIX: &str = "orchestration_session:";
 const HIVE_STATE_META_PREFIX: &str = "orchestration_hive_state:";
 const MEMBER_BINDING_META_PREFIX: &str = "orchestration_member_binding:";
 const HISTORY_META_PREFIX: &str = "orchestration_history:";
+const ROUND_STATE_META_PREFIX: &str = "orchestration_round_state:";
 const SITUATION_FILE_NAME: &str = "situation.txt";
 
 pub const ORCHESTRATION_MODE: &str = "orchestration";
@@ -37,7 +38,6 @@ pub struct OrchestrationSessionContext {
 
 #[derive(Debug, Clone)]
 pub struct OrchestrationDispatchContext {
-    pub run_id: String,
     pub round_index: i64,
     pub situation: String,
 }
@@ -114,6 +114,46 @@ pub struct OrchestrationHistoryRecord {
     pub restored_at: f64,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct OrchestrationRoundRecord {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub index: i64,
+    #[serde(default)]
+    pub situation: String,
+    #[serde(default)]
+    pub user_message: String,
+    #[serde(default)]
+    pub created_at: f64,
+    #[serde(default)]
+    pub finalized_at: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct OrchestrationSuppressedMessageRange {
+    #[serde(default)]
+    pub start_at: f64,
+    #[serde(default)]
+    pub end_at: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct OrchestrationRoundState {
+    #[serde(default)]
+    pub orchestration_id: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub group_id: String,
+    #[serde(default)]
+    pub rounds: Vec<OrchestrationRoundRecord>,
+    #[serde(default)]
+    pub suppressed_message_ranges: Vec<OrchestrationSuppressedMessageRange>,
+    #[serde(default)]
+    pub updated_at: f64,
+}
+
 pub fn session_meta_key(user_id: &str, session_id: &str) -> String {
     format!(
         "{SESSION_META_PREFIX}{}:{}",
@@ -147,6 +187,14 @@ pub fn history_meta_key(user_id: &str, group_id: &str, orchestration_id: &str) -
     )
 }
 
+pub fn round_state_meta_key(user_id: &str, orchestration_id: &str) -> String {
+    format!(
+        "{ROUND_STATE_META_PREFIX}{}:{}",
+        user_id.trim(),
+        orchestration_id.trim()
+    )
+}
+
 fn history_meta_prefix(user_id: &str, group_id: &str) -> String {
     format!("{HISTORY_META_PREFIX}{}:{}:", user_id.trim(), group_id.trim())
 }
@@ -157,6 +205,10 @@ pub fn normalize_round_index(round_index: i64) -> i64 {
 
 pub fn round_dir_name(round_index: i64) -> String {
     format!("round_{:04}", normalize_round_index(round_index))
+}
+
+pub fn round_id(round_index: i64) -> String {
+    round_dir_name(round_index)
 }
 
 pub fn situation_path(run_id: &str, round_index: i64) -> String {
@@ -172,17 +224,12 @@ pub fn situation_path(run_id: &str, round_index: i64) -> String {
     .join("/")
 }
 
-pub fn agent_artifact_path(run_id: &str, round_index: i64, agent_id: &str) -> String {
-    [
-        "orchestration".to_string(),
-        run_id.trim().to_string(),
-        round_dir_name(round_index),
-        agent_id.trim().to_string(),
-    ]
-    .into_iter()
-    .filter(|item| !item.trim().is_empty())
-    .collect::<Vec<_>>()
-    .join("/")
+pub fn prompt_agent_artifact_path(round_index: i64, agent_id: &str) -> String {
+    [round_dir_name(round_index), agent_id.trim().to_string()]
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 pub fn clear_session_context(
@@ -520,6 +567,132 @@ pub fn list_history_records(
     Ok(items)
 }
 
+pub fn normalize_round_record(record: &OrchestrationRoundRecord) -> OrchestrationRoundRecord {
+    let index = normalize_round_index(record.index);
+    OrchestrationRoundRecord {
+        id: if record.id.trim().is_empty() {
+            round_id(index)
+        } else {
+            record.id.trim().to_string()
+        },
+        index,
+        situation: record.situation.trim().to_string(),
+        user_message: record.user_message.trim().to_string(),
+        created_at: record.created_at.max(0.0),
+        finalized_at: record.finalized_at.max(0.0),
+    }
+}
+
+pub fn persist_round_state(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    state: &OrchestrationRoundState,
+) -> Result<()> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_orchestration_id = state.orchestration_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_orchestration_id.is_empty() {
+        return Ok(());
+    }
+    let mut rounds = state
+        .rounds
+        .iter()
+        .map(normalize_round_record)
+        .filter(|round| round.index > 0)
+        .collect::<Vec<_>>();
+    rounds.sort_by_key(|round| round.index);
+    rounds.dedup_by_key(|round| round.index);
+    let suppressed_message_ranges = state
+        .suppressed_message_ranges
+        .iter()
+        .filter_map(|range| {
+            let start_at = range.start_at.max(0.0);
+            let end_at = range.end_at.max(0.0);
+            if start_at <= 0.0 || end_at < start_at {
+                return None;
+            }
+            Some(OrchestrationSuppressedMessageRange { start_at, end_at })
+        })
+        .collect::<Vec<_>>();
+    let normalized = OrchestrationRoundState {
+        orchestration_id: cleaned_orchestration_id.to_string(),
+        run_id: state.run_id.trim().to_string(),
+        group_id: state.group_id.trim().to_string(),
+        rounds,
+        suppressed_message_ranges,
+        updated_at: state.updated_at.max(0.0),
+    };
+    storage.set_meta(
+        &round_state_meta_key(cleaned_user_id, cleaned_orchestration_id),
+        &serde_json::to_string(&normalized)?,
+    )?;
+    Ok(())
+}
+
+pub fn load_round_state(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    orchestration_id: &str,
+) -> Option<OrchestrationRoundState> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_orchestration_id = orchestration_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_orchestration_id.is_empty() {
+        return None;
+    }
+    let raw = storage
+        .get_meta(&round_state_meta_key(cleaned_user_id, cleaned_orchestration_id))
+        .ok()
+        .flatten()?;
+    let mut state = serde_json::from_str::<OrchestrationRoundState>(raw.trim()).ok()?;
+    state.orchestration_id = state.orchestration_id.trim().to_string();
+    state.run_id = state.run_id.trim().to_string();
+    state.group_id = state.group_id.trim().to_string();
+    if state.orchestration_id.is_empty() {
+        state.orchestration_id = cleaned_orchestration_id.to_string();
+    }
+    state.rounds = state
+        .rounds
+        .iter()
+        .map(normalize_round_record)
+        .collect::<Vec<_>>();
+    state.rounds.sort_by_key(|round| round.index);
+    state.rounds.dedup_by_key(|round| round.index);
+    state.suppressed_message_ranges = state
+        .suppressed_message_ranges
+        .into_iter()
+        .filter(|range| range.start_at > 0.0 && range.end_at >= range.start_at)
+        .collect();
+    if state.orchestration_id.is_empty() {
+        return None;
+    }
+    Some(state)
+}
+
+pub fn build_initial_round_state(state: &OrchestrationHiveState) -> OrchestrationRoundState {
+    let now = now_ts();
+    OrchestrationRoundState {
+        orchestration_id: state.orchestration_id.trim().to_string(),
+        run_id: state.run_id.trim().to_string(),
+        group_id: state.group_id.trim().to_string(),
+        rounds: vec![OrchestrationRoundRecord {
+            id: round_id(1),
+            index: 1,
+            situation: String::new(),
+            user_message: String::new(),
+            created_at: now,
+            finalized_at: 0.0,
+        }],
+        suppressed_message_ranges: Vec::new(),
+        updated_at: now,
+    }
+}
+
+pub fn latest_formal_round_index(round_state: Option<&OrchestrationRoundState>) -> i64 {
+    round_state
+        .and_then(|state| state.rounds.iter().map(|round| round.index).max())
+        .unwrap_or(1)
+        .max(1)
+}
+
 pub fn active_orchestration_for_agent(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -730,7 +903,6 @@ pub fn load_dispatch_context(
     let situation = read_situation_file(workspace, workspace_id, &context.run_id, context.round_index)
         .unwrap_or_default();
     Some(OrchestrationDispatchContext {
-        run_id: context.run_id,
         round_index: context.round_index,
         situation,
     })
@@ -747,7 +919,7 @@ pub fn build_worker_dispatch_message(
     let Some(context) = context else {
         return base_message.trim().to_string();
     };
-    let artifact_path = agent_artifact_path(&context.run_id, context.round_index, target_agent_id);
+    let artifact_path = prompt_agent_artifact_path(context.round_index, target_agent_id);
     let mut blocks = Vec::new();
     if is_first_worker_turn {
         let worker_name = if target_agent_name.trim().is_empty() {
@@ -855,6 +1027,19 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
+    fn full_agent_artifact_path(run_id: &str, round_index: i64, agent_id: &str) -> String {
+        [
+            "orchestration".to_string(),
+            run_id.trim().to_string(),
+            round_dir_name(round_index),
+            agent_id.trim().to_string(),
+        ]
+        .into_iter()
+        .filter(|item| !item.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+    }
+
     #[test]
     fn builds_round_paths() {
         assert_eq!(
@@ -862,15 +1047,18 @@ mod tests {
             "orchestration/orch_demo/round_0002/situation.txt"
         );
         assert_eq!(
-            agent_artifact_path("orch_demo", 3, "agent_a"),
+            full_agent_artifact_path("orch_demo", 3, "agent_a"),
             "orchestration/orch_demo/round_0003/agent_a"
+        );
+        assert_eq!(
+            prompt_agent_artifact_path(3, "agent_a"),
+            "round_0003/agent_a"
         );
     }
 
     #[test]
     fn worker_dispatch_includes_orchestration_context() {
         let context = OrchestrationDispatchContext {
-            run_id: "orch_demo".to_string(),
             round_index: 1,
             situation: "market pressure".to_string(),
         };
@@ -882,7 +1070,8 @@ mod tests {
             "Risk Worker",
             false,
         );
-        assert!(message.contains("orchestration/orch_demo/round_0001/agent_worker"));
+        assert!(message.contains("round_0001/agent_worker"));
+        assert!(!message.contains("orchestration/orch_demo/round_0001/agent_worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
     }
