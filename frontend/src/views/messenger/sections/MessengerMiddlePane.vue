@@ -221,6 +221,13 @@
         @drop="handleConversationDrop($event)"
         @dragend="handleDragEnd"
       >
+        <span
+          v-if="item.kind === 'agent' && isAgentConversationOrchestrationActive(item)"
+          class="messenger-orchestration-bookmark"
+          :title="t('orchestration.chat.timelineBadge')"
+        >
+          {{ t('orchestration.chat.timelineBadge') }}
+        </span>
         <AgentAvatar
           v-if="item.kind === 'agent'"
           size="md"
@@ -558,6 +565,13 @@
         @drop="handlePrimaryAgentDrop($event)"
         @dragend="handleDragEnd"
       >
+        <span
+          v-if="isAgentOrchestrationActive(agent.agentId)"
+          class="messenger-orchestration-bookmark"
+          :title="t('orchestration.chat.timelineBadge')"
+        >
+          {{ t('orchestration.chat.timelineBadge') }}
+        </span>
         <AgentAvatar
           size="md"
           :state="resolveAgentRuntimeState(agent.agentId)"
@@ -602,6 +616,13 @@
         @drop="handleSharedAgentDrop($event)"
         @dragend="handleDragEnd"
       >
+        <span
+          v-if="isAgentOrchestrationActive(agent.id)"
+          class="messenger-orchestration-bookmark"
+          :title="t('orchestration.chat.timelineBadge')"
+        >
+          {{ t('orchestration.chat.timelineBadge') }}
+        </span>
         <AgentAvatar
           size="md"
           :state="resolveAgentRuntimeState(agent.id)"
@@ -948,6 +969,7 @@
 import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { getBeeroomGroup } from '@/api/beeroom';
 import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
@@ -956,16 +978,19 @@ import avatar046Url from '@/assets/agent-avatars/avatar-046.png';
 import avatar016Url from '@/assets/agent-avatars/avatar-016.png';
 import type { PlazaBrowseKind } from '@/components/messenger/hivePlazaPanelState';
 import { useBeeroomStore } from '@/stores/beeroom';
+import { useAgentStore } from '@/stores/agents';
 import { runUnsavedChangesGuards } from '@/utils/unsavedChangesGuard';
 
 const { t } = useI18n();
 const beeroomStore = useBeeroomStore();
+const agentStore = useAgentStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 const swarmCreateVisible = ref(false);
 const swarmCreateSaving = ref(false);
 const swarmEditVisible = ref(false);
 const swarmEditSaving = ref(false);
 const swarmEditDeleting = ref(false);
+const swarmEditLoading = ref(false);
 const swarmEditingGroup = ref<Record<string, any> | null>(null);
 const packOverlayMode = ref<'import' | 'export'>('export');
 const packOverlayTargetName = ref('');
@@ -1024,6 +1049,7 @@ const {
   resolveExternalIconStyle,
   resolveExternalHost,
   filteredMixedConversations,
+  isAgentOrchestrationActive,
   isMixedConversationActive,
   openMixedConversation,
   preloadMixedConversation,
@@ -1061,6 +1087,7 @@ const {
   selectedAgentHiveGroupId,
   agentHiveTotalCount,
   agentHiveTreeRows,
+  ownedAgents,
   primaryAgentItems,
   filteredOwnedAgents,
   filteredSharedAgents,
@@ -1113,6 +1140,7 @@ const {
   resolveExternalIconStyle: (icon: string) => Record<string, string> | string;
   resolveExternalHost: (url: string) => string;
   filteredMixedConversations: Array<Record<string, any>>;
+  isAgentOrchestrationActive: (agentId: unknown) => boolean;
   isMixedConversationActive: (item: any) => boolean;
   openMixedConversation: (item: any) => void | Promise<void>;
   preloadMixedConversation: (item: any) => void;
@@ -1150,6 +1178,7 @@ const {
   selectedAgentHiveGroupId: string;
   agentHiveTotalCount: number;
   agentHiveTreeRows: Array<Record<string, any>>;
+  ownedAgents: Array<Record<string, any>>;
   primaryAgentItems: Array<Record<string, any>>;
   filteredOwnedAgents: Array<Record<string, any>>;
   filteredSharedAgents: Array<Record<string, any>>;
@@ -1285,6 +1314,11 @@ const displayedMixedConversations = computed(() => {
 
 const resolveConversationItemKey = (item: Record<string, unknown> | null | undefined): string =>
   String(item?.key || '').trim();
+
+const isAgentConversationOrchestrationActive = (item: Record<string, unknown> | null | undefined): boolean => {
+  if (!item || String(item?.kind || '').trim() !== 'agent') return false;
+  return isAgentOrchestrationActive(item?.agentId);
+};
 
 const resolveSwarmDragKey = (group: Record<string, unknown> | null | undefined): string =>
   String(group?.group_id || group?.hive_id || '').trim();
@@ -1782,19 +1816,96 @@ const triggerSearchCreateAction = (command?: string) => {
 };
 
 const swarmCreateCandidateAgents = computed(() => {
-  const list = [
-    ...(Array.isArray(filteredOwnedAgents) ? filteredOwnedAgents : []),
-    ...(Array.isArray(filteredSharedAgents) ? filteredSharedAgents : [])
-  ];
+  const list = Array.isArray(ownedAgents) ? ownedAgents : [];
   const unique = new Map<string, { id: string; name: string }>();
   list.forEach((item) => {
     const id = String(item?.id || '').trim();
-    if (!id || unique.has(id)) return;
+    if (!id || id === normalizeAgentId(defaultAgentKey) || unique.has(id)) return;
     const name = String(item?.name || id).trim() || id;
     unique.set(id, { id, name });
   });
   return Array.from(unique.values());
 });
+
+const defaultBeeroomGroupId = computed(() => {
+  const fallback = String(
+    beeroomStore.groups.find((item) => item.is_default)?.group_id ||
+      beeroomStore.groups.find((item) => item.is_default)?.hive_id ||
+      ''
+  ).trim();
+  return fallback || 'default';
+});
+
+const normalizeSwarmMemberIds = (value: unknown): string[] => {
+  const list = Array.isArray(value) ? value : [];
+  const unique = new Set<string>();
+  list.forEach((item) => {
+    if (typeof item === 'string') {
+      const id = item.trim();
+      if (id) {
+        unique.add(id);
+      }
+      return;
+    }
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const source = item as Record<string, unknown>;
+    const id = String(source.agent_id || source.id || '').trim();
+    if (id) {
+      unique.add(id);
+    }
+  });
+  return Array.from(unique);
+};
+
+const splitSwarmEditPayload = (payload: Record<string, unknown>) => {
+  const name = String(payload?.name || '').trim();
+  const description = String(payload?.description || '').trim();
+  const mother_agent_id = String(payload?.mother_agent_id || '').trim();
+  const member_agent_ids = normalizeSwarmMemberIds(payload?.member_agent_ids);
+  return {
+    metaPayload: {
+      name,
+      description,
+      mother_agent_id
+    },
+    memberAgentIds: member_agent_ids
+  };
+};
+
+const fetchSwarmGroupDetail = async (groupId: string) => {
+  const response = await getBeeroomGroup(groupId);
+  const group = (response?.data?.data?.group || null) as Record<string, unknown> | null;
+  const agents = Array.isArray(response?.data?.data?.agents)
+    ? (response.data.data.agents as Record<string, unknown>[])
+    : [];
+  return {
+    group,
+    memberAgentIds: normalizeSwarmMemberIds(agents)
+  };
+};
+
+const syncSwarmMembers = async (
+  targetGroupId: string,
+  options: {
+    currentMemberAgentIds: string[];
+    nextMemberAgentIds: string[];
+  }
+) => {
+  const currentIds = new Set(options.currentMemberAgentIds);
+  const nextIds = new Set(options.nextMemberAgentIds);
+  const addIds = Array.from(nextIds).filter((id) => !currentIds.has(id));
+  const removeIds = Array.from(currentIds).filter((id) => !nextIds.has(id));
+  const fallbackGroupId = defaultBeeroomGroupId.value;
+
+  if (addIds.length) {
+    await beeroomStore.moveAgents(targetGroupId, addIds);
+  }
+  if (removeIds.length) {
+    await beeroomStore.moveAgents(fallbackGroupId, removeIds);
+  }
+};
 
 const packOverlayVisible = computed(
   () => beeroomStore.packImportLoading || beeroomStore.packExportLoading
@@ -1980,9 +2091,26 @@ const resolveSwarmGroupName = (group: Record<string, any> | null | undefined): s
   return String(group?.name || groupId).trim() || groupId;
 };
 
-const openSwarmEditDialog = (group: Record<string, any>) => {
-  swarmEditingGroup.value = { ...group };
-  swarmEditVisible.value = true;
+const openSwarmEditDialog = async (group: Record<string, any>) => {
+  const groupId = resolveSwarmGroupId(group);
+  if (!groupId || swarmEditLoading.value) {
+    return;
+  }
+  swarmEditLoading.value = true;
+  try {
+    const detail = await fetchSwarmGroupDetail(groupId);
+    swarmEditingGroup.value = {
+      ...group,
+      ...(detail.group || {}),
+      member_agent_ids: detail.memberAgentIds
+    };
+    swarmEditVisible.value = true;
+  } catch (error: any) {
+    const detail = String(error?.response?.data?.detail || error?.message || '').trim();
+    ElMessage.error(detail || t('common.requestFailed'));
+  } finally {
+    swarmEditLoading.value = false;
+  }
 };
 
 const handleSwarmPlusCommand = (command: string | number | Record<string, unknown>) => {
@@ -2000,7 +2128,22 @@ const handleSwarmCreateSubmit = async (payload: Record<string, unknown>) => {
   if (swarmCreateSaving.value) return;
   swarmCreateSaving.value = true;
   try {
-    await beeroomStore.createGroup(payload);
+    const { metaPayload, memberAgentIds } = splitSwarmEditPayload(payload);
+    const created = await beeroomStore.createGroup(metaPayload);
+    const groupId = resolveSwarmGroupId(created as Record<string, unknown>);
+    const motherAgentId = String(metaPayload.mother_agent_id || '').trim();
+    const finalMemberIds = Array.from(new Set([...memberAgentIds, ...(motherAgentId ? [motherAgentId] : [])]));
+    if (groupId && finalMemberIds.length) {
+      const alreadyIncluded = new Set<string>(motherAgentId ? [motherAgentId] : []);
+      const addIds = finalMemberIds.filter((id) => !alreadyIncluded.has(id));
+      if (addIds.length) {
+        await beeroomStore.moveAgents(groupId, addIds);
+      }
+    }
+    await Promise.all([beeroomStore.loadGroups(), agentStore.loadAgents()]);
+    if (groupId) {
+      await beeroomStore.selectGroup(groupId, { silent: true }).catch(() => null);
+    }
     swarmCreateVisible.value = false;
     ElMessage.success(t('beeroom.message.hiveCreated'));
   } catch (error: any) {
@@ -2016,8 +2159,25 @@ const handleSwarmEditSubmit = async (payload: Record<string, unknown>) => {
   if (swarmEditSaving.value || !groupId) return;
   swarmEditSaving.value = true;
   try {
-    const updated = await beeroomStore.updateGroup(groupId, payload);
-    swarmEditingGroup.value = updated ? { ...updated } : swarmEditingGroup.value;
+    const detail = await fetchSwarmGroupDetail(groupId);
+    const { metaPayload, memberAgentIds } = splitSwarmEditPayload(payload);
+    const motherAgentId = String(metaPayload.mother_agent_id || '').trim();
+    const isDefaultGroup = swarmEditingGroup.value?.is_default === true;
+    const finalMemberIds = isDefaultGroup
+      ? detail.memberAgentIds
+      : Array.from(new Set([...memberAgentIds, ...(motherAgentId ? [motherAgentId] : [])]));
+    const updated = await beeroomStore.updateGroup(groupId, metaPayload);
+    if (!isDefaultGroup) {
+      await syncSwarmMembers(groupId, {
+        currentMemberAgentIds: detail.memberAgentIds,
+        nextMemberAgentIds: finalMemberIds
+      });
+    }
+    await Promise.all([beeroomStore.loadGroups(), agentStore.loadAgents()]);
+    await beeroomStore.selectGroup(groupId, { silent: true }).catch(() => null);
+    swarmEditingGroup.value = updated
+      ? { ...updated, member_agent_ids: finalMemberIds }
+      : { ...(swarmEditingGroup.value || {}), member_agent_ids: finalMemberIds };
     swarmEditVisible.value = false;
     ElMessage.success(t('common.saved'));
   } catch (error: any) {
@@ -2240,6 +2400,56 @@ const handleSwarmExport = async (group: Record<string, any>) => {
   width: 32px;
   height: 32px;
   border-radius: 7px;
+}
+
+.messenger-conversation-item,
+.messenger-agent-item {
+  position: relative;
+  overflow: visible;
+}
+
+.messenger-conversation-item .messenger-list-main,
+.messenger-agent-item .messenger-list-main {
+  padding-right: 10px;
+}
+
+.messenger-orchestration-bookmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: -1px;
+  right: 12px;
+  z-index: 2;
+  min-width: 26px;
+  height: 34px;
+  padding: 0 8px 6px;
+  border-radius: 0 0 11px 11px;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-top: 0;
+  background: linear-gradient(180deg, rgba(255, 243, 199, 0.98), rgba(254, 230, 138, 0.94));
+  color: #9a670d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 8px 18px rgba(217, 119, 6, 0.14);
+}
+
+.messenger-orchestration-bookmark::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  background: inherit;
+  border-left: 1px solid rgba(245, 158, 11, 0.3);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  transform: translateX(-50%) rotate(-45deg);
+  transform-origin: center;
 }
 </style>
 

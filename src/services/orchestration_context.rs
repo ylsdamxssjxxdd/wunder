@@ -5,6 +5,7 @@ use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -112,6 +113,14 @@ pub struct OrchestrationHistoryRecord {
     pub exited_at: f64,
     #[serde(default)]
     pub restored_at: f64,
+    #[serde(default)]
+    pub parent_orchestration_id: String,
+    #[serde(default)]
+    pub branch_root_orchestration_id: String,
+    #[serde(default)]
+    pub branch_from_round_index: i64,
+    #[serde(default)]
+    pub branch_depth: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -444,6 +453,16 @@ pub fn list_member_bindings(
     Ok(items)
 }
 
+pub fn clear_member_bindings(storage: &dyn StorageBackend, orchestration_id: &str) -> Result<()> {
+    let cleaned_orchestration_id = orchestration_id.trim();
+    if cleaned_orchestration_id.is_empty() {
+        return Ok(());
+    }
+    let prefix = format!("{MEMBER_BINDING_META_PREFIX}{cleaned_orchestration_id}:");
+    storage.delete_meta_prefix(&prefix)?;
+    Ok(())
+}
+
 pub fn build_history_record_from_state(
     state: &OrchestrationHiveState,
     status: &str,
@@ -462,7 +481,30 @@ pub fn build_history_record_from_state(
         updated_at: state.updated_at,
         exited_at: 0.0,
         restored_at: 0.0,
+        parent_orchestration_id: String::new(),
+        branch_root_orchestration_id: state.orchestration_id.trim().to_string(),
+        branch_from_round_index: 0,
+        branch_depth: 0,
     }
+}
+
+pub fn build_branch_history_record_from_state(
+    state: &OrchestrationHiveState,
+    status: &str,
+    latest_round_index: i64,
+    source: &OrchestrationHistoryRecord,
+    branch_from_round_index: i64,
+) -> OrchestrationHistoryRecord {
+    let mut record = build_history_record_from_state(state, status, latest_round_index);
+    record.parent_orchestration_id = source.orchestration_id.trim().to_string();
+    record.branch_root_orchestration_id = if source.branch_root_orchestration_id.trim().is_empty() {
+        source.orchestration_id.trim().to_string()
+    } else {
+        source.branch_root_orchestration_id.trim().to_string()
+    };
+    record.branch_from_round_index = normalize_round_index(branch_from_round_index);
+    record.branch_depth = source.branch_depth.max(0) + 1;
+    record
 }
 
 pub fn persist_history_record(
@@ -486,6 +528,14 @@ pub fn persist_history_record(
     normalized.mother_session_id = normalized.mother_session_id.trim().to_string();
     normalized.status = normalized.status.trim().to_string();
     normalized.latest_round_index = normalize_round_index(normalized.latest_round_index);
+    normalized.parent_orchestration_id = normalized.parent_orchestration_id.trim().to_string();
+    normalized.branch_root_orchestration_id = if normalized.branch_root_orchestration_id.trim().is_empty() {
+        cleaned_orchestration_id.to_string()
+    } else {
+        normalized.branch_root_orchestration_id.trim().to_string()
+    };
+    normalized.branch_from_round_index = normalized.branch_from_round_index.max(0);
+    normalized.branch_depth = normalized.branch_depth.max(0);
     storage.set_meta(
         &history_meta_key(cleaned_user_id, cleaned_group_id, cleaned_orchestration_id),
         &serde_json::to_string(&normalized)?,
@@ -523,6 +573,14 @@ pub fn load_history_record(
     record.mother_session_id = record.mother_session_id.trim().to_string();
     record.status = record.status.trim().to_string();
     record.latest_round_index = normalize_round_index(record.latest_round_index);
+    record.parent_orchestration_id = record.parent_orchestration_id.trim().to_string();
+    record.branch_root_orchestration_id = if record.branch_root_orchestration_id.trim().is_empty() {
+        cleaned_orchestration_id.to_string()
+    } else {
+        record.branch_root_orchestration_id.trim().to_string()
+    };
+    record.branch_from_round_index = record.branch_from_round_index.max(0);
+    record.branch_depth = record.branch_depth.max(0);
     if record.orchestration_id.is_empty()
         || record.group_id.is_empty()
         || record.run_id.is_empty()
@@ -532,6 +590,27 @@ pub fn load_history_record(
         return None;
     }
     Some(record)
+}
+
+pub fn clear_history_record(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    group_id: &str,
+    orchestration_id: &str,
+) -> Result<()> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_group_id = group_id.trim();
+    let cleaned_orchestration_id = orchestration_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_group_id.is_empty() || cleaned_orchestration_id.is_empty()
+    {
+        return Ok(());
+    }
+    storage.delete_meta_prefix(&history_meta_key(
+        cleaned_user_id,
+        cleaned_group_id,
+        cleaned_orchestration_id,
+    ))?;
+    Ok(())
 }
 
 pub fn list_history_records(
@@ -667,6 +746,20 @@ pub fn load_round_state(
     Some(state)
 }
 
+pub fn clear_round_state(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    orchestration_id: &str,
+) -> Result<()> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_orchestration_id = orchestration_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_orchestration_id.is_empty() {
+        return Ok(());
+    }
+    storage.delete_meta_prefix(&round_state_meta_key(cleaned_user_id, cleaned_orchestration_id))?;
+    Ok(())
+}
+
 pub fn build_initial_round_state(state: &OrchestrationHiveState) -> OrchestrationRoundState {
     let now = now_ts();
     OrchestrationRoundState {
@@ -691,6 +784,213 @@ pub fn latest_formal_round_index(round_state: Option<&OrchestrationRoundState>) 
         .and_then(|state| state.rounds.iter().map(|round| round.index).max())
         .unwrap_or(1)
         .max(1)
+}
+
+pub fn rebuild_branch_round_state(
+    source: &OrchestrationRoundState,
+    target_orchestration_id: &str,
+    target_run_id: &str,
+    branch_from_round_index: i64,
+    now: f64,
+) -> OrchestrationRoundState {
+    let reopen_index = normalize_round_index(branch_from_round_index);
+    let mut rounds = source
+        .rounds
+        .iter()
+        .filter(|round| round.index < reopen_index)
+        .map(normalize_round_record)
+        .collect::<Vec<_>>();
+    let source_round = source
+        .rounds
+        .iter()
+        .find(|round| round.index == reopen_index)
+        .cloned()
+        .unwrap_or_else(|| OrchestrationRoundRecord {
+            id: round_id(reopen_index),
+            index: reopen_index,
+            situation: String::new(),
+            user_message: String::new(),
+            created_at: now,
+            finalized_at: 0.0,
+        });
+    rounds.push(OrchestrationRoundRecord {
+        id: round_id(reopen_index),
+        index: reopen_index,
+        situation: source_round.situation.trim().to_string(),
+        user_message: String::new(),
+        created_at: now,
+        finalized_at: 0.0,
+    });
+    rounds.sort_by_key(|round| round.index);
+    OrchestrationRoundState {
+        orchestration_id: target_orchestration_id.trim().to_string(),
+        run_id: target_run_id.trim().to_string(),
+        group_id: source.group_id.trim().to_string(),
+        rounds,
+        suppressed_message_ranges: Vec::new(),
+        updated_at: now,
+    }
+}
+
+pub fn copy_round_directory_tree(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_run_id: &str,
+    target_run_id: &str,
+    inclusive_round_index: i64,
+) -> Result<()> {
+    let max_round = normalize_round_index(inclusive_round_index);
+    for round_index in 1..=max_round {
+        let source = workspace.resolve_path(
+            workspace_id,
+            &[
+                "orchestration",
+                source_run_id.trim(),
+                &round_dir_name(round_index),
+            ]
+            .join("/"),
+        )?;
+        if !source.exists() {
+            continue;
+        }
+        let target = workspace.resolve_path(
+            workspace_id,
+            &[
+                "orchestration",
+                target_run_id.trim(),
+                &round_dir_name(round_index),
+            ]
+            .join("/"),
+        )?;
+        copy_dir_recursive(&source, &target)?;
+    }
+    Ok(())
+}
+
+pub fn copy_round_situation_files(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    source_run_id: &str,
+    target_run_id: &str,
+    start_round_index: i64,
+) -> Result<()> {
+    let source_root = workspace.resolve_path(
+        workspace_id,
+        &["orchestration", source_run_id.trim()].join("/"),
+    )?;
+    if !source_root.exists() || !source_root.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(source_root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let round_index = parse_round_index_from_dir_name(&name);
+        if round_index < normalize_round_index(start_round_index) {
+            continue;
+        }
+        let source = entry.path().join(SITUATION_FILE_NAME);
+        if !source.is_file() {
+            continue;
+        }
+        let target = workspace.resolve_path(
+            workspace_id,
+            &situation_path(target_run_id, round_index),
+        )?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, target)?;
+    }
+    Ok(())
+}
+
+pub fn clear_orchestration_workspace_tree(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    run_id: &str,
+) -> Result<()> {
+    let cleaned_run_id = run_id.trim();
+    if cleaned_run_id.is_empty() {
+        return Ok(());
+    }
+    let target = workspace.resolve_path(
+        workspace_id,
+        &["orchestration", cleaned_run_id].join("/"),
+    )?;
+    if target.exists() {
+        fs::remove_dir_all(target)?;
+    }
+    Ok(())
+}
+
+pub fn delete_round_directories_after(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    run_id: &str,
+    retained_round_index: i64,
+) -> Result<()> {
+    let root = workspace.resolve_path(
+        workspace_id,
+        &["orchestration", run_id.trim()].join("/"),
+    )?;
+    if !root.exists() || !root.is_dir() {
+        return Ok(());
+    }
+    let retained = normalize_round_index(retained_round_index);
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if !file_type.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let round_index = parse_round_index_from_dir_name(&name);
+        if round_index <= retained {
+            continue;
+        }
+        fs::remove_dir_all(entry.path())?;
+    }
+    Ok(())
+}
+
+pub fn copy_chat_history_until_round(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    source_session_id: &str,
+    target_session_id: &str,
+    inclusive_round_index: i64,
+) -> Result<()> {
+    let target_round = normalize_round_index(inclusive_round_index);
+    let messages = storage.load_chat_history(user_id.trim(), source_session_id.trim(), None)?;
+    let mut copied_user_round = 0_i64;
+    for message in messages {
+        let role = message
+            .get("role")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase();
+        if role == "user" {
+            copied_user_round += 1;
+            if copied_user_round >= target_round {
+                break;
+            }
+        }
+        let mut cloned = message;
+        if let serde_json::Value::Object(ref mut map) = cloned {
+            map.insert(
+                "session_id".to_string(),
+                serde_json::Value::String(target_session_id.trim().to_string()),
+            );
+            map.remove("_history_id");
+        }
+        storage.append_chat(user_id.trim(), &cloned)?;
+    }
+    Ok(())
 }
 
 pub fn active_orchestration_for_agent(
@@ -982,6 +1282,41 @@ fn read_situation_file(
     std::fs::read_to_string(target)
         .ok()
         .map(|content| content.trim().to_string())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
+    if !source.exists() {
+        return Ok(());
+    }
+    if source.is_file() {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, target)?;
+        return Ok(());
+    }
+    fs::create_dir_all(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let child_source = entry.path();
+        let child_target = target.join(entry.file_name());
+        if child_source.is_dir() {
+            copy_dir_recursive(&child_source, &child_target)?;
+        } else {
+            if let Some(parent) = child_target.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(child_source, child_target)?;
+        }
+    }
+    Ok(())
+}
+
+fn parse_round_index_from_dir_name(value: &str) -> i64 {
+    let Some(rest) = value.trim().strip_prefix("round_") else {
+        return 0;
+    };
+    rest.parse::<i64>().unwrap_or(0).max(0)
 }
 
 fn render_prompt_template(config: &Config, name: &str, values: &[(&str, &str)]) -> String {

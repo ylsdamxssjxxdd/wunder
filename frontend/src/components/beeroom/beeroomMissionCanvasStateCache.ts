@@ -16,12 +16,13 @@ export type BeeroomMissionCanvasState = {
   chatCollapsed: boolean;
   chatWidth: number;
   timelineCollapsed: boolean;
+  timelineHeight: number;
   chatClearedAfter: number;
   viewport: BeeroomCanvasViewportState | null;
 };
 
 const MAX_CACHE_ENTRIES = 48;
-const MISSION_CANVAS_STATE_VERSION = 5;
+const MISSION_CANVAS_STATE_VERSION = 6;
 const MISSION_CANVAS_STATE_STORAGE_KEY = 'wunder:beeroom-mission-canvas-state';
 const missionCanvasStateCache = new Map<string, BeeroomMissionCanvasState>();
 let missionCanvasStateHydrated = false;
@@ -80,6 +81,12 @@ const normalizeChatWidth = (value: unknown) => {
   return width;
 };
 
+const normalizeTimelineHeight = (value: unknown) => {
+  const height = Math.round(Number(value || 0));
+  if (!Number.isFinite(height) || height <= 0) return 0;
+  return height;
+};
+
 const cloneState = (state: BeeroomMissionCanvasState): BeeroomMissionCanvasState => ({
   version: MISSION_CANVAS_STATE_VERSION,
   nodePositionOverrides: cloneNodePositionOverrides(state.nodePositionOverrides),
@@ -87,6 +94,7 @@ const cloneState = (state: BeeroomMissionCanvasState): BeeroomMissionCanvasState
   chatCollapsed: !!state.chatCollapsed,
   chatWidth: normalizeChatWidth(state.chatWidth),
   timelineCollapsed: !!state.timelineCollapsed,
+  timelineHeight: normalizeTimelineHeight(state.timelineHeight),
   chatClearedAfter: normalizeChatClearedAfter(state.chatClearedAfter),
   viewport: cloneViewport(state.viewport)
 });
@@ -98,6 +106,7 @@ const normalizeState = (state: Partial<BeeroomMissionCanvasState> | null | undef
   chatCollapsed: !!state?.chatCollapsed,
   chatWidth: normalizeChatWidth(state?.chatWidth),
   timelineCollapsed: !!state?.timelineCollapsed,
+  timelineHeight: normalizeTimelineHeight(state?.timelineHeight),
   chatClearedAfter: normalizeChatClearedAfter(state?.chatClearedAfter),
   viewport: cloneViewport(state?.viewport || null)
 });
@@ -204,6 +213,10 @@ export const mergeBeeroomMissionCanvasState = (
       nextPatch.chatWidth !== undefined ? normalizeChatWidth(nextPatch.chatWidth) : current.chatWidth,
     timelineCollapsed:
       nextPatch.timelineCollapsed !== undefined ? !!nextPatch.timelineCollapsed : current.timelineCollapsed,
+    timelineHeight:
+      nextPatch.timelineHeight !== undefined
+        ? normalizeTimelineHeight(nextPatch.timelineHeight)
+        : current.timelineHeight,
     chatClearedAfter:
       nextPatch.chatClearedAfter !== undefined
         ? normalizeChatClearedAfter(nextPatch.chatClearedAfter)

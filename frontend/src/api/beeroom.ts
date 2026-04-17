@@ -121,8 +121,17 @@ export const exitBeeroomOrchestrationState = (payload: ApiPayload) =>
 export const listBeeroomOrchestrationHistory = (params: QueryParams = {}) =>
   api.get('/beeroom/orchestration/history', { params, timeout: 60000 });
 
+export const deleteBeeroomOrchestrationHistory = (payload: ApiPayload) =>
+  api.delete('/beeroom/orchestration/history', { data: payload, timeout: 60000 });
+
 export const restoreBeeroomOrchestrationHistory = (payload: ApiPayload) =>
   api.post('/beeroom/orchestration/history/restore', payload, { timeout: 60000 });
+
+export const branchBeeroomOrchestrationHistory = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/history/branch', payload, { timeout: 60000 });
+
+export const truncateBeeroomOrchestrationHistory = (payload: ApiPayload) =>
+  api.post('/beeroom/orchestration/history/truncate', payload, { timeout: 60000 });
 
 export const reserveBeeroomOrchestrationRound = (payload: ApiPayload) =>
   api.post('/beeroom/orchestration/rounds/reserve', payload, { timeout: 60000 });

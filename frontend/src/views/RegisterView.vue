@@ -113,7 +113,9 @@ const loadUnits = async () => {
 const handleRegister = async () => {
   try {
     await authStore.register({
-      ...form,
+      username: form.username,
+      password: form.password,
+      email: form.email.trim() || undefined,
       unit_id: form.unit_id || ''
     });
     router.push(buildDefaultAgentChatRoute({ desktop: isDesktopModeEnabled() }));

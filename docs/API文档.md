@@ -2692,6 +2692,45 @@
   - 工蜂若历史编排线程仍存在则复用；若缺失则自动补建新的编排线程后重新加入当前编排态。
   - 历史编排的正式轮次状态会一并恢复；老历史若尚未落过 `round_state`，服务端会按母蜂历史做一次兼容迁移并写回。
 
+### `POST /wunder/beeroom/orchestration/history/branch`
+
+- 用途：从指定历史编排 run 的某个母蜂用户轮次创建新的编排分支。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `source_orchestration_id: string`，必填，分支来源 run。
+  - `round_index: number`，必填，表示从第几轮开始重新继续。
+  - `activate?: boolean`，可选，默认 `true`；为 `true` 时新分支会直接成为当前激活编排态。
+- 返回：
+  - `data.state`：新分支的编排态快照。
+  - `data.history`：新分支对应的历史记录。
+  - `data.member_threads[]`：新分支中母蜂/工蜂的线程绑定。
+- 说明：
+  - 该接口不会覆盖旧 run，而是新建新的 `orchestration_id + run_id`。
+  - 新分支会继承源 run 的 `1..N-1` 轮正式历史。
+  - 第 `N` 轮会在新分支中重新打开，保留 `situation`，清空该轮 `user_message` 与旧产物。
+  - 母蜂新线程会只复制分支点之前的可见聊天历史，避免未来轮消息污染新分支。
+  - 目录继承规则为：复制 `1..N-1` 轮目录与未来轮 `situation.txt`；当前重新打开轮只保留 `situation.txt`，并为工蜂预建空产物目录。
+
+### `POST /wunder/beeroom/orchestration/history/truncate`
+
+- 用途：保留指定 run 到某个用户轮次，并删除该轮之后的所有轮次与其后代分支。
+- 鉴权：用户端 Bearer Token。
+- 请求体：
+  - `group_id: string`，必填。
+  - `orchestration_id: string`，必填，要裁剪的 run。
+  - `round_index: number`，必填，表示保留到第几轮。
+- 返回：
+  - `data.history`：裁剪后的历史记录。
+  - `data.state?`：若该 run 当前处于激活编排态，则返回裁剪后的编排态快照。
+  - `data.round_state`：裁剪后的正式轮次状态。
+  - `data.removed_orchestration_ids[]`：被一并删除的后代分支 ID。
+  - `data.retained_round_index`：裁剪后保留的最新轮次。
+- 说明：
+  - 当前轮次节点本身会被保留，只清除其后的内容。
+  - 若目标 run 当前处于激活编排态，系统不会退出编排态，只会将当前 run 末端收缩到目标轮次。
+  - 若某个后代分支当前正处于激活编排态，接口会拒绝裁剪，避免误删当前现实。
+
 ### `POST /wunder/beeroom/orchestration/rounds/reserve`
 
 - 用途：为当前活跃编排态预留或更新一个待提交用户轮次，供前端在真正发给母蜂前先占位。

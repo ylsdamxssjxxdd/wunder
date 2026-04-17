@@ -103,6 +103,17 @@ pub struct UserStore {
 }
 
 impl UserStore {
+    fn normalize_optional_email(email: Option<String>) -> Option<String> {
+        email.and_then(|value| {
+            let cleaned = value.trim();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned.to_string())
+            }
+        })
+    }
+
     pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self {
             storage,
@@ -381,6 +392,7 @@ impl UserStore {
         if password_hash.trim().is_empty() {
             return Err(anyhow!("password hash is empty"));
         }
+        let email = Self::normalize_optional_email(email);
         let user_id =
             Self::normalize_user_id(username).ok_or_else(|| anyhow!("invalid username"))?;
         if self
@@ -1710,5 +1722,41 @@ mod tests {
                 .session_scope,
             "admin_web"
         );
+    }
+
+    #[test]
+    fn create_user_treats_blank_email_as_none() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-blank-email.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        let first = store
+            .create_user(
+                "alice",
+                Some("   ".to_string()),
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create first user");
+        let second = store
+            .create_user(
+                "bob",
+                Some(String::new()),
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create second user");
+
+        assert_eq!(first.email, None);
+        assert_eq!(second.email, None);
     }
 }

@@ -1199,6 +1199,18 @@ const reconcileWorkspaceSelection = () => {
   }
 };
 
+const reconcileWorkspaceRenameState = () => {
+  const renamingPath = String(state.renamingPath || '').trim();
+  if (!renamingPath) {
+    state.renamingValue = '';
+    return;
+  }
+  if (!findWorkspaceEntryByPath(state.entries, renamingPath)) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+  }
+};
+
 const syncWorkspacePreviewEntry = () => {
   const previewPath = normalizeWorkspacePath(state.preview.entry?.path || '');
   if (!previewPath) return;
@@ -1258,6 +1270,7 @@ const loadWorkspace = async ({
   resetSearch = false,
   background = false
 } = {}) => {
+  const preserveInteraction = background;
   const currentPath = normalizeWorkspacePath(path);
   const cacheKey = buildWorkspaceTreeCacheKey(
     normalizedAgentId.value,
@@ -1283,9 +1296,11 @@ const loadWorkspace = async ({
   if (resetExpanded) {
     state.expanded = new Set();
   }
-  state.renamingPath = '';
-  state.renamingValue = '';
-  resetWorkspaceSelection();
+  if (!preserveInteraction) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+    resetWorkspaceSelection();
+  }
   try {
     const { data } = await fetchWunderWorkspaceContent(withAgentParams({
       path: currentPath,
@@ -1317,8 +1332,10 @@ const loadWorkspace = async ({
       state.expanded = filtered;
     }
     await hydrateExpandedEntries();
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
     syncWorkspacePreviewEntry();
-    await syncWorkspaceListViewport({ reset: true });
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return true;
   } catch (error) {
     showApiError(error, t('workspace.loadFailed'));
@@ -1326,7 +1343,9 @@ const loadWorkspace = async ({
       state.entries = [];
       emitWorkspaceStats(state.entries);
     }
-    await syncWorkspaceListViewport({ reset: true });
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return false;
   } finally {
     state.loading = false;
@@ -1338,6 +1357,7 @@ const loadWorkspace = async ({
 };
 
 const loadWorkspaceSearch = async ({ background = false } = {}) => {
+  const preserveInteraction = background;
   const keyword = String(state.searchKeyword || '').trim();
   if (!keyword) {
     state.searchMode = false;
@@ -1345,9 +1365,11 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
   }
   state.loading = true;
   state.visualLoading = !background;
-  state.renamingPath = '';
-  state.renamingValue = '';
-  resetWorkspaceSelection();
+  if (!preserveInteraction) {
+    state.renamingPath = '';
+    state.renamingValue = '';
+    resetWorkspaceSelection();
+  }
   try {
     const { data } = await searchWunderWorkspace(
       withAgentParams({ keyword, offset: 0, limit: 200 })
@@ -1357,14 +1379,18 @@ const loadWorkspaceSearch = async ({ background = false } = {}) => {
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     state.searchMode = true;
     emitWorkspaceStats(state.entries);
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
     syncWorkspacePreviewEntry();
-    await syncWorkspaceListViewport({ reset: true });
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return true;
   } catch (error) {
     showApiError(error, t('workspace.searchFailed'));
     state.entries = [];
     emitWorkspaceStats(state.entries);
-    await syncWorkspaceListViewport({ reset: true });
+    reconcileWorkspaceSelection();
+    reconcileWorkspaceRenameState();
+    await syncWorkspaceListViewport({ reset: !preserveInteraction });
     return false;
   } finally {
     state.loading = false;

@@ -46,7 +46,7 @@ import {
 } from '@/utils/messageFeedback';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
-import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
@@ -9854,6 +9854,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         assistantMessage.workflowItems.push(
           buildWorkflowItem(t('chat.workflow.event', { event: eventType }), buildDetail(data || raw), status)
         );
+        if (eventType === 'team_task_result' || eventType === 'team_finish' || eventType === 'team_error') {
+          const workerAgentId = String(data?.agent_id ?? payload?.agent_id ?? '').trim();
+          emitAgentRuntimeRefresh({
+            agentIds: workerAgentId ? [workerAgentId] : undefined
+          });
+        }
         break;
       }
       default: {

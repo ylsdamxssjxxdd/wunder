@@ -148,6 +148,7 @@
           :resolve-external-icon-style="resolveExternalIconStyle"
           :resolve-external-host="resolveExternalHost"
           :filtered-mixed-conversations="filteredMixedConversations"
+          :is-agent-orchestration-active="isAgentOrchestrationActive"
           :is-mixed-conversation-active="isMixedConversationActive"
           :open-mixed-conversation="openMixedConversation"
           :preload-mixed-conversation="preloadMixedConversation"
@@ -183,6 +184,7 @@
           :select-group="selectGroupFromMiddlePane"
           :agent-hive-total-count="agentHiveTotalCount"
           :agent-hive-tree-rows="agentHiveTreeRows"
+          :owned-agents="ownedAgents"
           :primary-agent-items="orderedPrimaryAgents"
           :filtered-owned-agents="filteredOwnedAgentsOrdered"
           :filtered-shared-agents="filteredSharedAgentsOrdered"
@@ -1793,7 +1795,7 @@ import {
   extractWorkspaceRefreshPaths,
   isWorkspacePathAffected
 } from '@/utils/workspaceRefresh';
-import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitWorkspaceRefresh, onAgentRuntimeRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { emitUserToolsUpdated, onUserToolsUpdated } from '@/utils/userToolsEvents';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import {
@@ -2329,6 +2331,7 @@ const userAttachmentResourceCache = ref(new Map<string, AttachmentResourceState>
 let workspaceResourceHydrationFrame: number | null = null;
 let workspaceResourceHydrationPending = false;
 let stopWorkspaceRefreshListener: (() => void) | null = null;
+let stopAgentRuntimeRefreshListener: (() => void) | null = null;
 let stopUserToolsUpdatedListener: (() => void) | null = null;
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
@@ -3360,6 +3363,22 @@ const activeSessionOrchestrationLock = computed<Record<string, unknown> | null>(
 const activeSessionOrchestrationLocked = computed(
   () => Boolean(activeSessionOrchestrationLock.value)
 );
+
+const isAgentOrchestrationActive = (agentId: unknown): boolean => {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  if (!normalizedAgentId) return false;
+  return (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).some((sessionRaw) => {
+    const session = (sessionRaw || {}) as Record<string, unknown>;
+    if (normalizeAgentId(session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '')) !== normalizedAgentId) {
+      return false;
+    }
+    const lock =
+      session && typeof session === 'object' && !Array.isArray(session)
+        ? (session.orchestration_lock as Record<string, unknown> | null | undefined)
+        : null;
+    return Boolean(lock && typeof lock === 'object' && !Array.isArray(lock) && lock.active === true);
+  });
+};
 
 const buildSessionAgentMap = (): Map<string, string> => {
   const sessionAgentMap = new Map<string, string>();
@@ -5425,7 +5444,7 @@ const refreshAgentMainUnreadCount = async (entry: AgentMainSessionEntry, readAt:
       persistAgentUnreadState();
       return;
     }
-    setAgentMainUnreadCount(entry.agentId, unreadCount > 0 ? unreadCount : 1);
+    setAgentMainUnreadCount(entry.agentId, unreadCount);
     persistAgentUnreadState();
   } catch {
     // unread refresh is best-effort; keep previous value if request fails
@@ -6749,6 +6768,16 @@ const worldRenderableMessages = computed<WorldRenderableMessage[]>(() =>
   })
 );
 
+const latestRenderableAssistantMessage = computed<Record<string, unknown> | null>(() => {
+  for (let index = agentRenderableMessages.value.length - 1; index >= 0; index -= 1) {
+    const message = agentRenderableMessages.value[index]?.message as Record<string, unknown> | undefined;
+    if (String(message?.role || '') === 'assistant') {
+      return message || null;
+    }
+  }
+  return null;
+});
+
 const latestAgentRenderableMessageKey = computed(() => {
   const latest = agentRenderableMessages.value[agentRenderableMessages.value.length - 1];
   return String(latest?.key || '').trim();
@@ -6866,7 +6895,16 @@ const shouldShowCompactionDivider = (message: Record<string, unknown>): boolean 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
   if (resolveAssistantFailureNotice(message, t)) return 'error';
-  return resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
+  const runtimeState = resolveAssistantMessageRuntimeState(message) as AgentRuntimeState;
+  if (
+    runtimeState === 'done' &&
+    isAgentConversationActive.value &&
+    activeMessengerSessionBusy.value &&
+    latestRenderableAssistantMessage.value === message
+  ) {
+    return 'running';
+  }
+  return runtimeState;
 };
 
 const shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean =>
@@ -12720,13 +12758,18 @@ watch(
 
 watch(
   () => hasHotRuntimeState.value,
-  (hot) => {
-    if (!hot) return;
-    if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
-      triggerBeeroomRealtimeSyncRefresh?.('hot-runtime');
+  (hot, previousHot) => {
+    if (hot) {
+      if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
+        triggerBeeroomRealtimeSyncRefresh?.('hot-runtime');
+        return;
+      }
+      triggerRealtimePulseRefresh?.('hot-runtime');
       return;
     }
-    triggerRealtimePulseRefresh?.('hot-runtime');
+    if (previousHot && !hot) {
+      void loadRunningAgents({ force: true });
+    }
   }
 );
 
@@ -13225,6 +13268,22 @@ onMounted(async () => {
     summary: sessionHub.activeSection === 'agents' || showAgentRightDock.value
   });
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
+  stopAgentRuntimeRefreshListener = onAgentRuntimeRefresh((detail) => {
+    void loadRunningAgents({ force: true });
+    const targetAgentIds = new Set(
+      (Array.isArray(detail?.agentIds) ? detail.agentIds : [])
+        .map((agentId) => normalizeAgentId(agentId))
+        .filter(Boolean)
+    );
+    if (!targetAgentIds.size) return;
+    const sessionAgentMap = buildSessionAgentMap();
+    Object.keys(chatStore.loadingBySession || {}).forEach((sessionId) => {
+      const mappedAgentId = sessionAgentMap.get(sessionId);
+      if (mappedAgentId && targetAgentIds.has(mappedAgentId)) {
+        delete chatStore.loadingBySession[sessionId];
+      }
+    });
+  });
   stopUserToolsUpdatedListener = onUserToolsUpdated(handleUserToolsUpdatedEvent);
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
@@ -13338,6 +13397,10 @@ onBeforeUnmount(() => {
   if (stopWorkspaceRefreshListener) {
     stopWorkspaceRefreshListener();
     stopWorkspaceRefreshListener = null;
+  }
+  if (stopAgentRuntimeRefreshListener) {
+    stopAgentRuntimeRefreshListener();
+    stopAgentRuntimeRefreshListener = null;
   }
   if (stopUserToolsUpdatedListener) {
     stopUserToolsUpdatedListener();

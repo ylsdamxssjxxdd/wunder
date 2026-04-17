@@ -1,6 +1,8 @@
 import { ElMessage } from 'element-plus';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, type Ref, watch } from 'vue';
 
+import { emitAgentRuntimeRefresh } from '@/utils/workspaceEvents';
+
 import {
   createSession,
   listSessions,
@@ -3090,6 +3092,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           hydrate: true,
           forceReplace: true,
           immediate: true
+        });
+        const data = (payload?.data as Record<string, unknown>) ?? payload;
+        const workerAgentId = String(data?.agent_id ?? payload?.agent_id ?? '').trim();
+        emitAgentRuntimeRefresh({
+          agentIds: workerAgentId ? [workerAgentId] : undefined
         });
       }
       scheduleTeamRealtimeReconcile(forceImmediateReconcile);

@@ -2,10 +2,13 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::prompting::read_prompt_template_from_active_pack;
 use crate::services::orchestration_context::{
-    build_chat_session_with_title, build_history_record_from_state, build_orchestration_thread_title,
-    build_initial_round_state, clear_hive_state, clear_session_context, latest_formal_round_index,
-    list_history_records, load_hive_state, load_history_record, load_round_state, persist_hive_state,
-    persist_history_record, persist_member_binding, persist_round_state, persist_session_context,
+    build_branch_history_record_from_state, build_chat_session_with_title, build_history_record_from_state,
+    build_orchestration_thread_title, build_initial_round_state, clear_hive_state, clear_history_record,
+    clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state, clear_session_context,
+    copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
+    delete_round_directories_after, latest_formal_round_index, list_history_records, load_hive_state,
+    load_history_record, load_round_state, persist_hive_state, persist_history_record,
+    persist_member_binding, persist_round_state, persist_session_context, rebuild_branch_round_state,
     round_id, OrchestrationHiveState, OrchestrationHistoryRecord, OrchestrationMemberBinding,
     OrchestrationRoundRecord, OrchestrationRoundState, OrchestrationSessionContext,
     OrchestrationSuppressedMessageRange, ORCHESTRATION_HISTORY_STATUS_ACTIVE,
@@ -23,6 +26,7 @@ use axum::response::Response;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -73,11 +77,19 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/beeroom/orchestration/history",
-            get(list_orchestration_history),
+            get(list_orchestration_history).delete(delete_orchestration_history),
         )
         .route(
             "/wunder/beeroom/orchestration/history/restore",
             axum::routing::post(restore_orchestration_history),
+        )
+        .route(
+            "/wunder/beeroom/orchestration/history/branch",
+            axum::routing::post(branch_orchestration_history),
+        )
+        .route(
+            "/wunder/beeroom/orchestration/history/truncate",
+            axum::routing::post(truncate_orchestration_history),
         )
         .route(
             "/wunder/beeroom/orchestration/rounds/reserve",
@@ -265,8 +277,21 @@ async fn create_orchestration_state(
         let latest_round_index = latest_formal_round_index(
             load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
         );
-        let mut history =
-            build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
+        let mut history = load_history_record(
+            state.storage.as_ref(),
+            &user_id,
+            &group.hive_id,
+            &previous.orchestration_id,
+        )
+        .unwrap_or_else(|| {
+            build_history_record_from_state(
+                &previous,
+                ORCHESTRATION_HISTORY_STATUS_CLOSED,
+                latest_round_index,
+            )
+        });
+        history.status = ORCHESTRATION_HISTORY_STATUS_CLOSED.to_string();
+        history.latest_round_index = latest_round_index;
         history.updated_at = now;
         history.exited_at = now;
         persist_history_record(state.storage.as_ref(), &user_id, &history)
@@ -413,11 +438,21 @@ async fn exit_orchestration_state(
         let latest_round_index = latest_formal_round_index(
             load_or_migrate_round_state(state.as_ref(), &user_id, &active_state).as_ref(),
         );
-        let mut history = build_history_record_from_state(
-            &active_state,
-            ORCHESTRATION_HISTORY_STATUS_CLOSED,
-            latest_round_index,
-        );
+        let mut history = load_history_record(
+            state.storage.as_ref(),
+            &user_id,
+            &group.hive_id,
+            &active_state.orchestration_id,
+        )
+        .unwrap_or_else(|| {
+            build_history_record_from_state(
+                &active_state,
+                ORCHESTRATION_HISTORY_STATUS_CLOSED,
+                latest_round_index,
+            )
+        });
+        history.status = ORCHESTRATION_HISTORY_STATUS_CLOSED.to_string();
+        history.latest_round_index = latest_round_index;
         history.updated_at = now_ts();
         history.exited_at = history.updated_at;
         persist_history_record(state.storage.as_ref(), &user_id, &history)
@@ -453,6 +488,51 @@ async fn list_orchestration_history(
     Ok(Json(json!({
         "data": {
             "items": items.iter().map(orchestration_history_payload).collect::<Vec<_>>(),
+        }
+    })))
+}
+
+async fn delete_orchestration_history(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<DeleteOrchestrationHistoryRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    let orchestration_id = payload
+        .orchestration_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    if group_id.is_empty() || orchestration_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id and orchestration_id are required".to_string(),
+        ));
+    }
+    load_history_record(state.storage.as_ref(), &user_id, &group_id, &orchestration_id)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                "orchestration history not found".to_string(),
+            )
+        })?;
+    if let Some(active_state) = load_hive_state(state.storage.as_ref(), &user_id, &group_id) {
+        if active_state.orchestration_id.trim() == orchestration_id {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "active orchestration history cannot be deleted".to_string(),
+            ));
+        }
+    }
+    clear_history_record(state.storage.as_ref(), &user_id, &group_id, &orchestration_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "ok": true,
+            "orchestration_id": orchestration_id,
         }
     })))
 }
@@ -511,8 +591,21 @@ async fn restore_orchestration_history(
             let latest_round_index = latest_formal_round_index(
                 load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
             );
-            let mut previous_history =
-                build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
+            let mut previous_history = load_history_record(
+                state.storage.as_ref(),
+                &user_id,
+                &group.hive_id,
+                &previous.orchestration_id,
+            )
+            .unwrap_or_else(|| {
+                build_history_record_from_state(
+                    &previous,
+                    ORCHESTRATION_HISTORY_STATUS_CLOSED,
+                    latest_round_index,
+                )
+            });
+            previous_history.status = ORCHESTRATION_HISTORY_STATUS_CLOSED.to_string();
+            previous_history.latest_round_index = latest_round_index;
             previous_history.updated_at = now_ts();
             previous_history.exited_at = previous_history.updated_at;
             persist_history_record(state.storage.as_ref(), &user_id, &previous_history)
@@ -685,6 +778,464 @@ async fn restore_orchestration_history(
             "state": orchestration_state_payload(&hive_state, Some(&round_state)),
             "history": orchestration_history_payload(&next_history),
             "member_threads": member_bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
+        }
+    })))
+}
+
+async fn branch_orchestration_history(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<BranchOrchestrationHistoryRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    let source_orchestration_id = payload
+        .source_orchestration_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let requested_round_index = payload.round_index.unwrap_or(1).max(1);
+    let activate = payload.activate.unwrap_or(true);
+    if group_id.is_empty() || source_orchestration_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id and source_orchestration_id are required".to_string(),
+        ));
+    }
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let source_history = load_history_record(
+        state.storage.as_ref(),
+        &user_id,
+        &group.hive_id,
+        &source_orchestration_id,
+    )
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration history not found".to_string()))?;
+    let source_round_state = load_or_migrate_round_state_by_orchestration_id(
+        state.as_ref(),
+        &user_id,
+        &group.hive_id,
+        &source_history.orchestration_id,
+        &source_history.run_id,
+        &source_history.mother_session_id,
+        source_history.latest_round_index,
+    )
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration round state not found".to_string()))?;
+    let branch_round_index = requested_round_index.min(latest_formal_round_index(Some(&source_round_state)));
+    let agents = state
+        .user_store
+        .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if agents.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group has no agents".to_string(),
+        ));
+    }
+    let mother_agent = agents
+        .iter()
+        .find(|item| item.agent_id.trim() == source_history.mother_agent_id.trim())
+        .cloned()
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "mother agent not found".to_string()))?;
+    if activate {
+        if let Some(previous) = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id) {
+            let previous_bindings = crate::services::orchestration_context::list_member_bindings(
+                state.storage.as_ref(),
+                &previous.orchestration_id,
+            )
+            .unwrap_or_default();
+            let latest_round_index = latest_formal_round_index(
+                load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
+            );
+            let mut previous_history =
+                build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
+            previous_history.updated_at = now_ts();
+            previous_history.exited_at = previous_history.updated_at;
+            persist_history_record(state.storage.as_ref(), &user_id, &previous_history)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            for binding in &previous_bindings {
+                clear_session_context(state.storage.as_ref(), &user_id, &binding.session_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+            clear_hive_state(state.storage.as_ref(), &user_id, &group.hive_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+    }
+
+    let now = now_ts();
+    let orchestration_id = format!("orch_state_{}", Uuid::new_v4().simple());
+    let run_id = format!("orch_{}", Uuid::new_v4().simple());
+    let mut member_bindings = Vec::new();
+    let mut mother_session_id = String::new();
+    for agent in &agents {
+        let title = build_orchestration_thread_title(&agent.name);
+        let session = build_chat_session_with_title(&user_id, agent, &title);
+        state
+            .user_store
+            .upsert_chat_session(&session)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let role = if agent.agent_id.trim() == source_history.mother_agent_id.trim() {
+            "mother"
+        } else {
+            "worker"
+        };
+        if role == "mother" {
+            copy_chat_history_until_round(
+                state.storage.as_ref(),
+                &user_id,
+                &source_history.mother_session_id,
+                &session.session_id,
+                branch_round_index,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            mother_session_id = session.session_id.clone();
+        }
+        if activate {
+            state
+                .kernel
+                .thread_runtime
+                .set_main_session(&user_id, &agent.agent_id, &session.session_id, "orchestration_branch")
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        let binding = OrchestrationMemberBinding {
+            orchestration_id: orchestration_id.clone(),
+            run_id: run_id.clone(),
+            group_id: group.hive_id.clone(),
+            agent_id: agent.agent_id.clone(),
+            agent_name: agent.name.clone(),
+            role: role.to_string(),
+            session_id: session.session_id.clone(),
+            title,
+            created_at: session.created_at,
+        };
+        persist_member_binding(state.storage.as_ref(), &binding)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        persist_session_context(
+            state.storage.as_ref(),
+            &user_id,
+            &session.session_id,
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: run_id.clone(),
+                group_id: group.hive_id.clone(),
+                role: role.to_string(),
+                round_index: branch_round_index,
+                mother_agent_id: source_history.mother_agent_id.clone(),
+            },
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        member_bindings.push(binding);
+    }
+    if mother_session_id.trim().is_empty() {
+        return Err(error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "branch mother session create failed".to_string(),
+        ));
+    }
+    let hive_state = OrchestrationHiveState {
+        orchestration_id: orchestration_id.clone(),
+        run_id: run_id.clone(),
+        group_id: group.hive_id.clone(),
+        mother_agent_id: source_history.mother_agent_id.clone(),
+        mother_agent_name: mother_agent.name.clone(),
+        mother_session_id: mother_session_id.clone(),
+        active: activate,
+        entered_at: now,
+        updated_at: now,
+    };
+    let mut round_state = rebuild_branch_round_state(
+        &source_round_state,
+        &orchestration_id,
+        &run_id,
+        branch_round_index,
+        now,
+    );
+    round_state.group_id = group.hive_id.clone();
+    let mother_workspace_id = state
+        .workspace
+        .scoped_user_id_by_container(&user_id, mother_agent.sandbox_container_id);
+    copy_round_directory_tree(
+        state.workspace.as_ref(),
+        &mother_workspace_id,
+        &source_history.run_id,
+        &run_id,
+        branch_round_index.saturating_sub(1),
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    copy_round_situation_files(
+        state.workspace.as_ref(),
+        &mother_workspace_id,
+        &source_history.run_id,
+        &run_id,
+        branch_round_index,
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mother_reopen_dir = state
+        .workspace
+        .resolve_path(
+            &mother_workspace_id,
+            &[
+                "orchestration",
+                run_id.as_str(),
+                &format!("round_{:04}", branch_round_index.max(1)),
+            ]
+            .join("/"),
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    fs::create_dir_all(&mother_reopen_dir)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for agent in &agents {
+        if agent.agent_id.trim() == mother_agent.agent_id.trim() {
+            continue;
+        }
+        let worker_workspace_id = state
+            .workspace
+            .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
+        copy_round_directory_tree(
+            state.workspace.as_ref(),
+            &worker_workspace_id,
+            &source_history.run_id,
+            &run_id,
+            branch_round_index.saturating_sub(1),
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let reopen_dir = state
+            .workspace
+            .resolve_path(
+                &worker_workspace_id,
+                &[
+                    "orchestration",
+                    run_id.as_str(),
+                    &format!("round_{:04}", branch_round_index.max(1)),
+                    agent.agent_id.as_str(),
+                ]
+                .join("/"),
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        fs::create_dir_all(&reopen_dir)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    if activate {
+        persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    persist_round_state(state.storage.as_ref(), &user_id, &round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let latest_round_index = latest_formal_round_index(Some(&round_state));
+    let history = build_branch_history_record_from_state(
+        &hive_state,
+        if activate {
+            ORCHESTRATION_HISTORY_STATUS_ACTIVE
+        } else {
+            ORCHESTRATION_HISTORY_STATUS_CLOSED
+        },
+        latest_round_index,
+        &source_history,
+        branch_round_index,
+    );
+    persist_history_record(state.storage.as_ref(), &user_id, &history)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "state": orchestration_state_payload(&hive_state, Some(&round_state)),
+            "history": orchestration_history_payload(&history),
+            "member_threads": member_bindings.iter().map(orchestration_member_binding_payload).collect::<Vec<_>>(),
+        }
+    })))
+}
+
+async fn truncate_orchestration_history(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Json(payload): Json<TruncateOrchestrationHistoryRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    let group_id = normalize_hive_id(payload.group_id.as_deref().unwrap_or_default());
+    let orchestration_id = payload
+        .orchestration_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string();
+    let retained_round_index = payload.round_index.unwrap_or(1).max(1);
+    if group_id.is_empty() || orchestration_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "group_id and orchestration_id are required".to_string(),
+        ));
+    }
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let root_history = load_history_record(state.storage.as_ref(), &user_id, &group.hive_id, &orchestration_id)
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration history not found".to_string()))?;
+    let all_histories = list_history_records(state.storage.as_ref(), &user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut descendants_to_remove = all_histories
+        .iter()
+        .filter(|item| {
+            item.parent_orchestration_id.trim() == root_history.orchestration_id.trim()
+                && item.branch_from_round_index >= retained_round_index
+        })
+        .map(|item| item.orchestration_id.clone())
+        .collect::<Vec<_>>();
+    let mut stack = descendants_to_remove.clone();
+    while let Some(parent_id) = stack.pop() {
+        for item in &all_histories {
+            if item.parent_orchestration_id.trim() != parent_id.trim() {
+                continue;
+            }
+            if descendants_to_remove
+                .iter()
+                .any(|existing: &String| existing.trim() == item.orchestration_id.trim())
+            {
+                continue;
+            }
+            descendants_to_remove.push(item.orchestration_id.clone());
+            stack.push(item.orchestration_id.clone());
+        }
+    }
+    let active_hive_state = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id);
+    let is_active_root = active_hive_state
+        .as_ref()
+        .is_some_and(|active| active.orchestration_id.trim() == root_history.orchestration_id.trim());
+    if let Some(active_state) = active_hive_state.as_ref() {
+        if descendants_to_remove
+            .iter()
+            .any(|item| item.trim() == active_state.orchestration_id.trim())
+        {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "active orchestration descendant cannot be removed".to_string(),
+            ));
+        }
+    }
+
+    for descendant_id in &descendants_to_remove {
+        if let Some(history) = load_history_record(state.storage.as_ref(), &user_id, &group.hive_id, descendant_id) {
+            let bindings =
+                crate::services::orchestration_context::list_member_bindings(state.storage.as_ref(), descendant_id)
+                    .unwrap_or_default();
+            for binding in &bindings {
+                clear_session_context(state.storage.as_ref(), &user_id, &binding.session_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+            clear_member_bindings(state.storage.as_ref(), descendant_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            clear_round_state(state.storage.as_ref(), &user_id, descendant_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            clear_history_record(state.storage.as_ref(), &user_id, &group.hive_id, descendant_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let mother_agent = state
+                .user_store
+                .get_user_agent(&user_id, &history.mother_agent_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            if let Some(agent) = mother_agent {
+                let workspace_id = state
+                    .workspace
+                    .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
+                clear_orchestration_workspace_tree(state.workspace.as_ref(), &workspace_id, &history.run_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+            for agent in state
+                .user_store
+                .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            {
+                let workspace_id = state
+                    .workspace
+                    .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
+                clear_orchestration_workspace_tree(state.workspace.as_ref(), &workspace_id, &history.run_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+        }
+    }
+
+    let mut root_round_state = load_or_migrate_round_state_by_orchestration_id(
+        state.as_ref(),
+        &user_id,
+        &group.hive_id,
+        &root_history.orchestration_id,
+        &root_history.run_id,
+        &root_history.mother_session_id,
+        root_history.latest_round_index,
+    )
+    .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration round state not found".to_string()))?;
+    root_round_state.rounds.retain(|round| round.index <= retained_round_index);
+    if root_round_state.rounds.is_empty() {
+        root_round_state.rounds.push(OrchestrationRoundRecord {
+            id: round_id(1),
+            index: 1,
+            situation: String::new(),
+            user_message: String::new(),
+            created_at: now_ts(),
+            finalized_at: 0.0,
+        });
+    }
+    root_round_state.updated_at = now_ts();
+    persist_round_state(state.storage.as_ref(), &user_id, &root_round_state)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let agents = state
+        .user_store
+        .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for agent in &agents {
+        let workspace_id = state
+            .workspace
+            .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
+        delete_round_directories_after(
+            state.workspace.as_ref(),
+            &workspace_id,
+            &root_history.run_id,
+            retained_round_index,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+
+    let latest_round_index = latest_formal_round_index(Some(&root_round_state));
+    let mut next_history = root_history.clone();
+    next_history.latest_round_index = latest_round_index;
+    next_history.updated_at = root_round_state.updated_at;
+    persist_history_record(state.storage.as_ref(), &user_id, &next_history)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let mut next_state_payload = None;
+    if is_active_root {
+        if let Some(active_state) = active_hive_state {
+            let bindings = crate::services::orchestration_context::list_member_bindings(
+                state.storage.as_ref(),
+                &active_state.orchestration_id,
+            )
+            .unwrap_or_default();
+            for binding in &bindings {
+                persist_session_context(
+                    state.storage.as_ref(),
+                    &user_id,
+                    &binding.session_id,
+                    &OrchestrationSessionContext {
+                        mode: ORCHESTRATION_MODE.to_string(),
+                        run_id: active_state.run_id.clone(),
+                        group_id: active_state.group_id.clone(),
+                        role: binding.role.clone(),
+                        round_index: latest_round_index,
+                        mother_agent_id: active_state.mother_agent_id.clone(),
+                    },
+                )
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+            next_state_payload = Some(orchestration_state_payload(&active_state, Some(&root_round_state)));
+        }
+    }
+
+    Ok(Json(json!({
+        "data": {
+            "history": orchestration_history_payload(&next_history),
+            "state": next_state_payload,
+            "round_state": orchestration_round_state_payload(&root_round_state),
+            "removed_orchestration_ids": descendants_to_remove,
+            "retained_round_index": latest_round_index,
         }
     })))
 }
@@ -1677,6 +2228,10 @@ fn orchestration_history_payload(record: &OrchestrationHistoryRecord) -> Value {
         "updated_at": record.updated_at,
         "exited_at": record.exited_at,
         "restored_at": record.restored_at,
+        "parent_orchestration_id": record.parent_orchestration_id,
+        "branch_root_orchestration_id": record.branch_root_orchestration_id,
+        "branch_from_round_index": record.branch_from_round_index,
+        "branch_depth": record.branch_depth,
     })
 }
 
@@ -1873,6 +2428,36 @@ struct RestoreOrchestrationHistoryRequest {
     orchestration_id: Option<String>,
     #[serde(default)]
     activate: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteOrchestrationHistoryRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "orchestrationId", alias = "orchestration_id")]
+    orchestration_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BranchOrchestrationHistoryRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "sourceOrchestrationId", alias = "source_orchestration_id")]
+    source_orchestration_id: Option<String>,
+    #[serde(default, alias = "roundIndex", alias = "round_index")]
+    round_index: Option<i64>,
+    #[serde(default)]
+    activate: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TruncateOrchestrationHistoryRequest {
+    #[serde(default, alias = "groupId", alias = "hiveId", alias = "hive_id")]
+    group_id: Option<String>,
+    #[serde(default, alias = "orchestrationId", alias = "orchestration_id")]
+    orchestration_id: Option<String>,
+    #[serde(default, alias = "roundIndex", alias = "round_index")]
+    round_index: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

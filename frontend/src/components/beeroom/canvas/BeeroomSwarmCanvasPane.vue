@@ -1085,6 +1085,9 @@ const handleNodePointerDown = (nodeId: string, event: PointerEvent, pointerTarge
 
 const handleNodeLayerPointerDown = (event: PointerEvent) => {
   const target = event.target as HTMLElement | null;
+  if (target?.closest?.('.beeroom-node-artifact-scroll')) {
+    return;
+  }
   const card = target?.closest?.('.beeroom-node-card') as HTMLElement | null;
   const nodeId = String(card?.dataset.nodeId || '').trim();
   if (!card || !nodeId) {

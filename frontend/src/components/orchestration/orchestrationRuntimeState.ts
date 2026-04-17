@@ -1,13 +1,17 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue';
 
+import { getSessionEvents } from '@/api/chat';
 import {
+  branchBeeroomOrchestrationHistory,
   cancelBeeroomOrchestrationRound,
   createBeeroomOrchestrationState,
+  deleteBeeroomOrchestrationHistory,
   exitBeeroomOrchestrationState,
   finalizeBeeroomOrchestrationRound,
   getBeeroomOrchestrationState,
   listBeeroomOrchestrationHistory,
   reserveBeeroomOrchestrationRound,
+  truncateBeeroomOrchestrationHistory,
   restoreBeeroomOrchestrationHistory
 } from '@/api/beeroom';
 import {
@@ -19,10 +23,23 @@ import {
 } from '@/api/workspace';
 import { listRecentBeeroomAgentOutputs } from '@/components/beeroom/beeroomAgentOutputPreview';
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
+import {
+  buildSessionWorkflowItems,
+  buildTaskWorkflowRuntime,
+  type BeeroomTaskWorkflowPreview,
+  type BeeroomWorkflowItem
+} from '@/components/beeroom/beeroomTaskWorkflow';
 import { useI18n } from '@/i18n';
-import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
+import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
+import {
+  buildOrchestrationAgentArtifactPath,
+  buildOrchestrationRoundDirName,
+  buildOrchestrationRoundId,
+  buildOrchestrationRoundSituationPath,
+  normalizeOrchestrationText
+} from '@/components/orchestration/orchestrationShared';
 
 export type OrchestrationRound = {
   id: string;
@@ -31,6 +48,10 @@ export type OrchestrationRound = {
   userMessage: string;
   createdAt: number;
   missionIds: string[];
+  branchParentRoundId?: string;
+  branchFromRoundIndex?: number;
+  branchRootOrchestrationId?: string;
+  orchestrationId?: string;
 };
 
 export type OrchestrationArtifactEntry = {
@@ -65,6 +86,10 @@ export type OrchestrationHistoryItem = {
   updatedAt: number;
   exitedAt: number;
   restoredAt: number;
+  parentOrchestrationId: string;
+  branchRootOrchestrationId: string;
+  branchFromRoundIndex: number;
+  branchDepth: number;
 };
 
 type OrchestrationMemberThread = {
@@ -78,7 +103,7 @@ type OrchestrationSuppressedMessageRange = {
 };
 
 type PersistedRuntime = {
-  version: 4;
+  version: 5;
   groupId: string;
   orchestrationId: string;
   runId: string;
@@ -106,12 +131,21 @@ type WorkspaceEntryLike = {
   updated_time?: unknown;
 };
 
+type SessionRoundLike = {
+  events?: Array<{
+    event?: string;
+    data?: unknown;
+    timestamp?: string;
+  }>;
+};
+
 const ORCHESTRATION_STORAGE_PREFIX = 'wunder:orchestration-runtime';
-const ORCHESTRATION_RUNTIME_VERSION = 4;
+const ORCHESTRATION_RUNTIME_VERSION = 5;
 const ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES = 4096;
 const ORCHESTRATION_ARTIFACT_CARD_LIMIT = 6;
+const ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS = 1200;
 
-const normalizeText = (value: unknown): string => String(value || '').trim();
+const normalizeText = normalizeOrchestrationText;
 
 const normalizeRoundIndexKey = (value: unknown) => {
   const parsed = Number.parseInt(String(value ?? '').trim(), 10);
@@ -201,19 +235,19 @@ const buildRuntimeScopeKey = (runId: string) => `runtime:orchestration:${normali
 
 const buildClearScopeKey = (runId: string) => `chat:orchestration:${normalizeText(runId)}`;
 
-const buildRoundId = (index: number) => `round_${String(index).padStart(4, '0')}`;
+const buildRoundId = buildOrchestrationRoundId;
 
-const buildRoundDirName = (index: number) => `round_${String(index).padStart(4, '0')}`;
+const buildRoundDirName = buildOrchestrationRoundDirName;
 
-const buildAgentArtifactPath = (runId: string, roundIndex: number, agentId: string) =>
-  ['orchestration', runId, buildRoundDirName(roundIndex), normalizeText(agentId)]
-    .filter(Boolean)
-    .join('/');
+const buildAgentArtifactPath = buildOrchestrationAgentArtifactPath;
 
-const buildRoundSituationPath = (runId: string, roundIndex: number) =>
-  ['orchestration', runId, buildRoundDirName(roundIndex), 'situation.txt']
-    .filter(Boolean)
-    .join('/');
+const buildRoundSituationPath = buildOrchestrationRoundSituationPath;
+
+const parseRoundIndexFromDirName = (value: unknown) => {
+  const matched = normalizeText(value).match(/^round_(\d{4,})$/i);
+  if (!matched?.[1]) return 0;
+  return Number.parseInt(matched[1], 10) || 0;
+};
 
 const resolveWorkspaceAgentId = (agentId: string) => {
   const normalized = normalizeText(agentId);
@@ -236,6 +270,15 @@ const normalizeRound = (value: unknown): OrchestrationRound | null => {
     situation: String(record.situation || ''),
     userMessage: String(record.userMessage ?? record.user_message ?? ''),
     createdAt: normalizeMsTime(record.createdAt ?? record.created_at) || Date.now(),
+    branchParentRoundId: normalizeText(record.branchParentRoundId ?? record.branch_parent_round_id),
+    branchFromRoundIndex: Math.max(
+      0,
+      Number.parseInt(String(record.branchFromRoundIndex ?? record.branch_from_round_index ?? ''), 10) || 0
+    ),
+    branchRootOrchestrationId: normalizeText(
+      record.branchRootOrchestrationId ?? record.branch_root_orchestration_id
+    ),
+    orchestrationId: normalizeText(record.orchestrationId ?? record.orchestration_id),
     missionIds: Array.isArray(record.missionIds)
       ? record.missionIds.map((item) => normalizeText(item)).filter(Boolean)
       : []
@@ -340,6 +383,56 @@ const extractPreviewText = (value: unknown) => {
   return text.length > 180 ? `${text.slice(0, 177)}...` : text;
 };
 
+const resolveTaskSessionId = (task: BeeroomMissionTask | null | undefined): string =>
+  normalizeText(task?.spawned_session_id || task?.target_session_id || task?.session_run_id);
+
+const buildTaskWorkflowRequestKey = (task: BeeroomMissionTask | null | undefined) =>
+  [
+    normalizeText(task?.task_id),
+    normalizeText(task?.agent_id),
+    normalizeText(task?.status),
+    normalizeText(task?.updated_time),
+    normalizeText(task?.started_time),
+    normalizeText(task?.finished_time),
+    normalizeText(task?.spawned_session_id),
+    normalizeText(task?.target_session_id),
+    normalizeText(task?.session_run_id),
+    normalizeText(task?.retry_count),
+    normalizeText(task?.result_summary),
+    normalizeText(task?.error)
+  ].join('|');
+
+const buildSessionWorkflowFingerprint = (items: BeeroomWorkflowItem[]) =>
+  items
+    .map((item) =>
+      [
+        normalizeText(item.id),
+        normalizeText(item.title),
+        normalizeText(item.detail),
+        normalizeText(item.status),
+        normalizeText(item.eventType),
+        normalizeText(item.toolName),
+        normalizeText(item.toolCallId)
+      ].join(':')
+    )
+    .join('||');
+
+const pickLatestWorkerTask = (tasks: BeeroomMissionTask[]): BeeroomMissionTask | null =>
+  tasks.reduce<BeeroomMissionTask | null>((latest, current) => {
+    if (!latest) return current;
+    const currentMoment = Math.max(
+      Number(current?.updated_time || 0),
+      Number(current?.finished_time || 0),
+      Number(current?.started_time || 0)
+    );
+    const latestMoment = Math.max(
+      Number(latest?.updated_time || 0),
+      Number(latest?.finished_time || 0),
+      Number(latest?.started_time || 0)
+    );
+    return currentMoment >= latestMoment ? current : latest;
+  }, null);
+
 export const useOrchestrationRuntimeState = (options: {
   group: Ref<BeeroomGroup | null>;
   agents: Ref<BeeroomMember[]>;
@@ -357,7 +450,16 @@ export const useOrchestrationRuntimeState = (options: {
   const artifactCards = ref<OrchestrationArtifactCard[]>([]);
   const historyLoading = ref(false);
   const historyItems = ref<OrchestrationHistoryItem[]>([]);
+  const motherWorkflowItems = ref<BeeroomWorkflowItem[]>([]);
+  const workflowItemsByTask = ref<Record<string, BeeroomWorkflowItem[]>>({});
+  const workflowPreviewByTask = ref<Record<string, BeeroomTaskWorkflowPreview>>({});
   let artifactReloadTimer: number | null = null;
+  let workflowSyncTimer: number | null = null;
+  let motherWorkflowController: AbortController | null = null;
+  const workerWorkflowControllers = new Map<string, AbortController>();
+  let motherWorkflowRequestKey = '';
+  let motherWorkflowFetchedAt = 0;
+  const workflowFetchMeta = new Map<string, { requestKey: string; fetchedAt: number }>();
 
   const groupId = computed(() => buildScopeKey(options.group.value?.group_id || options.group.value?.hive_id));
   const motherAgentId = computed(() => normalizeText(options.group.value?.mother_agent_id));
@@ -425,6 +527,22 @@ export const useOrchestrationRuntimeState = (options: {
     });
   });
 
+  const activeRoundMissionTaskMap = computed(() => {
+    const grouped = new Map<string, BeeroomMissionTask[]>();
+    (Array.isArray(options.missions.value) ? options.missions.value : []).forEach((mission) => {
+      const missionId = normalizeText(mission?.mission_id || mission?.team_run_id);
+      if (!activeRound.value?.missionIds.includes(missionId)) return;
+      (Array.isArray(mission?.tasks) ? mission.tasks : []).forEach((task) => {
+        const agentId = normalizeText(task?.agent_id);
+        if (!agentId) return;
+        const bucket = grouped.get(agentId) || [];
+        bucket.push(task);
+        grouped.set(agentId, bucket);
+      });
+    });
+    return grouped;
+  });
+
   const normalizeHistoryItem = (value: unknown): OrchestrationHistoryItem | null => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
@@ -444,9 +562,26 @@ export const useOrchestrationRuntimeState = (options: {
       enteredAt: normalizeMsTime(record.entered_at),
       updatedAt: normalizeMsTime(record.updated_at),
       exitedAt: normalizeMsTime(record.exited_at),
-      restoredAt: normalizeMsTime(record.restored_at)
+      restoredAt: normalizeMsTime(record.restored_at),
+      parentOrchestrationId: normalizeText(record.parent_orchestration_id),
+      branchRootOrchestrationId: normalizeText(record.branch_root_orchestration_id) || orchestrationId,
+      branchFromRoundIndex: Math.max(0, Number.parseInt(String(record.branch_from_round_index ?? ''), 10) || 0),
+      branchDepth: Math.max(0, Number.parseInt(String(record.branch_depth ?? ''), 10) || 0)
     };
   };
+
+  const sortHistoryItems = (items: OrchestrationHistoryItem[]) =>
+    [...items].sort((left, right) => {
+      const leftHot = Math.max(left.updatedAt || 0, left.restoredAt || 0, left.enteredAt || 0);
+      const rightHot = Math.max(right.updatedAt || 0, right.restoredAt || 0, right.enteredAt || 0);
+      if (leftHot !== rightHot) return rightHot - leftHot;
+      const branchDepthDiff = (left.branchDepth || 0) - (right.branchDepth || 0);
+      if (branchDepthDiff !== 0) return branchDepthDiff;
+      return String(left.runId || left.orchestrationId).localeCompare(
+        String(right.runId || right.orchestrationId),
+        'zh-Hans-CN'
+      );
+    });
 
   const rememberRuntime = () => {
     writePersistedRuntime(groupId.value, runtimeState.value);
@@ -522,6 +657,26 @@ export const useOrchestrationRuntimeState = (options: {
     }
   };
 
+  const listSituationRoundIndexes = async (state: PersistedRuntime): Promise<number[]> => {
+    const motherId = normalizeText(state.motherAgentId);
+    const runId = normalizeText(state.runId);
+    if (!motherId || !runId) return [];
+    try {
+      const response = await listWunderWorkspace({
+        agent_id: resolveWorkspaceAgentId(motherId),
+        path: ['orchestration', runId].filter(Boolean).join('/')
+      });
+      const entries = Array.isArray(response?.data?.entries) ? response.data.entries : [];
+      return entries
+        .filter((entry: WorkspaceEntryLike) => normalizeText(entry?.type) === 'dir')
+        .map((entry: WorkspaceEntryLike) => parseRoundIndexFromDirName(entry?.name || entry?.path))
+        .filter((value, index, array) => Number.isFinite(value) && value > 0 && array.indexOf(value) === index)
+        .sort((left, right) => left - right);
+    } catch {
+      return [];
+    }
+  };
+
   const syncSituationFiles = async (
     state: PersistedRuntime,
     entries: Record<string, string>,
@@ -552,11 +707,16 @@ export const useOrchestrationRuntimeState = (options: {
   const hydrateSituationFiles = async (state: PersistedRuntime) => {
     const plannedSituations = { ...(state.plannedSituations || {}) };
     let changed = false;
+    const existingRoundIndexes = (state.rounds || [])
+      .map((round) => Number(round.index || 0))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const fileRoundIndexes = await listSituationRoundIndexes(state);
+    const roundIndexes = Array.from(new Set([...existingRoundIndexes, ...fileRoundIndexes])).sort((left, right) => left - right);
     await Promise.all(
-      (state.rounds || []).map(async (round) => {
-        const fileSituation = await loadRoundSituationFile(state, round.index);
+      roundIndexes.map(async (roundIndex) => {
+        const fileSituation = await loadRoundSituationFile(state, roundIndex);
         if (fileSituation === null) return;
-        const key = normalizeRoundIndexKey(round.index);
+        const key = normalizeRoundIndexKey(roundIndex);
         if (!key) return;
         const currentValue = String(plannedSituations[key] || '').trim();
         if (currentValue === fileSituation) return;
@@ -569,7 +729,20 @@ export const useOrchestrationRuntimeState = (options: {
       })
     );
     if (!changed) return state;
-    const rounds = applyPlannedSituationsToRounds(state.rounds, plannedSituations);
+    const roundsSeed = [...state.rounds];
+    roundIndexes.forEach((roundIndex) => {
+      if (roundsSeed.some((round) => round.index === roundIndex)) return;
+      roundsSeed.push({
+        id: buildRoundId(roundIndex),
+        index: roundIndex,
+        situation: String(plannedSituations[String(roundIndex)] || '').trim(),
+        userMessage: '',
+        createdAt: Date.now(),
+        missionIds: []
+      });
+    });
+    roundsSeed.sort((left, right) => left.index - right.index);
+    const rounds = applyPlannedSituationsToRounds(roundsSeed, plannedSituations);
     const activeRoundId = normalizeText(state.activeRoundId);
     const currentActiveRound = rounds.find((item) => item.id === activeRoundId) || rounds[rounds.length - 1] || null;
     return {
@@ -666,7 +839,7 @@ export const useOrchestrationRuntimeState = (options: {
     const nextRounds = remoteRoundState.rounds.length
       ? remoteRoundState.rounds
       : existing && normalizeText(existing.runId) === runId && existing.rounds.length
-        ? existing.rounds
+        ? existing.rounds.map((round) => ({ ...round, orchestrationId }))
         : buildInitialRuntime({
             orchestrationId,
             runId,
@@ -832,8 +1005,8 @@ export const useOrchestrationRuntimeState = (options: {
       const items = Array.isArray(response?.data?.data?.items)
         ? response.data.data.items.map(normalizeHistoryItem).filter((item): item is OrchestrationHistoryItem => Boolean(item))
         : [];
-      historyItems.value = items;
-      return items;
+      historyItems.value = sortHistoryItems(items);
+      return historyItems.value;
     } finally {
       historyLoading.value = false;
     }
@@ -878,6 +1051,122 @@ export const useOrchestrationRuntimeState = (options: {
     }
     await loadHistory().catch(() => []);
     return hydrated;
+  };
+
+  const branchHistory = async (
+    sourceOrchestrationId: string,
+    roundIndex: number,
+    options: { activate?: boolean } = {}
+  ) => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) {
+      throw new Error('orchestration_group_missing');
+    }
+    const normalizedSourceId = normalizeText(sourceOrchestrationId);
+    const normalizedRoundIndex = Math.max(1, Number.parseInt(String(roundIndex || 1), 10) || 1);
+    if (!normalizedSourceId) {
+      throw new Error('orchestration_history_missing');
+    }
+    const response = await branchBeeroomOrchestrationHistory({
+      group_id: currentGroupId,
+      source_orchestration_id: normalizedSourceId,
+      round_index: normalizedRoundIndex,
+      activate: options.activate ?? isActive.value
+    });
+    const stateRecord =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    const memberThreads = Array.isArray(response?.data?.data?.member_threads)
+      ? (response.data.data.member_threads as Array<Record<string, unknown>>)
+      : [];
+    const nextState = await applyRemoteState(
+      stateRecord
+        ? {
+            ...stateRecord,
+            member_threads: memberThreads
+          }
+        : null,
+      false
+    );
+    if (!nextState) {
+      return null;
+    }
+    const hydrated = await hydrateSituationFiles(nextState);
+    if (hydrated !== nextState) {
+      setRuntime(hydrated);
+    }
+    await loadHistory().catch(() => []);
+    return hydrated;
+  };
+
+  const deleteHistory = async (orchestrationId: string) => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) {
+      throw new Error('orchestration_group_missing');
+    }
+    const normalizedOrchestrationId = normalizeText(orchestrationId);
+    if (!normalizedOrchestrationId) {
+      throw new Error('orchestration_history_missing');
+    }
+    await deleteBeeroomOrchestrationHistory({
+      group_id: currentGroupId,
+      orchestration_id: normalizedOrchestrationId
+    });
+    historyItems.value = sortHistoryItems(
+      historyItems.value.filter((item) => item.orchestrationId !== normalizedOrchestrationId)
+    );
+    return historyItems.value;
+  };
+
+  const truncateHistoryFromRound = async (orchestrationId: string, roundIndex: number) => {
+    const currentGroupId = groupId.value;
+    if (!currentGroupId) {
+      throw new Error('orchestration_group_missing');
+    }
+    const normalizedOrchestrationId = normalizeText(orchestrationId);
+    const normalizedRoundIndex = Math.max(1, Number.parseInt(String(roundIndex || 1), 10) || 1);
+    if (!normalizedOrchestrationId) {
+      throw new Error('orchestration_history_missing');
+    }
+    const response = await truncateBeeroomOrchestrationHistory({
+      group_id: currentGroupId,
+      orchestration_id: normalizedOrchestrationId,
+      round_index: normalizedRoundIndex
+    });
+    const remoteState =
+      response?.data?.data?.state && typeof response.data.data.state === 'object'
+        ? (response.data.data.state as Record<string, unknown>)
+        : null;
+    if (remoteState) {
+      const nextState = await applyRemoteState(
+        {
+          ...remoteState,
+          member_threads: (runtimeState.value?.memberThreads || []).map((item) => ({
+            agent_id: item.agentId,
+            session_id: item.sessionId
+          }))
+        },
+        true
+      );
+      if (nextState) {
+        const hydrated = await hydrateSituationFiles(nextState);
+        if (hydrated !== nextState) {
+          setRuntime(hydrated);
+        }
+      }
+    } else if (runtimeState.value && runtimeState.value.orchestrationId === normalizedOrchestrationId) {
+      const retained = runtimeState.value.rounds.filter((item) => item.index <= normalizedRoundIndex);
+      const activeRound = retained.find((item) => item.index === normalizedRoundIndex) || retained[retained.length - 1] || null;
+      setRuntime({
+        ...runtimeState.value,
+        rounds: retained,
+        activeRoundId: activeRound?.id || runtimeState.value.activeRoundId,
+        currentSituation: String(activeRound?.situation || '').trim()
+      });
+    }
+    await loadHistory().catch(() => []);
+    return runtimeState.value;
   };
 
   const ensureRuntime = async () => {
@@ -1325,6 +1614,196 @@ export const useOrchestrationRuntimeState = (options: {
   const resolveWorkerThreadSessionId = (agentId: string) =>
     runtimeState.value?.memberThreads.find((item) => item.agentId === normalizeText(agentId))?.sessionId || '';
 
+  const updateMotherWorkflowState = (items: BeeroomWorkflowItem[]) => {
+    if (buildSessionWorkflowFingerprint(motherWorkflowItems.value) === buildSessionWorkflowFingerprint(items)) {
+      return;
+    }
+    motherWorkflowItems.value = items;
+  };
+
+  const updateTaskWorkflowState = (
+    taskId: string,
+    payload: { items: BeeroomWorkflowItem[]; preview: BeeroomTaskWorkflowPreview }
+  ) => {
+    const currentItems = workflowItemsByTask.value[taskId] || [];
+    const currentPreview = workflowPreviewByTask.value[taskId];
+    const nextFingerprint = buildSessionWorkflowFingerprint(payload.items);
+    const currentFingerprint = buildSessionWorkflowFingerprint(currentItems);
+    if (currentFingerprint === nextFingerprint && currentPreview?.fingerprint === payload.preview.fingerprint) {
+      return;
+    }
+    workflowItemsByTask.value = {
+      ...workflowItemsByTask.value,
+      [taskId]: payload.items
+    };
+    workflowPreviewByTask.value = {
+      ...workflowPreviewByTask.value,
+      [taskId]: payload.preview
+    };
+  };
+
+  const clearWorkflowSyncTimer = () => {
+    if (workflowSyncTimer === null || typeof window === 'undefined') return;
+    window.clearTimeout(workflowSyncTimer);
+    workflowSyncTimer = null;
+  };
+
+  const resetWorkflowState = () => {
+    motherWorkflowController?.abort();
+    motherWorkflowController = null;
+    workerWorkflowControllers.forEach((controller) => controller.abort());
+    workerWorkflowControllers.clear();
+    workflowFetchMeta.clear();
+    motherWorkflowRequestKey = '';
+    motherWorkflowFetchedAt = 0;
+    motherWorkflowItems.value = [];
+    workflowItemsByTask.value = {};
+    workflowPreviewByTask.value = {};
+    clearWorkflowSyncTimer();
+  };
+
+  const removeStaleWorkflowEntries = (taskIds: Set<string>) => {
+    const nextItems = { ...workflowItemsByTask.value };
+    const nextPreviews = { ...workflowPreviewByTask.value };
+    let changed = false;
+    Object.keys(nextItems).forEach((taskId) => {
+      if (taskIds.has(taskId)) return;
+      delete nextItems[taskId];
+      delete nextPreviews[taskId];
+      const controller = workerWorkflowControllers.get(taskId);
+      if (controller) {
+        controller.abort();
+        workerWorkflowControllers.delete(taskId);
+      }
+      workflowFetchMeta.delete(taskId);
+      changed = true;
+    });
+    if (changed) {
+      workflowItemsByTask.value = nextItems;
+      workflowPreviewByTask.value = nextPreviews;
+    }
+  };
+
+  const fetchMotherWorkflow = async (force = false) => {
+    const sessionId = normalizeText(runtimeState.value?.motherSessionId);
+    const round = activeRound.value;
+    if (!sessionId || !round) {
+      updateMotherWorkflowState([]);
+      return;
+    }
+    const requestKey = [
+      sessionId,
+      normalizeText(runtimeState.value?.orchestrationId),
+      normalizeText(round.id),
+      normalizeText(round.index),
+      normalizeText(round.createdAt),
+      normalizeText(round.situation),
+      normalizeText(round.userMessage),
+      normalizeText(round.missionIds.join('|'))
+    ].join('|');
+    const isRecent = Date.now() - motherWorkflowFetchedAt < ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS - 120;
+    if (!force && motherWorkflowRequestKey === requestKey && isRecent) {
+      return;
+    }
+    if (motherWorkflowController) {
+      motherWorkflowController.abort();
+      motherWorkflowController = null;
+    }
+    const controller = new AbortController();
+    motherWorkflowController = controller;
+    motherWorkflowRequestKey = requestKey;
+    try {
+      const response = await getSessionEvents(sessionId, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const rounds = Array.isArray(response?.data?.data?.rounds)
+        ? (response.data.data.rounds as SessionRoundLike[])
+        : [];
+      updateMotherWorkflowState(buildSessionWorkflowItems(rounds, t));
+      motherWorkflowFetchedAt = Date.now();
+    } catch {
+      if (controller.signal.aborted) return;
+      motherWorkflowFetchedAt = Date.now();
+      updateMotherWorkflowState([]);
+    } finally {
+      if (motherWorkflowController === controller) {
+        motherWorkflowController = null;
+      }
+    }
+  };
+
+  const fetchWorkerWorkflow = async (task: BeeroomMissionTask, force = false) => {
+    const taskId = normalizeText(task?.task_id);
+    if (!taskId) return;
+    const sessionId = resolveTaskSessionId(task);
+    const requestKey = buildTaskWorkflowRequestKey(task);
+    const previous = workflowFetchMeta.get(taskId);
+    const isRecent =
+      previous && Date.now() - previous.fetchedAt < ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS - 120;
+    if (!force && previous?.requestKey === requestKey && isRecent) {
+      return;
+    }
+    if (!sessionId) {
+      updateTaskWorkflowState(taskId, buildTaskWorkflowRuntime(task, [], t));
+      workflowFetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
+      return;
+    }
+    const previousController = workerWorkflowControllers.get(taskId);
+    if (previousController) {
+      previousController.abort();
+      workerWorkflowControllers.delete(taskId);
+    }
+    const controller = new AbortController();
+    workerWorkflowControllers.set(taskId, controller);
+    try {
+      const response = await getSessionEvents(sessionId, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      const rounds = Array.isArray(response?.data?.data?.rounds)
+        ? (response.data.data.rounds as SessionRoundLike[])
+        : [];
+      updateTaskWorkflowState(taskId, buildTaskWorkflowRuntime(task, rounds, t));
+      workflowFetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
+    } catch {
+      if (controller.signal.aborted) return;
+      updateTaskWorkflowState(taskId, buildTaskWorkflowRuntime(task, [], t));
+      workflowFetchMeta.set(taskId, { requestKey, fetchedAt: Date.now() });
+    } finally {
+      if (workerWorkflowControllers.get(taskId) === controller) {
+        workerWorkflowControllers.delete(taskId);
+      }
+    }
+  };
+
+  const scheduleWorkflowSync = () => {
+    clearWorkflowSyncTimer();
+    if (!runtimeState.value?.runId || !activeRound.value?.id) return;
+    if (typeof window === 'undefined') {
+      void syncWorkflowState();
+      return;
+    }
+    workflowSyncTimer = window.setTimeout(() => {
+      workflowSyncTimer = null;
+      void syncWorkflowState();
+    }, ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS);
+  };
+
+  const syncWorkflowState = async (force = false) => {
+    const current = runtimeState.value;
+    const round = activeRound.value;
+    if (!current || !round) {
+      resetWorkflowState();
+      return;
+    }
+    const latestTasks = visibleWorkers.value
+      .map((member) => pickLatestWorkerTask(activeRoundMissionTaskMap.value.get(normalizeText(member?.agent_id)) || []))
+      .filter((task): task is BeeroomMissionTask => Boolean(task));
+    removeStaleWorkflowEntries(new Set(latestTasks.map((task) => normalizeText(task.task_id)).filter(Boolean)));
+    await Promise.allSettled([
+      fetchMotherWorkflow(force),
+      ...latestTasks.map((task) => fetchWorkerWorkflow(task, force))
+    ]);
+    scheduleWorkflowSync();
+  };
+
   const reloadArtifacts = async () => {
     const current = runtimeState.value;
     const round = activeRound.value;
@@ -1451,6 +1930,7 @@ export const useOrchestrationRuntimeState = (options: {
         persisted && persisted.motherAgentId === motherAgentId.value ? persisted : null;
       artifactCards.value = [];
       historyItems.value = [];
+      resetWorkflowState();
       void loadHistory().catch(() => []);
     },
     { immediate: true }
@@ -1469,6 +1949,47 @@ export const useOrchestrationRuntimeState = (options: {
       }
       clearArtifactReloadTimer();
       void reloadArtifacts();
+    },
+    { immediate: true }
+  );
+
+  watch(
+    () =>
+      [
+        runtimeState.value?.runId || '',
+        runtimeState.value?.motherSessionId || '',
+        runtimeState.value?.orchestrationId || '',
+        activeRound.value?.id || '',
+        activeRound.value?.missionIds.join('|') || '',
+        visibleWorkers.value.map((item) => normalizeText(item?.agent_id)).join('|'),
+        (Array.isArray(options.missions.value) ? options.missions.value : [])
+          .map((mission) => {
+            const missionId = normalizeText(mission?.mission_id || mission?.team_run_id);
+            if (!activeRound.value?.missionIds.includes(missionId)) return '';
+            const taskPart = (Array.isArray(mission?.tasks) ? mission.tasks : [])
+              .map((task) =>
+                [
+                  normalizeText(task?.task_id),
+                  normalizeText(task?.agent_id),
+                  normalizeText(task?.status),
+                  normalizeText(task?.updated_time),
+                  normalizeText(task?.spawned_session_id),
+                  normalizeText(task?.target_session_id),
+                  normalizeText(task?.session_run_id)
+                ].join(':')
+              )
+              .join(',');
+            return `${missionId}|${normalizeText(mission?.status)}|${normalizeText(mission?.completion_status)}|${taskPart}`;
+          })
+          .filter(Boolean)
+          .join('||')
+      ].join('|'),
+    (signature, previousSignature) => {
+      if (!signature) {
+        resetWorkflowState();
+        return;
+      }
+      void syncWorkflowState(signature !== previousSignature);
     },
     { immediate: true }
   );
@@ -1500,10 +2021,11 @@ export const useOrchestrationRuntimeState = (options: {
 
   onBeforeUnmount(() => {
     clearArtifactReloadTimer();
+    resetWorkflowState();
   });
 
-    return {
-      runtimeState,
+  return {
+    runtimeState,
     runtimeScopeKey,
     clearScopeKey,
     activeRound,
@@ -1514,6 +2036,9 @@ export const useOrchestrationRuntimeState = (options: {
     artifactCards,
     artifactLoading,
     artifactError,
+    motherWorkflowItems,
+    workflowItemsByTask,
+    workflowPreviewByTask,
     historyLoading,
     historyItems,
     initializing,
@@ -1527,6 +2052,9 @@ export const useOrchestrationRuntimeState = (options: {
     exitRun,
     loadHistory,
     restoreHistory,
+    branchHistory,
+    deleteHistory,
+    truncateHistoryFromRound,
     createRound,
     reserveUserRound,
     commitUserRound,

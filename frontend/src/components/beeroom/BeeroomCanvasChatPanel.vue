@@ -13,8 +13,8 @@
     <template v-if="!collapsed">
       <div class="beeroom-canvas-chat-head">
         <div class="beeroom-canvas-chat-head-main">
-          <div class="beeroom-canvas-chat-title">{{ resolvedTitle }}</div>
           <slot name="head-main"></slot>
+          <div class="beeroom-canvas-chat-title">{{ resolvedTitle }}</div>
         </div>
         <div class="beeroom-canvas-chat-head-actions">
           <slot name="head-actions"></slot>
@@ -449,7 +449,7 @@ watch(
 
 .beeroom-canvas-chat-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding-bottom: 4px;
@@ -467,16 +467,19 @@ watch(
 .beeroom-canvas-chat-head-actions {
   display: inline-flex;
   align-items: center;
-  align-self: flex-start;
+  align-self: center;
   flex-wrap: wrap;
   gap: 8px;
 }
 
 .beeroom-canvas-chat-title {
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
   color: #f3f4f6;
   font-size: 16px;
   font-weight: 700;
+  line-height: 1.2;
   letter-spacing: 0.02em;
 }
 

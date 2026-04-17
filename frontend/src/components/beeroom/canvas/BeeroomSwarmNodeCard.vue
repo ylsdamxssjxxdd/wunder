@@ -32,17 +32,23 @@
   >
     <template v-if="node.renderKind === 'artifact-container'">
       <div class="beeroom-node-artifact-container">
-        <div class="beeroom-node-artifact-grid">
-          <div
-            v-for="slot in visibleArtifactSlots"
-            :key="slot.key"
-            class="beeroom-node-artifact-slot"
-            :class="{ 'is-empty': !slot.item }"
-            :title="slot.item?.title || ''"
-          >
-            <span class="beeroom-node-artifact-slot-frame" :class="slot.item ? `is-${slot.item.kind}` : 'is-empty'">
-              <i v-if="slot.item" class="fa-solid" :class="slot.item.iconClass" aria-hidden="true"></i>
-            </span>
+        <div class="beeroom-node-artifact-header">
+          <span class="beeroom-node-artifact-title">{{ artifactTitle }}</span>
+          <span class="beeroom-node-artifact-count">{{ artifactCount }}</span>
+        </div>
+        <div class="beeroom-node-artifact-scroll" @wheel.stop>
+          <div class="beeroom-node-artifact-grid">
+            <div
+              v-for="slot in artifactSlots"
+              :key="slot.key"
+              class="beeroom-node-artifact-slot"
+              :class="{ 'is-empty': !slot.item }"
+              :title="slot.item?.title || ''"
+            >
+              <span class="beeroom-node-artifact-slot-frame" :class="slot.item ? `is-${slot.item.kind}` : 'is-empty'">
+                <i v-if="slot.item" class="fa-solid" :class="slot.item.iconClass" aria-hidden="true"></i>
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -167,12 +173,20 @@ const cardStyle = computed(() => {
 
 const visibleWorkflowLines = computed(() => (Array.isArray(props.node.workflowLines) ? props.node.workflowLines : []));
 const visibleArtifactItems = computed(() => (Array.isArray(props.node.artifactItems) ? props.node.artifactItems : []));
-const visibleArtifactSlots = computed(() => {
-  const items = visibleArtifactItems.value.slice(0, 8);
-  return Array.from({ length: 8 }, (_, index) => ({
-    key: items[index]?.key || `empty:${props.node.id}:${index}`,
-    item: items[index] || null
+const artifactTitle = computed(() => String(props.node.roleLabel || '').trim() || '产物');
+const artifactCount = computed(() => Math.max(Number(props.node.artifactCount || 0), visibleArtifactItems.value.length));
+const artifactSlots = computed(() => {
+  const items = visibleArtifactItems.value.map((item, index) => ({
+    key: item?.key || `artifact:${props.node.id}:${index}`,
+    item: item || null
   }));
+  if (items.length >= 8) return items;
+  return items.concat(
+    Array.from({ length: 8 - items.length }, (_, index) => ({
+      key: `empty:${props.node.id}:${index}`,
+      item: null
+    }))
+  );
 });
 const hasLiveActivity = computed(() => {
   const normalizedStatus = String(props.node.status || '').trim().toLowerCase();
@@ -814,20 +828,79 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
+  gap: 8px;
   padding: 8px 6px 6px;
   background: transparent;
+}
+
+.beeroom-node-artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+  flex: 0 0 auto;
+}
+
+.beeroom-node-artifact-title {
+  min-width: 0;
+  color: rgba(255, 247, 214, 0.94);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.beeroom-node-artifact-count {
+  flex: 0 0 auto;
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 236, 179, 0.18);
+  background: rgba(255, 248, 235, 0.12);
+  color: #fff8eb;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255, 251, 235, 0.12);
+}
+
+.beeroom-node-artifact-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 236, 179, 0.28) transparent;
+}
+
+.beeroom-node-artifact-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.beeroom-node-artifact-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.beeroom-node-artifact-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 236, 179, 0.24);
 }
 
 .beeroom-node-artifact-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 8px;
   width: 100%;
-  height: 100%;
   min-height: 0;
+  align-content: start;
+  padding-bottom: 2px;
 }
 
 .beeroom-node-artifact-slot {
@@ -836,6 +909,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: stretch;
   justify-content: stretch;
+  aspect-ratio: 1 / 1;
 }
 
 .beeroom-node-artifact-slot-frame {

@@ -1,4 +1,8 @@
 import type { BeeroomGroup, BeeroomMember } from '@/stores/beeroom';
+import {
+  buildOrchestrationRoundDirName,
+  normalizeOrchestrationText
+} from '@/components/orchestration/orchestrationShared';
 
 export type OrchestrationPromptTemplates = {
   mother_runtime: string;
@@ -10,19 +14,12 @@ export type OrchestrationPromptTemplates = {
   user_message: string;
 };
 
-const normalizeText = (value: unknown): string => String(value || '').trim();
+const normalizeText = normalizeOrchestrationText;
 
-const buildRoundDirName = (roundIndex: number) => `round_${String(Math.max(1, roundIndex)).padStart(4, '0')}`;
-
-const buildAgentArtifactPath = (runId: string, roundIndex: number, agentId: string) =>
-  ['orchestration', normalizeText(runId), buildRoundDirName(roundIndex), normalizeText(agentId)]
-    .filter(Boolean)
-    .join('/');
-
-const buildRoundPromptDirectory = (roundIndex: number) => buildRoundDirName(roundIndex);
+const buildRoundPromptDirectory = (roundIndex: number) => buildOrchestrationRoundDirName(roundIndex);
 
 const buildPromptArtifactPath = (roundIndex: number, agentId: string) =>
-  [buildRoundDirName(roundIndex), normalizeText(agentId)]
+  [buildOrchestrationRoundDirName(roundIndex), normalizeText(agentId)]
     .filter(Boolean)
     .join('/');
 
@@ -92,7 +89,7 @@ export const buildMotherOrchestrationPrimer = (options: {
     mother_name: motherName,
     run_id: normalizeText(options.runId),
     current_round_dir: buildRoundPromptDirectory(options.roundIndex),
-    current_round_situation_file: `${buildRoundDirName(options.roundIndex)}/situation.txt`,
+    current_round_situation_file: `${buildOrchestrationRoundDirName(options.roundIndex)}/situation.txt`,
     worker_directory_lines: workers.map((item) => item.line).join('\n')
   }).trim();
 };

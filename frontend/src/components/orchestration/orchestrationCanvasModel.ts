@@ -1,9 +1,16 @@
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
 import type { BeeroomMissionSubagentItem } from '@/components/beeroom/beeroomMissionSubagentState';
 import {
+  buildNodeWorkflowPreviewLines,
+  buildTaskWorkflowRuntime,
+  type BeeroomTaskWorkflowPreview,
+  type BeeroomWorkflowItem
+} from '@/components/beeroom/beeroomTaskWorkflow';
+import {
   ACTIVE_DISPATCH_STATUSES,
   NODE_HEIGHT,
   NODE_WIDTH,
+  resolveBeeroomDispatchTaskLabel,
   type BeeroomSwarmDispatchPreview,
   type SwarmProjection,
   type SwarmProjectionBounds,
@@ -11,7 +18,7 @@ import {
   type SwarmProjectionNode
 } from '@/components/beeroom/canvas/swarmCanvasModel';
 import type { OrchestrationArtifactCard, OrchestrationRound } from '@/components/orchestration/orchestrationRuntimeState';
-import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
+import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import {
   DEFAULT_AGENT_AVATAR_IMAGE,
   parseAgentAvatarIconConfig,
@@ -29,6 +36,20 @@ const WORKER_X = 0;
 const ARTIFACT_X = 420;
 const ROW_GAP = 228;
 const ACTIVE_SUBAGENT_STATUSES = new Set(['running', 'waiting', 'queued', 'accepted', 'cancelling']);
+const ACTIVE_MISSION_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'resuming', 'merging']);
+const ACTIVE_TASK_STATUSES = new Set([
+  'queued',
+  'pending',
+  'running',
+  'awaiting_idle',
+  'resuming',
+  'merging',
+  'waiting',
+  'accepted',
+  'cancelling'
+]);
+const TERMINAL_TASK_STATUSES = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled', 'canceled']);
+const TERMINAL_MISSION_STATUSES = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled', 'canceled']);
 
 const normalizeText = (value: unknown) => String(value || '').trim();
 
@@ -101,6 +122,151 @@ const resolveWorkerStatus = (
   if (runtimeWorkerStatus) return runtimeWorkerStatus;
   if (workerOutputs.length) return 'completed';
   return normalizeText(fallbackStatus).toLowerCase() || 'idle';
+};
+
+const isTerminalMissionStatus = (value: unknown) =>
+  TERMINAL_MISSION_STATUSES.has(normalizeText(value).toLowerCase());
+
+const isTerminalTaskStatus = (value: unknown) =>
+  TERMINAL_TASK_STATUSES.has(normalizeText(value).toLowerCase());
+
+const isActiveTaskStatus = (value: unknown) =>
+  ACTIVE_TASK_STATUSES.has(normalizeText(value).toLowerCase());
+
+const isMissionRunning = (mission: BeeroomMission) => {
+  const completionStatus = normalizeText(mission?.completion_status).toLowerCase();
+  const missionStatus = normalizeText(mission?.status).toLowerCase();
+  if (
+    isTerminalMissionStatus(completionStatus) ||
+    isTerminalMissionStatus(missionStatus) ||
+    Number(mission?.finished_time || 0) > 0
+  ) {
+    return false;
+  }
+  const tasks = Array.isArray(mission?.tasks) ? mission.tasks : [];
+  if (
+    tasks.length &&
+    tasks.every(
+      (task) =>
+        isTerminalTaskStatus(task?.status) || Number(task?.finished_time || 0) > 0
+    )
+  ) {
+    return false;
+  }
+  if (
+    tasks.some((task) => {
+      const taskStatus = normalizeText(task?.status).toLowerCase();
+      if (isActiveTaskStatus(taskStatus)) return true;
+      return !taskStatus && Number(task?.finished_time || 0) <= 0;
+    })
+  ) {
+    return true;
+  }
+  return ACTIVE_MISSION_STATUSES.has(completionStatus || missionStatus);
+};
+
+const resolveTaskMoment = (task: BeeroomMissionTask | null | undefined) =>
+  Math.max(
+    Number(task?.updated_time || 0),
+    Number(task?.finished_time || 0),
+    Number(task?.started_time || 0)
+  );
+
+const pickLatestWorkerTask = (tasks: BeeroomMissionTask[]) =>
+  tasks.reduce<BeeroomMissionTask | null>((latest, current) => {
+    if (!latest) return current;
+    return resolveTaskMoment(current) >= resolveTaskMoment(latest) ? current : latest;
+  }, null);
+
+const buildMotherWorkflowLines = (options: {
+  motherNodeId: string;
+  motherSessionId: string;
+  activeRound: OrchestrationRound | null;
+  motherWorkflowItems: BeeroomWorkflowItem[];
+  runtimeDispatch: BeeroomSwarmDispatchPreview | null;
+  t: TranslationFn;
+}) => {
+  const workflowLines = buildNodeWorkflowPreviewLines(options.motherWorkflowItems, {
+    includeEventFallback: true
+  });
+  if (workflowLines.length > 0) {
+    return workflowLines.slice(0, 3);
+  }
+  return [
+    {
+      key: `${options.motherNodeId}:thread`,
+      main: options.t('orchestration.canvas.session', {
+        id: normalizeText(options.motherSessionId).slice(0, 8) || '-'
+      }),
+      detail: trimText(
+        options.activeRound?.situation || options.t('orchestration.canvas.noSituation'),
+        28
+      ),
+      title: options.activeRound?.situation || options.t('orchestration.canvas.noSituation')
+    },
+    ...(isActiveStatus(options.runtimeDispatch?.status)
+      ? [
+          {
+            key: `${options.motherNodeId}:dispatching`,
+            main: options.t('orchestration.canvas.motherDispatching'),
+            detail: options.t('beeroom.status.running'),
+            title: options.t('orchestration.canvas.motherDispatching')
+          }
+        ]
+      : [])
+  ];
+};
+
+const buildWorkerWorkflowSnapshot = (options: {
+  task: BeeroomMissionTask | null;
+  workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
+  workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
+  t: TranslationFn;
+}) => {
+  const fallbackRuntime = buildTaskWorkflowRuntime(options.task, [], options.t);
+  if (!options.task) {
+    return {
+      items: fallbackRuntime.items,
+      tone: fallbackRuntime.preview.badgeTone
+    };
+  }
+  const taskId = normalizeText(options.task.task_id);
+  const items = taskId ? options.workflowItemsByTask[taskId] : null;
+  if (Array.isArray(items) && items.length > 0) {
+    return {
+      items,
+      tone: options.workflowPreviewByTask[taskId]?.badgeTone || fallbackRuntime.preview.badgeTone
+    };
+  }
+  return {
+    items: fallbackRuntime.items,
+    tone: fallbackRuntime.preview.badgeTone
+  };
+};
+
+const resolveWorkerEdgeLabel = (options: {
+  workerId: string;
+  mission: BeeroomMission | null;
+  task: BeeroomMissionTask | null;
+  runtimeDispatch: BeeroomSwarmDispatchPreview | null;
+}) => {
+  const runtimeTargetAgentId = normalizeText(options.runtimeDispatch?.targetAgentId);
+  if (runtimeTargetAgentId === options.workerId && isActiveStatus(options.runtimeDispatch?.status)) {
+    return trimText(options.runtimeDispatch?.dispatchLabel || options.runtimeDispatch?.summary, 18);
+  }
+  const task = options.task;
+  if (!task) return '';
+  const taskSummary = trimText(task.result_summary || task.error || '', 18);
+  if (taskSummary) return taskSummary;
+  if (isActiveTaskStatus(task.status) && options.mission) {
+    return trimText(
+      resolveBeeroomDispatchTaskLabel(options.mission, task, {
+        allowTerminalTaskFallback: false
+      }),
+      18
+    );
+  }
+  return '';
 };
 
 const resolveDispatchPreviewStatus = (value: unknown) => {
@@ -190,6 +356,9 @@ export const buildOrchestrationCanvasProjection = (options: {
   activeRoundMissions: BeeroomMission[];
   visibleWorkers: BeeroomMember[];
   artifactCards: OrchestrationArtifactCard[];
+  motherWorkflowItems: BeeroomWorkflowItem[];
+  workflowItemsByTask: Record<string, BeeroomWorkflowItem[]>;
+  workflowPreviewByTask: Record<string, BeeroomTaskWorkflowPreview>;
   dispatchPreview?: BeeroomSwarmDispatchPreview | null;
   resolveWorkerOutputs: (agentId: string) => MissionChatMessage[];
   resolveWorkerThreadSessionId: (agentId: string) => string;
@@ -201,7 +370,7 @@ export const buildOrchestrationCanvasProjection = (options: {
 }): SwarmProjection => {
   const nodeMetaMap = new Map();
   const memberMap = new Map<string, BeeroomMember>();
-  const tasksByAgent = new Map();
+  const tasksByAgent = new Map<string, BeeroomMissionTask[]>();
   (Array.isArray(options.agents) ? options.agents : []).forEach((member) => {
     const agentId = normalizeText(member?.agent_id);
     if (!agentId) return;
@@ -217,28 +386,27 @@ export const buildOrchestrationCanvasProjection = (options: {
   const motherOverride = options.nodePositionOverrides[motherNodeId];
   const workerCenterY = options.visibleWorkers.length > 1 ? ((options.visibleWorkers.length - 1) * ROW_GAP) / 2 : 0;
   const runtimeWorkers = resolveRuntimeWorkers(runtimeDispatch, motherId);
-  const motherStatus = options.activeRoundMissions.length || isActiveStatus(runtimeDispatch?.status) ? 'running' : 'idle';
+  options.activeRoundMissions.forEach((mission) => {
+    const missionTasks = Array.isArray(mission?.tasks) ? mission.tasks : [];
+    missionTasks.forEach((task) => {
+      const agentId = normalizeText(task?.agent_id);
+      if (!agentId) return;
+      const bucket = tasksByAgent.get(agentId) || [];
+      bucket.push(task);
+      tasksByAgent.set(agentId, bucket);
+    });
+  });
+  const hasRunningMission = options.activeRoundMissions.some((mission) => isMissionRunning(mission));
+  const motherStatus = hasRunningMission || isActiveStatus(runtimeDispatch?.status) ? 'running' : 'idle';
   const motherStatusLabel = resolveNodeStatusLabel(motherStatus, options.t);
-  const motherWorkflowLines = [
-    {
-      key: `${motherNodeId}:thread`,
-      main: options.t('orchestration.canvas.session', {
-        id: normalizeText(options.motherSessionId).slice(0, 8) || '-'
-      }),
-      detail: trimText(options.activeRound?.situation || options.t('orchestration.canvas.noSituation'), 28),
-      title: options.activeRound?.situation || options.t('orchestration.canvas.noSituation')
-    },
-    ...(isActiveStatus(runtimeDispatch?.status)
-      ? [
-          {
-            key: `${motherNodeId}:dispatching`,
-            main: options.t('orchestration.canvas.motherDispatching'),
-            detail: options.t('beeroom.status.running'),
-            title: options.t('orchestration.canvas.motherDispatching')
-          }
-        ]
-      : [])
-  ];
+  const motherWorkflowLines = buildMotherWorkflowLines({
+    motherNodeId,
+    motherSessionId: options.motherSessionId,
+    activeRound: options.activeRound,
+    motherWorkflowItems: options.motherWorkflowItems,
+    runtimeDispatch,
+    t: options.t
+  });
   nodes.push({
     id: motherNodeId,
     agentId: motherId,
@@ -264,7 +432,7 @@ export const buildOrchestrationCanvasProjection = (options: {
       width: NODE_WIDTH,
       height: NODE_HEIGHT,
       workflowTaskId: '',
-      workflowTone: isActiveStatus(runtimeDispatch?.status) || options.activeRoundMissions.length ? 'loading' : 'pending',
+      workflowTone: isActiveStatus(runtimeDispatch?.status) || hasRunningMission ? 'loading' : 'pending',
       workflowLines: motherWorkflowLines,
     parentId: '',
     emphasis: 'default',
@@ -293,6 +461,7 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workerNodeId = `agent:${agentId}`;
     const workerOutputs = options.resolveWorkerOutputs(agentId);
     const runtimeWorkerStatus = runtimeWorkers.statusByAgentId.get(agentId) || '';
+    const workerTasks = tasksByAgent.get(agentId) || [];
     const workerStatus = resolveWorkerStatus(
       agentId,
       options.activeRoundMissions,
@@ -301,19 +470,25 @@ export const buildOrchestrationCanvasProjection = (options: {
       runtimeWorkerStatus
     );
     const workerActive =
-      workerStatus === 'running' || workerStatus === 'queued' || workerStatus === 'awaiting_idle';
+      workerTasks.some((task) => isActiveTaskStatus(task?.status)) ||
+      workerStatus === 'running' ||
+      workerStatus === 'queued' ||
+      workerStatus === 'awaiting_idle';
     const workerStatusLabel = resolveNodeStatusLabel(workerStatus, options.t);
     const workerName = normalizeText(member?.name) || agentId;
     const workerOverride = options.nodePositionOverrides[workerNodeId];
     const workerY = index * ROW_GAP;
     const threadShort = normalizeText(options.resolveWorkerThreadSessionId(agentId)).slice(0, 8) || '-';
-    const workflowLines =
-      workerOutputs.slice(0, 3).map((item, outputIndex) => ({
-        key: `${workerNodeId}:output:${outputIndex}`,
-        main: trimText(item.body, 14) || options.t('orchestration.canvas.noWorkerOutput'),
-        detail: item.timeLabel || workerStatusLabel,
-        title: item.body
-      })) || [];
+    const latestWorkerTask = pickLatestWorkerTask(workerTasks);
+    const workflowSnapshot = buildWorkerWorkflowSnapshot({
+      task: latestWorkerTask,
+      workflowItemsByTask: options.workflowItemsByTask,
+      workflowPreviewByTask: options.workflowPreviewByTask,
+      t: options.t
+    });
+    const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
+      includeEventFallback: true
+    }).slice(0, 3);
     nodes.push({
       id: workerNodeId,
       agentId,
@@ -342,13 +517,15 @@ export const buildOrchestrationCanvasProjection = (options: {
       height: NODE_HEIGHT,
       workflowTaskId: '',
       workflowTone:
-        workerStatus === 'completed' || workerStatus === 'success'
-          ? 'completed'
-          : workerStatus === 'failed'
-            ? 'failed'
-            : workerActive
-              ? 'loading'
-              : 'pending',
+        workflowLines.length > 0
+          ? workflowSnapshot.tone
+          : workerStatus === 'completed' || workerStatus === 'success'
+            ? 'completed'
+            : workerStatus === 'failed'
+              ? 'failed'
+              : workerActive
+                ? 'loading'
+                : 'pending',
       workflowLines: workflowLines.length
         ? workflowLines
         : [
@@ -382,21 +559,30 @@ export const buildOrchestrationCanvasProjection = (options: {
       role: 'worker',
       role_label: options.t('beeroom.canvas.legendWorker'),
       status: workerStatus,
-      task_total: options.activeRoundMissions
-        .flatMap((mission) => (Array.isArray(mission.tasks) ? mission.tasks : []))
-        .filter((task) => normalizeText(task?.agent_id) === agentId).length,
+      task_total: workerTasks.length,
       active_session_total: 1,
       updated_time: Number(options.activeRound?.createdAt || 0),
-      summary: workerOutputs[0]?.body || '',
+      summary: workerOutputs[0]?.body || workflowLines[0]?.title || '',
       entry_agent: false,
       parent_id: motherNodeId,
       emphasis: workerActive ? 'active' : 'default'
     });
+    const edgeMission =
+      options.activeRoundMissions.find((mission) =>
+        (Array.isArray(mission?.tasks) ? mission.tasks : []).some(
+          (task) => normalizeText(task?.agent_id) === agentId
+        )
+      ) || null;
     edges.push({
       id: `dispatch:${motherNodeId}:${workerNodeId}`,
       source: motherNodeId,
       target: workerNodeId,
-      label: options.activeRoundMissions.length ? trimText(options.activeRoundMissions[0]?.summary || options.activeRoundMissions[0]?.strategy, 18) : '',
+      label: resolveWorkerEdgeLabel({
+        workerId: agentId,
+        mission: edgeMission,
+        task: latestWorkerTask,
+        runtimeDispatch
+      }),
       active: workerActive,
       selected:
         normalizeText(options.selectedNodeId) === motherNodeId ||
@@ -442,7 +628,7 @@ export const buildOrchestrationCanvasProjection = (options: {
           : workerActive
             ? 'loading'
             : 'pending',
-      artifactItems: (artifactCard?.entries || []).slice(0, 8).map((entry, entryIndex) => ({
+      artifactItems: (artifactCard?.entries || []).map((entry, entryIndex) => ({
         key: `${artifactNodeId}:artifact:${entryIndex}`,
         label: trimText(entry.name, 12) || '-',
         title: entry.path || entry.name || '',

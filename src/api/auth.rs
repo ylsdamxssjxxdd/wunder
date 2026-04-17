@@ -220,17 +220,24 @@ async fn register(
     headers: HeaderMap,
     Json(payload): Json<RegisterRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
-    let username = payload.username.trim();
-    let password = payload.password.trim();
+    let RegisterRequest {
+        username,
+        email,
+        password,
+        access_level,
+        unit_id,
+    } = payload;
+    let username = username.trim();
+    let password = password.trim();
     if username.is_empty() || password.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
         ));
     }
-    let access_level = payload.access_level.as_deref();
+    let access_level = access_level.as_deref();
     let desktop_mode = is_desktop_mode(&state).await;
-    let requested_unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let requested_unit_id = normalize_optional_id(unit_id.as_deref());
     let create_unit_id = if desktop_mode {
         None
     } else {
@@ -240,7 +247,7 @@ async fn register(
         .user_store
         .create_user(
             username,
-            payload.email,
+            normalize_user_email(email),
             password,
             access_level,
             create_unit_id,
@@ -267,6 +274,17 @@ async fn register(
         .await;
     let profile = build_user_profile_value(&state, &session.user)?;
     Ok(Json(auth_response(profile, session.token.token)))
+}
+
+fn normalize_user_email(value: Option<String>) -> Option<String> {
+    value.and_then(|email| {
+        let cleaned = email.trim();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned.to_string())
+        }
+    })
 }
 
 async fn login(
@@ -764,7 +782,8 @@ async fn me(
     Ok(Json(json!({ "data": profile })))
 }
 
-async fn update_me(
+#[allow(dead_code)]
+async fn update_me_legacy(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<UpdateProfileRequest>,
@@ -912,6 +931,172 @@ async fn update_me(
         })?;
         changed = true;
     }
+    if changed {
+        record.updated_at = now_ts();
+        state.user_store.update_user(&record).map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                localize_update_profile_error_message(&err.to_string()),
+            )
+        })?;
+    }
+    let profile = build_user_profile_value(&state, &record)?;
+    Ok(Json(json!({ "data": profile })))
+}
+
+async fn update_me(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateProfileRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let desktop_mode = is_desktop_mode(&state).await;
+    let mut record = resolved.user.clone();
+    let UpdateProfileRequest {
+        username,
+        email,
+        unit_id,
+        current_password,
+        new_password,
+    } = payload;
+    let mut changed = false;
+
+    if let Some(username) = username {
+        let trimmed = username.trim();
+        if trimmed.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                i18n::t("error.content_required"),
+            ));
+        }
+        if UserStore::is_default_admin(&record.user_id) && trimmed != record.username {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "默认管理员账号不可修改".to_string(),
+            ));
+        }
+        let Some(normalized) = UserStore::normalize_user_id(trimmed) else {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "用户名格式不正确，请使用 3-64 位字母、数字、下划线或连字符".to_string(),
+            ));
+        };
+        if normalized != record.username {
+            let existing = state
+                .user_store
+                .get_user_by_username(&normalized)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            if let Some(existing) = existing {
+                if existing.user_id != record.user_id {
+                    return Err(error_response(
+                        StatusCode::BAD_REQUEST,
+                        "用户名已被占用".to_string(),
+                    ));
+                }
+            }
+            record.username = normalized;
+            changed = true;
+        }
+    }
+
+    if let Some(email) = email {
+        let normalized_email = normalize_user_email(Some(email));
+        if normalized_email.is_none() {
+            if record.email.is_some() {
+                record.email = None;
+                changed = true;
+            }
+        } else if record.email != normalized_email {
+            let trimmed = normalized_email.as_deref().unwrap_or_default();
+            let existing = state
+                .user_store
+                .get_user_by_email(trimmed)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            if let Some(existing) = existing {
+                if existing.user_id != record.user_id {
+                    return Err(error_response(
+                        StatusCode::BAD_REQUEST,
+                        "邮箱已被占用".to_string(),
+                    ));
+                }
+            }
+            record.email = normalized_email;
+            changed = true;
+        }
+    }
+
+    if let Some(unit_id) = unit_id {
+        let next_unit_id = normalize_optional_id(Some(&unit_id));
+        if desktop_mode {
+            if next_unit_id != record.unit_id {
+                record.unit_id = next_unit_id;
+                changed = true;
+            }
+        } else {
+            let units = state
+                .user_store
+                .list_org_units()
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let unit_map = build_unit_map(&units);
+            if let Some(next_unit_id) = next_unit_id.as_deref() {
+                if !unit_map.contains_key(next_unit_id) {
+                    return Err(error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.org_unit_not_found"),
+                    ));
+                }
+            }
+            if next_unit_id != record.unit_id {
+                record.unit_id = next_unit_id;
+                changed = true;
+            }
+        }
+    }
+
+    let current_password = current_password.unwrap_or_default();
+    let new_password = new_password.unwrap_or_default();
+    let current_password = current_password.trim();
+    let new_password = new_password.trim();
+    if !current_password.is_empty() || !new_password.is_empty() {
+        if record.is_demo {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "演示模式账号不支持修改登录密码".to_string(),
+            ));
+        }
+        if current_password.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "请输入当前密码".to_string(),
+            ));
+        }
+        if new_password.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "请输入新密码".to_string(),
+            ));
+        }
+        if !UserStore::verify_password(&record.password_hash, current_password) {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "当前密码不正确".to_string(),
+            ));
+        }
+        if current_password == new_password {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "新密码不能与当前密码相同".to_string(),
+            ));
+        }
+        record.password_hash = UserStore::hash_password(new_password).map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                localize_update_profile_error_message(&err.to_string()),
+            )
+        })?;
+        changed = true;
+    }
+
     if changed {
         record.updated_at = now_ts();
         state.user_store.update_user(&record).map_err(|err| {
@@ -1726,7 +1911,8 @@ fn localize_register_error(err: &anyhow::Error) -> String {
     localize_register_error_message(&err.to_string())
 }
 
-fn localize_update_profile_error_message(message: &str) -> String {
+#[allow(dead_code)]
+fn localize_update_profile_error_message_legacy(message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return "淇濆瓨璧勬枡澶辫触锛岃绋嶅悗閲嶈瘯".to_string();
@@ -1769,6 +1955,49 @@ fn localize_update_profile_error_message(message: &str) -> String {
     "淇濆瓨璧勬枡澶辫触锛岃绋嶅悗閲嶈瘯".to_string()
 }
 
+fn localize_update_profile_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "修改账号信息失败".to_string();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    {
+        return trimmed.to_string();
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
+        return "新密码不能为空".to_string();
+    }
+    if normalized.contains("invalid password") {
+        return "当前密码不正确".to_string();
+    }
+    if normalized.contains("user disabled") {
+        return "账号已被禁用，请联系管理员".to_string();
+    }
+    if normalized.contains("username already exists")
+        || normalized.contains("idx_user_accounts_username")
+        || normalized.contains("user_accounts.username")
+    {
+        return "用户名已被占用".to_string();
+    }
+    if normalized.contains("email already exists")
+        || normalized.contains("idx_user_accounts_email")
+        || normalized.contains("user_accounts.email")
+    {
+        return "邮箱已被占用".to_string();
+    }
+    if normalized.contains("invalid username") {
+        return "用户名格式不正确，请使用 3-64 位字母、数字、下划线或连字符".to_string();
+    }
+    if normalized.contains("unit not found") {
+        return i18n::t("error.org_unit_not_found");
+    }
+    "修改账号信息失败".to_string()
+}
+
 fn localize_reset_password_error_message(message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
@@ -1803,7 +2032,8 @@ fn localize_reset_password_error_message(message: &str) -> String {
     "重置密码失败，请稍后重试".to_string()
 }
 
-fn localize_register_error_message(message: &str) -> String {
+#[allow(dead_code)]
+fn localize_register_error_message_legacy(message: &str) -> String {
     let trimmed = message.trim();
     if trimmed.is_empty() {
         return "娉ㄥ唽澶辫触锛岃绋嶅悗閲嶈瘯".to_string();
@@ -1852,6 +2082,57 @@ fn localize_register_error_message(message: &str) -> String {
         return "账号信息已存在，请更换用户名或邮箱".to_string();
     }
     "娉ㄥ唽澶辫触锛岃绋嶅悗閲嶈瘯".to_string()
+}
+
+fn localize_register_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "注册失败，请稍后重试".to_string();
+    }
+    if trimmed
+        .chars()
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+    {
+        return trimmed.to_string();
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.contains("username already exists")
+        || normalized.contains("idx_user_accounts_username")
+        || normalized.contains("user_accounts.username")
+    {
+        return "用户名已被占用".to_string();
+    }
+    if normalized.contains("email already exists")
+        || normalized.contains("idx_user_accounts_email")
+        || normalized.contains("user_accounts.email")
+    {
+        return "邮箱已被占用".to_string();
+    }
+    if normalized.contains("invalid username") {
+        return "用户名格式不正确，请使用 3-64 位字母、数字、下划线或连字符".to_string();
+    }
+    if normalized.contains("password is empty") || normalized.contains("password hash is empty") {
+        return "密码不能为空".to_string();
+    }
+    if normalized.contains("unit not found") {
+        return i18n::t("error.org_unit_not_found");
+    }
+    if normalized.contains("user disabled") {
+        return "账号已被禁用，请联系管理员".to_string();
+    }
+    if normalized.contains("admin account is protected")
+        || normalized.contains("default admin account is protected")
+    {
+        return "默认管理员账号受保护".to_string();
+    }
+    if normalized.contains("duplicate key value violates unique constraint")
+        || normalized.contains("unique constraint failed")
+        || normalized.contains("already exists")
+    {
+        return "账号信息已存在，请更换用户名或邮箱".to_string();
+    }
+    "注册失败，请稍后重试".to_string()
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {
