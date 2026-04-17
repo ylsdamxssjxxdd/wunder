@@ -28,6 +28,7 @@
         :initializing="initializing"
         :history-loading="historyLoading"
         :is-active="isActive"
+        :is-busy="orchestrationStopBusy"
         :is-ready="isReady"
         :group-description="group.description || t('orchestration.empty.description')"
         :resolve-worker-outputs="resolveWorkerOutputs"

@@ -2241,6 +2241,7 @@ export default {
   'orchestration.panel.roundMissionEmpty': '当前轮次还没有关联到蜂群任务。',
   'orchestration.panel.roundMissionEmptySummary': '等待任务摘要',
   'orchestration.run.active': '编排中',
+  'orchestration.run.busy': '作业中',
   'orchestration.run.idle': '未启动',
   'orchestration.message.created': '编排已初始化',
   'orchestration.message.started': '编排态已启动',

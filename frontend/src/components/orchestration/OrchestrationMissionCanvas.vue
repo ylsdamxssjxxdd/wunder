@@ -999,6 +999,12 @@ watch(
   transform: scale(1.02);
 }
 
+.orchestration-panel-status-lamp.is-busy {
+  background: #38bdf8;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
+  transform: scale(1.04);
+}
+
 .beeroom-canvas-chat-resizer {
   position: absolute;
   top: 14px;

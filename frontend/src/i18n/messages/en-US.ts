@@ -2273,6 +2273,7 @@ export default {
   'orchestration.panel.roundMissionEmpty': 'No swarm mission is linked to this round yet.',
   'orchestration.panel.roundMissionEmptySummary': 'Waiting for mission summary',
   'orchestration.run.active': 'Running',
+  'orchestration.run.busy': 'Working',
   'orchestration.run.idle': 'Idle',
   'orchestration.message.created': 'Orchestration initialized',
   'orchestration.message.started': 'Orchestration activated',
