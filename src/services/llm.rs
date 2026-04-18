@@ -1946,15 +1946,30 @@ fn extract_tool_calls(message: &Value) -> Option<Value> {
     let Value::Object(map) = message else {
         return None;
     };
-    map.get("tool_calls")
+    let payload = map
+        .get("tool_calls")
         .or_else(|| map.get("tool_call"))
         .or_else(|| map.get("function_call"))
         .or_else(|| map.get("functionCall"))
-        .map(sanitize_tool_call_payload)
+        .map(sanitize_tool_call_payload)?;
+    match &payload {
+        Value::Array(items) if items.is_empty() => None,
+        _ => Some(payload),
+    }
 }
 
 fn has_stream_tool_activity(payload: Option<&Value>) -> bool {
     payload.is_some_and(|value| extract_tool_calls(value).is_some())
+}
+
+fn is_false_tool_stop_reason(value: Option<&Value>) -> bool {
+    let Some(raw) = value.and_then(Value::as_str).map(str::trim) else {
+        return false;
+    };
+    matches!(
+        raw.to_ascii_lowercase().as_str(),
+        "tool_calls" | "tool_call" | "function_call" | "tooluse" | "tool_use"
+    )
 }
 
 fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
@@ -2178,6 +2193,11 @@ where
                 || has_stream_tool_activity(choice.and_then(|value| value.get("message")))
                 || has_stream_tool_activity(choice)
                 || has_stream_tool_activity(Some(&payload));
+            let false_tool_stop = is_false_tool_stop_reason(
+                choice.and_then(|value| value.get("finish_reason")),
+            ) || is_false_tool_stop_reason(payload.get("finish_reason"))
+                || is_false_tool_stop_reason(payload.get("stop_reason"))
+                || is_false_tool_stop_reason(payload.get("stopReason"));
             update_stream_tool_calls(tool_calls_accumulator, &delta);
             if let Some(message) = choice.and_then(|value| value.get("message")) {
                 update_stream_tool_calls(tool_calls_accumulator, message);
@@ -2199,7 +2219,7 @@ where
             }
             if !content_delta.is_empty() || !reasoning_delta.is_empty() {
                 on_delta(content_delta, reasoning_delta).await?;
-            } else if tool_activity {
+            } else if tool_activity && !false_tool_stop {
                 on_delta(String::new(), String::new()).await?;
             }
         }
@@ -2588,6 +2608,9 @@ struct StreamToolCall {
 fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
     match payload {
         Value::Array(items) => {
+            if items.is_empty() {
+                return;
+            }
             for item in items {
                 merge_stream_tool_call_item(acc, item);
             }
@@ -3618,6 +3641,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_sse_event_block_ignores_empty_tool_calls_array() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{},\"message\":{\"tool_calls\":[]},\"finish_reason\":\"tool_calls\"}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process empty tool-calls block");
+
+        assert!(!done);
+        assert!(combined.is_empty());
+        assert!(reasoning.is_empty());
+        assert!(finalize_stream_tool_calls(&tool_calls).is_none());
+    }
+
+    #[tokio::test]
     async fn process_sse_event_block_ignores_assistant_name_metadata_in_delta() {
         let mut combined = String::new();
         let mut reasoning = String::new();
@@ -3689,6 +3737,22 @@ mod tests {
             finalized[0]["function"]["arguments"],
             "{\"path\":\"demo.txt\"}"
         );
+    }
+
+    #[test]
+    fn extract_tool_calls_ignores_empty_array_payload() {
+        let payload = json!({
+            "tool_calls": []
+        });
+        assert!(extract_tool_calls(&payload).is_none());
+    }
+
+    #[test]
+    fn is_false_tool_stop_reason_matches_known_variants() {
+        assert!(is_false_tool_stop_reason(Some(&json!("tool_calls"))));
+        assert!(is_false_tool_stop_reason(Some(&json!("toolUse"))));
+        assert!(is_false_tool_stop_reason(Some(&json!("tool_use"))));
+        assert!(!is_false_tool_stop_reason(Some(&json!("stop"))));
     }
 
     #[test]
