@@ -18,7 +18,7 @@
               :group="group"
               :mission="null"
               :agents="agents"
-              :dispatch-preview="null"
+              :dispatch-preview="dispatchPreview"
               :subagents-by-task="{}"
               :mother-workflow-items="motherWorkflowItems"
               :workflow-items-by-task="workflowItemsByTask"

@@ -421,6 +421,9 @@ const historyDialogVisible = ref(false);
 const deletingHistoryId = ref('');
 const branchingHistoryId = ref('');
 const situationPlanDraft = ref<Record<string, string>>({});
+const stagedSituationDraft = ref<Record<string, string>>({});
+const stagedSituationDraftOrchestrationId = ref('');
+const stagedSituationDraftActive = ref(false);
 const selectedSituationRound = ref(1);
 const situationRoundInput = ref(1);
 const situationImportInputRef = ref<HTMLInputElement | null>(null);
@@ -447,6 +450,7 @@ const isViewingLatestRound = computed(() => {
   const activeId = String(activeRound.value?.id || '').trim();
   return Boolean(latestId && activeId && latestId === activeId);
 });
+const shouldStageSituationDraft = computed(() => Boolean(currentOrchestrationId.value) && !isViewingLatestRound.value);
 const orchestrationCanSend = computed(
   () =>
     Boolean(
@@ -468,9 +472,43 @@ const motherName = computed(() => {
   return String(member?.name || props.group?.mother_agent_name || motherId).trim() || motherId;
 });
 
+const normalizeSituationEntries = (value: Record<string, string>) =>
+  Object.fromEntries(
+    Object.entries(value || {})
+      .map(([key, entry]) => [String(normalizeSituationRound(key)), String(entry || '').trim()])
+      .filter(([, entry]) => Boolean(entry))
+  );
+
+const clearStagedSituationDraft = (orchestrationId?: string) => {
+  const targetId = String(orchestrationId || '').trim();
+  if (targetId && stagedSituationDraftOrchestrationId.value !== targetId) {
+    return;
+  }
+  stagedSituationDraft.value = {};
+  stagedSituationDraftOrchestrationId.value = '';
+  stagedSituationDraftActive.value = false;
+};
+
+const rememberStagedSituationDraft = (entries: Record<string, string>) => {
+  stagedSituationDraft.value = normalizeSituationEntries(entries);
+  stagedSituationDraftOrchestrationId.value = currentOrchestrationId.value;
+  stagedSituationDraftActive.value = true;
+};
+
+const hasStagedSituationDraft = computed(
+  () =>
+    stagedSituationDraftActive.value &&
+    Boolean(stagedSituationDraftOrchestrationId.value) &&
+    stagedSituationDraftOrchestrationId.value === currentOrchestrationId.value
+);
+
 const plannedSituations = computed<Record<string, string>>(() => {
   const source = runtimeState.value?.plannedSituations;
-  return source && typeof source === 'object' ? source : {};
+  const persisted = source && typeof source === 'object' ? normalizeSituationEntries(source as Record<string, string>) : {};
+  if (hasStagedSituationDraft.value) {
+    return { ...stagedSituationDraft.value };
+  }
+  return persisted;
 });
 const latestRoundIndex = computed(() => Math.max(1, Number(latestRound.value?.index || 1)));
 const normalizeSituationRound = (value: unknown) =>
@@ -594,11 +632,7 @@ const handleSituationImportChange = async (event: Event) => {
 
 const handleCloseSituationDialog = () => {
   situationDialogVisible.value = false;
-  const next: Record<string, string> = {};
-  Object.entries(plannedSituations.value || {}).forEach(([key, value]) => {
-    next[String(key)] = String(value || '');
-  });
-  situationPlanDraft.value = next;
+  situationPlanDraft.value = { ...plannedSituations.value };
   selectSituationRound(activeRound.value?.index || latestRoundIndex.value);
 };
 
@@ -638,6 +672,15 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
 });
 
 const visibleChatMessages = computed(() => activeRoundChatMessages.value);
+
+const resolveDraftSituationByRoundIndex = (roundIndex: number) => {
+  const roundKey = String(normalizeSituationRound(roundIndex));
+  const draftValue = String(plannedSituations.value[roundKey] || '').trim();
+  if (draftValue) {
+    return draftValue;
+  }
+  return String(rounds.value.find((item) => item.index === normalizeSituationRound(roundIndex))?.situation || '').trim();
+};
 
 const normalizePromptTemplates = (value: unknown): OrchestrationPromptTemplates => {
   const record = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -686,6 +729,7 @@ const handleCreateRun = async () => {
     }
     composerText.value = '';
     situationPlanDraft.value = {};
+    clearStagedSituationDraft();
     selectSituationRound(1);
     situationDialogVisible.value = false;
     const nextState = await initializeRun();
@@ -699,10 +743,12 @@ const handleCreateRun = async () => {
 };
 
 const handleSaveSituation = () => {
-  const nextDraft = Object.fromEntries(
-    Object.entries(situationPlanDraft.value || {}).map(([key, value]) => [key, String(value || '').trim()]).filter(([, value]) => Boolean(value))
-  );
-  void updatePlannedSituations(nextDraft)
+  const nextDraft = normalizeSituationEntries(situationPlanDraft.value);
+  const shouldStage = shouldStageSituationDraft.value;
+  const task = shouldStage
+    ? Promise.resolve(rememberStagedSituationDraft(nextDraft))
+    : updatePlannedSituations(nextDraft);
+  void task
     .then(() => {
       situationDialogVisible.value = false;
       emit('edit-situation');
@@ -718,6 +764,7 @@ const handleStopRun = async () => {
     composerText.value = '';
     situationDialogVisible.value = false;
     historyDialogVisible.value = false;
+    clearStagedSituationDraft();
     await loadHistory().catch(() => []);
     emit('refresh');
     ElMessage.success(t('orchestration.message.stopped'));
@@ -729,6 +776,7 @@ const handleStopRun = async () => {
 const handleStartRun = async () => {
   try {
     const nextState = await startRun();
+    clearStagedSituationDraft();
     await syncMotherSessionContextForState(
       nextState,
       Number(nextState?.rounds?.[nextState.rounds.length - 1]?.index || latestRound.value?.index || 1)
@@ -744,6 +792,7 @@ const handleStartRun = async () => {
 const handleRestoreHistoryAction = async (orchestrationId: string) => {
   try {
     const nextState = await restoreHistory(orchestrationId, { activate: isActive.value });
+    clearStagedSituationDraft();
     if (nextState?.active) {
       await syncMotherSessionContextForState(
         nextState,
@@ -782,6 +831,7 @@ const handleBranchFromHistory = async (item: { orchestrationId: string; latestRo
   branchingHistoryId.value = item.orchestrationId;
   try {
     const nextState = await branchHistory(item.orchestrationId, targetRoundIndex, { activate: isActive.value });
+    clearStagedSituationDraft();
     if (nextState?.active) {
       await syncMotherSessionContextForState(
         nextState,
@@ -899,6 +949,7 @@ const handleDeleteBranchAfterRound = async (payload: { orchestrationId: string; 
   }
   try {
     await truncateHistoryFromRound(payload.orchestrationId, targetRoundIndex);
+    clearStagedSituationDraft(payload.orchestrationId);
     emit('refresh');
     ElMessage.success(t('orchestration.timeline.deleteAfterSuccess'));
   } catch (error: any) {
@@ -967,6 +1018,11 @@ const handleSendToMother = async () => {
     if (!String(state?.motherSessionId || '').trim()) {
       throw new Error(t('orchestration.message.createRunRequired'));
     }
+    const currentOrchestrationIdValue = currentOrchestrationId.value;
+    const stagedDraftEntries =
+      hasStagedSituationDraft.value && stagedSituationDraftOrchestrationId.value === currentOrchestrationIdValue
+        ? normalizeSituationEntries(stagedSituationDraft.value)
+        : null;
     let workingRunId = runId.value;
     let nextRoundSource = latestRound.value;
     let nextActiveRound = activeRound.value;
@@ -979,12 +1035,16 @@ const handleSendToMother = async () => {
         activate: true
       });
       if (branchedState?.active) {
+        if (stagedDraftEntries) {
+          await updatePlannedSituations(stagedDraftEntries);
+        }
         await syncMotherSessionContextForState(
           branchedState,
           Number(branchedState.rounds[branchedState.rounds.length - 1]?.index || branchBaseRoundIndex)
         );
       }
       state = branchedState || state;
+      clearStagedSituationDraft(currentOrchestrationIdValue);
       workingRunId = String(state?.runId || '').trim();
       nextRoundSource = state?.rounds?.[state.rounds.length - 1] || null;
       nextActiveRound = nextRoundSource;
@@ -993,7 +1053,7 @@ const handleSendToMother = async () => {
     const targetRound =
       nextRoundSource && !String(nextRoundSource.userMessage || '').trim() ? nextRoundSource : null;
     const nextRoundIndex = targetRound ? targetRound.index : Math.max(1, Number(nextRoundSource?.index || 0)) + 1;
-    const roundSituation = await resolveRoundSituation(nextRoundIndex);
+    const roundSituation = resolveDraftSituationByRoundIndex(nextRoundIndex) || await resolveRoundSituation(nextRoundIndex);
     const includePrimer = state?.motherPrimerInjected !== true;
     const templates = await ensureOrchestrationPromptTemplates();
     const dispatchContent = buildMotherDispatchEnvelope({
@@ -1023,6 +1083,7 @@ const handleSendToMother = async () => {
     if (includePrimer) {
       markMotherPrimerInjected();
     }
+    clearStagedSituationDraft();
   } catch (error: any) {
     const pending = pendingRound.value;
     if (pending?.id) {
@@ -1036,6 +1097,7 @@ watch(
   () => orchestrationGroupId.value,
   () => {
     situationPlanDraft.value = {};
+    clearStagedSituationDraft();
     selectSituationRound(1);
     historyDialogVisible.value = false;
     void loadHistory().catch(() => []);
@@ -1049,10 +1111,7 @@ watch(
 watch(
   plannedSituations,
   (value) => {
-    const next: Record<string, string> = {};
-    Object.entries(value || {}).forEach(([key, situation]) => {
-      next[String(key)] = String(situation || '');
-    });
+    const next = { ...normalizeSituationEntries(value) };
     situationPlanDraft.value = next;
     if (!situationDialogVisible.value) {
       selectSituationRound(activeRound.value?.index || latestRoundIndex.value);
@@ -1065,6 +1124,7 @@ watch(
   () => situationDialogVisible.value,
   (visible) => {
     if (!visible) return;
+    situationPlanDraft.value = { ...plannedSituations.value };
     const nextRound = activeRound.value?.index || latestRoundIndex.value;
     selectSituationRound(nextRound);
   }

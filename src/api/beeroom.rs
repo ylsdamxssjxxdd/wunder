@@ -1127,25 +1127,25 @@ async fn truncate_orchestration_history(
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             clear_history_record(state.storage.as_ref(), &user_id, &group.hive_id, descendant_id)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            let mother_agent = state
-                .user_store
-                .get_user_agent(&user_id, &history.mother_agent_id)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            if let Some(agent) = mother_agent {
-                let workspace_id = state
-                    .workspace
-                    .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
-                clear_orchestration_workspace_tree(state.workspace.as_ref(), &workspace_id, &history.run_id)
-                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            }
+            let mut workspace_container_ids = std::collections::BTreeSet::new();
             for agent in state
                 .user_store
                 .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
             {
+                workspace_container_ids.insert(agent.sandbox_container_id);
+            }
+            if let Some(agent) = state
+                .user_store
+                .get_user_agent(&user_id, &history.mother_agent_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            {
+                workspace_container_ids.insert(agent.sandbox_container_id);
+            }
+            for container_id in workspace_container_ids {
                 let workspace_id = state
                     .workspace
-                    .scoped_user_id_by_container(&user_id, agent.sandbox_container_id);
+                    .scoped_user_id_by_container(&user_id, container_id);
                 clear_orchestration_workspace_tree(state.workspace.as_ref(), &workspace_id, &history.run_id)
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             }

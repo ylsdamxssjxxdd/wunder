@@ -171,6 +171,7 @@
                 "group": "前端与桌面",
                 "pages": [
                   "zh-CN/surfaces/frontend",
+                  "zh-CN/surfaces/orchestration",
                   "zh-CN/surfaces/web-admin",
                   "zh-CN/surfaces/desktop-ui"
                 ]
@@ -415,6 +416,7 @@
                 "group": "Frontend and Desktop",
                 "pages": [
                   "en/surfaces/frontend",
+                  "en/surfaces/orchestration",
                   "en/surfaces/web-admin",
                   "en/surfaces/desktop-ui"
                 ]

@@ -17,6 +17,7 @@ Wunder 有三个主要界面，各有各的职责：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/"><strong>用户端界面</strong><span>聊天、文件、智能体、工具、设置。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/surfaces/orchestration/"><strong>编排功能</strong><span>母蜂、工蜂、产物与时间线的专用工作台。</span></a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/"><strong>管理端界面</strong><span>用户管理、系统配置、渠道监控。</span></a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/"><strong>桌面端界面</strong><span>本地工作台，桌面端特有功能。</span></a>
 </div>
@@ -56,6 +57,13 @@ Wunder 有三个主要界面，各有各的职责：
 - **中栏**：列表（会话列表、文件列表、智能体列表等）
 - **右栏**：工作区（对话详情、文件预览、设置面板等）
 
+## 关键工作台
+
+- [用户端界面](/docs/zh-CN/surfaces/frontend/)：统一消息工作台，覆盖聊天、文件、智能体、工具与设置
+- [编排功能](/docs/zh-CN/surfaces/orchestration/)：蜂群进入编排态后的专用工作台，适合连续推进、看轮次快照与分支
+- [管理端界面](/docs/zh-CN/surfaces/web-admin/)：系统治理后台
+- [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/)：本地优先的个人入口
+
 ## 按角色选择
 
 ### 普通用户
@@ -79,5 +87,6 @@ Wunder 有三个主要界面，各有各的职责：
 ## 延伸阅读
 
 - [Desktop 入门](/docs/zh-CN/start/desktop/)
+- [编排功能](/docs/zh-CN/surfaces/orchestration/)
 - [管理端面板指南](/docs/zh-CN/reference/admin-panels/)
 - [核心概览](/docs/zh-CN/concepts/)

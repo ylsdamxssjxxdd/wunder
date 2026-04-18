@@ -23,6 +23,10 @@ If you are trying to figure out "where should I look for a particular feature," 
     <strong>User Frontend</strong>
     <span>The unified workbench for chat, user world, workspace, tools, and settings.</span>
   </a>
+  <a class="docs-card" href="/docs/en/surfaces/orchestration/">
+    <strong>Orchestration</strong>
+    <span>The dedicated workbench for queen-worker-artifact flow, timeline snapshots, and branching.</span>
+  </a>
   <a class="docs-card" href="/docs/en/surfaces/web-admin/">
     <strong>Admin Interface</strong>
     <span>The management entry point for models, users, channels, tools, monitoring, and benchmarks.</span>
@@ -36,6 +40,7 @@ If you are trying to figure out "where should I look for a particular feature," 
 ## Responsibilities of Each Surface
 
 - **User frontend**: Focused on conversations, files, contacts, and tool operations
+- **Orchestration**: Focused on long-running hive execution, round snapshots, artifacts, and branching
 - **Admin frontend**: Focused on governance, configuration, monitoring, and evaluation
 - **Desktop**: Focused on local-first and desktop capabilities
 
@@ -46,6 +51,7 @@ If you are trying to figure out "where should I look for a particular feature," 
 Start with:
 
 - [User Frontend](/docs/en/surfaces/frontend/)
+- [Orchestration](/docs/en/surfaces/orchestration/)
 - [Desktop Interface](/docs/en/surfaces/desktop-ui/)
 
 ### Administrators
@@ -71,5 +77,6 @@ In addition to the interface pages, you should also read:
 ## Further Reading
 
 - [Getting Started](/docs/en/start/desktop/)
+- [Orchestration](/docs/en/surfaces/orchestration/)
 - [Operations Overview](/docs/en/ops/)
 - [Help](/docs/en/help/)

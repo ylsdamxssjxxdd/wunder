@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestration | 使用说明书</title>
+  <meta name="description" content="The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.">
+  <link rel="stylesheet" href="/docs/site.css?v=c9863d5d7815">
+  <script type="module" src="/docs/site.js?v=c9863d5d7815"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
+          <a class="docs-brand" href="/docs/">
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
+            <span class="docs-brand-text">使用说明书</span>
+          </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+        </div>
+        <div class="docs-topbar-center">
+          <label class="docs-search">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+        </div>
+        <div class="docs-topbar-end">
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">在此页面</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"en/surfaces/orchestration","language":"en","title":"Orchestration","summary":"The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.","updated_at":"2026-04-18","read_when":["You want to use the orchestration page instead of a normal swarm run","You need to understand orchestration mode, timeline snapshots, artifacts, and branching"],"source_docs":["docs/设计文档/编排态系统设计.md","docs/方案/编排态系统落地方案.md","docs/API文档.md"],"tab":"Surfaces","group":"Frontend and Desktop","group_path":["Frontend and Desktop"],"url":"/docs/en/surfaces/orchestration/","headings":[{"id":"section-1","level":1,"text":"Orchestration"},{"id":"section-2","level":2,"text":"When to Use It"},{"id":"section-3","level":2,"text":"How to Enter"},{"id":"section-4","level":2,"text":"Page Structure"},{"id":"section-5","level":3,"text":"Canvas"},{"id":"section-6","level":3,"text":"Right Panel"},{"id":"section-7","level":3,"text":"Bottom Timeline"},{"id":"section-8","level":2,"text":"Typical Workflow"},{"id":"section-9","level":2,"text":"Situation Presets"},{"id":"section-10","level":2,"text":"How Artifacts Are Displayed"},{"id":"section-11","level":2,"text":"History, Replay, and Branching"},{"id":"section-12","level":3,"text":"Viewing an Older Round"},{"id":"section-13","level":3,"text":"Continuing from an Older Round"},{"id":"section-14","level":3,"text":"Deleting Later Content"},{"id":"section-15","level":2,"text":"Relationship with the Chat Page"},{"id":"section-16","level":2,"text":"Start and Close"},{"id":"section-17","level":3,"text":"Close"},{"id":"section-18","level":3,"text":"Start"},{"id":"section-19","level":2,"text":"History List"},{"id":"section-20","level":2,"text":"Practical Advice"},{"id":"section-21","level":2,"text":"Further Reading"}],"prev_slug":"en/surfaces/frontend","next_slug":"en/surfaces/web-admin","markdown":"# Orchestration\n\nOrchestration is not just another chat layout. It is the dedicated workbench used when a hive enters orchestration mode.\n\nIn this mode, the queen, workers, and round artifacts keep advancing inside one orchestration run, and the page lets you inspect the state round by round.\n\n## When to Use It\n\nUse orchestration when:\n\n- You want the queen to coordinate workers across multiple user rounds\n- You want artifacts to accumulate round by round and remain inspectable later\n- You want to revisit an earlier round and continue from there as a new branch\n\nIf you only need a one-off parallel swarm task, the swarm page is lighter. If you need continuity, snapshots, and branching, use orchestration.\n\n## How to Enter\n\nA typical entry flow is:\n\n1. Open the swarm area from the left navigation.\n2. Select a hive in the middle column.\n3. Open the orchestration page.\n4. Click `New Orchestration` in the right-side controls.\n\nCreating a new orchestration run forces the queen and all workers onto new orchestration main threads and switches the hive into that orchestration reality.\n\nImportant behavior:\n\n- Only the initial `New Orchestration` creates fresh threads for everyone.\n- Later user rounds continue on the same orchestration threads.\n\n## Page Structure\n\nThe orchestration page uses the same interaction shell as the swarm canvas, but with different default spatial semantics.\n\n### Canvas\n\nThe canvas keeps the same core behaviors as the swarm page:\n\n- Draggable node cards\n- Connectors\n- Align / tidy action\n- Fullscreen mode\n- Matching side-panel and animation behavior\n\nIts default layout meaning is:\n\n- Queen card on the left\n- Worker cards in the middle\n- Artifact container cards on the right\n\nThis is not a rigid three-column table. Tidy alignment restores this default arrangement, but manual dragging is still allowed.\n\n### Right Panel\n\nThe right panel is where you control the current run and send messages to the queen. Its main top actions are:\n\n- New orchestration\n- History\n- Start / Close\n- Situation\n\nA small status lamp appears next to the hive title:\n\n- Gray: inactive run\n- Green: active and ready\n- Blue: currently running\n\n### Bottom Timeline\n\nThe timeline lives inside the canvas as a bottom dock rather than as a separate page block.\n\nIt represents the queen's user rounds, not generic chat threads. It supports:\n\n- Collapse and expand\n- Horizontal scrolling\n- Visible branch structure\n- Clicking a round to inspect messages and artifact snapshots from that time\n\n## Typical Workflow\n\nA common orchestration flow looks like this:\n\n1. Create a new orchestration run.\n2. Pre-fill situations for one or more rounds.\n3. Send a message to the queen from the right panel.\n4. The queen calls the swarm tool in orchestration mode.\n5. Workers produce files inside the current round's artifact directories.\n6. The queen aggregates the result and replies.\n7. A formal user round is added to the timeline.\n\nIf you stop an in-progress round, that interrupted round does not become a formal orchestration round.\n\n## Situation Presets\n\nA situation is round-scoped background context.\n\nWhenever you send a message to the queen, the system prepends the situation for that target round. When the queen dispatches workers during orchestration mode, the same round situation is also injected for workers.\n\nAt the user level, the important points are:\n\n- Situations are stored per round\n- Future rounds can be preset ahead of time\n- You can jump to any round from the situation dialog\n- You can import a `.txt` file to fill multiple rounds\n\nThe import format uses markers like `#1`, `#2`, and so on to separate round content.\n\n## How Artifacts Are Displayed\n\nArtifact nodes are container cards that display file slots.\n\nWhen you select a round in the timeline, the page only shows files from that round's artifact snapshot. This makes it easy to answer \"what exactly existed in round N?\"\n\nKey points:\n\n- Artifact display switches by round snapshot\n- It is driven by directory structure rather than extra business tags\n- Each worker's files appear in its corresponding artifact container\n\n## History, Replay, and Branching\n\n### Viewing an Older Round\n\nWhen you click an older round:\n\n- The right panel shows only that round's message slice\n- The artifact area shows only that round's files\n- Sending is disabled\n\nSo you are inspecting a snapshot, not rewinding the live queen thread.\n\n### Continuing from an Older Round\n\nYou can return to an older round and continue in two common ways:\n\n- Modify that round's situation, then continue\n- Leave the situation unchanged and continue anyway\n\nAs soon as you send from an older round, the system creates a new branch run instead of overwriting the old run.\n\nThat means:\n\n- The old run stays intact\n- The new branch continues from that round\n- The timeline visualizes the branch relationship\n\n### Deleting Later Content\n\nRound nodes expose a context action for deleting everything after that round.\n\nAfter deletion:\n\n- The selected round stays\n- Later rounds are removed\n- Descendant branches grown from those later paths are also removed\n\n## Relationship with the Chat Page\n\nWhen a hive is in active orchestration mode, the corresponding orchestration threads are visibly marked on the normal chat page.\n\nThose threads are protected. The chat page remains viewable, but it cannot be used to break the orchestration reality. In practice:\n\n- You cannot send directly into the orchestration thread from normal chat\n- You cannot replace it with a new main thread\n- You cannot switch threads or change the main thread freely\n- History controls can still be opened, but they cannot be used to disrupt the active orchestration state\n\nTo continue the orchestration, go back to the orchestration page.\n\n## Start and Close\n\nThe right panel exposes `Start / Close` for the currently loaded run.\n\n### Close\n\nClosing a run:\n\n- Does not leave the orchestration page\n- Keeps that run as viewable history\n- Switches the whole hive back to fresh normal main threads\n\n### Start\n\nIf the currently loaded run is inactive, `Start` reactivates it as the current orchestration reality.\n\nThis does not create a new run. It re-enables the existing one.\n\n## History List\n\nThe `History` action opens the hive's orchestration history.\n\nFrom there you can:\n\n- Inspect run timestamps\n- Load an older run\n- Delete a history item\n\nWhen a historical run is loaded, the system tries to reuse the original queen thread. Missing worker threads can be recreated later if needed.\n\n## Practical Advice\n\n- Confirm worker roles before creating a new orchestration run.\n- For long workflows, preset future situations first.\n- If you want to compare alternate paths, continue from an older round and let the system create a branch.\n- If you must interrupt a run, stop it from the orchestration panel instead of trying to operate through normal chat.\n\n## Further Reading\n\n- [User Frontend](/docs/en/surfaces/frontend/)\n- [Swarm Collaboration](/docs/en/concepts/swarm/)\n- [Stream Events](/docs/en/reference/stream-events/)\n","source_path":"使用说明书/en/surfaces/orchestration.md"}</script>
+</body>
+</html>

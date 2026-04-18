@@ -1789,6 +1789,7 @@ mod tests {
         stable_json_signature,
     };
     use anyhow::Result;
+    use std::io::Write;
     use serde_json::json;
     use std::fs;
     use tempfile::tempdir;

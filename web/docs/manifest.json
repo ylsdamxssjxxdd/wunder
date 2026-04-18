@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-04-15T04:24:36.643297+00:00",
+  "generated_at": "2026-04-17T23:23:54.462000+00:00",
   "site": {
     "name": "使用说明书",
     "description": "wunder is an agent orchestration system for organizations and individual users. / wunder 是一个面向组织和个人用户的智能体调度系统。",
@@ -463,6 +463,12 @@
                     "title": "用户端界面",
                     "summary": "你的主要工作台。三栏布局：左栏导航、中栏列表、右栏工作区。聊天、文件、智能体、工具、设置都在这里。",
                     "url": "/docs/zh-CN/surfaces/frontend/"
+                  },
+                  {
+                    "slug": "zh-CN/surfaces/orchestration",
+                    "title": "编排功能",
+                    "summary": "编排页是母蜂、工蜂与产物协同的专用工作台，用来持续推进一个蜂群级编排 run，并按母蜂用户轮次查看历史、分支与产物快照。",
+                    "url": "/docs/zh-CN/surfaces/orchestration/"
                   },
                   {
                     "slug": "zh-CN/surfaces/web-admin",
@@ -1157,6 +1163,12 @@
                     "url": "/docs/en/surfaces/frontend/"
                   },
                   {
+                    "slug": "en/surfaces/orchestration",
+                    "title": "Orchestration",
+                    "summary": "The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.",
+                    "url": "/docs/en/surfaces/orchestration/"
+                  },
+                  {
                     "slug": "en/surfaces/web-admin",
                     "title": "Admin Interface",
                     "summary": "The admin frontend lives in `web/`, handling models, tools, users, channels, and runtime governance.",
@@ -1461,6 +1473,7 @@
     "zh-CN/integration/mcp-endpoint",
     "zh-CN/surfaces/index",
     "zh-CN/surfaces/frontend",
+    "zh-CN/surfaces/orchestration",
     "zh-CN/surfaces/web-admin",
     "zh-CN/surfaces/desktop-ui",
     "zh-CN/ops/index",
@@ -1549,6 +1562,7 @@
     "en/integration/mcp-endpoint",
     "en/surfaces/index",
     "en/surfaces/frontend",
+    "en/surfaces/orchestration",
     "en/surfaces/web-admin",
     "en/surfaces/desktop-ui",
     "en/ops/index",
@@ -6086,7 +6100,7 @@
       "language": "zh-CN",
       "title": "界面概览",
       "summary": "Wunder 有三个界面：用户端、管理端、桌面端。用户端做日常工作，管理端做系统治理，桌面端是个人主入口。",
-      "updated_at": "2026-04-14",
+      "updated_at": "2026-04-18",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6129,25 +6143,30 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "按角色选择"
+          "text": "关键工作台"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "普通用户"
+          "level": 2,
+          "text": "按角色选择"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "管理员"
+          "text": "普通用户"
         },
         {
           "id": "section-10",
+          "level": 3,
+          "text": "管理员"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "常见误区"
         },
         {
-          "id": "section-11",
+          "id": "section-12",
           "level": 2,
           "text": "延伸阅读"
         }
@@ -6162,7 +6181,7 @@
       "language": "zh-CN",
       "title": "用户端界面",
       "summary": "你的主要工作台。三栏布局：左栏导航、中栏列表、右栏工作区。聊天、文件、智能体、工具、设置都在这里。",
-      "updated_at": "2026-04-14",
+      "updated_at": "2026-04-18",
       "read_when": [],
       "source_docs": [],
       "tab": "界面",
@@ -6205,118 +6224,249 @@
         {
           "id": "section-7",
           "level": 2,
-          "text": "文件功能"
+          "text": "编排工作台"
         },
         {
           "id": "section-8",
-          "level": 3,
-          "text": "工作区浏览"
+          "level": 2,
+          "text": "文件功能"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "文件预览"
+          "text": "工作区浏览"
         },
         {
           "id": "section-10",
+          "level": 3,
+          "text": "文件预览"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "智能体管理"
         },
         {
-          "id": "section-11",
+          "id": "section-12",
           "level": 3,
           "text": "查看智能体"
         },
         {
-          "id": "section-12",
+          "id": "section-13",
           "level": 3,
           "text": "配置智能体"
         },
         {
-          "id": "section-13",
+          "id": "section-14",
           "level": 3,
           "text": "新建线程"
         },
         {
-          "id": "section-14",
+          "id": "section-15",
           "level": 2,
           "text": "工具与技能"
         },
         {
-          "id": "section-15",
+          "id": "section-16",
           "level": 3,
           "text": "工具面板"
         },
         {
-          "id": "section-16",
+          "id": "section-17",
           "level": 3,
           "text": "知识库"
         },
         {
-          "id": "section-17",
+          "id": "section-18",
           "level": 2,
           "text": "定时任务"
         },
         {
-          "id": "section-18",
+          "id": "section-19",
           "level": 2,
           "text": "我的概况与设置"
         },
         {
-          "id": "section-19",
+          "id": "section-20",
           "level": 3,
           "text": "我的概况"
         },
         {
-          "id": "section-20",
+          "id": "section-21",
           "level": 3,
           "text": "账户管理"
         },
         {
-          "id": "section-21",
+          "id": "section-22",
           "level": 3,
           "text": "系统设置"
         },
         {
-          "id": "section-22",
+          "id": "section-23",
           "level": 3,
           "text": "帮助手册"
         },
         {
-          "id": "section-23",
+          "id": "section-24",
           "level": 2,
           "text": "界面使用技巧"
         },
         {
-          "id": "section-24",
+          "id": "section-25",
           "level": 3,
           "text": "快速导航"
         },
         {
-          "id": "section-25",
+          "id": "section-26",
           "level": 3,
           "text": "会话管理"
         },
         {
-          "id": "section-26",
+          "id": "section-27",
           "level": 3,
           "text": "右栏工作"
         },
         {
-          "id": "section-27",
+          "id": "section-28",
           "level": 3,
           "text": "状态识别"
         },
         {
-          "id": "section-28",
+          "id": "section-29",
           "level": 2,
           "text": "延伸阅读"
         }
       ],
       "prev_slug": "zh-CN/surfaces/index",
-      "next_slug": "zh-CN/surfaces/web-admin",
+      "next_slug": "zh-CN/surfaces/orchestration",
       "source_path": "zh-CN/surfaces/frontend.md",
       "output_path": "zh-CN/surfaces/frontend/index.html"
+    },
+    "zh-CN/surfaces/orchestration": {
+      "slug": "zh-CN/surfaces/orchestration",
+      "language": "zh-CN",
+      "title": "编排功能",
+      "summary": "编排页是母蜂、工蜂与产物协同的专用工作台，用来持续推进一个蜂群级编排 run，并按母蜂用户轮次查看历史、分支与产物快照。",
+      "updated_at": "2026-04-18",
+      "read_when": [],
+      "source_docs": [],
+      "tab": "界面",
+      "group": "前端与桌面",
+      "group_path": [
+        "前端与桌面"
+      ],
+      "url": "/docs/zh-CN/surfaces/orchestration/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "编排功能"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "适合什么场景"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "进入方式"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "页面布局"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "画布"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "右侧栏"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "底部时间线"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "基本工作流"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "态势设置"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "产物怎么看"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "历史、回看与分支"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "回看旧轮次"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "从旧轮次继续"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "删除后续内容"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "编排态与聊天页的关系"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "启动与关闭"
+        },
+        {
+          "id": "section-17",
+          "level": 3,
+          "text": "关闭"
+        },
+        {
+          "id": "section-18",
+          "level": 3,
+          "text": "启动"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "历史列表"
+        },
+        {
+          "id": "section-20",
+          "level": 2,
+          "text": "使用建议"
+        },
+        {
+          "id": "section-21",
+          "level": 2,
+          "text": "延伸阅读"
+        }
+      ],
+      "prev_slug": "zh-CN/surfaces/frontend",
+      "next_slug": "zh-CN/surfaces/web-admin",
+      "source_path": "zh-CN/surfaces/orchestration.md",
+      "output_path": "zh-CN/surfaces/orchestration/index.html"
     },
     "zh-CN/surfaces/web-admin": {
       "slug": "zh-CN/surfaces/web-admin",
@@ -6494,7 +6644,7 @@
           "text": "延伸阅读"
         }
       ],
-      "prev_slug": "zh-CN/surfaces/frontend",
+      "prev_slug": "zh-CN/surfaces/orchestration",
       "next_slug": "zh-CN/surfaces/desktop-ui",
       "source_path": "zh-CN/surfaces/web-admin.md",
       "output_path": "zh-CN/surfaces/web-admin/index.html"
@@ -14255,7 +14405,7 @@
       "language": "en",
       "title": "Interface Overview",
       "summary": "Wunder currently maintains three interface surfaces — the user-side frontend, the admin frontend, and the desktop client. They share the same backend capabilities but serve different responsibilities.",
-      "updated_at": "2026-04-13",
+      "updated_at": "2026-04-18",
       "read_when": [
         "You want to quickly understand what the user frontend, admin frontend, and desktop each do",
         "You are looking for which interface a particular feature belongs to"
@@ -14394,28 +14544,166 @@
         {
           "id": "section-10",
           "level": 2,
-          "text": "Dangerous Operations in System Settings"
+          "text": "Orchestration Workbench"
         },
         {
           "id": "section-11",
           "level": 2,
-          "text": "Help Manual Entry"
+          "text": "Dangerous Operations in System Settings"
         },
         {
           "id": "section-12",
           "level": 2,
-          "text": "When to Check This Page First"
+          "text": "Help Manual Entry"
         },
         {
           "id": "section-13",
+          "level": 2,
+          "text": "When to Check This Page First"
+        },
+        {
+          "id": "section-14",
           "level": 2,
           "text": "Further Reading"
         }
       ],
       "prev_slug": "en/surfaces/index",
-      "next_slug": "en/surfaces/web-admin",
+      "next_slug": "en/surfaces/orchestration",
       "source_path": "en/surfaces/frontend.md",
       "output_path": "en/surfaces/frontend/index.html"
+    },
+    "en/surfaces/orchestration": {
+      "slug": "en/surfaces/orchestration",
+      "language": "en",
+      "title": "Orchestration",
+      "summary": "The orchestration page is a dedicated workbench for queen-worker-artifact collaboration. It lets one hive continue a long-running orchestration run, inspect round snapshots, and branch from earlier rounds.",
+      "updated_at": "2026-04-18",
+      "read_when": [
+        "You want to use the orchestration page instead of a normal swarm run",
+        "You need to understand orchestration mode, timeline snapshots, artifacts, and branching"
+      ],
+      "source_docs": [
+        "docs/设计文档/编排态系统设计.md",
+        "docs/方案/编排态系统落地方案.md",
+        "docs/API文档.md"
+      ],
+      "tab": "Surfaces",
+      "group": "Frontend and Desktop",
+      "group_path": [
+        "Frontend and Desktop"
+      ],
+      "url": "/docs/en/surfaces/orchestration/",
+      "headings": [
+        {
+          "id": "section-1",
+          "level": 1,
+          "text": "Orchestration"
+        },
+        {
+          "id": "section-2",
+          "level": 2,
+          "text": "When to Use It"
+        },
+        {
+          "id": "section-3",
+          "level": 2,
+          "text": "How to Enter"
+        },
+        {
+          "id": "section-4",
+          "level": 2,
+          "text": "Page Structure"
+        },
+        {
+          "id": "section-5",
+          "level": 3,
+          "text": "Canvas"
+        },
+        {
+          "id": "section-6",
+          "level": 3,
+          "text": "Right Panel"
+        },
+        {
+          "id": "section-7",
+          "level": 3,
+          "text": "Bottom Timeline"
+        },
+        {
+          "id": "section-8",
+          "level": 2,
+          "text": "Typical Workflow"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "Situation Presets"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "How Artifacts Are Displayed"
+        },
+        {
+          "id": "section-11",
+          "level": 2,
+          "text": "History, Replay, and Branching"
+        },
+        {
+          "id": "section-12",
+          "level": 3,
+          "text": "Viewing an Older Round"
+        },
+        {
+          "id": "section-13",
+          "level": 3,
+          "text": "Continuing from an Older Round"
+        },
+        {
+          "id": "section-14",
+          "level": 3,
+          "text": "Deleting Later Content"
+        },
+        {
+          "id": "section-15",
+          "level": 2,
+          "text": "Relationship with the Chat Page"
+        },
+        {
+          "id": "section-16",
+          "level": 2,
+          "text": "Start and Close"
+        },
+        {
+          "id": "section-17",
+          "level": 3,
+          "text": "Close"
+        },
+        {
+          "id": "section-18",
+          "level": 3,
+          "text": "Start"
+        },
+        {
+          "id": "section-19",
+          "level": 2,
+          "text": "History List"
+        },
+        {
+          "id": "section-20",
+          "level": 2,
+          "text": "Practical Advice"
+        },
+        {
+          "id": "section-21",
+          "level": 2,
+          "text": "Further Reading"
+        }
+      ],
+      "prev_slug": "en/surfaces/frontend",
+      "next_slug": "en/surfaces/web-admin",
+      "source_path": "en/surfaces/orchestration.md",
+      "output_path": "en/surfaces/orchestration/index.html"
     },
     "en/surfaces/web-admin": {
       "slug": "en/surfaces/web-admin",
@@ -14485,7 +14773,7 @@
           "text": "Further Reading"
         }
       ],
-      "prev_slug": "en/surfaces/frontend",
+      "prev_slug": "en/surfaces/orchestration",
       "next_slug": "en/surfaces/desktop-ui",
       "source_path": "en/surfaces/web-admin.md",
       "output_path": "en/surfaces/web-admin/index.html"

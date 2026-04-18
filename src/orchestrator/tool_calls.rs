@@ -72,6 +72,28 @@ fn think_tag_regex() -> Option<&'static Regex> {
         .as_ref()
 }
 
+fn qwen_function_open_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        compile_regex(
+            r#"(?is)<function\s*=\s*(?P<name>[^>\s/]+)\s*>"#,
+            "qwen_function_open",
+        )
+    })
+    .as_ref()
+}
+
+fn qwen_parameter_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        compile_regex(
+            r#"(?is)<parameter\s*=\s*(?P<name>[^>\s/]+)\s*>(?P<value>.*?)</parameter\s*>"#,
+            "qwen_parameter",
+        )
+    })
+    .as_ref()
+}
+
 fn find_json_end(text: &str, start: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut stack: Vec<u8> = Vec::new();
@@ -609,6 +631,80 @@ fn extract_tagged_text(payload: &str, tag: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn clean_xml_attribute_name(raw: &str) -> String {
+    raw.trim()
+        .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '=' | '/' | '>' | '<'))
+        .trim()
+        .to_string()
+}
+
+fn parse_qwen_parameter_value(raw: &str) -> Value {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Value::String(String::new());
+    }
+    serde_json::from_str::<Value>(trimmed).unwrap_or_else(|_| Value::String(trimmed.to_string()))
+}
+
+fn parse_qwen_xml_tool_call_payload(payload: &str) -> Option<ToolCall> {
+    let function_caps = qwen_function_open_regex()?.captures(payload)?;
+    let function_match = function_caps.get(0)?;
+    let function_name = clean_tool_call_name(function_caps.name("name")?.as_str());
+    if function_name.is_empty() {
+        return None;
+    }
+
+    let body_start = function_match.end();
+    let lower = payload.to_ascii_lowercase();
+    let body_end = lower[body_start..]
+        .find("</function>")
+        .map(|offset| body_start + offset)
+        .unwrap_or(payload.len());
+    let body = payload.get(body_start..body_end).unwrap_or("").trim();
+
+    let mut arguments = Map::new();
+    if let Some(parameter_regex) = qwen_parameter_regex() {
+        for captures in parameter_regex.captures_iter(body) {
+            let Some(raw_name) = captures.name("name").map(|value| value.as_str()) else {
+                continue;
+            };
+            let name = clean_xml_attribute_name(raw_name);
+            if name.is_empty() {
+                continue;
+            }
+            let value = captures.name("value").map(|entry| entry.as_str()).unwrap_or("");
+            arguments.insert(name, parse_qwen_parameter_value(value));
+        }
+    }
+
+    if arguments.is_empty() {
+        if let Some(arguments_text) = extract_tagged_text(body, "arguments")
+            .or_else(|| extract_tagged_text(body, "parameters"))
+            .or_else(|| extract_tagged_text(body, "args"))
+        {
+            let parsed = serde_json::from_str::<Value>(arguments_text.as_str())
+                .map(normalize_tool_call_arguments)
+                .unwrap_or_else(|_| json!({ "raw": arguments_text }));
+            return Some(ToolCall {
+                id: None,
+                name: function_name,
+                arguments: parsed,
+            });
+        }
+        if let Some(input_text) =
+            extract_tagged_text(body, "input").or_else(|| extract_tagged_text(body, "patch"))
+        {
+            arguments.insert("input".to_string(), Value::String(input_text));
+        }
+    }
+
+    Some(ToolCall {
+        id: None,
+        name: function_name,
+        arguments: Value::Object(arguments),
+    })
+}
+
 fn normalize_tool_call_arguments(value: Value) -> Value {
     match value {
         Value::Null => json!({}),
@@ -631,7 +727,11 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
     let name = extract_tagged_text(payload, "name")
         .or_else(|| extract_tagged_text(payload, "tool"))
         .map(|value| clean_tool_call_name(value.as_str()))
-        .filter(|value| !value.is_empty())?;
+        .filter(|value| !value.is_empty());
+    let Some(name) = name.or_else(|| parse_qwen_xml_tool_call_payload(payload).map(|call| call.name))
+    else {
+        return None;
+    };
     let arguments = if let Some(arguments_text) =
         extract_tagged_text(payload, "arguments").or_else(|| extract_tagged_text(payload, "args"))
     {
@@ -642,6 +742,8 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
         extract_tagged_text(payload, "input").or_else(|| extract_tagged_text(payload, "patch"))
     {
         json!({ "input": input_text })
+    } else if let Some(call) = parse_qwen_xml_tool_call_payload(payload) {
+        call.arguments
     } else {
         json!({})
     };
@@ -1192,6 +1294,39 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tool_call_qwen_function_parameter_payload() {
+        let content = r#"<tool_call><function=final_response><parameter=content>你好</parameter></function></tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "final_response");
+        assert_eq!(
+            calls[0].arguments.get("content").and_then(Value::as_str),
+            Some("你好")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_qwen_function_multiple_parameters() {
+        let content = r#"<tool_call>
+<function=read_file>
+<parameter=path>"Cargo.toml"</parameter>
+<parameter=start_line>3</parameter>
+</function>
+</tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("Cargo.toml")
+        );
+        assert_eq!(
+            calls[0].arguments.get("start_line").and_then(Value::as_i64),
+            Some(3)
+        );
+    }
+
+    #[test]
     fn test_parse_tool_call_prefixed_name_without_close() {
         let content =
             r#"<tool_call>ptc{"content":"print('ok')","filename":"demo.py","workdir":"."}</think>"#;
@@ -1254,6 +1389,24 @@ mod tests {
             collect_tool_calls_from_output(content, reasoning, None, ToolCallMode::ToolCall);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
+    }
+
+    #[test]
+    fn test_collect_tool_calls_from_reasoning_qwen_xml() {
+        let content = "";
+        let reasoning = r#"<tool_call>
+<function=final_response>
+<parameter=content>你好！有什么我可以帮你的吗？</parameter>
+</function>
+</tool_call>"#;
+        let calls =
+            collect_tool_calls_from_output(content, reasoning, None, ToolCallMode::ToolCall);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "final_response");
+        assert_eq!(
+            calls[0].arguments.get("content").and_then(Value::as_str),
+            Some("你好！有什么我可以帮你的吗？")
+        );
     }
 
     #[test]

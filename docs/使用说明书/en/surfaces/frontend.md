@@ -111,6 +111,8 @@ The chat input area is a context assembler, not a plain text box.
 
 Sending is blocked while attachments are still being processed. This is a safeguard, not a frozen UI.
 
+If the current hive is in active orchestration mode, the orchestration thread is also protected in normal chat. You can inspect it, but continuing that workflow must happen on the orchestration page.
+
 ## Why the "New Thread" Button Is Sometimes Disabled
 
 The chat page currently disables the `New Thread` button while an agent is running.
@@ -139,6 +141,30 @@ The right panel and canvas workflow display also have a clearer division of labo
 - Sub-agent nodes retain their completed tool traces after finishing
 
 In other words, the swarm workflow area now focuses on "what tools were called and which step was reached," rather than just stacking statuses, session IDs, or summaries.
+
+## Orchestration Workbench
+
+The user frontend also includes a dedicated orchestration page in addition to normal chat and the swarm page.
+
+It is the right place when:
+
+- The queen needs to coordinate workers across multiple user rounds
+- You want message, situation, and artifact snapshots per queen user round
+- You want to continue from an older round and create a branch instead of overwriting history
+
+Compared with the standard swarm page, the orchestration page treats the workflow as one persistent run rather than a one-off dispatch.
+
+Important behavior:
+
+- A new orchestration run creates fresh orchestration main threads for the queen and workers
+- Later rounds stay on the same orchestration threads
+- The timeline is based on the queen's user rounds
+- Older rounds are viewed as snapshots by default
+- Sending from an older round creates a new branch automatically
+
+For the full operational guide, see:
+
+- [Orchestration](/docs/en/surfaces/orchestration/)
 
 ## Dangerous Operations in System Settings
 
@@ -176,6 +202,7 @@ This page is useful when:
 ## Further Reading
 
 - [Getting Started with Desktop](/docs/en/start/desktop/)
+- [Orchestration](/docs/en/surfaces/orchestration/)
 - [Desktop Local Mode](/docs/en/ops/desktop-local-mode/)
 - [Swarm Collaboration](/docs/en/concepts/swarm/)
 - [Troubleshooting](/docs/en/help/troubleshooting/)
