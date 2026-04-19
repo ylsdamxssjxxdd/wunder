@@ -1182,6 +1182,106 @@ pub fn ensure_orchestration_member_session(
     Ok((binding, true))
 }
 
+pub fn ensure_orchestration_binding_main_thread(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    state: &OrchestrationHiveState,
+    binding: &OrchestrationMemberBinding,
+    round_index: i64,
+) -> Result<bool> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_agent_id = binding.agent_id.trim();
+    let cleaned_session_id = binding.session_id.trim();
+    if cleaned_user_id.is_empty()
+        || cleaned_agent_id.is_empty()
+        || cleaned_session_id.is_empty()
+        || state.orchestration_id.trim().is_empty()
+        || state.run_id.trim().is_empty()
+    {
+        return Ok(false);
+    }
+    let Some(session) = storage.get_chat_session(cleaned_user_id, cleaned_session_id)? else {
+        return Ok(false);
+    };
+    let session_agent_id = session.agent_id.as_deref().unwrap_or("").trim();
+    if session_agent_id != cleaned_agent_id {
+        return Ok(false);
+    }
+    persist_session_context(
+        storage,
+        cleaned_user_id,
+        cleaned_session_id,
+        &OrchestrationSessionContext {
+            mode: ORCHESTRATION_MODE.to_string(),
+            run_id: state.run_id.clone(),
+            group_id: state.group_id.clone(),
+            role: binding.role.trim().to_string(),
+            round_index: normalize_round_index(round_index),
+            mother_agent_id: state.mother_agent_id.clone(),
+        },
+    )?;
+    let already_main = storage
+        .get_agent_thread(cleaned_user_id, cleaned_agent_id)?
+        .map(|record| record.session_id.trim() == cleaned_session_id)
+        .unwrap_or(false);
+    bind_member_session_as_main_thread(
+        storage,
+        cleaned_user_id,
+        cleaned_agent_id,
+        cleaned_session_id,
+    )?;
+    Ok(!already_main)
+}
+
+pub fn repair_active_orchestration_main_threads(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    state: &OrchestrationHiveState,
+    round_index: i64,
+) -> Result<Vec<String>> {
+    if !state.active || state.orchestration_id.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let bindings = list_member_bindings(storage, &state.orchestration_id)?;
+    let mut repaired_agent_ids = Vec::new();
+    for binding in bindings {
+        if ensure_orchestration_binding_main_thread(storage, user_id, state, &binding, round_index)? {
+            repaired_agent_ids.push(binding.agent_id);
+        }
+    }
+    Ok(repaired_agent_ids)
+}
+
+pub fn repair_orchestration_session_main_thread(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    session_id: &str,
+    round_index: i64,
+) -> Result<Option<(OrchestrationHiveState, OrchestrationMemberBinding, bool)>> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_session_id = session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_session_id.is_empty() {
+        return Ok(None);
+    }
+    let Some(session) = storage.get_chat_session(cleaned_user_id, cleaned_session_id)? else {
+        return Ok(None);
+    };
+    let agent_id = session.agent_id.as_deref().unwrap_or("").trim();
+    if agent_id.is_empty() {
+        return Ok(None);
+    }
+    let Some((state, binding)) = active_orchestration_for_agent(storage, cleaned_user_id, agent_id)
+    else {
+        return Ok(None);
+    };
+    if binding.session_id.trim() != cleaned_session_id {
+        return Ok(Some((state, binding, false)));
+    }
+    let repaired =
+        ensure_orchestration_binding_main_thread(storage, cleaned_user_id, &state, &binding, round_index)?;
+    Ok(Some((state, binding, repaired)))
+}
+
 fn bind_member_session_as_main_thread(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -1196,27 +1296,18 @@ fn bind_member_session_as_main_thread(
     }
     let now = now_ts();
     let existing = storage.get_agent_thread(cleaned_user_id, cleaned_agent_id)?;
-    let (thread_id, created_at, status) = if let Some(record) = existing {
-        let next_thread_id = if record.thread_id.trim().is_empty() {
-            format!("thread_{cleaned_session_id}")
-        } else {
-            record.thread_id
-        };
+    let (created_at, status) = if let Some(record) = existing {
         let next_status = if record.status.trim().is_empty() {
             "idle".to_string()
         } else {
             record.status
         };
-        (next_thread_id, record.created_at, next_status)
+        (record.created_at, next_status)
     } else {
-        (
-            format!("thread_{cleaned_session_id}"),
-            now,
-            "idle".to_string(),
-        )
+        (now, "idle".to_string())
     };
     storage.upsert_agent_thread(&AgentThreadRecord {
-        thread_id,
+        thread_id: format!("thread_{cleaned_session_id}"),
         user_id: cleaned_user_id.to_string(),
         agent_id: cleaned_agent_id.to_string(),
         session_id: cleaned_session_id.to_string(),
@@ -1422,12 +1513,12 @@ mod tests {
             "orchestration/orch_demo/round_0002/situation.txt"
         );
         assert_eq!(
-            full_agent_artifact_path("orch_demo", 3, "情报官", "agent_a"),
-            "orchestration/orch_demo/round_0003/情报官"
+            full_agent_artifact_path("orch_demo", 3, "分析员", "agent_a"),
+            "orchestration/orch_demo/round_0003/分析员"
         );
         assert_eq!(
-            prompt_agent_artifact_path(3, "情报官", "agent_a"),
-            "round_0003/情报官"
+            prompt_agent_artifact_path(3, "分析员", "agent_a"),
+            "round_0003/分析员"
         );
     }
 
@@ -1454,8 +1545,8 @@ mod tests {
     #[test]
     fn artifact_dir_name_prefers_agent_name() {
         assert_eq!(
-            orchestration_agent_artifact_dir_name("蓝军技术官", "agent_x"),
-            "蓝军技术官"
+            orchestration_agent_artifact_dir_name("协作技术角色", "agent_x"),
+            "协作技术角色"
         );
         assert_eq!(
             orchestration_agent_artifact_dir_name(" Demo:Agent? ", "agent_x"),

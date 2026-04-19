@@ -745,3 +745,125 @@ async fn disconnected_history_restore_keeps_orchestration_inactive() {
     assert_eq!(mother_thread_before.session_id, mother_session_before);
     assert_eq!(worker_thread_before.session_id, worker_session_before);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn get_state_repairs_mother_main_thread_back_to_orchestration_session() {
+    let app = build_test_app().await;
+    let user = create_user_session(&app, "orch_repair_user");
+    let hive = create_hive(
+        &app,
+        &user,
+        "orch_repair_hive",
+        "Orch Repair Hive",
+        "repair mother main thread",
+    );
+    let mother = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_mother_repair",
+        "Mother Repair",
+        true,
+    );
+    let _worker = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_worker_repair",
+        "Worker Repair",
+        false,
+    );
+
+    let (status, create_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::POST,
+        "/wunder/beeroom/orchestration/state/create",
+        Some(json!({
+            "group_id": hive.hive_id,
+            "mother_agent_id": mother.agent_id,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mother_orchestration_session =
+        member_session_id(&create_payload, "/data/member_threads", &mother.agent_id);
+    assert!(!mother_orchestration_session.is_empty());
+
+    let detached_session_id = "sess_detached_mother_repair";
+    let now = now_ts();
+    app.state
+        .user_store
+        .upsert_chat_session(&wunder_server::storage::ChatSessionRecord {
+            session_id: detached_session_id.to_string(),
+            user_id: user.user_id.clone(),
+            title: "Detached Mother Session".to_string(),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+            last_message_at: now,
+            agent_id: Some(mother.agent_id.clone()),
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        })
+        .expect("create detached chat session");
+    app.state
+        .user_store
+        .upsert_agent_thread(&wunder_server::storage::AgentThreadRecord {
+            thread_id: format!("thread_{detached_session_id}"),
+            user_id: user.user_id.clone(),
+            agent_id: mother.agent_id.clone(),
+            session_id: detached_session_id.to_string(),
+            status: "idle".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("rebind detached mother thread");
+
+    let before = app
+        .state
+        .user_store
+        .get_agent_thread(&user.user_id, &mother.agent_id)
+        .expect("load mother thread before")
+        .expect("mother thread before exists");
+    assert_eq!(before.session_id, detached_session_id);
+
+    let (status, state_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::GET,
+        &format!(
+            "/wunder/beeroom/orchestration/state?group_id={}",
+            hive.hive_id
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        state_payload.pointer("/data/active").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        state_payload
+            .pointer("/data/state/mother_session_id")
+            .and_then(Value::as_str),
+        Some(mother_orchestration_session.as_str())
+    );
+
+    let repaired = app
+        .state
+        .user_store
+        .get_agent_thread(&user.user_id, &mother.agent_id)
+        .expect("load mother thread after")
+        .expect("mother thread after exists");
+    assert_eq!(repaired.session_id, mother_orchestration_session);
+    assert_eq!(
+        repaired.thread_id,
+        format!("thread_{mother_orchestration_session}")
+    );
+}

@@ -1121,7 +1121,7 @@ const handleSendToMother = async () => {
       await resolveRoundSituation(actualRoundIndex);
     await syncMotherSessionContext(actualRoundIndex);
     ensureOrchestrationDispatchFlowActive(flowToken);
-    const includePrimer = state?.motherPrimerInjected !== true;
+    const includePrimer = actualRoundIndex === 1 && state?.motherPrimerInjected !== true;
     const templates = await ensureOrchestrationPromptTemplates();
     ensureOrchestrationDispatchFlowActive(flowToken);
     const dispatchContent = buildMotherDispatchEnvelope({

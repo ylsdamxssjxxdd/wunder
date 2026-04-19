@@ -106,7 +106,8 @@ export const buildMotherDispatchEnvelope = (options: {
   templates: OrchestrationPromptTemplates;
 }) => {
   const blocks: string[] = [];
-  if (options.includePrimer) {
+  const shouldIncludePrimer = options.includePrimer && Math.max(1, Number(options.roundIndex || 1)) === 1;
+  if (shouldIncludePrimer) {
     blocks.push(
       buildMotherOrchestrationPrimer({
         group: options.group,

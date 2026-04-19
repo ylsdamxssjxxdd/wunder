@@ -281,6 +281,36 @@ const resolveRoundUserMessageWindow = (
   if (!userMessages.length) {
     return null;
   }
+  const targetRound = formalRounds[targetFormalPosition] || null;
+  if (!targetRound) {
+    return null;
+  }
+  const nextFormalRound = formalRounds[targetFormalPosition + 1] || null;
+  const targetCreatedAt = Number(targetRound.createdAt || 0);
+  const nextCreatedAt = Number(nextFormalRound?.createdAt || 0);
+  if (targetCreatedAt > 0) {
+    const targetMessageIndex = userMessages.findIndex((message) => {
+      const timeMs = normalizeMsTime(message?.time);
+      if (timeMs <= 0 || timeMs < targetCreatedAt) {
+        return false;
+      }
+      return !(nextCreatedAt > 0 && timeMs >= nextCreatedAt);
+    });
+    if (targetMessageIndex >= 0) {
+      const startMessage = userMessages[targetMessageIndex] || null;
+      const endMessage =
+        nextCreatedAt > 0
+          ? userMessages.find((message) => normalizeMsTime(message?.time) >= nextCreatedAt) || null
+          : null;
+      if (startMessage) {
+        return {
+          orderedMessages,
+          startKey: normalizeText(startMessage.key),
+          endKey: normalizeText(endMessage?.key)
+        };
+      }
+    }
+  }
   const mapping = new Map<string, number>();
   let searchCursor = 0;
   formalRounds.forEach((round) => {
@@ -304,8 +334,8 @@ const resolveRoundUserMessageWindow = (
   if (targetMessageIndex == null || targetMessageIndex < 0 || targetMessageIndex >= userMessages.length) {
     return null;
   }
-  const nextFormalRound = formalRounds[targetFormalPosition + 1] || null;
-  const nextMessageIndex = nextFormalRound ? mapping.get(nextFormalRound.id) ?? -1 : -1;
+  const nextFormalRoundByText = formalRounds[targetFormalPosition + 1] || null;
+  const nextMessageIndex = nextFormalRoundByText ? mapping.get(nextFormalRoundByText.id) ?? -1 : -1;
   const startMessage = userMessages[targetMessageIndex] || null;
   const endMessage =
     nextMessageIndex >= 0 && nextMessageIndex < userMessages.length ? userMessages[nextMessageIndex] : null;
@@ -372,6 +402,20 @@ const normalizeRemoteRoundState = (value: unknown) => {
   return {
     rounds,
     suppressedMessageRanges: normalizeSuppressedMessageRanges(record.suppressed_message_ranges)
+  };
+};
+
+const attachResponseRoundState = (
+  remoteState: Record<string, unknown> | null,
+  responseRoundState: unknown
+): Record<string, unknown> | null => {
+  if (!remoteState) return null;
+  if (!responseRoundState || typeof responseRoundState !== 'object' || Array.isArray(responseRoundState)) {
+    return remoteState;
+  }
+  return {
+    ...remoteState,
+    round_state: responseRoundState
   };
 };
 
@@ -1248,10 +1292,12 @@ export const useOrchestrationRuntimeState = (options: {
       orchestration_id: normalizedOrchestrationId,
       round_index: normalizedRoundIndex
     });
-    const remoteState =
+    const remoteState = attachResponseRoundState(
       response?.data?.data?.state && typeof response.data.data.state === 'object'
         ? (response.data.data.state as Record<string, unknown>)
-        : null;
+        : null,
+      response?.data?.data?.round_state
+    );
     if (remoteState) {
       const nextState = await applyRemoteState(
         {
@@ -1389,10 +1435,12 @@ export const useOrchestrationRuntimeState = (options: {
       situation: normalizedSituation,
       user_message: normalizedMessage
     });
-    const remoteState =
+    const remoteState = attachResponseRoundState(
       response?.data?.data?.state && typeof response.data.data.state === 'object'
         ? (response.data.data.state as Record<string, unknown>)
-        : null;
+        : null,
+      response?.data?.data?.round_state
+    );
     const nextState = await applyRemoteState(
       remoteState
         ? {
@@ -1443,10 +1491,12 @@ export const useOrchestrationRuntimeState = (options: {
       situation: String(payload.situation || '').trim() || undefined,
       user_message: String(payload.userMessage || '').trim() || undefined
     });
-    const remoteState =
+    const remoteState = attachResponseRoundState(
       response?.data?.data?.state && typeof response.data.data.state === 'object'
         ? (response.data.data.state as Record<string, unknown>)
-        : null;
+        : null,
+      response?.data?.data?.round_state
+    );
     const nextState = await applyRemoteState(
       remoteState
         ? {
@@ -1508,10 +1558,12 @@ export const useOrchestrationRuntimeState = (options: {
       message_ended_at: discardCompletedAt,
       remove_round: removeWholeRound
     });
-    const remoteState =
+    const remoteState = attachResponseRoundState(
       response?.data?.data?.state && typeof response.data.data.state === 'object'
         ? (response.data.data.state as Record<string, unknown>)
-        : null;
+        : null,
+      response?.data?.data?.round_state
+    );
     const appliedState = await applyRemoteState(
       remoteState
         ? {

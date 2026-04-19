@@ -9,11 +9,11 @@ use crate::services::orchestration_context::{
     delete_round_directories_after, latest_formal_round_index, list_history_records, load_hive_state,
     load_history_record, load_round_state, orchestration_agent_artifact_dir_name,
     persist_hive_state, persist_history_record, persist_member_binding, persist_round_state,
-    persist_session_context, rebuild_branch_round_state, round_id, OrchestrationHiveState,
+    persist_session_context, rebuild_branch_round_state, repair_active_orchestration_main_threads,
+    repair_orchestration_session_main_thread, round_id, OrchestrationHiveState,
     OrchestrationHistoryRecord, OrchestrationMemberBinding, OrchestrationRoundRecord,
     OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
-    ORCHESTRATION_HISTORY_STATUS_ACTIVE,
-    ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
+    ORCHESTRATION_HISTORY_STATUS_ACTIVE, ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
 };
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
@@ -154,6 +154,13 @@ async fn update_orchestration_session_context(
     };
     persist_session_context(state.storage.as_ref(), &user_id, session_id, &context)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let _ = repair_orchestration_session_main_thread(
+        state.storage.as_ref(),
+        &user_id,
+        session_id,
+        context.round_index,
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
             "session_id": session_id,
@@ -182,6 +189,18 @@ async fn get_orchestration_state(
         ));
     }
     let state_value = load_hive_state(state.storage.as_ref(), &user_id, &group_id);
+    if let Some(active_state) = state_value.as_ref() {
+        let round_index = latest_formal_round_index(
+            load_or_migrate_round_state(state.as_ref(), &user_id, active_state).as_ref(),
+        );
+        let _ = repair_active_orchestration_main_threads(
+            state.storage.as_ref(),
+            &user_id,
+            active_state,
+            round_index,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
     let bindings = state_value
         .as_ref()
         .map(|item| {
@@ -1259,6 +1278,14 @@ async fn reserve_orchestration_round(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration state not found".to_string()))?;
     let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
         .unwrap_or_else(|| build_initial_round_state(&hive_state));
+    let current_round_index = latest_formal_round_index(Some(&round_state));
+    let _ = repair_active_orchestration_main_threads(
+        state.storage.as_ref(),
+        &user_id,
+        &hive_state,
+        current_round_index,
+    )
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let requested_round_id = payload
         .round_id
         .as_deref()

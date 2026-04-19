@@ -15,7 +15,9 @@ use crate::services::chat_media::{
 };
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
 use crate::services::orchestration_context::{
-    build_locked_thread_message, session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
+    active_orchestration_for_agent, build_locked_thread_message,
+    repair_orchestration_session_main_thread, session_orchestration_lock_info,
+    ORCHESTRATION_THREAD_LOCKED_CODE,
 };
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
@@ -1314,7 +1316,18 @@ async fn send_message(
         .map(str::trim)
         .unwrap_or_default();
     let allow_orchestration_send = orchestration_source == ORCHESTRATION_SOURCE_ALLOW;
-    if !allow_orchestration_send {
+    let session_record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(record) = session_record.as_ref() {
+        reject_or_repair_orchestration_dispatch(
+            state.as_ref(),
+            &resolved.user.user_id,
+            record,
+            allow_orchestration_send,
+        )?;
+    } else if !allow_orchestration_send {
         reject_locked_orchestration_session(state.as_ref(), &resolved.user.user_id, &session_id)?;
     }
     let request = build_chat_request(
@@ -2977,6 +2990,64 @@ fn reject_locked_orchestration_session(
                 "role": lock_binding.role,
             })),
         ));
+    }
+    Ok(())
+}
+
+fn reject_or_repair_orchestration_dispatch(
+    state: &AppState,
+    user_id: &str,
+    session: &crate::storage::ChatSessionRecord,
+    allow_orchestration_send: bool,
+) -> Result<(), Response> {
+    let session_id = session.session_id.trim();
+    let agent_id = session.agent_id.as_deref().unwrap_or("").trim();
+    if agent_id.is_empty() {
+        if !allow_orchestration_send {
+            reject_locked_orchestration_session(state, user_id, session_id)?;
+        }
+        return Ok(());
+    }
+    if let Some((lock_state, lock_binding)) =
+        active_orchestration_for_agent(state.storage.as_ref(), user_id, agent_id)
+    {
+        if lock_binding.session_id.trim() != session_id {
+            return Err(crate::api::errors::error_response_with_detail(
+                StatusCode::CONFLICT,
+                Some(ORCHESTRATION_THREAD_LOCKED_CODE),
+                build_locked_thread_message(&lock_state, &lock_binding),
+                Some("Use the orchestration page to continue this orchestration thread."),
+                Some(json!({
+                    "group_id": lock_state.group_id,
+                    "orchestration_id": lock_state.orchestration_id,
+                    "run_id": lock_state.run_id,
+                    "session_id": lock_binding.session_id,
+                    "agent_id": lock_binding.agent_id,
+                    "role": lock_binding.role,
+                })),
+            ));
+        }
+        if allow_orchestration_send {
+            let round_index =
+                crate::services::orchestration_context::load_session_context(
+                    state.storage.as_ref(),
+                    user_id,
+                    session_id,
+                )
+                .map(|context| context.round_index)
+                .unwrap_or(1);
+            let _ = repair_orchestration_session_main_thread(
+                state.storage.as_ref(),
+                user_id,
+                session_id,
+                round_index,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            return Ok(());
+        }
+    }
+    if !allow_orchestration_send {
+        reject_locked_orchestration_session(state, user_id, session_id)?;
     }
     Ok(())
 }
