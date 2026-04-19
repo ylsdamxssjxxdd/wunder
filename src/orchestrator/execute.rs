@@ -13,6 +13,7 @@ use crate::core::approval::{
 };
 use crate::core::llm_speed::TurnDecodeSpeedAccumulator;
 use crate::services::chat_attachments::persist_user_chat_attachments;
+use crate::services::orchestration_context::session_orchestration_run_root;
 use crate::services::subagents;
 use crate::services::tools::sessions_yield_tool;
 use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
@@ -325,11 +326,21 @@ impl Orchestrator {
                 self.user_tool_manager
                     .build_bindings(&config, &skills_snapshot, &user_id);
             let private_root = self.inner_visible.private_root(&user_id);
+            let mut extra_tool_roots = vec![private_root];
+            if let Some(orchestration_run_root) = session_orchestration_run_root(
+                self.storage.as_ref(),
+                self.workspace.as_ref(),
+                &prepared.workspace_id,
+                &user_id,
+                &session_id,
+            ) {
+                extra_tool_roots.push(orchestration_run_root);
+            }
             let tool_roots = crate::tools::build_tool_roots(
                 &config,
                 &skills_snapshot,
                 Some(&user_tool_bindings),
-                &[private_root],
+                &extra_tool_roots,
             );
             let allowed_tool_names = self.filter_tools_for_model_capability(
                 self.resolve_allowed_tool_names(

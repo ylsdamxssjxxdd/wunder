@@ -85,6 +85,7 @@ use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_worker_dispatch_message,
     ensure_orchestration_member_session, load_dispatch_context, session_has_visible_history,
+    session_orchestration_run_root,
 };
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
@@ -239,6 +240,25 @@ pub(crate) fn build_model_tool_success_with_hint(
         result["next_step_hint"] = Value::String(next_step_hint);
     }
     result
+}
+
+fn collect_orchestration_run_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    session_orchestration_run_root(
+        context.storage.as_ref(),
+        context.workspace.as_ref(),
+        context.workspace_id,
+        context.user_id,
+        context.session_id,
+    )
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect()
+}
+
+fn collect_orchestration_aware_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
+    let mut roots = collect_allow_roots(context);
+    roots.extend(collect_orchestration_run_roots(context));
+    roots
 }
 
 pub(crate) fn tool_result_data(value: &Value) -> &Value {
@@ -8985,7 +9005,7 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
-    let allow_roots = collect_allow_roots(context);
+    let allow_roots = collect_orchestration_aware_allow_roots(context);
     let write_outcome = tokio::task::spawn_blocking(move || {
         let target =
             resolve_tool_path(workspace.as_ref(), &user_id, &path_for_write, &allow_roots)?;
@@ -9006,7 +9026,11 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             });
         }
         let workspace_root = workspace.workspace_root(&user_id);
-        if is_within_root(&workspace_root, &target) {
+        let default_workspace_target = workspace.resolve_path(&user_id, &path_for_write)?;
+        if is_within_root(&workspace_root, &target)
+            && normalize_path_for_compare(&normalize_target_path(&target))
+                == normalize_path_for_compare(&normalize_target_path(&default_workspace_target))
+        {
             workspace.write_file(&user_id, &path_for_write, &content, true)?;
         } else {
             if let Some(parent) = target.parent() {
@@ -10158,6 +10182,89 @@ mod tests {
         }))
         .expect_err("cursor should be validated");
         assert!(err.to_string().contains("cursor"));
+    }
+
+    #[tokio::test]
+    async fn write_file_uses_orchestration_run_root_for_round_short_paths() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.sqlite3");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let run_root = workspace_root.join("workspace-test").join("orchestration").join("orch_demo");
+        std::fs::create_dir_all(&run_root).expect("create run root");
+        crate::services::orchestration_context::persist_session_context(
+            storage.as_ref(),
+            "alice",
+            "sess_mother",
+            &crate::services::orchestration_context::OrchestrationSessionContext {
+                mode: crate::services::orchestration_context::ORCHESTRATION_MODE.to_string(),
+                run_id: "orch_demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                role: "mother".to_string(),
+                round_index: 2,
+                mother_agent_id: "agent_mother".to_string(),
+            },
+        )
+        .expect("persist orchestration context");
+
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let lsp_manager = LspManager::new(workspace.clone());
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_mother",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_mother"),
+            user_round: Some(2),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace: workspace.clone(),
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let result = write_file(
+            &context,
+            &json!({
+                "path": "round_0002/worker/report.txt",
+                "content": "artifact"
+            }),
+        )
+        .await
+        .expect("write file");
+
+        assert_eq!(result["ok"], true);
+        assert!(run_root.join("round_0002/worker/report.txt").is_file());
+        assert!(!workspace_root
+            .join("workspace-test")
+            .join("round_0002/worker/report.txt")
+            .exists());
     }
 
     #[test]

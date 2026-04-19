@@ -327,7 +327,14 @@ pub(crate) fn resolve_tool_path(
     extra_roots: &[PathBuf],
 ) -> Result<PathBuf> {
     match workspace.resolve_path(user_id, raw_path) {
-        Ok(path) => Ok(path),
+        Ok(path) => {
+            if !path.exists() && should_resolve_missing_path_from_extra_roots(raw_path) {
+                if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
+                    return Ok(resolved);
+                }
+            }
+            Ok(path)
+        }
         Err(err) => {
             if let Some(resolved) = resolve_path_in_roots(raw_path, extra_roots) {
                 Ok(resolved)
@@ -336,6 +343,17 @@ pub(crate) fn resolve_tool_path(
             }
         }
     }
+}
+
+fn should_resolve_missing_path_from_extra_roots(raw_path: &str) -> bool {
+    let normalized = raw_path.trim().replace('\\', "/");
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+    let Some(first) = stripped.split('/').next() else {
+        return false;
+    };
+    first
+        .strip_prefix("round_")
+        .is_some_and(|suffix| suffix.len() == 4 && suffix.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
@@ -426,6 +444,69 @@ mod tests {
             normalize_existing_path(&resolved),
             normalize_existing_path(&target)
         );
+    }
+
+    #[test]
+    fn resolve_tool_path_prefers_existing_extra_root_for_missing_workspace_path() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let run_root = workspace_root.join("orchestration").join("orch_demo");
+        let target = run_root.join("round_0002").join("worker").join("report.txt");
+        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+        fs::write(&target, "ok").expect("write target");
+        let db_path = temp.path().join("state.sqlite3");
+        let storage = Arc::new(crate::storage::SqliteStorage::new(
+            db_path.to_string_lossy().to_string(),
+        ));
+        let workspace = crate::workspace::WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &std::collections::HashMap::new(),
+        );
+
+        let resolved = super::resolve_tool_path(
+            &workspace,
+            "alice",
+            "round_0002/worker/report.txt",
+            &[run_root],
+        )
+        .expect("resolved");
+
+        assert_eq!(
+            normalize_existing_path(&resolved),
+            normalize_existing_path(&target)
+        );
+    }
+
+    #[test]
+    fn resolve_tool_path_keeps_regular_missing_workspace_path_in_workspace() {
+        let temp = tempdir().expect("tempdir");
+        let workspace_root = temp.path().join("workspace");
+        let extra_root = temp.path().join("extra");
+        fs::create_dir_all(&extra_root).expect("mkdir extra");
+        let storage = Arc::new(crate::storage::SqliteStorage::new(
+            temp.path()
+                .join("state.sqlite3")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = crate::workspace::WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &std::collections::HashMap::new(),
+        );
+
+        let resolved = super::resolve_tool_path(
+            &workspace,
+            "alice",
+            "notes/new.txt",
+            &[extra_root],
+        )
+        .expect("resolved");
+
+        assert_eq!(resolved, workspace_root.join("alice").join("notes").join("new.txt"));
     }
 
     #[test]

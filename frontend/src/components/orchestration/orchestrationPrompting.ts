@@ -69,10 +69,9 @@ export const buildMotherRoundArtifactInstructions = (options: {
   templates: OrchestrationPromptTemplates;
 }) => {
   const workers = resolveWorkerArtifactLines(options);
-  if (!workers.length) {
-    return '';
-  }
   return renderTemplate(options.templates.round_artifacts, {
+    current_round_dir: buildRoundPromptDirectory(options.roundIndex),
+    current_round_situation_file: `${buildOrchestrationRoundDirName(options.roundIndex)}/situation.txt`,
     worker_artifact_lines: workers.map((item) => item.artifactLine).join('\n')
   }).trim();
 };
@@ -118,6 +117,15 @@ export const buildMotherDispatchEnvelope = (options: {
       })
     );
   }
+  blocks.push(
+    buildMotherRoundArtifactInstructions({
+      group: options.group,
+      agents: options.agents,
+      runId: options.runId,
+      roundIndex: options.roundIndex,
+      templates: options.templates
+    })
+  );
   if (normalizeText(options.situation)) {
     blocks.push(
       renderTemplate(options.templates.situation_context, {

@@ -7,7 +7,7 @@ use anyhow::Result;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 const SESSION_META_PREFIX: &str = "orchestration_session:";
@@ -325,6 +325,25 @@ pub fn load_session_context(
         return None;
     }
     Some(context)
+}
+
+pub fn session_orchestration_run_root(
+    storage: &dyn StorageBackend,
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    user_id: &str,
+    session_id: &str,
+) -> Option<PathBuf> {
+    let context = load_session_context(storage, user_id, session_id)?;
+    if context.run_id.trim().is_empty() {
+        return None;
+    }
+    workspace
+        .resolve_path(
+            workspace_id,
+            &["orchestration", context.run_id.trim()].join("/"),
+        )
+        .ok()
 }
 
 pub fn persist_hive_state(

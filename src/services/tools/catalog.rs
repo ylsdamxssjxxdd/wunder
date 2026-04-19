@@ -374,6 +374,34 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "type": "string",
                         "description": t("tool.spec.read.args.path")
                     },
+                    "files": {
+                        "type": "array",
+                        "description": t("tool.spec.read.args.files"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {
+                                    "type": "string",
+                                    "description": t("tool.spec.read.args.files.path")
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": t("tool.spec.read.args.files.start_line")
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": t("tool.spec.read.args.files.end_line")
+                                },
+                                "line_ranges": {
+                                    "type": "array",
+                                    "description": t("tool.spec.read.args.files.line_ranges"),
+                                    "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}
+                                }
+                            },
+                            "required": ["path"],
+                            "additionalProperties": false
+                        }
+                    },
                     "start_line": {
                         "type": "integer",
                         "description": t("tool.spec.read.args.start_line")
@@ -405,7 +433,10 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "additionalProperties": false
                     }
                 },
-                "required": ["path"],
+                "anyOf": [
+                    {"required": ["path"]},
+                    {"required": ["files"]}
+                ],
                 "additionalProperties": false
             }),
         },
@@ -1411,12 +1442,19 @@ mod tests {
             .expect("start_line description");
         assert!(start_line_description.contains("Start line"));
         assert!(start_line_description.contains("end_line"));
+        assert!(spec.input_schema["properties"]["files"].is_object());
+        let files_description = spec.input_schema["properties"]["files"]["description"]
+            .as_str()
+            .expect("files description");
+        assert!(files_description.contains("List of files"));
         assert!(spec.input_schema["properties"]["file_path"].is_null());
-        assert!(spec.input_schema["properties"]["files"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
-        assert!(spec.input_schema["required"]
+        assert!(spec.input_schema["anyOf"]
             .as_array()
-            .is_some_and(|items| items.iter().any(|item| item == "path")));
+            .is_some_and(|items| items.iter().any(|item| item["required"][0] == "path")));
+        assert!(spec.input_schema["anyOf"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["required"][0] == "files")));
     }
 
     #[test]
@@ -1440,8 +1478,12 @@ mod tests {
             .expect("start_line description");
         assert!(start_line_description.contains("起始行"));
         assert!(start_line_description.contains("end_line"));
+        assert!(spec.input_schema["properties"]["files"].is_object());
+        let files_description = spec.input_schema["properties"]["files"]["description"]
+            .as_str()
+            .expect("files description");
+        assert!(files_description.contains("文件列表"));
         assert!(spec.input_schema["properties"]["file_path"].is_null());
-        assert!(spec.input_schema["properties"]["files"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
     }
 
