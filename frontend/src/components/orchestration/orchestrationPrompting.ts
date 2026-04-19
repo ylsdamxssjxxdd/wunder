@@ -1,5 +1,6 @@
 import type { BeeroomGroup, BeeroomMember } from '@/stores/beeroom';
 import {
+  buildOrchestrationAgentArtifactDirName,
   buildOrchestrationRoundDirName,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
@@ -18,8 +19,8 @@ const normalizeText = normalizeOrchestrationText;
 
 const buildRoundPromptDirectory = (roundIndex: number) => buildOrchestrationRoundDirName(roundIndex);
 
-const buildPromptArtifactPath = (roundIndex: number, agentId: string) =>
-  [buildOrchestrationRoundDirName(roundIndex), normalizeText(agentId)]
+const buildPromptArtifactPath = (roundIndex: number, workerName: string, fallbackAgentId = '') =>
+  [buildOrchestrationRoundDirName(roundIndex), buildOrchestrationAgentArtifactDirName(workerName, fallbackAgentId)]
     .filter(Boolean)
     .join('/');
 
@@ -50,12 +51,13 @@ const resolveWorkerArtifactLines = (options: {
   resolveWorkerMembers(options.group, options.agents).map((worker, index) => {
     const agentId = normalizeText(worker.agent_id);
     const workerName = normalizeText(worker.name || agentId) || agentId;
-    const artifactPath = buildPromptArtifactPath(options.roundIndex, agentId);
+    const artifactPath = buildPromptArtifactPath(options.roundIndex, workerName, agentId);
     return {
       agentId,
       workerName,
       artifactPath,
-      line: `${index + 1}. ${workerName}: ${artifactPath}`
+      nameLine: `${index + 1}. ${workerName}`,
+      artifactLine: `${index + 1}. ${workerName}: ${artifactPath}`
     };
   });
 
@@ -71,7 +73,7 @@ export const buildMotherRoundArtifactInstructions = (options: {
     return '';
   }
   return renderTemplate(options.templates.round_artifacts, {
-    worker_artifact_lines: workers.map((item) => item.line).join('\n')
+    worker_artifact_lines: workers.map((item) => item.artifactLine).join('\n')
   }).trim();
 };
 
@@ -90,7 +92,7 @@ export const buildMotherOrchestrationPrimer = (options: {
     run_id: normalizeText(options.runId),
     current_round_dir: buildRoundPromptDirectory(options.roundIndex),
     current_round_situation_file: `${buildOrchestrationRoundDirName(options.roundIndex)}/situation.txt`,
-    worker_directory_lines: workers.map((item) => item.line).join('\n')
+    worker_directory_lines: workers.map((item) => item.nameLine).join('\n')
   }).trim();
 };
 

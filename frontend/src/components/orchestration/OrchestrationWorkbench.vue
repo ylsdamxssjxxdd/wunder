@@ -35,6 +35,7 @@
         :is-active="isActive"
         :is-busy="orchestrationStopBusy"
         :is-ready="isReady"
+        :runtime-locked="orchestrationRuntimeLocked"
         :group-description="group.description || t('orchestration.empty.description')"
         :resolve-worker-outputs="resolveWorkerOutputs"
         :resolve-worker-thread-session-id="resolveWorkerThreadSessionId"
@@ -46,8 +47,8 @@
         @create-run="handleCreateRun"
         @start-run="handleStartRun"
         @exit-run="handleStopRun"
-        @open-history="historyDialogVisible = true"
-        @open-situation="situationDialogVisible = true"
+        @open-history="handleOpenHistoryDialog"
+        @open-situation="handleOpenSituationDialog"
         @select-round="selectRound($event)"
         @restore-run="handleRestoreHistoryAction($event)"
         @delete-round-tail="handleDeleteBranchAfterRound($event)"
@@ -57,7 +58,7 @@
         v-model="historyDialogVisible"
         width="520px"
         append-to-body
-        class="messenger-modal messenger-modal--beeroom"
+        class="messenger-modal messenger-modal--beeroom orchestration-theme-dialog orchestration-history-dialog"
       >
         <template #header>
           <div class="messenger-modal-header">
@@ -81,72 +82,51 @@
             class="orchestration-history-item"
             :class="{
               'is-current': item.orchestrationId === currentOrchestrationId,
-              'is-deleting': deletingHistoryId === item.orchestrationId,
-              'is-branching': branchingHistoryId === item.orchestrationId
+              'is-deleting': deletingHistoryId === item.orchestrationId
             }"
           >
-            <div class="orchestration-history-item-main">
-              <button
-                class="orchestration-history-item-open"
-                type="button"
-                @click="handleRestoreHistoryAction(item.orchestrationId)"
-              >
+            <button
+              class="orchestration-history-item-main"
+              type="button"
+              :disabled="orchestrationRuntimeLocked"
+              @click="handleRestoreHistoryAction(item.orchestrationId)"
+            >
               <div class="orchestration-history-item-head">
-                <div class="orchestration-history-item-head-main">
-                  <span class="orchestration-history-item-title">{{ item.runId }}</span>
-                  <span
-                    class="orchestration-history-item-status"
-                    :class="resolveHistoryStatusClass(item)"
-                  >
-                    {{ resolveHistoryStatusLabel(item) }}
-                  </span>
-                </div>
+                <span class="orchestration-history-item-title">{{ item.runId }}</span>
                 <span class="orchestration-history-item-time">
                   {{ formatHistoryPrimaryTime(item) }}
                 </span>
               </div>
-              <div class="orchestration-history-item-summary">
-                <span class="orchestration-history-item-pill">
+              <div class="orchestration-history-item-meta">
+                <span
+                  class="orchestration-history-item-status"
+                  :class="resolveHistoryStatusClass(item)"
+                >
+                  {{ resolveHistoryStatusLabel(item) }}
+                </span>
+                <span class="orchestration-history-item-meta-text">
                   {{ t('orchestration.timeline.round', { round: item.latestRoundIndex }) }}
                 </span>
                 <span
-                  v-if="item.motherAgentName"
-                  class="orchestration-history-item-pill orchestration-history-item-pill--muted"
-                >
-                  {{ item.motherAgentName }}
-                </span>
-                <span
                   v-if="item.orchestrationId === currentOrchestrationId"
-                  class="orchestration-history-item-pill orchestration-history-item-pill--current"
+                  class="orchestration-history-item-status orchestration-history-item-status--current"
                 >
                   {{ t('orchestration.dialog.historyCurrent') }}
                 </span>
-              </div>
-              <div class="orchestration-history-item-timeline">
-                <span>{{ t('orchestration.dialog.historyEnteredAt', { time: formatHistoryTime(item.enteredAt) }) }}</span>
-                <span>{{ t('orchestration.dialog.historyUpdatedAt', { time: formatHistoryTime(item.updatedAt) }) }}</span>
-                <span v-if="item.restoredAt">{{ t('orchestration.dialog.historyRestoredAt', { time: formatHistoryTime(item.restoredAt) }) }}</span>
-                <span v-else-if="item.exitedAt">{{ t('orchestration.dialog.historyExitedAt', { time: formatHistoryTime(item.exitedAt) }) }}</span>
-              </div>
-              </button>
-              <div class="orchestration-history-item-actions">
-                <button
-                  class="orchestration-history-item-branch"
-                  type="button"
-                  :disabled="branchingHistoryId === item.orchestrationId"
-                  @click.stop="handleBranchFromHistory(item, getHistoryBranchTargetRound(item))"
+                <span
+                  v-else
+                  class="orchestration-history-item-meta-text"
                 >
-                  <i class="fa-solid fa-code-branch" aria-hidden="true"></i>
-                  <span>{{ t('orchestration.dialog.historyBranchAction') }}</span>
-                </button>
+                  {{ resolveHistorySecondaryTime(item) }}
+                </span>
               </div>
-            </div>
+            </button>
             <button
               class="orchestration-history-delete"
               type="button"
               :title="t('common.delete')"
               :aria-label="t('common.delete')"
-              :disabled="cannotDeleteHistoryItem(item)"
+              :disabled="orchestrationRuntimeLocked || cannotDeleteHistoryItem(item)"
               @click.stop="handleDeleteHistory(item)"
             >
               <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
@@ -159,7 +139,7 @@
         v-model="situationDialogVisible"
         width="760px"
         append-to-body
-        class="messenger-modal messenger-modal--beeroom"
+        class="messenger-modal messenger-modal--beeroom orchestration-theme-dialog orchestration-situation-dialog"
       >
         <template #header>
           <div class="messenger-modal-header">
@@ -177,21 +157,7 @@
             </span>
           </div>
           <div class="orchestration-situation-toolbar-actions">
-            <span class="orchestration-situation-toolbar-label">
-              {{ t('orchestration.dialog.situationRoundLabel') }}
-            </span>
-            <el-input-number
-              v-model="situationRoundInput"
-              class="orchestration-situation-round-input"
-              :min="1"
-              :step="1"
-              :precision="0"
-              controls-position="right"
-            />
-            <el-button @click="handleSituationRoundJump">
-              {{ t('orchestration.dialog.situationRoundGo') }}
-            </el-button>
-            <el-button @click="triggerSituationImport">
+            <el-button type="primary" :disabled="orchestrationRuntimeLocked" @click="triggerSituationImport">
               <i class="fa-solid fa-file-import" aria-hidden="true"></i>
               <span>{{ t('common.import') }}</span>
             </el-button>
@@ -216,6 +182,7 @@
                 'is-active-round': entry.isActiveRound
               }"
               type="button"
+              :disabled="orchestrationRuntimeLocked"
               @click="selectSituationRound(entry.round)"
             >
               <div class="orchestration-situation-round-item-head">
@@ -276,6 +243,7 @@
               v-model="selectedSituationDraft"
               class="orchestration-situation-textarea"
               :placeholder="t('orchestration.dialog.situationPlaceholder')"
+              :disabled="orchestrationRuntimeLocked"
               rows="13"
             ></textarea>
           </div>
@@ -284,7 +252,7 @@
         <template #footer>
           <div class="messenger-modal-footer">
             <el-button @click="handleCloseSituationDialog">{{ t('common.cancel') }}</el-button>
-            <el-button type="primary" @click="handleSaveSituation">{{ t('common.confirm') }}</el-button>
+            <el-button type="primary" :disabled="orchestrationRuntimeLocked" @click="handleSaveSituation">{{ t('common.confirm') }}</el-button>
           </div>
         </template>
       </el-dialog>
@@ -297,11 +265,7 @@ import { computed, ref, toRef, watch, type Ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
-import {
-  clearBeeroomMissionChatState,
-  getBeeroomMissionChatState,
-  setBeeroomMissionChatState
-} from '@/components/beeroom/beeroomMissionChatStateCache';
+import { clearBeeroomMissionChatState } from '@/components/beeroom/beeroomMissionChatStateCache';
 import { clearBeeroomMissionCanvasState } from '@/components/beeroom/beeroomMissionCanvasStateCache';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { useBeeroomMissionCanvasRuntime } from '@/components/beeroom/useBeeroomMissionCanvasRuntime';
@@ -317,7 +281,8 @@ import {
 } from '@/components/orchestration/orchestrationPrompting';
 import {
   isOrchestrationMissionRunning,
-  normalizeOrchestrationStatus
+  normalizeOrchestrationStatus,
+  normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
@@ -419,16 +384,17 @@ const {
 const situationDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
 const deletingHistoryId = ref('');
-const branchingHistoryId = ref('');
 const situationPlanDraft = ref<Record<string, string>>({});
 const stagedSituationDraft = ref<Record<string, string>>({});
 const stagedSituationDraftOrchestrationId = ref('');
 const stagedSituationDraftActive = ref(false);
 const selectedSituationRound = ref(1);
-const situationRoundInput = ref(1);
 const situationImportInputRef = ref<HTMLInputElement | null>(null);
 const orchestrationPromptTemplates = ref<OrchestrationPromptTemplates | null>(null);
 const orchestrationPromptLanguage = ref('');
+const orchestrationDispatchPreparing = ref(false);
+const orchestrationDispatchStopRequested = ref(false);
+const orchestrationDispatchFlowToken = ref(0);
 let orchestrationPromptLoadTask: Promise<OrchestrationPromptTemplates> | null = null;
 
 const ORCHESTRATION_PROMPT_TEMPLATE_KEYS = [
@@ -445,6 +411,12 @@ const rounds = computed(() => runtimeState.value?.rounds || []);
 const runId = computed(() => String(runtimeState.value?.runId || '').trim());
 const currentOrchestrationId = computed(() => String(runtimeState.value?.orchestrationId || '').trim());
 const motherSessionId = computed(() => String(runtimeState.value?.motherSessionId || '').trim());
+const activeDispatchPreviewStatus = computed(() => String(dispatchPreview.value?.status || '').trim().toLowerCase());
+const hasActiveDispatchPreview = computed(() =>
+  ['queued', 'running', 'resuming', 'awaiting_approval', 'waiting', 'accepted', 'pending'].includes(
+    activeDispatchPreviewStatus.value
+  )
+);
 const isViewingLatestRound = computed(() => {
   const latestId = String(latestRound.value?.id || '').trim();
   const activeId = String(activeRound.value?.id || '').trim();
@@ -514,6 +486,17 @@ const latestRoundIndex = computed(() => Math.max(1, Number(latestRound.value?.in
 const normalizeSituationRound = (value: unknown) =>
   Math.max(1, Number.parseInt(String(value ?? '').trim(), 10) || 1);
 
+const resolveNextUserRoundIndex = (state: { rounds?: Array<{ index?: number; userMessage?: string }> } | null | undefined) => {
+  const formalRoundIndex = Math.max(
+    0,
+    ...(Array.isArray(state?.rounds) ? state.rounds : [])
+      .filter((round) => String(round?.userMessage || '').trim())
+      .map((round) => Number(round?.index || 0))
+  );
+  const sentUserMessageCount = activeRoundChatMessages.value.filter((message) => message.tone === 'user').length;
+  return Math.max(1, formalRoundIndex + 1, sentUserMessageCount + 1);
+};
+
 const selectedSituationKey = computed(() => String(normalizeSituationRound(selectedSituationRound.value)));
 const selectedSituationDraft = computed({
   get: () => String(situationPlanDraft.value[selectedSituationKey.value] || ''),
@@ -531,7 +514,6 @@ const situationRoundRows = computed(() => {
     .filter((value, index, array) => array.indexOf(value) === index);
   const targetMax = Math.max(
     normalizeSituationRound(selectedSituationRound.value),
-    normalizeSituationRound(situationRoundInput.value),
     latestRoundIndex.value + 2,
     ...plannedRoundNumbers
   );
@@ -557,11 +539,6 @@ const selectedSituationEntry = computed(
 const selectSituationRound = (round: number) => {
   const nextRound = normalizeSituationRound(round);
   selectedSituationRound.value = nextRound;
-  situationRoundInput.value = nextRound;
-};
-
-const handleSituationRoundJump = () => {
-  selectSituationRound(situationRoundInput.value);
 };
 
 const parseSituationImportText = (content: string) => {
@@ -658,10 +635,60 @@ const latestRoundRunningMissions = computed(() =>
   latestRoundMissions.value.filter((item) => isOrchestrationMissionRunning(item))
 );
 
-const orchestrationStopBusy = computed(() => composerSending.value || latestRoundRunningMissions.value.length > 0);
+const beginOrchestrationDispatchFlow = () => {
+  const nextToken = orchestrationDispatchFlowToken.value + 1;
+  orchestrationDispatchFlowToken.value = nextToken;
+  orchestrationDispatchPreparing.value = true;
+  orchestrationDispatchStopRequested.value = false;
+  return nextToken;
+};
+
+const finishOrchestrationDispatchFlow = (token: number) => {
+  if (orchestrationDispatchFlowToken.value !== token) return;
+  orchestrationDispatchPreparing.value = false;
+  orchestrationDispatchStopRequested.value = false;
+};
+
+const buildOrchestrationDispatchStoppedError = () => {
+  const error = new Error('orchestration_dispatch_stopped');
+  (error as Error & { code?: string }).code = 'ORCHESTRATION_DISPATCH_STOPPED';
+  return error;
+};
+
+const ensureOrchestrationDispatchFlowActive = (token: number) => {
+  if (orchestrationDispatchFlowToken.value !== token || orchestrationDispatchStopRequested.value) {
+    throw buildOrchestrationDispatchStoppedError();
+  }
+};
+
+const isOrchestrationDispatchStoppedError = (error: unknown) =>
+  (error as { code?: string; message?: string } | null)?.code === 'ORCHESTRATION_DISPATCH_STOPPED' ||
+  (error as { message?: string } | null)?.message === 'orchestration_dispatch_stopped';
+
+const orchestrationPendingRoundActive = computed(() => {
+  const pendingRoundId = normalizeOrchestrationText(runtimeState.value?.pendingRoundId);
+  if (!pendingRoundId) return false;
+  const pendingRound = rounds.value.find((item) => normalizeOrchestrationText(item.id) === pendingRoundId) || null;
+  if (!pendingRound) return false;
+  const pendingMessageStartedAt = Number(runtimeState.value?.pendingMessageStartedAt || 0);
+  if (pendingMessageStartedAt > 0) return true;
+  return Boolean(normalizeOrchestrationText(pendingRound.userMessage));
+});
+
+const orchestrationRunning = computed(
+  () =>
+    orchestrationDispatchPreparing.value ||
+    composerSending.value ||
+    hasActiveDispatchPreview.value ||
+    latestRoundRunningMissions.value.length > 0 ||
+    activeRoundRunningMissions.value.length > 0 ||
+    orchestrationPendingRoundActive.value
+);
+const orchestrationStopBusy = computed(() => orchestrationRunning.value);
+const orchestrationRuntimeLocked = computed(() => orchestrationRunning.value);
 
 const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
-  if (!orchestrationStopBusy.value) {
+  if (!orchestrationRunning.value) {
     return null;
   }
   const latestRound = rounds.value[rounds.value.length - 1] || null;
@@ -715,6 +742,10 @@ const ensureOrchestrationPromptTemplates = async () => {
 };
 
 const handleCreateRun = async () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   try {
     const previousRunId = runId.value;
     const previousRoundId = String(activeRound.value?.id || '').trim();
@@ -743,6 +774,10 @@ const handleCreateRun = async () => {
 };
 
 const handleSaveSituation = () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   const nextDraft = normalizeSituationEntries(situationPlanDraft.value);
   const shouldStage = shouldStageSituationDraft.value;
   const task = shouldStage
@@ -759,6 +794,10 @@ const handleSaveSituation = () => {
 };
 
 const handleStopRun = async () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   try {
     await exitRun();
     composerText.value = '';
@@ -774,6 +813,10 @@ const handleStopRun = async () => {
 };
 
 const handleStartRun = async () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   try {
     const nextState = await startRun();
     clearStagedSituationDraft();
@@ -790,6 +833,10 @@ const handleStartRun = async () => {
 };
 
 const handleRestoreHistoryAction = async (orchestrationId: string) => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   try {
     const nextState = await restoreHistory(orchestrationId, { activate: isActive.value });
     clearStagedSituationDraft();
@@ -807,45 +854,20 @@ const handleRestoreHistoryAction = async (orchestrationId: string) => {
   }
 };
 
-const handleBranchFromHistory = async (item: { orchestrationId: string; latestRoundIndex: number }, roundIndex?: number) => {
-  const targetRoundIndex = Math.max(
-    1,
-    Number.parseInt(
-      String(roundIndex || getHistoryBranchTargetRound(item) || item.latestRoundIndex || 1),
-      10
-    ) || 1
-  );
-  try {
-    await ElMessageBox.confirm(
-      t('orchestration.dialog.historyBranchConfirm', { round: targetRoundIndex }),
-      t('common.notice'),
-      {
-        confirmButtonText: t('orchestration.dialog.historyBranchAction'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning'
-      }
-    );
-  } catch {
+const handleOpenHistoryDialog = () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
     return;
   }
-  branchingHistoryId.value = item.orchestrationId;
-  try {
-    const nextState = await branchHistory(item.orchestrationId, targetRoundIndex, { activate: isActive.value });
-    clearStagedSituationDraft();
-    if (nextState?.active) {
-      await syncMotherSessionContextForState(
-        nextState,
-        Number(nextState.rounds[nextState.rounds.length - 1]?.index || targetRoundIndex)
-      );
-    }
-    historyDialogVisible.value = false;
-    emit('refresh');
-    ElMessage.success(t('orchestration.dialog.historyBranchSuccess'));
-  } catch (error: any) {
-    ElMessage.error(String(error?.message || t('common.requestFailed')));
-  } finally {
-    branchingHistoryId.value = '';
+  historyDialogVisible.value = true;
+};
+
+const handleOpenSituationDialog = () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
   }
+  situationDialogVisible.value = true;
 };
 
 const formatHistoryTime = (value: unknown) => {
@@ -858,6 +880,16 @@ const formatHistoryTime = (value: unknown) => {
 
 const formatHistoryPrimaryTime = (item: { updatedAt: number; restoredAt: number; exitedAt: number; enteredAt: number }) =>
   formatHistoryTime(item.updatedAt || item.restoredAt || item.exitedAt || item.enteredAt);
+
+const resolveHistorySecondaryTime = (item: { restoredAt: number; exitedAt: number; enteredAt: number }) => {
+  if (item.restoredAt) {
+    return t('orchestration.dialog.historyRestoredAt', { time: formatHistoryTime(item.restoredAt) });
+  }
+  if (item.exitedAt) {
+    return t('orchestration.dialog.historyExitedAt', { time: formatHistoryTime(item.exitedAt) });
+  }
+  return t('orchestration.dialog.historyEnteredAt', { time: formatHistoryTime(item.enteredAt) });
+};
 
 const resolveHistoryStatusLabel = (item: { orchestrationId: string; status: string }) => {
   if (item.orchestrationId === currentOrchestrationId.value && isActive.value) {
@@ -875,13 +907,6 @@ const resolveHistoryStatusClass = (item: { orchestrationId: string; status: stri
     return 'is-active';
   }
   return normalizeOrchestrationStatus(item.status) === 'active' ? 'is-active' : 'is-closed';
-};
-
-const getHistoryBranchTargetRound = (item: { orchestrationId: string; latestRoundIndex: number }) => {
-  if (item.orchestrationId === currentOrchestrationId.value) {
-    return Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || item.latestRoundIndex || 1));
-  }
-  return Math.max(1, Number(item.latestRoundIndex || 1));
 };
 
 const syncMotherSessionContextForState = async (
@@ -904,9 +929,13 @@ const syncMotherSessionContextForState = async (
 
 const cannotDeleteHistoryItem = (item: { orchestrationId: string }) =>
   deletingHistoryId.value === item.orchestrationId ||
-  item.orchestrationId === currentOrchestrationId.value;
+  (item.orchestrationId === currentOrchestrationId.value && isActive.value);
 
 const handleDeleteHistory = async (item: { orchestrationId: string; runId: string }) => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   if (cannotDeleteHistoryItem(item)) return;
   try {
     await ElMessageBox.confirm(
@@ -924,6 +953,9 @@ const handleDeleteHistory = async (item: { orchestrationId: string; runId: strin
   deletingHistoryId.value = item.orchestrationId;
   try {
     await deleteHistory(item.orchestrationId);
+    if (item.orchestrationId === currentOrchestrationId.value && !isActive.value) {
+      historyDialogVisible.value = false;
+    }
     ElMessage.success(t('orchestration.dialog.historyDeleteSuccess'));
   } catch (error: any) {
     ElMessage.error(String(error?.message || t('common.deleteFailed')));
@@ -933,6 +965,10 @@ const handleDeleteHistory = async (item: { orchestrationId: string; runId: strin
 };
 
 const handleDeleteBranchAfterRound = async (payload: { orchestrationId: string; roundIndex: number }) => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
   const targetRoundIndex = Math.max(1, Number(payload.roundIndex || 1));
   try {
     await ElMessageBox.confirm(
@@ -999,7 +1035,10 @@ const stopOrchestrationDispatch = async () => {
 };
 
 const handleSendToMother = async () => {
-  if (orchestrationStopBusy.value) {
+  if (orchestrationRunning.value) {
+    if (orchestrationDispatchPreparing.value) {
+      orchestrationDispatchStopRequested.value = true;
+    }
     const pending = pendingRound.value;
     await stopOrchestrationDispatch();
     if (pending?.id) {
@@ -1013,8 +1052,12 @@ const handleSendToMother = async () => {
     ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
+  const flowToken = beginOrchestrationDispatchFlow();
+  let reservedRoundId = '';
   try {
+    ensureOrchestrationDispatchFlowActive(flowToken);
     let state = await ensureRuntime();
+    ensureOrchestrationDispatchFlowActive(flowToken);
     if (!String(state?.motherSessionId || '').trim()) {
       throw new Error(t('orchestration.message.createRunRequired'));
     }
@@ -1034,14 +1077,17 @@ const handleSendToMother = async () => {
       const branchedState = await branchHistory(currentOrchestrationId.value, branchBaseRoundIndex, {
         activate: true
       });
+      ensureOrchestrationDispatchFlowActive(flowToken);
       if (branchedState?.active) {
         if (stagedDraftEntries) {
           await updatePlannedSituations(stagedDraftEntries);
+          ensureOrchestrationDispatchFlowActive(flowToken);
         }
         await syncMotherSessionContextForState(
           branchedState,
           Number(branchedState.rounds[branchedState.rounds.length - 1]?.index || branchBaseRoundIndex)
         );
+        ensureOrchestrationDispatchFlowActive(flowToken);
       }
       state = branchedState || state;
       clearStagedSituationDraft(currentOrchestrationIdValue);
@@ -1050,46 +1096,89 @@ const handleSendToMother = async () => {
       nextActiveRound = nextRoundSource;
       emit('refresh');
     }
+    const inferredNextRoundIndex = resolveNextUserRoundIndex(state);
     const targetRound =
-      nextRoundSource && !String(nextRoundSource.userMessage || '').trim() ? nextRoundSource : null;
-    const nextRoundIndex = targetRound ? targetRound.index : Math.max(1, Number(nextRoundSource?.index || 0)) + 1;
-    const roundSituation = resolveDraftSituationByRoundIndex(nextRoundIndex) || await resolveRoundSituation(nextRoundIndex);
+      (state?.rounds || []).find(
+        (round) => Number(round?.index || 0) === inferredNextRoundIndex && !String(round?.userMessage || '').trim()
+      ) || null;
+    const initialRoundSituation =
+      resolveDraftSituationByRoundIndex(inferredNextRoundIndex) ||
+      await resolveRoundSituation(inferredNextRoundIndex);
+    const reservedRound = await reserveUserRound({
+      targetRoundId: targetRound?.id || '',
+      situation: initialRoundSituation,
+      userMessage: content
+    });
+    reservedRoundId = String(reservedRound?.id || '').trim();
+    if (reservedRoundId) {
+      selectRound(reservedRoundId);
+    }
+    ensureOrchestrationDispatchFlowActive(flowToken);
+    const actualRoundIndex = Math.max(1, Number(reservedRound?.index || inferredNextRoundIndex));
+    const roundSituation =
+      resolveDraftSituationByRoundIndex(actualRoundIndex) ||
+      String(reservedRound?.situation || '').trim() ||
+      await resolveRoundSituation(actualRoundIndex);
+    await syncMotherSessionContext(actualRoundIndex);
+    ensureOrchestrationDispatchFlowActive(flowToken);
     const includePrimer = state?.motherPrimerInjected !== true;
     const templates = await ensureOrchestrationPromptTemplates();
+    ensureOrchestrationDispatchFlowActive(flowToken);
     const dispatchContent = buildMotherDispatchEnvelope({
       group: props.group,
       agents: props.agents,
       runId: workingRunId,
-      roundIndex: nextRoundIndex,
+      roundIndex: actualRoundIndex,
       userMessage: content,
       situation: roundSituation,
       includePrimer,
       templates
     });
-    const reservedRound = await reserveUserRound({
-      targetRoundId: targetRound?.id || '',
-      situation: roundSituation,
-      userMessage: content
-    });
-    await syncMotherSessionContext(nextRoundIndex);
-    await handleComposerSend({
+    ensureOrchestrationDispatchFlowActive(flowToken);
+    const sendResult = await handleComposerSend({
       content: dispatchContent,
       displayContent: content,
       displayCreatedAt: Number(reservedRound?.createdAt || 0) > 0
         ? Number(reservedRound?.createdAt || 0) / 1000
         : undefined
     });
-    await finalizePendingRound(reservedRound?.id);
+    if (sendResult?.status === 'completed') {
+      const finalizedRound = await finalizePendingRound(reservedRound?.id, {
+        situation: roundSituation,
+        userMessage: content
+      });
+      if (finalizedRound?.id) {
+        selectRound(finalizedRound.id);
+      }
+      reservedRoundId = '';
+    } else {
+      if (reservedRoundId) {
+        await discardPendingRound(reservedRoundId).catch(() => null);
+        reservedRoundId = '';
+      }
+      if (sendResult?.status === 'failed') {
+        throw new Error(String(sendResult?.error || t('common.requestFailed')));
+      }
+      return;
+    }
     if (includePrimer) {
       markMotherPrimerInjected();
     }
     clearStagedSituationDraft();
   } catch (error: any) {
-    const pending = pendingRound.value;
-    if (pending?.id) {
-      await discardPendingRound(pending.id).catch(() => null);
+    if (reservedRoundId) {
+      await discardPendingRound(reservedRoundId).catch(() => null);
+      reservedRoundId = '';
+    } else {
+      const pending = pendingRound.value;
+      if (pending?.id) {
+        await discardPendingRound(pending.id).catch(() => null);
+      }
     }
+    if (isOrchestrationDispatchStoppedError(error)) return;
     ElMessage.error(String(error?.message || t('common.requestFailed')));
+  } finally {
+    finishOrchestrationDispatchFlow(flowToken);
   }
 };
 
@@ -1137,20 +1226,6 @@ watch(
   },
   { immediate: true }
 );
-
-watch(
-  [runtimeScopeKey, activeRoundChatMessages],
-  ([scopeKey, messages]) => {
-    const resolvedScopeKey = String(scopeKey || '').trim();
-    if (!resolvedScopeKey) return;
-    const cached = getBeeroomMissionChatState(resolvedScopeKey);
-    setBeeroomMissionChatState(resolvedScopeKey, {
-      ...(cached || { version: 2, manualMessages: [], runtimeRelayMessages: [], dispatch: null }),
-      manualMessages: Array.isArray(messages) ? messages : []
-    });
-  },
-  { immediate: true }
-);
 </script>
 
 <style scoped>
@@ -1182,16 +1257,129 @@ watch(
   min-height: 0;
 }
 
+.orchestration-theme-dialog :deep(.el-overlay-dialog) {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 28px 20px 40px;
+  box-sizing: border-box;
+  overflow: auto;
+  background:
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.14), transparent 32%),
+    rgba(2, 6, 23, 0.68);
+}
+
+.orchestration-theme-dialog :deep(.el-dialog) {
+  margin: 0;
+  width: min(var(--el-dialog-width, 760px), calc(100vw - 40px));
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(6, 10, 18, 0.98), rgba(8, 12, 22, 0.96));
+  box-shadow:
+    0 28px 80px rgba(2, 6, 23, 0.56),
+    inset 0 1px 0 rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.orchestration-theme-dialog :deep(.el-dialog__header) {
+  margin: 0;
+  padding: 24px 28px 0;
+}
+
+.orchestration-theme-dialog :deep(.el-dialog__headerbtn) {
+  top: 18px;
+  right: 18px;
+}
+
+.orchestration-theme-dialog :deep(.el-dialog__headerbtn .el-dialog__close) {
+  color: rgba(226, 232, 240, 0.72);
+}
+
+.orchestration-theme-dialog :deep(.el-dialog__body) {
+  padding: 18px 28px 24px;
+}
+
+.orchestration-theme-dialog :deep(.el-dialog__footer) {
+  padding: 0 28px 26px;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-header) {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-title) {
+  color: #f8fafc;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-subtitle) {
+  margin-top: 8px;
+  color: rgba(191, 219, 254, 0.74);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-footer) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-footer .el-button) {
+  min-width: 90px;
+  border-radius: 12px;
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-footer .el-button:not(.el-button--primary)) {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.68);
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.orchestration-theme-dialog :deep(.messenger-modal-footer .el-button--primary) {
+  border-color: rgba(59, 130, 246, 0.46);
+  background: linear-gradient(135deg, #2563eb, #38bdf8);
+  color: #f8fafc;
+}
+
+.orchestration-history-dialog :deep(.el-dialog) {
+  max-width: min(560px, calc(100vw - 40px));
+}
+
+.orchestration-history-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+}
+
+.orchestration-situation-dialog :deep(.el-dialog) {
+  max-width: min(900px, calc(100vw - 40px));
+}
+
+.orchestration-situation-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 210px);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
 .orchestration-situation-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 14px;
   padding: 14px 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(12, 16, 24, 0.96), rgba(9, 12, 19, 0.94));
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at left top, rgba(56, 189, 248, 0.12), transparent 28%),
+    linear-gradient(180deg, rgba(10, 15, 26, 0.96), rgba(8, 12, 22, 0.94));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
 }
 
 .orchestration-situation-toolbar-copy {
@@ -1207,33 +1395,25 @@ watch(
 
 .orchestration-situation-toolbar-actions {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: flex-start;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.orchestration-situation-toolbar-label {
-  font-size: 12px;
-  color: rgba(191, 219, 254, 0.78);
-}
-
-.orchestration-situation-round-input {
-  width: 120px;
 }
 
 .orchestration-situation-shell {
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   gap: 14px;
-  min-height: min(68vh, 720px);
+  min-height: 0;
+  max-height: calc(100vh - 300px);
 }
 
 .orchestration-situation-round-list {
   display: grid;
   align-content: start;
   gap: 10px;
-  max-height: min(68vh, 720px);
+  min-height: 0;
+  max-height: calc(100vh - 300px);
   padding-right: 4px;
   overflow: auto;
 }
@@ -1243,9 +1423,11 @@ watch(
   gap: 10px;
   width: 100%;
   padding: 14px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(12, 16, 24, 0.94), rgba(9, 12, 19, 0.92));
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(12, 16, 27, 0.94), rgba(9, 12, 20, 0.92));
   color: #f8fafc;
   text-align: left;
   cursor: pointer;
@@ -1261,8 +1443,9 @@ watch(
 .orchestration-situation-round-item.is-selected {
   border-color: rgba(59, 130, 246, 0.5);
   background:
-    radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 38%),
-    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(10, 14, 22, 0.96));
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.16), transparent 40%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(9, 14, 24, 0.96));
+  box-shadow: 0 16px 34px rgba(2, 6, 23, 0.24);
 }
 
 .orchestration-situation-round-item-head {
@@ -1306,22 +1489,35 @@ watch(
 .orchestration-situation-textarea {
   width: 100%;
   resize: vertical;
-  min-height: 88px;
-  padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 14px;
-  background: linear-gradient(180deg, rgba(22, 24, 31, 0.92), rgba(15, 17, 23, 0.88));
+  min-height: 320px;
+  height: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(96, 165, 250, 0.14);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(24, 35, 52, 0.96), rgba(16, 24, 39, 0.94));
   color: #f8fafc;
   line-height: 1.65;
   outline: none;
   box-sizing: border-box;
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
+}
+
+.orchestration-situation-textarea::placeholder {
+  color: rgba(226, 232, 240, 0.42);
 }
 
 .orchestration-situation-editor {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: min(68vh, 720px);
+  max-height: calc(100vh - 300px);
+  padding: 16px;
+  border: 1px solid rgba(96, 165, 250, 0.14);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top, rgba(56, 189, 248, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(11, 15, 24, 0.98), rgba(7, 11, 20, 0.96));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.08);
 }
 
 .orchestration-situation-editor-head {
@@ -1373,6 +1569,27 @@ watch(
 }
 
 @media (max-width: 900px) {
+  .orchestration-theme-dialog :deep(.el-overlay-dialog) {
+    padding: 16px 12px 24px;
+  }
+
+  .orchestration-theme-dialog :deep(.el-dialog) {
+    width: calc(100vw - 24px);
+    border-radius: 22px;
+  }
+
+  .orchestration-theme-dialog :deep(.el-dialog__header) {
+    padding: 20px 20px 0;
+  }
+
+  .orchestration-theme-dialog :deep(.el-dialog__body) {
+    padding: 16px 20px 20px;
+  }
+
+  .orchestration-theme-dialog :deep(.el-dialog__footer) {
+    padding: 0 20px 20px;
+  }
+
   .orchestration-situation-toolbar {
     align-items: stretch;
     flex-direction: column;
@@ -1384,17 +1601,26 @@ watch(
 
   .orchestration-situation-shell {
     grid-template-columns: minmax(0, 1fr);
+    max-height: none;
   }
 
   .orchestration-situation-round-list {
     max-height: 220px;
+  }
+
+  .orchestration-situation-editor {
+    max-height: none;
+  }
+
+  .orchestration-situation-textarea {
+    min-height: 260px;
   }
 }
 
 .orchestration-history-list {
   display: grid;
   gap: 12px;
-  max-height: min(68vh, 720px);
+  max-height: calc(100vh - 240px);
   padding-right: 4px;
   overflow: auto;
 }
@@ -1406,11 +1632,12 @@ watch(
   align-items: start;
   gap: 10px;
   padding: 14px 14px 14px 16px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 20px;
   background:
-    radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 36%),
-    linear-gradient(180deg, rgba(12, 16, 24, 0.96), rgba(9, 12, 19, 0.94));
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.14), transparent 38%),
+    linear-gradient(180deg, rgba(11, 15, 24, 0.96), rgba(8, 12, 20, 0.94));
+  box-shadow: inset 0 1px 0 rgba(148, 163, 184, 0.06);
 }
 
 .orchestration-history-item:hover,
@@ -1429,14 +1656,7 @@ watch(
 
 .orchestration-history-item-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  width: 100%;
-}
-
-.orchestration-history-item-open {
-  display: grid;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
   padding: 0;
   border: none;
@@ -1446,36 +1666,9 @@ watch(
   cursor: pointer;
 }
 
-.orchestration-history-item-actions {
-  display: flex;
-  align-items: flex-start;
-}
-
-.orchestration-history-item-branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 12px;
-  border: 1px solid rgba(96, 165, 250, 0.24);
-  border-radius: 12px;
-  background: rgba(30, 41, 59, 0.64);
-  color: rgba(219, 234, 254, 0.88);
-  cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
-}
-
-.orchestration-history-item-branch:hover:not(:disabled),
-.orchestration-history-item-branch:focus-visible:not(:disabled) {
-  border-color: rgba(96, 165, 250, 0.42);
-  background: rgba(30, 41, 59, 0.92);
-  color: #f8fafc;
-  outline: none;
-}
-
-.orchestration-history-item-branch:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.orchestration-history-item-main:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.38);
+  outline-offset: 4px;
 }
 
 .orchestration-history-item-head {
@@ -1485,23 +1678,29 @@ watch(
   gap: 12px;
 }
 
-.orchestration-history-item-head-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
 .orchestration-history-item-title {
+  min-width: 0;
   font-size: 14px;
   font-weight: 700;
   line-height: 1.3;
   word-break: break-all;
 }
 
-.orchestration-history-item-status,
-.orchestration-history-item-pill {
+.orchestration-history-item-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: rgba(191, 219, 254, 0.64);
+  white-space: nowrap;
+}
+
+.orchestration-history-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.orchestration-history-item-status {
   display: inline-flex;
   align-items: center;
   min-height: 24px;
@@ -1530,37 +1729,13 @@ watch(
   background: rgba(30, 41, 59, 0.66);
 }
 
-.orchestration-history-item-time {
-  font-size: 12px;
-  color: rgba(191, 219, 254, 0.64);
-  white-space: nowrap;
-}
-
-.orchestration-history-item-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.orchestration-history-item-pill {
-  color: rgba(226, 232, 240, 0.9);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  background: rgba(15, 23, 42, 0.58);
-}
-
-.orchestration-history-item-pill--muted {
-  color: rgba(191, 219, 254, 0.72);
-}
-
-.orchestration-history-item-pill--current {
+.orchestration-history-item-status--current {
   color: #dbeafe;
   border-color: rgba(96, 165, 250, 0.34);
   background: rgba(30, 64, 175, 0.24);
 }
 
-.orchestration-history-item-timeline {
-  display: grid;
-  gap: 6px;
+.orchestration-history-item-meta-text {
   font-size: 12px;
   color: rgba(191, 219, 254, 0.68);
 }
@@ -1572,9 +1747,9 @@ watch(
   width: 34px;
   height: 34px;
   margin-top: 2px;
-  border: 1px solid rgba(248, 113, 113, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.22);
   border-radius: 12px;
-  background: rgba(127, 29, 29, 0.16);
+  background: rgba(127, 29, 29, 0.18);
   color: rgba(254, 202, 202, 0.92);
   cursor: pointer;
   transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;

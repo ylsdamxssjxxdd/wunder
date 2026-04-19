@@ -32,9 +32,9 @@
   >
     <template v-if="node.renderKind === 'artifact-container'">
       <div class="beeroom-node-artifact-container">
-        <div class="beeroom-node-artifact-header">
+        <div class="beeroom-node-artifact-topbar">
           <span class="beeroom-node-artifact-title">{{ artifactTitle }}</span>
-          <span class="beeroom-node-artifact-count">{{ artifactCount }}</span>
+          <span class="beeroom-node-artifact-count">{{ artifactCountLabel }}</span>
         </div>
         <div class="beeroom-node-artifact-scroll" @wheel.stop>
           <div class="beeroom-node-artifact-grid">
@@ -195,6 +195,8 @@ const hasLiveActivity = computed(() => {
   }
   return props.node.role === 'subagent' && props.node.emphasis === 'active';
 });
+
+const artifactCountLabel = computed(() => String(artifactCount.value));
 
 const workflowContainerRef = ref<HTMLElement | null>(null);
 const workflowStepsRef = ref<HTMLElement | null>(null);
@@ -831,12 +833,12 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 8px;
-  padding: 8px 6px 6px;
+  gap: 10px;
+  padding: 4px 2px 2px;
   background: transparent;
 }
 
-.beeroom-node-artifact-header {
+.beeroom-node-artifact-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -873,7 +875,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 4px;
+  padding-right: 2px;
   overscroll-behavior: contain;
   touch-action: pan-y;
   scrollbar-width: thin;
@@ -896,7 +898,7 @@ onBeforeUnmount(() => {
 .beeroom-node-artifact-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   min-height: 0;
   align-content: start;
@@ -910,6 +912,14 @@ onBeforeUnmount(() => {
   align-items: stretch;
   justify-content: stretch;
   aspect-ratio: 1 / 1;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+}
+
+.beeroom-node-artifact-slot:not(.is-empty) {
+  box-shadow: none;
 }
 
 .beeroom-node-artifact-slot-frame {

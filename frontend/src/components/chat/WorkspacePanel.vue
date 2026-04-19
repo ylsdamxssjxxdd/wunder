@@ -250,7 +250,7 @@
         v-model="editor.content"
         class="workspace-editor-text"
         :disabled="editor.loading"
-        :placeholder="t('common.loading')"
+        :placeholder="editor.loading ? t('common.loading') : t('workspace.preview.emptyContent')"
       />
       <template #footer>
         <button class="workspace-btn secondary" @click="closeEditor">{{ t('common.close') }}</button>

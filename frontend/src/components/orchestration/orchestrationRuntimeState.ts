@@ -22,7 +22,10 @@ import {
   saveWunderWorkspaceFile
 } from '@/api/workspace';
 import { listRecentBeeroomAgentOutputs } from '@/components/beeroom/beeroomAgentOutputPreview';
-import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
+import {
+  compareMissionChatMessages,
+  type MissionChatMessage
+} from '@/components/beeroom/beeroomCanvasChatModel';
 import {
   buildSessionWorkflowItems,
   buildTaskWorkflowRuntime,
@@ -47,6 +50,7 @@ export type OrchestrationRound = {
   situation: string;
   userMessage: string;
   createdAt: number;
+  finalizedAt?: number;
   missionIds: string[];
   branchParentRoundId?: string;
   branchFromRoundIndex?: number;
@@ -227,6 +231,8 @@ const normalizeSecondsTime = (value: unknown): number => {
   return ms > 0 ? Math.floor(ms / 1000) : 0;
 };
 
+const normalizeMessageBody = (value: unknown) => normalizeText(value).replace(/\s+/g, ' ');
+
 const buildScopeKey = (groupId: unknown) => normalizeText(groupId) || 'standby';
 
 const buildStorageKey = (groupId: unknown) => `${ORCHESTRATION_STORAGE_PREFIX}:${buildScopeKey(groupId)}`;
@@ -242,6 +248,76 @@ const buildRoundDirName = buildOrchestrationRoundDirName;
 const buildAgentArtifactPath = buildOrchestrationAgentArtifactPath;
 
 const buildRoundSituationPath = buildOrchestrationRoundSituationPath;
+
+const findLatestFormalRound = (rounds: OrchestrationRound[] | null | undefined) => {
+  const source = Array.isArray(rounds) ? rounds : [];
+  return source.reduce<OrchestrationRound | null>((latest, round) => {
+    if (!round) return latest;
+    if (!normalizeText(round.userMessage)) return latest;
+    if (!latest) return round;
+    return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
+  }, null);
+};
+
+const resolveRoundUserMessageWindow = (
+  rounds: OrchestrationRound[],
+  activeRoundId: string,
+  messages: MissionChatMessage[]
+) => {
+  const normalizedActiveRoundId = normalizeText(activeRoundId);
+  if (!normalizedActiveRoundId) return null;
+  const orderedRounds = [...(Array.isArray(rounds) ? rounds : [])].sort(
+    (left, right) =>
+      Number(left.index || 0) - Number(right.index || 0) ||
+      Number(left.createdAt || 0) - Number(right.createdAt || 0)
+  );
+  const formalRounds = orderedRounds.filter((round) => normalizeText(round.userMessage));
+  const targetFormalPosition = formalRounds.findIndex((round) => round.id === normalizedActiveRoundId);
+  if (targetFormalPosition < 0) {
+    return null;
+  }
+  const orderedMessages = [...(Array.isArray(messages) ? messages : [])].sort(compareMissionChatMessages);
+  const userMessages = orderedMessages.filter((message) => message.tone === 'user');
+  if (!userMessages.length) {
+    return null;
+  }
+  const mapping = new Map<string, number>();
+  let searchCursor = 0;
+  formalRounds.forEach((round) => {
+    const roundMessage = normalizeMessageBody(round.userMessage);
+    if (!roundMessage) return;
+    let matchedIndex = -1;
+    for (let index = searchCursor; index < userMessages.length; index += 1) {
+      if (normalizeMessageBody(userMessages[index]?.body) === roundMessage) {
+        matchedIndex = index;
+        break;
+      }
+    }
+    if (matchedIndex < 0 && searchCursor < userMessages.length) {
+      matchedIndex = searchCursor;
+    }
+    if (matchedIndex < 0) return;
+    mapping.set(round.id, matchedIndex);
+    searchCursor = matchedIndex + 1;
+  });
+  const targetMessageIndex = mapping.get(normalizedActiveRoundId);
+  if (targetMessageIndex == null || targetMessageIndex < 0 || targetMessageIndex >= userMessages.length) {
+    return null;
+  }
+  const nextFormalRound = formalRounds[targetFormalPosition + 1] || null;
+  const nextMessageIndex = nextFormalRound ? mapping.get(nextFormalRound.id) ?? -1 : -1;
+  const startMessage = userMessages[targetMessageIndex] || null;
+  const endMessage =
+    nextMessageIndex >= 0 && nextMessageIndex < userMessages.length ? userMessages[nextMessageIndex] : null;
+  if (!startMessage) {
+    return null;
+  }
+  return {
+    orderedMessages,
+    startKey: normalizeText(startMessage.key),
+    endKey: normalizeText(endMessage?.key)
+  };
+};
 
 const parseRoundIndexFromDirName = (value: unknown) => {
   const matched = normalizeText(value).match(/^round_(\d{4,})$/i);
@@ -270,6 +346,7 @@ const normalizeRound = (value: unknown): OrchestrationRound | null => {
     situation: String(record.situation || ''),
     userMessage: String(record.userMessage ?? record.user_message ?? ''),
     createdAt: normalizeMsTime(record.createdAt ?? record.created_at) || Date.now(),
+    finalizedAt: normalizeMsTime(record.finalizedAt ?? record.finalized_at),
     branchParentRoundId: normalizeText(record.branchParentRoundId ?? record.branch_parent_round_id),
     branchFromRoundIndex: Math.max(
       0,
@@ -505,6 +582,33 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current || !round) {
       return source;
     }
+    const userMessageWindow = resolveRoundUserMessageWindow(
+      current.rounds,
+      current.activeRoundId,
+      source
+    );
+    if (userMessageWindow) {
+      const startIndex = userMessageWindow.orderedMessages.findIndex(
+        (message) => normalizeText(message.key) === userMessageWindow.startKey
+      );
+      const endIndex = userMessageWindow.endKey
+        ? userMessageWindow.orderedMessages.findIndex(
+            (message) => normalizeText(message.key) === userMessageWindow.endKey
+          )
+        : -1;
+      if (startIndex >= 0) {
+        return userMessageWindow.orderedMessages.filter((message, index) => {
+          if (index < startIndex) return false;
+          if (endIndex >= 0 && index >= endIndex) return false;
+          const timeMs = normalizeMsTime(message?.time);
+          if (!timeMs) return true;
+          if ((current.suppressedMessageRanges || []).some((range) => timeMs >= range.startAt && timeMs <= range.endAt)) {
+            return false;
+          }
+          return true;
+        });
+      }
+    }
     const roundIndex = current.rounds.findIndex((item) => item.id === round.id);
     const nextRound = roundIndex >= 0 ? current.rounds[roundIndex + 1] || null : null;
     const roundStart = Number(round.createdAt || 0);
@@ -597,12 +701,13 @@ export const useOrchestrationRuntimeState = (options: {
     await Promise.all(
       agents.map((member) => {
         const agentId = normalizeText(member?.agent_id);
+        const agentName = normalizeText(member?.name) || agentId;
         if (!agentId) return Promise.resolve();
         const containerId = resolveWorkspaceContainerId(member);
         return createWunderWorkspaceDir({
           agent_id: resolveWorkspaceAgentId(agentId),
           container_id: containerId,
-          path: buildAgentArtifactPath(state.runId, round.index, agentId)
+          path: buildAgentArtifactPath(state.runId, round.index, agentName, agentId)
         }).catch(() => null);
       })
     );
@@ -848,8 +953,10 @@ export const useOrchestrationRuntimeState = (options: {
           }).rounds;
     const existingActiveRoundId =
       existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
+    const latestFormalRound = findLatestFormalRound(nextRounds);
     const activeRound =
       nextRounds.find((item) => item.id === existingActiveRoundId) ||
+      latestFormalRound ||
       nextRounds[nextRounds.length - 1] ||
       null;
     const nextState =
@@ -1113,6 +1220,13 @@ export const useOrchestrationRuntimeState = (options: {
       group_id: currentGroupId,
       orchestration_id: normalizedOrchestrationId
     });
+    if (runtimeState.value?.orchestrationId === normalizedOrchestrationId) {
+      setRuntime(null);
+      artifactCards.value = [];
+      motherWorkflowItems.value = [];
+      workflowItemsByTask.value = {};
+      workflowPreviewByTask.value = {};
+    }
     historyItems.value = sortHistoryItems(
       historyItems.value.filter((item) => item.orchestrationId !== normalizedOrchestrationId)
     );
@@ -1253,17 +1367,21 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current) return null;
     const targetRoundId = normalizeText(payload.targetRoundId);
     const normalizedMessage = String(payload.userMessage || '').trim();
-    const currentRound =
-      current.rounds.find((item) => item.id === targetRoundId) ||
-      current.rounds.find((item) => item.id === current.activeRoundId) ||
-      current.rounds[current.rounds.length - 1];
+    const latestFormalRound = findLatestFormalRound(current.rounds);
+    const nextFormalRoundIndex = Math.max(1, Number(latestFormalRound?.index || 0) + 1);
+    const explicitTargetRound = current.rounds.find((item) => item.id === targetRoundId) || null;
+    const reusableNextRound =
+      explicitTargetRound && !normalizeText(explicitTargetRound.userMessage)
+        ? explicitTargetRound
+        : current.rounds.find(
+            (item) => Number(item.index || 0) === nextFormalRoundIndex && !normalizeText(item.userMessage)
+          ) || null;
+    const currentRound = reusableNextRound || null;
+    const shouldCreateRound = !currentRound;
+    const targetRoundIndex = currentRound?.index || nextFormalRoundIndex;
     const normalizedSituation =
       String(payload.situation || '').trim() ||
-      resolveSituationByRoundIndex(current.plannedSituations, Number(currentRound?.index || 0));
-    const shouldCreateRound = !currentRound || Boolean(normalizeText(currentRound.userMessage));
-    const targetRoundIndex = shouldCreateRound
-      ? Math.max(1, ...(current.rounds || []).map((item) => item.index)) + 1
-      : currentRound.index;
+      resolveSituationByRoundIndex(current.plannedSituations, targetRoundIndex);
     const response = await reserveBeeroomOrchestrationRound({
       group_id: groupId.value,
       round_id: shouldCreateRound ? '' : currentRound?.id || '',
@@ -1310,7 +1428,10 @@ export const useOrchestrationRuntimeState = (options: {
     return finalizePendingRound(reserved.id);
   };
 
-  const finalizePendingRound = async (roundId?: string) => {
+  const finalizePendingRound = async (
+    roundId?: string,
+    payload: { situation?: string; userMessage?: string } = {}
+  ) => {
     const current = runtimeState.value;
     if (!current) return null;
     const resolvedRoundId = normalizeText(roundId) || normalizeText(current.pendingRoundId);
@@ -1318,7 +1439,9 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current.rounds.some((item) => item.id === resolvedRoundId)) return null;
     const response = await finalizeBeeroomOrchestrationRound({
       group_id: groupId.value,
-      round_id: resolvedRoundId
+      round_id: resolvedRoundId,
+      situation: String(payload.situation || '').trim() || undefined,
+      user_message: String(payload.userMessage || '').trim() || undefined
     });
     const remoteState =
       response?.data?.data?.state && typeof response.data.data.state === 'object'
@@ -1337,13 +1460,19 @@ export const useOrchestrationRuntimeState = (options: {
       true
     );
     if (!nextState) return normalizeRound(response?.data?.data?.round);
+    const finalizedRound =
+      normalizeRound(response?.data?.data?.round) ||
+      nextState.rounds.find((item) => item.id === resolvedRoundId) ||
+      findLatestFormalRound(nextState.rounds);
     setRuntime({
       ...nextState,
+      activeRoundId: finalizedRound?.id || nextState.activeRoundId,
+      currentSituation: String(finalizedRound?.situation || nextState.currentSituation || '').trim(),
       pendingRoundId: '',
       pendingRoundCreated: false,
       pendingMessageStartedAt: 0
     });
-    return normalizeRound(response?.data?.data?.round) || nextState.rounds.find((item) => item.id === resolvedRoundId) || null;
+    return finalizedRound || null;
   };
 
   const discardPendingRound = async (roundId?: string) => {
@@ -1430,11 +1559,12 @@ export const useOrchestrationRuntimeState = (options: {
       await Promise.all(
         visibleWorkers.value.map((member) => {
           const agentId = normalizeText(member?.agent_id);
+          const agentName = normalizeText(member?.name) || agentId;
           if (!agentId) return Promise.resolve();
           return deleteWunderWorkspaceEntry({
             agent_id: resolveWorkspaceAgentId(agentId),
             container_id: resolveWorkspaceContainerId(member),
-            path: buildAgentArtifactPath(current.runId, round.index, agentId)
+            path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
           }).catch(() => null);
         })
       );
@@ -1819,7 +1949,7 @@ export const useOrchestrationRuntimeState = (options: {
           const agentId = normalizeText(member?.agent_id);
           const agentName = normalizeText(member?.name) || agentId;
           const containerId = resolveWorkspaceContainerId(member);
-          const path = buildAgentArtifactPath(current.runId, round.index, agentId);
+          const path = buildAgentArtifactPath(current.runId, round.index, agentName, agentId);
           try {
             await createWunderWorkspaceDir({
               agent_id: resolveWorkspaceAgentId(agentId),

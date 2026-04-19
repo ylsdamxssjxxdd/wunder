@@ -44,7 +44,7 @@
               class="tool-workflow-entry-title"
               @mouseenter="handleToolCallTitleMouseEnter(entry, $event)"
               @mousemove="handleToolCallTitleMouseMove($event)"
-              @mouseleave="hideToolCallDebugHint"
+              @mouseleave="scheduleHideToolCallDebugHint"
             >
               <span class="tool-workflow-entry-tool-name">
                 {{ entry.toolLabel }}
@@ -94,6 +94,8 @@
         ref="toolCallDebugHintRef"
         class="tool-workflow-debug-floating"
         :style="toolCallDebugHintStyle"
+        @mouseenter="handleToolCallDebugHintMouseEnter"
+        @mouseleave="scheduleHideToolCallDebugHint"
       >
         {{ toolCallDebugHint.text }}
       </div>
@@ -231,6 +233,7 @@ const TOOL_CALL_DEBUG_HINT_OFFSET = 14;
 const TOOL_CALL_DEBUG_HINT_MARGIN = 12;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_WIDTH = 360;
 const TOOL_CALL_DEBUG_HINT_FALLBACK_HEIGHT = 160;
+const TOOL_CALL_DEBUG_HINT_HIDE_DELAY_MS = 140;
 
 const PATH_HINT_KEYS = [
   'path',
@@ -291,6 +294,7 @@ const toolCallDebugHint = ref<ToolCallDebugHintState>({
 });
 let workflowLayoutFrame: number | null = null;
 let workflowToggleProgrammatic = false;
+let toolCallDebugHintHideTimer: ReturnType<typeof setTimeout> | null = null;
 const programmaticEntryToggleKeys = new Set<string>();
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
@@ -375,6 +379,12 @@ const syncEntryOpenStates = (validKeys?: Set<string>) => {
 
 const clampNumber = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
 
+const clearToolCallDebugHintHideTimer = (): void => {
+  if (toolCallDebugHintHideTimer === null) return;
+  clearTimeout(toolCallDebugHintHideTimer);
+  toolCallDebugHintHideTimer = null;
+};
+
 const updateToolCallDebugHintPosition = (pointerX: number, pointerY: number): void => {
   if (typeof window === 'undefined') return;
   const viewportWidth = window.innerWidth;
@@ -398,6 +408,7 @@ const updateToolCallDebugHintPosition = (pointerX: number, pointerY: number): vo
 };
 
 const showToolCallDebugHint = (text: string, event: MouseEvent): void => {
+  clearToolCallDebugHintHideTimer();
   const normalized = String(text || '').trim();
   if (!normalized) {
     toolCallDebugHint.value.visible = false;
@@ -419,7 +430,20 @@ const handleToolCallTitleMouseMove = (event: MouseEvent): void => {
   updateToolCallDebugHintPosition(event.clientX, event.clientY);
 };
 
+const handleToolCallDebugHintMouseEnter = (): void => {
+  clearToolCallDebugHintHideTimer();
+};
+
+const scheduleHideToolCallDebugHint = (): void => {
+  clearToolCallDebugHintHideTimer();
+  toolCallDebugHintHideTimer = setTimeout(() => {
+    toolCallDebugHintHideTimer = null;
+    hideToolCallDebugHint();
+  }, TOOL_CALL_DEBUG_HINT_HIDE_DELAY_MS);
+};
+
 const hideToolCallDebugHint = (): void => {
+  clearToolCallDebugHintHideTimer();
   if (!toolCallDebugHint.value.visible && !toolCallDebugHint.value.text) return;
   toolCallDebugHint.value.visible = false;
   toolCallDebugHint.value.text = '';
@@ -3513,6 +3537,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  clearToolCallDebugHintHideTimer();
   hideToolCallDebugHint();
   entryDetailRefMap.clear();
   if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {
@@ -4050,7 +4075,8 @@ onBeforeUnmount(() => {
   max-width: min(820px, calc(100vw - 32px));
   max-height: min(60vh, 720px);
   overflow: auto;
-  pointer-events: none;
+  overscroll-behavior: contain;
+  pointer-events: auto;
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--workflow-term-border-strong, #32445f);
@@ -4063,6 +4089,27 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(125, 211, 252, 0.42) rgba(15, 22, 34, 0.32);
+}
+
+.tool-workflow-debug-floating::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.tool-workflow-debug-floating::-webkit-scrollbar-track {
+  background: rgba(15, 22, 34, 0.32);
+  border-radius: 999px;
+}
+
+.tool-workflow-debug-floating::-webkit-scrollbar-thumb {
+  background: rgba(125, 211, 252, 0.42);
+  border-radius: 999px;
+}
+
+.tool-workflow-debug-floating::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 211, 252, 0.58);
 }
 
 .tool-workflow-entry-tool-icon {

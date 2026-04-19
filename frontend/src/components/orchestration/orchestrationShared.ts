@@ -2,13 +2,42 @@ import type { BeeroomMission } from '@/stores/beeroom';
 
 export const normalizeOrchestrationText = (value: unknown): string => String(value || '').trim();
 
+const ORCHESTRATION_ARTIFACT_DIR_INVALID_CHARS = /[\\/:*?"<>|]+/g;
+
 export const buildOrchestrationRoundId = (index: number) =>
   `round_${String(Math.max(1, Math.trunc(Number(index) || 0))).padStart(4, '0')}`;
 
 export const buildOrchestrationRoundDirName = (index: number) => buildOrchestrationRoundId(index);
 
-export const buildOrchestrationAgentArtifactPath = (runId: string, roundIndex: number, agentId: string) =>
-  ['orchestration', normalizeOrchestrationText(runId), buildOrchestrationRoundDirName(roundIndex), normalizeOrchestrationText(agentId)]
+export const sanitizeOrchestrationArtifactDirName = (value: unknown) => {
+  const normalized = normalizeOrchestrationText(value).replace(
+    ORCHESTRATION_ARTIFACT_DIR_INVALID_CHARS,
+    '_'
+  );
+  const trimmed = normalized.trim().replace(/^\.+|\.+$/g, '').trim();
+  return trimmed.replaceAll('..', '_');
+};
+
+export const buildOrchestrationAgentArtifactDirName = (
+  agentName: string,
+  fallbackAgentId = ''
+) =>
+  sanitizeOrchestrationArtifactDirName(agentName) ||
+  sanitizeOrchestrationArtifactDirName(fallbackAgentId) ||
+  'worker';
+
+export const buildOrchestrationAgentArtifactPath = (
+  runId: string,
+  roundIndex: number,
+  agentName: string,
+  fallbackAgentId = ''
+) =>
+  [
+    'orchestration',
+    normalizeOrchestrationText(runId),
+    buildOrchestrationRoundDirName(roundIndex),
+    buildOrchestrationAgentArtifactDirName(agentName, fallbackAgentId)
+  ]
     .filter(Boolean)
     .join('/');
 

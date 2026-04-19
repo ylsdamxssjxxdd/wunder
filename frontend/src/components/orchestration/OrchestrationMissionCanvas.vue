@@ -101,41 +101,41 @@
                         :class="{
                           current: item.current,
                           active: item.active,
-                          branched: item.branchFromRoundIndex > 0
+                          branched: item.branchFromRoundIndex > 0,
+                          'is-disabled': runtimeLocked && !item.current
                         }"
                         type="button"
+                        :disabled="runtimeLocked && !item.current"
                         :style="{
                           '--lane': String(item.lane + 1),
                           '--column': String(item.column)
                         }"
                         :title="item.title"
                         :aria-label="item.title"
-                        @click="emit('restore-run', item.id.slice(4))"
+                        @click="handleRunChipClick(item)"
                       >
                         <span class="orchestration-run-chip-icon" aria-hidden="true">
                           <i class="fa-solid fa-code-branch" v-if="item.branchDepth > 0"></i>
                           <i class="fa-solid fa-diagram-project" v-else></i>
                         </span>
-                        <span class="orchestration-run-chip-body">
-                          <span class="orchestration-run-chip-title">{{ item.title }}</span>
-                          <span class="orchestration-run-chip-meta">
-                            {{ t('orchestration.timeline.round', { round: item.latestRoundIndex }) }}
-                          </span>
-                        </span>
                       </button>
                       <button
                         v-else
                         class="orchestration-round-chip"
-                        :class="{ active: item.active }"
+                        :class="{
+                          active: item.active,
+                          'is-disabled': runtimeLocked
+                        }"
                         type="button"
+                        :disabled="runtimeLocked"
                         :style="{
                           '--lane': String(item.lane + 1),
                           '--column': String(item.column)
                         }"
                         :title="t('orchestration.timeline.round', { round: item.roundIndex })"
                         :aria-label="t('orchestration.timeline.round', { round: item.roundIndex })"
-                        :aria-current="item.active ? 'step' : undefined"
-                        @click="emit('select-round', item.roundId)"
+                        :aria-current="item.currentRun && item.active ? 'step' : undefined"
+                        @click="handleRoundChipClick(item)"
                         @contextmenu.prevent.stop="openRoundContextMenu($event, item)"
                       >
                         <span class="orchestration-round-chip-node" aria-hidden="true">
@@ -226,7 +226,7 @@
               type="button"
               :title="t('orchestration.action.create')"
               :aria-label="t('orchestration.action.create')"
-              :disabled="initializing"
+              :disabled="initializing || runtimeLocked"
               @click="emit('create-run')"
             >
               <i class="fa-solid fa-plus" aria-hidden="true"></i>
@@ -236,7 +236,7 @@
               type="button"
               :title="t('orchestration.action.history')"
               :aria-label="t('orchestration.action.history')"
-              :disabled="historyLoading"
+              :disabled="historyLoading || runtimeLocked"
               @click="emit('open-history')"
             >
               <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
@@ -256,7 +256,7 @@
               type="button"
               :title="t('orchestration.action.situation')"
               :aria-label="t('orchestration.action.situation')"
-              :disabled="!isReady"
+              :disabled="!isReady || runtimeLocked"
               @click="emit('open-situation')"
             >
               <i class="fa-solid fa-wave-square" aria-hidden="true"></i>
@@ -352,6 +352,7 @@ const props = defineProps<{
   isActive: boolean;
   isBusy: boolean;
   isReady: boolean;
+  runtimeLocked: boolean;
   groupDescription: string;
   resolveWorkerOutputs: (agentId: string) => MissionChatMessage[];
   resolveWorkerThreadSessionId: (agentId: string) => string;
@@ -492,6 +493,7 @@ type TimelineRoundItem = {
   roundIndex: number;
   active: boolean;
   orchestrationId: string;
+  currentRun: boolean;
 };
 
 type TimelineConnector = {
@@ -506,6 +508,23 @@ type TimelineLayout = {
   laneCount: number;
   columnCount: number;
 };
+
+type TimelineRunLayoutMeta = {
+  lane: number;
+  runChipColumn: number;
+  lastRoundColumn: number;
+  branchFromRoundIndex: number;
+  roundColumns: Map<number, number>;
+};
+
+const sortTimelineHistoryItems = (items: OrchestrationHistoryItem[]) =>
+  [...items].sort((left, right) => {
+    const branchDepthDiff = (left.branchDepth || 0) - (right.branchDepth || 0);
+    if (branchDepthDiff !== 0) return branchDepthDiff;
+    const enteredDiff = (left.enteredAt || 0) - (right.enteredAt || 0);
+    if (enteredDiff !== 0) return enteredDiff;
+    return String(left.orchestrationId || '').localeCompare(String(right.orchestrationId || ''));
+  });
 
 const timelineLayout = computed<TimelineLayout>(() => {
   const historyItems = Array.isArray(props.historyItems) ? props.historyItems : [];
@@ -522,6 +541,10 @@ const timelineLayout = computed<TimelineLayout>(() => {
     };
   }
 
+  const currentRounds = rounds.map((round) => ({
+    ...round,
+    orchestrationId: currentRunId
+  }));
   const currentHistoryItem =
     historyItems.find((item) => String(item.orchestrationId || '').trim() === currentRunId) || null;
   const currentBranchRootId = String(
@@ -539,23 +562,13 @@ const timelineLayout = computed<TimelineLayout>(() => {
     return branchRootId === currentBranchRootId;
   });
 
-  const normalizedHistory = scopedHistory
-    .slice()
-    .sort((left, right) => {
-      const branchDepthDiff = (left.branchDepth || 0) - (right.branchDepth || 0);
-      if (branchDepthDiff !== 0) return branchDepthDiff;
-      const enteredDiff = (left.enteredAt || 0) - (right.enteredAt || 0);
-      if (enteredDiff !== 0) return enteredDiff;
-      return String(left.orchestrationId || '').localeCompare(String(right.orchestrationId || ''));
-    });
+  const normalizedHistory = sortTimelineHistoryItems(scopedHistory);
 
   const laneByRun = new Map<string, number>();
   const lanes: string[][] = [];
 
-  normalizedHistory.forEach((item) => {
-    const runId = String(item.orchestrationId || '').trim();
-    if (!runId) return;
-    const parentId = String(item.parentOrchestrationId || '').trim();
+  const ensureRunLane = (runId: string, parentId = '') => {
+    if (!runId || laneByRun.has(runId)) return;
     let lane = 0;
     if (parentId && laneByRun.has(parentId)) {
       lane = laneByRun.get(parentId) ?? 0;
@@ -570,38 +583,77 @@ const timelineLayout = computed<TimelineLayout>(() => {
     laneByRun.set(runId, lane);
     if (!lanes[lane]) lanes[lane] = [];
     lanes[lane].push(runId);
+  };
+
+  normalizedHistory.forEach((item) => {
+    const runId = String(item.orchestrationId || '').trim();
+    if (!runId) return;
+    const parentId = String(item.parentOrchestrationId || '').trim();
+    ensureRunLane(runId, parentId);
   });
 
-  if (currentRunId && !laneByRun.has(currentRunId)) {
-    const fallbackLane = lanes.findIndex((lane) => !lane?.length);
-    const lane = fallbackLane >= 0 ? fallbackLane : lanes.length;
-    laneByRun.set(currentRunId, lane);
-    if (!lanes[lane]) lanes[lane] = [];
-    lanes[lane].push(currentRunId);
+  if (currentRunId && rounds.length && !laneByRun.has(currentRunId)) {
+    ensureRunLane(currentRunId, String(currentHistoryItem?.parentOrchestrationId || '').trim());
   }
+
+  const renderableRuns = normalizedHistory.slice();
+  if (currentRunId && rounds.length && !renderableRuns.some((item) => String(item.orchestrationId || '').trim() === currentRunId)) {
+    renderableRuns.push({
+      orchestrationId: currentRunId,
+      runId: String(props.runId || currentRunId).trim() || currentRunId,
+      groupId: String(props.group?.group_id || props.group?.hive_id || '').trim(),
+      motherAgentId: String(props.motherAgentId || '').trim(),
+      motherAgentName: String(props.motherName || '').trim(),
+      motherSessionId: String(props.motherSessionId || '').trim(),
+      status: props.isActive ? 'active' : 'closed',
+      latestRoundIndex: Math.max(1, rounds.length || 1),
+      enteredAt: 0,
+      updatedAt: 0,
+      exitedAt: 0,
+      restoredAt: 0,
+      parentOrchestrationId: String(currentHistoryItem?.parentOrchestrationId || '').trim(),
+      branchRootOrchestrationId: currentBranchRootId || currentRunId,
+      branchFromRoundIndex: Math.max(0, Number(currentHistoryItem?.branchFromRoundIndex || 0)),
+      branchDepth: Math.max(0, Number(currentHistoryItem?.branchDepth || 0))
+    });
+  }
+  const orderedRuns = sortTimelineHistoryItems(renderableRuns);
 
   const items: Array<TimelineRunItem | TimelineRoundItem> = [];
   const connectors: TimelineConnector[] = [];
-  const baseColumnForRun = new Map<string, number>();
+  const runLayoutById = new Map<string, TimelineRunLayoutMeta>();
   let maxColumn = 1;
 
-  normalizedHistory.forEach((item) => {
+  const resolveRunAnchorColumn = (runId: string, roundIndex: number) => {
+    const meta = runLayoutById.get(runId);
+    if (!meta) return 1;
+    if (roundIndex <= meta.branchFromRoundIndex) {
+      return meta.runChipColumn;
+    }
+    return meta.roundColumns.get(roundIndex) ?? meta.lastRoundColumn ?? meta.runChipColumn;
+  };
+
+  const buildSyntheticRounds = (runId: string, latestRoundIndex: number) =>
+    Array.from({ length: Math.max(1, latestRoundIndex) }, (_, index) => ({
+      id: `history:${runId}:round_${String(index + 1).padStart(4, '0')}`,
+      index: index + 1,
+      orchestrationId: runId
+    }));
+
+  orderedRuns.forEach((item) => {
     const runId = String(item.orchestrationId || '').trim();
     if (!runId) return;
     const lane = laneByRun.get(runId) ?? 0;
     const parentId = String(item.parentOrchestrationId || '').trim();
     const branchFromRoundIndex = Math.max(0, Number(item.branchFromRoundIndex || 0));
-    const parentColumn = parentId ? baseColumnForRun.get(parentId) ?? 1 : 1;
-    const column = parentId
-      ? Math.max(parentColumn + Math.max(1, branchFromRoundIndex), 2)
-      : 1;
-    baseColumnForRun.set(runId, column);
-    maxColumn = Math.max(maxColumn, column);
+    const parentAnchorColumn = parentId ? resolveRunAnchorColumn(parentId, branchFromRoundIndex) : 1;
+    const runChipColumn = Math.max(1, parentAnchorColumn);
+    maxColumn = Math.max(maxColumn, runChipColumn);
     items.push({
       type: 'run',
       id: `run:${runId}`,
       lane,
-      column,
+      column: runChipColumn,
       title: String(item.runId || runId).trim() || runId,
       latestRoundIndex: Math.max(1, Number(item.latestRoundIndex || 1)),
       active: runId === currentRunId && props.isActive,
@@ -611,71 +663,68 @@ const timelineLayout = computed<TimelineLayout>(() => {
       branchDepth: Math.max(0, Number(item.branchDepth || 0)),
       parentOrchestrationId: parentId
     });
-    if (parentId && baseColumnForRun.has(parentId)) {
-      const parentLane = laneByRun.get(parentId) ?? 0;
-      const parentBaseColumn = baseColumnForRun.get(parentId) ?? 1;
-      if (parentLane === lane) {
+    if (parentId && runLayoutById.has(parentId)) {
+      const parentMeta = runLayoutById.get(parentId)!;
+      if (parentMeta.lane !== lane) {
         connectors.push({
-          id: `run-link:${parentId}:${runId}`,
-          className: 'orchestration-timeline-connector horizontal',
+          id: `run-link-vertical:${parentId}:${runId}:${branchFromRoundIndex}`,
+          className: 'orchestration-timeline-connector vertical orchestration-timeline-connector--branch',
           style: {
-            '--lane': String(lane + 1),
-            '--column-start': String(parentBaseColumn + 1),
-            '--column-span': String(Math.max(1, column - parentBaseColumn))
-          }
-        });
-      } else {
-        connectors.push({
-          id: `run-link-horizontal:${parentId}:${runId}`,
-          className: 'orchestration-timeline-connector horizontal',
-          style: {
-            '--lane': String(parentLane + 1),
-            '--column-start': String(parentBaseColumn + 1),
-            '--column-span': String(Math.max(1, column - parentBaseColumn))
-          }
-        });
-        connectors.push({
-          id: `run-link-vertical:${parentId}:${runId}`,
-          className: 'orchestration-timeline-connector vertical',
-          style: {
-            '--lane-start': String(Math.min(parentLane, lane) + 1),
-            '--lane-span': String(Math.abs(lane - parentLane) + 1),
-            '--column': String(column)
+            '--lane-start': String(Math.min(parentMeta.lane, lane) + 1),
+            '--lane-end': String(Math.max(parentMeta.lane, lane) + 1),
+            '--column': String(runChipColumn)
           }
         });
       }
     }
-  });
 
-  if (currentRunId) {
-    const currentLane = laneByRun.get(currentRunId) ?? 0;
-    const currentBaseColumn = baseColumnForRun.get(currentRunId) ?? 1;
-    rounds.forEach((round) => {
-      const column = currentBaseColumn + round.index;
+    const isCurrentRun = runId === currentRunId;
+    const sourceRounds = isCurrentRun
+      ? currentRounds
+      : buildSyntheticRounds(runId, Math.max(1, Number(item.latestRoundIndex || 1)));
+    const visibleRounds = sourceRounds.filter((round) => {
+      const roundIndex = Math.max(1, Number(round.index || 0));
+      return branchFromRoundIndex > 0 ? roundIndex > branchFromRoundIndex : true;
+    });
+    const roundColumns = new Map<number, number>();
+    let lastRoundColumn = runChipColumn;
+    visibleRounds.forEach((round) => {
+      const roundIndex = Math.max(1, Number(round.index || 0));
+      const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
+      roundColumns.set(roundIndex, column);
+      lastRoundColumn = Math.max(lastRoundColumn, column);
       maxColumn = Math.max(maxColumn, column);
       items.push({
         type: 'round',
         id: `round:${round.id}`,
-        lane: currentLane,
+        lane,
         column,
         roundId: round.id,
-        roundIndex: round.index,
-        active: round.id === props.activeRound?.id,
-        orchestrationId: currentRunId
+        roundIndex,
+        active: isCurrentRun && round.id === props.activeRound?.id,
+        orchestrationId: runId,
+        currentRun: isCurrentRun
       });
     });
-    if (rounds.length) {
+    if (visibleRounds.length) {
       connectors.push({
-        id: `run-round-link:${currentRunId}`,
+        id: `run-round-link:${runId}`,
         className: 'orchestration-timeline-connector horizontal orchestration-timeline-connector--rounds',
         style: {
-          '--lane': String(currentLane + 1),
-          '--column-start': String(currentBaseColumn + 1),
-          '--column-span': String(Math.max(1, rounds.length))
+          '--lane': String(lane + 1),
+          '--column-start': String(runChipColumn),
+          '--column-end': String(lastRoundColumn)
         }
       });
     }
-  }
+    runLayoutById.set(runId, {
+      lane,
+      runChipColumn,
+      lastRoundColumn,
+      branchFromRoundIndex,
+      roundColumns
+    });
+  });
 
   return {
     items,
@@ -790,7 +839,26 @@ const closeRoundContextMenu = () => {
   };
 };
 
+const handleRunChipClick = (item: TimelineRunItem) => {
+  if (props.runtimeLocked && !item.current) return;
+  if (item.current) return;
+  emit('restore-run', item.id.slice(4));
+};
+
+const handleRoundChipClick = (item: TimelineRoundItem) => {
+  if (props.runtimeLocked) return;
+  if (item.currentRun) {
+    emit('select-round', item.roundId);
+    return;
+  }
+  emit('restore-run', item.orchestrationId);
+};
+
 const openRoundContextMenu = (event: MouseEvent, item: TimelineRoundItem) => {
+  if (props.runtimeLocked) {
+    closeRoundContextMenu();
+    return;
+  }
   if (!item?.orchestrationId || item.orchestrationId !== props.currentOrchestrationId) {
     closeRoundContextMenu();
     return;
@@ -1079,6 +1147,15 @@ watch(
 );
 
 watch(
+  () => props.runtimeLocked,
+  (locked) => {
+    if (locked) {
+      closeRoundContextMenu();
+    }
+  }
+);
+
+watch(
   () => [chatCollapsed.value, isCompactLayout.value] as const,
   ([collapsed, compact]) => {
     mergeBeeroomMissionCanvasState(canvasScopeKey.value, {
@@ -1290,7 +1367,7 @@ watch(
   margin: 0 14px;
   height: var(--orchestration-timeline-height);
   min-height: 88px;
-  padding: 8px 16px 16px;
+  padding: 0 16px 16px;
   border-top: 1px solid rgba(148, 163, 184, 0.14);
   background:
     linear-gradient(180deg, rgba(14, 18, 27, 0.86), rgba(9, 12, 18, 0.94)),
@@ -1309,9 +1386,9 @@ watch(
 
 .orchestration-timeline-resizer {
   position: relative;
-  flex: 0 0 14px;
-  height: 14px;
-  margin-bottom: 10px;
+  flex: 0 0 18px;
+  height: 18px;
+  margin: 0 -16px 8px;
   cursor: ns-resize;
   touch-action: none;
   display: flex;
@@ -1322,8 +1399,11 @@ watch(
 
 .orchestration-timeline-resizer::before {
   content: '';
-  width: 100%;
-  height: 1px;
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
   border-radius: 999px;
   background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.46), transparent);
   transition: background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1341,24 +1421,8 @@ watch(
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 10px 6px 6px;
+  padding: 6px 6px 6px;
   overflow: visible;
-}
-
-.orchestration-timeline-rail::before {
-  content: '';
-  position: absolute;
-  left: 20px;
-  right: 20px;
-  top: 34px;
-  height: 2px;
-  border-radius: 999px;
-  background:
-    linear-gradient(90deg, rgba(56, 189, 248, 0.16), rgba(251, 191, 36, 0.2), rgba(45, 212, 191, 0.16));
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.02),
-    0 0 18px rgba(56, 189, 248, 0.08);
-  pointer-events: none;
 }
 
 .orchestration-timeline-handle {
@@ -1474,24 +1538,36 @@ watch(
 }
 
 .orchestration-timeline-tree-grid {
+  --timeline-node-size: 36px;
+  --timeline-track-width: 64px;
+  --timeline-track-height: 48px;
+  --timeline-row-gap: 12px;
+  --timeline-column-gap: 10px;
+  --timeline-grid-pad-top: 10px;
+  --timeline-grid-pad-x: 10px;
+  --timeline-grid-pad-bottom: 12px;
+  --timeline-column-step: calc(var(--timeline-track-width) + var(--timeline-column-gap));
+  --timeline-row-step: calc(var(--timeline-track-height) + var(--timeline-row-gap));
+  --timeline-center-x: calc(var(--timeline-track-width) / 2);
+  --timeline-center-y: calc(var(--timeline-track-height) / 2);
   position: relative;
   display: grid;
-  grid-template-columns: repeat(var(--timeline-columns), minmax(62px, 88px));
-  grid-template-rows: repeat(var(--timeline-lanes), 58px);
+  grid-template-columns: repeat(var(--timeline-columns), var(--timeline-track-width));
+  grid-template-rows: repeat(var(--timeline-lanes), var(--timeline-track-height));
   grid-auto-flow: row;
-  gap: 10px 8px;
+  gap: var(--timeline-row-gap) var(--timeline-column-gap);
   min-width: max-content;
   min-height: max-content;
-  padding: 8px 8px 10px;
+  padding: var(--timeline-grid-pad-top) var(--timeline-grid-pad-x) var(--timeline-grid-pad-bottom);
 }
 
 .orchestration-timeline-lane-rail {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: calc((var(--lane) - 1) * 68px + 29px);
+  left: var(--timeline-grid-pad-x);
+  right: var(--timeline-grid-pad-x);
+  top: calc(var(--timeline-grid-pad-top) + (var(--lane) - 1) * var(--timeline-row-step) + var(--timeline-center-y));
   height: 1px;
-  background: linear-gradient(90deg, rgba(71, 85, 105, 0.24), rgba(56, 189, 248, 0.16), rgba(71, 85, 105, 0.24));
+  background: linear-gradient(90deg, rgba(51, 65, 85, 0.12), rgba(59, 130, 246, 0.14), rgba(51, 65, 85, 0.12));
   pointer-events: none;
 }
 
@@ -1502,25 +1578,31 @@ watch(
 }
 
 .orchestration-timeline-connector.horizontal {
-  left: calc((var(--column-start) - 1) * 70px + 38px);
-  top: calc((var(--lane) - 1) * 68px + 29px);
-  width: calc(var(--column-span) * 70px - 8px);
+  left: calc(var(--timeline-grid-pad-x) + (var(--column-start) - 1) * var(--timeline-column-step) + var(--timeline-center-x));
+  top: calc(var(--timeline-grid-pad-top) + (var(--lane) - 1) * var(--timeline-row-step) + var(--timeline-center-y) - 1px);
+  width: max(10px, calc((var(--column-end) - var(--column-start)) * var(--timeline-column-step)));
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.22), rgba(251, 191, 36, 0.24));
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.34), rgba(125, 211, 252, 0.2));
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.24);
 }
 
 .orchestration-timeline-connector.vertical {
-  left: calc((var(--column) - 1) * 70px + 38px);
-  top: calc((var(--lane-start) - 1) * 68px + 29px);
+  left: calc(var(--timeline-grid-pad-x) + (var(--column) - 1) * var(--timeline-column-step) + var(--timeline-center-x) - 1px);
+  top: calc(var(--timeline-grid-pad-top) + (var(--lane-start) - 1) * var(--timeline-row-step) + var(--timeline-center-y));
   width: 2px;
-  height: calc((var(--lane-span) - 1) * 68px);
+  height: calc((var(--lane-end) - var(--lane-start)) * var(--timeline-row-step));
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.22), rgba(251, 191, 36, 0.24));
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.34), rgba(125, 211, 252, 0.2));
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.24);
 }
 
 .orchestration-timeline-connector--rounds {
-  background: linear-gradient(90deg, rgba(251, 191, 36, 0.24), rgba(248, 250, 252, 0.18));
+  background: linear-gradient(90deg, rgba(251, 191, 36, 0.46), rgba(253, 224, 71, 0.28));
+}
+
+.orchestration-timeline-connector--branch {
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.5), rgba(56, 189, 248, 0.26));
 }
 
 .orchestration-run-chip,
@@ -1528,6 +1610,8 @@ watch(
   position: relative;
   z-index: 1;
   display: inline-flex;
+  width: var(--timeline-node-size);
+  height: var(--timeline-node-size);
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -1537,6 +1621,7 @@ watch(
   cursor: pointer;
   grid-column: var(--column);
   grid-row: var(--lane);
+  place-self: center;
   transition:
     color 160ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 160ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -1544,19 +1629,14 @@ watch(
 }
 
 .orchestration-run-chip {
-  justify-content: flex-start;
-  min-width: 0;
-  width: 100%;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
   background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(2, 6, 23, 0.96)),
+    linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 0.98)),
     linear-gradient(120deg, rgba(56, 189, 248, 0.04), rgba(251, 191, 36, 0.04));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 10px 26px rgba(2, 6, 23, 0.18);
+    0 8px 20px rgba(2, 6, 23, 0.16);
 }
 
 .orchestration-run-chip:hover,
@@ -1572,6 +1652,12 @@ watch(
   border-color: rgba(56, 189, 248, 0.34);
 }
 
+.orchestration-run-chip.is-disabled,
+.orchestration-round-chip.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .orchestration-run-chip.active {
   border-color: rgba(251, 191, 36, 0.36);
   box-shadow:
@@ -1581,48 +1667,27 @@ watch(
 }
 
 .orchestration-run-chip-icon {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 100%;
+  height: 100%;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
+  border-radius: 999px;
   color: rgba(191, 219, 254, 0.86);
-  background: rgba(15, 23, 42, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: transparent;
+  border: 0;
 }
 
-.orchestration-run-chip-body {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.orchestration-run-chip-title {
-  width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(241, 245, 249, 0.94);
-}
-
-.orchestration-run-chip-meta {
-  font-size: 11px;
-  color: rgba(148, 163, 184, 0.86);
+.orchestration-run-chip-icon i {
+  font-size: 13px;
 }
 
 .orchestration-round-chip-node {
   position: relative;
   z-index: 1;
-  width: 36px;
-  height: 36px;
+  width: var(--timeline-node-size);
+  height: var(--timeline-node-size);
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
@@ -1666,6 +1731,22 @@ watch(
 
 .orchestration-round-chip.active .orchestration-round-chip-index {
   color: #3f2207;
+}
+
+.orchestration-run-chip.is-disabled:hover,
+.orchestration-run-chip.is-disabled:focus-visible,
+.orchestration-round-chip.is-disabled:hover,
+.orchestration-round-chip.is-disabled:focus-visible {
+  color: #dbeafe;
+  transform: none;
+}
+
+.orchestration-round-chip.is-disabled:hover .orchestration-round-chip-node,
+.orchestration-round-chip.is-disabled:focus-visible .orchestration-round-chip-node {
+  border-color: rgba(148, 163, 184, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 4px 14px rgba(2, 6, 23, 0.18);
 }
 
 .orchestration-round-chip:hover .orchestration-round-chip-node,

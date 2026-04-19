@@ -1,17 +1,18 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
-use crate::prompting::read_prompt_template_from_active_pack;
+use crate::prompting::read_prompt_template;
 use crate::services::orchestration_context::{
     build_branch_history_record_from_state, build_chat_session_with_title, build_history_record_from_state,
     build_orchestration_thread_title, build_initial_round_state, clear_hive_state, clear_history_record,
     clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state, clear_session_context,
     copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
     delete_round_directories_after, latest_formal_round_index, list_history_records, load_hive_state,
-    load_history_record, load_round_state, persist_hive_state, persist_history_record,
-    persist_member_binding, persist_round_state, persist_session_context, rebuild_branch_round_state,
-    round_id, OrchestrationHiveState, OrchestrationHistoryRecord, OrchestrationMemberBinding,
-    OrchestrationRoundRecord, OrchestrationRoundState, OrchestrationSessionContext,
-    OrchestrationSuppressedMessageRange, ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+    load_history_record, load_round_state, orchestration_agent_artifact_dir_name,
+    persist_hive_state, persist_history_record, persist_member_binding, persist_round_state,
+    persist_session_context, rebuild_branch_round_state, round_id, OrchestrationHiveState,
+    OrchestrationHistoryRecord, OrchestrationMemberBinding, OrchestrationRoundRecord,
+    OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
+    ORCHESTRATION_HISTORY_STATUS_ACTIVE,
     ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
 };
 use crate::services::swarm::beeroom::{
@@ -961,7 +962,7 @@ async fn branch_orchestration_history(
         &mother_workspace_id,
         &source_history.run_id,
         &run_id,
-        branch_round_index.saturating_sub(1),
+        branch_round_index,
     )
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     copy_round_situation_files(
@@ -979,7 +980,7 @@ async fn branch_orchestration_history(
             &[
                 "orchestration",
                 run_id.as_str(),
-                &format!("round_{:04}", branch_round_index.max(1)),
+                &format!("round_{:04}", branch_round_index.saturating_add(1).max(1)),
             ]
             .join("/"),
         )
@@ -998,7 +999,7 @@ async fn branch_orchestration_history(
             &worker_workspace_id,
             &source_history.run_id,
             &run_id,
-            branch_round_index.saturating_sub(1),
+            branch_round_index,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let reopen_dir = state
@@ -1006,10 +1007,10 @@ async fn branch_orchestration_history(
             .resolve_path(
                 &worker_workspace_id,
                 &[
-                    "orchestration",
-                    run_id.as_str(),
-                    &format!("round_{:04}", branch_round_index.max(1)),
-                    agent.agent_id.as_str(),
+                    "orchestration".to_string(),
+                    run_id.clone(),
+                    format!("round_{:04}", branch_round_index.saturating_add(1).max(1)),
+                    orchestration_agent_artifact_dir_name(&agent.name, &agent.agent_id),
                 ]
                 .join("/"),
             )
@@ -1278,7 +1279,7 @@ async fn reserve_orchestration_round(
         .unwrap_or_default()
         .to_string();
     let now = now_ts();
-    let target_index = if requested_index > 0 {
+    let requested_target_index = if requested_index > 0 {
         requested_index
     } else if !requested_round_id.is_empty() {
         round_state
@@ -1290,7 +1291,28 @@ async fn reserve_orchestration_round(
     } else {
         latest_formal_round_index(Some(&round_state)).saturating_add(1)
     };
-    let normalized_target_index = target_index.max(1);
+    let mut normalized_target_index = requested_target_index.max(1);
+    let latest_formal_index = latest_formal_round_index_or_zero(&round_state);
+    let history_user_round_index =
+        count_mother_user_rounds(state.storage.as_ref(), &user_id, &hive_state.mother_session_id, &round_state);
+    let authoritative_next_index = latest_formal_index
+        .max(history_user_round_index)
+        .saturating_add(1)
+        .max(1);
+    if normalized_target_index < authoritative_next_index {
+        normalized_target_index = authoritative_next_index;
+    }
+    if let Some(existing) = round_state
+        .rounds
+        .iter()
+        .find(|round| round.index == normalized_target_index)
+    {
+        let requested_existing_round = !requested_round_id.is_empty()
+            && existing.id.trim() == requested_round_id;
+        if !requested_existing_round && !existing.user_message.trim().is_empty() {
+            normalized_target_index = authoritative_next_index;
+        }
+    }
     if let Some(existing) = round_state
         .rounds
         .iter_mut()
@@ -1532,7 +1554,6 @@ async fn get_orchestration_prompts(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, Response> {
     let _resolved = resolve_user(&state, &headers, None).await?;
-    let config = state.config_store.get().await;
     let locale = if i18n::get_language().to_ascii_lowercase().starts_with("en") {
         "en"
     } else {
@@ -1564,10 +1585,9 @@ async fn get_orchestration_prompts(
                     .strip_prefix("prompts")
                     .unwrap_or_else(|_| Path::new(path)),
             );
-            let localized_template =
-                read_prompt_template_from_active_pack(&config, localized_path.as_path());
+            let localized_template = read_prompt_template(localized_path.as_path());
             let template = if localized_template.trim().is_empty() {
-                read_prompt_template_from_active_pack(&config, Path::new(path))
+                read_prompt_template(Path::new(path))
             } else {
                 localized_template
             };
@@ -2233,6 +2253,57 @@ fn orchestration_history_payload(record: &OrchestrationHistoryRecord) -> Value {
         "branch_from_round_index": record.branch_from_round_index,
         "branch_depth": record.branch_depth,
     })
+}
+
+fn latest_formal_round_index_or_zero(round_state: &OrchestrationRoundState) -> i64 {
+    round_state
+        .rounds
+        .iter()
+        .filter(|round| !round.user_message.trim().is_empty())
+        .map(|round| round.index)
+        .max()
+        .unwrap_or(0)
+        .max(0)
+}
+
+fn count_mother_user_rounds(
+    storage: &dyn crate::storage::StorageBackend,
+    user_id: &str,
+    mother_session_id: &str,
+    round_state: &OrchestrationRoundState,
+) -> i64 {
+    if mother_session_id.trim().is_empty() {
+        return 0;
+    }
+    let earliest_round_created_at = round_state
+        .rounds
+        .iter()
+        .map(|round| round.created_at)
+        .filter(|value| *value > 0.0)
+        .min_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(0.0);
+    storage
+        .load_chat_history(user_id.trim(), mother_session_id.trim(), None)
+        .ok()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|message| {
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim()
+                .to_ascii_lowercase();
+            if role != "user" {
+                return false;
+            }
+            let created_at = message
+                .get("created_at")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            earliest_round_created_at <= 0.0 || created_at <= 0.0 || created_at >= earliest_round_created_at
+        })
+        .count() as i64
 }
 
 fn load_or_migrate_round_state(

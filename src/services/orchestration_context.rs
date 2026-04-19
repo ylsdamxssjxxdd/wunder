@@ -1,5 +1,6 @@
 use crate::config::Config;
-use crate::prompting::read_prompt_template_from_active_pack;
+use crate::services::attachment::sanitize_filename_stem;
+use crate::prompting::read_prompt_template;
 use crate::storage::{AgentThreadRecord, ChatSessionRecord, StorageBackend, UserAgentRecord};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -233,8 +234,27 @@ pub fn situation_path(run_id: &str, round_index: i64) -> String {
     .join("/")
 }
 
-pub fn prompt_agent_artifact_path(round_index: i64, agent_id: &str) -> String {
-    [round_dir_name(round_index), agent_id.trim().to_string()]
+pub fn orchestration_agent_artifact_dir_name(agent_name: &str, fallback_agent_id: &str) -> String {
+    let cleaned_name = sanitize_filename_stem(agent_name.trim());
+    if !cleaned_name.is_empty() {
+        return cleaned_name;
+    }
+    let cleaned_fallback = sanitize_filename_stem(fallback_agent_id.trim());
+    if !cleaned_fallback.is_empty() {
+        return cleaned_fallback;
+    }
+    "worker".to_string()
+}
+
+pub fn prompt_agent_artifact_path(
+    round_index: i64,
+    agent_name: &str,
+    fallback_agent_id: &str,
+) -> String {
+    [
+        round_dir_name(round_index),
+        orchestration_agent_artifact_dir_name(agent_name, fallback_agent_id),
+    ]
         .into_iter()
         .filter(|item| !item.trim().is_empty())
         .collect::<Vec<_>>()
@@ -781,7 +801,14 @@ pub fn build_initial_round_state(state: &OrchestrationHiveState) -> Orchestratio
 
 pub fn latest_formal_round_index(round_state: Option<&OrchestrationRoundState>) -> i64 {
     round_state
-        .and_then(|state| state.rounds.iter().map(|round| round.index).max())
+        .and_then(|state| {
+            state
+                .rounds
+                .iter()
+                .filter(|round| !round.user_message.trim().is_empty())
+                .map(|round| round.index)
+                .max()
+        })
         .unwrap_or(1)
         .max(1)
 }
@@ -793,34 +820,23 @@ pub fn rebuild_branch_round_state(
     branch_from_round_index: i64,
     now: f64,
 ) -> OrchestrationRoundState {
-    let reopen_index = normalize_round_index(branch_from_round_index);
+    let retained_index = normalize_round_index(branch_from_round_index);
     let mut rounds = source
         .rounds
         .iter()
-        .filter(|round| round.index < reopen_index)
+        .filter(|round| round.index <= retained_index)
         .map(normalize_round_record)
         .collect::<Vec<_>>();
-    let source_round = source
-        .rounds
-        .iter()
-        .find(|round| round.index == reopen_index)
-        .cloned()
-        .unwrap_or_else(|| OrchestrationRoundRecord {
-            id: round_id(reopen_index),
-            index: reopen_index,
+    if rounds.is_empty() {
+        rounds.push(OrchestrationRoundRecord {
+            id: round_id(1),
+            index: 1,
             situation: String::new(),
             user_message: String::new(),
             created_at: now,
             finalized_at: 0.0,
         });
-    rounds.push(OrchestrationRoundRecord {
-        id: round_id(reopen_index),
-        index: reopen_index,
-        situation: source_round.situation.trim().to_string(),
-        user_message: String::new(),
-        created_at: now,
-        finalized_at: 0.0,
-    });
+    }
     rounds.sort_by_key(|round| round.index);
     OrchestrationRoundState {
         orchestration_id: target_orchestration_id.trim().to_string(),
@@ -976,7 +992,7 @@ pub fn copy_chat_history_until_round(
             .to_ascii_lowercase();
         if role == "user" {
             copied_user_round += 1;
-            if copied_user_round >= target_round {
+            if copied_user_round > target_round {
                 break;
             }
         }
@@ -1219,14 +1235,14 @@ pub fn build_worker_dispatch_message(
     let Some(context) = context else {
         return base_message.trim().to_string();
     };
-    let artifact_path = prompt_agent_artifact_path(context.round_index, target_agent_id);
+    let worker_name = if target_agent_name.trim().is_empty() {
+        target_agent_id.trim()
+    } else {
+        target_agent_name.trim()
+    };
+    let artifact_path = prompt_agent_artifact_path(context.round_index, worker_name, target_agent_id);
     let mut blocks = Vec::new();
     if is_first_worker_turn {
-        let worker_name = if target_agent_name.trim().is_empty() {
-            target_agent_id.trim()
-        } else {
-            target_agent_name.trim()
-        };
         blocks.push(render_prompt_template(
             config,
             "worker_first_dispatch",
@@ -1319,7 +1335,7 @@ fn parse_round_index_from_dir_name(value: &str) -> i64 {
     rest.parse::<i64>().unwrap_or(0).max(0)
 }
 
-fn render_prompt_template(config: &Config, name: &str, values: &[(&str, &str)]) -> String {
+fn render_prompt_template(_config: &Config, name: &str, values: &[(&str, &str)]) -> String {
     let locale = if crate::i18n::get_language()
         .to_ascii_lowercase()
         .starts_with("en")
@@ -1335,9 +1351,9 @@ fn render_prompt_template(config: &Config, name: &str, values: &[(&str, &str)]) 
     let fallback_path = Path::new("prompts")
         .join("orchestration")
         .join(format!("{name}.txt"));
-    let localized = read_prompt_template_from_active_pack(config, &localized_path);
+    let localized = read_prompt_template(&localized_path);
     let template = if localized.trim().is_empty() {
-        read_prompt_template_from_active_pack(config, &fallback_path)
+        read_prompt_template(&fallback_path)
     } else {
         localized
     };
@@ -1362,12 +1378,17 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-    fn full_agent_artifact_path(run_id: &str, round_index: i64, agent_id: &str) -> String {
+    fn full_agent_artifact_path(
+        run_id: &str,
+        round_index: i64,
+        agent_name: &str,
+        fallback_agent_id: &str,
+    ) -> String {
         [
             "orchestration".to_string(),
             run_id.trim().to_string(),
             round_dir_name(round_index),
-            agent_id.trim().to_string(),
+            orchestration_agent_artifact_dir_name(agent_name, fallback_agent_id),
         ]
         .into_iter()
         .filter(|item| !item.trim().is_empty())
@@ -1382,12 +1403,12 @@ mod tests {
             "orchestration/orch_demo/round_0002/situation.txt"
         );
         assert_eq!(
-            full_agent_artifact_path("orch_demo", 3, "agent_a"),
-            "orchestration/orch_demo/round_0003/agent_a"
+            full_agent_artifact_path("orch_demo", 3, "情报官", "agent_a"),
+            "orchestration/orch_demo/round_0003/情报官"
         );
         assert_eq!(
-            prompt_agent_artifact_path(3, "agent_a"),
-            "round_0003/agent_a"
+            prompt_agent_artifact_path(3, "情报官", "agent_a"),
+            "round_0003/情报官"
         );
     }
 
@@ -1405,10 +1426,26 @@ mod tests {
             "Risk Worker",
             false,
         );
-        assert!(message.contains("round_0001/agent_worker"));
+        assert!(message.contains("round_0001/Risk Worker"));
         assert!(!message.contains("orchestration/orch_demo/round_0001/agent_worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
+    }
+
+    #[test]
+    fn artifact_dir_name_prefers_agent_name() {
+        assert_eq!(
+            orchestration_agent_artifact_dir_name("蓝军技术官", "agent_x"),
+            "蓝军技术官"
+        );
+        assert_eq!(
+            orchestration_agent_artifact_dir_name(" Demo:Agent? ", "agent_x"),
+            "Demo_Agent_"
+        );
+        assert_eq!(
+            orchestration_agent_artifact_dir_name("   ", "agent_x"),
+            "agent_x"
+        );
     }
 
     #[test]

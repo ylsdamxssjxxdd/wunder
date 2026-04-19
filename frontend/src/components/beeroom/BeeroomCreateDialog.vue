@@ -11,7 +11,15 @@
     <template #header>
       <div class="messenger-dialog-header">
         <div class="messenger-dialog-title">{{ dialogTitle }}</div>
-        <button class="messenger-dialog-close" type="button" @click="visible = false">&times;</button>
+        <button
+          class="messenger-dialog-close"
+          type="button"
+          :aria-label="t('common.close')"
+          :title="t('common.close')"
+          @click.stop="visible = false"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
       </div>
     </template>
 
@@ -371,17 +379,46 @@ watch(
 </script>
 
 <style scoped>
+.messenger-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.messenger-dialog-close:hover,
+.messenger-dialog-close:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.26);
+  background: rgba(var(--ui-accent-rgb), 0.1);
+  color: var(--ui-accent-hover, #ff8430);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.12);
+  outline: none;
+}
+
+.messenger-dialog-close:active {
+  transform: translateY(1px) scale(0.98);
+}
+
 .beeroom-worker-picker {
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.14);
   border-radius: 16px;
-  background: rgba(15, 23, 42, 0.32);
+  background:
+    linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.08), rgba(var(--ui-accent-rgb), 0.03)),
+    var(--dark-panel, #ffffff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .beeroom-worker-picker.is-disabled {
   opacity: 0.8;
+  filter: saturate(0.92);
 }
 
 .beeroom-worker-picker-toolbar {
@@ -394,22 +431,38 @@ watch(
 .beeroom-worker-picker-count {
   font-size: 12px;
   font-weight: 600;
-  color: var(--el-text-color-regular, #e2e8f0);
+  color: var(--el-text-color-primary, var(--dark-text, #18181c));
 }
 
 .beeroom-worker-picker-clear {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--el-color-primary, #60a5fa);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.16);
+  border-radius: 999px;
+  background: rgba(var(--ui-accent-rgb), 0.06);
+  color: var(--ui-accent, #ff9448);
   font-size: 12px;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
   cursor: pointer;
 }
 
 .beeroom-worker-picker-clear:hover,
 .beeroom-worker-picker-clear:focus-visible {
-  color: var(--el-color-primary-light-3, #93c5fd);
+  border-color: rgba(var(--ui-accent-rgb), 0.24);
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  color: var(--ui-accent-hover, #ff8430);
   outline: none;
+}
+
+.beeroom-worker-picker-clear:active {
+  transform: translateY(1px);
 }
 
 .beeroom-worker-picker-tags {
@@ -424,15 +477,32 @@ watch(
   gap: 8px;
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid rgba(96, 165, 250, 0.24);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.18);
   border-radius: 999px;
-  background: rgba(30, 64, 175, 0.12);
-  color: var(--el-text-color-primary, #f8fafc);
+  background: rgba(var(--ui-accent-rgb), 0.1);
+  color: var(--el-text-color-primary, var(--dark-text, #18181c));
   cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.beeroom-worker-chip:hover,
+.beeroom-worker-chip:focus-visible {
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: rgba(var(--ui-accent-rgb), 0.16);
+  outline: none;
+}
+
+.beeroom-worker-chip:active {
+  transform: translateY(1px);
 }
 
 .beeroom-worker-chip:disabled {
   cursor: default;
+  transform: none;
 }
 
 .beeroom-worker-chip-label {
@@ -444,20 +514,22 @@ watch(
 }
 
 .beeroom-worker-chip-close {
-  color: rgba(191, 219, 254, 0.82);
+  color: rgba(var(--ui-accent-rgb), 0.88);
   font-size: 11px;
 }
 
 .beeroom-worker-picker-empty-state {
   padding: 10px 12px;
-  border: 1px dashed rgba(148, 163, 184, 0.2);
+  border: 1px dashed rgba(var(--ui-accent-rgb), 0.16);
   border-radius: 12px;
-  color: var(--el-text-color-secondary, #94a3b8);
+  background: rgba(var(--ui-accent-rgb), 0.04);
+  color: var(--el-text-color-secondary, var(--dark-muted, #808080));
   font-size: 12px;
 }
 
 .beeroom-worker-picker-search :deep(.el-input__wrapper) {
-  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.16) inset;
+  background: rgba(var(--ui-accent-rgb), 0.03);
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.12) inset;
 }
 
 .beeroom-worker-picker-panel {
@@ -475,10 +547,10 @@ watch(
   gap: 10px;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.12);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.22);
-  color: var(--el-text-color-primary, #f8fafc);
+  background: rgba(var(--ui-accent-rgb), 0.05);
+  color: var(--el-text-color-primary, var(--dark-text, #18181c));
   text-align: left;
   cursor: pointer;
   transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
@@ -486,15 +558,15 @@ watch(
 
 .beeroom-worker-option:hover,
 .beeroom-worker-option:focus-visible {
-  border-color: rgba(96, 165, 250, 0.32);
-  background: rgba(30, 41, 59, 0.42);
+  border-color: rgba(var(--ui-accent-rgb), 0.22);
+  background: rgba(var(--ui-accent-rgb), 0.1);
   transform: translateY(-1px);
   outline: none;
 }
 
 .beeroom-worker-option.is-selected {
-  border-color: rgba(96, 165, 250, 0.44);
-  background: rgba(30, 64, 175, 0.18);
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
+  background: rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .beeroom-worker-option:disabled {
@@ -508,17 +580,17 @@ watch(
   justify-content: center;
   width: 18px;
   height: 18px;
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.16);
   border-radius: 6px;
   color: transparent;
-  background: rgba(15, 23, 42, 0.58);
+  background: rgba(var(--ui-accent-rgb), 0.05);
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
 }
 
 .beeroom-worker-option.is-selected .beeroom-worker-option-check {
-  border-color: rgba(96, 165, 250, 0.5);
-  background: rgba(37, 99, 235, 0.92);
-  color: #eff6ff;
+  border-color: rgba(var(--ui-accent-rgb), 0.38);
+  background: var(--ui-accent, #ff9448);
+  color: #fff7ed;
 }
 
 .beeroom-worker-option-body {
@@ -541,21 +613,22 @@ watch(
 
 .beeroom-worker-option-id {
   font-size: 11px;
-  color: var(--el-text-color-secondary, #94a3b8);
+  color: var(--el-text-color-secondary, var(--dark-muted, #808080));
 }
 
 .beeroom-worker-picker-empty {
   padding: 18px 12px;
-  border: 1px dashed rgba(148, 163, 184, 0.16);
+  border: 1px dashed rgba(var(--ui-accent-rgb), 0.16);
   border-radius: 14px;
-  color: var(--el-text-color-secondary, #94a3b8);
+  background: rgba(var(--ui-accent-rgb), 0.04);
+  color: var(--el-text-color-secondary, var(--dark-muted, #808080));
   font-size: 12px;
   text-align: center;
 }
 
 .beeroom-dialog-hint {
   margin-top: 8px;
-  color: var(--el-text-color-secondary, #64748b);
+  color: var(--el-text-color-secondary, var(--dark-muted, #808080));
   font-size: 12px;
   line-height: 1.5;
 }

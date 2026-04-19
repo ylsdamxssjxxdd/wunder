@@ -2182,6 +2182,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return consumeDispatchStream(response);
   };
 
+  type ComposerSendResult = {
+    status: 'completed' | 'stopped' | 'failed';
+    error?: string;
+  };
+
   const handleComposerSend = async (payload?: {
     content?: string;
     displayContent?: string;
@@ -2189,17 +2194,26 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   }) => {
     if (composerSending.value) {
       await handleDispatchStop();
-      return;
+      return {
+        status: 'stopped'
+      } satisfies ComposerSendResult;
     }
     const content = String(payload?.content ?? composerText.value ?? '').trim();
-    if (!content) return;
+    if (!content) {
+      return {
+        status: 'failed'
+      } satisfies ComposerSendResult;
+    }
     const inputOverflow = resolveChatRequestTextInputOverflow(content, [], ({ actualChars, maxChars }) =>
       options.t('chat.error.userInputTooLong', { actualChars, maxChars })
     );
     if (inputOverflow) {
       composerError.value = inputOverflow.message;
       ElMessage.warning(inputOverflow.message);
-      return;
+      return {
+        status: 'failed',
+        error: inputOverflow.message
+      } satisfies ComposerSendResult;
     }
 
     const { target, body } = resolveDispatchTarget(content);
@@ -2207,7 +2221,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       const message = options.t('beeroom.canvas.chatTargetRequired');
       composerError.value = message;
       ElMessage.warning(message);
-      return;
+      return {
+        status: 'failed',
+        error: message
+      } satisfies ComposerSendResult;
     }
 
     const targetName = resolveAgentNameById(target.agentId);
@@ -2248,6 +2265,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     let terminalReplyText = '';
     let reachedTerminalReply = false;
     let baselineAssistantSignature = '';
+    let result: ComposerSendResult = {
+      status: 'failed'
+    };
     try {
       const dispatchSession = await ensureDispatchSession(target.agentId, {
         preferredSessionId,
@@ -2314,6 +2334,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         targetAgentId: target.agentId,
         replyPreview: clipDebugText(replyText)
       });
+      result = {
+        status: 'completed'
+      };
     } catch (error: any) {
       if (error?.name === 'AbortError' || dispatchStopRequested) {
         dispatchRuntimeStatus.value = 'stopped';
@@ -2321,7 +2344,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
           sessionId: dispatchSessionId.value,
           targetAgentId: dispatchTargetAgentId.value
         });
-        return;
+        result = {
+          status: 'stopped'
+        };
+        return result;
       }
       const message = String(error?.message || '').trim() || options.t('common.requestFailed');
       dispatchRuntimeStatus.value = 'failed';
@@ -2332,6 +2358,10 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         targetAgentId: dispatchTargetAgentId.value,
         error: clipDebugText(message)
       });
+      result = {
+        status: 'failed',
+        error: message
+      };
     } finally {
       if (dispatchSessionId.value) {
         if (reachedTerminalReply) {
@@ -2348,6 +2378,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       composerSending.value = false;
       dispatchLabelPreview.value = '';
     }
+    return result;
   };
 
   const handleDispatchStop = async (options: { force?: boolean; sessionId?: string } = {}) => {

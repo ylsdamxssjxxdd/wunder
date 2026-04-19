@@ -7,5 +7,5 @@ Each user round maps to an independent artifact slice. In this round, artifacts 
 The current round directory is "{{current_round_dir}}", and the current round situation file is "{{current_round_situation_file}}".
 Future round situations should continue to be managed as `round_000x/situation.txt`.
 
-Available workers under the current orchestration artifact root:
+Available workers for dispatch:
 {{worker_directory_lines}}

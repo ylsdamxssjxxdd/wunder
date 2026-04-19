@@ -2254,6 +2254,7 @@ export default {
   'orchestration.message.started': '编排态已启动',
   'orchestration.message.stopped': '编排态已断开',
   'orchestration.message.startRunRequired': '请先启动编排态，再向母蜂发送消息。',
+  'orchestration.message.busySwitchBlocked': '编排运行中，暂时不能切换历史、分支或修改编排设置。',
   'orchestration.empty.createRun': '这个蜂群还没有编排运行实例',
   'orchestration.empty.createRunHint': '点击右上角“新建编排”后，会为母蜂与工蜂建立新的主线程。',
   'orchestration.canvas.session': '线程 {id}',
