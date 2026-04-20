@@ -89,11 +89,11 @@ def _build_schema_hint(columns: Sequence[dict[str, Any]]) -> str:
     if truncated:
         column_parts = column_parts[:24]
     tail = ", ..." if truncated else ""
-    parts = ["Columns: " + ", ".join(column_parts) + tail]
+    parts = ["字段：" + ", ".join(column_parts) + tail]
     if example_parts:
-        parts.append("Known values/examples: " + "; ".join(example_parts[:6]))
+        parts.append("已知取值/示例：" + "; ".join(example_parts[:6]))
     if note_parts:
-        parts.append("Notes: " + "; ".join(note_parts[:4]))
+        parts.append("备注：" + "; ".join(note_parts[:4]))
     return ". ".join(parts)
 
 
@@ -155,13 +155,13 @@ def _build_identifier_quote_hint(target: DbQueryTarget) -> str:
         return ""
     if cfg.engine == "mysql":
         return (
-            "Identifier hint: this table name contains non-ASCII/special characters; "
-            f"in MySQL use backticks, for example FROM `{table}`. "
+            "标识符提示：该表名包含中文或特殊字符；"
+            f"在 MySQL 中请使用反引号，例如 FROM `{table}`。"
         )
     if cfg.engine == "postgres":
         return (
-            "Identifier hint: this table name contains non-ASCII/special characters; "
-            f"in PostgreSQL use double quotes, for example FROM \"{table}\". "
+            "标识符提示：该表名包含中文或特殊字符；"
+            f"在 PostgreSQL 中请使用双引号，例如 FROM \"{table}\"。"
         )
     return ""
 
@@ -173,20 +173,20 @@ def _build_query_description(
     identifier_quote_hint: str,
 ) -> str:
     parts = [
-        f"Run read-only SQL and return compact rows for table {target.table}. ",
-        "Strong constraint: queries can only access this bound table. ",
-        "For large datasets, prefer LIMIT/OFFSET pagination and narrower filters. ",
-        "Pagination queries must include a stable ORDER BY. ",
-        "Successful calls return a query_handle that can be passed to the paired export tool. ",
+        f"对表 {target.table} 执行只读 SQL，并返回紧凑结果。",
+        "强约束：查询只能访问这个绑定表。",
+        "数据量较大时，优先使用 LIMIT/OFFSET 分页，并尽量收窄筛选条件。",
+        "分页查询必须包含稳定的 ORDER BY。",
+        "成功调用后会返回 query_handle，可直接传给配套导出工具。",
     ]
     if target.description:
-        parts.append(f"Purpose: {target.description}. ")
+        parts.append(f"用途：{target.description}。")
     if include_db_key and target.db_key:
-        parts.append(f"Database target: {target.db_key}. ")
+        parts.append(f"数据库目标：{target.db_key}。")
     if identifier_quote_hint:
         parts.append(identifier_quote_hint)
     if schema_hint:
-        parts.append(schema_hint + ".")
+        parts.append(schema_hint + "。")
     return "".join(parts).strip()
 
 
@@ -197,17 +197,17 @@ def _build_export_description(
     include_db_key: bool,
 ) -> str:
     parts = [
-        f"Export read-only SQL results from table {target.table} directly to xlsx or csv files. ",
-        "Strong constraint: queries can only access this bound table. ",
-        f"Prefer using query_handle returned by {query_tool_name} after validating counts or samples, but only reuse a full-detail query_handle without LIMIT/OFFSET for formal exports. ",
-        "Use this for deliverables such as Excel exports instead of paging rows through model context. ",
-        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns canonical `path` plus `workspace_relative_path` for follow-up tools and final links. ",
-        "SQL/query_handle that still contains LIMIT/OFFSET is rejected by default; set allow_limited_export=true only when a partial export is intentional. ",
+        f"将表 {target.table} 的只读 SQL 结果直接导出为 xlsx 或 csv 文件。",
+        "强约束：查询只能访问这个绑定表。",
+        f"建议先用 {query_tool_name} 校验计数或小样本，再优先复用返回的 query_handle；正式全量导出时，只应复用不带 LIMIT/OFFSET 的完整明细 query_handle。",
+        "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。",
+        "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。",
+        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL 或 query_handle；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。",
     ]
     if target.description:
-        parts.append(f"Purpose: {target.description}. ")
+        parts.append(f"用途：{target.description}。")
     if include_db_key and target.db_key:
-        parts.append(f"Database target: {target.db_key}. ")
+        parts.append(f"数据库目标：{target.db_key}。")
     return "".join(parts).strip()
 
 
@@ -226,20 +226,20 @@ def _annotate_query_result(
 
 def _build_generic_query_description() -> str:
     return (
-        "Run read-only SQL and return compact rows. "
-        "For large datasets, prefer LIMIT/OFFSET pagination and narrower filters. "
-        "Pagination queries must include a stable ORDER BY. "
-        "Successful calls return a query_handle that can be passed to db_export."
+        "执行只读 SQL，并返回紧凑结果。"
+        "数据量较大时，优先使用 LIMIT/OFFSET 分页，并尽量收窄筛选条件。"
+        "分页查询必须包含稳定的 ORDER BY。"
+        "成功调用后会返回 query_handle，可直接传给 db_export。"
     )
 
 
 def _build_generic_export_description() -> str:
     return (
-        "Export read-only SQL results directly to xlsx or csv files. "
-        "Prefer using query_handle returned by db_query after validating counts or samples, but only reuse a full-detail query_handle without LIMIT/OFFSET for formal exports. "
-        "Use this for deliverables such as Excel exports instead of paging rows through model context. "
-        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns canonical `path` plus `workspace_relative_path` for follow-up tools and final links. "
-        "SQL/query_handle that still contains LIMIT/OFFSET is rejected by default; set allow_limited_export=true only when a partial export is intentional."
+        "将只读 SQL 结果直接导出为 xlsx 或 csv 文件。"
+        "建议先用 db_query 校验计数或小样本，再优先复用返回的 query_handle；正式全量导出时，只应复用不带 LIMIT/OFFSET 的完整明细 query_handle。"
+        "适合生成 Excel/CSV 交付物，不要把大量分页结果塞进模型上下文。"
+        "如果希望文件直接落到当前工作区，请把 path 写成 `/workspaces/{user_id}/exports/...`；返回结果会包含规范化后的 path 和 workspace_relative_path，便于后续工具继续处理。"
+        "默认拒绝仍包含 LIMIT/OFFSET 的 SQL 或 query_handle；只有在明确要导出局部结果时，才将 allow_limited_export 设为 true。"
     )
 
 
@@ -251,7 +251,7 @@ def _register_bound_db_query_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"DB Query ({target.table})",
+        title=f"数据库查询（{target.table}）",
         description=description,
         annotations={
             "readOnlyHint": True,
@@ -264,31 +264,31 @@ def _register_bound_db_query_tool(
         sql: Annotated[
             str,
             Field(
-                description="SQL query (read-only statements only).",
-                title="SQL",
+                description="SQL 查询语句，仅允许只读语句。",
+                title="SQL 语句",
             ),
         ],
         params: Annotated[
             Sequence[Any],
             Field(
-                description="Optional SQL positional parameters.",
-                title="Params",
+                description="可选的 SQL 位置参数。",
+                title="参数",
             ),
         ] = (),
         max_rows: Annotated[
             int,
             Field(
-                description="Maximum returned rows, default 200; if truncated=true, continue with LIMIT/OFFSET or narrower filters.",
-                title="Max Rows",
+                description="最多返回的行数，默认 200；若结果被截断（truncated=true），请结合 LIMIT/OFFSET 或更窄的筛选条件继续查询。",
+                title="最大返回行数",
             ),
         ] = 200,
     ) -> dict[str, Any]:
-        """Run a SQL query and return compact results."""
+        """执行 SQL 查询并返回紧凑结果。"""
         start = time.perf_counter()
         try:
             sql_text = sql.strip()
             if not sql_text:
-                return {"ok": False, "error": "SQL statement cannot be empty."}
+                return {"ok": False, "error": "SQL 语句不能为空。"}
             cfg = get_db_config(None, target.db_key)
             validation_error = validate_sql_against_target_table(sql_text, cfg, target.table)
             if validation_error:
@@ -322,7 +322,7 @@ def _register_bound_db_export_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"DB Export ({target.table})",
+        title=f"数据库导出（{target.table}）",
         description=description,
         annotations={
             "readOnlyHint": False,
@@ -335,61 +335,61 @@ def _register_bound_db_export_tool(
         query_handle: Annotated[
             str,
             Field(
-                description="Opaque handle previously returned by the paired db_query tool. Preferred for exports.",
-                title="Query Handle",
+                description="由配套 db_query 工具返回的不透明 query_handle。导出时优先使用它。",
+                title="查询句柄",
             ),
         ] = "",
         sql: Annotated[
             str,
             Field(
-                description="Fallback SQL query (read-only statements only). Use when query_handle is unavailable.",
-                title="SQL",
+                description="兜底 SQL 查询语句，仅允许只读语句。当 query_handle 不可用时再使用。",
+                title="SQL 语句",
             ),
         ] = "",
         params: Annotated[
             Sequence[Any],
             Field(
-                description="Optional SQL positional parameters used with sql when query_handle is not supplied.",
-                title="Params",
+                description="在未提供 query_handle、改用 sql 时使用的可选 SQL 位置参数。",
+                title="参数",
             ),
         ] = (),
         path: Annotated[
             str,
             Field(
-                description="Output path. Use `/workspaces/{user_id}/exports/report.xlsx` to save into the current workspace so later file tools can continue processing it; otherwise a relative path is resolved under the configured export root. If omitted, a timestamped filename is generated automatically.",
-                title="Path",
+                description="导出文件路径。若希望文件直接落到当前工作区，请使用 `/workspaces/{user_id}/exports/report.xlsx` 这类路径，便于后续文件工具继续处理；否则相对路径会解析到配置的导出根目录下。不填时会自动生成带时间戳的文件名。",
+                title="输出路径",
             ),
         ] = "",
         format: Annotated[
             Literal["xlsx", "csv"],
             Field(
-                description="Export format. Defaults to xlsx.",
-                title="Format",
+                description="导出格式，默认 xlsx。",
+                title="导出格式",
             ),
         ] = "xlsx",
         sheet_name: Annotated[
             str,
             Field(
-                description="Optional worksheet name for xlsx exports.",
-                title="Sheet Name",
+                description="xlsx 导出时可选的工作表名称。",
+                title="工作表名称",
             ),
         ] = "Sheet1",
         overwrite: Annotated[
             bool,
             Field(
-                description="Overwrite the target file if it already exists. Defaults to false.",
-                title="Overwrite",
+                description="如果目标文件已存在，是否覆盖。默认 false。",
+                title="覆盖已有文件",
             ),
         ] = False,
         allow_limited_export: Annotated[
             bool,
             Field(
-                description="Allow exporting SQL/query_handle that still contains LIMIT/OFFSET. Keep false for formal full exports; set true only when a partial export is intentional.",
-                title="Allow Limited Export",
+                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL 或 query_handle。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
+                title="允许局部导出",
             ),
         ] = False,
     ) -> dict[str, Any]:
-        """Export SQL query results directly to a file."""
+        """将 SQL 查询结果直接导出到文件。"""
         start = time.perf_counter()
         try:
             sql_text, params_list = resolve_query_request(
@@ -423,7 +423,7 @@ def _register_bound_db_export_tool(
 def _register_generic_db_query_tool(mcp: FastMCP) -> None:
     @mcp.tool(
         name="db_query",
-        title="DB Query",
+        title="数据库查询",
         description=_build_generic_query_description(),
         annotations={
             "readOnlyHint": True,
@@ -436,31 +436,31 @@ def _register_generic_db_query_tool(mcp: FastMCP) -> None:
         sql: Annotated[
             str,
             Field(
-                description="SQL query (read-only statements only).",
-                title="SQL",
+                description="SQL 查询语句，仅允许只读语句。",
+                title="SQL 语句",
             ),
         ],
         params: Annotated[
             Sequence[Any],
             Field(
-                description="Optional SQL positional parameters.",
-                title="Params",
+                description="可选的 SQL 位置参数。",
+                title="参数",
             ),
         ] = (),
         max_rows: Annotated[
             int,
             Field(
-                description="Maximum returned rows, default 200; if truncated=true, continue with LIMIT/OFFSET or narrower filters.",
-                title="Max Rows",
+                description="最多返回的行数，默认 200；若结果被截断（truncated=true），请结合 LIMIT/OFFSET 或更窄的筛选条件继续查询。",
+                title="最大返回行数",
             ),
         ] = 200,
     ) -> dict[str, Any]:
-        """Run a SQL query and return compact results."""
+        """执行 SQL 查询并返回紧凑结果。"""
         start = time.perf_counter()
         try:
             sql_text = sql.strip()
             if not sql_text:
-                return {"ok": False, "error": "SQL statement cannot be empty."}
+                return {"ok": False, "error": "SQL 语句不能为空。"}
             cfg = get_db_config(None, None)
             params_list = _normalize_params(params)
             result = await run_in_thread(
@@ -486,7 +486,7 @@ def _register_generic_db_query_tool(mcp: FastMCP) -> None:
 def _register_generic_db_export_tool(mcp: FastMCP) -> None:
     @mcp.tool(
         name="db_export",
-        title="DB Export",
+        title="数据库导出",
         description=_build_generic_export_description(),
         annotations={
             "readOnlyHint": False,
@@ -499,61 +499,61 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
         query_handle: Annotated[
             str,
             Field(
-                description="Opaque handle previously returned by db_query. Preferred for exports.",
-                title="Query Handle",
+                description="由 db_query 返回的不透明 query_handle。导出时优先使用它。",
+                title="查询句柄",
             ),
         ] = "",
         sql: Annotated[
             str,
             Field(
-                description="Fallback SQL query (read-only statements only). Use when query_handle is unavailable.",
-                title="SQL",
+                description="兜底 SQL 查询语句，仅允许只读语句。当 query_handle 不可用时再使用。",
+                title="SQL 语句",
             ),
         ] = "",
         params: Annotated[
             Sequence[Any],
             Field(
-                description="Optional SQL positional parameters used with sql when query_handle is not supplied.",
-                title="Params",
+                description="在未提供 query_handle、改用 sql 时使用的可选 SQL 位置参数。",
+                title="参数",
             ),
         ] = (),
         path: Annotated[
             str,
             Field(
-                description="Output path. Use `/workspaces/{user_id}/exports/report.xlsx` to save into the current workspace so later file tools can continue processing it; otherwise a relative path is resolved under the configured export root. If omitted, a timestamped filename is generated automatically.",
-                title="Path",
+                description="导出文件路径。若希望文件直接落到当前工作区，请使用 `/workspaces/{user_id}/exports/report.xlsx` 这类路径，便于后续文件工具继续处理；否则相对路径会解析到配置的导出根目录下。不填时会自动生成带时间戳的文件名。",
+                title="输出路径",
             ),
         ] = "",
         format: Annotated[
             Literal["xlsx", "csv"],
             Field(
-                description="Export format. Defaults to xlsx.",
-                title="Format",
+                description="导出格式，默认 xlsx。",
+                title="导出格式",
             ),
         ] = "xlsx",
         sheet_name: Annotated[
             str,
             Field(
-                description="Optional worksheet name for xlsx exports.",
-                title="Sheet Name",
+                description="xlsx 导出时可选的工作表名称。",
+                title="工作表名称",
             ),
         ] = "Sheet1",
         overwrite: Annotated[
             bool,
             Field(
-                description="Overwrite the target file if it already exists. Defaults to false.",
-                title="Overwrite",
+                description="如果目标文件已存在，是否覆盖。默认 false。",
+                title="覆盖已有文件",
             ),
         ] = False,
         allow_limited_export: Annotated[
             bool,
             Field(
-                description="Allow exporting SQL/query_handle that still contains LIMIT/OFFSET. Keep false for formal full exports; set true only when a partial export is intentional.",
-                title="Allow Limited Export",
+                description="是否允许导出仍包含 LIMIT/OFFSET 的 SQL 或 query_handle。正式全量导出应保持 false；只有明确要导出局部结果时才设为 true。",
+                title="允许局部导出",
             ),
         ] = False,
     ) -> dict[str, Any]:
-        """Export SQL query results directly to a file."""
+        """将 SQL 查询结果直接导出到文件。"""
         start = time.perf_counter()
         try:
             sql_text, params_list = resolve_query_request(

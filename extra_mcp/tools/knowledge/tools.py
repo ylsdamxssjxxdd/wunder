@@ -43,8 +43,11 @@ def _build_tool_names(keys: list[str]) -> list[str]:
 
 def _build_description(cfg: KnowledgeTargetConfig) -> str:
     if cfg.description:
-        return f"Search configured knowledge target: {cfg.description}."
-    return f"Search configured knowledge target: {cfg.key}."
+        return (
+            "在指定的 RAGFlow 知识库目标中检索内容，返回紧凑的召回片段。"
+            f"当前目标用途：{cfg.description}。"
+        )
+    return f"在指定的 RAGFlow 知识库目标中检索内容，返回紧凑的召回片段。当前目标：{cfg.key}。"
 
 
 def _register_bound_kb_query_tool(
@@ -55,7 +58,7 @@ def _register_bound_kb_query_tool(
 ) -> None:
     @mcp.tool(
         name=tool_name,
-        title=f"KB Query ({cfg.key})",
+        title=f"知识库检索（{cfg.key}）",
         description=description,
         annotations={
             "readOnlyHint": True,
@@ -68,23 +71,23 @@ def _register_bound_kb_query_tool(
         query: Annotated[
             str,
             Field(
-                description="Question or keywords to search.",
-                title="Query",
+                description="要检索的问题、关键词或短语。",
+                title="检索内容",
             ),
         ],
         limit: Annotated[
             int,
             Field(
-                description="Maximum result chunks, default 20.",
-                title="Limit",
+                description="最多返回的结果片段数，默认 20。",
+                title="返回数量",
             ),
         ] = 20,
     ) -> dict[str, Any]:
-        """Search knowledge base and return compact retrieval results."""
+        """检索知识库并返回紧凑结果。"""
         try:
             query_text = query.strip()
             if not query_text:
-                return {"ok": False, "error": "Query cannot be empty."}
+                return {"ok": False, "error": "检索内容不能为空。"}
             return await run_in_thread(query_kb_sync, cfg, query_text, limit)
         except Exception as exc:  # pragma: no cover
             return _error_response(exc)
@@ -93,8 +96,8 @@ def _register_bound_kb_query_tool(
 def _register_generic_kb_query_tool(mcp: FastMCP) -> None:
     @mcp.tool(
         name="kb_query",
-        title="KB Query",
-        description="Search knowledge base content chunks.",
+        title="知识库检索",
+        description="检索已配置的 RAGFlow 知识库内容片段，返回紧凑的召回结果，适合输入问题、关键词、主题词或文档线索。",
         annotations={
             "readOnlyHint": True,
             "destructiveHint": False,
@@ -106,23 +109,23 @@ def _register_generic_kb_query_tool(mcp: FastMCP) -> None:
         query: Annotated[
             str,
             Field(
-                description="Question or keywords to search.",
-                title="Query",
+                description="要检索的问题、关键词或短语。",
+                title="检索内容",
             ),
         ],
         limit: Annotated[
             int,
             Field(
-                description="Maximum result chunks, default 20.",
-                title="Limit",
+                description="最多返回的结果片段数，默认 20。",
+                title="返回数量",
             ),
         ] = 20,
     ) -> dict[str, Any]:
-        """Search knowledge base and return compact retrieval results."""
+        """检索知识库并返回紧凑结果。"""
         try:
             query_text = query.strip()
             if not query_text:
-                return {"ok": False, "error": "Query cannot be empty."}
+                return {"ok": False, "error": "检索内容不能为空。"}
             cfg = get_kb_config(None)
             return await run_in_thread(query_kb_sync, cfg, query_text, limit)
         except Exception as exc:  # pragma: no cover

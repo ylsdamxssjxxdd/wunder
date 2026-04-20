@@ -10,7 +10,8 @@ use crate::services::orchestration_context::{
     load_history_record, load_round_state, orchestration_agent_artifact_dir_name,
     persist_hive_state, persist_history_record, persist_member_binding, persist_round_state,
     persist_session_context, rebuild_branch_round_state, repair_active_orchestration_main_threads,
-    repair_orchestration_session_main_thread, round_id, OrchestrationHiveState,
+    repair_orchestration_session_main_thread, round_dir_name, round_id, round_id_matches,
+    OrchestrationHiveState,
     OrchestrationHistoryRecord, OrchestrationMemberBinding, OrchestrationRoundRecord,
     OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
     ORCHESTRATION_HISTORY_STATUS_ACTIVE, ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
@@ -30,6 +31,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -999,7 +1001,7 @@ async fn branch_orchestration_history(
             &[
                 "orchestration",
                 run_id.as_str(),
-                &format!("round_{:04}", branch_round_index.saturating_add(1).max(1)),
+                &round_dir_name(branch_round_index.saturating_add(1).max(1)),
             ]
             .join("/"),
         )
@@ -1028,7 +1030,7 @@ async fn branch_orchestration_history(
                 &[
                     "orchestration".to_string(),
                     run_id.clone(),
-                    format!("round_{:04}", branch_round_index.saturating_add(1).max(1)),
+                    round_dir_name(branch_round_index.saturating_add(1).max(1)),
                     orchestration_agent_artifact_dir_name(&agent.name, &agent.agent_id),
                 ]
                 .join("/"),
@@ -1312,7 +1314,7 @@ async fn reserve_orchestration_round(
         round_state
             .rounds
             .iter()
-            .find(|round| round.id.trim() == requested_round_id)
+            .find(|round| round_id_matches(round, &requested_round_id))
             .map(|round| round.index)
             .unwrap_or_else(|| latest_formal_round_index(Some(&round_state)).saturating_add(1))
     } else {
@@ -1334,12 +1336,37 @@ async fn reserve_orchestration_round(
         .iter()
         .find(|round| round.index == normalized_target_index)
     {
-        let requested_existing_round = !requested_round_id.is_empty()
-            && existing.id.trim() == requested_round_id;
+        let requested_existing_round =
+            !requested_round_id.is_empty() && round_id_matches(existing, &requested_round_id);
         if !requested_existing_round && !existing.user_message.trim().is_empty() {
             normalized_target_index = authoritative_next_index;
         }
     }
+    debug!(
+        target: "wunder::orchestration",
+        event = "reserve_round_decision",
+        user_id = %user_id,
+        group_id = %group_id,
+        orchestration_id = %hive_state.orchestration_id,
+        run_id = %hive_state.run_id,
+        requested_round_id = %requested_round_id,
+        requested_index = requested_index,
+        requested_target_index = requested_target_index,
+        normalized_target_index = normalized_target_index,
+        latest_formal_index = latest_formal_index,
+        history_user_round_index = history_user_round_index,
+        authoritative_next_index = authoritative_next_index,
+        rounds = ?round_state.rounds.iter().map(|round| {
+            json!({
+                "id": round.id,
+                "index": round.index,
+                "user_message": !round.user_message.trim().is_empty(),
+                "created_at": round.created_at,
+                "finalized_at": round.finalized_at
+            })
+        }).collect::<Vec<_>>(),
+        "orchestration reserve round decision"
+    );
     if let Some(existing) = round_state
         .rounds
         .iter_mut()
@@ -1391,6 +1418,18 @@ async fn reserve_orchestration_round(
         .find(|round| round.index == normalized_target_index)
         .cloned()
         .ok_or_else(|| error_response(StatusCode::INTERNAL_SERVER_ERROR, "round reserve failed".to_string()))?;
+    debug!(
+        target: "wunder::orchestration",
+        event = "reserve_round_result",
+        user_id = %user_id,
+        group_id = %group_id,
+        orchestration_id = %hive_state.orchestration_id,
+        run_id = %hive_state.run_id,
+        reserved_round_id = %round.id,
+        reserved_round_index = round.index,
+        latest_round_index = latest_round_index,
+        "orchestration reserve round result"
+    );
     Ok(Json(json!({
         "data": {
             "round": orchestration_round_payload(&round),
@@ -1429,7 +1468,7 @@ async fn finalize_orchestration_round(
         .rounds
         .iter()
         .position(|round| {
-            (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+            (!target_round_id.is_empty() && round_id_matches(round, &target_round_id))
                 || (target_round_index > 0 && round.index == target_round_index)
         })
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "round not found".to_string()))?;
@@ -1466,6 +1505,19 @@ async fn finalize_orchestration_round(
     persist_history_record(state.storage.as_ref(), &user_id, &history)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let response_round = round_state.rounds[target_position].clone();
+    debug!(
+        target: "wunder::orchestration",
+        event = "finalize_round_result",
+        user_id = %user_id,
+        group_id = %group_id,
+        orchestration_id = %hive_state.orchestration_id,
+        run_id = %hive_state.run_id,
+        round_id = %response_round.id,
+        round_index = response_round.index,
+        latest_round_index = latest_round_index,
+        finalized_at = response_round.finalized_at,
+        "orchestration finalize round result"
+    );
     Ok(Json(json!({
         "data": {
             "round": orchestration_round_payload(&response_round),
@@ -1507,7 +1559,7 @@ async fn cancel_orchestration_round(
     if remove_round {
         let mut retained = Vec::with_capacity(round_state.rounds.len());
         for round in round_state.rounds.drain(..) {
-            let matches = (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+            let matches = (!target_round_id.is_empty() && round_id_matches(&round, &target_round_id))
                 || (target_round_index > 0 && round.index == target_round_index);
             if matches && cancelled_round.is_none() {
                 cancelled_round = Some(round);
@@ -1527,7 +1579,7 @@ async fn cancel_orchestration_round(
         }
         round_state.rounds = retained;
     } else if let Some(round) = round_state.rounds.iter_mut().find(|round| {
-        (!target_round_id.is_empty() && round.id.trim() == target_round_id)
+        (!target_round_id.is_empty() && round_id_matches(round, &target_round_id))
             || (target_round_index > 0 && round.index == target_round_index)
     }) {
         round.user_message.clear();
@@ -1567,6 +1619,22 @@ async fn cancel_orchestration_round(
     history.updated_at = round_state.updated_at;
     persist_history_record(state.storage.as_ref(), &user_id, &history)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(round) = cancelled_round.as_ref() {
+        debug!(
+            target: "wunder::orchestration",
+            event = "cancel_round_result",
+            user_id = %user_id,
+            group_id = %group_id,
+            orchestration_id = %hive_state.orchestration_id,
+            run_id = %hive_state.run_id,
+            round_id = %round.id,
+            round_index = round.index,
+            remove_round = remove_round,
+            latest_round_index = latest_round_index,
+            suppressed_ranges = round_state.suppressed_message_ranges.len(),
+            "orchestration cancel round result"
+        );
+    }
     Ok(Json(json!({
         "data": {
             "round": cancelled_round.as_ref().map(orchestration_round_payload),

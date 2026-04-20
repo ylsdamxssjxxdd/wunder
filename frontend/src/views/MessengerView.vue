@@ -2201,6 +2201,7 @@ const showScrollBottomButton = ref(false);
 const autoStickToBottom = ref(true);
 const agentInquirySelection = ref<number[]>([]);
 const agentPlanExpanded = ref(false);
+const beeroomFirstEntryAutoSelectionPending = ref(true);
 const dismissedPlanMessages = ref<WeakSet<Record<string, unknown>>>(new WeakSet());
 const dismissedPlanVersion = ref(0);
 const groupCreateVisible = ref(false);
@@ -8796,6 +8797,7 @@ const submitAgentCreate = async (payload: Record<string, unknown>): Promise<bool
       String(payload.hive_name || '').trim()
     ) {
       if (createdHiveId) {
+        beeroomFirstEntryAutoSelectionPending.value = false;
         beeroomStore.setActiveGroup(createdHiveId);
       }
       await beeroomStore.loadActiveGroup().catch(() => null);
@@ -9134,6 +9136,33 @@ const selectPlazaItem = (itemId: unknown) => {
   selectedPlazaItemId.value = String(itemId || '').trim();
 };
 
+const resolveFirstVisibleBeeroomGroupId = (): string =>
+  String(
+    filteredBeeroomGroupsOrdered.value[0]?.group_id ||
+      filteredBeeroomGroupsOrdered.value[0]?.hive_id ||
+      ''
+  ).trim();
+
+const applyInitialBeeroomSectionSelection = (): boolean => {
+  if (
+    !beeroomFirstEntryAutoSelectionPending.value ||
+    !['swarms', 'orchestrations'].includes(sessionHub.activeSection) ||
+    messengerOrderHydrating.value ||
+    !messengerOrderReady.value
+  ) {
+    return false;
+  }
+  const firstGroupId = resolveFirstVisibleBeeroomGroupId();
+  if (!firstGroupId) {
+    return false;
+  }
+  beeroomFirstEntryAutoSelectionPending.value = false;
+  if (String(beeroomStore.activeGroupId || '').trim() !== firstGroupId) {
+    beeroomStore.setActiveGroup(firstGroupId);
+  }
+  return true;
+};
+
 const triggerPlazaPublish = () => {
   void messengerHivePlazaPanelRef.value?.openPublishDialog();
 };
@@ -9145,6 +9174,7 @@ const triggerPlazaRefresh = () => {
 const selectBeeroomGroup = async (group: Record<string, unknown>) => {
   const groupId = String(group?.group_id || group?.hive_id || '').trim();
   if (!groupId) return;
+  beeroomFirstEntryAutoSelectionPending.value = false;
   beeroomStore.setActiveGroup(groupId);
   await beeroomStore.loadActiveGroup().catch(() => null);
 };
@@ -9180,6 +9210,7 @@ const handleHivePackImportedFromMiddlePane = async (job: unknown) => {
   if (!groupId) {
     return;
   }
+  beeroomFirstEntryAutoSelectionPending.value = false;
   clearBeeroomRuntimeCachesByGroup(groupId);
   orderedBeeroomGroupsState.orderedKeys.value = normalizeStringListUnique([
     groupId,
@@ -10535,16 +10566,14 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'swarms' || sessionHub.activeSection === 'orchestrations') {
+    if (applyInitialBeeroomSectionSelection()) {
+      return;
+    }
     if (!beeroomStore.activeGroupId && filteredBeeroomGroupsOrdered.value.length > 0) {
-      const preferredGroup = preferredBeeroomGroupId.value;
-      const matchedGroup = preferredGroup
-        ? filteredBeeroomGroupsOrdered.value.find(
-            (item) => String(item?.group_id || item?.hive_id || '').trim() === preferredGroup
-          )
-        : null;
-      beeroomStore.setActiveGroup(
-        matchedGroup?.group_id || filteredBeeroomGroupsOrdered.value[0]?.group_id || ''
-      );
+      const firstGroupId = resolveFirstVisibleBeeroomGroupId();
+      if (firstGroupId) {
+        beeroomStore.setActiveGroup(firstGroupId);
+      }
     }
     return;
   }
@@ -12540,6 +12569,7 @@ watch(
       router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
     }
     beeroomStore.resetState();
+    beeroomFirstEntryAutoSelectionPending.value = true;
     beeroomGroupsLastRefreshAt = 0;
     selectedAgentHiveGroupId.value = '';
     void hydrateCurrentUserAppearance();

@@ -124,6 +124,12 @@ const TEAM_REALTIME_REFRESH_THROTTLE_MS = 360;
 const DISPATCH_MESSAGE_REFRESH_THROTTLE_MS = 220;
 const SYNC_REQUIRED_HISTORY_RELOAD_THROTTLE_MS = 520;
 const TERMINAL_DISPATCH_PREVIEW_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const ACTIVE_CACHED_DISPATCH_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
+  'queued',
+  'running',
+  'awaiting_approval',
+  'resuming'
+]);
 const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_start',
   'team_task_dispatch',
@@ -604,6 +610,38 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     return 'idle';
   });
 
+  const normalizeCachedDispatchRuntimeStatus = (value: unknown): DispatchRuntimeStatus => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'queued') return 'queued';
+    if (normalized === 'running') return 'running';
+    if (normalized === 'awaiting_approval') return 'awaiting_approval';
+    if (normalized === 'resuming') return 'resuming';
+    if (normalized === 'stopped') return 'stopped';
+    if (normalized === 'completed') return 'completed';
+    if (normalized === 'failed') return 'failed';
+    return 'idle';
+  };
+
+  const resolveCachedDispatchRuntimeStatus = (): DispatchRuntimeStatus => {
+    if (ACTIVE_CACHED_DISPATCH_RUNTIME_STATUSES.has(dispatchRuntimeStatus.value)) {
+      return dispatchRuntimeStatus.value;
+    }
+    const previewStatus = String(dispatchPreview.value?.status || '').trim().toLowerCase();
+    if (previewStatus === 'queued') {
+      return 'queued';
+    }
+    if (previewStatus === 'running') {
+      return 'running';
+    }
+    return normalizeCachedDispatchRuntimeStatus(dispatchRuntimeStatus.value);
+  };
+
+  const shouldPersistCachedDispatchState = () => {
+    const sessionId = String(dispatchSessionId.value || '').trim();
+    if (!sessionId) return false;
+    return ACTIVE_CACHED_DISPATCH_RUNTIME_STATUSES.has(resolveCachedDispatchRuntimeStatus());
+  };
+
   const formatDateTime = (value: unknown) => {
     const numeric = Number(value || 0);
     if (!Number.isFinite(numeric) || numeric <= 0) return '-';
@@ -981,6 +1019,16 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   const readCachedChatState = (scopeKey = chatRuntimeScopeKey.value) => getBeeroomMissionChatState(scopeKey);
 
   const persistCachedChatState = (scopeKey = chatRuntimeScopeKey.value) => {
+    if (!shouldPersistCachedDispatchState()) {
+      setBeeroomMissionChatState(scopeKey, {
+        version: 2,
+        manualMessages: [],
+        runtimeRelayMessages: [],
+        dispatch: null
+      });
+      return;
+    }
+    const persistedRuntimeStatus = resolveCachedDispatchRuntimeStatus();
     setBeeroomMissionChatState(scopeKey, {
       version: 2,
       manualMessages: manualChatMessages.value,
@@ -992,7 +1040,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
             targetAgentId: String(dispatchTargetAgentId.value || '').trim(),
             targetName: String(dispatchTargetName.value || '').trim(),
             targetTone: dispatchTargetTone.value,
-            runtimeStatus: dispatchRuntimeStatus.value
+            runtimeStatus: persistedRuntimeStatus
           }
         : null
     });
@@ -1000,31 +1048,44 @@ export const useBeeroomMissionCanvasRuntime = (options: {
 
   const restoreCachedChatState = (scopeKey = chatRuntimeScopeKey.value) => {
     const cached = readCachedChatState(scopeKey);
+    const cachedDispatch = cached?.dispatch;
+    const cachedRuntimeStatus = normalizeCachedDispatchRuntimeStatus(cachedDispatch?.runtimeStatus);
+    const shouldRestoreDispatch =
+      Boolean(String(cachedDispatch?.sessionId || '').trim()) &&
+      ACTIVE_CACHED_DISPATCH_RUNTIME_STATUSES.has(cachedRuntimeStatus);
+    if (!shouldRestoreDispatch) {
+      replaceManualChatMessages([]);
+      replaceRuntimeRelayChatMessages([]);
+      dispatchSessionId.value = '';
+      dispatchLastEventId.value = 0;
+      dispatchTargetAgentId.value = '';
+      dispatchTargetName.value = '';
+      dispatchTargetTone.value = 'worker';
+      dispatchRuntimeStatus.value = 'idle';
+      logBeeroomRuntime('restore-cached-chat-state', {
+        scopeKey,
+        manualCount: 0,
+        relayCount: 0,
+        dispatchSessionId: '',
+        dispatchTargetAgentId: '',
+        runtimeStatus: 'idle',
+        droppedCachedDispatchSessionId: String(cachedDispatch?.sessionId || '').trim(),
+        droppedCachedRuntimeStatus: cachedRuntimeStatus
+      });
+      return;
+    }
     const cachedMessages = Array.isArray(cached?.manualMessages) ? cached.manualMessages : [];
     const cachedRuntimeRelayMessages = Array.isArray(cached?.runtimeRelayMessages)
       ? cached.runtimeRelayMessages
       : [];
     replaceManualChatMessages(cachedMessages);
     replaceRuntimeRelayChatMessages(cachedRuntimeRelayMessages);
-    const cachedDispatch = cached?.dispatch;
-    if (!cachedDispatch) {
-      logBeeroomRuntime('restore-cached-chat-state', {
-        scopeKey,
-        manualCount: cachedMessages.length,
-        relayCount: runtimeRelayChatMessages.value.length,
-        dispatchSessionId: '',
-        dispatchTargetAgentId: '',
-        runtimeStatus: 'idle'
-      });
-      return;
-    }
-    dispatchSessionId.value = String(cachedDispatch.sessionId || '').trim();
-    dispatchLastEventId.value = Math.max(0, Number(cachedDispatch.lastEventId || 0));
-    dispatchTargetAgentId.value = String(cachedDispatch.targetAgentId || '').trim();
-    dispatchTargetName.value = String(cachedDispatch.targetName || '').trim();
-    dispatchTargetTone.value =
-      cachedDispatch.targetTone === 'mother' ? 'mother' : 'worker';
-    dispatchRuntimeStatus.value = cachedDispatch.runtimeStatus || 'idle';
+    dispatchSessionId.value = String(cachedDispatch?.sessionId || '').trim();
+    dispatchLastEventId.value = Math.max(0, Number(cachedDispatch?.lastEventId || 0));
+    dispatchTargetAgentId.value = String(cachedDispatch?.targetAgentId || '').trim();
+    dispatchTargetName.value = String(cachedDispatch?.targetName || '').trim();
+    dispatchTargetTone.value = cachedDispatch?.targetTone === 'mother' ? 'mother' : 'worker';
+    dispatchRuntimeStatus.value = cachedRuntimeStatus;
     rememberSessionAssistantIdentity(dispatchSessionId.value, {
       agentId: dispatchTargetAgentId.value,
       name: dispatchTargetName.value,
@@ -1249,19 +1310,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const cachedSessionMatchesCurrent =
       !currentDispatchSessionId || !cachedDispatchSessionId || cachedDispatchSessionId === currentDispatchSessionId;
     if (!String(dispatchSessionId.value || '').trim()) {
-      const next = [...cachedMessages]
-        .filter(
-          (message) =>
-            !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
-        )
-        .sort(compareMissionChatMessages)
-        .slice(-MANUAL_CHAT_HISTORY_LIMIT);
-      if (!sameManualChatMessages(manualChatMessages.value, next)) {
-        replaceManualChatMessages(next);
+      if (manualChatMessages.value.length > 0) {
+        replaceManualChatMessages([]);
       }
-      logBeeroomRuntime('load-manual-chat-history:cached-only', {
+      logBeeroomRuntime('load-manual-chat-history:no-active-dispatch', {
         scopeKey: chatRuntimeScopeKey.value,
-        messageCount: next.length
+        messageCount: 0
       });
       return;
     }
@@ -3151,14 +3205,17 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   });
 
   onBeforeUnmount(() => {
-    // Preserve the last dispatch session snapshot so returning to swarms can replay
-    // the mother/worker/subagent canvas from cached session references.
+    const preserveLiveDispatch = shouldPersistCachedDispatchState();
     logBeeroomRuntime('before-unmount', {
       groupId: activeGroupId.value,
       dispatchSessionId: dispatchSessionId.value,
-      runtimeStatus: dispatchRuntimeStatus.value
+      runtimeStatus: dispatchRuntimeStatus.value,
+      preserveLiveDispatch
     });
-    resetDispatchRuntime({ keepSession: true, keepRuntimeStatus: true });
+    resetDispatchRuntime({
+      keepSession: preserveLiveDispatch,
+      keepRuntimeStatus: preserveLiveDispatch
+    });
     stopChatPolling();
     stopChatRealtimeWatch();
   });

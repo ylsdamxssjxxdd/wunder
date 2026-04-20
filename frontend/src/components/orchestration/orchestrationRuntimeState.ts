@@ -35,6 +35,7 @@ import {
 import { useI18n } from '@/i18n';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import {
   buildOrchestrationAgentArtifactPath,
@@ -151,6 +152,10 @@ const ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS = 1200;
 
 const normalizeText = normalizeOrchestrationText;
 
+const orchestrationDebugLog = (event: string, payload?: unknown) => {
+  chatDebugLog('orchestration-runtime', event, payload);
+};
+
 const normalizeRoundIndexKey = (value: unknown) => {
   const parsed = Number.parseInt(String(value ?? '').trim(), 10);
   return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : '';
@@ -258,6 +263,9 @@ const findLatestFormalRound = (rounds: OrchestrationRound[] | null | undefined) 
     return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
   }, null);
 };
+
+const countFormalRounds = (rounds: OrchestrationRound[] | null | undefined) =>
+  (Array.isArray(rounds) ? rounds : []).filter((round) => Boolean(normalizeText(round?.userMessage))).length;
 
 const resolveRoundUserMessageWindow = (
   rounds: OrchestrationRound[],
@@ -626,6 +634,13 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current || !round) {
       return source;
     }
+    const formalRounds = current.rounds.filter((item) => Boolean(normalizeText(item.userMessage)));
+    if (!formalRounds.length) {
+      return [];
+    }
+    if (!formalRounds.some((item) => item.id === round.id)) {
+      return [];
+    }
     const userMessageWindow = resolveRoundUserMessageWindow(
       current.rounds,
       current.activeRoundId,
@@ -657,10 +672,13 @@ export const useOrchestrationRuntimeState = (options: {
     const nextRound = roundIndex >= 0 ? current.rounds[roundIndex + 1] || null : null;
     const roundStart = Number(round.createdAt || 0);
     const nextRoundStart = Number(nextRound?.createdAt || 0);
+    if (roundStart <= 0) {
+      return [];
+    }
     return source.filter((message) => {
       const timeMs = normalizeMsTime(message?.time);
       if (!timeMs) {
-        return round.id === current.activeRoundId;
+        return false;
       }
       if (timeMs < roundStart) {
         return false;
@@ -985,16 +1003,33 @@ export const useOrchestrationRuntimeState = (options: {
       .filter((item) => item.agentId && item.sessionId);
     const remoteRoundState = normalizeRemoteRoundState(remoteState.round_state);
     const existing = preserveExisting ? runtimeState.value || readPersistedRuntime(groupId.value) : null;
-    const nextRounds = remoteRoundState.rounds.length
-      ? remoteRoundState.rounds
-      : existing && normalizeText(existing.runId) === runId && existing.rounds.length
-        ? existing.rounds.map((round) => ({ ...round, orchestrationId }))
-        : buildInitialRuntime({
-            orchestrationId,
-            runId,
-            motherSessionId,
-            memberThreads
-          }).rounds;
+    const existingMatchesRun = Boolean(existing && normalizeText(existing.runId) === runId);
+    const existingRounds = existingMatchesRun ? existing!.rounds.map((round) => ({ ...round, orchestrationId })) : [];
+    const remoteFormalRoundCount = countFormalRounds(remoteRoundState.rounds);
+    const existingFormalRoundCount = countFormalRounds(existingRounds);
+    const preferExistingRounds =
+      existingMatchesRun &&
+      existingRounds.length > 0 &&
+      (
+        !remoteRoundState.rounds.length ||
+        remoteFormalRoundCount < existingFormalRoundCount ||
+        (
+          remoteFormalRoundCount === existingFormalRoundCount &&
+          remoteRoundState.rounds.length < existingRounds.length
+        )
+      );
+    const nextRounds = preferExistingRounds
+      ? existingRounds
+      : remoteRoundState.rounds.length
+        ? remoteRoundState.rounds
+        : existingRounds.length
+          ? existingRounds
+          : buildInitialRuntime({
+              orchestrationId,
+              runId,
+              motherSessionId,
+              memberThreads
+            }).rounds;
     const existingActiveRoundId =
       existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
     const latestFormalRound = findLatestFormalRound(nextRounds);
@@ -1035,6 +1070,29 @@ export const useOrchestrationRuntimeState = (options: {
             activeRoundId: activeRound?.id || '',
             suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
           };
+    orchestrationDebugLog('apply-remote-state', {
+      preserveExisting,
+      remoteRunId: runId,
+      remoteOrchestrationId: orchestrationId,
+      existingRunId: normalizeText(existing?.runId),
+      existingActiveRoundId: normalizeText(existing?.activeRoundId),
+      preferExistingRounds,
+      remoteFormalRoundCount,
+      existingFormalRoundCount,
+      remoteRoundIds: remoteRoundState.rounds.map((round) => ({
+        id: round.id,
+        index: round.index,
+        hasUserMessage: Boolean(normalizeText(round.userMessage)),
+        createdAt: round.createdAt
+      })),
+      nextActiveRoundId: nextState.activeRoundId,
+      nextRounds: nextState.rounds.map((round) => ({
+        id: round.id,
+        index: round.index,
+        hasUserMessage: Boolean(normalizeText(round.userMessage)),
+        createdAt: round.createdAt
+      }))
+    });
     if (nextState.active) {
       await bindMemberThreadsAsMain(nextState);
     }
@@ -1329,8 +1387,11 @@ export const useOrchestrationRuntimeState = (options: {
     return runtimeState.value;
   };
 
-  const ensureRuntime = async () => {
-    if (runtimeState.value?.runId && runtimeState.value?.orchestrationId) return runtimeState.value;
+  const ensureRuntime = async (options: { forceRemote?: boolean } = {}) => {
+    const forceRemote = options.forceRemote === true;
+    if (!forceRemote && runtimeState.value?.runId && runtimeState.value?.orchestrationId) {
+      return runtimeState.value;
+    }
     const currentGroupId = groupId.value;
     if (!currentGroupId || !motherAgentId.value) {
       return null;
@@ -1428,6 +1489,20 @@ export const useOrchestrationRuntimeState = (options: {
     const normalizedSituation =
       String(payload.situation || '').trim() ||
       resolveSituationByRoundIndex(current.plannedSituations, targetRoundIndex);
+    orchestrationDebugLog('reserve-user-round:request', {
+      runId: current.runId,
+      orchestrationId: current.orchestrationId,
+      targetRoundId,
+      nextFormalRoundIndex,
+      targetRoundIndex,
+      shouldCreateRound,
+      currentRounds: current.rounds.map((item) => ({
+        id: item.id,
+        index: item.index,
+        hasUserMessage: Boolean(normalizeText(item.userMessage)),
+        createdAt: item.createdAt
+      }))
+    });
     const response = await reserveBeeroomOrchestrationRound({
       group_id: groupId.value,
       round_id: shouldCreateRound ? '' : currentRound?.id || '',
@@ -1457,6 +1532,23 @@ export const useOrchestrationRuntimeState = (options: {
       normalizeRound(response?.data?.data?.round) ||
       nextState?.rounds.find((item) => item.index === targetRoundIndex) ||
       null;
+    orchestrationDebugLog('reserve-user-round:response', {
+      reservedRound: reservedRound
+        ? {
+            id: reservedRound.id,
+            index: reservedRound.index,
+            hasUserMessage: Boolean(normalizeText(reservedRound.userMessage)),
+            createdAt: reservedRound.createdAt
+          }
+        : null,
+      nextStateActiveRoundId: nextState?.activeRoundId || '',
+      nextStateRounds: nextState?.rounds.map((item) => ({
+        id: item.id,
+        index: item.index,
+        hasUserMessage: Boolean(normalizeText(item.userMessage)),
+        createdAt: item.createdAt
+      })) || []
+    });
     if (!nextState || !reservedRound) return reservedRound;
     await saveRoundSituationFile(nextState, reservedRound.index, normalizedSituation);
     setRuntime({
@@ -1514,6 +1606,26 @@ export const useOrchestrationRuntimeState = (options: {
       normalizeRound(response?.data?.data?.round) ||
       nextState.rounds.find((item) => item.id === resolvedRoundId) ||
       findLatestFormalRound(nextState.rounds);
+    orchestrationDebugLog('finalize-pending-round:response', {
+      resolvedRoundId,
+      finalizedRound: finalizedRound
+        ? {
+            id: finalizedRound.id,
+            index: finalizedRound.index,
+            hasUserMessage: Boolean(normalizeText(finalizedRound.userMessage)),
+            createdAt: finalizedRound.createdAt,
+            finalizedAt: finalizedRound.finalizedAt
+          }
+        : null,
+      nextStateActiveRoundId: nextState.activeRoundId,
+      nextStateRounds: nextState.rounds.map((item) => ({
+        id: item.id,
+        index: item.index,
+        hasUserMessage: Boolean(normalizeText(item.userMessage)),
+        createdAt: item.createdAt,
+        finalizedAt: item.finalizedAt
+      }))
+    });
     setRuntime({
       ...nextState,
       activeRoundId: finalizedRound?.id || nextState.activeRoundId,
@@ -1576,6 +1688,18 @@ export const useOrchestrationRuntimeState = (options: {
         : null,
       true
     );
+    orchestrationDebugLog('discard-pending-round:response', {
+      resolvedRoundId,
+      removeWholeRound,
+      fallbackRoundId: fallbackRound?.id || '',
+      appliedStateActiveRoundId: appliedState?.activeRoundId || '',
+      appliedStateRounds: appliedState?.rounds.map((item) => ({
+        id: item.id,
+        index: item.index,
+        hasUserMessage: Boolean(normalizeText(item.userMessage)),
+        createdAt: item.createdAt
+      })) || []
+    });
     const nextState = appliedState
       ? {
           ...appliedState,
@@ -2117,6 +2241,29 @@ export const useOrchestrationRuntimeState = (options: {
     },
     { immediate: true }
   );
+
+  if (isChatDebugEnabled()) {
+    watch(
+      () =>
+        ({
+          runId: runtimeState.value?.runId || '',
+          orchestrationId: runtimeState.value?.orchestrationId || '',
+          activeRoundId: runtimeState.value?.activeRoundId || '',
+          pendingRoundId: runtimeState.value?.pendingRoundId || '',
+          rounds: (runtimeState.value?.rounds || []).map((round) => ({
+            id: round.id,
+            index: round.index,
+            hasUserMessage: Boolean(normalizeText(round.userMessage)),
+            createdAt: round.createdAt,
+            finalizedAt: round.finalizedAt
+          }))
+        }),
+      (snapshot) => {
+        orchestrationDebugLog('runtime-snapshot', snapshot);
+      },
+      { deep: true }
+    );
+  }
 
   watch(
     () => [

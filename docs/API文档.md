@@ -2618,7 +2618,8 @@
   - `mother_agent_id`
 - 说明：
   - 该状态保存在线程级 meta 中，不改动 chat session 表结构。
-  - 当母蜂在该线程里调用 `agent_swarm` 时，后端会读取对应 `orchestration/<run_id>/round_000x/situation.txt`，并把当前轮次态势与工蜂产物目录提示自动注入给工蜂。
+  - 当母蜂在该线程里调用 `agent_swarm` 时，后端会读取对应 `orchestration/<run_id>/round_xx/situation.txt`，并把当前轮次态势与工蜂产物目录提示自动注入给工蜂。
+  - 新写入目录统一使用两位格式，如 `round_01`、`round_02`；后端继续兼容历史 `round_0001` 这类旧目录与旧 round_id 传参。
 
 ### `GET /wunder/beeroom/orchestration/state`
 

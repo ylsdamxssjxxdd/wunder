@@ -124,6 +124,8 @@
                         class="orchestration-round-chip"
                         :class="{
                           active: item.active,
+                          'is-pending': item.pending,
+                          'is-preview': item.preview,
                           'is-disabled': runtimeLocked
                         }"
                         type="button"
@@ -134,7 +136,7 @@
                         }"
                         :title="t('orchestration.timeline.round', { round: item.roundIndex })"
                         :aria-label="t('orchestration.timeline.round', { round: item.roundIndex })"
-                        :aria-current="item.currentRun && item.active ? 'step' : undefined"
+                        :aria-current="item.currentRun && (item.active || item.pending) ? 'step' : undefined"
                         @click="handleRoundChipClick(item)"
                         @contextmenu.prevent.stop="openRoundContextMenu($event, item)"
                       >
@@ -193,17 +195,18 @@
           :approvals="[]"
           :dispatch-can-stop="composerSending"
           :dispatch-approval-busy="false"
-          :composer-text="composerText"
+          :composer-text="''"
           :composer-target-agent-id="motherAgentId"
           :composer-target-options="composerTargetOptions"
           :composer-sending="composerSending"
-          :composer-can-send="canSend"
-          :composer-disabled="composerDisabled"
+          :composer-can-send="false"
+          :composer-disabled="true"
           :composer-error="''"
           :title="group?.name || t('beeroom.canvas.chatTitle')"
           :artifacts-enabled="Boolean(activeArtifactWorkspace)"
           :show-artifacts-button="false"
           :show-clear-button="false"
+          :show-composer="false"
           :resolve-message-avatar-image="resolveMessageAvatarImage"
           :avatar-label="avatarLabel"
           @update:collapsed="chatCollapsed = $event"
@@ -251,16 +254,66 @@
             >
               <i class="fa-solid" :class="isActive ? 'fa-link-slash' : 'fa-play'" aria-hidden="true"></i>
             </button>
-            <button
-              class="beeroom-canvas-icon-btn orchestration-panel-action"
-              type="button"
-              :title="t('orchestration.action.situation')"
-              :aria-label="t('orchestration.action.situation')"
-              :disabled="!isReady || runtimeLocked"
-              @click="emit('open-situation')"
-            >
-              <i class="fa-solid fa-wave-square" aria-hidden="true"></i>
-            </button>
+          </template>
+          <template #footer>
+            <section class="orchestration-side-control">
+              <div class="orchestration-side-control-head">
+                <span class="orchestration-side-control-title">{{ t('orchestration.panel.situation') }}</span>
+                <div class="orchestration-side-control-head-actions">
+                  <button
+                    class="beeroom-canvas-icon-btn orchestration-panel-action orchestration-side-control-icon-btn"
+                    type="button"
+                    :title="t('common.edit')"
+                    :aria-label="t('common.edit')"
+                    :disabled="!isReady || runtimeLocked"
+                    @click="emit('open-situation')"
+                  >
+                    <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    class="beeroom-canvas-icon-btn orchestration-panel-action orchestration-side-control-icon-btn"
+                    :class="{ 'is-stop': composerSending }"
+                    type="button"
+                    :title="
+                      composerSending
+                        ? t('common.stop')
+                        : nextRoundReady
+                          ? t('orchestration.action.nextRound')
+                          : t('orchestration.action.startRound')
+                    "
+                    :aria-label="
+                      composerSending
+                        ? t('common.stop')
+                        : nextRoundReady
+                          ? t('orchestration.action.nextRound')
+                          : t('orchestration.action.startRound')
+                    "
+                    :disabled="actionDisabled"
+                    @click="emit('trigger-round')"
+                  >
+                    <i
+                      class="fa-solid"
+                      :class="
+                        composerSending
+                          ? 'fa-stop'
+                          : nextRoundReady
+                            ? 'fa-forward-step'
+                            : 'fa-play'
+                      "
+                      aria-hidden="true"
+                    ></i>
+                  </button>
+                </div>
+              </div>
+              <textarea
+                class="orchestration-side-control-textarea"
+                :value="currentSituation"
+                :disabled="!isReady || runtimeLocked"
+                :placeholder="t('orchestration.canvas.noSituation')"
+                rows="7"
+                @input="emit('update:current-situation', ($event.target as HTMLTextAreaElement).value)"
+              ></textarea>
+            </section>
           </template>
         </BeeroomCanvasChatPanel>
       </div>
@@ -321,6 +374,7 @@ import {
   buildOrchestrationCanvasScopeKey
 } from '@/components/orchestration/orchestrationCanvasModel';
 import { useI18n } from '@/i18n';
+import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 
@@ -347,6 +401,8 @@ const props = defineProps<{
   composerSending: boolean;
   canSend: boolean;
   composerDisabled: boolean;
+  currentSituation: string;
+  nextRoundReady: boolean;
   initializing: boolean;
   historyLoading: boolean;
   isActive: boolean;
@@ -363,7 +419,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
   (event: 'update:composer-text', value: string): void;
+  (event: 'update:current-situation', value: string): void;
   (event: 'send'): void;
+  (event: 'trigger-round'): void;
   (event: 'create-run'): void;
   (event: 'start-run'): void;
   (event: 'exit-run'): void;
@@ -375,6 +433,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const orchestrationTimelineDebug = (event: string, payload?: unknown) => {
+  chatDebugLog('orchestration-timeline', event, payload);
+};
 const screenRef = ref<HTMLElement | null>(null);
 const boardRef = ref<HTMLElement | null>(null);
 const canvasFullscreen = ref(false);
@@ -492,6 +554,8 @@ type TimelineRoundItem = {
   roundId: string;
   roundIndex: number;
   active: boolean;
+  pending: boolean;
+  preview: boolean;
   orchestrationId: string;
   currentRun: boolean;
 };
@@ -619,6 +683,28 @@ const timelineLayout = computed<TimelineLayout>(() => {
   }
   const orderedRuns = sortTimelineHistoryItems(renderableRuns);
 
+  if (isChatDebugEnabled()) {
+    orchestrationTimelineDebug('timeline-layout-input', {
+      currentOrchestrationId: currentRunId,
+      activeRoundId: String(props.activeRound?.id || '').trim(),
+      rounds: rounds.map((round) => ({
+        id: String(round.id || '').trim(),
+        index: Number(round.index || 0),
+        orchestrationId: String((round as { orchestrationId?: unknown }).orchestrationId || currentRunId).trim(),
+        hasUserMessage: Boolean(String((round as { userMessage?: unknown }).userMessage || '').trim())
+      })),
+      historyItems: orderedRuns.map((item) => ({
+        orchestrationId: String(item.orchestrationId || '').trim(),
+        parentOrchestrationId: String(item.parentOrchestrationId || '').trim(),
+        branchRootOrchestrationId: String(item.branchRootOrchestrationId || '').trim(),
+        branchFromRoundIndex: Number(item.branchFromRoundIndex || 0),
+        latestRoundIndex: Number(item.latestRoundIndex || 0),
+        branchDepth: Number(item.branchDepth || 0),
+        status: String(item.status || '').trim()
+      }))
+    });
+  }
+
   const items: Array<TimelineRunItem | TimelineRoundItem> = [];
   const connectors: TimelineConnector[] = [];
   const runLayoutById = new Map<string, TimelineRunLayoutMeta>();
@@ -686,10 +772,36 @@ const timelineLayout = computed<TimelineLayout>(() => {
       const roundIndex = Math.max(1, Number(round.index || 0));
       return branchFromRoundIndex > 0 ? roundIndex > branchFromRoundIndex : true;
     });
+    const lastVisibleRound = visibleRounds[visibleRounds.length - 1] || null;
+    const currentFormalRounds = currentRounds.filter((round) => Boolean(String(round.userMessage || '').trim()));
+    const lastVisibleRoundHasUserMessage = Boolean(
+      String((lastVisibleRound as { userMessage?: unknown } | null)?.userMessage || '').trim()
+    );
+    const shouldAppendPreviewRound =
+      isCurrentRun &&
+      props.isActive &&
+      currentFormalRounds.length > 0 &&
+      !props.isBusy &&
+      Boolean(lastVisibleRound) &&
+      lastVisibleRoundHasUserMessage;
+    const displayRounds: Array<{ id: string; index: number; orchestrationId: string; userMessage?: string }> = shouldAppendPreviewRound
+      ? [
+          ...visibleRounds,
+          {
+            id: `preview:${runId}:round_${String(Math.max(1, Number(lastVisibleRound?.index || 0) + 1)).padStart(4, '0')}`,
+            index: Math.max(1, Number(lastVisibleRound?.index || 0) + 1),
+            orchestrationId: runId,
+            userMessage: ''
+          }
+        ]
+      : visibleRounds;
     const roundColumns = new Map<number, number>();
     let lastRoundColumn = runChipColumn;
-    visibleRounds.forEach((round) => {
+    displayRounds.forEach((round) => {
       const roundIndex = Math.max(1, Number(round.index || 0));
+      const hasUserMessage = Boolean(String((round as { userMessage?: unknown }).userMessage || '').trim());
+      const isSelectedRound = isCurrentRun && round.id === props.activeRound?.id;
+      const isPreviewRound = String(round.id || '').startsWith(`preview:${runId}:`);
       const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
       roundColumns.set(roundIndex, column);
       lastRoundColumn = Math.max(lastRoundColumn, column);
@@ -701,12 +813,14 @@ const timelineLayout = computed<TimelineLayout>(() => {
         column,
         roundId: round.id,
         roundIndex,
-        active: isCurrentRun && round.id === props.activeRound?.id,
+        active: isSelectedRound && hasUserMessage,
+        pending: (isSelectedRound && !hasUserMessage) || isPreviewRound,
+        preview: isPreviewRound,
         orchestrationId: runId,
         currentRun: isCurrentRun
       });
     });
-    if (visibleRounds.length) {
+    if (displayRounds.length) {
       connectors.push({
         id: `run-round-link:${runId}`,
         className: 'orchestration-timeline-connector horizontal orchestration-timeline-connector--rounds',
@@ -739,6 +853,12 @@ const statusLampLabel = computed(() => {
     return t('orchestration.run.busy');
   }
   return props.isActive ? t('orchestration.run.active') : t('orchestration.run.idle');
+});
+
+const actionDisabled = computed(() => {
+  if (props.composerSending) return false;
+  if (!props.isReady || !props.isActive) return true;
+  return false;
 });
 
 const activeArtifactWorkspace = computed(() => {
@@ -847,6 +967,7 @@ const handleRunChipClick = (item: TimelineRunItem) => {
 
 const handleRoundChipClick = (item: TimelineRoundItem) => {
   if (props.runtimeLocked) return;
+  if (item.preview) return;
   if (item.currentRun) {
     emit('select-round', item.roundId);
     return;
@@ -856,6 +977,10 @@ const handleRoundChipClick = (item: TimelineRoundItem) => {
 
 const openRoundContextMenu = (event: MouseEvent, item: TimelineRoundItem) => {
   if (props.runtimeLocked) {
+    closeRoundContextMenu();
+    return;
+  }
+  if (item.preview) {
     closeRoundContextMenu();
     return;
   }
@@ -1525,7 +1650,26 @@ watch(
   overflow-y: auto;
   padding: 2px 2px 8px;
   scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ui-accent-rgb), 0.45) transparent;
   overscroll-behavior: contain;
+}
+
+.orchestration-timeline-track::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+.orchestration-timeline-track::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.orchestration-timeline-track::-webkit-scrollbar-thumb {
+  background: rgba(var(--ui-accent-rgb), 0.45);
+  border-radius: 999px;
+}
+
+.orchestration-timeline-track::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--ui-accent-rgb), 0.62);
 }
 
 .orchestration-timeline-empty {
@@ -1733,6 +1877,47 @@ watch(
   color: #3f2207;
 }
 
+.orchestration-round-chip.is-pending {
+  color: #dbeafe;
+}
+
+.orchestration-round-chip.is-pending .orchestration-round-chip-node {
+  border-color: rgba(96, 165, 250, 0.52);
+  background:
+    radial-gradient(circle at 32% 28%, rgba(239, 246, 255, 0.22), transparent 42%),
+    linear-gradient(180deg, rgba(37, 99, 235, 0.3), rgba(15, 23, 42, 0.92));
+  box-shadow:
+    inset 0 1px 0 rgba(239, 246, 255, 0.16),
+    0 0 0 3px rgba(59, 130, 246, 0.1),
+    0 8px 22px rgba(30, 64, 175, 0.16);
+  transform: scale(1.02);
+}
+
+.orchestration-round-chip.is-pending .orchestration-round-chip-index {
+  color: #dbeafe;
+}
+
+.orchestration-round-chip.is-preview {
+  cursor: default;
+}
+
+.orchestration-round-chip.is-preview .orchestration-round-chip-node {
+  border-style: dashed;
+  border-color: rgba(125, 211, 252, 0.44);
+  background:
+    radial-gradient(circle at 32% 28%, rgba(224, 242, 254, 0.16), transparent 44%),
+    linear-gradient(180deg, rgba(14, 116, 144, 0.16), rgba(15, 23, 42, 0.88));
+  box-shadow:
+    inset 0 1px 0 rgba(224, 242, 254, 0.12),
+    0 0 0 2px rgba(14, 165, 233, 0.08),
+    0 6px 18px rgba(8, 47, 73, 0.14);
+  transform: none;
+}
+
+.orchestration-round-chip.is-preview .orchestration-round-chip-index {
+  color: rgba(186, 230, 253, 0.92);
+}
+
 .orchestration-run-chip.is-disabled:hover,
 .orchestration-run-chip.is-disabled:focus-visible,
 .orchestration-round-chip.is-disabled:hover,
@@ -1809,6 +1994,68 @@ watch(
   background: #38bdf8;
   box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
   transform: scale(1.04);
+}
+
+.orchestration-side-control {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(9, 10, 15, 0), rgba(9, 10, 15, 0.52));
+}
+
+.orchestration-side-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.orchestration-side-control-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.orchestration-side-control-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(226, 232, 240, 0.92);
+  letter-spacing: 0.02em;
+}
+
+.orchestration-side-control-textarea {
+  width: 100%;
+  min-height: 148px;
+  resize: vertical;
+  padding: 12px 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(180deg, rgba(19, 23, 32, 0.96), rgba(12, 16, 24, 0.92));
+  color: #e5e7eb;
+  line-height: 1.65;
+  font-size: 12.5px;
+  outline: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.orchestration-side-control-textarea:focus-visible {
+  border-color: rgba(96, 165, 250, 0.4);
+  box-shadow:
+    0 0 0 2px rgba(96, 165, 250, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.orchestration-side-control-textarea:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.orchestration-side-control-icon-btn.is-stop {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: linear-gradient(135deg, rgba(180, 83, 9, 0.92), rgba(146, 64, 14, 0.92));
+  color: #fef3c7;
+  box-shadow: 0 10px 24px rgba(120, 53, 15, 0.24);
 }
 
 .beeroom-canvas-chat-resizer {

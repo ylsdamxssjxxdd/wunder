@@ -16,6 +16,9 @@ const MEMBER_BINDING_META_PREFIX: &str = "orchestration_member_binding:";
 const HISTORY_META_PREFIX: &str = "orchestration_history:";
 const ROUND_STATE_META_PREFIX: &str = "orchestration_round_state:";
 const SITUATION_FILE_NAME: &str = "situation.txt";
+const ROUND_DIR_PREFIX: &str = "round_";
+const CANONICAL_ROUND_WIDTH: usize = 2;
+const LEGACY_ROUND_WIDTH: usize = 4;
 
 pub const ORCHESTRATION_MODE: &str = "orchestration";
 pub const ORCHESTRATION_THREAD_LOCKED_CODE: &str = "ORCHESTRATION_THREAD_LOCKED";
@@ -213,8 +216,34 @@ pub fn normalize_round_index(round_index: i64) -> i64 {
     round_index.max(1)
 }
 
+pub fn parse_round_index_token(value: &str) -> Option<i64> {
+    let rest = value.trim().strip_prefix(ROUND_DIR_PREFIX)?;
+    if rest.is_empty() || !rest.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let index = rest.parse::<i64>().ok()?;
+    if index <= 0 {
+        return None;
+    }
+    Some(normalize_round_index(index))
+}
+
+pub fn round_dir_aliases(round_index: i64) -> Vec<String> {
+    let index = normalize_round_index(round_index);
+    let canonical = format!("{ROUND_DIR_PREFIX}{index:0CANONICAL_ROUND_WIDTH$}");
+    let legacy = format!("{ROUND_DIR_PREFIX}{index:0LEGACY_ROUND_WIDTH$}");
+    if canonical == legacy {
+        vec![canonical]
+    } else {
+        vec![canonical, legacy]
+    }
+}
+
 pub fn round_dir_name(round_index: i64) -> String {
-    format!("round_{:04}", normalize_round_index(round_index))
+    round_dir_aliases(round_index)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| format!("{ROUND_DIR_PREFIX}01"))
 }
 
 pub fn round_id(round_index: i64) -> String {
@@ -259,6 +288,17 @@ pub fn prompt_agent_artifact_path(
         .filter(|item| !item.trim().is_empty())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+pub fn round_id_matches(round: &OrchestrationRoundRecord, requested_id: &str) -> bool {
+    let trimmed = requested_id.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if let Some(index) = parse_round_index_token(trimmed) {
+        return index == normalize_round_index(round.index);
+    }
+    round.id.trim() == trimmed
 }
 
 pub fn clear_session_context(
@@ -688,11 +728,9 @@ pub fn list_history_records(
 pub fn normalize_round_record(record: &OrchestrationRoundRecord) -> OrchestrationRoundRecord {
     let index = normalize_round_index(record.index);
     OrchestrationRoundRecord {
-        id: if record.id.trim().is_empty() {
-            round_id(index)
-        } else {
-            record.id.trim().to_string()
-        },
+        id: parse_round_index_token(&record.id)
+            .map(round_id)
+            .unwrap_or_else(|| round_id(index)),
         index,
         situation: record.situation.trim().to_string(),
         user_message: record.user_message.trim().to_string(),
@@ -774,11 +812,9 @@ pub fn load_round_state(
         .collect::<Vec<_>>();
     state.rounds.sort_by_key(|round| round.index);
     state.rounds.dedup_by_key(|round| round.index);
-    state.suppressed_message_ranges = state
+    state
         .suppressed_message_ranges
-        .into_iter()
-        .filter(|range| range.start_at > 0.0 && range.end_at >= range.start_at)
-        .collect();
+        .retain(|range| range.start_at > 0.0 && range.end_at >= range.start_at);
     if state.orchestration_id.is_empty() {
         return None;
     }
@@ -876,18 +912,11 @@ pub fn copy_round_directory_tree(
 ) -> Result<()> {
     let max_round = normalize_round_index(inclusive_round_index);
     for round_index in 1..=max_round {
-        let source = workspace.resolve_path(
-            workspace_id,
-            &[
-                "orchestration",
-                source_run_id.trim(),
-                &round_dir_name(round_index),
-            ]
-            .join("/"),
-        )?;
-        if !source.exists() {
+        let Some(source) =
+            resolve_existing_round_dir(workspace, workspace_id, source_run_id, round_index)
+        else {
             continue;
-        }
+        };
         let target = workspace.resolve_path(
             workspace_id,
             &[
@@ -1400,8 +1429,13 @@ fn read_situation_file(
     run_id: &str,
     round_index: i64,
 ) -> Option<String> {
-    let path = situation_path(run_id, round_index);
-    let target = workspace.resolve_path(workspace_id, &path).ok()?;
+    let target = resolve_existing_round_file(
+        workspace,
+        workspace_id,
+        run_id,
+        round_index,
+        SITUATION_FILE_NAME,
+    )?;
     if !target.is_file() {
         return None;
     }
@@ -1438,11 +1472,55 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> Result<()> {
     Ok(())
 }
 
+fn resolve_existing_round_dir(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    run_id: &str,
+    round_index: i64,
+) -> Option<PathBuf> {
+    for dir_name in round_dir_aliases(round_index) {
+        let path = workspace
+            .resolve_path(
+                workspace_id,
+                &["orchestration", run_id.trim(), dir_name.as_str()].join("/"),
+            )
+            .ok()?;
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn resolve_existing_round_file(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    run_id: &str,
+    round_index: i64,
+    file_name: &str,
+) -> Option<PathBuf> {
+    for dir_name in round_dir_aliases(round_index) {
+        let path = workspace
+            .resolve_path(
+                workspace_id,
+                &[
+                    "orchestration",
+                    run_id.trim(),
+                    dir_name.as_str(),
+                    file_name.trim(),
+                ]
+                .join("/"),
+            )
+            .ok()?;
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 fn parse_round_index_from_dir_name(value: &str) -> i64 {
-    let Some(rest) = value.trim().strip_prefix("round_") else {
-        return 0;
-    };
-    rest.parse::<i64>().unwrap_or(0).max(0)
+    parse_round_index_token(value).unwrap_or(0)
 }
 
 fn render_prompt_template(_config: &Config, name: &str, values: &[(&str, &str)]) -> String {
@@ -1510,15 +1588,15 @@ mod tests {
     fn builds_round_paths() {
         assert_eq!(
             situation_path("orch_demo", 2),
-            "orchestration/orch_demo/round_0002/situation.txt"
+            "orchestration/orch_demo/round_02/situation.txt"
         );
         assert_eq!(
             full_agent_artifact_path("orch_demo", 3, "分析员", "agent_a"),
-            "orchestration/orch_demo/round_0003/分析员"
+            "orchestration/orch_demo/round_03/分析员"
         );
         assert_eq!(
             prompt_agent_artifact_path(3, "分析员", "agent_a"),
-            "round_0003/分析员"
+            "round_03/分析员"
         );
     }
 
@@ -1536,8 +1614,8 @@ mod tests {
             "Risk Worker",
             false,
         );
-        assert!(message.contains("round_0001/Risk Worker"));
-        assert!(!message.contains("orchestration/orch_demo/round_0001/agent_worker"));
+        assert!(message.contains("round_01/Risk Worker"));
+        assert!(!message.contains("orchestration/orch_demo/round_01/agent_worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
     }

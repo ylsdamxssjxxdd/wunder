@@ -10252,7 +10252,7 @@ mod tests {
         let result = write_file(
             &context,
             &json!({
-                "path": "round_0002/worker/report.txt",
+                "path": "round_02/worker/report.txt",
                 "content": "artifact"
             }),
         )
@@ -10260,10 +10260,10 @@ mod tests {
         .expect("write file");
 
         assert_eq!(result["ok"], true);
-        assert!(run_root.join("round_0002/worker/report.txt").is_file());
+        assert!(run_root.join("round_02/worker/report.txt").is_file());
         assert!(!workspace_root
             .join("workspace-test")
-            .join("round_0002/worker/report.txt")
+            .join("round_02/worker/report.txt")
             .exists());
     }
 

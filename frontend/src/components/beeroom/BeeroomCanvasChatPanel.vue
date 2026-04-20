@@ -156,7 +156,7 @@
         </article>
       </section>
 
-      <section class="beeroom-canvas-chat-composer">
+      <section v-if="showComposer !== false" class="beeroom-canvas-chat-composer">
         <textarea
           class="beeroom-canvas-chat-textarea"
           data-testid="beeroom-chat-textarea"
@@ -231,6 +231,7 @@ const props = defineProps<{
   artifactsEnabled: boolean;
   showArtifactsButton?: boolean;
   showClearButton?: boolean;
+  showComposer?: boolean;
   composerDisabled?: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;

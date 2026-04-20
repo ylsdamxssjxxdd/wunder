@@ -15,6 +15,7 @@ use crate::storage::StorageBackend;
 use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
 use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
+use crate::services::orchestration_context::{parse_round_index_token, round_dir_aliases};
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -311,6 +312,9 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
         return None;
     }
     let relative = sanitize_relative_path(trimmed)?;
+    if let Some(resolved) = resolve_existing_round_relative_path(&relative, roots) {
+        return Some(resolved);
+    }
     for root in roots {
         let candidate = normalize_target_path(&root.join(&relative));
         if is_within_root(root, &candidate) {
@@ -345,15 +349,47 @@ pub(crate) fn resolve_tool_path(
     }
 }
 
+fn resolve_existing_round_relative_path(relative: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    let candidates = round_relative_path_candidates(relative)?;
+    for root in roots {
+        for candidate_relative in &candidates {
+            let candidate = normalize_target_path(&root.join(candidate_relative));
+            if is_within_root(root, &candidate) && candidate.exists() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn round_relative_path_candidates(relative: &Path) -> Option<Vec<PathBuf>> {
+    let mut parts = relative.iter();
+    let first = parts.next()?.to_string_lossy().to_string();
+    let round_index = parse_round_index_token(&first)?;
+    let remainder = parts.fold(PathBuf::new(), |mut acc, part| {
+        acc.push(part);
+        acc
+    });
+    let mut candidates = Vec::new();
+    for alias in round_dir_aliases(round_index) {
+        let mut candidate = PathBuf::from(alias);
+        if !remainder.as_os_str().is_empty() {
+            candidate.push(&remainder);
+        }
+        if !candidates.iter().any(|existing| existing == &candidate) {
+            candidates.push(candidate);
+        }
+    }
+    Some(candidates)
+}
+
 fn should_resolve_missing_path_from_extra_roots(raw_path: &str) -> bool {
     let normalized = raw_path.trim().replace('\\', "/");
     let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
     let Some(first) = stripped.split('/').next() else {
         return false;
     };
-    first
-        .strip_prefix("round_")
-        .is_some_and(|suffix| suffix.len() == 4 && suffix.chars().all(|ch| ch.is_ascii_digit()))
+    parse_round_index_token(first).is_some()
 }
 
 pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
@@ -468,7 +504,7 @@ mod tests {
         let resolved = super::resolve_tool_path(
             &workspace,
             "alice",
-            "round_0002/worker/report.txt",
+            "round_02/worker/report.txt",
             &[run_root],
         )
         .expect("resolved");

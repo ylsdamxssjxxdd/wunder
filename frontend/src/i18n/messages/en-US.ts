@@ -2260,6 +2260,8 @@ export default {
   'orchestration.action.create': 'New Run',
   'orchestration.action.history': 'History',
   'orchestration.action.situation': 'Situation',
+  'orchestration.action.startRound': 'Start',
+  'orchestration.action.nextRound': 'Next Round',
   'orchestration.empty.selectGroup': 'Select a swarm to start orchestration',
   'orchestration.empty.description': 'No orchestration description yet',
   'orchestration.canvas.title': 'Orchestration Canvas',
@@ -2287,6 +2289,7 @@ export default {
   'orchestration.message.started': 'Orchestration activated',
   'orchestration.message.stopped': 'Orchestration disconnected',
   'orchestration.message.startRunRequired': 'Start orchestration before sending a message to the mother agent.',
+  'orchestration.message.situationRequired': 'Set the current situation before starting this orchestration round.',
   'orchestration.message.busySwitchBlocked':
     'This orchestration is still running. Switching history/branches or editing orchestration settings is blocked.',
   'orchestration.empty.createRun': 'This swarm has no orchestration run yet',

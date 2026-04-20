@@ -420,7 +420,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         reserve_round_one_payload
             .pointer("/data/round/id")
             .and_then(Value::as_str),
-        Some("round_0001")
+        Some("round_01")
     );
 
     let (status, finalize_round_one_payload) = send_json(
@@ -460,7 +460,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         reserve_round_two_payload
             .pointer("/data/round/id")
             .and_then(Value::as_str),
-        Some("round_0002")
+        Some("round_02")
     );
 
     let (status, cancel_round_two_payload) = send_json(
@@ -480,10 +480,10 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         round_ids(&cancel_round_two_payload, "/data/round_state/rounds"),
-        vec!["round_0001".to_string()]
+        vec!["round_01".to_string()]
     );
     assert_eq!(
-        round_user_message(&cancel_round_two_payload, "/data/round_state/rounds", "round_0001"),
+        round_user_message(&cancel_round_two_payload, "/data/round_state/rounds", "round_01"),
         "第一轮正式消息".to_string()
     );
     assert_eq!(
@@ -543,10 +543,10 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         round_ids(&restore_payload, "/data/state/round_state/rounds"),
-        vec!["round_0001".to_string()]
+        vec!["round_01".to_string()]
     );
     assert_eq!(
-        round_user_message(&restore_payload, "/data/state/round_state/rounds", "round_0001"),
+        round_user_message(&restore_payload, "/data/state/round_state/rounds", "round_01"),
         "第一轮正式消息".to_string()
     );
     assert_eq!(
@@ -588,7 +588,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     );
     assert_eq!(
         round_ids(&state_payload, "/data/state/round_state/rounds"),
-        vec!["round_0001".to_string()]
+        vec!["round_01".to_string()]
     );
 }
 

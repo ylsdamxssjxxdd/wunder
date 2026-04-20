@@ -1,9 +1,9 @@
 <template>
   <el-dialog
     v-model="visible"
-    class="messenger-dialog"
+    class="messenger-dialog beeroom-create-dialog"
     width="560px"
-    top="10vh"
+    top="calc(var(--desktop-window-chrome-height, 36px) + 12px)"
     :show-close="false"
     :close-on-click-modal="false"
     append-to-body
@@ -379,6 +379,17 @@ watch(
 </script>
 
 <style scoped>
+:deep(.beeroom-create-dialog.el-dialog) {
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  box-sizing: border-box;
+}
+
+:deep(.beeroom-create-dialog .el-dialog__body) {
+  max-height: calc(var(--app-viewport-height, 100vh) - 210px);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
 .messenger-dialog-close {
   display: inline-flex;
   align-items: center;

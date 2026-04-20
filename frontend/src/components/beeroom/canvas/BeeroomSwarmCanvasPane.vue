@@ -345,6 +345,7 @@ let pendingNodeOutputPreviewTimer: number | null = null;
 const knownProjectionNodeIds = new Set<string>();
 const knownProjectionNodeDispatchActivity = new Map<string, boolean>();
 const revealCleanupTimers = new Map<string, number>();
+const revealBaselineReady = ref(false);
 
 const scopeKey = computed(() =>
   String(props.externalScopeKey || '').trim() ||
@@ -815,6 +816,23 @@ const buildCanvasProjectionDebugSnapshot = () => {
 const syncNodeRevealState = () => {
   const currentNodes = projection.value.nodes;
   const currentIds = new Set(currentNodes.map((node) => node.id));
+  if (!revealBaselineReady.value) {
+    knownProjectionNodeIds.clear();
+    knownProjectionNodeDispatchActivity.clear();
+    currentNodes.forEach((node) => {
+      const normalizedStatus = String(node.status || '').trim().toLowerCase();
+      const workerDispatchActive =
+        node.role === 'worker' &&
+        (normalizedStatus === 'queued' || normalizedStatus === 'running' || normalizedStatus === 'awaiting_idle');
+      knownProjectionNodeIds.add(node.id);
+      knownProjectionNodeDispatchActivity.set(node.id, workerDispatchActive);
+    });
+    if (Object.keys(nodeRevealMap.value).length > 0) {
+      nodeRevealMap.value = {};
+    }
+    revealBaselineReady.value = true;
+    return;
+  }
   const activeDispatchSourceByTarget = new Map<string, string>();
   projection.value.edges.forEach((edge) => {
     if (edge.kind !== 'dispatch' || !edge.active) return;
@@ -1223,6 +1241,7 @@ watch(
     knownProjectionNodeIds.clear();
     knownProjectionNodeDispatchActivity.clear();
     nodeRevealMap.value = {};
+    revealBaselineReady.value = false;
     hydrateCanvasState();
   },
   { immediate: true }
@@ -1296,6 +1315,7 @@ onBeforeUnmount(() => {
   knownProjectionNodeIds.clear();
   knownProjectionNodeDispatchActivity.clear();
   nodeRevealMap.value = {};
+  revealBaselineReady.value = false;
 });
 </script>
 

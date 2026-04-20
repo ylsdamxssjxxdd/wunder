@@ -30,6 +30,8 @@
         :composer-sending="orchestrationStopBusy"
         :can-send="orchestrationCanSend"
         :composer-disabled="orchestrationComposerDisabled"
+        :current-situation="currentSituationText"
+        :next-round-ready="orchestrationNextRoundReady"
         :initializing="initializing"
         :history-loading="historyLoading"
         :is-active="isActive"
@@ -43,7 +45,9 @@
         :avatar-label="avatarLabel"
         @open-agent="emit('open-agent', $event)"
         @update:composer-text="composerText = $event"
+        @update:current-situation="handleCurrentSituationInput"
         @send="handleSendToMother"
+        @trigger-round="handleRunRoundAction"
         @create-run="handleCreateRun"
         @start-run="handleStartRun"
         @exit-run="handleStopRun"
@@ -138,6 +142,7 @@
       <el-dialog
         v-model="situationDialogVisible"
         width="760px"
+        top="calc(var(--desktop-window-chrome-height, 36px) + 12px)"
         append-to-body
         class="messenger-modal messenger-modal--beeroom orchestration-theme-dialog orchestration-situation-dialog"
       >
@@ -287,6 +292,7 @@ import {
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
+import { chatDebugLog } from '@/utils/chatDebug';
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -305,6 +311,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const orchestrationWorkbenchDebug = (event: string, payload?: unknown) => {
+  chatDebugLog('orchestration-workbench', event, payload);
+};
 
 const groupRef = toRef(props, 'group');
 const agentsRef = toRef(props, 'agents');
@@ -340,11 +350,13 @@ const {
   branchHistory,
   deleteHistory,
   truncateHistoryFromRound,
+  createRound,
   reserveUserRound,
   finalizePendingRound,
   discardPendingRound,
   resolveRoundSituation,
   markMotherPrimerInjected,
+  updateSituation,
   updatePlannedSituations,
   selectRound,
   resolveWorkerOutputs,
@@ -427,13 +439,24 @@ const orchestrationCanSend = computed(
   () =>
     Boolean(
       isReady.value &&
-        isActive.value &&
-        String(composerText.value || '').trim()
+        isActive.value
     ) && !orchestrationStopBusy.value
 );
 const orchestrationComposerDisabled = computed(
   () => !isReady.value || !isActive.value
 );
+const currentSituationText = computed(() => String(activeRound.value?.situation || '').trim());
+const orchestrationNextRoundReady = computed(() => {
+  if (!isReady.value || !isActive.value || orchestrationRunning.value) {
+    return false;
+  }
+  const current = activeRound.value;
+  const latest = latestRound.value;
+  if (!current || !latest || current.id !== latest.id) {
+    return false;
+  }
+  return Boolean(String(current.userMessage || '').trim());
+});
 
 const motherName = computed(() => {
   const motherId = motherAgentId.value;
@@ -699,6 +722,49 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
 });
 
 const visibleChatMessages = computed(() => activeRoundChatMessages.value);
+
+const handleCurrentSituationInput = (value: string) => {
+  void updateSituation(String(value || ''));
+};
+
+const buildOrchestrationRoundDispatchText = (situation: string) => String(situation || '').trim();
+
+const handleRunRoundAction = async () => {
+  if (orchestrationRunning.value) {
+    await handleSendToMother();
+    return;
+  }
+  if (!isReady.value) {
+    ElMessage.warning(t('orchestration.message.createRunRequired'));
+    return;
+  }
+  if (!isActive.value) {
+    ElMessage.warning(t('orchestration.message.startRunRequired'));
+    return;
+  }
+  if (orchestrationNextRoundReady.value) {
+    const nextRoundIndex = Math.max(1, Number(latestRound.value?.index || 0) + 1);
+    const nextSituation =
+      resolveDraftSituationByRoundIndex(nextRoundIndex) ||
+      await resolveRoundSituation(nextRoundIndex);
+    const created = await createRound(nextSituation, '');
+    if (created?.id) {
+      selectRound(created.id);
+    }
+    return;
+  }
+  const roundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
+  const situation =
+    resolveDraftSituationByRoundIndex(roundIndex) ||
+    String(activeRound.value?.situation || '').trim() ||
+    await resolveRoundSituation(roundIndex);
+  composerText.value = buildOrchestrationRoundDispatchText(situation);
+  if (!composerText.value) {
+    ElMessage.warning(t('orchestration.message.situationRequired'));
+    return;
+  }
+  await handleSendToMother();
+};
 
 const resolveDraftSituationByRoundIndex = (roundIndex: number) => {
   const roundKey = String(normalizeSituationRound(roundIndex));
@@ -1097,6 +1163,18 @@ const handleSendToMother = async () => {
       emit('refresh');
     }
     const inferredNextRoundIndex = resolveNextUserRoundIndex(state);
+    orchestrationWorkbenchDebug('send:before-reserve', {
+      runId: String(state?.runId || '').trim(),
+      orchestrationId: String(state?.orchestrationId || '').trim(),
+      activeRoundId: String(activeRound.value?.id || '').trim(),
+      latestRoundId: String(latestRound.value?.id || '').trim(),
+      inferredNextRoundIndex,
+      rounds: (state?.rounds || []).map((round) => ({
+        id: String(round?.id || '').trim(),
+        index: Number(round?.index || 0),
+        hasUserMessage: Boolean(String(round?.userMessage || '').trim())
+      }))
+    });
     const targetRound =
       (state?.rounds || []).find(
         (round) => Number(round?.index || 0) === inferredNextRoundIndex && !String(round?.userMessage || '').trim()
@@ -1108,6 +1186,12 @@ const handleSendToMother = async () => {
       targetRoundId: targetRound?.id || '',
       situation: initialRoundSituation,
       userMessage: content
+    });
+    orchestrationWorkbenchDebug('send:after-reserve', {
+      reservedRoundId: String(reservedRound?.id || '').trim(),
+      reservedRoundIndex: Number(reservedRound?.index || 0),
+      targetRoundId: String(targetRound?.id || '').trim(),
+      inferredNextRoundIndex
     });
     reservedRoundId = String(reservedRound?.id || '').trim();
     if (reservedRoundId) {
@@ -1147,6 +1231,12 @@ const handleSendToMother = async () => {
         situation: roundSituation,
         userMessage: content
       });
+      orchestrationWorkbenchDebug('send:after-finalize', {
+        actualRoundIndex,
+        finalizedRoundId: String(finalizedRound?.id || '').trim(),
+        finalizedRoundIndex: Number(finalizedRound?.index || 0),
+        sendStatus: sendResult?.status || ''
+      });
       if (finalizedRound?.id) {
         selectRound(finalizedRound.id);
       }
@@ -1176,6 +1266,10 @@ const handleSendToMother = async () => {
       }
     }
     if (isOrchestrationDispatchStoppedError(error)) return;
+    orchestrationWorkbenchDebug('send:error', {
+      message: String(error?.message || ''),
+      code: String(error?.code || '')
+    });
     ElMessage.error(String(error?.message || t('common.requestFailed')));
   } finally {
     finishOrchestrationDispatchFlow(flowToken);
@@ -1191,7 +1285,7 @@ watch(
     historyDialogVisible.value = false;
     void loadHistory().catch(() => []);
     if (runtimeState.value?.runId) {
-      void ensureRuntime().catch(() => null);
+      void ensureRuntime({ forceRemote: true }).catch(() => null);
     }
   },
   { immediate: true }
@@ -1359,10 +1453,12 @@ watch(
 
 .orchestration-situation-dialog :deep(.el-dialog) {
   max-width: min(900px, calc(100vw - 40px));
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
+  box-sizing: border-box;
 }
 
 .orchestration-situation-dialog :deep(.el-dialog__body) {
-  max-height: calc(100vh - 210px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 210px);
   overflow: auto;
   box-sizing: border-box;
 }
@@ -1405,7 +1501,7 @@ watch(
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   gap: 14px;
   min-height: 0;
-  max-height: calc(100vh - 300px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 300px);
 }
 
 .orchestration-situation-round-list {
@@ -1413,7 +1509,7 @@ watch(
   align-content: start;
   gap: 10px;
   min-height: 0;
-  max-height: calc(100vh - 300px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 300px);
   padding-right: 4px;
   overflow: auto;
 }
@@ -1510,7 +1606,7 @@ watch(
   display: flex;
   flex-direction: column;
   min-height: 0;
-  max-height: calc(100vh - 300px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 300px);
   padding: 16px;
   border: 1px solid rgba(96, 165, 250, 0.14);
   border-radius: 24px;
