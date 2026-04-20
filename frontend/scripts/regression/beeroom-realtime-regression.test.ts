@@ -14,6 +14,10 @@ import {
   shouldRunSyncRequiredReloadImmediately
 } from '../../src/components/beeroom/beeroomRealtimeSyncGap';
 import { resolveNextRealtimeCursor } from '../../src/components/beeroom/beeroomRealtimeCursor';
+import {
+  getBeeroomMissionChatState,
+  setBeeroomMissionChatState
+} from '../../src/components/beeroom/beeroomMissionChatStateCache';
 
 const terminalTaskStatuses = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
 
@@ -185,4 +189,25 @@ test('realtime cursor accepts payload resume fields for reconnect continuity', (
     }),
     29
   );
+});
+
+test('mission chat state keeps realtime cursor even without dispatch snapshot', () => {
+  const scopeKey = 'runtime:test-beeroom-cursor';
+  setBeeroomMissionChatState(scopeKey, {
+    version: 2,
+    manualMessages: [],
+    runtimeRelayMessages: [],
+    dispatch: null,
+    realtimeCursor: 42
+  });
+  assert.equal(getBeeroomMissionChatState(scopeKey)?.realtimeCursor, 42);
+
+  setBeeroomMissionChatState(scopeKey, {
+    version: 2,
+    manualMessages: [],
+    runtimeRelayMessages: [],
+    dispatch: null,
+    realtimeCursor: 0
+  });
+  assert.equal(getBeeroomMissionChatState(scopeKey), null);
 });

@@ -1,5 +1,11 @@
 export type BeeroomDispatchTargetRole = 'mother' | 'worker';
 
+const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set(['running', 'queued', 'awaiting_approval', 'resuming']);
+const ACTIVE_PREVIEW_STATUSES = new Set(['queued', 'running']);
+const ACTIVE_PREVIEW_SUBAGENT_STATUSES = new Set(['accepted', 'queued', 'waiting', 'running', 'cancelling']);
+
+const normalizeStatus = (value: unknown) => String(value || '').trim().toLowerCase();
+
 export const resolvePreferredBeeroomDispatchSessionId = (options: {
   targetRole: BeeroomDispatchTargetRole;
   targetAgentId: string;
@@ -51,6 +57,33 @@ export const resolveNextBeeroomMotherDispatchSessionId = (options: {
     return currentSessionId;
   }
   return fallbackPrimarySessionId;
+};
+
+export const shouldCacheBeeroomDispatchPreviewSnapshot = (options: {
+  previewStatus?: unknown;
+  subagentStatuses?: unknown[];
+}) => {
+  const previewStatus = normalizeStatus(options.previewStatus);
+  if (ACTIVE_PREVIEW_STATUSES.has(previewStatus)) {
+    return true;
+  }
+  return (Array.isArray(options.subagentStatuses) ? options.subagentStatuses : []).some((status) =>
+    ACTIVE_PREVIEW_SUBAGENT_STATUSES.has(normalizeStatus(status))
+  );
+};
+
+export const shouldRestoreCachedBeeroomDispatchPreview = (options: {
+  localRuntimeStatus?: unknown;
+  previewStatus?: unknown;
+  subagentStatuses?: unknown[];
+}) => {
+  if (!ACTIVE_LOCAL_RUNTIME_STATUSES.has(normalizeStatus(options.localRuntimeStatus))) {
+    return false;
+  }
+  return shouldCacheBeeroomDispatchPreviewSnapshot({
+    previewStatus: options.previewStatus,
+    subagentStatuses: options.subagentStatuses
+  });
 };
 
 export const shouldFinishBeeroomTerminalHydration = (options: {

@@ -17,6 +17,7 @@ export type BeeroomMissionChatState = {
   manualMessages: MissionChatMessage[];
   runtimeRelayMessages: MissionChatMessage[];
   dispatch: BeeroomMissionChatDispatchState | null;
+  realtimeCursor: number;
 };
 
 const CHAT_STATE_VERSION = 2;
@@ -78,6 +79,12 @@ const normalizeSortOrder = (value: unknown): number => {
   return Number.isFinite(normalized) ? normalized : 0;
 };
 
+const normalizeRealtimeCursor = (value: unknown): number => {
+  const normalized = Math.floor(Number(value || 0));
+  if (!Number.isFinite(normalized) || normalized <= 0) return 0;
+  return normalized;
+};
+
 const cloneManualMessages = (messages: MissionChatMessage[]): MissionChatMessage[] =>
   (Array.isArray(messages) ? messages : [])
     .map((message) => {
@@ -124,14 +131,16 @@ const normalizeState = (
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state?.manualMessages || []),
   runtimeRelayMessages: cloneManualMessages(state?.runtimeRelayMessages || []),
-  dispatch: cloneDispatchState(state?.dispatch || null)
+  dispatch: cloneDispatchState(state?.dispatch || null),
+  realtimeCursor: normalizeRealtimeCursor(state?.realtimeCursor)
 });
 
 const cloneState = (state: BeeroomMissionChatState): BeeroomMissionChatState => ({
   version: CHAT_STATE_VERSION,
   manualMessages: cloneManualMessages(state.manualMessages),
   runtimeRelayMessages: cloneManualMessages(state.runtimeRelayMessages),
-  dispatch: cloneDispatchState(state.dispatch)
+  dispatch: cloneDispatchState(state.dispatch),
+  realtimeCursor: normalizeRealtimeCursor(state.realtimeCursor)
 });
 
 const persistCache = () => {
@@ -201,7 +210,12 @@ export const setBeeroomMissionChatState = (
   hydrateCache();
   const key = normalizeScopeKey(scopeKey);
   const next = normalizeState(state || null);
-  if (next.manualMessages.length === 0 && next.runtimeRelayMessages.length === 0 && !next.dispatch) {
+  if (
+    next.manualMessages.length === 0 &&
+    next.runtimeRelayMessages.length === 0 &&
+    !next.dispatch &&
+    next.realtimeCursor <= 0
+  ) {
     missionChatStateCache.delete(key);
   } else {
     missionChatStateCache.set(key, next);

@@ -908,6 +908,29 @@ const syncNodeRevealState = () => {
   }
 };
 
+const freezeCurrentProjectionAsRevealBaseline = () => {
+  knownProjectionNodeIds.clear();
+  knownProjectionNodeDispatchActivity.clear();
+  projection.value.nodes.forEach((node) => {
+    const normalizedStatus = String(node.status || '').trim().toLowerCase();
+    const workerDispatchActive =
+      node.role === 'worker' &&
+      (normalizedStatus === 'queued' || normalizedStatus === 'running' || normalizedStatus === 'awaiting_idle');
+    knownProjectionNodeIds.add(node.id);
+    knownProjectionNodeDispatchActivity.set(node.id, workerDispatchActive);
+  });
+  revealCleanupTimers.forEach((timer) => {
+    if (typeof window !== 'undefined') {
+      window.clearTimeout(timer);
+    }
+  });
+  revealCleanupTimers.clear();
+  if (Object.keys(nodeRevealMap.value).length > 0) {
+    nodeRevealMap.value = {};
+  }
+  revealBaselineReady.value = true;
+};
+
 const clearViewportSaveTimer = () => {
   if (viewportSaveTimer !== null) {
     window.clearTimeout(viewportSaveTimer);
@@ -1245,6 +1268,15 @@ watch(
     hydrateCanvasState();
   },
   { immediate: true }
+);
+
+watch(
+  () => props.dispatchPreview?.sessionId || '',
+  (sessionId, previousSessionId) => {
+    if (sessionId && sessionId !== previousSessionId) {
+      freezeCurrentProjectionAsRevealBaseline();
+    }
+  }
 );
 
 watch(

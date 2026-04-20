@@ -11,7 +11,11 @@ import {
   resolveBeeroomSwarmWorkerReplyFromHistoryMessages,
   resolveBeeroomSwarmWorkerTerminalState
 } from '@/components/beeroom/beeroomSwarmWorkerShadowState';
-import { shouldPreserveBeeroomDispatchPreviewOnSyncError } from '@/components/beeroom/beeroomDispatchSessionPolicy';
+import {
+  shouldCacheBeeroomDispatchPreviewSnapshot,
+  shouldRestoreCachedBeeroomDispatchPreview,
+  shouldPreserveBeeroomDispatchPreviewOnSyncError
+} from '@/components/beeroom/beeroomDispatchSessionPolicy';
 import {
   ACTIVE_BEEROOM_SUBAGENT_STATUSES,
   collectBeeroomHistoricalSubagentItems,
@@ -587,7 +591,14 @@ export const useBeeroomDispatchSessionPreview = (options: {
 
     if (!rawPreview.value || normalizeText(rawPreview.value.sessionId) !== sessionId) {
       const cachedPreview = getCachedDispatchPreview(sessionId);
-      if (cachedPreview) {
+      if (
+        cachedPreview &&
+        shouldRestoreCachedBeeroomDispatchPreview({
+          localRuntimeStatus: options.runtimeStatus.value,
+          previewStatus: cachedPreview.status,
+          subagentStatuses: cachedPreview.subagents.map((item) => item.status)
+        })
+      ) {
         rawPreview.value = cachedPreview;
         logDispatchPreview('restore-cached-preview', {
           sessionId,
@@ -710,7 +721,15 @@ export const useBeeroomDispatchSessionPreview = (options: {
         updatedTime,
         subagents
       };
-      setCachedDispatchPreview(sessionId, rawPreview.value);
+      setCachedDispatchPreview(
+        sessionId,
+        shouldCacheBeeroomDispatchPreviewSnapshot({
+          previewStatus,
+          subagentStatuses: subagents.map((item) => item.status)
+        })
+          ? rawPreview.value
+          : null
+      );
       if (!running && !subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status))) {
         if (previewStatus === 'completed' && ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value)) {
           options.runtimeStatus.value = 'completed';
@@ -828,7 +847,17 @@ export const useBeeroomDispatchSessionPreview = (options: {
   onBeforeUnmount(() => {
     const sessionId = normalizeText(options.sessionId.value);
     if (sessionId) {
-      setCachedDispatchPreview(sessionId, rawPreview.value);
+      setCachedDispatchPreview(
+        sessionId,
+        shouldCacheBeeroomDispatchPreviewSnapshot({
+          previewStatus: rawPreview.value?.status,
+          subagentStatuses: (Array.isArray(rawPreview.value?.subagents) ? rawPreview.value?.subagents : []).map(
+            (item) => item.status
+          )
+        })
+          ? rawPreview.value
+          : null
+      );
     }
     clearSyncTimer();
     cancelActiveRequest();

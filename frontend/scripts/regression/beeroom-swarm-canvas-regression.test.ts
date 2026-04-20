@@ -807,3 +807,29 @@ test('parent dispatch preview still becomes failed when the parent session itsel
 
   assert.equal(status, 'failed');
 });
+
+test('terminal dispatch preview stays terminal instead of reviving old swarm replay state', () => {
+  const status = resolveBeeroomDispatchPreviewStatus({
+    localStatus: 'idle',
+    running: false,
+    events: [
+      {
+        event: 'final',
+        data: {
+          answer: 'done'
+        }
+      }
+    ] as never,
+    subagents: [
+      buildSubagent({
+        key: 'completed-child',
+        sessionId: 'sess_completed_child',
+        runId: 'run_completed_child',
+        status: 'completed',
+        terminal: true
+      })
+    ] as never
+  });
+
+  assert.equal(status, 'completed');
+});

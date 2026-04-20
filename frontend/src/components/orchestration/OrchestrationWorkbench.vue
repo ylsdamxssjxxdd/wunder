@@ -46,8 +46,10 @@
         @open-agent="emit('open-agent', $event)"
         @update:composer-text="composerText = $event"
         @update:current-situation="handleCurrentSituationInput"
+        @commit:current-situation="handleCommitCurrentSituation"
         @send="handleSendToMother"
         @trigger-round="handleRunRoundAction"
+        @branch-run="handleBranchRun"
         @create-run="handleCreateRun"
         @start-run="handleStartRun"
         @exit-run="handleStopRun"
@@ -400,6 +402,7 @@ const situationPlanDraft = ref<Record<string, string>>({});
 const stagedSituationDraft = ref<Record<string, string>>({});
 const stagedSituationDraftOrchestrationId = ref('');
 const stagedSituationDraftActive = ref(false);
+const currentSituationDraft = ref('');
 const selectedSituationRound = ref(1);
 const situationImportInputRef = ref<HTMLInputElement | null>(null);
 const orchestrationPromptTemplates = ref<OrchestrationPromptTemplates | null>(null);
@@ -445,7 +448,7 @@ const orchestrationCanSend = computed(
 const orchestrationComposerDisabled = computed(
   () => !isReady.value || !isActive.value
 );
-const currentSituationText = computed(() => String(activeRound.value?.situation || '').trim());
+const currentSituationText = computed(() => currentSituationDraft.value);
 const orchestrationNextRoundReady = computed(() => {
   if (!isReady.value || !isActive.value || orchestrationRunning.value) {
     return false;
@@ -724,7 +727,33 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
 const visibleChatMessages = computed(() => activeRoundChatMessages.value);
 
 const handleCurrentSituationInput = (value: string) => {
-  void updateSituation(String(value || ''));
+  currentSituationDraft.value = String(value || '');
+};
+
+const handleCommitCurrentSituation = async () => {
+  if (!isReady.value) {
+    return;
+  }
+  const currentRound = activeRound.value;
+  if (!currentRound) {
+    return;
+  }
+  const draftValue = String(currentSituationDraft.value || '');
+  if (draftValue === String(currentRound.situation || '')) {
+    return;
+  }
+  if (!isViewingLatestRound.value) {
+    const nextEntries = {
+      ...plannedSituations.value,
+      [String(normalizeSituationRound(currentRound.index))]: draftValue
+    };
+    rememberStagedSituationDraft(nextEntries);
+    return;
+  }
+  if (orchestrationRuntimeLocked.value) {
+    return;
+  }
+  await updateSituation(draftValue);
 };
 
 const buildOrchestrationRoundDispatchText = (situation: string) => String(situation || '').trim();
@@ -742,6 +771,11 @@ const handleRunRoundAction = async () => {
     ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
+  if (!isViewingLatestRound.value) {
+    ElMessage.warning(t('orchestration.message.branchRequired'));
+    return;
+  }
+  await handleCommitCurrentSituation();
   if (orchestrationNextRoundReady.value) {
     const nextRoundIndex = Math.max(1, Number(latestRound.value?.index || 0) + 1);
     const nextSituation =
@@ -756,7 +790,7 @@ const handleRunRoundAction = async () => {
   const roundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
   const situation =
     resolveDraftSituationByRoundIndex(roundIndex) ||
-    String(activeRound.value?.situation || '').trim() ||
+    String(currentSituationDraft.value || activeRound.value?.situation || '').trim() ||
     await resolveRoundSituation(roundIndex);
   composerText.value = buildOrchestrationRoundDispatchText(situation);
   if (!composerText.value) {
@@ -813,6 +847,25 @@ const handleCreateRun = async () => {
     return;
   }
   try {
+    let requestedRunName = '';
+    try {
+      const promptResult = await ElMessageBox.prompt(
+        t('orchestration.dialog.createNameMessage'),
+        t('orchestration.action.create'),
+        {
+          confirmButtonText: t('common.confirm'),
+          cancelButtonText: t('common.cancel'),
+          inputPlaceholder: t('orchestration.dialog.createNamePlaceholder'),
+          inputValue: ''
+        }
+      );
+      requestedRunName = String(promptResult.value || '').trim();
+    } catch (error: any) {
+      if (String(error || '') === 'cancel' || String(error || '') === 'close') {
+        return;
+      }
+      throw error;
+    }
     const previousRunId = runId.value;
     const previousRoundId = String(activeRound.value?.id || '').trim();
     const previousScopeKey =
@@ -827,9 +880,10 @@ const handleCreateRun = async () => {
     composerText.value = '';
     situationPlanDraft.value = {};
     clearStagedSituationDraft();
+    currentSituationDraft.value = '';
     selectSituationRound(1);
     situationDialogVisible.value = false;
-    const nextState = await initializeRun();
+    const nextState = await initializeRun({ runName: requestedRunName });
     await syncMotherSessionContextForState(nextState, 1);
     await loadHistory().catch(() => []);
     emit('create');
@@ -857,6 +911,48 @@ const handleSaveSituation = () => {
     .catch((error: any) => {
       ElMessage.error(String(error?.message || t('common.requestFailed')));
     });
+};
+
+const handleBranchRun = async () => {
+  if (orchestrationRuntimeLocked.value) {
+    ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
+    return;
+  }
+  if (!isReady.value) {
+    ElMessage.warning(t('orchestration.message.createRunRequired'));
+    return;
+  }
+  if (!isActive.value) {
+    ElMessage.warning(t('orchestration.message.startRunRequired'));
+    return;
+  }
+  if (isViewingLatestRound.value || !currentOrchestrationId.value) {
+    ElMessage.warning(t('orchestration.message.branchLatestBlocked'));
+    return;
+  }
+  try {
+    await handleCommitCurrentSituation();
+    const branchBaseRoundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
+    const draftSituation = String(currentSituationDraft.value || activeRound.value?.situation || '');
+    const branchedState = await branchHistory(currentOrchestrationId.value, branchBaseRoundIndex, {
+      activate: true
+    });
+    if (branchedState?.active) {
+      const nextStateRoundIndex = Math.max(
+        1,
+        Number(branchedState.rounds[branchedState.rounds.length - 1]?.index || branchBaseRoundIndex)
+      );
+      if (draftSituation !== String(branchedState.rounds[branchedState.rounds.length - 1]?.situation || '')) {
+        await updateSituation(draftSituation);
+      }
+      await syncMotherSessionContextForState(branchedState, nextStateRoundIndex);
+    }
+    clearStagedSituationDraft(currentOrchestrationId.value);
+    emit('refresh');
+    ElMessage.success(t('orchestration.message.branched'));
+  } catch (error: any) {
+    ElMessage.error(String(error?.message || t('common.requestFailed')));
+  }
 };
 
 const handleStopRun = async () => {
@@ -1108,8 +1204,9 @@ const handleSendToMother = async () => {
     const pending = pendingRound.value;
     await stopOrchestrationDispatch();
     if (pending?.id) {
-      await discardPendingRound(pending.id);
+      await discardPendingRound(pending.id, { clearSituation: true });
     }
+    clearStagedSituationDraft();
     return;
   }
   const content = String(composerText.value || '').trim();
@@ -1118,50 +1215,21 @@ const handleSendToMother = async () => {
     ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
+  if (!isViewingLatestRound.value) {
+    ElMessage.warning(t('orchestration.message.branchRequired'));
+    return;
+  }
+  await handleCommitCurrentSituation();
   const flowToken = beginOrchestrationDispatchFlow();
   let reservedRoundId = '';
   try {
     ensureOrchestrationDispatchFlowActive(flowToken);
-    let state = await ensureRuntime();
+    const state = await ensureRuntime();
     ensureOrchestrationDispatchFlowActive(flowToken);
     if (!String(state?.motherSessionId || '').trim()) {
       throw new Error(t('orchestration.message.createRunRequired'));
     }
-    const currentOrchestrationIdValue = currentOrchestrationId.value;
-    const stagedDraftEntries =
-      hasStagedSituationDraft.value && stagedSituationDraftOrchestrationId.value === currentOrchestrationIdValue
-        ? normalizeSituationEntries(stagedSituationDraft.value)
-        : null;
     let workingRunId = runId.value;
-    let nextRoundSource = latestRound.value;
-    let nextActiveRound = activeRound.value;
-    if (!isViewingLatestRound.value && currentOrchestrationId.value) {
-      const branchBaseRoundIndex = Math.max(
-        1,
-        Number(nextActiveRound?.index || latestRound.value?.index || 1)
-      );
-      const branchedState = await branchHistory(currentOrchestrationId.value, branchBaseRoundIndex, {
-        activate: true
-      });
-      ensureOrchestrationDispatchFlowActive(flowToken);
-      if (branchedState?.active) {
-        if (stagedDraftEntries) {
-          await updatePlannedSituations(stagedDraftEntries);
-          ensureOrchestrationDispatchFlowActive(flowToken);
-        }
-        await syncMotherSessionContextForState(
-          branchedState,
-          Number(branchedState.rounds[branchedState.rounds.length - 1]?.index || branchBaseRoundIndex)
-        );
-        ensureOrchestrationDispatchFlowActive(flowToken);
-      }
-      state = branchedState || state;
-      clearStagedSituationDraft(currentOrchestrationIdValue);
-      workingRunId = String(state?.runId || '').trim();
-      nextRoundSource = state?.rounds?.[state.rounds.length - 1] || null;
-      nextActiveRound = nextRoundSource;
-      emit('refresh');
-    }
     const inferredNextRoundIndex = resolveNextUserRoundIndex(state);
     orchestrationWorkbenchDebug('send:before-reserve', {
       runId: String(state?.runId || '').trim(),
@@ -1257,12 +1325,12 @@ const handleSendToMother = async () => {
     clearStagedSituationDraft();
   } catch (error: any) {
     if (reservedRoundId) {
-      await discardPendingRound(reservedRoundId).catch(() => null);
+      await discardPendingRound(reservedRoundId, { clearSituation: true }).catch(() => null);
       reservedRoundId = '';
     } else {
       const pending = pendingRound.value;
       if (pending?.id) {
-        await discardPendingRound(pending.id).catch(() => null);
+        await discardPendingRound(pending.id, { clearSituation: true }).catch(() => null);
       }
     }
     if (isOrchestrationDispatchStoppedError(error)) return;
@@ -1277,10 +1345,19 @@ const handleSendToMother = async () => {
 };
 
 watch(
+  () => activeRound.value?.id || '',
+  () => {
+    currentSituationDraft.value = String(activeRound.value?.situation || '');
+  },
+  { immediate: true }
+);
+
+watch(
   () => orchestrationGroupId.value,
   () => {
     situationPlanDraft.value = {};
     clearStagedSituationDraft();
+    currentSituationDraft.value = '';
     selectSituationRound(1);
     historyDialogVisible.value = false;
     void loadHistory().catch(() => []);

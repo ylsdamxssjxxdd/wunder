@@ -3,14 +3,16 @@ use crate::i18n;
 use crate::prompting::read_prompt_template;
 use crate::services::orchestration_context::{
     build_branch_history_record_from_state, build_chat_session_with_title, build_history_record_from_state,
-    build_orchestration_thread_title, build_initial_round_state, clear_hive_state, clear_history_record,
+    build_initial_round_state, build_orchestration_run_id, build_orchestration_thread_title,
+    clear_hive_state, clear_history_record,
     clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state, clear_session_context,
     copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
     delete_round_directories_after, latest_formal_round_index, list_history_records, load_hive_state,
-    load_history_record, load_round_state, orchestration_agent_artifact_dir_name,
+    load_history_record, load_round_state, normalize_orchestration_run_name,
+    orchestration_agent_artifact_dir_name,
     persist_hive_state, persist_history_record, persist_member_binding, persist_round_state,
     persist_session_context, rebuild_branch_round_state, repair_active_orchestration_main_threads,
-    repair_orchestration_session_main_thread, round_dir_name, round_id, round_id_matches,
+    repair_orchestration_session_main_thread, round_dir_name, round_id,
     OrchestrationHiveState,
     OrchestrationHistoryRecord, OrchestrationMemberBinding, OrchestrationRoundRecord,
     OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
@@ -283,12 +285,13 @@ async fn create_orchestration_state(
     let now = now_ts();
     let orchestration_id = format!("orch_state_{}", Uuid::new_v4().simple());
     let run_id = payload
-        .run_id
+        .run_name
         .as_deref()
-        .map(str::trim)
+        .or(payload.name.as_deref())
+        .or(payload.run_id.as_deref())
+        .map(normalize_orchestration_run_name)
         .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("orch_{}", Uuid::new_v4().simple()));
+        .unwrap_or_else(|| build_orchestration_run_id(None));
 
     if let Some(previous) = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id) {
         let previous_bindings = crate::services::orchestration_context::list_member_bindings(
@@ -887,7 +890,14 @@ async fn branch_orchestration_history(
 
     let now = now_ts();
     let orchestration_id = format!("orch_state_{}", Uuid::new_v4().simple());
-    let run_id = format!("orch_{}", Uuid::new_v4().simple());
+    let parent_run_id = normalize_orchestration_run_name(&source_history.run_id);
+    let run_id = if parent_run_id.is_empty() {
+        build_orchestration_run_id(None)
+    } else {
+        let branch_suffix = Uuid::new_v4().simple().to_string();
+        let compact_parent: String = parent_run_id.chars().take(36).collect();
+        format!("{}_b{}", compact_parent, &branch_suffix[..4])
+    };
     let mut member_bindings = Vec::new();
     let mut mother_session_id = String::new();
     for agent in &agents {
@@ -1314,7 +1324,7 @@ async fn reserve_orchestration_round(
         round_state
             .rounds
             .iter()
-            .find(|round| round_id_matches(round, &requested_round_id))
+            .find(|round| round.id.trim() == requested_round_id)
             .map(|round| round.index)
             .unwrap_or_else(|| latest_formal_round_index(Some(&round_state)).saturating_add(1))
     } else {
@@ -1337,7 +1347,7 @@ async fn reserve_orchestration_round(
         .find(|round| round.index == normalized_target_index)
     {
         let requested_existing_round =
-            !requested_round_id.is_empty() && round_id_matches(existing, &requested_round_id);
+            !requested_round_id.is_empty() && existing.id.trim() == requested_round_id;
         if !requested_existing_round && !existing.user_message.trim().is_empty() {
             normalized_target_index = authoritative_next_index;
         }
@@ -1468,7 +1478,7 @@ async fn finalize_orchestration_round(
         .rounds
         .iter()
         .position(|round| {
-            (!target_round_id.is_empty() && round_id_matches(round, &target_round_id))
+            (!target_round_id.is_empty() && round.id.trim() == target_round_id)
                 || (target_round_index > 0 && round.index == target_round_index)
         })
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "round not found".to_string()))?;
@@ -1559,7 +1569,7 @@ async fn cancel_orchestration_round(
     if remove_round {
         let mut retained = Vec::with_capacity(round_state.rounds.len());
         for round in round_state.rounds.drain(..) {
-            let matches = (!target_round_id.is_empty() && round_id_matches(&round, &target_round_id))
+            let matches = (!target_round_id.is_empty() && round.id.trim() == target_round_id)
                 || (target_round_index > 0 && round.index == target_round_index);
             if matches && cancelled_round.is_none() {
                 cancelled_round = Some(round);
@@ -1579,7 +1589,7 @@ async fn cancel_orchestration_round(
         }
         round_state.rounds = retained;
     } else if let Some(round) = round_state.rounds.iter_mut().find(|round| {
-        (!target_round_id.is_empty() && round_id_matches(round, &target_round_id))
+        (!target_round_id.is_empty() && round.id.trim() == target_round_id)
             || (target_round_index > 0 && round.index == target_round_index)
     }) {
         round.user_message.clear();
@@ -2572,6 +2582,10 @@ struct CreateOrchestrationStateRequest {
     mother_agent_id: Option<String>,
     #[serde(default, alias = "runId", alias = "run_id")]
     run_id: Option<String>,
+    #[serde(default, alias = "runName", alias = "run_name")]
+    run_name: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

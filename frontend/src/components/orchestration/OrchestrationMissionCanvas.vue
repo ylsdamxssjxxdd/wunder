@@ -200,9 +200,9 @@
           :composer-target-options="composerTargetOptions"
           :composer-sending="composerSending"
           :composer-can-send="false"
-          :composer-disabled="true"
-          :composer-error="''"
-          :title="group?.name || t('beeroom.canvas.chatTitle')"
+        :composer-disabled="true"
+        :composer-error="''"
+        :title="group?.name || t('beeroom.canvas.chatTitle')"
           :artifacts-enabled="Boolean(activeArtifactWorkspace)"
           :show-artifacts-button="false"
           :show-clear-button="false"
@@ -252,7 +252,7 @@
               :disabled="!isReady || (isActive && isBusy)"
               @click="isActive ? emit('exit-run') : emit('start-run')"
             >
-              <i class="fa-solid" :class="isActive ? 'fa-link-slash' : 'fa-play'" aria-hidden="true"></i>
+              <i class="fa-solid" :class="isActive ? 'fa-link-slash' : 'fa-plug-circle-check'" aria-hidden="true"></i>
             </button>
           </template>
           <template #footer>
@@ -269,6 +269,17 @@
                     @click="emit('open-situation')"
                   >
                     <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    v-if="showBranchAction"
+                    class="beeroom-canvas-icon-btn orchestration-panel-action orchestration-side-control-icon-btn"
+                    type="button"
+                    :title="t('orchestration.action.branch')"
+                    :aria-label="t('orchestration.action.branch')"
+                    :disabled="branchActionDisabled"
+                    @click="emit('branch-run')"
+                  >
+                    <i class="fa-solid fa-code-branch" aria-hidden="true"></i>
                   </button>
                   <button
                     class="beeroom-canvas-icon-btn orchestration-panel-action orchestration-side-control-icon-btn"
@@ -312,6 +323,8 @@
                 :placeholder="t('orchestration.canvas.noSituation')"
                 rows="7"
                 @input="emit('update:current-situation', ($event.target as HTMLTextAreaElement).value)"
+                @change="emit('commit:current-situation')"
+                @blur="emit('commit:current-situation')"
               ></textarea>
             </section>
           </template>
@@ -420,8 +433,10 @@ const emit = defineEmits<{
   (event: 'open-agent', agentId: string): void;
   (event: 'update:composer-text', value: string): void;
   (event: 'update:current-situation', value: string): void;
+  (event: 'commit:current-situation'): void;
   (event: 'send'): void;
   (event: 'trigger-round'): void;
+  (event: 'branch-run'): void;
   (event: 'create-run'): void;
   (event: 'start-run'): void;
   (event: 'exit-run'): void;
@@ -721,7 +736,7 @@ const timelineLayout = computed<TimelineLayout>(() => {
 
   const buildSyntheticRounds = (runId: string, latestRoundIndex: number) =>
     Array.from({ length: Math.max(1, latestRoundIndex) }, (_, index) => ({
-      id: `history:${runId}:round_${String(index + 1).padStart(4, '0')}`,
+      id: `history:${runId}:round_${String(index + 1).padStart(2, '0')}`,
       index: index + 1,
       orchestrationId: runId
     }));
@@ -788,7 +803,7 @@ const timelineLayout = computed<TimelineLayout>(() => {
       ? [
           ...visibleRounds,
           {
-            id: `preview:${runId}:round_${String(Math.max(1, Number(lastVisibleRound?.index || 0) + 1)).padStart(4, '0')}`,
+            id: `preview:${runId}:round_${String(Math.max(1, Number(lastVisibleRound?.index || 0) + 1)).padStart(2, '0')}`,
             index: Math.max(1, Number(lastVisibleRound?.index || 0) + 1),
             orchestrationId: runId,
             userMessage: ''
@@ -859,6 +874,18 @@ const actionDisabled = computed(() => {
   if (props.composerSending) return false;
   if (!props.isReady || !props.isActive) return true;
   return false;
+});
+
+const showBranchAction = computed(() => {
+  const latestRoundId = String(props.rounds[props.rounds.length - 1]?.id || '').trim();
+  const activeRoundId = String(props.activeRound?.id || '').trim();
+  return Boolean(latestRoundId && activeRoundId && latestRoundId !== activeRoundId);
+});
+
+const branchActionDisabled = computed(() => {
+  if (props.runtimeLocked) return true;
+  if (!props.isReady || !props.isActive) return true;
+  return !showBranchAction.value;
 });
 
 const activeArtifactWorkspace = computed(() => {

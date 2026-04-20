@@ -215,7 +215,7 @@ import type {
   MissionChatMessage
 } from './beeroomCanvasChatModel';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   collapsed: boolean;
   messages: MissionChatMessage[];
   approvals: DispatchApprovalItem[];
@@ -235,7 +235,12 @@ const props = defineProps<{
   composerDisabled?: boolean;
   resolveMessageAvatarImage: (message: MissionChatMessage) => string;
   avatarLabel: (value: unknown) => string;
-}>();
+}>(), {
+  showArtifactsButton: true,
+  showClearButton: true,
+  showComposer: true,
+  composerDisabled: false
+});
 
 const emit = defineEmits<{
   (event: 'update:collapsed', value: boolean): void;

@@ -409,7 +409,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         "/wunder/beeroom/orchestration/rounds/reserve",
         Some(json!({
             "group_id": hive.hive_id,
-            "round_id": "round_0001",
+            "round_id": "round_01",
             "round_index": 1,
             "user_message": "第一轮正式消息",
         })),
@@ -430,7 +430,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         "/wunder/beeroom/orchestration/rounds/finalize",
         Some(json!({
             "group_id": hive.hive_id,
-            "round_id": "round_0001",
+            "round_id": "round_01",
         })),
     )
     .await;
@@ -470,7 +470,7 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         "/wunder/beeroom/orchestration/rounds/cancel",
         Some(json!({
             "group_id": hive.hive_id,
-            "round_id": "round_0002",
+            "round_id": "round_02",
             "message_started_at": 1000.0,
             "message_ended_at": 1001.0,
             "remove_round": true,

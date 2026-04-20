@@ -15,7 +15,7 @@ use crate::storage::StorageBackend;
 use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
 use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
-use crate::services::orchestration_context::{parse_round_index_token, round_dir_aliases};
+use crate::services::orchestration_context::parse_round_index_token;
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -312,9 +312,6 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
         return None;
     }
     let relative = sanitize_relative_path(trimmed)?;
-    if let Some(resolved) = resolve_existing_round_relative_path(&relative, roots) {
-        return Some(resolved);
-    }
     for root in roots {
         let candidate = normalize_target_path(&root.join(&relative));
         if is_within_root(root, &candidate) {
@@ -347,40 +344,6 @@ pub(crate) fn resolve_tool_path(
             }
         }
     }
-}
-
-fn resolve_existing_round_relative_path(relative: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    let candidates = round_relative_path_candidates(relative)?;
-    for root in roots {
-        for candidate_relative in &candidates {
-            let candidate = normalize_target_path(&root.join(candidate_relative));
-            if is_within_root(root, &candidate) && candidate.exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn round_relative_path_candidates(relative: &Path) -> Option<Vec<PathBuf>> {
-    let mut parts = relative.iter();
-    let first = parts.next()?.to_string_lossy().to_string();
-    let round_index = parse_round_index_token(&first)?;
-    let remainder = parts.fold(PathBuf::new(), |mut acc, part| {
-        acc.push(part);
-        acc
-    });
-    let mut candidates = Vec::new();
-    for alias in round_dir_aliases(round_index) {
-        let mut candidate = PathBuf::from(alias);
-        if !remainder.as_os_str().is_empty() {
-            candidate.push(&remainder);
-        }
-        if !candidates.iter().any(|existing| existing == &candidate) {
-            candidates.push(candidate);
-        }
-    }
-    Some(candidates)
 }
 
 fn should_resolve_missing_path_from_extra_roots(raw_path: &str) -> bool {
@@ -487,7 +450,7 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let workspace_root = temp.path().join("workspace");
         let run_root = workspace_root.join("orchestration").join("orch_demo");
-        let target = run_root.join("round_0002").join("worker").join("report.txt");
+        let target = run_root.join("round_02").join("worker").join("report.txt");
         fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
         fs::write(&target, "ok").expect("write target");
         let db_path = temp.path().join("state.sqlite3");

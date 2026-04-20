@@ -342,6 +342,10 @@ async fn cancel_team_run(
         ));
     }
 
+    let tasks = state
+        .user_store
+        .list_team_tasks(&run.team_run_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let now = now_ts();
     run.status = "cancelled".to_string();
     run.finished_time = Some(now);
@@ -354,10 +358,35 @@ async fn cancel_team_run(
 
     state.kernel.mission_runtime.cancel(&run.team_run_id).await;
 
-    let tasks = state
-        .user_store
-        .list_team_tasks(&run.team_run_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for task in &tasks {
+        if let Some(session_id) = task
+            .target_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let _ = state.monitor.cancel(session_id);
+            let thread_id = format!("thread_{session_id}");
+            let agent_tasks = state
+                .kernel
+                .thread_runtime
+                .list_thread_tasks(&thread_id, None, 256)
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            for agent_task in agent_tasks {
+                let status = agent_task.status.trim().to_ascii_lowercase();
+                if !matches!(status.as_str(), "pending" | "running" | "retry") {
+                    continue;
+                }
+                state
+                    .kernel
+                    .thread_runtime
+                    .cancel_task(&agent_task.task_id)
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            }
+        }
+    }
+
     for mut task in tasks {
         if matches!(task.status.as_str(), "success" | "failed" | "cancelled") {
             continue;

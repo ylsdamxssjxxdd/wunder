@@ -5,7 +5,7 @@ export const normalizeOrchestrationText = (value: unknown): string => String(val
 const ORCHESTRATION_ARTIFACT_DIR_INVALID_CHARS = /[\\/:*?"<>|]+/g;
 
 export const buildOrchestrationRoundId = (index: number) =>
-  `round_${String(Math.max(1, Math.trunc(Number(index) || 0))).padStart(4, '0')}`;
+  `round_${String(Math.max(1, Math.trunc(Number(index) || 0))).padStart(2, '0')}`;
 
 export const buildOrchestrationRoundDirName = (index: number) => buildOrchestrationRoundId(index);
 

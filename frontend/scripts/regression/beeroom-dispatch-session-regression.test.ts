@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   resolveNextBeeroomMotherDispatchSessionId,
   resolvePreferredBeeroomDispatchSessionId,
+  shouldCacheBeeroomDispatchPreviewSnapshot,
   shouldFinishBeeroomTerminalHydration,
+  shouldRestoreCachedBeeroomDispatchPreview,
   shouldPreserveBeeroomDispatchPreviewOnSyncError
 } from '../../src/components/beeroom/beeroomDispatchSessionPolicy';
 import { overlayBeeroomLiveDispatchLabel } from '../../src/components/beeroom/beeroomDispatchPreviewOverlay';
@@ -110,6 +112,39 @@ test('dispatch preview is preserved only for transient sync errors on the same s
       requestedSessionId: 'sess_new'
     }),
     false
+  );
+});
+
+test('only active dispatch previews are cached and restored for beeroom canvas recovery', () => {
+  assert.equal(
+    shouldCacheBeeroomDispatchPreviewSnapshot({
+      previewStatus: 'running',
+      subagentStatuses: []
+    }),
+    true
+  );
+  assert.equal(
+    shouldCacheBeeroomDispatchPreviewSnapshot({
+      previewStatus: 'completed',
+      subagentStatuses: ['completed']
+    }),
+    false
+  );
+  assert.equal(
+    shouldRestoreCachedBeeroomDispatchPreview({
+      localRuntimeStatus: 'idle',
+      previewStatus: 'running',
+      subagentStatuses: ['running']
+    }),
+    false
+  );
+  assert.equal(
+    shouldRestoreCachedBeeroomDispatchPreview({
+      localRuntimeStatus: 'running',
+      previewStatus: 'running',
+      subagentStatuses: ['running']
+    }),
+    true
   );
 });
 

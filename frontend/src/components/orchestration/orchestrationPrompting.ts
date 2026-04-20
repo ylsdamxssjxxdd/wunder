@@ -125,11 +125,6 @@ export const buildMotherDispatchEnvelope = (options: {
       })
     );
   }
-  blocks.push(
-    renderTemplate(options.templates.user_message, {
-      user_message: normalizeText(options.userMessage)
-    })
-  );
   return blocks.filter((item) => normalizeText(item)).join('\n\n');
 };
 

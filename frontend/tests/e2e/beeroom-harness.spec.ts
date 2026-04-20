@@ -72,6 +72,14 @@ test('chat stream returns to bottom after collapse and expand', async ({ page })
   expect(snapshot.remaining).toBeLessThanOrEqual(12);
 });
 
+test('chat side panel shows default actions and composer when optional props are omitted', async ({ page }) => {
+  await page.getByTestId('scenario-idle').click();
+
+  await expect(page.getByTestId('beeroom-chat-textarea')).toBeVisible();
+  await expect(page.getByTestId('beeroom-chat-send')).toBeVisible();
+  await expect(page.locator('.beeroom-canvas-icon-btn')).toHaveCount(2);
+});
+
 test('canvas ignores swarm worker shadow sessions and only projects real subagents', async ({ page }) => {
   await page.getByTestId('scenario-worker-shadow').click();
   await expect(page.locator('[data-node-role="subagent"]')).toHaveCount(0);

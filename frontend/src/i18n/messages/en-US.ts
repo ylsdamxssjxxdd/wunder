@@ -2260,6 +2260,7 @@ export default {
   'orchestration.action.create': 'New Run',
   'orchestration.action.history': 'History',
   'orchestration.action.situation': 'Situation',
+  'orchestration.action.branch': 'Branch',
   'orchestration.action.startRound': 'Start',
   'orchestration.action.nextRound': 'Next Round',
   'orchestration.empty.selectGroup': 'Select a swarm to start orchestration',
@@ -2288,10 +2289,16 @@ export default {
   'orchestration.message.created': 'Orchestration initialized',
   'orchestration.message.started': 'Orchestration activated',
   'orchestration.message.stopped': 'Orchestration disconnected',
+  'orchestration.message.branched': 'Branch created',
   'orchestration.message.startRunRequired': 'Start orchestration before sending a message to the mother agent.',
   'orchestration.message.situationRequired': 'Set the current situation before starting this orchestration round.',
+  'orchestration.message.branchRequired': 'Create an explicit branch from this historical round before continuing.',
+  'orchestration.message.branchLatestBlocked': 'The latest round does not need a separate branch.',
   'orchestration.message.busySwitchBlocked':
     'This orchestration is still running. Switching history/branches or editing orchestration settings is blocked.',
+  'orchestration.dialog.createNameMessage':
+    'Enter an orchestration name. Leave it empty to use an automatic short English id.',
+  'orchestration.dialog.createNamePlaceholder': 'For example: campaign_alpha',
   'orchestration.empty.createRun': 'This swarm has no orchestration run yet',
   'orchestration.empty.createRunHint':
     'Create a new orchestration run to give the mother and workers fresh main threads.',
