@@ -653,9 +653,8 @@ const currentRoundShowsNextAction = computed(
 );
 
 const showBranchAction = computed(() => {
-  const latestRoundId = String(latestRenderableRound.value?.id || '').trim();
-  const activeRoundId = String(props.activeRound?.id || '').trim();
-  return Boolean(latestRoundId && activeRoundId && latestRoundId !== activeRoundId);
+  if (!props.isReady || !props.isActive) return false;
+  return Boolean(roundHasUserMessage(props.activeRound));
 });
 
 const branchActionDisabled = computed(() => {

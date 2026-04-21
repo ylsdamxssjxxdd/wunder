@@ -126,6 +126,28 @@ async fn workspace_content(
         .resolve_path(&workspace_id, &target_path)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if !target.exists() {
+        let safe_offset = params.offset.max(0) as u64;
+        let safe_limit = params.limit.max(0) as u64;
+        if params.allow_missing {
+            return Ok(Json(WorkspaceContentResponse {
+                user_id,
+                path: normalized,
+                entry_type: "file".to_string(),
+                size: 0,
+                updated_time: String::new(),
+                content: if params.include_content {
+                    Some(String::new())
+                } else {
+                    None
+                },
+                format_value: "text".to_string(),
+                truncated: false,
+                entries: Vec::new(),
+                total: 0,
+                offset: safe_offset,
+                limit: safe_limit,
+            }));
+        }
         return Err(error_response(
             StatusCode::NOT_FOUND,
             i18n::t("workspace.error.path_not_found"),
@@ -1394,6 +1416,8 @@ struct WorkspaceContentQuery {
     path: String,
     #[serde(default = "default_true")]
     include_content: bool,
+    #[serde(default)]
+    allow_missing: bool,
     #[serde(default = "default_max_bytes")]
     max_bytes: i64,
     #[serde(default = "default_depth")]

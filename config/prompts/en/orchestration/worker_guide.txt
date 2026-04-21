@@ -1,4 +1,4 @@
 [First Worker Message Guide]
-When you dispatch a worker for the first time, explicitly include the matching guidance in that task. You can use the following template fragments:
+The system automatically adds worker role, situation, and artifact directory guidance at dispatch time. You only need to state the subtask goal, deliverables, and success criteria.
 
 {{worker_first_dispatch_blocks}}

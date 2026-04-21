@@ -50,6 +50,7 @@ import { emitAgentRuntimeRefresh, emitWorkspaceRefresh } from '@/utils/workspace
 import { chatPerf } from '@/utils/chatPerf';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
+import { resolveAccessToken } from '@/api/requestAuth';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 import {
   assistantEntriesShareTurnAnchor,
@@ -1378,7 +1379,14 @@ const resolveGreetingContent = (override) => {
 };
 const CHAT_STATE_KEY = 'beeroom-chat-state';
 const LEGACY_CHAT_STATE_KEY = 'wille-chat-state';
+const CHAT_STATE_KEY_PREFIX = 'beeroom-chat-state:';
+const LEGACY_CHAT_STATE_KEY_PREFIX = 'wille-chat-state:';
 const DEFAULT_AGENT_KEY = '__default__';
+const CHAT_SNAPSHOT_KEY = 'beeroom-chat-snapshot';
+const LEGACY_CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
+const CHAT_SNAPSHOT_KEY_PREFIX = 'beeroom-chat-snapshot:';
+const LEGACY_CHAT_SNAPSHOT_KEY_PREFIX = 'wille-chat-snapshot:';
+const CHAT_STORAGE_ANONYMOUS_SCOPE = 'anonymous';
 
 const normalizeAgentKey = (agentId) => {
   const cleaned = String(agentId || '').trim();
@@ -1406,6 +1414,36 @@ const buildChatPersistState = () => ({
   lastSessionByAgent: {}
 });
 
+const resolveChatStorageScope = (): string => {
+  const token = String(resolveAccessToken() || '').trim();
+  if (token) {
+    return token;
+  }
+  return CHAT_STORAGE_ANONYMOUS_SCOPE;
+};
+
+const buildScopedStorageKey = (prefix: string, scope: string): string => `${prefix}${scope}`;
+
+const resolveChatStateStorageKeys = () => {
+  const scope = resolveChatStorageScope();
+  return {
+    primary: buildScopedStorageKey(CHAT_STATE_KEY_PREFIX, scope),
+    legacyScoped: buildScopedStorageKey(LEGACY_CHAT_STATE_KEY_PREFIX, scope),
+    globalPrimary: CHAT_STATE_KEY,
+    globalLegacy: LEGACY_CHAT_STATE_KEY
+  };
+};
+
+const resolveChatSnapshotStorageKeys = () => {
+  const scope = resolveChatStorageScope();
+  return {
+    primary: buildScopedStorageKey(CHAT_SNAPSHOT_KEY_PREFIX, scope),
+    legacyScoped: buildScopedStorageKey(LEGACY_CHAT_SNAPSHOT_KEY_PREFIX, scope),
+    globalPrimary: CHAT_SNAPSHOT_KEY,
+    globalLegacy: LEGACY_CHAT_SNAPSHOT_KEY
+  };
+};
+
 const normalizeChatPersistState = (value) => {
   if (!value || typeof value !== 'object') {
     return buildChatPersistState();
@@ -1419,10 +1457,18 @@ const normalizeChatPersistState = (value) => {
 
 const readChatPersistState = () => {
   try {
-    const raw = localStorage.getItem(CHAT_STATE_KEY) ?? localStorage.getItem(LEGACY_CHAT_STATE_KEY);
+    const keys = resolveChatStateStorageKeys();
+    const raw =
+      localStorage.getItem(keys.primary) ??
+      localStorage.getItem(keys.legacyScoped) ??
+      localStorage.getItem(keys.globalPrimary) ??
+      localStorage.getItem(keys.globalLegacy);
     if (!raw) return buildChatPersistState();
-    if (!localStorage.getItem(CHAT_STATE_KEY)) {
-      localStorage.setItem(CHAT_STATE_KEY, raw);
+    if (!localStorage.getItem(keys.primary)) {
+      localStorage.setItem(keys.primary, raw);
+    }
+    if (!localStorage.getItem(keys.legacyScoped)) {
+      localStorage.setItem(keys.legacyScoped, raw);
     }
     return normalizeChatPersistState(JSON.parse(raw));
   } catch (error) {
@@ -1434,8 +1480,10 @@ const updateChatPersistState = (updater) => {
   try {
     const current = readChatPersistState();
     const next = normalizeChatPersistState(updater(current));
-    localStorage.setItem(CHAT_STATE_KEY, JSON.stringify(next));
-    localStorage.setItem(LEGACY_CHAT_STATE_KEY, JSON.stringify(next));
+    const serialized = JSON.stringify(next);
+    const keys = resolveChatStateStorageKeys();
+    localStorage.setItem(keys.primary, serialized);
+    localStorage.setItem(keys.legacyScoped, serialized);
   } catch (error) {
     // ignore persistence errors
   }
@@ -1548,8 +1596,6 @@ const resolvePersistedSessionId = (agentId) => {
   return state.lastSessionByAgent?.[key] || '';
 };
 
-const CHAT_SNAPSHOT_KEY = 'beeroom-chat-snapshot';
-const LEGACY_CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
 const SNAPSHOT_FLUSH_MS = 800;
 const SNAPSHOT_IDLE_TIMEOUT_MS = 2000;
 const SNAPSHOT_MESSAGE_LIMIT = 200;
@@ -1942,10 +1988,18 @@ const buildChatSnapshot = (storeState) => {
 
 const readChatSnapshot = () => {
   try {
-    const raw = localStorage.getItem(CHAT_SNAPSHOT_KEY) ?? localStorage.getItem(LEGACY_CHAT_SNAPSHOT_KEY);
+    const keys = resolveChatSnapshotStorageKeys();
+    const raw =
+      localStorage.getItem(keys.primary) ??
+      localStorage.getItem(keys.legacyScoped) ??
+      localStorage.getItem(keys.globalPrimary) ??
+      localStorage.getItem(keys.globalLegacy);
     if (!raw) return null;
-    if (!localStorage.getItem(CHAT_SNAPSHOT_KEY)) {
-      localStorage.setItem(CHAT_SNAPSHOT_KEY, raw);
+    if (!localStorage.getItem(keys.primary)) {
+      localStorage.setItem(keys.primary, raw);
+    }
+    if (!localStorage.getItem(keys.legacyScoped)) {
+      localStorage.setItem(keys.legacyScoped, raw);
     }
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
@@ -1965,8 +2019,9 @@ const writeChatSnapshot = (payload) => {
   if (!payload) return;
   try {
     const serialized = JSON.stringify(payload);
-    localStorage.setItem(CHAT_SNAPSHOT_KEY, serialized);
-    localStorage.setItem(LEGACY_CHAT_SNAPSHOT_KEY, serialized);
+    const keys = resolveChatSnapshotStorageKeys();
+    localStorage.setItem(keys.primary, serialized);
+    localStorage.setItem(keys.legacyScoped, serialized);
   } catch (error) {
     // ignore persistence errors
   }
@@ -1976,8 +2031,9 @@ const clearChatSnapshot = (sessionId) => {
   try {
     const current = readChatSnapshot();
     if (!current || current.sessionId !== String(sessionId || '')) return;
-    localStorage.removeItem(CHAT_SNAPSHOT_KEY);
-    localStorage.removeItem(LEGACY_CHAT_SNAPSHOT_KEY);
+    const keys = resolveChatSnapshotStorageKeys();
+    localStorage.removeItem(keys.primary);
+    localStorage.removeItem(keys.legacyScoped);
   } catch (error) {
     // ignore storage errors
   }
@@ -1985,8 +2041,9 @@ const clearChatSnapshot = (sessionId) => {
 
 const clearAllChatSnapshots = () => {
   try {
-    localStorage.removeItem(CHAT_SNAPSHOT_KEY);
-    localStorage.removeItem(LEGACY_CHAT_SNAPSHOT_KEY);
+    const keys = resolveChatSnapshotStorageKeys();
+    localStorage.removeItem(keys.primary);
+    localStorage.removeItem(keys.legacyScoped);
   } catch (error) {
     // ignore storage errors
   }

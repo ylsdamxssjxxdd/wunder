@@ -1,3 +1,3 @@
 [Current Round Artifact Directory]
-Write this round's artifacts into this absolute workspace directory: {{artifact_path}}
-Do not write to another round directory or another worker's directory.
+Artifact directory: {{artifact_path}}
+Write this round's new or modified files only here. Do not write to another round or another worker directory.

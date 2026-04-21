@@ -62,7 +62,11 @@ pub fn compute_allowed_tool_names(
         collect_available_tool_names(&context.config, &context.skills, Some(&context.bindings));
 
     if let Some(access) = context.tool_access.as_ref() {
-        if let Some(allowed_tools) = access.allowed_tools.as_ref() {
+        if let Some(allowed_tools) = access
+            .allowed_tools
+            .as_ref()
+            .filter(|items| !items.is_empty())
+        {
             let allowed_set: HashSet<String> = allowed_tools
                 .iter()
                 .map(|name| name.trim().to_string())
@@ -126,4 +130,60 @@ pub fn is_agent_allowed(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compute_allowed_tool_names, UserToolContext};
+    use crate::config::Config;
+    use crate::skills::SkillRegistry;
+    use crate::storage::{UserAccountRecord, UserToolAccessRecord};
+    use crate::user_tools::UserToolBindings;
+
+    fn sample_user() -> UserAccountRecord {
+        UserAccountRecord {
+            user_id: "admin".to_string(),
+            username: "admin".to_string(),
+            email: None,
+            password_hash: String::new(),
+            access_level: "A".to_string(),
+            daily_quota: 0,
+            daily_quota_used: 0,
+            daily_quota_date: None,
+            daily_token_grant: 0,
+            token_balance: 0,
+            token_used_total: 0,
+            token_granted_total: 0,
+            level: 1,
+            experience_total: 0,
+            last_token_grant_date: None,
+            unit_id: None,
+            roles: vec!["admin".to_string()],
+            status: "active".to_string(),
+            created_at: 0.0,
+            updated_at: 0.0,
+            last_login_at: None,
+            is_demo: false,
+        }
+    }
+
+    #[test]
+    fn empty_tool_access_whitelist_does_not_block_everything() {
+        let mut config = Config::default();
+        config.server.mode = "server".to_string();
+        config.tools.builtin.enabled = vec!["read_file".to_string()];
+        let context = UserToolContext {
+            config,
+            skills: SkillRegistry::default(),
+            bindings: UserToolBindings::default(),
+            tool_access: Some(UserToolAccessRecord {
+                user_id: "admin".to_string(),
+                allowed_tools: Some(Vec::new()),
+                updated_at: 0.0,
+            }),
+        };
+
+        let allowed = compute_allowed_tool_names(&sample_user(), &context);
+        assert!(allowed.contains("读取文件") || allowed.contains("read_file"));
+    }
 }

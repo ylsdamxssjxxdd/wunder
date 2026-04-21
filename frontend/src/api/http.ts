@@ -9,8 +9,24 @@ import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/
 
 type HttpError = AxiosError & {
   code?: string;
+  config?: {
+    url?: string;
+  };
   response?: {
     status?: number;
+    headers?: Record<string, unknown>;
+    data?: {
+      error?: {
+        code?: string;
+        message?: string;
+      };
+      detail?: {
+        code?: string;
+        message?: string;
+      };
+      code?: string;
+      message?: string;
+    };
   };
 };
 
@@ -52,6 +68,27 @@ const resolveUnauthorizedRedirectPath = (): string => {
   return FORCE_LOGOUT_LOGIN_PATH;
 };
 
+const resolveHttpErrorCode = (error: HttpError): string => {
+  const headerCode = String(error.response?.headers?.['x-error-code'] || '').trim().toUpperCase();
+  if (headerCode) {
+    return headerCode;
+  }
+  const bodyCode = String(
+    error.response?.data?.error?.code ||
+      error.response?.data?.detail?.code ||
+      error.response?.data?.code ||
+      ''
+  )
+    .trim()
+    .toUpperCase();
+  return bodyCode;
+};
+
+const isProfileRequest = (error: HttpError): boolean => {
+  const url = String(error.config?.url || '').trim().toLowerCase();
+  return url === '/auth/me' || url.endsWith('/auth/me');
+};
+
 const shouldForceAuthRedirect = (error: HttpError): boolean => {
   if (error.response?.status !== 401 || isCanceledRequest(error)) {
     return false;
@@ -67,7 +104,11 @@ const shouldForceAuthRedirect = (error: HttpError): boolean => {
   ) {
     return false;
   }
-  return true;
+  const code = resolveHttpErrorCode(error);
+  if (code === 'AUTH_REQUIRED' || code === 'SESSION_REPLACED') {
+    return true;
+  }
+  return isProfileRequest(error);
 };
 
 const forceLogoutAndRedirect = (): void => {

@@ -1,7 +1,7 @@
 [本轮编排上下文]
-当前轮次目录：{{current_round_dir}}
-当前轮次态势文件：{{current_round_situation_file}}
-本轮所有工蜂的产物都必须写入下面列出的各自绝对工作区目录，不要混放，也不要写到别的轮次目录。
+轮次目录：{{current_round_dir}}
+态势文件：{{current_round_situation_file}}
+工蜂产物目录：
 {{worker_artifact_lines}}
 
-产物读取策略：如果需要查看本轮产物，优先一次性对“{{current_round_dir}}”做有界递归列目录（建议 max_depth=2，limit=500），再用读取文件工具的 files 数组批量读取真正相关的文本文件。列目录返回的是“{{current_round_dir}}”内部相对清单，读取时要加回“{{current_round_dir}}/”前缀。不要逐个列出每个工蜂目录；不要猜测 `orchestration/orch_*`；不要把“{{current_round_dir}}”改写成其他轮次格式。
+需要查看产物时，先对“{{current_round_dir}}”做一次有界递归列目录，再批量读取相关文件。

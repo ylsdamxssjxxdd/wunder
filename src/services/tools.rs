@@ -5373,7 +5373,11 @@ fn collect_user_allowed_tools(context: &ToolContext<'_>, user_id: &str) -> Resul
         collect_available_tool_names(context.config, context.skills, context.user_tool_bindings);
     let access = context.storage.get_user_tool_access(user_id)?;
     if let Some(access) = access {
-        if let Some(allowed_tools) = access.allowed_tools.as_ref() {
+        if let Some(allowed_tools) = access
+            .allowed_tools
+            .as_ref()
+            .filter(|items| !items.is_empty())
+        {
             let allowed_set: HashSet<String> = allowed_tools
                 .iter()
                 .map(|name| name.trim().to_string())

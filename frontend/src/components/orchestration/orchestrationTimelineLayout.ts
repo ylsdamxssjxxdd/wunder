@@ -420,61 +420,62 @@ export const buildOrchestrationTimelineLayout = ({
       const roundIndex = Math.max(1, Number(round.index || 0));
       return branchFromRoundIndex > 0 ? roundIndex > branchFromRoundIndex : true;
     });
-    const visibleRounds = scopedRounds.filter((round) => roundHasUserMessage(round));
-    const lastVisibleRound = visibleRounds[visibleRounds.length - 1] || null;
+    const completedRounds = isCurrentRun
+      ? scopedRounds.filter((round) => roundHasUserMessage(round))
+      : scopedRounds;
+    const lastCompletedRound = completedRounds[completedRounds.length - 1] || null;
     const branchBaseRound =
       branchFromRoundIndex > 0
         ? sourceRounds.find((round) => Math.max(1, Number(round.index || 0)) === branchFromRoundIndex) || null
         : null;
     const branchBaseRoundHasUserMessage = roundHasUserMessage(branchBaseRound);
     const previewBaseRoundIndex = Math.max(
-      0,
-      Number(lastVisibleRound?.index || 0) ||
-        Number(branchBaseRound?.index || 0) ||
-        branchFromRoundIndex
+      branchFromRoundIndex,
+      Number(lastCompletedRound?.index || 0) || Number(branchBaseRound?.index || 0) || 0
     );
-    const existingPreparedNextRound = scopedRounds.find(
-      (round) => Number(round.index || 0) === previewBaseRoundIndex + 1 && !roundHasUserMessage(round)
-    ) || null;
-    const shouldAppendBranchPreview =
-      isCurrentRun &&
-      isActive &&
-      branchFromRoundIndex > 0 &&
-      !isBusy &&
-      !lastVisibleRound &&
-      branchBaseRoundHasUserMessage;
+    const nextFrontierRoundIndex = Math.max(1, previewBaseRoundIndex + 1);
+    const existingPreparedNextRound =
+      isCurrentRun
+        ? scopedRounds.find(
+            (round) =>
+              Number(round.index || 0) === nextFrontierRoundIndex && !roundHasUserMessage(round)
+          ) || null
+        : null;
     const shouldAppendPreviewRound =
       isCurrentRun &&
       isActive &&
       !isBusy &&
-      previewBaseRoundIndex > 0 &&
       !existingPreparedNextRound &&
-      (Boolean(lastVisibleRound) || shouldAppendBranchPreview);
+      (completedRounds.length > 0 || branchBaseRoundHasUserMessage || nextFrontierRoundIndex === 1);
     const displayRounds: Array<{
       id: string;
       index: number;
       orchestrationId: string;
       userMessage?: string;
-    }> = shouldAppendPreviewRound
-      ? [
-          ...visibleRounds,
-          {
-            id: `preview:${runId}:round_${String(previewBaseRoundIndex + 1).padStart(2, '0')}`,
-            index: previewBaseRoundIndex + 1,
-            orchestrationId: runId,
-            userMessage: ''
-          }
-        ]
-      : visibleRounds;
+    }> = [
+      ...completedRounds,
+      ...(existingPreparedNextRound
+        ? [existingPreparedNextRound]
+        : shouldAppendPreviewRound
+          ? [
+              {
+                id: `preview:${runId}:round_${String(nextFrontierRoundIndex).padStart(2, '0')}`,
+                index: nextFrontierRoundIndex,
+                orchestrationId: runId,
+                userMessage: ''
+              }
+            ]
+          : [])
+    ];
     const roundColumns = new Map<number, number>();
     let lastRoundColumn = runChipColumn;
     displayRounds.forEach((round) => {
       const roundIndex = Math.max(1, Number(round.index || 0));
-      const hasUserMessage = roundHasUserMessage(round);
+      const hasUserMessage = isCurrentRun ? roundHasUserMessage(round) : true;
       const isSelectedRound = isCurrentRun && round.id === normalizeTimelineText(activeRoundId);
       const isPreviewRound = String(round.id || '').startsWith(`preview:${runId}:`);
-      const hasCompletedLaterRound = currentFormalRounds.some(
-        (formalRound) => Math.max(1, Number(formalRound.index || 0)) > roundIndex
+      const hasCompletedLaterRound = completedRounds.some(
+        (completedRound) => Math.max(1, Number(completedRound.index || 0)) > roundIndex
       );
       const isCompletedRound = hasUserMessage || hasCompletedLaterRound;
       const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
@@ -483,7 +484,7 @@ export const buildOrchestrationTimelineLayout = ({
       maxColumn = Math.max(maxColumn, column);
       items.push({
         type: 'round',
-        id: `round:${round.id}`,
+        id: `round:${runId}:${round.id}`,
         lane,
         column,
         roundId: round.id,

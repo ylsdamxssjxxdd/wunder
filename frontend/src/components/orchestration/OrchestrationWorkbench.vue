@@ -1020,15 +1020,20 @@ const handleBranchRun = async () => {
     ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
-  if (isViewingLatestRound.value || !currentOrchestrationId.value) {
+  if (!currentOrchestrationId.value) {
     ElMessage.warning(t('orchestration.message.branchLatestBlocked'));
+    return;
+  }
+  const branchSourceRound = activeRound.value || latestFormalRound.value || null;
+  if (!branchSourceRound || !roundHasUserMessage(branchSourceRound)) {
+    ElMessage.warning(t('orchestration.message.branchRequired'));
     return;
   }
   try {
     const sourceOrchestrationId = currentOrchestrationId.value;
     await handleCommitCurrentSituation();
-    const branchBaseRoundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
-    const draftSituation = String(currentSituationDraft.value || activeRound.value?.situation || '');
+    const branchBaseRoundIndex = Math.max(1, Number(branchSourceRound.index || 1));
+    const draftSituation = String(currentSituationDraft.value || branchSourceRound.situation || '');
     const branchedState = await branchHistory(currentOrchestrationId.value, branchBaseRoundIndex, {
       activate: true
     });

@@ -814,6 +814,7 @@ export const useOrchestrationRuntimeState = (options: {
         agent_id: resolveWorkspaceAgentId(motherId),
         path: buildRoundSituationPath(runId, roundIndex),
         include_content: true,
+        allow_missing: true,
         max_bytes: ORCHESTRATION_ARTIFACT_PREVIEW_MAX_BYTES
       });
       return String(response?.data?.content || '').trim();
