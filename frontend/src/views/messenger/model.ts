@@ -158,6 +158,8 @@ export type AgentOverviewCard = {
   hasChannelBinding: boolean;
   containerId: number;
   userRounds: number;
+  skillCount: number;
+  mcpCount: number;
 };
 
 export type UnitTreeNode = {

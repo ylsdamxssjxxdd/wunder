@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { resolveAbilityVisual } from '../../src/utils/abilityVisuals';
+import { resolveAgentOverviewAbilityCounts } from '../../src/views/messenger/agentOverviewAbilities';
 import {
   extractPromptToolingPreview,
   inferPromptToolingAbilityMeta
@@ -78,7 +79,7 @@ test('prompt tooling preview keeps MCP and knowledge tones aligned with shared a
     }
   );
   assert.equal(resolveAbilityVisual(skillItem || {}).tone, 'skill');
-  assert.equal(resolveAbilityVisual(skillItem || {}).icon, 'fa-book-open');
+  assert.equal(resolveAbilityVisual(skillItem || {}).icon, 'fa-book');
 
   assert.deepEqual(
     mcpItem && {
@@ -108,5 +109,57 @@ test('prompt tooling preview keeps MCP and knowledge tones aligned with shared a
     }
   );
   assert.equal(resolveAbilityVisual(knowledgeItem || {}).tone, 'knowledge');
-  assert.equal(resolveAbilityVisual(knowledgeItem || {}).icon, 'fa-book');
+  assert.equal(resolveAbilityVisual(knowledgeItem || {}).icon, 'fa-database');
+});
+
+test('agent overview counts only selected structured skills and MCP items', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'write_file', 'github@get_issue', 'search_web'],
+      declared_skill_names: ['planner'],
+      ability_items: [
+        {
+          runtime_name: 'planner',
+          name: 'planner',
+          kind: 'skill',
+          group: 'skills',
+          source: 'skill',
+          selected: true
+        },
+        {
+          runtime_name: 'github@get_issue',
+          name: 'github@get_issue',
+          kind: 'tool',
+          group: 'mcp',
+          source: 'mcp',
+          selected: true
+        },
+        {
+          runtime_name: 'read_file',
+          name: 'read_file',
+          kind: 'tool',
+          group: 'builtin',
+          source: 'builtin',
+          selected: true
+        }
+      ]
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 1
+    }
+  );
+});
+
+test('agent overview does not infer MCP count from declared tool names without explicit MCP data', () => {
+  assert.deepEqual(
+    resolveAgentOverviewAbilityCounts({
+      declared_tool_names: ['read_file', 'write_file', 'search_web'],
+      declared_skill_names: ['planner']
+    }),
+    {
+      skillCount: 1,
+      mcpCount: 0
+    }
+  );
 });

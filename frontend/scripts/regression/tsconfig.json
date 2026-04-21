@@ -41,6 +41,7 @@
     "../../src/views/messenger/chatRefreshRecovery.ts",
     "../../src/views/messenger/interactionBlocker.ts",
     "../../src/views/messenger/realtimePulse.ts",
+    "../../src/views/messenger/agentOverviewAbilities.ts",
     "../../src/components/chat/workspacePanelRefreshPlanner.ts",
     "../../src/components/chat/toolWorkflowActionViews.ts",
     "../../src/components/chat/toolWorkflowRunModel.ts",

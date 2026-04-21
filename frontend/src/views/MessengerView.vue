@@ -557,6 +557,20 @@
                           <i class="fa-solid fa-user" aria-hidden="true"></i>
                           <span>{{ formatUserRounds(card.userRounds) }}</span>
                         </span>
+                        <span
+                          class="messenger-agent-grid-metric"
+                          :title="t('toolManager.system.skills')"
+                        >
+                          <i class="fa-solid fa-book" aria-hidden="true"></i>
+                          <span>{{ card.skillCount }}</span>
+                        </span>
+                        <span
+                          class="messenger-agent-grid-metric"
+                          :title="t('toolManager.system.mcp')"
+                        >
+                          <i class="fa-solid fa-plug" aria-hidden="true"></i>
+                          <span>{{ card.mcpCount }}</span>
+                        </span>
                         <span class="messenger-agent-grid-foot-icons">
                           <i
                             v-if="card.hasCron"
@@ -1669,6 +1683,7 @@ import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import { useMessengerInteractionBlocker } from '@/views/messenger/interactionBlocker';
 import { useMessengerRightDockResize } from '@/views/messenger/rightDockResize';
+import { resolveAgentConfiguredAbilityNames, resolveAgentOverviewAbilityCounts } from '@/views/messenger/agentOverviewAbilities';
 import MessengerHivePlazaPanel from '@/components/messenger/MessengerHivePlazaPanel.vue';
 import {
   filterPlazaItemsByKindAndKeyword,
@@ -3538,51 +3553,6 @@ const normalizeAbilityNameList = (values: unknown): string[] => {
   return output;
 };
 
-const resolveSelectedAbilityNamesFromAgentProfile = (agent: Record<string, unknown> | null): string[] => {
-  const source = agent || {};
-  const abilities = source.abilities as Record<string, unknown> | null | undefined;
-  const abilitySource = Array.isArray(source.ability_items)
-    ? source.ability_items
-    : Array.isArray(abilities?.items)
-      ? abilities.items
-      : [];
-  const output: string[] = [];
-  const seen = new Set<string>();
-  abilitySource.forEach((item) => {
-    if (!item || typeof item !== 'object') return;
-    const ability = item as Record<string, unknown>;
-    if (ability.selected === false) return;
-    const name = String(ability.runtime_name || ability.runtimeName || ability.name || '').trim();
-    if (!name || seen.has(name)) return;
-    seen.add(name);
-    output.push(name);
-  });
-  return output;
-};
-
-const resolveAgentConfiguredAbilityNames = (agent: Record<string, unknown> | null): string[] => {
-  const declared = normalizeAbilityNameList([
-    ...normalizeAbilityNameList(agent?.declared_tool_names),
-    ...normalizeAbilityNameList(agent?.declared_skill_names)
-  ]);
-  if (declared.length > 0) {
-    return declared;
-  }
-  // tool_names is the persisted selection source; keep it ahead of legacy ability_items.
-  const selectedFromToolNames = normalizeAbilityNameList([
-    ...normalizeAbilityNameList(agent?.tool_names),
-    ...normalizeAbilityNameList(agent?.toolNames)
-  ]);
-  if (selectedFromToolNames.length > 0) {
-    return selectedFromToolNames;
-  }
-  const selectedFromItems = resolveSelectedAbilityNamesFromAgentProfile(agent);
-  if (selectedFromItems.length > 0) {
-    return selectedFromItems;
-  }
-  return [];
-};
-
 const extractPromptPreviewSelectedAbilityNames = (payload: unknown): string[] => {
   const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
   const tooling =
@@ -4240,6 +4210,7 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     if (!id || seen.has(id)) return;
     seen.add(id);
     const containerId = normalizeSandboxContainerId(agent?.sandbox_container_id);
+    const abilityCounts = resolveAgentOverviewAbilityCounts(agent);
     cards.push({
       id,
       name: String(agent?.name || id),
@@ -4251,7 +4222,9 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
       hasCron: hasCronTask(id),
       hasChannelBinding: channelBoundAgentIds.value.has(id),
       containerId,
-      userRounds: resolveAgentUserRounds(id)
+      userRounds: resolveAgentUserRounds(id),
+      skillCount: abilityCounts.skillCount,
+      mcpCount: abilityCounts.mcpCount
     });
   };
 

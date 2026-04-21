@@ -1943,6 +1943,18 @@ button.messenger-chat-header-model {
   font-size: 12px;
 }
 
+.messenger-agent-grid-metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+.messenger-agent-grid-metric i {
+  font-size: 11px;
+}
+
 .messenger-agent-grid-container-id {
   font-size: 11px;
   color: #8a8a8a;
