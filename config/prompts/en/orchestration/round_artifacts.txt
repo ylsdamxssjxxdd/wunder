@@ -1,7 +1,4 @@
-[Current Round Context]
-Round directory: {{current_round_dir}}
-Situation file: {{current_round_situation_file}}
-Worker artifact directories:
-{{worker_artifact_lines}}
+[Current Round Artifact Directories]
+All worker artifacts for this round will be written under: {{current_round_dir}}/
 
-When artifacts must be inspected, first do one bounded recursive listing of "{{current_round_dir}}", then batch-read only relevant files.
+When this round's artifacts must be inspected, first do one bounded recursive listing of "{{current_round_dir}}", then batch-read only relevant files.

@@ -44,6 +44,7 @@ import {
   buildOrchestrationRoundSituationPath,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
+import { stabilizeOrchestrationRoundSnapshots } from '@/components/orchestration/orchestrationRoundStateStability';
 
 export type OrchestrationRound = {
   id: string;
@@ -277,9 +278,6 @@ const findLatestFormalRound = (rounds: OrchestrationRound[] | null | undefined) 
     return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
   }, null);
 };
-
-const countFormalRounds = (rounds: OrchestrationRound[] | null | undefined) =>
-  (Array.isArray(rounds) ? rounds : []).filter((round) => Boolean(normalizeText(round?.userMessage))).length;
 
 const resolveRoundUserMessageWindow = (
   rounds: OrchestrationRound[],
@@ -1018,31 +1016,22 @@ export const useOrchestrationRuntimeState = (options: {
     const existing = preserveExisting ? runtimeState.value || readPersistedRuntime(groupId.value) : null;
     const existingMatchesRun = Boolean(existing && normalizeText(existing.runId) === runId);
     const existingRounds = existingMatchesRun ? existing!.rounds.map((round) => ({ ...round, orchestrationId })) : [];
-    const remoteFormalRoundCount = countFormalRounds(remoteRoundState.rounds);
-    const existingFormalRoundCount = countFormalRounds(existingRounds);
-    const preferExistingRounds =
-      existingMatchesRun &&
-      existingRounds.length > 0 &&
-      (
-        !remoteRoundState.rounds.length ||
-        remoteFormalRoundCount < existingFormalRoundCount ||
-        (
-          remoteFormalRoundCount === existingFormalRoundCount &&
-          remoteRoundState.rounds.length < existingRounds.length
-        )
-      );
-    const nextRounds = preferExistingRounds
-      ? existingRounds
-      : remoteRoundState.rounds.length
-        ? remoteRoundState.rounds
-        : existingRounds.length
-          ? existingRounds
-          : buildInitialRuntime({
-              orchestrationId,
-              runId,
-              motherSessionId,
-              memberThreads
-            }).rounds;
+    const remoteRounds = remoteRoundState.rounds.map((round) => ({
+      ...round,
+      orchestrationId: normalizeText(round.orchestrationId) || orchestrationId
+    }));
+    const nextRounds = remoteRounds.length
+      ? existingMatchesRun
+        ? stabilizeOrchestrationRoundSnapshots(existingRounds, remoteRounds)
+        : remoteRounds
+      : existingRounds.length
+        ? existingRounds
+        : buildInitialRuntime({
+            orchestrationId,
+            runId,
+            motherSessionId,
+            memberThreads
+          }).rounds;
     const existingActiveRoundId =
       existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
     const latestFormalRound = findLatestFormalRound(nextRounds);
@@ -1106,9 +1095,6 @@ export const useOrchestrationRuntimeState = (options: {
       remoteOrchestrationId: orchestrationId,
       existingRunId: normalizeText(existing?.runId),
       existingActiveRoundId: normalizeText(existing?.activeRoundId),
-      preferExistingRounds,
-      remoteFormalRoundCount,
-      existingFormalRoundCount,
       remoteRoundIds: remoteRoundState.rounds.map((round) => ({
         id: round.id,
         index: round.index,

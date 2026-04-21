@@ -146,6 +146,16 @@ export const buildMotherDispatchEnvelope = (options: {
       })
     );
   }
+  blocks.push(
+    buildMotherRoundArtifactInstructions({
+      group: options.group,
+      agents: options.agents,
+      runId: options.runId,
+      roundIndex: options.roundIndex,
+      currentUserId: options.currentUserId,
+      templates: options.templates
+    })
+  );
   if (normalizeText(options.situation)) {
     blocks.push(
       renderTemplate(options.templates.situation_context, {

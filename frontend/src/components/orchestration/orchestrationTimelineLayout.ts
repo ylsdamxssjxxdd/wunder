@@ -22,6 +22,7 @@ export type OrchestrationTimelineRoundInput = {
   index: number;
   orchestrationId?: string;
   userMessage?: string;
+  finalizedAt?: number;
 };
 
 export type OrchestrationTimelineRunFallback = {
@@ -89,6 +90,8 @@ type TimelineRunLayoutMeta = {
   branchFromRoundIndex: number;
   roundColumns: Map<number, number>;
 };
+
+import { roundHasCommittedContent } from '@/components/orchestration/orchestrationRoundStateStability';
 
 const normalizeTimelineText = (value: unknown): string => String(value || '').trim();
 
@@ -235,7 +238,8 @@ export const buildOrchestrationTimelineLayout = ({
       index: Math.max(1, Number(round?.index || 0)),
       orchestrationId:
         normalizeTimelineText(round?.orchestrationId) || normalizedCurrentRunId,
-      userMessage: String(round?.userMessage || '')
+      userMessage: String(round?.userMessage || ''),
+      finalizedAt: Number(round?.finalizedAt || 0)
     }))
     .filter((round) => round.id && round.index > 0)
     .sort(
@@ -420,15 +424,29 @@ export const buildOrchestrationTimelineLayout = ({
       const roundIndex = Math.max(1, Number(round.index || 0));
       return branchFromRoundIndex > 0 ? roundIndex > branchFromRoundIndex : true;
     });
+    const latestCommittedRoundIndex = isCurrentRun
+      ? scopedRounds.reduce((latest, round) => {
+          if (!roundHasCommittedContent(round)) {
+            return latest;
+          }
+          return Math.max(latest, Math.max(1, Number(round.index || 0)));
+        }, 0)
+      : 0;
     const completedRounds = isCurrentRun
-      ? scopedRounds.filter((round) => roundHasUserMessage(round))
+      ? scopedRounds.filter((round) => {
+          const roundIndex = Math.max(1, Number(round.index || 0));
+          if (latestCommittedRoundIndex > 0) {
+            return roundIndex <= latestCommittedRoundIndex;
+          }
+          return roundHasCommittedContent(round);
+        })
       : scopedRounds;
     const lastCompletedRound = completedRounds[completedRounds.length - 1] || null;
     const branchBaseRound =
       branchFromRoundIndex > 0
         ? sourceRounds.find((round) => Math.max(1, Number(round.index || 0)) === branchFromRoundIndex) || null
         : null;
-    const branchBaseRoundHasUserMessage = roundHasUserMessage(branchBaseRound);
+    const branchBaseRoundHasUserMessage = roundHasCommittedContent(branchBaseRound);
     const previewBaseRoundIndex = Math.max(
       branchFromRoundIndex,
       Number(lastCompletedRound?.index || 0) || Number(branchBaseRound?.index || 0) || 0
@@ -471,13 +489,13 @@ export const buildOrchestrationTimelineLayout = ({
     let lastRoundColumn = runChipColumn;
     displayRounds.forEach((round) => {
       const roundIndex = Math.max(1, Number(round.index || 0));
-      const hasUserMessage = isCurrentRun ? roundHasUserMessage(round) : true;
+      const hasCommittedContent = isCurrentRun ? roundHasCommittedContent(round) : true;
       const isSelectedRound = isCurrentRun && round.id === normalizeTimelineText(activeRoundId);
       const isPreviewRound = String(round.id || '').startsWith(`preview:${runId}:`);
       const hasCompletedLaterRound = completedRounds.some(
         (completedRound) => Math.max(1, Number(completedRound.index || 0)) > roundIndex
       );
-      const isCompletedRound = hasUserMessage || hasCompletedLaterRound;
+      const isCompletedRound = hasCommittedContent || hasCompletedLaterRound;
       const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
       roundColumns.set(roundIndex, column);
       lastRoundColumn = Math.max(lastRoundColumn, column);
@@ -491,10 +509,7 @@ export const buildOrchestrationTimelineLayout = ({
         roundIndex,
         active: isSelectedRound && !isPreviewRound && isCompletedRound,
         selected: isSelectedRound,
-        pending:
-          (!isSelectedRound && !hasUserMessage) ||
-          (isSelectedRound && !isCompletedRound) ||
-          isPreviewRound,
+        pending: !isCompletedRound || isPreviewRound,
         preview: isPreviewRound,
         orchestrationId: runId,
         currentRun: isCurrentRun

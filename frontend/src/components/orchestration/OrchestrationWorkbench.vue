@@ -1548,7 +1548,11 @@ const handleSendToMother = async () => {
 };
 
 watch(
-  () => activeRound.value?.id || '',
+  () => [
+    currentOrchestrationId.value,
+    activeRound.value?.id || '',
+    String(activeRound.value?.situation || '')
+  ],
   () => {
     currentSituationDraft.value = String(activeRound.value?.situation || '');
   },

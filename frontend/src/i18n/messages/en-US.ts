@@ -2360,7 +2360,7 @@ export default {
   'orchestration.chat.lockedInMessenger': 'This thread is locked by orchestration mode. Continue from the orchestration page to preserve continuity.',
   'orchestration.chat.timelineBadge': 'Orchestration',
   'messenger.section.plaza': 'Hive Plaza',
-  'messenger.section.plaza.desc': 'Publish and import hive packs, worker cards, and skill packs',
+  'messenger.section.plaza.desc': 'Publish and import hives, workers, and skills',
   'messenger.agentGroup.label': 'Swarm Group',
   'messenger.agentGroup.modeExisting': 'Existing Swarm',
   'messenger.agentGroup.modeNew': 'New Swarm',

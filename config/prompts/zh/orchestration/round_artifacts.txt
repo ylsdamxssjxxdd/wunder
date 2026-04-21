@@ -1,7 +1,4 @@
-[本轮编排上下文]
-轮次目录：{{current_round_dir}}
-态势文件：{{current_round_situation_file}}
-工蜂产物目录：
-{{worker_artifact_lines}}
+[本轮产物目录]
+本轮工蜂的产物都会落在：{{current_round_dir}}/
 
-需要查看产物时，先对“{{current_round_dir}}”做一次有界递归列目录，再批量读取相关文件。
+需要查看本轮产物时，先对“{{current_round_dir}}”做一次有界递归列目录，再批量读取相关文件。

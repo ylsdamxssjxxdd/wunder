@@ -2736,7 +2736,7 @@ export default {
   'messenger.memory.replicateConfirm': '确认将当前智能体的全部记忆覆盖复刻到“{name}”吗？',
   'messenger.memory.replicateSuccess': '已将当前智能体的记忆覆盖复刻到“{name}”。',
   'messenger.section.plaza': '蜂巢广场',
-  'messenger.section.plaza.desc': '发布并引入蜂群包、工蜂卡与技能包',
+  'messenger.section.plaza.desc': '发布或引入蜂群、工蜂与技能',
   'messenger.search.plaza': '搜索蜂巢广场',
   'messenger.empty.plaza': '暂无广场条目',
   'plaza.title': '蜂巢广场',
