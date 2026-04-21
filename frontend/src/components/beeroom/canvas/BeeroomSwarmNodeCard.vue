@@ -37,18 +37,34 @@
           <span class="beeroom-node-artifact-count">{{ artifactCountLabel }}</span>
         </div>
         <div class="beeroom-node-artifact-scroll" @wheel.stop>
-          <div class="beeroom-node-artifact-grid">
-            <div
+          <div class="beeroom-node-artifact-grid" :class="`is-${artifactDisplayMode}`">
+            <button
               v-for="slot in artifactSlots"
               :key="slot.key"
               class="beeroom-node-artifact-slot"
-              :class="{ 'is-empty': !slot.item }"
+              :class="{
+                'is-empty': !slot.item,
+                'is-clickable': Boolean(slot.item?.previewable)
+              }"
+              type="button"
+              :disabled="!slot.item || !slot.item.previewable"
               :title="slot.item?.title || ''"
+              @click.stop="handleArtifactSlotClick(slot.item)"
             >
-              <span class="beeroom-node-artifact-slot-frame" :class="slot.item ? `is-${slot.item.kind}` : 'is-empty'">
+              <span
+                class="beeroom-node-artifact-slot-frame"
+                :class="[
+                  slot.item ? `is-${slot.item.kind}` : 'is-empty',
+                  slot.item?.previewable ? 'is-previewable' : ''
+                ]"
+              >
                 <i v-if="slot.item" class="fa-solid" :class="slot.item.iconClass" aria-hidden="true"></i>
+                <span v-if="slot.item" class="beeroom-node-artifact-slot-copy">
+                  <span class="beeroom-node-artifact-slot-label">{{ slot.item.label }}</span>
+                  <span v-if="slot.item.meta" class="beeroom-node-artifact-slot-meta">{{ slot.item.meta }}</span>
+                </span>
               </span>
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -115,6 +131,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'click'): void;
   (event: 'dblclick'): void;
+  (event: 'preview-artifact', payload: NonNullable<SwarmProjectionNode['artifactItems']>[number]): void;
 }>();
 
 const DEFAULT_ACTIVITY_ACCENT_RGB = '59, 130, 246';
@@ -175,14 +192,18 @@ const visibleWorkflowLines = computed(() => (Array.isArray(props.node.workflowLi
 const visibleArtifactItems = computed(() => (Array.isArray(props.node.artifactItems) ? props.node.artifactItems : []));
 const artifactTitle = computed(() => String(props.node.roleLabel || '').trim() || '产物');
 const artifactCount = computed(() => Math.max(Number(props.node.artifactCount || 0), visibleArtifactItems.value.length));
+const artifactDisplayMode = computed(() =>
+  String(props.node.artifactDisplayMode || '').trim().toLowerCase() === 'showcase' ? 'showcase' : 'compact'
+);
 const artifactSlots = computed(() => {
+  const limit = artifactDisplayMode.value === 'showcase' ? 2 : 8;
   const items = visibleArtifactItems.value.map((item, index) => ({
     key: item?.key || `artifact:${props.node.id}:${index}`,
     item: item || null
-  }));
-  if (items.length >= 8) return items;
+  })).slice(0, limit);
+  if (items.length >= limit) return items;
   return items.concat(
-    Array.from({ length: 8 - items.length }, (_, index) => ({
+    Array.from({ length: limit - items.length }, (_, index) => ({
       key: `empty:${props.node.id}:${index}`,
       item: null
     }))
@@ -197,6 +218,11 @@ const hasLiveActivity = computed(() => {
 });
 
 const artifactCountLabel = computed(() => String(artifactCount.value));
+
+const handleArtifactSlotClick = (item: NonNullable<SwarmProjectionNode['artifactItems']>[number] | null | undefined) => {
+  if (!item?.previewable) return;
+  emit('preview-artifact', item);
+};
 
 const workflowContainerRef = ref<HTMLElement | null>(null);
 const workflowStepsRef = ref<HTMLElement | null>(null);
@@ -905,6 +931,11 @@ onBeforeUnmount(() => {
   padding-bottom: 2px;
 }
 
+.beeroom-node-artifact-grid.is-showcase {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
 .beeroom-node-artifact-slot {
   min-width: 0;
   min-height: 0;
@@ -916,10 +947,15 @@ onBeforeUnmount(() => {
   border-radius: 0;
   background: transparent;
   border: 0;
+  cursor: default;
 }
 
 .beeroom-node-artifact-slot:not(.is-empty) {
   box-shadow: none;
+}
+
+.beeroom-node-artifact-slot.is-clickable {
+  cursor: pointer;
 }
 
 .beeroom-node-artifact-slot-frame {
@@ -934,6 +970,20 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(253, 230, 138, 0.18);
   box-shadow: inset 0 1px 0 rgba(255, 251, 235, 0.1);
   font-size: 17px;
+}
+
+.beeroom-node-artifact-grid.is-showcase .beeroom-node-artifact-slot {
+  aspect-ratio: auto;
+  min-height: 58px;
+}
+
+.beeroom-node-artifact-grid.is-showcase .beeroom-node-artifact-slot-frame {
+  min-height: 58px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  text-align: left;
 }
 
 .beeroom-node-artifact-slot:not(.is-empty) .beeroom-node-artifact-slot-frame {
@@ -963,6 +1013,44 @@ onBeforeUnmount(() => {
 
 .beeroom-node-artifact-slot-frame i {
   font-size: 16px;
+}
+
+.beeroom-node-artifact-grid.is-showcase .beeroom-node-artifact-slot-frame i {
+  flex: 0 0 30px;
+  font-size: 26px;
+  text-align: center;
+}
+
+.beeroom-node-artifact-slot-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.beeroom-node-artifact-slot-label,
+.beeroom-node-artifact-slot-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beeroom-node-artifact-slot-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: inherit;
+}
+
+.beeroom-node-artifact-slot-meta {
+  font-size: 10px;
+  color: rgba(241, 245, 249, 0.72);
+}
+
+.beeroom-node-artifact-slot.is-clickable .beeroom-node-artifact-slot-frame:hover,
+.beeroom-node-artifact-slot.is-clickable .beeroom-node-artifact-slot-frame:focus-visible {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 251, 235, 0.16),
+    0 8px 18px rgba(15, 23, 42, 0.14);
 }
 
 .beeroom-node-card.is-condensed {

@@ -109,6 +109,7 @@
             :style="{ left: `${node.left}px`, top: `${node.top}px` }"
             @click="handleNodeClick(node.id)"
             @dblclick="handleNodeDoubleClick(node.id)"
+            @preview-artifact="handleArtifactPreview(node.id, $event)"
           />
         </div>
       </div>
@@ -237,6 +238,7 @@ import {
   NODE_WIDTH,
   WORLD_PADDING,
   type SwarmProjection,
+  type SwarmProjectionArtifactItem,
   type BeeroomSwarmDispatchPreview,
   buildBeeroomSwarmProjection,
   hasBeeroomSwarmNodes,
@@ -285,6 +287,7 @@ const emit = defineEmits<{
     roleLabel: string;
     statusLabel: string;
   }): void;
+  (event: 'preview-artifact', payload: { nodeId: string; item: SwarmProjectionArtifactItem }): void;
   (event: 'toggle-fullscreen'): void;
 }>();
 
@@ -1098,6 +1101,14 @@ const handleNodeDoubleClick = (nodeId: string) => {
   if (agentId) {
     emit('open-agent', agentId);
   }
+};
+
+const handleArtifactPreview = (nodeId: string, item: SwarmProjectionArtifactItem) => {
+  clearPendingNodeOutputPreview();
+  emit('preview-artifact', {
+    nodeId: String(nodeId || '').trim(),
+    item
+  });
 };
 
 const handleNodePointerDown = (nodeId: string, event: PointerEvent, pointerTarget?: HTMLElement | null) => {

@@ -30,6 +30,7 @@
               :show-minimap="false"
               @open-agent="emit('open-agent', $event)"
               @preview-node-output="handleAgentOutputPreview"
+              @preview-artifact="handleArtifactFilePreview"
               @toggle-fullscreen="toggleCanvasFullscreen"
             />
 
@@ -371,12 +372,22 @@
       :resolve-message-avatar-image="resolveMessageAvatarImage"
       :avatar-label="avatarLabel"
     />
+
+    <OrchestrationArtifactPreviewDialog
+      v-model:visible="artifactPreviewVisible"
+      :title="artifactPreviewTitle"
+      :path="artifactPreviewPath"
+      :content="artifactPreviewContent"
+      :loading="artifactPreviewLoading"
+      :error="artifactPreviewError"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import { fetchWunderWorkspaceContent } from '@/api/workspace';
 import BeeroomAgentOutputPreviewDialog from '@/components/beeroom/BeeroomAgentOutputPreviewDialog.vue';
 import BeeroomCanvasChatPanel from '@/components/beeroom/BeeroomCanvasChatPanel.vue';
 import {
@@ -387,6 +398,7 @@ import BeeroomSwarmCanvasPane from '@/components/beeroom/canvas/BeeroomSwarmCanv
 import type { MissionChatMessage } from '@/components/beeroom/beeroomCanvasChatModel';
 import type { BeeroomTaskWorkflowPreview, BeeroomWorkflowItem } from '@/components/beeroom/beeroomTaskWorkflow';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import OrchestrationArtifactPreviewDialog from '@/components/orchestration/OrchestrationArtifactPreviewDialog.vue';
 import type {
   OrchestrationArtifactCard,
   OrchestrationHistoryItem,
@@ -501,6 +513,12 @@ const agentOutputPreviewAgentId = ref('');
 const agentOutputPreviewTitle = ref('');
 const agentOutputPreviewRoleLabel = ref('');
 const agentOutputPreviewStatusLabel = ref('');
+const artifactPreviewVisible = ref(false);
+const artifactPreviewLoading = ref(false);
+const artifactPreviewError = ref('');
+const artifactPreviewTitle = ref('');
+const artifactPreviewPath = ref('');
+const artifactPreviewContent = ref('');
 
 const DEFAULT_CHAT_WIDTH = 352;
 const MIN_CHAT_WIDTH = 316;
@@ -1045,6 +1063,55 @@ const openActiveArtifactWorkspace = () => {
   artifactWorkspaceVisible.value = true;
 };
 
+const handleArtifactFilePreview = async (payload: {
+  nodeId: string;
+  item: {
+    path?: string;
+    name?: string;
+    previewable?: boolean;
+  };
+}) => {
+  const itemPath = String(payload?.item?.path || '').trim();
+  const itemName = String(payload?.item?.name || '').trim();
+  if (!itemPath || payload?.item?.previewable !== true) {
+    return;
+  }
+  const artifactMatch = String(payload?.nodeId || '').trim().match(/^artifact:(.+)$/);
+  const agentId = String(artifactMatch?.[1] || '').trim();
+  if (!agentId) return;
+  const member = props.visibleWorkers.find((entry) => String(entry.agent_id || '').trim() === agentId) || null;
+  if (!member) return;
+  const containerId = Number.parseInt(String(member.sandbox_container_id ?? 1), 10) || 1;
+
+  artifactPreviewTitle.value = itemName || itemPath;
+  artifactPreviewPath.value = itemPath;
+  artifactPreviewContent.value = '';
+  artifactPreviewError.value = '';
+  artifactPreviewLoading.value = true;
+  artifactPreviewVisible.value = true;
+
+  try {
+    const response = await fetchWunderWorkspaceContent({
+      agent_id: agentId,
+      container_id: containerId,
+      path: itemPath,
+      include_content: true,
+      max_bytes: 1024 * 256
+    });
+    const payloadData = response?.data || {};
+    artifactPreviewContent.value = typeof payloadData.content === 'string' ? payloadData.content : '';
+    if (payloadData.truncated) {
+      artifactPreviewError.value = t('workspace.preview.truncatedHint');
+    }
+  } catch (error: any) {
+    artifactPreviewError.value = String(
+      error?.response?.data?.detail || error?.message || t('workspace.preview.loadFailedHint')
+    ).trim();
+  } finally {
+    artifactPreviewLoading.value = false;
+  }
+};
+
 onMounted(() => {
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
@@ -1096,6 +1163,7 @@ watch(
     timelineCollapsed.value = Boolean(cached?.timelineCollapsed);
     timelineHeight.value = clampTimelineHeight(Number(cached?.timelineHeight || DEFAULT_TIMELINE_HEIGHT));
     artifactWorkspaceVisible.value = false;
+    artifactPreviewVisible.value = false;
     agentOutputPreviewVisible.value = false;
   },
   { immediate: true }

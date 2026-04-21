@@ -29,8 +29,8 @@ import {
 
 type TranslationFn = (key: string, params?: Record<string, unknown>) => string;
 
-const ARTIFACT_NODE_WIDTH = 252;
-const ARTIFACT_NODE_HEIGHT = 154;
+const ARTIFACT_NODE_WIDTH = 276;
+const ARTIFACT_NODE_HEIGHT = 186;
 const MOTHER_X = -420;
 const WORKER_X = 0;
 const ARTIFACT_X = 420;
@@ -634,10 +634,18 @@ export const buildOrchestrationCanvasProjection = (options: {
         title: entry.path || entry.name || '',
         meta: resolveArtifactMeta(entry),
         kind: entry.type === 'dir' ? 'dir' : 'file',
-        iconClass: resolveArtifactIconClass(entry)
+        iconClass: resolveArtifactIconClass(entry),
+        path: entry.path,
+        name: entry.name,
+        size: entry.size,
+        updatedTime: entry.updatedTime,
+        updatedAtMs: entry.updatedAtMs,
+        preview: entry.preview,
+        previewable: entry.type !== 'dir'
       })),
       artifactPath: artifactCard?.path || '',
       artifactCount: artifactCard?.entries?.length || 0,
+      artifactDisplayMode: 'showcase',
       workflowLines: artifactCard?.entries?.length
         ? artifactCard.entries.slice(0, 3).map((entry, entryIndex) => ({
             key: `${artifactNodeId}:entry:${entryIndex}`,

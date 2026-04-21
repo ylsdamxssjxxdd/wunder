@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::prompting::read_prompt_template;
+use crate::services::orchestration_run_control::cancel_active_team_runs_for_parent_session;
 use crate::services::orchestration_context::{
     build_branch_history_record_from_state, build_chat_session_with_title,
     build_closed_history_record, build_history_record_from_state, build_initial_round_state,
@@ -1651,6 +1652,12 @@ async fn finalize_orchestration_round(
         finalized_at = response_round.finalized_at,
         "orchestration finalize round result"
     );
+    let _ = cancel_active_team_runs_for_parent_session(
+        state.as_ref(),
+        &user_id,
+        &hive_state.mother_session_id,
+    )
+    .await;
     Ok(Json(json!({
         "data": {
             "round": orchestration_round_payload(&response_round),

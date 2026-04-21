@@ -2313,6 +2313,7 @@ export default {
   'orchestration.canvas.workerDispatchPending': 'Waiting for mother dispatch',
   'orchestration.canvas.workerDispatchRunning': 'This orchestration round is running',
   'orchestration.canvas.artifactPending': 'Waiting for artifacts to be written',
+  'orchestration.canvas.artifactPreviewTitle': 'Artifact Preview',
   'orchestration.dialog.situationTitle': 'Set Situation',
   'orchestration.dialog.historyTitle': 'Orchestration History',
   'orchestration.dialog.historySubtitle':

@@ -42,6 +42,13 @@ export type SwarmProjectionArtifactItem = {
   meta: string;
   kind: 'file' | 'dir';
   iconClass: string;
+  path?: string;
+  name?: string;
+  size?: number;
+  updatedTime?: string;
+  updatedAtMs?: number;
+  preview?: string;
+  previewable?: boolean;
 };
 
 export type CanvasNodeMeta = {
@@ -85,6 +92,7 @@ export type SwarmProjectionNode = {
   artifactItems?: SwarmProjectionArtifactItem[];
   artifactPath?: string;
   artifactCount?: number;
+  artifactDisplayMode?: 'compact' | 'showcase';
   parentId: string;
   emphasis: SwarmNodeEmphasis;
   introFromId: string;

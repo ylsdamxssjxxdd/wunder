@@ -87,6 +87,7 @@ use crate::services::orchestration_context::{
     ensure_orchestration_member_session, load_dispatch_context, session_has_visible_history,
     session_orchestration_run_root,
 };
+use crate::services::orchestration_run_control::worker_already_dispatched_in_round;
 use crate::services::subagents;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
@@ -2056,6 +2057,30 @@ fn is_swarm_task_terminal_status(status: &str) -> bool {
     )
 }
 
+fn skipped_swarm_task_result(
+    action: &str,
+    team_task_id: &str,
+    session_id: &str,
+    agent_id: &str,
+    agent_name: &str,
+    reason: &str,
+) -> Value {
+    build_model_tool_success(
+        action,
+        "skipped",
+        format!("Skipped swarm task {team_task_id}: {reason}."),
+        json!({
+            "task_id": team_task_id,
+            "run_id": Value::Null,
+            "session_id": session_id,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "skipped": true,
+            "skip_reason": reason,
+        }),
+    )
+}
+
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let payload: AgentSwarmControlArgs = match serde_json::from_value(args.clone()) {
         Ok(payload) => payload,
@@ -2499,6 +2524,34 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
+    if worker_already_dispatched_in_round(
+        context.storage.as_ref(),
+        user_id,
+        context.session_id,
+        &target_session_id,
+    )? {
+        task_record.status = "success".to_string();
+        task_record.result_summary = Some("already_dispatched_this_round".to_string());
+        task_record.updated_time = now_ts();
+        task_record.finished_time = Some(task_record.updated_time);
+        task_record.elapsed_s = Some(0.0);
+        context.storage.upsert_team_task(&task_record)?;
+        emit_swarm_task_updated(context, &run_record, &task_record);
+        let (terminal, failed) =
+            sync_swarm_run_summary(context, &mut run_record, std::slice::from_ref(&task_record))?;
+        if terminal {
+            emit_swarm_run_terminal(context, &run_record, failed);
+        }
+        return Ok(skipped_swarm_task_result(
+            "send",
+            &task_record.task_id,
+            &target_session_id,
+            &target_agent_id,
+            &target_agent.name,
+            "already_dispatched_this_round",
+        ));
+    }
+
     let wait_mode = resolve_swarm_wait_mode(
         payload.timeout_seconds,
         context.config.tools.swarm.default_timeout_s,
@@ -2851,6 +2904,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     }
 
     let mut dispatch_plan = Vec::with_capacity(payload.tasks.len());
+    let mut indexed_items = Vec::new();
+    let mut run_ids = Vec::new();
     let mut task_records_by_index = HashMap::new();
     for (index, task) in payload.tasks.into_iter().enumerate() {
         let message = normalize_optional_string(task.message)
@@ -3107,6 +3162,35 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         emit_swarm_task_dispatched(context, &run_record, &task_record);
         task_records_by_index.insert(index, task_record.clone());
 
+        if worker_already_dispatched_in_round(
+            context.storage.as_ref(),
+            user_id,
+            context.session_id,
+            &session_id,
+        )? {
+            let mut skipped_task = task_record.clone();
+            skipped_task.status = "success".to_string();
+            skipped_task.result_summary = Some("already_dispatched_this_round".to_string());
+            skipped_task.updated_time = now_ts();
+            skipped_task.finished_time = Some(skipped_task.updated_time);
+            skipped_task.elapsed_s = Some(0.0);
+            context.storage.upsert_team_task(&skipped_task)?;
+            emit_swarm_task_updated(context, &run_record, &skipped_task);
+            task_records_by_index.insert(index, skipped_task.clone());
+            indexed_items.push((
+                index,
+                skipped_swarm_task_result(
+                    "batch_send",
+                    &skipped_task.task_id,
+                    &session_id,
+                    &agent_record.agent_id,
+                    &agent_record.name,
+                    "already_dispatched_this_round",
+                ),
+            ));
+            continue;
+        }
+
         dispatch_plan.push(SwarmBatchDispatchTask {
             index,
             team_task_id: task_record.task_id,
@@ -3131,8 +3215,6 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     }))
     .buffer_unordered(dispatch_parallelism);
 
-    let mut indexed_items = Vec::new();
-    let mut run_ids = Vec::new();
     while let Some((index, result)) = dispatches.next().await {
         match result {
             Ok(result) => {
@@ -3249,7 +3331,18 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 .unwrap_or(false)
         })
         .count();
-    let failed_total = items.len().saturating_sub(accepted_total);
+    let skipped_total = items
+        .iter()
+        .filter(|item| {
+            item.get("skipped")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
+    let failed_total = items
+        .len()
+        .saturating_sub(accepted_total)
+        .saturating_sub(skipped_total);
     let run_tasks = task_records_by_index.values().cloned().collect::<Vec<_>>();
     let (terminal, failed) = sync_swarm_run_summary(context, &mut run_record, &run_tasks)?;
     if terminal {
@@ -3262,6 +3355,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         } else {
             "accepted".to_string()
         }
+    } else if skipped_total > 0 && failed_total == 0 {
+        "skipped".to_string()
     } else {
         "error".to_string()
     };
@@ -11811,6 +11906,34 @@ PATCH"#;
         assert_eq!(
             tool_result_field(&result, "error").and_then(Value::as_str),
             Some("nested error")
+        );
+    }
+
+    #[test]
+    fn skipped_swarm_task_result_exposes_skipped_reason_in_data() {
+        let result = skipped_swarm_task_result(
+            "batch_send",
+            "task_a",
+            "sess_a",
+            "agent_a",
+            "Worker A",
+            "already_dispatched_this_round",
+        );
+        assert_eq!(
+            tool_result_field(&result, "status").and_then(Value::as_str),
+            Some("skipped")
+        );
+        assert_eq!(
+            tool_result_field(&result, "task_id").and_then(Value::as_str),
+            Some("task_a")
+        );
+        assert_eq!(
+            tool_result_field(&result, "skip_reason").and_then(Value::as_str),
+            Some("already_dispatched_this_round")
+        );
+        assert_eq!(
+            tool_result_field(&result, "run_id"),
+            Some(&Value::Null)
         );
     }
 

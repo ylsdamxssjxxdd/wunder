@@ -1,9 +1,10 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::services::orchestration_run_control::cancel_team_run_record;
 use crate::services::stream_events::StreamEventService;
 use crate::services::swarm::beeroom::{claim_mother_agent, snapshot_team_run};
 use crate::services::swarm::events::{
-    TEAM_FINISH, TEAM_START, TEAM_TASK_DISPATCH, TEAM_TASK_UPDATE,
+    TEAM_START, TEAM_TASK_DISPATCH,
 };
 use crate::state::AppState;
 use crate::storage::{normalize_hive_id, TeamRunRecord, TeamTaskRecord, DEFAULT_HIVE_ID};
@@ -346,88 +347,9 @@ async fn cancel_team_run(
         .user_store
         .list_team_tasks(&run.team_run_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let now = now_ts();
-    run.status = "cancelled".to_string();
-    run.finished_time = Some(now);
-    run.elapsed_s = run.started_time.map(|start| (now - start).max(0.0));
-    run.updated_time = now;
-    state
-        .user_store
-        .upsert_team_run(&run)
+    cancel_team_run_record(state.as_ref(), &user_id, &mut run, tasks)
+        .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-
-    state.kernel.mission_runtime.cancel(&run.team_run_id).await;
-
-    for task in &tasks {
-        if let Some(session_id) = task
-            .target_session_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let _ = state.monitor.cancel(session_id);
-            let thread_id = format!("thread_{session_id}");
-            let agent_tasks = state
-                .kernel
-                .thread_runtime
-                .list_thread_tasks(&thread_id, None, 256)
-                .await
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            for agent_task in agent_tasks {
-                let status = agent_task.status.trim().to_ascii_lowercase();
-                if !matches!(status.as_str(), "pending" | "running" | "retry") {
-                    continue;
-                }
-                state
-                    .kernel
-                    .thread_runtime
-                    .cancel_task(&agent_task.task_id)
-                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            }
-        }
-    }
-
-    for mut task in tasks {
-        if matches!(task.status.as_str(), "success" | "failed" | "cancelled") {
-            continue;
-        }
-        task.status = "cancelled".to_string();
-        task.updated_time = now;
-        task.finished_time = Some(now);
-        task.elapsed_s = task.started_time.map(|start| (now - start).max(0.0));
-        state
-            .user_store
-            .upsert_team_task(&task)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        emit_team_event(
-            state.as_ref(),
-            &user_id,
-            &run.parent_session_id,
-            &task.hive_id,
-            TEAM_TASK_UPDATE,
-            json!({
-                "team_run_id": task.team_run_id,
-                "task_id": task.task_id,
-                "hive_id": task.hive_id,
-                "agent_id": task.agent_id,
-                "status": task.status,
-            }),
-        );
-    }
-
-    emit_team_event(
-        state.as_ref(),
-        &user_id,
-        &run.parent_session_id,
-        &run.hive_id,
-        TEAM_FINISH,
-        json!({
-            "team_run_id": run.team_run_id,
-            "hive_id": run.hive_id,
-            "status": run.status,
-            "updated_time": run.updated_time,
-        }),
-    );
 
     Ok(Json(json!({ "data": team_run_payload(&run) })))
 }

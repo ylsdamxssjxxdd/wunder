@@ -2276,6 +2276,7 @@ export default {
   'orchestration.canvas.workerDispatchPending': '等待母蜂调度',
   'orchestration.canvas.workerDispatchRunning': '本轮编排进行中',
   'orchestration.canvas.artifactPending': '等待产物回写',
+  'orchestration.canvas.artifactPreviewTitle': '产物预览',
   'orchestration.dialog.situationTitle': '设置态势',
   'orchestration.dialog.historyTitle': '编排历史',
   'orchestration.dialog.historySubtitle': '查看以往编排记录，可切换回当时的运行上下文，也可移除单条历史记录。',
