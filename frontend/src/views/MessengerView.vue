@@ -9158,12 +9158,13 @@ const selectBeeroomGroup = async (group: Record<string, unknown>) => {
 
 const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
   const groupId = String(group?.group_id || group?.hive_id || '').trim();
+  const mode = String(group?.__delete_mode || '').trim().toLowerCase() === 'purge' ? 'purge' : 'standard';
   if (!groupId) {
     return;
   }
   try {
     clearBeeroomRuntimeCachesByGroup(groupId);
-    await beeroomStore.deleteGroup(groupId);
+    await beeroomStore.deleteGroup(groupId, { mode });
     await Promise.all([
       agentStore.loadAgents().catch(() => null),
       loadRunningAgents({ force: true }).catch(() => null)

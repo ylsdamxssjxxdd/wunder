@@ -813,8 +813,13 @@ mod tests {
         storage
             .upsert_user_agent(&mother_agent)
             .expect("upsert mother agent");
-        set_mother_agent(storage.as_ref(), "alice", &hive.hive_id, &mother_agent.agent_id)
-            .expect("set mother agent");
+        set_mother_agent(
+            storage.as_ref(),
+            "alice",
+            &hive.hive_id,
+            &mother_agent.agent_id,
+        )
+        .expect("set mother agent");
 
         let worker_agent = UserAgentRecord {
             agent_id: "agent_worker".to_string(),

@@ -9,13 +9,13 @@ use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::orchestration_context::parse_round_index_token;
 use crate::services::tools::command_sessions::CommandSessionBroker;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
 use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
 use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
-use crate::services::orchestration_context::parse_round_index_token;
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -497,15 +497,14 @@ mod tests {
             &std::collections::HashMap::new(),
         );
 
-        let resolved = super::resolve_tool_path(
-            &workspace,
-            "alice",
-            "notes/new.txt",
-            &[extra_root],
-        )
-        .expect("resolved");
+        let resolved =
+            super::resolve_tool_path(&workspace, "alice", "notes/new.txt", &[extra_root])
+                .expect("resolved");
 
-        assert_eq!(resolved, workspace_root.join("alice").join("notes").join("new.txt"));
+        assert_eq!(
+            resolved,
+            workspace_root.join("alice").join("notes").join("new.txt")
+        );
     }
 
     #[test]

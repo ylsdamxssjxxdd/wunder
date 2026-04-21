@@ -3028,14 +3028,13 @@ fn reject_or_repair_orchestration_dispatch(
             ));
         }
         if allow_orchestration_send {
-            let round_index =
-                crate::services::orchestration_context::load_session_context(
-                    state.storage.as_ref(),
-                    user_id,
-                    session_id,
-                )
-                .map(|context| context.round_index)
-                .unwrap_or(1);
+            let round_index = crate::services::orchestration_context::load_session_context(
+                state.storage.as_ref(),
+                user_id,
+                session_id,
+            )
+            .map(|context| context.round_index)
+            .unwrap_or(1);
             let _ = repair_orchestration_session_main_thread(
                 state.storage.as_ref(),
                 user_id,

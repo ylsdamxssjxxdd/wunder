@@ -1044,12 +1044,16 @@ export const useBeeroomStore = defineStore('beeroom', {
       return group;
     },
 
-    async deleteGroup(groupId: unknown) {
+    async deleteGroup(groupId: unknown, options: { mode?: 'standard' | 'purge' } = {}) {
       const normalizedGroupId = normalizeGroupId(groupId || this.activeGroupId);
       if (!normalizedGroupId) {
         return 0;
       }
-      const { data } = await deleteBeeroomGroup(normalizedGroupId);
+      const query: QueryParams = {};
+      if (options.mode === 'purge') {
+        query.mode = 'purge';
+      }
+      const { data } = await deleteBeeroomGroup(normalizedGroupId, query);
       const deleted = Number(data?.data?.deleted || 0);
       this.clearGroupRuntimeCaches(normalizedGroupId);
       await this.loadGroups();

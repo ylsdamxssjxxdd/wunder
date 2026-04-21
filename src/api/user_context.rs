@@ -1,5 +1,5 @@
-use crate::auth as guard_auth;
 use crate::api::errors::error_response_with_detail;
+use crate::auth as guard_auth;
 use crate::i18n;
 use crate::state::AppState;
 use crate::storage::UserAccountRecord;
@@ -162,13 +162,7 @@ fn requested_user_matches_token_scope(requested: &str, token_user_id: &str) -> b
 
 fn error_response(status: StatusCode, message: String) -> Response {
     if status == StatusCode::UNAUTHORIZED {
-        return error_response_with_detail(
-            status,
-            Some("AUTH_REQUIRED"),
-            message,
-            None,
-            None,
-        );
+        return error_response_with_detail(status, Some("AUTH_REQUIRED"), message, None, None);
     }
     crate::api::errors::error_response(status, message)
 }

@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::services::attachment::sanitize_filename_stem;
 use crate::prompting::read_prompt_template;
+use crate::services::attachment::sanitize_filename_stem;
 use crate::storage::{AgentThreadRecord, ChatSessionRecord, StorageBackend, UserAgentRecord};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -212,7 +212,11 @@ pub fn round_state_meta_key(user_id: &str, orchestration_id: &str) -> String {
 }
 
 fn history_meta_prefix(user_id: &str, group_id: &str) -> String {
-    format!("{HISTORY_META_PREFIX}{}:{}:", user_id.trim(), group_id.trim())
+    format!(
+        "{HISTORY_META_PREFIX}{}:{}:",
+        user_id.trim(),
+        group_id.trim()
+    )
 }
 
 pub fn normalize_round_index(round_index: i64) -> i64 {
@@ -293,7 +297,10 @@ pub fn normalize_orchestration_run_name(value: &str) -> String {
     if compact.is_empty() {
         return ORCHESTRATION_RUN_NAME_FALLBACK.to_string();
     }
-    compact.chars().take(ORCHESTRATION_RUN_NAME_MAX_LEN).collect()
+    compact
+        .chars()
+        .take(ORCHESTRATION_RUN_NAME_MAX_LEN)
+        .collect()
 }
 
 pub fn build_orchestration_run_id(preferred_name: Option<&str>) -> String {
@@ -489,11 +496,7 @@ pub fn load_hive_state(
     Some(state)
 }
 
-pub fn clear_hive_state(
-    storage: &dyn StorageBackend,
-    user_id: &str,
-    group_id: &str,
-) -> Result<()> {
+pub fn clear_hive_state(storage: &dyn StorageBackend, user_id: &str, group_id: &str) -> Result<()> {
     let cleaned_user_id = user_id.trim();
     let cleaned_group_id = group_id.trim();
     if cleaned_user_id.is_empty() || cleaned_group_id.is_empty() {
@@ -539,7 +542,10 @@ pub fn load_member_binding(
         return None;
     }
     let raw = storage
-        .get_meta(&member_binding_meta_key(cleaned_orchestration_id, cleaned_agent_id))
+        .get_meta(&member_binding_meta_key(
+            cleaned_orchestration_id,
+            cleaned_agent_id,
+        ))
         .ok()
         .flatten()?;
     let mut binding = serde_json::from_str::<OrchestrationMemberBinding>(raw.trim()).ok()?;
@@ -572,7 +578,9 @@ pub fn list_member_bindings(
     let mut items = storage
         .list_meta_prefix(&prefix)?
         .into_iter()
-        .filter_map(|(_, value)| serde_json::from_str::<OrchestrationMemberBinding>(value.trim()).ok())
+        .filter_map(|(_, value)| {
+            serde_json::from_str::<OrchestrationMemberBinding>(value.trim()).ok()
+        })
         .collect::<Vec<_>>();
     items.sort_by(|left, right| left.agent_id.cmp(&right.agent_id));
     Ok(items)
@@ -638,15 +646,13 @@ pub fn build_closed_history_record(
     latest_round_index: i64,
     updated_at: f64,
 ) -> OrchestrationHistoryRecord {
-    let mut record = existing
-        .cloned()
-        .unwrap_or_else(|| {
-            build_history_record_from_state(
-                state,
-                ORCHESTRATION_HISTORY_STATUS_CLOSED,
-                latest_round_index,
-            )
-        });
+    let mut record = existing.cloned().unwrap_or_else(|| {
+        build_history_record_from_state(
+            state,
+            ORCHESTRATION_HISTORY_STATUS_CLOSED,
+            latest_round_index,
+        )
+    });
     record.status = ORCHESTRATION_HISTORY_STATUS_CLOSED.to_string();
     record.latest_round_index = normalize_round_index(latest_round_index);
     record.updated_at = updated_at.max(0.0);
@@ -662,7 +668,9 @@ pub fn persist_history_record(
     let cleaned_user_id = user_id.trim();
     let cleaned_group_id = record.group_id.trim();
     let cleaned_orchestration_id = record.orchestration_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_group_id.is_empty() || cleaned_orchestration_id.is_empty()
+    if cleaned_user_id.is_empty()
+        || cleaned_group_id.is_empty()
+        || cleaned_orchestration_id.is_empty()
     {
         return Ok(());
     }
@@ -676,11 +684,12 @@ pub fn persist_history_record(
     normalized.status = normalized.status.trim().to_string();
     normalized.latest_round_index = normalize_round_index(normalized.latest_round_index);
     normalized.parent_orchestration_id = normalized.parent_orchestration_id.trim().to_string();
-    normalized.branch_root_orchestration_id = if normalized.branch_root_orchestration_id.trim().is_empty() {
-        cleaned_orchestration_id.to_string()
-    } else {
-        normalized.branch_root_orchestration_id.trim().to_string()
-    };
+    normalized.branch_root_orchestration_id =
+        if normalized.branch_root_orchestration_id.trim().is_empty() {
+            cleaned_orchestration_id.to_string()
+        } else {
+            normalized.branch_root_orchestration_id.trim().to_string()
+        };
     normalized.branch_from_round_index = normalized.branch_from_round_index.max(0);
     normalized.branch_depth = normalized.branch_depth.max(0);
     storage.set_meta(
@@ -699,7 +708,9 @@ pub fn load_history_record(
     let cleaned_user_id = user_id.trim();
     let cleaned_group_id = group_id.trim();
     let cleaned_orchestration_id = orchestration_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_group_id.is_empty() || cleaned_orchestration_id.is_empty()
+    if cleaned_user_id.is_empty()
+        || cleaned_group_id.is_empty()
+        || cleaned_orchestration_id.is_empty()
     {
         return None;
     }
@@ -748,7 +759,9 @@ pub fn clear_history_record(
     let cleaned_user_id = user_id.trim();
     let cleaned_group_id = group_id.trim();
     let cleaned_orchestration_id = orchestration_id.trim();
-    if cleaned_user_id.is_empty() || cleaned_group_id.is_empty() || cleaned_orchestration_id.is_empty()
+    if cleaned_user_id.is_empty()
+        || cleaned_group_id.is_empty()
+        || cleaned_orchestration_id.is_empty()
     {
         return Ok(());
     }
@@ -773,7 +786,9 @@ pub fn list_history_records(
     let mut items = storage
         .list_meta_prefix(&history_meta_prefix(cleaned_user_id, cleaned_group_id))?
         .into_iter()
-        .filter_map(|(_, value)| serde_json::from_str::<OrchestrationHistoryRecord>(value.trim()).ok())
+        .filter_map(|(_, value)| {
+            serde_json::from_str::<OrchestrationHistoryRecord>(value.trim()).ok()
+        })
         .filter_map(|record| {
             load_history_record(
                 storage,
@@ -898,7 +913,10 @@ pub fn load_round_state(
         return None;
     }
     let raw = storage
-        .get_meta(&round_state_meta_key(cleaned_user_id, cleaned_orchestration_id))
+        .get_meta(&round_state_meta_key(
+            cleaned_user_id,
+            cleaned_orchestration_id,
+        ))
         .ok()
         .flatten()?;
     let mut state = serde_json::from_str::<OrchestrationRoundState>(raw.trim()).ok()?;
@@ -934,7 +952,10 @@ pub fn clear_round_state(
     if cleaned_user_id.is_empty() || cleaned_orchestration_id.is_empty() {
         return Ok(());
     }
-    storage.delete_meta_prefix(&round_state_meta_key(cleaned_user_id, cleaned_orchestration_id))?;
+    storage.delete_meta_prefix(&round_state_meta_key(
+        cleaned_user_id,
+        cleaned_orchestration_id,
+    ))?;
     Ok(())
 }
 
@@ -1070,10 +1091,8 @@ pub fn copy_round_situation_files(
         if !source.is_file() {
             continue;
         }
-        let target = workspace.resolve_path(
-            workspace_id,
-            &situation_path(target_run_id, round_index),
-        )?;
+        let target =
+            workspace.resolve_path(workspace_id, &situation_path(target_run_id, round_index))?;
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -1091,10 +1110,8 @@ pub fn clear_orchestration_workspace_tree(
     if cleaned_run_id.is_empty() {
         return Ok(());
     }
-    let target = workspace.resolve_path(
-        workspace_id,
-        &["orchestration", cleaned_run_id].join("/"),
-    )?;
+    let target =
+        workspace.resolve_path(workspace_id, &["orchestration", cleaned_run_id].join("/"))?;
     if target.exists() {
         fs::remove_dir_all(target)?;
     }
@@ -1107,10 +1124,7 @@ pub fn delete_round_directories_after(
     run_id: &str,
     retained_round_index: i64,
 ) -> Result<()> {
-    let root = workspace.resolve_path(
-        workspace_id,
-        &["orchestration", run_id.trim()].join("/"),
-    )?;
+    let root = workspace.resolve_path(workspace_id, &["orchestration", run_id.trim()].join("/"))?;
     if !root.exists() || !root.is_dir() {
         return Ok(());
     }
@@ -1270,7 +1284,9 @@ pub fn ensure_orchestration_member_session(
     agent: &UserAgentRecord,
 ) -> Result<(OrchestrationMemberBinding, bool)> {
     if let Some(existing) = load_member_binding(storage, &state.orchestration_id, &agent.agent_id) {
-        if let Some(session) = storage.get_chat_session(user_id.trim(), existing.session_id.trim())? {
+        if let Some(session) =
+            storage.get_chat_session(user_id.trim(), existing.session_id.trim())?
+        {
             let session_agent_id = session.agent_id.as_deref().unwrap_or("").trim();
             if session_agent_id == agent.agent_id.trim() {
                 bind_member_session_as_main_thread(
@@ -1384,7 +1400,8 @@ pub fn repair_active_orchestration_main_threads(
     let bindings = list_member_bindings(storage, &state.orchestration_id)?;
     let mut repaired_agent_ids = Vec::new();
     for binding in bindings {
-        if ensure_orchestration_binding_main_thread(storage, user_id, state, &binding, round_index)? {
+        if ensure_orchestration_binding_main_thread(storage, user_id, state, &binding, round_index)?
+        {
             repaired_agent_ids.push(binding.agent_id);
         }
     }
@@ -1416,8 +1433,13 @@ pub fn repair_orchestration_session_main_thread(
     if binding.session_id.trim() != cleaned_session_id {
         return Ok(Some((state, binding, false)));
     }
-    let repaired =
-        ensure_orchestration_binding_main_thread(storage, cleaned_user_id, &state, &binding, round_index)?;
+    let repaired = ensure_orchestration_binding_main_thread(
+        storage,
+        cleaned_user_id,
+        &state,
+        &binding,
+        round_index,
+    )?;
     Ok(Some((state, binding, repaired)))
 }
 
@@ -1465,8 +1487,13 @@ pub fn load_dispatch_context(
     session_id: &str,
 ) -> Option<OrchestrationDispatchContext> {
     let context = load_session_context(storage, user_id, session_id)?;
-    let situation = read_situation_file(workspace, workspace_id, &context.run_id, context.round_index)
-        .unwrap_or_default();
+    let situation = read_situation_file(
+        workspace,
+        workspace_id,
+        &context.run_id,
+        context.round_index,
+    )
+    .unwrap_or_default();
     Some(OrchestrationDispatchContext {
         run_id: context.run_id,
         round_index: context.round_index,
@@ -1686,7 +1713,8 @@ mod tests {
             "Risk Worker",
             false,
         );
-        assert!(message.contains("/workspaces/alice__c__2/orchestration/orch_demo/round_01/Risk Worker"));
+        assert!(message
+            .contains("/workspaces/alice__c__2/orchestration/orch_demo/round_01/Risk Worker"));
         assert!(!message.contains("位置：round_01/Risk Worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
@@ -1767,7 +1795,8 @@ mod tests {
     }
 
     #[test]
-    fn collect_descendant_history_ids_after_round_keeps_earlier_branch_but_removes_nested_late_branch() {
+    fn collect_descendant_history_ids_after_round_keeps_earlier_branch_but_removes_nested_late_branch(
+    ) {
         let root_state = OrchestrationHiveState {
             orchestration_id: "orch_root".to_string(),
             run_id: "root".to_string(),

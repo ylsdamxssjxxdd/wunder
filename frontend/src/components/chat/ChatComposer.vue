@@ -895,19 +895,10 @@ const resolveLatestContextTotalTokensFromMessages = (messages: unknown[]): numbe
   }
   return null;
 };
-const tokenNumberFormatter = (() => {
-  let formatter: Intl.NumberFormat | null = null;
-  return (): Intl.NumberFormat => {
-    if (!formatter) {
-      formatter = new Intl.NumberFormat();
-    }
-    return formatter;
-  };
-})();
 const formatContextTokenCount = (value: unknown): string => {
   const normalized = normalizeTokenCount(value);
   if (normalized === null) return '--';
-  return tokenNumberFormatter().format(normalized);
+  return String(normalized);
 };
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);

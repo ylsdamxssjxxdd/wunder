@@ -1789,9 +1789,9 @@ mod tests {
         stable_json_signature,
     };
     use anyhow::Result;
-    use std::io::Write;
     use serde_json::json;
     use std::fs;
+    use std::io::Write;
     use tempfile::tempdir;
     use zip::write::FileOptions;
     use zip::{CompressionMethod, ZipWriter};

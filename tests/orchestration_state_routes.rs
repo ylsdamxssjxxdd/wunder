@@ -227,7 +227,8 @@ fn round_ids(payload: &Value, pointer: &str) -> Vec<String> {
         .pointer(pointer)
         .and_then(Value::as_array)
         .map(|items| {
-            items.iter()
+            items
+                .iter()
                 .filter_map(|item| item.get("id").and_then(Value::as_str).map(str::to_string))
                 .collect::<Vec<_>>()
         })
@@ -261,9 +262,29 @@ fn now_ts() -> f64 {
 async fn exit_orchestration_clears_active_state_and_rebinds_fresh_main_threads() {
     let app = build_test_app().await;
     let user = create_user_session(&app, "orch_exit_user");
-    let hive = create_hive(&app, &user, "orch_exit_hive", "Orch Exit Hive", "orchestration exit");
-    let mother = create_agent(&app, &user, &hive.hive_id, "agent_mother_exit", "Mother Exit", true);
-    let worker = create_agent(&app, &user, &hive.hive_id, "agent_worker_exit", "Worker Exit", false);
+    let hive = create_hive(
+        &app,
+        &user,
+        "orch_exit_hive",
+        "Orch Exit Hive",
+        "orchestration exit",
+    );
+    let mother = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_mother_exit",
+        "Mother Exit",
+        true,
+    );
+    let worker = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_worker_exit",
+        "Worker Exit",
+        false,
+    );
 
     let (status, create_payload) = send_json(
         &app.app,
@@ -302,7 +323,9 @@ async fn exit_orchestration_clears_active_state_and_rebinds_fresh_main_threads()
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        exit_payload.pointer("/data/active").and_then(Value::as_bool),
+        exit_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(false)
     );
 
@@ -328,7 +351,9 @@ async fn exit_orchestration_clears_active_state_and_rebinds_fresh_main_threads()
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        state_payload.pointer("/data/active").and_then(Value::as_bool),
+        state_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(state_payload.pointer("/data/state"), Some(&Value::Null));
@@ -483,7 +508,11 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         vec!["round_01".to_string()]
     );
     assert_eq!(
-        round_user_message(&cancel_round_two_payload, "/data/round_state/rounds", "round_01"),
+        round_user_message(
+            &cancel_round_two_payload,
+            "/data/round_state/rounds",
+            "round_01"
+        ),
         "第一轮正式消息".to_string()
     );
     assert_eq!(
@@ -508,10 +537,15 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     assert_eq!(status, StatusCode::OK);
     let active_item = history_item(&active_history_payload, &orchestration_id);
     assert_eq!(
-        active_item.get("latest_round_index").and_then(Value::as_i64),
+        active_item
+            .get("latest_round_index")
+            .and_then(Value::as_i64),
         Some(1)
     );
-    assert_eq!(active_item.get("status").and_then(Value::as_str), Some("active"));
+    assert_eq!(
+        active_item.get("status").and_then(Value::as_str),
+        Some("active")
+    );
 
     let (status, exit_payload) = send_json(
         &app.app,
@@ -525,7 +559,9 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        exit_payload.pointer("/data/active").and_then(Value::as_bool),
+        exit_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(false)
     );
 
@@ -546,7 +582,11 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         vec!["round_01".to_string()]
     );
     assert_eq!(
-        round_user_message(&restore_payload, "/data/state/round_state/rounds", "round_01"),
+        round_user_message(
+            &restore_payload,
+            "/data/state/round_state/rounds",
+            "round_01"
+        ),
         "第一轮正式消息".to_string()
     );
     assert_eq!(
@@ -583,7 +623,9 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        state_payload.pointer("/data/active").and_then(Value::as_bool),
+        state_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(true)
     );
     assert_eq!(
@@ -723,7 +765,9 @@ async fn disconnected_history_restore_keeps_orchestration_inactive() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        state_payload.pointer("/data/active").and_then(Value::as_bool),
+        state_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(false)
     );
     assert_eq!(state_payload.pointer("/data/state"), Some(&Value::Null));
@@ -845,7 +889,9 @@ async fn get_state_repairs_mother_main_thread_back_to_orchestration_session() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        state_payload.pointer("/data/active").and_then(Value::as_bool),
+        state_payload
+            .pointer("/data/active")
+            .and_then(Value::as_bool),
         Some(true)
     );
     assert_eq!(

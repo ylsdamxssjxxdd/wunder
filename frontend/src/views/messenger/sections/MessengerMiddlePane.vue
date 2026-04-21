@@ -2188,15 +2188,46 @@ const handleSwarmEditSubmit = async (payload: Record<string, unknown>) => {
   }
 };
 
-const handleSwarmEditDelete = async () => {
+const handleSwarmEditDelete = async (mode?: 'standard' | 'purge') => {
   const group = swarmEditingGroup.value;
   const groupId = resolveSwarmGroupId(group);
   if (!groupId || swarmEditDeleting.value) {
     return;
   }
+
+  let resolvedMode: 'standard' | 'purge' = mode || 'standard';
+  if (!mode) {
+    try {
+      await ElMessageBox.confirm(
+        t('beeroom.message.deleteModePrompt', { name: resolveSwarmGroupName(group) }),
+        t('common.delete'),
+        {
+          confirmButtonText: t('common.delete'),
+          cancelButtonText: t('beeroom.dialog.deletePurge'),
+          distinguishCancelAndClose: true,
+          showClose: true,
+          closeOnClickModal: false,
+          closeOnPressEscape: true,
+          type: 'warning'
+        }
+      );
+      resolvedMode = 'standard';
+    } catch (selectionAction) {
+      const action = String(selectionAction || '').trim().toLowerCase();
+      if (action === 'cancel') {
+        resolvedMode = 'purge';
+      } else {
+        return;
+      }
+    }
+  }
+
   try {
     await ElMessageBox.confirm(
-      t('beeroom.message.deleteConfirm', { name: resolveSwarmGroupName(group) }),
+      t(
+        resolvedMode === 'purge' ? 'beeroom.message.deleteConfirmPurge' : 'beeroom.message.deleteConfirm',
+        { name: resolveSwarmGroupName(group) }
+      ),
       t('common.delete'),
       {
         confirmButtonText: t('common.delete'),
@@ -2210,7 +2241,10 @@ const handleSwarmEditDelete = async () => {
 
   swarmEditDeleting.value = true;
   try {
-    await deleteBeeroomGroup(group);
+    await deleteBeeroomGroup({
+      ...group,
+      __delete_mode: resolvedMode
+    });
     swarmEditVisible.value = false;
     swarmEditingGroup.value = null;
   } finally {

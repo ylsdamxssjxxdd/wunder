@@ -2399,8 +2399,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                         context.storage.as_ref(),
                         user_id,
                         &target_agent.agent_id,
-                    )
-                {
+                    ) {
                     let (binding, created) = ensure_orchestration_member_session(
                         context.storage.as_ref(),
                         user_id,
@@ -10208,7 +10207,10 @@ mod tests {
             0,
             &HashMap::new(),
         ));
-        let run_root = workspace_root.join("workspace-test").join("orchestration").join("orch_demo");
+        let run_root = workspace_root
+            .join("workspace-test")
+            .join("orchestration")
+            .join("orch_demo");
         std::fs::create_dir_all(&run_root).expect("create run root");
         crate::services::orchestration_context::persist_session_context(
             storage.as_ref(),

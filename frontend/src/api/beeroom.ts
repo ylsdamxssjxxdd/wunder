@@ -87,8 +87,11 @@ export const getBeeroomGroup = (groupId: ApiId, params: QueryParams = {}) =>
 export const updateBeeroomGroup = (groupId: ApiId, payload: ApiPayload) =>
   api.put(`/beeroom/groups/${encodeURIComponent(groupId)}`, payload, { timeout: 60000 });
 
-export const deleteBeeroomGroup = (groupId: ApiId) =>
-  api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}`, { timeout: 60000 });
+export const deleteBeeroomGroup = (
+  groupId: ApiId,
+  params: QueryParams = {}
+) =>
+  api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}`, { params, timeout: 60000 });
 
 export const moveBeeroomAgents = (groupId: ApiId, payload: ApiPayload) =>
   api.post(`/beeroom/groups/${encodeURIComponent(groupId)}/move_agents`, payload, {

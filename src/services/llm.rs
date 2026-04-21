@@ -2193,11 +2193,11 @@ where
                 || has_stream_tool_activity(choice.and_then(|value| value.get("message")))
                 || has_stream_tool_activity(choice)
                 || has_stream_tool_activity(Some(&payload));
-            let false_tool_stop = is_false_tool_stop_reason(
-                choice.and_then(|value| value.get("finish_reason")),
-            ) || is_false_tool_stop_reason(payload.get("finish_reason"))
-                || is_false_tool_stop_reason(payload.get("stop_reason"))
-                || is_false_tool_stop_reason(payload.get("stopReason"));
+            let false_tool_stop =
+                is_false_tool_stop_reason(choice.and_then(|value| value.get("finish_reason")))
+                    || is_false_tool_stop_reason(payload.get("finish_reason"))
+                    || is_false_tool_stop_reason(payload.get("stop_reason"))
+                    || is_false_tool_stop_reason(payload.get("stopReason"));
             update_stream_tool_calls(tool_calls_accumulator, &delta);
             if let Some(message) = choice.and_then(|value| value.get("message")) {
                 update_stream_tool_calls(tool_calls_accumulator, message);

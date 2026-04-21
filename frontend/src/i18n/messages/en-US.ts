@@ -105,12 +105,16 @@ export default {
   'beeroom.dialog.workerAgentHint':
     'Editing workers here will also update each agent’s real swarm grouping in agent settings.',
   'beeroom.dialog.defaultWorkerHint': 'Default swarm members are managed by each agent’s own grouping.',
+  'beeroom.dialog.deletePurge': 'Permanently remove pack content',
   'beeroom.dialog.moveTitle': 'Move Agents to Swarm',
   'beeroom.dialog.moveCount': '{count} agents selected',
   'beeroom.dialog.moveTargetPlaceholder': 'Select agents to move into this swarm',
   'beeroom.message.hiveCreated': 'Swarm created',
   'beeroom.message.hiveDeleted': 'Swarm deleted',
+  'beeroom.message.deleteModePrompt':
+    'Delete swarm "{name}" in standard mode, or choose "Permanently remove pack content" to also remove imported internal agents and unused internal skills from this hive pack?',
   'beeroom.message.deleteConfirm': 'Delete swarm "{name}"? Agents inside it will be marked as having no swarm, and the swarm activity history will be cleared.',
+  'beeroom.message.deleteConfirmPurge': 'Permanently remove swarm "{name}"? This deletes agents in the swarm and removes internal skills imported with this hive pack when they are not still used by other agents. Swarm activity history will also be cleared.',
   'beeroom.message.agentMoved': 'Agents moved into swarm',
   'beeroom.empty.description': 'No swarm description yet',
   'beeroom.empty.selectGroup': 'Select a swarm to inspect members and missions',

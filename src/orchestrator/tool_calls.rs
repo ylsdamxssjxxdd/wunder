@@ -672,7 +672,10 @@ fn parse_qwen_xml_tool_call_payload(payload: &str) -> Option<ToolCall> {
             if name.is_empty() {
                 continue;
             }
-            let value = captures.name("value").map(|entry| entry.as_str()).unwrap_or("");
+            let value = captures
+                .name("value")
+                .map(|entry| entry.as_str())
+                .unwrap_or("");
             arguments.insert(name, parse_qwen_parameter_value(value));
         }
     }
@@ -728,7 +731,8 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
         .or_else(|| extract_tagged_text(payload, "tool"))
         .map(|value| clean_tool_call_name(value.as_str()))
         .filter(|value| !value.is_empty());
-    let Some(name) = name.or_else(|| parse_qwen_xml_tool_call_payload(payload).map(|call| call.name))
+    let Some(name) =
+        name.or_else(|| parse_qwen_xml_tool_call_payload(payload).map(|call| call.name))
     else {
         return None;
     };

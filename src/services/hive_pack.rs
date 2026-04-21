@@ -24,6 +24,7 @@ use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 const HIVE_PACK_META_PREFIX: &str = "beeroom_pack_job:";
+pub const HIVE_PACK_IMPORT_BINDING_PREFIX: &str = "beeroom_pack_import_binding:";
 const HIVE_PACK_TEMP_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
 const HIVE_PACK_TEMP_DIR: &str = "wunder_hivepack";
 const HIVE_PACK_CHECKSUM_FILE: &str = "checksums.sha256";
@@ -44,6 +45,22 @@ pub struct HivePackJobRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<HivePackArtifact>,
     pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HivePackImportBinding {
+    pub user_id: String,
+    pub hive_id: String,
+    #[serde(default)]
+    pub job_id: String,
+    #[serde(default)]
+    pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub skill_names: Vec<String>,
+    #[serde(default)]
+    pub created_at: f64,
+    #[serde(default)]
     pub updated_at: f64,
 }
 
@@ -338,6 +355,8 @@ struct ImportRuntime {
     installed_skill_names: Vec<String>,
     replaced_skill_backups: Vec<ReplacedSkillBackup>,
     import_skill_name_keys: HashSet<String>,
+    imported_skill_cache: HashMap<String, ImportedSkillCacheEntry>,
+    import_skill_source_hashes: HashMap<PathBuf, String>,
 }
 
 #[derive(Debug)]
@@ -392,6 +411,12 @@ struct ExportSkillSource {
 struct SkillInstallSnapshot {
     source_skill_id: String,
     preferred_name: String,
+    final_name: String,
+    reused: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ImportedSkillCacheEntry {
     final_name: String,
 }
 
@@ -467,6 +492,36 @@ pub fn get_job_for_user(
 
 pub fn resolve_export_artifact_path(job: &HivePackJobRecord) -> Option<PathBuf> {
     job.artifact.as_ref().map(|item| PathBuf::from(&item.path))
+}
+
+pub fn get_latest_hive_pack_import_binding(
+    state: &AppState,
+    user_id: &str,
+    hive_id: &str,
+) -> Result<Option<HivePackImportBinding>> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_hive_id = normalize_hive_id(hive_id);
+    if cleaned_user_id.is_empty() || cleaned_hive_id.is_empty() {
+        return Ok(None);
+    }
+    let prefix = import_binding_meta_prefix(cleaned_user_id, &cleaned_hive_id);
+    let mut latest: Option<HivePackImportBinding> = None;
+    for (_key, raw) in state.storage.list_meta_prefix(&prefix)? {
+        let Ok(binding) = serde_json::from_str::<HivePackImportBinding>(&raw) else {
+            continue;
+        };
+        if binding.user_id.trim() != cleaned_user_id || normalize_hive_id(&binding.hive_id) != cleaned_hive_id {
+            continue;
+        }
+        let replace = latest
+            .as_ref()
+            .map(|current| binding.updated_at >= current.updated_at)
+            .unwrap_or(true);
+        if replace {
+            latest = Some(binding);
+        }
+    }
+    Ok(latest)
 }
 
 pub async fn run_import_job(
@@ -657,6 +712,7 @@ async fn run_import_job_inner(
     }
 
     // Collect deterministic rename entries so UI can explain conflict outcomes.
+    let mut skill_rename_keys = HashSet::new();
     let skill_renames = worker_snapshots
         .iter()
         .flat_map(|snapshot| {
@@ -664,7 +720,17 @@ async fn run_import_job_inner(
                 .skill_installs
                 .iter()
                 .filter_map(|skill_install| {
-                    if skill_install.preferred_name == skill_install.final_name {
+                    if skill_install.preferred_name == skill_install.final_name
+                        || skill_install.reused
+                    {
+                        return None;
+                    }
+                    let rename_key = format!(
+                        "{}=>{}",
+                        normalize_conflict_key(&skill_install.preferred_name),
+                        normalize_conflict_key(&skill_install.final_name)
+                    );
+                    if !skill_rename_keys.insert(rename_key) {
                         return None;
                     }
                     Some(json!({
@@ -853,6 +919,18 @@ async fn run_import_job_inner(
         }
     }));
     job.updated_at = now_ts();
+    persist_import_binding(
+        state,
+        &HivePackImportBinding {
+            user_id: user.user_id.clone(),
+            hive_id: target_hive.hive.hive_id.clone(),
+            job_id: job.job_id.clone(),
+            agent_ids: runtime.created_agents.clone(),
+            skill_names: runtime.installed_skill_names.clone(),
+            created_at: job.created_at,
+            updated_at: job.updated_at,
+        },
+    )?;
     persist_job(state, job)?;
     if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
         tracing::warn!(
@@ -1170,6 +1248,7 @@ fn install_worker_snapshot(
         .collect::<Vec<_>>();
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
+    let mut declared_skill_name_map = HashMap::new();
     for skill_source in &skill_sources {
         let preferred = normalize_import_skill_name_base(&skill_source.preferred_name, "skill");
         let source_skill_id = if skill_source.source_skill_id.trim().is_empty() {
@@ -1177,36 +1256,56 @@ fn install_worker_snapshot(
         } else {
             skill_source.source_skill_id.trim().to_string()
         };
-        let final_name = resolve_import_skill_name(
-            skill_root,
-            &preferred,
-            conflict_mode,
-            &runtime.import_skill_name_keys,
-        );
-        let skill_target = skill_root.join(&final_name);
-        if conflict_mode.allows_direct_replace() && skill_target.exists() {
-            let backup_dir =
-                replace_backup_root.join(format!("{}-{}", final_name, Uuid::new_v4().simple()));
-            copy_dir_recursive(&skill_target, &backup_dir)?;
-            runtime.replaced_skill_backups.push(ReplacedSkillBackup {
-                skill_name: final_name.clone(),
-                target_dir: skill_target.clone(),
-                backup_dir,
-            });
-            std::fs::remove_dir_all(&skill_target)?;
-        }
-        copy_dir_recursive(&skill_source.source_dir, &skill_target)?;
-        rewrite_skill_md_name(&skill_target, &final_name)?;
-        runtime.installed_skill_dirs.push(skill_target);
-        runtime.installed_skill_names.push(final_name.clone());
-        runtime.import_skill_name_keys.insert(final_name.clone());
+        let cache_key =
+            build_imported_skill_cache_key(&preferred, skill_source.source_dir.as_path(), runtime)?;
+        let (final_name, reused) = if let Some(cached) =
+            runtime.imported_skill_cache.get(&cache_key)
+        {
+            (cached.final_name.clone(), true)
+        } else {
+            let final_name = resolve_import_skill_name(
+                skill_root,
+                &preferred,
+                conflict_mode,
+                &runtime.import_skill_name_keys,
+            );
+            let skill_target = skill_root.join(&final_name);
+            if conflict_mode.allows_direct_replace() && skill_target.exists() {
+                let backup_dir =
+                    replace_backup_root.join(format!("{}-{}", final_name, Uuid::new_v4().simple()));
+                copy_dir_recursive(&skill_target, &backup_dir)?;
+                runtime.replaced_skill_backups.push(ReplacedSkillBackup {
+                    skill_name: final_name.clone(),
+                    target_dir: skill_target.clone(),
+                    backup_dir,
+                });
+                std::fs::remove_dir_all(&skill_target)?;
+            }
+            copy_dir_recursive(&skill_source.source_dir, &skill_target)?;
+            rewrite_skill_md_name(&skill_target, &final_name)?;
+            runtime.installed_skill_dirs.push(skill_target);
+            runtime.installed_skill_names.push(final_name.clone());
+            runtime.import_skill_name_keys.insert(final_name.clone());
+            runtime.imported_skill_cache.insert(
+                cache_key,
+                ImportedSkillCacheEntry {
+                    final_name: final_name.clone(),
+                },
+            );
+            (final_name, false)
+        };
+        declared_skill_name_map.insert(source_skill_id.clone(), final_name.clone());
+        declared_skill_name_map.insert(skill_source.preferred_name.clone(), final_name.clone());
         skill_installs.push(SkillInstallSnapshot {
             source_skill_id,
             preferred_name: preferred,
             final_name: final_name.clone(),
+            reused,
         });
         installed_skills.push(final_name);
     }
+    let declared_skill_names =
+        remap_import_declared_skill_names(&declared_skill_names, &declared_skill_name_map);
 
     Ok(WorkerImportSnapshot {
         worker_id: worker_ref.worker_id.clone(),
@@ -1296,6 +1395,72 @@ fn resolve_import_workers(
         occupied.insert(worker.worker_id.clone());
     }
     Ok(workers)
+}
+
+fn remap_import_declared_skill_names(
+    declared_skill_names: &[String],
+    renamed_skill_names: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut remapped = Vec::with_capacity(declared_skill_names.len());
+    for name in declared_skill_names {
+        let cleaned = name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if let Some(replacement) = renamed_skill_names.get(cleaned) {
+            remapped.push(replacement.clone());
+        } else {
+            remapped.push(cleaned.to_string());
+        }
+    }
+    normalize_string_items(&remapped)
+}
+
+fn build_imported_skill_cache_key(
+    preferred_name: &str,
+    source_dir: &Path,
+    runtime: &mut ImportRuntime,
+) -> Result<String> {
+    let normalized_name = normalize_import_skill_name_base(preferred_name, "skill");
+    let source_hash =
+        hash_import_skill_source_dir(source_dir, &mut runtime.import_skill_source_hashes)?;
+    Ok(format!("{normalized_name}::{source_hash}"))
+}
+
+fn hash_import_skill_source_dir(
+    source_dir: &Path,
+    cache: &mut HashMap<PathBuf, String>,
+) -> Result<String> {
+    let cache_key = source_dir.to_path_buf();
+    if let Some(existing) = cache.get(&cache_key) {
+        return Ok(existing.clone());
+    }
+
+    let mut entries = WalkDir::new(source_dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.path().to_string_lossy().to_string());
+
+    let mut hasher = Sha256::new();
+    for entry in entries {
+        let relative = entry
+            .path()
+            .strip_prefix(source_dir)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        let bytes = std::fs::read(entry.path())
+            .with_context(|| format!("read {} failed", entry.path().display()))?;
+        hasher.update(bytes);
+        hasher.update([0xff]);
+    }
+    let digest = hex::encode(hasher.finalize());
+    cache.insert(cache_key, digest.clone());
+    Ok(digest)
 }
 
 fn normalize_string_items(values: &[String]) -> Vec<String> {
@@ -2548,8 +2713,35 @@ fn persist_job(state: &AppState, job: &HivePackJobRecord) -> Result<()> {
     Ok(())
 }
 
+fn persist_import_binding(state: &AppState, binding: &HivePackImportBinding) -> Result<()> {
+    let key = import_binding_meta_key(
+        binding.user_id.trim(),
+        &binding.hive_id,
+        binding.job_id.trim(),
+    );
+    let payload = serde_json::to_string(binding)?;
+    state.user_store.set_meta(&key, &payload)?;
+    Ok(())
+}
+
 fn meta_key(job_id: &str) -> String {
     format!("{HIVE_PACK_META_PREFIX}{}", job_id.trim())
+}
+
+fn import_binding_meta_prefix(user_id: &str, hive_id: &str) -> String {
+    format!(
+        "{HIVE_PACK_IMPORT_BINDING_PREFIX}{}:{}:",
+        user_id.trim(),
+        normalize_hive_id(hive_id)
+    )
+}
+
+fn import_binding_meta_key(user_id: &str, hive_id: &str, job_id: &str) -> String {
+    format!(
+        "{}{}",
+        import_binding_meta_prefix(user_id, hive_id),
+        job_id.trim()
+    )
 }
 
 fn hivepack_temp_root() -> PathBuf {
@@ -2569,9 +2761,10 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_agent_skills_for_export, export_worker_id, load_worker_card_manifest,
-        normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
-        normalize_import_conflict_mode, normalize_name, resolve_declared_skill_runtime_name,
+        collect_agent_skills_for_export, export_worker_id, hash_import_skill_source_dir,
+        load_worker_card_manifest, normalize_approval_mode, normalize_conflict_key,
+        normalize_export_filename_stem, normalize_import_conflict_mode, normalize_name,
+        remap_import_declared_skill_names, resolve_declared_skill_runtime_name,
         resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
         unique_label_with_reserved, unique_slug_with_reserved, validate_archive_entry_path,
         validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
@@ -2712,6 +2905,71 @@ mod tests {
             ),
             "传播链路评估-2"
         );
+    }
+
+    #[test]
+    fn remap_import_declared_skill_names_uses_runtime_names() {
+        let mut renamed = HashMap::new();
+        renamed.insert("蓝军通识技能".to_string(), "蓝军通识技能-2".to_string());
+        renamed.insert("政工主官技能".to_string(), "政工主官技能".to_string());
+        assert_eq!(
+            remap_import_declared_skill_names(
+                &[
+                    "政工主官技能".to_string(),
+                    "蓝军通识技能".to_string(),
+                    "蓝军通识技能".to_string()
+                ],
+                &renamed
+            ),
+            vec!["政工主官技能".to_string(), "蓝军通识技能-2".to_string()]
+        );
+    }
+
+    #[test]
+    fn hash_import_skill_source_dir_matches_identical_copies() {
+        let root = tempdir().expect("tempdir");
+        let skill_a = root.path().join("skills").join("planner");
+        let skill_b = root
+            .path()
+            .join("workers")
+            .join("planner")
+            .join("skills")
+            .join("planner");
+        std::fs::create_dir_all(&skill_a).expect("skill a dir");
+        std::fs::create_dir_all(&skill_b).expect("skill b dir");
+        std::fs::write(
+            skill_a.join("SKILL.md"),
+            "---\nname: planner\n---\n# demo\n",
+        )
+        .expect("skill a file");
+        std::fs::write(
+            skill_b.join("SKILL.md"),
+            "---\nname: planner\n---\n# demo\n",
+        )
+        .expect("skill b file");
+        std::fs::write(skill_a.join("skill.yaml"), "name: planner\n").expect("skill a meta");
+        std::fs::write(skill_b.join("skill.yaml"), "name: planner\n").expect("skill b meta");
+
+        let mut cache = HashMap::new();
+        let hash_a = hash_import_skill_source_dir(skill_a.as_path(), &mut cache).expect("hash a");
+        let hash_b = hash_import_skill_source_dir(skill_b.as_path(), &mut cache).expect("hash b");
+        assert_eq!(hash_a, hash_b);
+    }
+
+    #[test]
+    fn hash_import_skill_source_dir_distinguishes_different_contents() {
+        let root = tempdir().expect("tempdir");
+        let skill_a = root.path().join("skills").join("planner-a");
+        let skill_b = root.path().join("skills").join("planner-b");
+        std::fs::create_dir_all(&skill_a).expect("skill a dir");
+        std::fs::create_dir_all(&skill_b).expect("skill b dir");
+        std::fs::write(skill_a.join("SKILL.md"), "# demo a\n").expect("skill a file");
+        std::fs::write(skill_b.join("SKILL.md"), "# demo b\n").expect("skill b file");
+
+        let mut cache = HashMap::new();
+        let hash_a = hash_import_skill_source_dir(skill_a.as_path(), &mut cache).expect("hash a");
+        let hash_b = hash_import_skill_source_dir(skill_b.as_path(), &mut cache).expect("hash b");
+        assert_ne!(hash_a, hash_b);
     }
 
     #[test]
