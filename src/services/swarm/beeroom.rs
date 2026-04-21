@@ -776,7 +776,7 @@ mod tests {
         let hive = HiveRecord {
             hive_id: "hive_blue".to_string(),
             user_id: "alice".to_string(),
-            name: "AI蓝军蜂群".to_string(),
+            name: "AI示例蜂群".to_string(),
             description: String::new(),
             is_default: false,
             status: "active".to_string(),
@@ -789,7 +789,7 @@ mod tests {
             agent_id: "agent_mother".to_string(),
             user_id: "alice".to_string(),
             hive_id: hive.hive_id.clone(),
-            name: "蓝军母蜂".to_string(),
+            name: "示例母蜂".to_string(),
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
@@ -867,8 +867,8 @@ mod tests {
             payload,
             serde_json::json!({
                 "swarm": {
-                    "hive_name": "AI蓝军蜂群",
-                    "mother_agent_name": "蓝军母蜂"
+                    "hive_name": "AI示例蜂群",
+                    "mother_agent_name": "示例母蜂"
                 }
             })
         );
