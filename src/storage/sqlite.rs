@@ -9057,9 +9057,13 @@ impl StorageBackend for SqliteStorage {
         let Some(raw) = row else {
             return Ok(None);
         };
+        let allowed_tools = raw
+            .0
+            .map(|value| Self::parse_string_list(Some(value)))
+            .filter(|items| !items.is_empty());
         Ok(Some(UserToolAccessRecord {
             user_id: cleaned.to_string(),
-            allowed_tools: raw.0.map(|value| Self::parse_string_list(Some(value))),
+            allowed_tools,
             updated_at: raw.1,
         }))
     }
@@ -9075,8 +9079,9 @@ impl StorageBackend for SqliteStorage {
             return Ok(());
         }
         let conn = self.open()?;
-        if allowed_tools.is_some() {
-            let payload = allowed_tools
+        let normalized_allowed_tools = allowed_tools.filter(|items| !items.is_empty());
+        if normalized_allowed_tools.is_some() {
+            let payload = normalized_allowed_tools
                 .map(|value| Self::string_list_to_json(value))
                 .unwrap_or_else(|| "[]".to_string());
             let now = Self::now_ts();

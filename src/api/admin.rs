@@ -5436,7 +5436,7 @@ async fn admin_user_accounts_tool_access_update(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let actor = resolve_admin_actor(&state, &headers, true, &units)?;
     ensure_user_scope(&actor, &record)?;
-    let allowed = payload.allowed_tools.map(normalize_tool_access_list);
+    let allowed = normalize_optional_tool_access_list(payload.allowed_tools);
     state
         .user_store
         .set_user_tool_access(cleaned, allowed.as_ref())
@@ -6257,6 +6257,17 @@ fn normalize_tool_access_list(raw: Vec<String>) -> Vec<String> {
     output
 }
 
+fn normalize_optional_tool_access_list(raw: Option<Vec<String>>) -> Option<Vec<String>> {
+    raw.and_then(|values| {
+        let normalized = normalize_tool_access_list(values);
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalized)
+        }
+    })
+}
+
 fn builtin_tool_names() -> HashSet<String> {
     builtin_tool_specs()
         .into_iter()
@@ -6852,7 +6863,10 @@ fn build_builtin_tools_payload(config: &Config) -> (Vec<String>, Vec<Value>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{admin_browser_tool_name, apply_builtin_tools_update, build_builtin_tools_payload};
+    use super::{
+        admin_browser_tool_name, apply_builtin_tools_update, build_builtin_tools_payload,
+        normalize_optional_tool_access_list,
+    };
     use crate::config::Config;
     use crate::tools::resolve_tool_name;
     use serde_json::Value;
@@ -6902,6 +6916,23 @@ mod tests {
             .iter()
             .any(|name| resolve_tool_name(name) == browser_tool));
         assert!(tool_enabled(&tools, &browser_tool));
+    }
+
+    #[test]
+    fn normalize_optional_tool_access_list_treats_empty_as_unset() {
+        assert_eq!(normalize_optional_tool_access_list(None), None);
+        assert_eq!(normalize_optional_tool_access_list(Some(Vec::new())), None);
+        assert_eq!(
+            normalize_optional_tool_access_list(Some(vec!["  ".to_string()])),
+            None
+        );
+        assert_eq!(
+            normalize_optional_tool_access_list(Some(vec![
+                "read_file".to_string(),
+                " read_file ".to_string(),
+            ])),
+            Some(vec!["read_file".to_string()])
+        );
     }
 }
 

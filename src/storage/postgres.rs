@@ -9260,9 +9260,12 @@ impl StorageBackend for PostgresStorage {
         };
         let allowed: Option<String> = row.get(0);
         let updated_at: f64 = row.get(1);
+        let allowed_tools = allowed
+            .map(|value| Self::parse_string_list(Some(value)))
+            .filter(|items| !items.is_empty());
         Ok(Some(UserToolAccessRecord {
             user_id: cleaned.to_string(),
-            allowed_tools: allowed.map(|value| Self::parse_string_list(Some(value))),
+            allowed_tools,
             updated_at,
         }))
     }
@@ -9278,8 +9281,9 @@ impl StorageBackend for PostgresStorage {
             return Ok(());
         }
         let mut conn = self.conn()?;
-        if allowed_tools.is_some() {
-            let payload = allowed_tools
+        let normalized_allowed_tools = allowed_tools.filter(|items| !items.is_empty());
+        if normalized_allowed_tools.is_some() {
+            let payload = normalized_allowed_tools
                 .map(|value| Self::string_list_to_json(value))
                 .unwrap_or_else(|| "[]".to_string());
             let now = Self::now_ts();
