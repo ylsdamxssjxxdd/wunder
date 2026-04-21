@@ -212,3 +212,32 @@ test('timeline item ids stay unique when mainline and branch share round ids', (
     )
   );
 });
+
+test('completed round situation remains recoverable from rounds when planned map is empty', () => {
+  const persisted = {} as Record<string, string>;
+  const rounds = [
+    {
+      id: 'round_01',
+      index: 1,
+      userMessage: 'round 1 message',
+      situation: 'round 1 situation'
+    },
+    {
+      id: 'round_02',
+      index: 2,
+      userMessage: '',
+      situation: 'round 2 preview situation'
+    }
+  ];
+
+  const merged = { ...persisted };
+  rounds.forEach((round) => {
+    const key = String(round.index);
+    const situation = String(round.situation || '').trim();
+    if (!situation) return;
+    merged[key] = situation;
+  });
+
+  assert.equal(merged['1'], 'round 1 situation');
+  assert.equal(merged['2'], 'round 2 preview situation');
+});

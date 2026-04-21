@@ -201,6 +201,20 @@ const applyPlannedSituationsToRounds = (
     };
   });
 
+const mergeRoundSituationsIntoPlanned = (
+  rounds: OrchestrationRound[] | null | undefined,
+  plannedSituations: Record<string, string> | null | undefined
+): Record<string, string> => {
+  const merged = normalizePlannedSituations(plannedSituations || {}, Array.isArray(rounds) ? rounds : []);
+  (Array.isArray(rounds) ? rounds : []).forEach((round) => {
+    const roundKey = normalizeRoundIndexKey(round.index);
+    const situation = String(round?.situation || '').trim();
+    if (!roundKey || !situation) return;
+    merged[roundKey] = situation;
+  });
+  return merged;
+};
+
 const normalizeMsTime = (value: unknown): number => {
   if (typeof value === 'number') {
     if (!Number.isFinite(value) || value <= 0) return 0;
@@ -1039,6 +1053,19 @@ export const useOrchestrationRuntimeState = (options: {
       latestFormalRound ||
       nextRounds[nextRounds.length - 1] ||
       null;
+    const nextPlannedSituations = mergeRoundSituationsIntoPlanned(
+      nextRounds,
+      existing && normalizeText(existing.runId) === runId
+        ? existing.plannedSituations
+        : undefined
+    );
+    const nextRoundsWithSituations = applyPlannedSituationsToRounds(nextRounds, nextPlannedSituations);
+    const nextActiveRound =
+      nextRoundsWithSituations.find((item) => item.id === activeRound?.id) ||
+      nextRoundsWithSituations.find((item) => item.id === existingActiveRoundId) ||
+      findLatestFormalRound(nextRoundsWithSituations) ||
+      nextRoundsWithSituations[nextRoundsWithSituations.length - 1] ||
+      null;
     const nextState =
       existing && normalizeText(existing.runId) === runId
         ? {
@@ -1049,9 +1076,10 @@ export const useOrchestrationRuntimeState = (options: {
             active: remoteState.active === true,
             motherAgentId: motherAgentId.value,
             motherSessionId,
-            currentSituation: String(activeRound?.situation || '').trim(),
-            rounds: nextRounds,
-            activeRoundId: activeRound?.id || '',
+            currentSituation: String(nextActiveRound?.situation || '').trim(),
+            plannedSituations: nextPlannedSituations,
+            rounds: nextRoundsWithSituations,
+            activeRoundId: nextActiveRound?.id || '',
             memberThreads,
             pendingRoundId: '',
             pendingRoundCreated: false,
@@ -1066,9 +1094,10 @@ export const useOrchestrationRuntimeState = (options: {
               memberThreads
             }),
             active: remoteState.active === true,
-            currentSituation: String(activeRound?.situation || '').trim(),
-            rounds: nextRounds,
-            activeRoundId: activeRound?.id || '',
+            currentSituation: String(nextActiveRound?.situation || '').trim(),
+            plannedSituations: nextPlannedSituations,
+            rounds: nextRoundsWithSituations,
+            activeRoundId: nextActiveRound?.id || '',
             suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
           };
     orchestrationDebugLog('apply-remote-state', {
@@ -1090,9 +1119,11 @@ export const useOrchestrationRuntimeState = (options: {
       nextRounds: nextState.rounds.map((round) => ({
         id: round.id,
         index: round.index,
+        situation: round.situation,
         hasUserMessage: Boolean(normalizeText(round.userMessage)),
         createdAt: round.createdAt
-      }))
+      })),
+      nextPlannedSituations
     });
     if (nextState.active) {
       await bindMemberThreadsAsMain(nextState);

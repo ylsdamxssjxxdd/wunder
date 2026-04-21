@@ -546,11 +546,21 @@ const hasStagedSituationDraft = computed(
 const plannedSituations = computed<Record<string, string>>(() => {
   const source = runtimeState.value?.plannedSituations;
   const persisted = source && typeof source === 'object' ? normalizeSituationEntries(source as Record<string, string>) : {};
+  const mergedFromRounds = { ...persisted };
+  rounds.value.forEach((round) => {
+    const roundKey = String(normalizeSituationRound(round.index));
+    const situation = String(round.situation || '').trim();
+    if (!situation) return;
+    mergedFromRounds[roundKey] = situation;
+  });
   const currentId = currentOrchestrationId.value;
   if (currentId && hasStagedSituationDraft.value) {
-    return { ...(stagedSituationDrafts.value[currentId] || {}) };
+    return {
+      ...mergedFromRounds,
+      ...(stagedSituationDrafts.value[currentId] || {})
+    };
   }
-  return persisted;
+  return mergedFromRounds;
 });
 const latestRoundIndex = computed(() =>
   Math.max(1, Number(activeRound.value?.index || 0), Number(latestFormalRound.value?.index || 0) || 1)
