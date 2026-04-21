@@ -1639,6 +1639,12 @@ button.messenger-chat-header-model {
   transform: translateY(var(--messenger-hover-lift));
 }
 
+.messenger-header-action-text:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .messenger-header-action-text--danger {
   border-color: #f2c8ce;
   background: #fbeff1;

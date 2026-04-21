@@ -113,6 +113,7 @@
                         :title="item.title"
                         :aria-label="item.title"
                         @click="handleRunChipClick(item)"
+                        @contextmenu.prevent.stop="openRunContextMenu($event, item)"
                       >
                         <span class="orchestration-run-chip-icon" aria-hidden="true">
                           <i class="fa-solid fa-code-branch" v-if="item.branchDepth > 0"></i>
@@ -123,6 +124,7 @@
                         v-else
                         class="orchestration-round-chip"
                         :class="{
+                          selected: item.selected,
                           active: item.active,
                           'is-pending': item.pending,
                           'is-preview': item.preview,
@@ -170,7 +172,15 @@
                 @click="handleDeleteRoundTail"
               >
                 <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-                <span>{{ t('orchestration.timeline.deleteAfter') }}</span>
+                <span>
+                  {{
+                    t(
+                      roundContextMenu.kind === 'run'
+                        ? 'orchestration.timeline.deleteBranchAfter'
+                        : 'orchestration.timeline.deleteAfter'
+                    )
+                  }}
+                </span>
               </button>
             </div>
           </div>
@@ -288,14 +298,14 @@
                     :title="
                       composerSending
                         ? t('common.stop')
-                        : nextRoundReady
+                        : currentRoundShowsNextAction
                           ? t('orchestration.action.nextRound')
                           : t('orchestration.action.startRound')
                     "
                     :aria-label="
                       composerSending
                         ? t('common.stop')
-                        : nextRoundReady
+                        : currentRoundShowsNextAction
                           ? t('orchestration.action.nextRound')
                           : t('orchestration.action.startRound')
                     "
@@ -307,7 +317,7 @@
                       :class="
                         composerSending
                           ? 'fa-stop'
-                          : nextRoundReady
+                          : currentRoundShowsNextAction
                             ? 'fa-forward-step'
                             : 'fa-play'
                       "
@@ -386,6 +396,12 @@ import {
   buildOrchestrationCanvasProjection,
   buildOrchestrationCanvasScopeKey
 } from '@/components/orchestration/orchestrationCanvasModel';
+import {
+  buildOrchestrationTimelineLayout,
+  type TimelineLayout,
+  type TimelineRunItem,
+  type TimelineRoundItem
+} from '@/components/orchestration/orchestrationTimelineLayout';
 import { useI18n } from '@/i18n';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
@@ -443,7 +459,7 @@ const emit = defineEmits<{
   (event: 'open-history'): void;
   (event: 'open-situation'): void;
   (event: 'select-round', roundId: string): void;
-  (event: 'restore-run', orchestrationId: string): void;
+  (event: 'restore-run', payload: { orchestrationId: string; roundIndex?: number; preview?: boolean }): void;
   (event: 'delete-round-tail', payload: { orchestrationId: string; roundIndex: number }): void;
 }>();
 
@@ -469,12 +485,14 @@ const roundContextMenu = ref<{
   y: number;
   orchestrationId: string;
   roundIndex: number;
+  kind: 'round' | 'run';
 }>({
   visible: false,
   x: 0,
   y: 0,
   orchestrationId: '',
-  roundIndex: 0
+  roundIndex: 0,
+  kind: 'round'
 });
 const artifactWorkspaceVisible = ref(false);
 const selectedArtifactAgentId = ref('');
@@ -546,169 +564,57 @@ const composerTargetOptions = computed(() => [
   }
 ]);
 
-type TimelineRunItem = {
-  type: 'run';
-  id: string;
-  lane: number;
-  column: number;
-  title: string;
-  latestRoundIndex: number;
-  active: boolean;
-  current: boolean;
-  status: string;
-  branchFromRoundIndex: number;
-  branchDepth: number;
-  parentOrchestrationId: string;
-};
-
-type TimelineRoundItem = {
-  type: 'round';
-  id: string;
-  lane: number;
-  column: number;
-  roundId: string;
-  roundIndex: number;
-  active: boolean;
-  pending: boolean;
-  preview: boolean;
-  orchestrationId: string;
-  currentRun: boolean;
-};
-
-type TimelineConnector = {
-  id: string;
-  className: string;
-  style: Record<string, string>;
-};
-
-type TimelineLayout = {
-  items: Array<TimelineRunItem | TimelineRoundItem>;
-  connectors: TimelineConnector[];
-  laneCount: number;
-  columnCount: number;
-};
-
-type TimelineRunLayoutMeta = {
-  lane: number;
-  runChipColumn: number;
-  lastRoundColumn: number;
-  branchFromRoundIndex: number;
-  roundColumns: Map<number, number>;
-};
-
-const sortTimelineHistoryItems = (items: OrchestrationHistoryItem[]) =>
-  [...items].sort((left, right) => {
-    const branchDepthDiff = (left.branchDepth || 0) - (right.branchDepth || 0);
-    if (branchDepthDiff !== 0) return branchDepthDiff;
-    const enteredDiff = (left.enteredAt || 0) - (right.enteredAt || 0);
-    if (enteredDiff !== 0) return enteredDiff;
-    return String(left.orchestrationId || '').localeCompare(String(right.orchestrationId || ''));
-  });
+const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
+  Boolean(String(round?.userMessage || '').trim());
+const sortedRounds = computed(() =>
+  [...(Array.isArray(props.rounds) ? props.rounds : [])].sort(
+    (left, right) =>
+      Number(left.index || 0) - Number(right.index || 0) ||
+      String(left.id || '').localeCompare(String(right.id || ''))
+  )
+);
+const formalRounds = computed(() => sortedRounds.value.filter((round) => roundHasUserMessage(round)));
+const latestFormalRound = computed(() => formalRounds.value[formalRounds.value.length - 1] || null);
+const frontierPreparedRound = computed(() => {
+  const targetIndex = latestFormalRound.value ? Math.max(1, Number(latestFormalRound.value.index || 0) + 1) : 1;
+  return sortedRounds.value.find(
+    (round) => Number(round.index || 0) === targetIndex && !roundHasUserMessage(round)
+  ) || null;
+});
+const latestRenderableRound = computed(
+  () => frontierPreparedRound.value || latestFormalRound.value || sortedRounds.value[sortedRounds.value.length - 1] || null
+);
 
 const timelineLayout = computed<TimelineLayout>(() => {
-  const historyItems = Array.isArray(props.historyItems) ? props.historyItems : [];
-  const currentRunId = String(props.currentOrchestrationId || '').trim();
-  const rounds = (Array.isArray(props.rounds) ? props.rounds : [])
-    .slice()
-    .sort((left, right) => left.index - right.index);
-  if (!historyItems.length && !rounds.length) {
-    return {
-      items: [],
-      connectors: [],
-      laneCount: 1,
-      columnCount: 1
-    };
-  }
-
-  const currentRounds = rounds.map((round) => ({
-    ...round,
-    orchestrationId: currentRunId
-  }));
-  const currentHistoryItem =
-    historyItems.find((item) => String(item.orchestrationId || '').trim() === currentRunId) || null;
-  const currentBranchRootId = String(
-    currentHistoryItem?.branchRootOrchestrationId ||
-      currentHistoryItem?.orchestrationId ||
-      currentRunId
-  ).trim();
-
-  const scopedHistory = historyItems.filter((item) => {
-    const orchestrationId = String(item.orchestrationId || '').trim();
-    const branchRootId = String(item.branchRootOrchestrationId || orchestrationId).trim();
-    if (!currentBranchRootId) {
-      return orchestrationId === currentRunId;
-    }
-    return branchRootId === currentBranchRootId;
-  });
-
-  const normalizedHistory = sortTimelineHistoryItems(scopedHistory);
-
-  const laneByRun = new Map<string, number>();
-  const lanes: string[][] = [];
-
-  const ensureRunLane = (runId: string, parentId = '') => {
-    if (!runId || laneByRun.has(runId)) return;
-    let lane = 0;
-    if (parentId && laneByRun.has(parentId)) {
-      lane = laneByRun.get(parentId) ?? 0;
-      while (lanes[lane]?.length) {
-        lane += 1;
+  const layout = buildOrchestrationTimelineLayout({
+    historyItems: Array.isArray(props.historyItems) ? props.historyItems : [],
+    currentOrchestrationId: String(props.currentOrchestrationId || '').trim(),
+    rounds: Array.isArray(props.rounds) ? props.rounds : [],
+    activeRoundId: String(props.activeRound?.id || '').trim(),
+    isActive: props.isActive,
+    isBusy: props.isBusy,
+      currentRunFallback: {
+        runId: String(props.runId || props.currentOrchestrationId || '').trim(),
+        status: props.isActive ? 'active' : 'closed',
+        latestRoundIndex: Math.max(1, Number(latestFormalRound.value?.index || 0) || 1),
+        groupId: String(props.group?.group_id || props.group?.hive_id || '').trim(),
+        motherAgentId: String(props.motherAgentId || '').trim(),
+        motherAgentName: String(props.motherName || '').trim(),
+        motherSessionId: String(props.motherSessionId || '').trim()
       }
-    } else {
-      while (lanes[lane]?.length) {
-        lane += 1;
-      }
-    }
-    laneByRun.set(runId, lane);
-    if (!lanes[lane]) lanes[lane] = [];
-    lanes[lane].push(runId);
-  };
-
-  normalizedHistory.forEach((item) => {
-    const runId = String(item.orchestrationId || '').trim();
-    if (!runId) return;
-    const parentId = String(item.parentOrchestrationId || '').trim();
-    ensureRunLane(runId, parentId);
   });
-
-  if (currentRunId && rounds.length && !laneByRun.has(currentRunId)) {
-    ensureRunLane(currentRunId, String(currentHistoryItem?.parentOrchestrationId || '').trim());
-  }
-
-  const renderableRuns = normalizedHistory.slice();
-  if (currentRunId && rounds.length && !renderableRuns.some((item) => String(item.orchestrationId || '').trim() === currentRunId)) {
-    renderableRuns.push({
-      orchestrationId: currentRunId,
-      runId: String(props.runId || currentRunId).trim() || currentRunId,
-      groupId: String(props.group?.group_id || props.group?.hive_id || '').trim(),
-      motherAgentId: String(props.motherAgentId || '').trim(),
-      motherAgentName: String(props.motherName || '').trim(),
-      motherSessionId: String(props.motherSessionId || '').trim(),
-      status: props.isActive ? 'active' : 'closed',
-      latestRoundIndex: Math.max(1, rounds.length || 1),
-      enteredAt: 0,
-      updatedAt: 0,
-      exitedAt: 0,
-      restoredAt: 0,
-      parentOrchestrationId: String(currentHistoryItem?.parentOrchestrationId || '').trim(),
-      branchRootOrchestrationId: currentBranchRootId || currentRunId,
-      branchFromRoundIndex: Math.max(0, Number(currentHistoryItem?.branchFromRoundIndex || 0)),
-      branchDepth: Math.max(0, Number(currentHistoryItem?.branchDepth || 0))
-    });
-  }
-  const orderedRuns = sortTimelineHistoryItems(renderableRuns);
 
   if (isChatDebugEnabled()) {
     orchestrationTimelineDebug('timeline-layout-input', {
-      currentOrchestrationId: currentRunId,
+      currentOrchestrationId: String(props.currentOrchestrationId || '').trim(),
       activeRoundId: String(props.activeRound?.id || '').trim(),
-      rounds: rounds.map((round) => ({
+      rounds: (Array.isArray(props.rounds) ? props.rounds : []).map((round) => ({
         id: String(round.id || '').trim(),
         index: Number(round.index || 0),
-        orchestrationId: String((round as { orchestrationId?: unknown }).orchestrationId || currentRunId).trim(),
+        orchestrationId: String((round as { orchestrationId?: unknown }).orchestrationId || props.currentOrchestrationId || '').trim(),
         hasUserMessage: Boolean(String((round as { userMessage?: unknown }).userMessage || '').trim())
       })),
-      historyItems: orderedRuns.map((item) => ({
+      historyItems: layout.debugRuns.map((item) => ({
         orchestrationId: String(item.orchestrationId || '').trim(),
         parentOrchestrationId: String(item.parentOrchestrationId || '').trim(),
         branchRootOrchestrationId: String(item.branchRootOrchestrationId || '').trim(),
@@ -720,146 +626,12 @@ const timelineLayout = computed<TimelineLayout>(() => {
     });
   }
 
-  const items: Array<TimelineRunItem | TimelineRoundItem> = [];
-  const connectors: TimelineConnector[] = [];
-  const runLayoutById = new Map<string, TimelineRunLayoutMeta>();
-  let maxColumn = 1;
-
-  const resolveRunAnchorColumn = (runId: string, roundIndex: number) => {
-    const meta = runLayoutById.get(runId);
-    if (!meta) return 1;
-    if (roundIndex <= meta.branchFromRoundIndex) {
-      return meta.runChipColumn;
-    }
-    return meta.roundColumns.get(roundIndex) ?? meta.lastRoundColumn ?? meta.runChipColumn;
-  };
-
-  const buildSyntheticRounds = (runId: string, latestRoundIndex: number) =>
-    Array.from({ length: Math.max(1, latestRoundIndex) }, (_, index) => ({
-      id: `history:${runId}:round_${String(index + 1).padStart(2, '0')}`,
-      index: index + 1,
-      orchestrationId: runId
-    }));
-
-  orderedRuns.forEach((item) => {
-    const runId = String(item.orchestrationId || '').trim();
-    if (!runId) return;
-    const lane = laneByRun.get(runId) ?? 0;
-    const parentId = String(item.parentOrchestrationId || '').trim();
-    const branchFromRoundIndex = Math.max(0, Number(item.branchFromRoundIndex || 0));
-    const parentAnchorColumn = parentId ? resolveRunAnchorColumn(parentId, branchFromRoundIndex) : 1;
-    const runChipColumn = Math.max(1, parentAnchorColumn);
-    maxColumn = Math.max(maxColumn, runChipColumn);
-    items.push({
-      type: 'run',
-      id: `run:${runId}`,
-      lane,
-      column: runChipColumn,
-      title: String(item.runId || runId).trim() || runId,
-      latestRoundIndex: Math.max(1, Number(item.latestRoundIndex || 1)),
-      active: runId === currentRunId && props.isActive,
-      current: runId === currentRunId,
-      status: String(item.status || '').trim().toLowerCase(),
-      branchFromRoundIndex,
-      branchDepth: Math.max(0, Number(item.branchDepth || 0)),
-      parentOrchestrationId: parentId
-    });
-    if (parentId && runLayoutById.has(parentId)) {
-      const parentMeta = runLayoutById.get(parentId)!;
-      if (parentMeta.lane !== lane) {
-        connectors.push({
-          id: `run-link-vertical:${parentId}:${runId}:${branchFromRoundIndex}`,
-          className: 'orchestration-timeline-connector vertical orchestration-timeline-connector--branch',
-          style: {
-            '--lane-start': String(Math.min(parentMeta.lane, lane) + 1),
-            '--lane-end': String(Math.max(parentMeta.lane, lane) + 1),
-            '--column': String(runChipColumn)
-          }
-        });
-      }
-    }
-
-    const isCurrentRun = runId === currentRunId;
-    const sourceRounds = isCurrentRun
-      ? currentRounds
-      : buildSyntheticRounds(runId, Math.max(1, Number(item.latestRoundIndex || 1)));
-    const visibleRounds = sourceRounds.filter((round) => {
-      const roundIndex = Math.max(1, Number(round.index || 0));
-      return branchFromRoundIndex > 0 ? roundIndex > branchFromRoundIndex : true;
-    });
-    const lastVisibleRound = visibleRounds[visibleRounds.length - 1] || null;
-    const currentFormalRounds = currentRounds.filter((round) => Boolean(String(round.userMessage || '').trim()));
-    const lastVisibleRoundHasUserMessage = Boolean(
-      String((lastVisibleRound as { userMessage?: unknown } | null)?.userMessage || '').trim()
-    );
-    const shouldAppendPreviewRound =
-      isCurrentRun &&
-      props.isActive &&
-      currentFormalRounds.length > 0 &&
-      !props.isBusy &&
-      Boolean(lastVisibleRound) &&
-      lastVisibleRoundHasUserMessage;
-    const displayRounds: Array<{ id: string; index: number; orchestrationId: string; userMessage?: string }> = shouldAppendPreviewRound
-      ? [
-          ...visibleRounds,
-          {
-            id: `preview:${runId}:round_${String(Math.max(1, Number(lastVisibleRound?.index || 0) + 1)).padStart(2, '0')}`,
-            index: Math.max(1, Number(lastVisibleRound?.index || 0) + 1),
-            orchestrationId: runId,
-            userMessage: ''
-          }
-        ]
-      : visibleRounds;
-    const roundColumns = new Map<number, number>();
-    let lastRoundColumn = runChipColumn;
-    displayRounds.forEach((round) => {
-      const roundIndex = Math.max(1, Number(round.index || 0));
-      const hasUserMessage = Boolean(String((round as { userMessage?: unknown }).userMessage || '').trim());
-      const isSelectedRound = isCurrentRun && round.id === props.activeRound?.id;
-      const isPreviewRound = String(round.id || '').startsWith(`preview:${runId}:`);
-      const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
-      roundColumns.set(roundIndex, column);
-      lastRoundColumn = Math.max(lastRoundColumn, column);
-      maxColumn = Math.max(maxColumn, column);
-      items.push({
-        type: 'round',
-        id: `round:${round.id}`,
-        lane,
-        column,
-        roundId: round.id,
-        roundIndex,
-        active: isSelectedRound && hasUserMessage,
-        pending: (isSelectedRound && !hasUserMessage) || isPreviewRound,
-        preview: isPreviewRound,
-        orchestrationId: runId,
-        currentRun: isCurrentRun
-      });
-    });
-    if (displayRounds.length) {
-      connectors.push({
-        id: `run-round-link:${runId}`,
-        className: 'orchestration-timeline-connector horizontal orchestration-timeline-connector--rounds',
-        style: {
-          '--lane': String(lane + 1),
-          '--column-start': String(runChipColumn),
-          '--column-end': String(lastRoundColumn)
-        }
-      });
-    }
-    runLayoutById.set(runId, {
-      lane,
-      runChipColumn,
-      lastRoundColumn,
-      branchFromRoundIndex,
-      roundColumns
-    });
-  });
-
   return {
-    items,
-    connectors,
-    laneCount: Math.max(1, lanes.length || 1),
-    columnCount: Math.max(1, maxColumn + 1)
+    items: layout.items,
+    connectors: layout.connectors,
+    laneCount: layout.laneCount,
+    columnCount: layout.columnCount,
+    debugRuns: layout.debugRuns
   };
 });
 
@@ -876,8 +648,12 @@ const actionDisabled = computed(() => {
   return false;
 });
 
+const currentRoundShowsNextAction = computed(
+  () => props.nextRoundReady || roundHasUserMessage(props.activeRound)
+);
+
 const showBranchAction = computed(() => {
-  const latestRoundId = String(props.rounds[props.rounds.length - 1]?.id || '').trim();
+  const latestRoundId = String(latestRenderableRound.value?.id || '').trim();
   const activeRoundId = String(props.activeRound?.id || '').trim();
   return Boolean(latestRoundId && activeRoundId && latestRoundId !== activeRoundId);
 });
@@ -982,24 +758,36 @@ const closeRoundContextMenu = () => {
     x: 0,
     y: 0,
     orchestrationId: '',
-    roundIndex: 0
+    roundIndex: 0,
+    kind: 'round'
   };
 };
 
 const handleRunChipClick = (item: TimelineRunItem) => {
   if (props.runtimeLocked && !item.current) return;
   if (item.current) return;
-  emit('restore-run', item.id.slice(4));
+  emit('restore-run', { orchestrationId: item.id.slice(4) });
 };
 
 const handleRoundChipClick = (item: TimelineRoundItem) => {
   if (props.runtimeLocked) return;
-  if (item.preview) return;
   if (item.currentRun) {
+    if (item.preview) {
+      emit('restore-run', {
+        orchestrationId: item.orchestrationId,
+        roundIndex: item.roundIndex,
+        preview: true
+      });
+      return;
+    }
     emit('select-round', item.roundId);
     return;
   }
-  emit('restore-run', item.orchestrationId);
+  emit('restore-run', {
+    orchestrationId: item.orchestrationId,
+    roundIndex: item.roundIndex,
+    preview: item.preview
+  });
 };
 
 const openRoundContextMenu = (event: MouseEvent, item: TimelineRoundItem) => {
@@ -1021,7 +809,30 @@ const openRoundContextMenu = (event: MouseEvent, item: TimelineRoundItem) => {
     x: Math.round(event.clientX - (shellRect?.left || 0)),
     y: Math.round(event.clientY - (shellRect?.top || 0)),
     orchestrationId: item.orchestrationId,
-    roundIndex: item.roundIndex
+    roundIndex: item.roundIndex,
+    kind: 'round'
+  };
+};
+
+const openRunContextMenu = (event: MouseEvent, item: TimelineRunItem) => {
+  if (props.runtimeLocked) {
+    closeRoundContextMenu();
+    return;
+  }
+  const orchestrationId = String(item.id || '').replace(/^run:/, '').trim();
+  const roundIndex = Math.max(0, Number(item.branchFromRoundIndex || 0));
+  if (!orchestrationId || roundIndex <= 0) {
+    closeRoundContextMenu();
+    return;
+  }
+  const shellRect = screenRef.value?.getBoundingClientRect();
+  roundContextMenu.value = {
+    visible: true,
+    x: Math.round(event.clientX - (shellRect?.left || 0)),
+    y: Math.round(event.clientY - (shellRect?.top || 0)),
+    orchestrationId,
+    roundIndex,
+    kind: 'run'
   };
 };
 
@@ -1886,6 +1697,14 @@ watch(
 
 .orchestration-round-chip.active {
   color: #fff8eb;
+}
+
+.orchestration-round-chip.selected:not(.active) .orchestration-round-chip-node {
+  border-color: rgba(250, 204, 21, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 251, 235, 0.12),
+    0 0 0 3px rgba(250, 204, 21, 0.08),
+    0 8px 22px rgba(120, 53, 15, 0.14);
 }
 
 .orchestration-round-chip.active .orchestration-round-chip-node {

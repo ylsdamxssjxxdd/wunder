@@ -2,10 +2,12 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::prompting::read_prompt_template;
 use crate::services::orchestration_context::{
-    build_branch_history_record_from_state, build_chat_session_with_title, build_history_record_from_state,
+    build_branch_history_record_from_state, build_chat_session_with_title, build_closed_history_record,
+    build_history_record_from_state,
     build_initial_round_state, build_orchestration_run_id, build_orchestration_thread_title,
     clear_hive_state, clear_history_record,
     clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state, clear_session_context,
+    collect_descendant_history_ids_after_round,
     copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
     delete_round_directories_after, latest_formal_round_index, list_history_records, load_hive_state,
     load_history_record, load_round_state, normalize_orchestration_run_name,
@@ -35,6 +37,25 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
+
+fn close_existing_history_record(
+    storage: &dyn crate::storage::StorageBackend,
+    user_id: &str,
+    group_id: &str,
+    active_state: &OrchestrationHiveState,
+    latest_round_index: i64,
+    updated_at: f64,
+) -> anyhow::Result<OrchestrationHistoryRecord> {
+    let existing = load_history_record(storage, user_id, group_id, &active_state.orchestration_id);
+    let history = build_closed_history_record(
+        active_state,
+        existing.as_ref(),
+        latest_round_index,
+        updated_at,
+    );
+    persist_history_record(storage, user_id, &history)?;
+    Ok(history)
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -873,11 +894,14 @@ async fn branch_orchestration_history(
             let latest_round_index = latest_formal_round_index(
                 load_or_migrate_round_state(state.as_ref(), &user_id, &previous).as_ref(),
             );
-            let mut previous_history =
-                build_history_record_from_state(&previous, ORCHESTRATION_HISTORY_STATUS_CLOSED, latest_round_index);
-            previous_history.updated_at = now_ts();
-            previous_history.exited_at = previous_history.updated_at;
-            persist_history_record(state.storage.as_ref(), &user_id, &previous_history)
+            close_existing_history_record(
+                state.storage.as_ref(),
+                &user_id,
+                &group.hive_id,
+                &previous,
+                latest_round_index,
+                now_ts(),
+            )
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
             for binding in &previous_bindings {
                 clear_session_context(state.storage.as_ref(), &user_id, &binding.session_id)
@@ -1104,30 +1128,8 @@ async fn truncate_orchestration_history(
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "orchestration history not found".to_string()))?;
     let all_histories = list_history_records(state.storage.as_ref(), &user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut descendants_to_remove = all_histories
-        .iter()
-        .filter(|item| {
-            item.parent_orchestration_id.trim() == root_history.orchestration_id.trim()
-                && item.branch_from_round_index >= retained_round_index
-        })
-        .map(|item| item.orchestration_id.clone())
-        .collect::<Vec<_>>();
-    let mut stack = descendants_to_remove.clone();
-    while let Some(parent_id) = stack.pop() {
-        for item in &all_histories {
-            if item.parent_orchestration_id.trim() != parent_id.trim() {
-                continue;
-            }
-            if descendants_to_remove
-                .iter()
-                .any(|existing: &String| existing.trim() == item.orchestration_id.trim())
-            {
-                continue;
-            }
-            descendants_to_remove.push(item.orchestration_id.clone());
-            stack.push(item.orchestration_id.clone());
-        }
-    }
+    let descendants_to_remove =
+        collect_descendant_history_ids_after_round(&root_history, &all_histories, retained_round_index);
     let active_hive_state = load_hive_state(state.storage.as_ref(), &user_id, &group.hive_id);
     let is_active_root = active_hive_state
         .as_ref()

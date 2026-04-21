@@ -134,7 +134,7 @@
     </div>
     <template #footer>
       <el-button @click="visible = false">{{ t('portal.agent.cancel') }}</el-button>
-      <el-button type="danger" plain :disabled="saving || !canEdit" @click="deleteAgent">
+      <el-button type="danger" plain :disabled="saving || !canDelete" @click="deleteAgent">
         {{ t('portal.agent.delete') }}
       </el-button>
       <el-button type="primary" :loading="saving" :disabled="!canEdit" @click="saveAgent">
@@ -206,6 +206,11 @@ const visible = computed({
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const canEdit = computed(() => Boolean(normalizedAgentId.value));
+const isDefaultAgent = computed(() => {
+  const lowered = normalizedAgentId.value.trim().toLowerCase();
+  return !lowered || lowered === '__default__' || lowered === 'default';
+});
+const canDelete = computed(() => canEdit.value && !isDefaultAgent.value);
 const dependencyNoticeKey = computed(() => `agent:${normalizedAgentId.value || '__default__'}`);
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
@@ -479,7 +484,7 @@ const exportWorkerCard = () => {
 };
 
 const deleteAgent = async () => {
-  if (!canEdit.value) return;
+  if (!canDelete.value) return;
   const targetName = String(form.name || normalizedAgentId.value || '').trim();
   try {
     await ElMessageBox.confirm(t('portal.agent.deleteConfirm', { name: targetName }), t('common.notice'), {

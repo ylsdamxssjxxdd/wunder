@@ -269,33 +269,30 @@ const countFormalRounds = (rounds: OrchestrationRound[] | null | undefined) =>
 
 const resolveRoundUserMessageWindow = (
   rounds: OrchestrationRound[],
-  activeRoundId: string,
+  targetRoundId: string,
   messages: MissionChatMessage[]
 ) => {
-  const normalizedActiveRoundId = normalizeText(activeRoundId);
-  if (!normalizedActiveRoundId) return null;
+  const normalizedTargetRoundId = normalizeText(targetRoundId);
+  if (!normalizedTargetRoundId) return null;
   const orderedRounds = [...(Array.isArray(rounds) ? rounds : [])].sort(
     (left, right) =>
       Number(left.index || 0) - Number(right.index || 0) ||
       Number(left.createdAt || 0) - Number(right.createdAt || 0)
   );
-  const formalRounds = orderedRounds.filter((round) => normalizeText(round.userMessage));
-  const targetFormalPosition = formalRounds.findIndex((round) => round.id === normalizedActiveRoundId);
-  if (targetFormalPosition < 0) {
+  const targetRound = orderedRounds.find((round) => round.id === normalizedTargetRoundId) || null;
+  if (!targetRound) {
     return null;
   }
+  const targetRoundPosition = orderedRounds.findIndex((round) => round.id === normalizedTargetRoundId);
+  const nextRound = targetRoundPosition >= 0 ? orderedRounds[targetRoundPosition + 1] || null : null;
+  const formalRounds = orderedRounds.filter((round) => normalizeText(round.userMessage));
   const orderedMessages = [...(Array.isArray(messages) ? messages : [])].sort(compareMissionChatMessages);
   const userMessages = orderedMessages.filter((message) => message.tone === 'user');
   if (!userMessages.length) {
     return null;
   }
-  const targetRound = formalRounds[targetFormalPosition] || null;
-  if (!targetRound) {
-    return null;
-  }
-  const nextFormalRound = formalRounds[targetFormalPosition + 1] || null;
   const targetCreatedAt = Number(targetRound.createdAt || 0);
-  const nextCreatedAt = Number(nextFormalRound?.createdAt || 0);
+  const nextCreatedAt = Number(nextRound?.createdAt || 0);
   if (targetCreatedAt > 0) {
     const targetMessageIndex = userMessages.findIndex((message) => {
       const timeMs = normalizeMsTime(message?.time);
@@ -319,6 +316,10 @@ const resolveRoundUserMessageWindow = (
       }
     }
   }
+  const targetFormalPosition = formalRounds.findIndex((round) => round.id === normalizedTargetRoundId);
+  if (targetFormalPosition < 0) {
+    return null;
+  }
   const mapping = new Map<string, number>();
   let searchCursor = 0;
   formalRounds.forEach((round) => {
@@ -338,7 +339,7 @@ const resolveRoundUserMessageWindow = (
     mapping.set(round.id, matchedIndex);
     searchCursor = matchedIndex + 1;
   });
-  const targetMessageIndex = mapping.get(normalizedActiveRoundId);
+  const targetMessageIndex = mapping.get(normalizedTargetRoundId);
   if (targetMessageIndex == null || targetMessageIndex < 0 || targetMessageIndex >= userMessages.length) {
     return null;
   }
@@ -638,12 +639,9 @@ export const useOrchestrationRuntimeState = (options: {
     if (!formalRounds.length) {
       return [];
     }
-    if (!formalRounds.some((item) => item.id === round.id)) {
-      return [];
-    }
     const userMessageWindow = resolveRoundUserMessageWindow(
       current.rounds,
-      current.activeRoundId,
+      round.id,
       source
     );
     if (userMessageWindow) {
@@ -1033,8 +1031,10 @@ export const useOrchestrationRuntimeState = (options: {
     const existingActiveRoundId =
       existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
     const latestFormalRound = findLatestFormalRound(nextRounds);
+    const retainedActiveRound =
+      nextRounds.find((item) => item.id === existingActiveRoundId) || null;
     const activeRound =
-      nextRounds.find((item) => item.id === existingActiveRoundId) ||
+      retainedActiveRound ||
       latestFormalRound ||
       nextRounds[nextRounds.length - 1] ||
       null;
@@ -1444,11 +1444,52 @@ export const useOrchestrationRuntimeState = (options: {
     return null;
   };
 
-  const createRound = async (situation: string, userMessage = '') => {
+  const createRound = async (
+    situation: string,
+    userMessage = '',
+    options: { roundIndex?: number } = {}
+  ) => {
     const current = await ensureRuntime();
     if (!current) return null;
-    const nextIndex = Math.max(1, ...(current.rounds || []).map((item) => item.index)) + 1;
+    const requestedRoundIndex = Math.max(0, Number.parseInt(String(options.roundIndex || 0), 10) || 0);
+    const nextIndex =
+      requestedRoundIndex > 0
+        ? requestedRoundIndex
+        : Math.max(1, ...(current.rounds || []).map((item) => item.index)) + 1;
     const resolvedSituation = String(situation || '').trim() || resolveSituationByRoundIndex(current.plannedSituations, nextIndex);
+    const sameIndexRounds = current.rounds
+      .filter((item) => Number(item.index || 0) === nextIndex)
+      .sort((left, right) => Number(left.createdAt || 0) - Number(right.createdAt || 0));
+    const reusablePreviewRound =
+      sameIndexRounds.find((item) => !normalizeText(item.userMessage)) || null;
+    if (reusablePreviewRound) {
+      const nextRounds = current.rounds.map((item) =>
+        item.id === reusablePreviewRound.id
+          ? {
+              ...item,
+              situation: resolvedSituation
+            }
+          : item
+      );
+      const updatedRound =
+        nextRounds.find((item) => item.id === reusablePreviewRound.id) || reusablePreviewRound;
+      const nextState: PersistedRuntime = {
+        ...current,
+        currentSituation:
+          current.activeRoundId === reusablePreviewRound.id
+            ? resolvedSituation
+            : current.currentSituation,
+        rounds: nextRounds
+      };
+      await ensureRoundArtifactDirs(nextState, updatedRound);
+      await ensureMotherRoundDir(nextState, updatedRound);
+      await saveRoundSituationFile(nextState, updatedRound.index, resolvedSituation);
+      setRuntime(nextState);
+      return updatedRound;
+    }
+    if (sameIndexRounds.length) {
+      return sameIndexRounds[0];
+    }
     const round: OrchestrationRound = {
       id: buildRoundId(nextIndex),
       index: nextIndex,

@@ -293,6 +293,7 @@ import {
 } from '@/components/orchestration/orchestrationShared';
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
+import { useAuthStore } from '@/stores/auth';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 import { chatDebugLog } from '@/utils/chatDebug';
 
@@ -313,6 +314,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const authStore = useAuthStore();
 
 const orchestrationWorkbenchDebug = (event: string, payload?: unknown) => {
   chatDebugLog('orchestration-workbench', event, payload);
@@ -324,6 +326,10 @@ const missionsRef = toRef(props, 'missions');
 const displayChatMessagesSeed = ref<MissionChatMessage[]>([]);
 const orchestrationGroupId = computed(() => String(props.group?.group_id || props.group?.hive_id || '').trim());
 const motherAgentId = computed(() => String(props.group?.mother_agent_id || '').trim());
+const currentUserId = computed(() => {
+  const user = authStore.user as Record<string, unknown> | null;
+  return String(user?.id || user?.user_id || user?.username || '').trim();
+});
 
 const {
   runtimeState,
@@ -399,9 +405,7 @@ const situationDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
 const deletingHistoryId = ref('');
 const situationPlanDraft = ref<Record<string, string>>({});
-const stagedSituationDraft = ref<Record<string, string>>({});
-const stagedSituationDraftOrchestrationId = ref('');
-const stagedSituationDraftActive = ref(false);
+const stagedSituationDrafts = ref<Record<string, Record<string, string>>>({});
 const currentSituationDraft = ref('');
 const selectedSituationRound = ref(1);
 const situationImportInputRef = ref<HTMLInputElement | null>(null);
@@ -432,8 +436,41 @@ const hasActiveDispatchPreview = computed(() =>
     activeDispatchPreviewStatus.value
   )
 );
+const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
+  Boolean(String(round?.userMessage || '').trim());
+const sortedRounds = computed(() =>
+  [...rounds.value].sort(
+    (left, right) =>
+      Number(left.index || 0) - Number(right.index || 0) ||
+      Number(left.createdAt || 0) - Number(right.createdAt || 0)
+  )
+);
+const formalRounds = computed(() => sortedRounds.value.filter((round) => roundHasUserMessage(round)));
+const latestFormalRound = computed(() => formalRounds.value[formalRounds.value.length - 1] || null);
+const resolveFrontierRoundIndex = () =>
+  latestFormalRound.value ? Math.max(1, Number(latestFormalRound.value.index || 0) + 1) : 1;
+const findPreparedRoundByIndex = (roundIndex: number) =>
+  sortedRounds.value.find(
+    (round) => Number(round.index || 0) === Math.max(1, Number(roundIndex || 0)) && !roundHasUserMessage(round)
+  ) || null;
+const frontierPreparedRound = computed(() => findPreparedRoundByIndex(resolveFrontierRoundIndex()));
+const latestInteractiveRound = computed(
+  () => frontierPreparedRound.value || latestFormalRound.value || sortedRounds.value[sortedRounds.value.length - 1] || null
+);
+const findDirectSuccessorRound = (roundIndex: number) => {
+  const targetIndex = Math.max(1, Number(roundIndex || 0)) + 1;
+  const candidates = sortedRounds.value
+    .filter((round) => Number(round.index || 0) === targetIndex)
+    .sort((left, right) => {
+      const completionDiff = Number(roundHasUserMessage(right)) - Number(roundHasUserMessage(left));
+      if (completionDiff !== 0) return completionDiff;
+      return Number(left.createdAt || 0) - Number(right.createdAt || 0);
+    });
+  return candidates[0] || null;
+};
+const resolveImmediateNextRoundIndex = () => resolveFrontierRoundIndex();
 const isViewingLatestRound = computed(() => {
-  const latestId = String(latestRound.value?.id || '').trim();
+  const latestId = String(latestInteractiveRound.value?.id || '').trim();
   const activeId = String(activeRound.value?.id || '').trim();
   return Boolean(latestId && activeId && latestId === activeId);
 });
@@ -453,12 +490,7 @@ const orchestrationNextRoundReady = computed(() => {
   if (!isReady.value || !isActive.value || orchestrationRunning.value) {
     return false;
   }
-  const current = activeRound.value;
-  const latest = latestRound.value;
-  if (!current || !latest || current.id !== latest.id) {
-    return false;
-  }
-  return Boolean(String(current.userMessage || '').trim());
+  return roundHasUserMessage(activeRound.value);
 });
 
 const motherName = computed(() => {
@@ -479,36 +511,50 @@ const normalizeSituationEntries = (value: Record<string, string>) =>
 
 const clearStagedSituationDraft = (orchestrationId?: string) => {
   const targetId = String(orchestrationId || '').trim();
-  if (targetId && stagedSituationDraftOrchestrationId.value !== targetId) {
+  if (!targetId) {
+    stagedSituationDrafts.value = {};
     return;
   }
-  stagedSituationDraft.value = {};
-  stagedSituationDraftOrchestrationId.value = '';
-  stagedSituationDraftActive.value = false;
+  if (!stagedSituationDrafts.value[targetId]) {
+    return;
+  }
+  const nextDrafts = { ...stagedSituationDrafts.value };
+  delete nextDrafts[targetId];
+  stagedSituationDrafts.value = nextDrafts;
 };
 
-const rememberStagedSituationDraft = (entries: Record<string, string>) => {
-  stagedSituationDraft.value = normalizeSituationEntries(entries);
-  stagedSituationDraftOrchestrationId.value = currentOrchestrationId.value;
-  stagedSituationDraftActive.value = true;
+const rememberStagedSituationDraft = (
+  entries: Record<string, string>,
+  orchestrationId: string = currentOrchestrationId.value
+) => {
+  const targetId = String(orchestrationId || '').trim();
+  if (!targetId) return;
+  stagedSituationDrafts.value = {
+    ...stagedSituationDrafts.value,
+    [targetId]: normalizeSituationEntries(entries)
+  };
 };
 
 const hasStagedSituationDraft = computed(
-  () =>
-    stagedSituationDraftActive.value &&
-    Boolean(stagedSituationDraftOrchestrationId.value) &&
-    stagedSituationDraftOrchestrationId.value === currentOrchestrationId.value
+  () => {
+    const currentId = currentOrchestrationId.value;
+    if (!currentId) return false;
+    return Object.keys(stagedSituationDrafts.value[currentId] || {}).length > 0;
+  }
 );
 
 const plannedSituations = computed<Record<string, string>>(() => {
   const source = runtimeState.value?.plannedSituations;
   const persisted = source && typeof source === 'object' ? normalizeSituationEntries(source as Record<string, string>) : {};
-  if (hasStagedSituationDraft.value) {
-    return { ...stagedSituationDraft.value };
+  const currentId = currentOrchestrationId.value;
+  if (currentId && hasStagedSituationDraft.value) {
+    return { ...(stagedSituationDrafts.value[currentId] || {}) };
   }
   return persisted;
 });
-const latestRoundIndex = computed(() => Math.max(1, Number(latestRound.value?.index || 1)));
+const latestRoundIndex = computed(() =>
+  Math.max(1, Number(activeRound.value?.index || 0), Number(latestFormalRound.value?.index || 0) || 1)
+);
 const normalizeSituationRound = (value: unknown) =>
   Math.max(1, Number.parseInt(String(value ?? '').trim(), 10) || 1);
 
@@ -651,7 +697,7 @@ const activeRoundRunningMissions = computed(() =>
 );
 
 const latestRoundMissions = computed(() => {
-  const missionIds = new Set(latestRound.value?.missionIds || []);
+  const missionIds = new Set(latestFormalRound.value?.missionIds || []);
   return (Array.isArray(props.missions) ? props.missions : []).filter((item) =>
     missionIds.has(String(item?.mission_id || item?.team_run_id || '').trim())
   );
@@ -717,8 +763,8 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
   if (!orchestrationRunning.value) {
     return null;
   }
-  const latestRound = rounds.value[rounds.value.length - 1] || null;
-  if (!latestRound || latestRound.id !== activeRound.value?.id) {
+  const latestRenderableRound = latestInteractiveRound.value;
+  if (!latestRenderableRound || latestRenderableRound.id !== activeRound.value?.id) {
     return null;
   }
   return dispatchPreview.value || null;
@@ -758,6 +804,59 @@ const handleCommitCurrentSituation = async () => {
 
 const buildOrchestrationRoundDispatchText = (situation: string) => String(situation || '').trim();
 
+const updateSituationForRound = async (roundIndex: number, value: string) => {
+  const targetRoundIndex = normalizeSituationRound(roundIndex);
+  const normalizedValue = String(value || '');
+  const nextEntries = { ...plannedSituations.value };
+  if (String(normalizedValue).trim()) {
+    nextEntries[String(targetRoundIndex)] = normalizedValue;
+  } else {
+    delete nextEntries[String(targetRoundIndex)];
+  }
+  const isEditingActiveRound = Number(activeRound.value?.index || 0) === targetRoundIndex;
+  if (isEditingActiveRound && isViewingLatestRound.value && !orchestrationRuntimeLocked.value) {
+    await updateSituation(normalizedValue);
+    return;
+  }
+  if (shouldStageSituationDraft.value) {
+    rememberStagedSituationDraft(nextEntries);
+    return;
+  }
+  await updatePlannedSituations(nextEntries);
+};
+
+const createPreparedRoundAtIndex = async (roundIndex: number, preferredSituation = '') => {
+  const nextRoundIndex = Math.max(1, Number(roundIndex || 0));
+  const existingPreparedRound =
+    rounds.value.find(
+      (round) => Number(round.index || 0) === nextRoundIndex && !String(round.userMessage || '').trim()
+    ) || null;
+  if (existingPreparedRound?.id) {
+    const nextSituation =
+      String(preferredSituation || '').trim() ||
+      resolveDraftSituationByRoundIndex(nextRoundIndex) ||
+      String(existingPreparedRound.situation || '').trim() ||
+      await resolveRoundSituation(nextRoundIndex);
+    if (nextSituation !== String(existingPreparedRound.situation || '').trim()) {
+      await updateSituationForRound(nextRoundIndex, nextSituation);
+    }
+    selectRound(existingPreparedRound.id);
+    return existingPreparedRound;
+  }
+  const nextSituation =
+    String(preferredSituation || '').trim() ||
+    resolveDraftSituationByRoundIndex(nextRoundIndex) ||
+    await resolveRoundSituation(nextRoundIndex);
+  const created = await createRound(nextSituation, '', { roundIndex: nextRoundIndex });
+  if (created?.id) {
+    selectRound(created.id);
+  }
+  return created;
+};
+
+const createNextPreparedRound = async (preferredSituation = '') =>
+  createPreparedRoundAtIndex(resolveImmediateNextRoundIndex(), preferredSituation);
+
 const handleRunRoundAction = async () => {
   if (orchestrationRunning.value) {
     await handleSendToMother();
@@ -771,27 +870,22 @@ const handleRunRoundAction = async () => {
     ElMessage.warning(t('orchestration.message.startRunRequired'));
     return;
   }
-  if (!isViewingLatestRound.value) {
-    ElMessage.warning(t('orchestration.message.branchRequired'));
-    return;
-  }
   await handleCommitCurrentSituation();
-  if (orchestrationNextRoundReady.value) {
-    const nextRoundIndex = Math.max(1, Number(latestRound.value?.index || 0) + 1);
-    const nextSituation =
-      resolveDraftSituationByRoundIndex(nextRoundIndex) ||
-      await resolveRoundSituation(nextRoundIndex);
-    const created = await createRound(nextSituation, '');
-    if (created?.id) {
-      selectRound(created.id);
+  const currentRoundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
+  const selectedRoundHasUserMessage = roundHasUserMessage(activeRound.value);
+  const directSuccessorRound = findDirectSuccessorRound(currentRoundIndex);
+  if (selectedRoundHasUserMessage) {
+    if (directSuccessorRound?.id) {
+      selectRound(directSuccessorRound.id);
+      return;
     }
+    await createPreparedRoundAtIndex(currentRoundIndex + 1);
     return;
   }
-  const roundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
   const situation =
-    resolveDraftSituationByRoundIndex(roundIndex) ||
+    resolveDraftSituationByRoundIndex(currentRoundIndex) ||
     String(currentSituationDraft.value || activeRound.value?.situation || '').trim() ||
-    await resolveRoundSituation(roundIndex);
+    await resolveRoundSituation(currentRoundIndex);
   composerText.value = buildOrchestrationRoundDispatchText(situation);
   if (!composerText.value) {
     ElMessage.warning(t('orchestration.message.situationRequired'));
@@ -931,23 +1025,31 @@ const handleBranchRun = async () => {
     return;
   }
   try {
+    const sourceOrchestrationId = currentOrchestrationId.value;
     await handleCommitCurrentSituation();
     const branchBaseRoundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
     const draftSituation = String(currentSituationDraft.value || activeRound.value?.situation || '');
     const branchedState = await branchHistory(currentOrchestrationId.value, branchBaseRoundIndex, {
       activate: true
     });
-    if (branchedState?.active) {
-      const nextStateRoundIndex = Math.max(
-        1,
-        Number(branchedState.rounds[branchedState.rounds.length - 1]?.index || branchBaseRoundIndex)
-      );
-      if (draftSituation !== String(branchedState.rounds[branchedState.rounds.length - 1]?.situation || '')) {
-        await updateSituation(draftSituation);
+    if (sourceOrchestrationId && branchedState?.orchestrationId) {
+      const stagedDraft = stagedSituationDrafts.value[sourceOrchestrationId] || null;
+      if (stagedDraft) {
+        rememberStagedSituationDraft(stagedDraft, String(branchedState.orchestrationId || ''));
       }
-      await syncMotherSessionContextForState(branchedState, nextStateRoundIndex);
     }
-    clearStagedSituationDraft(currentOrchestrationId.value);
+    if (branchedState?.active) {
+    const nextStateRoundIndex = Math.max(
+      1,
+      Number(
+        branchedState.rounds
+          .filter((round) => roundHasUserMessage(round))
+          .slice(-1)[0]?.index || branchBaseRoundIndex
+      )
+    );
+      await syncMotherSessionContextForState(branchedState, nextStateRoundIndex);
+      await createNextPreparedRound(draftSituation);
+    }
     emit('refresh');
     ElMessage.success(t('orchestration.message.branched'));
   } catch (error: any) {
@@ -994,18 +1096,92 @@ const handleStartRun = async () => {
   }
 };
 
-const handleRestoreHistoryAction = async (orchestrationId: string) => {
+const handleRestoreHistoryAction = async (
+  payload:
+    | string
+    | {
+        orchestrationId: string;
+        roundIndex?: number;
+        preview?: boolean;
+      }
+) => {
   if (orchestrationRuntimeLocked.value) {
     ElMessage.warning(t('orchestration.message.busySwitchBlocked'));
     return;
   }
   try {
-    const nextState = await restoreHistory(orchestrationId, { activate: isActive.value });
-    clearStagedSituationDraft();
+    const normalizedPayload =
+      typeof payload === 'string'
+        ? { orchestrationId: payload, roundIndex: 0, preview: false }
+        : {
+            orchestrationId: String(payload?.orchestrationId || '').trim(),
+            roundIndex: Math.max(0, Number(payload?.roundIndex || 0)),
+            preview: payload?.preview === true
+          };
+    const currentRunSelected = normalizedPayload.orchestrationId === currentOrchestrationId.value;
+    if (currentRunSelected) {
+      if (normalizedPayload.preview && normalizedPayload.roundIndex > 0) {
+        const previewRound =
+          rounds.value.find(
+            (round) =>
+              Number(round.index || 0) === normalizedPayload.roundIndex &&
+              !String(round.userMessage || '').trim()
+          ) || null;
+        if (previewRound?.id) {
+          selectRound(previewRound.id);
+          return;
+        }
+        const createdRound = await createPreparedRoundAtIndex(normalizedPayload.roundIndex);
+        if (createdRound?.id) {
+          selectRound(createdRound.id);
+        }
+        return;
+      }
+      if (normalizedPayload.roundIndex > 0) {
+        const targetRound =
+          rounds.value.find((round) => Number(round.index || 0) === normalizedPayload.roundIndex) || null;
+        if (targetRound?.id) {
+          selectRound(targetRound.id);
+          return;
+        }
+      }
+    }
+    const nextState = await restoreHistory(normalizedPayload.orchestrationId, { activate: isActive.value });
+    if (nextState && normalizedPayload.roundIndex > 0) {
+      if (normalizedPayload.preview) {
+        const previewRound =
+          nextState.rounds.find(
+            (round) =>
+              Number(round.index || 0) === normalizedPayload.roundIndex &&
+              !String(round.userMessage || '').trim()
+          ) || null;
+        if (previewRound?.id) {
+          selectRound(previewRound.id);
+        } else {
+          const createdRound = await createRound(
+            resolveDraftSituationByRoundIndex(normalizedPayload.roundIndex) ||
+              await resolveRoundSituation(normalizedPayload.roundIndex),
+            '',
+            { roundIndex: normalizedPayload.roundIndex }
+          );
+          if (createdRound?.id) {
+            selectRound(createdRound.id);
+          }
+        }
+      } else {
+        const targetRound =
+          nextState.rounds.find((round) => Number(round.index || 0) === normalizedPayload.roundIndex) || null;
+        if (targetRound?.id) {
+          selectRound(targetRound.id);
+        }
+      }
+    }
     if (nextState?.active) {
       await syncMotherSessionContextForState(
         nextState,
-        Number(nextState.rounds[nextState.rounds.length - 1]?.index || 1)
+        normalizedPayload.roundIndex > 0
+          ? normalizedPayload.roundIndex
+          : Number(nextState.rounds[nextState.rounds.length - 1]?.index || 1)
       );
     }
     historyDialogVisible.value = false;
@@ -1147,7 +1323,18 @@ const handleDeleteBranchAfterRound = async (payload: { orchestrationId: string; 
   }
   try {
     await truncateHistoryFromRound(payload.orchestrationId, targetRoundIndex);
-    clearStagedSituationDraft(payload.orchestrationId);
+    const targetId = String(payload.orchestrationId || '').trim();
+    const currentEntries = stagedSituationDrafts.value[targetId] || null;
+    if (currentEntries) {
+      const trimmedEntries = Object.fromEntries(
+        Object.entries(currentEntries).filter(([key]) => normalizeSituationRound(key) <= targetRoundIndex)
+      );
+      if (Object.keys(trimmedEntries).length) {
+        rememberStagedSituationDraft(trimmedEntries, targetId);
+      } else {
+        clearStagedSituationDraft(targetId);
+      }
+    }
     emit('refresh');
     ElMessage.success(t('orchestration.timeline.deleteAfterSuccess'));
   } catch (error: any) {
@@ -1273,7 +1460,7 @@ const handleSendToMother = async () => {
       await resolveRoundSituation(actualRoundIndex);
     await syncMotherSessionContext(actualRoundIndex);
     ensureOrchestrationDispatchFlowActive(flowToken);
-    const includePrimer = actualRoundIndex === 1 && state?.motherPrimerInjected !== true;
+    const includePrimer = state?.motherPrimerInjected !== true;
     const templates = await ensureOrchestrationPromptTemplates();
     ensureOrchestrationDispatchFlowActive(flowToken);
     const dispatchContent = buildMotherDispatchEnvelope({
@@ -1284,6 +1471,7 @@ const handleSendToMother = async () => {
       userMessage: content,
       situation: roundSituation,
       includePrimer,
+      currentUserId: currentUserId.value,
       templates
     });
     ensureOrchestrationDispatchFlowActive(flowToken);

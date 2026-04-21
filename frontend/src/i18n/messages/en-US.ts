@@ -2353,6 +2353,7 @@ export default {
   'orchestration.timeline.noSituation': 'No situation',
   'orchestration.timeline.branchFrom': 'Branch from round {round}',
   'orchestration.timeline.deleteAfter': 'Delete everything after this round',
+  'orchestration.timeline.deleteBranchAfter': 'Delete everything after this branch',
   'orchestration.timeline.deleteAfterConfirm':
     'Keep up to round {round} and remove every later round and descendant branch?',
   'orchestration.timeline.deleteAfterSuccess': 'Removed everything after this round',

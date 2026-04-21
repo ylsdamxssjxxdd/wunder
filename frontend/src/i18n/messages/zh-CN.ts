@@ -2310,6 +2310,7 @@ export default {
   'orchestration.timeline.noSituation': '未填写态势',
   'orchestration.timeline.branchFrom': '从第 {round} 轮分支',
   'orchestration.timeline.deleteAfter': '删除该轮之后的内容',
+  'orchestration.timeline.deleteBranchAfter': '删除该分支后续内容',
   'orchestration.timeline.deleteAfterConfirm': '确认保留到第 {round} 轮，并移除该轮之后的所有轮次与后续分支吗？',
   'orchestration.timeline.deleteAfterSuccess': '已移除该轮之后的内容',
   'orchestration.chat.lockedInMessenger': '该线程处于编排态，请回到编排页面继续操作以保持线程连续性。',

@@ -259,11 +259,11 @@
               showChatSettingsView &&
               sessionHub.activeSection === 'agents' &&
               !showAgentGridOverview &&
-              agentSettingMode === 'agent' &&
-              !isSettingsDefaultAgentReadonly
+              agentSettingMode === 'agent'
             "
             class="messenger-header-action-text messenger-header-action-text--danger"
             type="button"
+            :disabled="!canDeleteSettingsAgent"
             @click="triggerAgentSettingsDelete"
           >
             <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
@@ -4035,6 +4035,10 @@ const settingsAgentId = computed(() => {
 
 const settingsAgentIdForPanel = computed(() => normalizeAgentId(settingsAgentId.value));
 const isSettingsDefaultAgentReadonly = computed(() => false);
+const canDeleteSettingsAgent = computed(() => {
+  const value = normalizeAgentId(settingsAgentId.value);
+  return Boolean(value) && value !== DEFAULT_AGENT_KEY;
+});
 
 const settingsAgentIdForApi = computed(() => {
   const value = normalizeAgentId(settingsAgentId.value);
@@ -9358,6 +9362,7 @@ const triggerAgentSettingsReload = () => {
 };
 
 const triggerAgentSettingsDelete = () => {
+  if (!canDeleteSettingsAgent.value) return;
   void agentSettingsPanelRef.value?.triggerDelete();
 };
 

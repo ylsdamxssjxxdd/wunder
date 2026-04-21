@@ -1,7 +1,7 @@
 [Current Round Context]
 Current round directory: {{current_round_dir}}
 Current round situation file: {{current_round_situation_file}}
-All worker artifacts for this round must be written into their own subdirectories under the current round. Do not mix them and do not write into another round's directory.
+All worker artifacts for this round must be written into their own absolute workspace directories listed below. Do not mix them and do not write into another round's directory.
 {{worker_artifact_lines}}
 
 Artifact retrieval policy: if you need to inspect this round's artifacts, first perform one bounded recursive listing of "{{current_round_dir}}" (recommended max_depth=2, limit=500), then use the read_file tool's files array to batch-read only the relevant text files. The listing returns paths relative to "{{current_round_dir}}"; when reading, prefix them with "{{current_round_dir}}/". Do not list each worker directory one by one; do not guess `orchestration/orch_*`; do not rewrite "{{current_round_dir}}" into another round format.

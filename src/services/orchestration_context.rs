@@ -45,6 +45,7 @@ pub struct OrchestrationSessionContext {
 
 #[derive(Debug, Clone)]
 pub struct OrchestrationDispatchContext {
+    pub run_id: String,
     pub round_index: i64,
     pub situation: String,
 }
@@ -307,19 +308,43 @@ pub fn build_orchestration_run_id(preferred_name: Option<&str>) -> String {
     format!("{ORCHESTRATION_RUN_NAME_FALLBACK}_{}", &suffix[..8])
 }
 
-pub fn prompt_agent_artifact_path(
+pub fn agent_artifact_path(
+    run_id: &str,
     round_index: i64,
     agent_name: &str,
     fallback_agent_id: &str,
 ) -> String {
     [
+        "orchestration".to_string(),
+        run_id.trim().to_string(),
         round_dir_name(round_index),
         orchestration_agent_artifact_dir_name(agent_name, fallback_agent_id),
     ]
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
+    .into_iter()
+    .filter(|item| !item.trim().is_empty())
+    .collect::<Vec<_>>()
+    .join("/")
+}
+
+pub fn public_agent_artifact_path(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    run_id: &str,
+    round_index: i64,
+    agent_name: &str,
+    fallback_agent_id: &str,
+) -> String {
+    let relative_path = agent_artifact_path(run_id, round_index, agent_name, fallback_agent_id);
+    match workspace.resolve_path(workspace_id, &relative_path) {
+        Ok(target) => workspace.display_path(workspace_id, &target),
+        Err(_) => {
+            let public_root = workspace
+                .public_root(workspace_id)
+                .to_string_lossy()
+                .replace('\\', "/");
+            format!("{}/{}", public_root.trim_end_matches('/'), relative_path)
+        }
+    }
 }
 
 pub fn clear_session_context(
@@ -607,6 +632,28 @@ pub fn build_branch_history_record_from_state(
     record
 }
 
+pub fn build_closed_history_record(
+    state: &OrchestrationHiveState,
+    existing: Option<&OrchestrationHistoryRecord>,
+    latest_round_index: i64,
+    updated_at: f64,
+) -> OrchestrationHistoryRecord {
+    let mut record = existing
+        .cloned()
+        .unwrap_or_else(|| {
+            build_history_record_from_state(
+                state,
+                ORCHESTRATION_HISTORY_STATUS_CLOSED,
+                latest_round_index,
+            )
+        });
+    record.status = ORCHESTRATION_HISTORY_STATUS_CLOSED.to_string();
+    record.latest_round_index = normalize_round_index(latest_round_index);
+    record.updated_at = updated_at.max(0.0);
+    record.exited_at = record.updated_at;
+    record
+}
+
 pub fn persist_history_record(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -744,6 +791,43 @@ pub fn list_history_records(
             .then_with(|| left.orchestration_id.cmp(&right.orchestration_id))
     });
     Ok(items)
+}
+
+pub fn collect_descendant_history_ids_after_round(
+    root_history: &OrchestrationHistoryRecord,
+    all_histories: &[OrchestrationHistoryRecord],
+    retained_round_index: i64,
+) -> Vec<String> {
+    let normalized_retained_round_index = normalize_round_index(retained_round_index);
+    let root_id = root_history.orchestration_id.trim();
+    if root_id.is_empty() {
+        return Vec::new();
+    }
+    let mut descendants_to_remove = all_histories
+        .iter()
+        .filter(|item| {
+            item.parent_orchestration_id.trim() == root_id
+                && item.branch_from_round_index >= normalized_retained_round_index
+        })
+        .map(|item| item.orchestration_id.clone())
+        .collect::<Vec<_>>();
+    let mut stack = descendants_to_remove.clone();
+    while let Some(parent_id) = stack.pop() {
+        for item in all_histories {
+            if item.parent_orchestration_id.trim() != parent_id.trim() {
+                continue;
+            }
+            if descendants_to_remove
+                .iter()
+                .any(|existing| existing.trim() == item.orchestration_id.trim())
+            {
+                continue;
+            }
+            descendants_to_remove.push(item.orchestration_id.clone());
+            stack.push(item.orchestration_id.clone());
+        }
+    }
+    descendants_to_remove
 }
 
 pub fn normalize_round_record(record: &OrchestrationRoundRecord) -> OrchestrationRoundRecord {
@@ -1384,6 +1468,7 @@ pub fn load_dispatch_context(
     let situation = read_situation_file(workspace, workspace_id, &context.run_id, context.round_index)
         .unwrap_or_default();
     Some(OrchestrationDispatchContext {
+        run_id: context.run_id,
         round_index: context.round_index,
         situation,
     })
@@ -1391,6 +1476,8 @@ pub fn load_dispatch_context(
 
 pub fn build_worker_dispatch_message(
     config: &Config,
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
     base_message: &str,
     context: Option<&OrchestrationDispatchContext>,
     target_agent_id: &str,
@@ -1405,7 +1492,14 @@ pub fn build_worker_dispatch_message(
     } else {
         target_agent_name.trim()
     };
-    let artifact_path = prompt_agent_artifact_path(context.round_index, worker_name, target_agent_id);
+    let artifact_path = public_agent_artifact_path(
+        workspace,
+        workspace_id,
+        &context.run_id,
+        context.round_index,
+        worker_name,
+        target_agent_id,
+    );
     let mut blocks = Vec::new();
     if is_first_worker_turn {
         blocks.push(render_prompt_template(
@@ -1540,24 +1634,10 @@ fn now_ts() -> f64 {
 mod tests {
     use super::*;
     use crate::config::Config;
-
-    fn full_agent_artifact_path(
-        run_id: &str,
-        round_index: i64,
-        agent_name: &str,
-        fallback_agent_id: &str,
-    ) -> String {
-        [
-            "orchestration".to_string(),
-            run_id.trim().to_string(),
-            round_dir_name(round_index),
-            orchestration_agent_artifact_dir_name(agent_name, fallback_agent_id),
-        ]
-        .into_iter()
-        .filter(|item| !item.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
-    }
+    use crate::storage::SqliteStorage;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn builds_round_paths() {
@@ -1566,31 +1646,48 @@ mod tests {
             "orchestration/orch_demo/round_02/situation.txt"
         );
         assert_eq!(
-            full_agent_artifact_path("orch_demo", 3, "分析员", "agent_a"),
+            agent_artifact_path("orch_demo", 3, "分析员", "agent_a"),
             "orchestration/orch_demo/round_03/分析员"
         );
         assert_eq!(
-            prompt_agent_artifact_path(3, "分析员", "agent_a"),
-            "round_03/分析员"
+            orchestration_agent_artifact_dir_name("分析员", "agent_a"),
+            "分析员"
         );
     }
 
     #[test]
     fn worker_dispatch_includes_orchestration_context() {
+        let dir = tempdir().expect("tempdir");
+        let storage = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("orchestration-context-test.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace_root = dir.path().join("workspaces");
+        let workspace = WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
         let context = OrchestrationDispatchContext {
+            run_id: "orch_demo".to_string(),
             round_index: 1,
             situation: "market pressure".to_string(),
         };
         let message = build_worker_dispatch_message(
             &Config::default(),
+            &workspace,
+            "alice__c__2",
             "analyze risk",
             Some(&context),
             "agent_worker",
             "Risk Worker",
             false,
         );
-        assert!(message.contains("round_01/Risk Worker"));
-        assert!(!message.contains("orchestration/orch_demo/round_01/agent_worker"));
+        assert!(message.contains("/workspaces/alice__c__2/orchestration/orch_demo/round_01/Risk Worker"));
+        assert!(!message.contains("位置：round_01/Risk Worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
     }
@@ -1621,5 +1718,137 @@ mod tests {
             member_binding_meta_key("orch_1", "agent_a"),
             "orchestration_member_binding:orch_1:agent_a"
         );
+    }
+
+    #[test]
+    fn build_closed_history_record_preserves_branch_lineage() {
+        let parent_state = OrchestrationHiveState {
+            orchestration_id: "orch_root".to_string(),
+            run_id: "root".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_root".to_string(),
+            active: true,
+            entered_at: 10.0,
+            updated_at: 12.0,
+        };
+        let branch_state = OrchestrationHiveState {
+            orchestration_id: "orch_branch".to_string(),
+            run_id: "branch".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_branch".to_string(),
+            active: true,
+            entered_at: 20.0,
+            updated_at: 21.0,
+        };
+        let root_history =
+            build_history_record_from_state(&parent_state, ORCHESTRATION_HISTORY_STATUS_ACTIVE, 4);
+        let branch_history = build_branch_history_record_from_state(
+            &branch_state,
+            ORCHESTRATION_HISTORY_STATUS_ACTIVE,
+            6,
+            &root_history,
+            3,
+        );
+
+        let closed = build_closed_history_record(&branch_state, Some(&branch_history), 6, 30.0);
+
+        assert_eq!(closed.parent_orchestration_id, "orch_root");
+        assert_eq!(closed.branch_root_orchestration_id, "orch_root");
+        assert_eq!(closed.branch_from_round_index, 3);
+        assert_eq!(closed.branch_depth, 1);
+        assert_eq!(closed.status, ORCHESTRATION_HISTORY_STATUS_CLOSED);
+        assert_eq!(closed.latest_round_index, 6);
+        assert_eq!(closed.updated_at, 30.0);
+        assert_eq!(closed.exited_at, 30.0);
+    }
+
+    #[test]
+    fn collect_descendant_history_ids_after_round_keeps_earlier_branch_but_removes_nested_late_branch() {
+        let root_state = OrchestrationHiveState {
+            orchestration_id: "orch_root".to_string(),
+            run_id: "root".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_root".to_string(),
+            active: true,
+            entered_at: 10.0,
+            updated_at: 12.0,
+        };
+        let branch_a_state = OrchestrationHiveState {
+            orchestration_id: "orch_branch_a".to_string(),
+            run_id: "branch_a".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_branch_a".to_string(),
+            active: false,
+            entered_at: 20.0,
+            updated_at: 21.0,
+        };
+        let branch_b_state = OrchestrationHiveState {
+            orchestration_id: "orch_branch_b".to_string(),
+            run_id: "branch_b".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_branch_b".to_string(),
+            active: false,
+            entered_at: 30.0,
+            updated_at: 31.0,
+        };
+        let branch_b_child_state = OrchestrationHiveState {
+            orchestration_id: "orch_branch_b_child".to_string(),
+            run_id: "branch_b_child".to_string(),
+            group_id: "group_a".to_string(),
+            mother_agent_id: "mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: "sess_branch_b_child".to_string(),
+            active: false,
+            entered_at: 40.0,
+            updated_at: 41.0,
+        };
+        let root_history =
+            build_history_record_from_state(&root_state, ORCHESTRATION_HISTORY_STATUS_ACTIVE, 6);
+        let branch_a_history = build_branch_history_record_from_state(
+            &branch_a_state,
+            ORCHESTRATION_HISTORY_STATUS_CLOSED,
+            4,
+            &root_history,
+            2,
+        );
+        let branch_b_history = build_branch_history_record_from_state(
+            &branch_b_state,
+            ORCHESTRATION_HISTORY_STATUS_CLOSED,
+            5,
+            &root_history,
+            5,
+        );
+        let branch_b_child_history = build_branch_history_record_from_state(
+            &branch_b_child_state,
+            ORCHESTRATION_HISTORY_STATUS_CLOSED,
+            5,
+            &branch_b_history,
+            4,
+        );
+
+        let removed = collect_descendant_history_ids_after_round(
+            &root_history,
+            &[
+                root_history.clone(),
+                branch_a_history.clone(),
+                branch_b_history.clone(),
+                branch_b_child_history.clone(),
+            ],
+            4,
+        );
+
+        assert!(removed.iter().any(|id| id == "orch_branch_b"));
+        assert!(removed.iter().any(|id| id == "orch_branch_b_child"));
+        assert!(!removed.iter().any(|id| id == "orch_branch_a"));
     }
 }

@@ -2486,6 +2486,10 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     )?;
     let dispatch_message = build_worker_dispatch_message(
         context.config,
+        context.workspace.as_ref(),
+        &context
+            .workspace
+            .scoped_user_id_by_container(user_id, target_agent.sandbox_container_id),
         &dispatch_message,
         orchestration_context.as_ref(),
         &target_agent_id,
@@ -3087,6 +3091,10 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         };
         let dispatch_message = build_worker_dispatch_message(
             context.config,
+            context.workspace.as_ref(),
+            &context
+                .workspace
+                .scoped_user_id_by_container(user_id, agent_record.sandbox_container_id),
             &dispatch_message,
             orchestration_context.as_ref(),
             &agent_record.agent_id,

@@ -362,48 +362,33 @@ pub fn collect_agent_activity(
 #[allow(clippy::too_many_arguments)]
 pub fn build_swarm_dispatch_message(
     storage: &dyn StorageBackend,
-    monitor: Option<&MonitorState>,
+    _monitor: Option<&MonitorState>,
     user_id: &str,
     hive_id: &str,
-    sender_agent_id: Option<&str>,
-    source_session_id: &str,
+    _sender_agent_id: Option<&str>,
+    _source_session_id: &str,
     _team_run_id: Option<&str>,
     _task_id: Option<&str>,
     original_message: &str,
 ) -> Result<String> {
     let hive = storage.get_hive(user_id, hive_id)?;
     let members = list_user_agents_by_hive_with_default(storage, user_id, hive_id)?;
-    let activity = collect_agent_activity(storage, monitor, user_id, hive_id, &members)?;
     let mother_agent_id = get_mother_agent_id(storage, user_id, hive_id)?;
-    let active_member_total = members
-        .iter()
-        .filter(|agent| {
-            activity
-                .get(&agent.agent_id)
-                .is_some_and(|snapshot| !snapshot.is_idle())
+    let mother_agent_name = mother_agent_id
+        .as_deref()
+        .and_then(|mother_id| {
+            members
+                .iter()
+                .find(|agent| agent.agent_id.trim() == mother_id.trim())
         })
-        .count();
-    let idle_member_total = members
-        .iter()
-        .filter(|agent| {
-            activity
-                .get(&agent.agent_id)
-                .is_none_or(AgentActivitySnapshot::is_idle)
-        })
-        .count();
+        .map(|agent| agent.name.trim().to_string())
+        .filter(|name| !name.is_empty());
 
     // Keep swarm context minimal to reduce prompt noise and chat bubble overflow.
     let payload = json!({
         "swarm": {
             "hive_name": hive.as_ref().map(|item| item.name.clone()),
-            "mother_agent_id": mother_agent_id,
-            "member_total": members.len(),
-            "active_member_total": active_member_total,
-            "idle_member_total": idle_member_total,
-        },
-        "sender": {
-            "agent_id": sender_agent_id.map(str::trim).filter(|value| !value.is_empty()),
-            "session_id": source_session_id.trim(),
+            "mother_agent_name": mother_agent_name,
         },
     });
     let payload_pretty =
@@ -620,11 +605,14 @@ fn is_default_agent_alias(agent_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_agent_main_session, resolve_or_create_agent_main_session, resolve_swarm_hive_id,
+        build_swarm_dispatch_message, resolve_agent_main_session,
+        resolve_or_create_agent_main_session, resolve_swarm_hive_id, set_mother_agent,
     };
     use crate::storage::{
-        ChatSessionRecord, SqliteStorage, StorageBackend, UserAgentRecord, DEFAULT_HIVE_ID,
+        ChatSessionRecord, HiveRecord, SqliteStorage, StorageBackend, UserAgentRecord,
+        DEFAULT_HIVE_ID,
     };
+    use serde_json::Value;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -777,5 +765,112 @@ mod tests {
             .expect("resolve hive id");
 
         assert_eq!(resolved, DEFAULT_HIVE_ID);
+    }
+
+    #[test]
+    fn build_swarm_dispatch_message_keeps_only_minimal_swarm_context() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("beeroom-dispatch-message.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+
+        let hive = HiveRecord {
+            hive_id: "hive_blue".to_string(),
+            user_id: "alice".to_string(),
+            name: "AI蓝军蜂群".to_string(),
+            description: String::new(),
+            is_default: false,
+            status: "active".to_string(),
+            created_time: 1.0,
+            updated_time: 1.0,
+        };
+        storage.upsert_hive(&hive).expect("upsert hive");
+
+        let mother_agent = UserAgentRecord {
+            agent_id: "agent_mother".to_string(),
+            user_id: "alice".to_string(),
+            hive_id: hive.hive_id.clone(),
+            name: "蓝军母蜂".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+            preset_binding: None,
+            silent: false,
+            prefer_mother: true,
+        };
+        storage
+            .upsert_user_agent(&mother_agent)
+            .expect("upsert mother agent");
+        set_mother_agent(storage.as_ref(), "alice", &hive.hive_id, &mother_agent.agent_id)
+            .expect("set mother agent");
+
+        let worker_agent = UserAgentRecord {
+            agent_id: "agent_worker".to_string(),
+            user_id: "alice".to_string(),
+            hive_id: hive.hive_id.clone(),
+            name: "侦察工蜂".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            ability_items: Vec::new(),
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+            preset_binding: None,
+            silent: false,
+            prefer_mother: false,
+        };
+        storage
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+
+        let message = build_swarm_dispatch_message(
+            storage.as_ref(),
+            None,
+            "alice",
+            &hive.hive_id,
+            Some(&mother_agent.agent_id),
+            "sess_demo",
+            None,
+            None,
+            "执行侦察任务",
+        )
+        .expect("build dispatch message");
+
+        let start = message.find('{').expect("json start");
+        let end = message.find("\n[/SWARM_CONTEXT]").expect("json end");
+        let payload: Value =
+            serde_json::from_str(&message[start..end]).expect("parse swarm context payload");
+
+        assert_eq!(
+            payload,
+            serde_json::json!({
+                "swarm": {
+                    "hive_name": "AI蓝军蜂群",
+                    "mother_agent_name": "蓝军母蜂"
+                }
+            })
+        );
     }
 }
