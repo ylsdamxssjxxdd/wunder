@@ -1,7 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::prompting::read_prompt_template;
-use crate::services::orchestration_run_control::cancel_active_team_runs_for_parent_session;
+use crate::services::beeroom_cleanup::{delete_group, BeeroomDeleteMode};
 use crate::services::orchestration_context::{
     build_branch_history_record_from_state, build_chat_session_with_title,
     build_closed_history_record, build_history_record_from_state, build_initial_round_state,
@@ -9,17 +9,17 @@ use crate::services::orchestration_context::{
     clear_hive_state, clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state,
     clear_session_context, collect_descendant_history_ids_after_round,
     copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
-    current_occupied_round_index, delete_round_directories_after, latest_formal_round_index, list_history_records,
-    load_history_record, load_hive_state, load_round_state, normalize_orchestration_run_name,
-    orchestration_agent_artifact_dir_name, persist_history_record, persist_hive_state,
-    persist_member_binding, persist_round_state, persist_session_context,
-    rebuild_branch_round_state, repair_active_orchestration_main_threads,
+    current_occupied_round_index, delete_round_directories_after, latest_formal_round_index,
+    list_history_records, load_history_record, load_hive_state, load_round_state,
+    normalize_orchestration_run_name, orchestration_agent_artifact_dir_name,
+    persist_history_record, persist_hive_state, persist_member_binding, persist_round_state,
+    persist_session_context, rebuild_branch_round_state, repair_active_orchestration_main_threads,
     repair_orchestration_session_main_thread, round_dir_name, round_id, OrchestrationHistoryRecord,
     OrchestrationHiveState, OrchestrationMemberBinding, OrchestrationRoundRecord,
     OrchestrationRoundState, OrchestrationSessionContext, OrchestrationSuppressedMessageRange,
     ORCHESTRATION_HISTORY_STATUS_ACTIVE, ORCHESTRATION_HISTORY_STATUS_CLOSED, ORCHESTRATION_MODE,
 };
-use crate::services::beeroom_cleanup::{delete_group, BeeroomDeleteMode};
+use crate::services::orchestration_run_control::cancel_active_team_runs_for_parent_session;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, mother_meta_key,
     resolve_preferred_mother_agent_id, set_mother_agent, snapshot_team_run,
@@ -616,7 +616,7 @@ async fn delete_orchestration_history(
             "group_id and orchestration_id are required".to_string(),
         ));
     }
-    load_history_record(
+    let history = load_history_record(
         state.storage.as_ref(),
         &user_id,
         &group_id,
@@ -635,7 +635,14 @@ async fn delete_orchestration_history(
                 "active orchestration history cannot be deleted".to_string(),
             ));
         }
+        if active_state.run_id.trim() == history.run_id.trim() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "orchestration artifact directory is still used by an active run".to_string(),
+            ));
+        }
     }
+    clear_history_workspace_artifacts(state.as_ref(), &user_id, &group_id, &history)?;
     clear_history_record(
         state.storage.as_ref(),
         &user_id,
@@ -649,6 +656,59 @@ async fn delete_orchestration_history(
             "orchestration_id": orchestration_id,
         }
     })))
+}
+
+fn clear_history_workspace_artifacts(
+    state: &AppState,
+    user_id: &str,
+    group_id: &str,
+    history: &OrchestrationHistoryRecord,
+) -> Result<(), Response> {
+    if history.run_id.trim().is_empty() {
+        return Ok(());
+    }
+    let mut workspace_container_ids = std::collections::BTreeSet::new();
+    workspace_container_ids.insert(state.user_store.default_sandbox_container_id());
+    for agent in state
+        .user_store
+        .list_user_agents_by_hive_with_default(user_id, group_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        workspace_container_ids.insert(agent.sandbox_container_id);
+    }
+    if let Some(agent) = state
+        .user_store
+        .get_user_agent(user_id, &history.mother_agent_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    {
+        workspace_container_ids.insert(agent.sandbox_container_id);
+    }
+    for binding in crate::services::orchestration_context::list_member_bindings(
+        state.storage.as_ref(),
+        &history.orchestration_id,
+    )
+    .unwrap_or_default()
+    {
+        if let Some(agent) = state
+            .user_store
+            .get_user_agent(user_id, &binding.agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        {
+            workspace_container_ids.insert(agent.sandbox_container_id);
+        }
+    }
+    for container_id in workspace_container_ids {
+        let workspace_id = state
+            .workspace
+            .scoped_user_id_by_container(user_id, container_id);
+        clear_orchestration_workspace_tree(
+            state.workspace.as_ref(),
+            &workspace_id,
+            &history.run_id,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+    Ok(())
 }
 
 async fn restore_orchestration_history(
@@ -1110,10 +1170,9 @@ async fn branch_orchestration_history(
         active: activate,
         entered_at: now,
         updated_at: now,
-        mother_primer_injected: source_round_state
-            .rounds
-            .iter()
-            .any(|round| round.index <= branch_round_index && !round.user_message.trim().is_empty()),
+        mother_primer_injected: source_round_state.rounds.iter().any(|round| {
+            round.index <= branch_round_index && !round.user_message.trim().is_empty()
+        }),
     };
     let mut round_state = rebuild_branch_round_state(
         &source_round_state,
@@ -2570,6 +2629,25 @@ fn is_round_formally_completed(round: &OrchestrationRoundRecord) -> bool {
     !round.user_message.trim().is_empty() && round.finalized_at > 0.0
 }
 
+fn parse_chat_message_time(value: &Value) -> f64 {
+    if let Some(numeric) = value.as_f64() {
+        return numeric.max(0.0);
+    }
+    if let Some(text) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        if let Ok(numeric) = text.parse::<f64>() {
+            return numeric.max(0.0);
+        }
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
+            return (parsed.timestamp_millis() as f64 / 1000.0).max(0.0);
+        }
+    }
+    0.0
+}
+
 fn count_mother_user_rounds(
     storage: &dyn crate::storage::StorageBackend,
     user_id: &str,
@@ -2603,7 +2681,7 @@ fn count_mother_user_rounds(
             }
             let created_at = message
                 .get("created_at")
-                .and_then(Value::as_f64)
+                .map(parse_chat_message_time)
                 .unwrap_or(0.0);
             if message_is_suppressed(round_state, created_at) {
                 return false;
@@ -2667,7 +2745,7 @@ fn load_or_migrate_round_state_by_orchestration_id(
         }
         let created_at = message
             .get("created_at")
-            .and_then(Value::as_f64)
+            .map(parse_chat_message_time)
             .unwrap_or_else(now_ts);
         let suppression_probe = OrchestrationRoundState {
             orchestration_id: orchestration_id.trim().to_string(),
@@ -2791,7 +2869,11 @@ struct UpdateOrchestrationSessionContextRequest {
     round_index: Option<i64>,
     #[serde(default, alias = "motherAgentId")]
     mother_agent_id: Option<String>,
-    #[serde(default, alias = "motherPrimerInjected", alias = "mother_primer_injected")]
+    #[serde(
+        default,
+        alias = "motherPrimerInjected",
+        alias = "mother_primer_injected"
+    )]
     mother_primer_injected: Option<bool>,
 }
 

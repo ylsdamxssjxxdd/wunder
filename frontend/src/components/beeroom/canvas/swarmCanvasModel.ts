@@ -1064,23 +1064,27 @@ export const buildBeeroomSwarmProjection = (options: {
       runtimeSubagents: runtimeDispatchSubagents
     });
     if (!workerShadowItem) return;
-    const shadowStatus = normalizeDispatchPreviewStatus(workerShadowItem.status) || workerNode.status;
-    const shadowStatusLabel = resolveStatusLabel(shadowStatus, options.t);
-    const shadowWorkflowLines = buildWorkerShadowWorkflowLines(workerShadowItem, shadowStatusLabel, options.t);
+    const shadowBaseStatus = normalizeDispatchPreviewStatus(workerShadowItem.status) || workerNode.status;
     const shadowWorkflowItems = Array.isArray(workerShadowItem.workflowItems)
       ? (workerShadowItem.workflowItems as BeeroomWorkflowItem[])
       : [];
     const shadowWorkflowTone =
       shadowWorkflowItems.length > 0
-        ? resolveNodeWorkflowTone(shadowWorkflowItems[shadowWorkflowItems.length - 1]?.status || shadowStatus)
-        : resolveNodeWorkflowTone(shadowStatus);
-    workerNode.status = shadowStatus;
+        ? resolveNodeWorkflowTone(shadowWorkflowItems[shadowWorkflowItems.length - 1]?.status || shadowBaseStatus)
+        : resolveNodeWorkflowTone(shadowBaseStatus);
+    const shadowDisplayStatus =
+      shadowWorkflowTone === 'loading'
+        ? 'running'
+        : shadowBaseStatus;
+    const shadowStatusLabel = resolveStatusLabel(shadowDisplayStatus, options.t);
+    const shadowWorkflowLines = buildWorkerShadowWorkflowLines(workerShadowItem, shadowStatusLabel, options.t);
+    workerNode.status = shadowDisplayStatus;
     workerNode.statusLabel = shadowStatusLabel;
     workerNode.workflowTone = shadowWorkflowTone;
     workerNode.workflowLines = shadowWorkflowLines;
     const targetMeta = nodeMetaMap.get(workerNode.id);
     if (targetMeta) {
-      targetMeta.status = shadowStatus;
+      targetMeta.status = shadowDisplayStatus;
       targetMeta.updated_time = Math.max(targetMeta.updated_time, Number(workerShadowItem.updatedTime || 0));
       if (workerShadowItem.summary) {
         targetMeta.summary = workerShadowItem.summary;

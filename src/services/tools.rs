@@ -11962,10 +11962,7 @@ PATCH"#;
             tool_result_field(&result, "skip_reason").and_then(Value::as_str),
             Some("already_dispatched_this_round")
         );
-        assert_eq!(
-            tool_result_field(&result, "run_id"),
-            Some(&Value::Null)
-        );
+        assert_eq!(tool_result_field(&result, "run_id"), Some(&Value::Null));
     }
 
     #[test]

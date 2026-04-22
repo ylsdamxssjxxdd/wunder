@@ -375,6 +375,136 @@ async fn exit_orchestration_clears_active_state_and_rebinds_fresh_main_threads()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deleting_history_removes_orchestration_artifact_directory() {
+    let app = build_test_app().await;
+    let user = create_user_session(&app, "orch_delete_artifact_user");
+    let hive = create_hive(
+        &app,
+        &user,
+        "orch_delete_artifact_hive",
+        "Orch Delete Artifact Hive",
+        "delete artifact directory",
+    );
+    let mother = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_mother_delete_artifact",
+        "Mother Delete Artifact",
+        true,
+    );
+    let worker = create_agent(
+        &app,
+        &user,
+        &hive.hive_id,
+        "agent_worker_delete_artifact",
+        "Worker Delete Artifact",
+        false,
+    );
+
+    let (status, create_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::POST,
+        "/wunder/beeroom/orchestration/state/create",
+        Some(json!({
+            "group_id": hive.hive_id,
+            "mother_agent_id": mother.agent_id,
+            "run_name": "same-name-orchestration",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let orchestration_id = create_payload
+        .pointer("/data/state/orchestration_id")
+        .and_then(Value::as_str)
+        .expect("orchestration id")
+        .to_string();
+    let run_id = create_payload
+        .pointer("/data/state/run_id")
+        .and_then(Value::as_str)
+        .expect("run id")
+        .to_string();
+    let worker_workspace_id = app
+        .state
+        .workspace
+        .scoped_user_id_by_container(&user.user_id, worker.sandbox_container_id);
+    let artifact_path = app
+        .state
+        .workspace
+        .resolve_path(
+            &worker_workspace_id,
+            &format!(
+                "orchestration/{run_id}/round_01/{}/artifact.md",
+                worker.name
+            ),
+        )
+        .expect("artifact path");
+    std::fs::create_dir_all(artifact_path.parent().expect("artifact parent"))
+        .expect("create artifact dir");
+    std::fs::write(&artifact_path, "old artifact").expect("write artifact");
+    let run_root = app
+        .state
+        .workspace
+        .resolve_path(&worker_workspace_id, &format!("orchestration/{run_id}"))
+        .expect("run root");
+    assert!(run_root.is_dir());
+
+    let (status, _) = send_json(
+        &app.app,
+        &user.token,
+        Method::POST,
+        "/wunder/beeroom/orchestration/state/exit",
+        Some(json!({
+            "group_id": hive.hive_id,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, delete_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::DELETE,
+        "/wunder/beeroom/orchestration/history",
+        Some(json!({
+            "group_id": hive.hive_id,
+            "orchestration_id": orchestration_id,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        delete_payload.pointer("/data/ok").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(!run_root.exists());
+
+    let (status, history_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::GET,
+        &format!(
+            "/wunder/beeroom/orchestration/history?group_id={}",
+            hive.hive_id
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(history_payload
+        .pointer("/data/items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items.iter().all(|item| {
+                item.get("orchestration_id").and_then(Value::as_str)
+                    != Some(orchestration_id.as_str())
+            })
+        })
+        .unwrap_or(true));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancelled_pending_round_does_not_survive_history_restore() {
     let app = build_test_app().await;
     let user = create_user_session(&app, "orch_restore_user");
@@ -579,7 +709,12 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
             .map(|items| {
                 items
                     .iter()
-                    .map(|item| item.get("id").and_then(Value::as_str).unwrap_or_default().to_string())
+                    .map(|item| {
+                        item.get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    })
                     .collect::<Vec<_>>()
             }),
         Some(vec!["round_01".to_string(), "round_02".to_string()])

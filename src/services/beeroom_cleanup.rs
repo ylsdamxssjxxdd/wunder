@@ -1,7 +1,7 @@
 use crate::core::state::AppState;
 use crate::services::hive_pack::{get_latest_hive_pack_import_binding, HivePackImportBinding};
 use crate::services::orchestration_context::{
-    clear_hive_state, clear_history_record, clear_member_bindings, clear_round_state,
+    clear_history_record, clear_hive_state, clear_member_bindings, clear_round_state,
     clear_session_context, list_history_records, load_hive_state,
 };
 use crate::services::swarm::beeroom::mother_meta_key;
@@ -51,7 +51,8 @@ pub fn delete_group(
         .map(|agent| agent.agent_id.clone())
         .collect::<Vec<_>>();
 
-    let import_binding = get_latest_hive_pack_import_binding(state, cleaned_user_id, &cleaned_group_id)?;
+    let import_binding =
+        get_latest_hive_pack_import_binding(state, cleaned_user_id, &cleaned_group_id)?;
 
     match mode {
         BeeroomDeleteMode::Standard => {
@@ -121,7 +122,9 @@ fn purge_group_agents(
         if let Err(err) = state.inner_visible.remove_agent_files(user_id, agent_id) {
             tracing::warn!("failed to remove inner-visible files for {user_id}/{agent_id}: {err}");
         }
-        let mut workspace_ids = state.workspace.scoped_user_id_variants(user_id, Some(agent_id));
+        let mut workspace_ids = state
+            .workspace
+            .scoped_user_id_variants(user_id, Some(agent_id));
         workspace_ids.sort();
         workspace_ids.dedup();
         for workspace_id in workspace_ids {
@@ -158,7 +161,11 @@ fn purge_imported_skills_if_safe(
         .collect::<HashSet<_>>();
     let remaining_agents = state.user_store.list_user_agents(user_id)?;
     let mut report = SkillDeleteReport::default();
-    let mut enabled = state.user_tool_store.load_user_tools(user_id).skills.enabled;
+    let mut enabled = state
+        .user_tool_store
+        .load_user_tools(user_id)
+        .skills
+        .enabled;
     let mut shared = state.user_tool_store.load_user_tools(user_id).skills.shared;
 
     for skill_name in &binding.skill_names {
@@ -186,7 +193,9 @@ fn purge_imported_skills_if_safe(
     }
 
     if report.deleted > 0 {
-        state.user_tool_store.update_skills(user_id, enabled, shared)?;
+        state
+            .user_tool_store
+            .update_skills(user_id, enabled, shared)?;
         state.user_tool_manager.clear_skill_cache(Some(user_id));
     }
     Ok(report)
@@ -206,7 +215,8 @@ fn agent_uses_skill(
     let runtime = state
         .user_tool_store
         .build_user_skill_name(user_id, user_id, cleaned_skill_name);
-    agent.declared_skill_names
+    agent
+        .declared_skill_names
         .iter()
         .any(|value| value.trim() == cleaned_skill_name)
         || agent.tool_names.iter().any(|value| {

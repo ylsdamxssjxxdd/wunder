@@ -66,6 +66,7 @@ const ACTIVE_LOCAL_RUNTIME_STATUSES = new Set<DispatchRuntimeStatus>([
   'resuming'
 ]);
 const ACTIVE_PREVIEW_STATUSES = new Set(['queued', 'running']);
+const POLLING_PREVIEW_STATUSES = new Set(['queued', 'running']);
 const normalizeText = (value: unknown): string => String(value || '').trim();
 
 const resolvePreviewCacheStorage = (): Storage | null => {
@@ -751,6 +752,7 @@ export const useBeeroomDispatchSessionPreview = (options: {
       const shouldPoll =
         running ||
         ACTIVE_LOCAL_RUNTIME_STATUSES.has(options.runtimeStatus.value) ||
+        POLLING_PREVIEW_STATUSES.has(previewStatus) ||
         subagents.some((item) => ACTIVE_BEEROOM_SUBAGENT_STATUSES.has(item.status));
       logDispatchPreview('sync-result', {
         sessionId,

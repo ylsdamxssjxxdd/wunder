@@ -16,9 +16,8 @@ use crate::services::chat_media::{
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_locked_thread_message, load_round_state,
-    load_session_context,
-    repair_orchestration_session_main_thread, session_orchestration_lock_info,
-    ORCHESTRATION_THREAD_LOCKED_CODE,
+    load_session_context, repair_orchestration_session_main_thread,
+    session_orchestration_lock_info, ORCHESTRATION_THREAD_LOCKED_CODE,
 };
 use crate::services::runtime::thread::ThreadSubmitOutcome;
 use crate::services::subagents;
@@ -2725,7 +2724,8 @@ fn filter_orchestration_suppressed_history(
     if cleaned_user_id.is_empty() || cleaned_session_id.is_empty() {
         return history;
     }
-    let Some(context) = load_session_context(state.storage.as_ref(), cleaned_user_id, cleaned_session_id)
+    let Some(context) =
+        load_session_context(state.storage.as_ref(), cleaned_user_id, cleaned_session_id)
     else {
         return history;
     };
@@ -2741,19 +2741,23 @@ fn filter_orchestration_suppressed_history(
     if binding.session_id.trim() != cleaned_session_id {
         return history;
     }
-    let Some(round_state) =
-        load_round_state(state.storage.as_ref(), cleaned_user_id, &lock_state.orchestration_id)
-    else {
+    let Some(round_state) = load_round_state(
+        state.storage.as_ref(),
+        cleaned_user_id,
+        &lock_state.orchestration_id,
+    ) else {
         return history;
     };
     history
         .into_iter()
         .filter(|item| {
-            let created_at = item.get("created_at").and_then(Value::as_f64).unwrap_or(0.0);
-            !round_state
-                .suppressed_message_ranges
-                .iter()
-                .any(|range| created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at)
+            let created_at = item
+                .get("created_at")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            !round_state.suppressed_message_ranges.iter().any(|range| {
+                created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at
+            })
         })
         .collect()
 }

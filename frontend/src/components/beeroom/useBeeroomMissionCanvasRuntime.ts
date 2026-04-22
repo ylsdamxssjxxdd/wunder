@@ -2648,6 +2648,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
         return !silentAgentIdSet.value.has(senderAgentId);
       })
   );
+  const sessionOnlyChatMessages = computed(() =>
+    allRenderableChatMessages.value.filter((message) =>
+      String(message?.key || '').startsWith('session:')
+    )
+  );
 
   const listRecentAgentOutputs = (
     agentId: unknown,
@@ -3312,6 +3317,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     dispatchSessionId,
     dispatchPreview: effectiveDispatchPreview,
     displayChatMessages,
+    sessionOnlyChatMessages,
     listRecentAgentOutputs,
     motherWorkflowItems,
     subagentsByTask,

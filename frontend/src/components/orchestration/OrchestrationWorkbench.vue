@@ -15,7 +15,7 @@
         :active-round-missions="activeRoundMissions"
         :artifact-cards="artifactCards"
         :visible-workers="visibleWorkers"
-        :visible-chat-messages="activeRoundChatMessages"
+        :visible-chat-messages="activeRoundVisibleChatMessages"
         :mother-workflow-items="motherWorkflowItems"
         :workflow-items-by-task="workflowItemsByTask"
         :workflow-preview-by-task="workflowPreviewByTask"
@@ -295,6 +295,7 @@ import { roundIsFinalized } from '@/components/orchestration/orchestrationRoundS
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
+import { useChatStore } from '@/stores/chat';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 import { chatDebugLog } from '@/utils/chatDebug';
 
@@ -316,6 +317,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const authStore = useAuthStore();
+const chatStore = useChatStore();
 
 const orchestrationWorkbenchDebug = (event: string, payload?: unknown) => {
   chatDebugLog('orchestration-workbench', event, payload);
@@ -381,6 +383,7 @@ const {
   chatCollapsed: _chatCollapsed,
   composerText,
   composerSending,
+  dispatchRuntimeStatus,
   dispatchPreview,
   displayChatMessages,
   handleComposerSend,
@@ -431,6 +434,9 @@ const rounds = computed(() => runtimeState.value?.rounds || []);
 const runId = computed(() => String(runtimeState.value?.runId || '').trim());
 const currentOrchestrationId = computed(() => String(runtimeState.value?.orchestrationId || '').trim());
 const motherSessionId = computed(() => String(runtimeState.value?.motherSessionId || '').trim());
+const activeRoundVisibleChatMessages = computed(() =>
+  activeRoundChatMessages.value.filter((message) => String(message?.key || '').startsWith('session:'))
+);
 const activeDispatchPreviewStatus = computed(() => String(dispatchPreview.value?.status || '').trim().toLowerCase());
 const hasActiveDispatchPreview = computed(() =>
   ['queued', 'running', 'resuming', 'awaiting_approval', 'waiting', 'accepted', 'pending'].includes(
@@ -774,6 +780,20 @@ const orchestrationPendingRoundActive = computed(() => {
   if (pendingMessageStartedAt > 0) return true;
   return Boolean(normalizeOrchestrationText(pendingRound.userMessage)) && !roundIsCompleted(pendingRound);
 });
+const motherSessionBusy = computed(() => {
+  const sessionId = String(motherSessionId.value || '').trim();
+  if (!sessionId) return false;
+  try {
+    return Boolean(chatStore.isSessionBusy(sessionId));
+  } catch {
+    return false;
+  }
+});
+const orchestrationDispatchRuntimeBusy = computed(() =>
+  ['queued', 'running', 'resuming', 'awaiting_approval'].includes(
+    String(dispatchRuntimeStatus.value || '').trim().toLowerCase()
+  )
+);
 
 const liveDispatchPreviewIsBlocking = computed(() => {
   const preview = dispatchPreview.value;
@@ -806,6 +826,8 @@ const orchestrationRunning = computed(
   () =>
     orchestrationDispatchPreparing.value ||
     composerSending.value ||
+    motherSessionBusy.value ||
+    orchestrationDispatchRuntimeBusy.value ||
     liveDispatchPreviewIsBlocking.value ||
     latestRoundRunningMissions.value.length > 0 ||
     activeRoundRunningMissions.value.length > 0 ||
@@ -824,8 +846,6 @@ const liveDispatchPreview = computed<BeeroomSwarmDispatchPreview | null>(() => {
   }
   return dispatchPreview.value || null;
 });
-
-const visibleChatMessages = computed(() => activeRoundChatMessages.value);
 
 const handleCurrentSituationInput = (value: string) => {
   currentSituationDraft.value = String(value || '');
@@ -1467,9 +1487,8 @@ const handleSendToMother = async () => {
     const pending = pendingRound.value;
     await stopOrchestrationDispatch();
     if (pending?.id) {
-      await discardPendingRound(pending.id, { clearSituation: true });
+      await discardPendingRound(pending.id, { clearSituation: false });
     }
-    clearStagedSituationDraft();
     return;
   }
   const content = String(composerText.value || '').trim();
@@ -1599,12 +1618,12 @@ const handleSendToMother = async () => {
     clearStagedSituationDraft();
   } catch (error: any) {
     if (reservedRoundId) {
-      await discardPendingRound(reservedRoundId, { clearSituation: true }).catch(() => null);
+      await discardPendingRound(reservedRoundId, { clearSituation: false }).catch(() => null);
       reservedRoundId = '';
     } else {
       const pending = pendingRound.value;
       if (pending?.id) {
-        await discardPendingRound(pending.id, { clearSituation: true }).catch(() => null);
+        await discardPendingRound(pending.id, { clearSituation: false }).catch(() => null);
       }
     }
     if (isOrchestrationDispatchStoppedError(error)) return;
@@ -1675,6 +1694,7 @@ watch(
   },
   { immediate: true }
 );
+
 </script>
 
 <style scoped>

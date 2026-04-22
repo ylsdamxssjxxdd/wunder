@@ -1,5 +1,5 @@
 use crate::services::orchestration_context::{
-    load_round_state, load_session_context, load_hive_state, OrchestrationSessionContext,
+    load_hive_state, load_round_state, load_session_context, OrchestrationSessionContext,
 };
 use crate::services::stream_events::StreamEventService;
 use crate::services::swarm::events::{TEAM_FINISH, TEAM_TASK_UPDATE};
@@ -10,11 +10,30 @@ use chrono::Utc;
 use serde_json::Value;
 use tracing::warn;
 
+fn parse_chat_timestamp(value: &Value) -> f64 {
+    if let Some(numeric) = value.as_f64() {
+        return numeric.max(0.0);
+    }
+    if let Some(text) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        if let Ok(numeric) = text.parse::<f64>() {
+            return numeric.max(0.0);
+        }
+        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
+            return (parsed.timestamp_millis() as f64 / 1000.0).max(0.0);
+        }
+    }
+    0.0
+}
+
 fn chat_message_timestamp(record: &Value) -> f64 {
     record
         .get("timestamp")
-        .and_then(Value::as_f64)
-        .or_else(|| record.get("created_at").and_then(Value::as_f64))
+        .map(parse_chat_timestamp)
+        .or_else(|| record.get("created_at").map(parse_chat_timestamp))
         .unwrap_or(0.0)
 }
 
@@ -120,7 +139,10 @@ pub async fn cancel_team_run_record(
                 if !matches!(status.as_str(), "pending" | "running" | "retry") {
                     continue;
                 }
-                state.kernel.thread_runtime.cancel_task(&agent_task.task_id)?;
+                state
+                    .kernel
+                    .thread_runtime
+                    .cancel_task(&agent_task.task_id)?;
             }
         }
     }
@@ -172,9 +194,13 @@ pub async fn cancel_active_team_runs_for_parent_session(
     user_id: &str,
     parent_session_id: &str,
 ) -> Result<usize> {
-    let (runs, _) = state
-        .user_store
-        .list_team_runs(user_id.trim(), None, Some(parent_session_id.trim()), 0, 256)?;
+    let (runs, _) = state.user_store.list_team_runs(
+        user_id.trim(),
+        None,
+        Some(parent_session_id.trim()),
+        0,
+        256,
+    )?;
     let mut cancelled = 0usize;
     for mut run in runs {
         if !is_active_team_run_status(&run.status) {
@@ -366,10 +392,13 @@ mod tests {
                 }),
             )
             .expect("append old user");
-        assert!(
-            !worker_already_dispatched_in_round(&storage, "alice", "sess_mother", "sess_worker")
-                .expect("guard result")
-        );
+        assert!(!worker_already_dispatched_in_round(
+            &storage,
+            "alice",
+            "sess_mother",
+            "sess_worker"
+        )
+        .expect("guard result"));
 
         storage
             .append_chat(
@@ -382,9 +411,111 @@ mod tests {
                 }),
             )
             .expect("append current round user");
-        assert!(
-            worker_already_dispatched_in_round(&storage, "alice", "sess_mother", "sess_worker")
-                .expect("guard result")
-        );
+        assert!(worker_already_dispatched_in_round(
+            &storage,
+            "alice",
+            "sess_mother",
+            "sess_worker"
+        )
+        .expect("guard result"));
+    }
+
+    #[test]
+    fn worker_already_dispatched_in_round_accepts_iso_created_at() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("state.sqlite3");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+        storage.ensure_initialized().expect("init");
+        storage
+            .upsert_chat_session(&session("sess_mother", "agent_mother"))
+            .expect("mother session");
+        storage
+            .upsert_chat_session(&session("sess_worker", "agent_worker"))
+            .expect("worker session");
+        persist_hive_state(
+            &storage,
+            "alice",
+            &OrchestrationHiveState {
+                orchestration_id: "orch_a".to_string(),
+                run_id: "demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                mother_agent_id: "agent_mother".to_string(),
+                mother_agent_name: "mother".to_string(),
+                mother_session_id: "sess_mother".to_string(),
+                active: true,
+                entered_at: 1.0,
+                updated_at: 1.0,
+                mother_primer_injected: true,
+            },
+        )
+        .expect("persist hive");
+        persist_round_state(
+            &storage,
+            "alice",
+            &OrchestrationRoundState {
+                orchestration_id: "orch_a".to_string(),
+                run_id: "demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                rounds: vec![OrchestrationRoundRecord {
+                    id: "round_01".to_string(),
+                    index: 1,
+                    situation: String::new(),
+                    user_message: "hello".to_string(),
+                    created_at: 1_776_853_975.0,
+                    finalized_at: 0.0,
+                }],
+                suppressed_message_ranges: Vec::new(),
+                updated_at: 1_776_853_975.0,
+            },
+        )
+        .expect("persist round state");
+        persist_session_context(
+            &storage,
+            "alice",
+            "sess_mother",
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: "demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                role: "mother".to_string(),
+                round_index: 1,
+                mother_agent_id: "agent_mother".to_string(),
+            },
+        )
+        .expect("persist mother context");
+        persist_session_context(
+            &storage,
+            "alice",
+            "sess_worker",
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: "demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                role: "worker".to_string(),
+                round_index: 1,
+                mother_agent_id: "agent_mother".to_string(),
+            },
+        )
+        .expect("persist worker context");
+
+        storage
+            .append_chat(
+                "alice",
+                &json!({
+                    "session_id": "sess_worker",
+                    "role": "user",
+                    "content": "current round iso",
+                    "created_at": "2026-04-22T10:32:56Z"
+                }),
+            )
+            .expect("append current round user");
+
+        assert!(worker_already_dispatched_in_round(
+            &storage,
+            "alice",
+            "sess_mother",
+            "sess_worker"
+        )
+        .expect("guard result"));
     }
 }

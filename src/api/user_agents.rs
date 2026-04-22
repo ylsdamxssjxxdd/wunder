@@ -19,8 +19,7 @@ use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, HiveRecord, SessionLockRecord,
-    DEFAULT_HIVE_ID,
-    DEFAULT_SANDBOX_CONTAINER_ID,
+    DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use crate::user_access::{
     build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
@@ -50,8 +49,7 @@ const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
 const DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
-const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str =
-    "用公文写作技能写一篇广州旅游攻略";
+const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
 const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
@@ -2573,8 +2571,7 @@ struct AgentUpdateRequest {
 mod tests {
     use super::{
         default_agent_payload, has_active_runtime_evidence, requested_create_ability_items,
-        AgentCreateRequest,
-        DefaultAgentConfig,
+        AgentCreateRequest, DefaultAgentConfig,
     };
     use crate::storage::SessionLockRecord;
     use serde_json::json;

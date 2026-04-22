@@ -510,7 +510,9 @@ pub fn get_latest_hive_pack_import_binding(
         let Ok(binding) = serde_json::from_str::<HivePackImportBinding>(&raw) else {
             continue;
         };
-        if binding.user_id.trim() != cleaned_user_id || normalize_hive_id(&binding.hive_id) != cleaned_hive_id {
+        if binding.user_id.trim() != cleaned_user_id
+            || normalize_hive_id(&binding.hive_id) != cleaned_hive_id
+        {
             continue;
         }
         let replace = latest

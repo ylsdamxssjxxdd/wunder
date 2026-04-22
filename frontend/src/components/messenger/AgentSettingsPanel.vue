@@ -19,7 +19,7 @@
               v-model="form.name"
               class="messenger-agent-field"
               :placeholder="t('portal.agent.form.placeholder.name')"
-              :disabled="isInteractionDisabled"
+              :disabled="isAgentNameDisabled"
             />
             <button
               class="messenger-agent-avatar-trigger"
@@ -528,6 +528,7 @@ const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.valu
 const isReadonlyMode = computed(() => Boolean(props.readonly));
 const deleting = ref(false);
 const isInteractionDisabled = computed(() => isReadonlyMode.value || deleting.value);
+const isAgentNameDisabled = computed(() => isInteractionDisabled.value || isDefaultAgent.value);
 const dependencyNoticeKey = computed(() => `agent:${normalizedAgentId.value || '__default__'}`);
 const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
 const canEdit = computed(() => !isInteractionDisabled.value && Boolean(normalizedAgentId.value));

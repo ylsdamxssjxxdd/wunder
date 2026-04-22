@@ -96,6 +96,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
+  min-width: 0;
 }
 
 .agent-preset-questions-field__empty {
@@ -109,16 +111,30 @@ watch(
 }
 
 .agent-preset-questions-field__row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 34px;
+  display: flex;
+  width: 100%;
+  min-width: max-content;
   gap: 10px;
   align-items: start;
 }
 
+.agent-preset-questions-field__row :deep(.el-textarea) {
+  flex: 1 0 520px;
+  min-width: 520px;
+}
+
+.agent-preset-questions-field__row :deep(.el-textarea__inner) {
+  overflow-x: auto;
+  white-space: nowrap;
+  resize: none;
+}
+
 .agent-preset-questions-field__index {
+  flex: 0 0 28px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
   height: 32px;
   border-radius: 8px;
   background: rgba(148, 163, 184, 0.12);
@@ -136,6 +152,7 @@ watch(
 }
 
 .agent-preset-questions-field__remove {
+  flex: 0 0 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;

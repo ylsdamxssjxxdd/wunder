@@ -76,8 +76,5 @@ export const resolveBeeroomDispatchPreviewStatus = (options: {
   if (options.localStatus === 'completed') return 'completed';
   if (options.localStatus === 'failed') return 'failed';
   if (options.localStatus === 'stopped') return 'cancelled';
-  if (options.subagents.length > 0) {
-    return 'completed';
-  }
   return 'idle';
 };

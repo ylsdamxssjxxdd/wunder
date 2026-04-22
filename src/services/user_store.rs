@@ -45,8 +45,7 @@ const DEFAULT_AGENT_DESCRIPTION: &str =
     "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
 const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
 const DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
-const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str =
-    "用公文写作技能写一篇广州旅游攻略";
+const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str = "用公文写作技能写一篇广州旅游攻略";
 const SESSION_TIME_EPSILON_MICROS: u64 = 1;
 const DEFAULT_SESSION_SCOPE: &str = "default";
 const SESSION_SCOPE_MAX_LEN: usize = 32;

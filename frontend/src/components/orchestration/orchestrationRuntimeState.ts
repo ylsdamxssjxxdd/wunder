@@ -670,10 +670,8 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current || !round) {
       return source;
     }
-    const formalRounds = current.rounds.filter(
-      (item) => Boolean(normalizeText(item.userMessage)) && roundIsFinalized({ finalizedAt: item.finalizedAt })
-    );
-    if (!formalRounds.length) {
+    const occupiedRounds = current.rounds.filter((item) => Boolean(normalizeText(item.userMessage)));
+    if (!occupiedRounds.length) {
       return [];
     }
     const userMessageWindow = resolveRoundUserMessageWindow(
@@ -1810,6 +1808,7 @@ export const useOrchestrationRuntimeState = (options: {
     const pendingMessageStartedAt = normalizeMsTime(current.pendingMessageStartedAt);
     const discardCompletedAt = Date.now();
     const removeWholeRound =
+      clearSituation &&
       currentPendingId === resolvedRoundId &&
       current.pendingRoundCreated === true &&
       normalizeText(round.userMessage) &&
@@ -1939,6 +1938,18 @@ export const useOrchestrationRuntimeState = (options: {
         })
       );
     } else {
+      await Promise.all(
+        visibleWorkers.value.map((member) => {
+          const agentId = normalizeText(member?.agent_id);
+          const agentName = normalizeText(member?.name) || agentId;
+          if (!agentId) return Promise.resolve();
+          return deleteWunderWorkspaceEntry({
+            agent_id: resolveWorkspaceAgentId(agentId),
+            container_id: resolveWorkspaceContainerId(member),
+            path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
+          }).catch(() => null);
+        })
+      );
       await saveRoundSituationFile(nextState, round.index, clearSituation ? '' : round.situation);
     }
     return nextState.rounds.find((item) => item.id === nextState.activeRoundId) || null;
@@ -2422,6 +2433,38 @@ export const useOrchestrationRuntimeState = (options: {
       limit: 3
     });
 
+  const finalizeRoundLocally = (
+    roundId: string,
+    payload: { situation?: string; userMessage?: string } = {}
+  ) => {
+    const current = runtimeState.value;
+    const normalizedRoundId = normalizeText(roundId);
+    if (!current || !normalizedRoundId) return null;
+    const targetRound = current.rounds.find((round) => round.id === normalizedRoundId) || null;
+    if (!targetRound) return null;
+    const finalizedAt = Date.now();
+    const committedRound: OrchestrationRound = {
+      ...targetRound,
+      situation: String(payload.situation || targetRound.situation || '').trim(),
+      userMessage: String(payload.userMessage || targetRound.userMessage || '').trim(),
+      createdAt: Number(targetRound.createdAt || 0),
+      finalizedAt
+    };
+    const nextRounds = current.rounds.some((round) => round.id === committedRound.id)
+      ? current.rounds.map((round) => (round.id === committedRound.id ? committedRound : round))
+      : [...current.rounds, committedRound];
+    setRuntime({
+      ...current,
+      rounds: nextRounds,
+      activeRoundId: committedRound.id,
+      currentSituation: String(committedRound.situation || current.currentSituation || '').trim(),
+      pendingRoundId: '',
+      pendingRoundCreated: false,
+      pendingMessageStartedAt: 0
+    });
+    return committedRound;
+  };
+
   watch(
     groupId,
     (value) => {
@@ -2589,6 +2632,7 @@ export const useOrchestrationRuntimeState = (options: {
     updatePlannedSituations,
     selectRound,
     reloadArtifacts,
+    finalizeRoundLocally,
     resolveWorkerOutputs,
     resolveWorkerThreadSessionId
   };

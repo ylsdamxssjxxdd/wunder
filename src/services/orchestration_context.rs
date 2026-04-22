@@ -861,6 +861,60 @@ pub fn normalize_round_record(record: &OrchestrationRoundRecord) -> Orchestratio
     }
 }
 
+fn pick_stronger_round_record(
+    left: OrchestrationRoundRecord,
+    right: OrchestrationRoundRecord,
+) -> OrchestrationRoundRecord {
+    let left_committed = !left.user_message.is_empty() && left.finalized_at > 0.0;
+    let right_committed = !right.user_message.is_empty() && right.finalized_at > 0.0;
+    if left_committed != right_committed {
+        return if left_committed { left } else { right };
+    }
+    let left_has_message = !left.user_message.is_empty();
+    let right_has_message = !right.user_message.is_empty();
+    if left_has_message != right_has_message {
+        return if left_has_message { left } else { right };
+    }
+    if (left.finalized_at > 0.0) != (right.finalized_at > 0.0) {
+        return if left.finalized_at > 0.0 { left } else { right };
+    }
+    if left.created_at != right.created_at {
+        return if left.created_at >= right.created_at {
+            left
+        } else {
+            right
+        };
+    }
+    if left.finalized_at != right.finalized_at {
+        return if left.finalized_at >= right.finalized_at {
+            left
+        } else {
+            right
+        };
+    }
+    left
+}
+
+fn normalize_round_records(rounds: &[OrchestrationRoundRecord]) -> Vec<OrchestrationRoundRecord> {
+    let mut normalized = rounds
+        .iter()
+        .map(normalize_round_record)
+        .filter(|round| round.index > 0)
+        .collect::<Vec<_>>();
+    normalized.sort_by_key(|round| round.index);
+    let mut deduped: Vec<OrchestrationRoundRecord> = Vec::with_capacity(normalized.len());
+    for round in normalized {
+        if let Some(existing) = deduped.last_mut() {
+            if existing.index == round.index {
+                *existing = pick_stronger_round_record(existing.clone(), round);
+                continue;
+            }
+        }
+        deduped.push(round);
+    }
+    deduped
+}
+
 pub fn persist_round_state(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -871,14 +925,7 @@ pub fn persist_round_state(
     if cleaned_user_id.is_empty() || cleaned_orchestration_id.is_empty() {
         return Ok(());
     }
-    let mut rounds = state
-        .rounds
-        .iter()
-        .map(normalize_round_record)
-        .filter(|round| round.index > 0)
-        .collect::<Vec<_>>();
-    rounds.sort_by_key(|round| round.index);
-    rounds.dedup_by_key(|round| round.index);
+    let rounds = normalize_round_records(&state.rounds);
     let suppressed_message_ranges = state
         .suppressed_message_ranges
         .iter()
@@ -930,13 +977,7 @@ pub fn load_round_state(
     if state.orchestration_id.is_empty() {
         state.orchestration_id = cleaned_orchestration_id.to_string();
     }
-    state.rounds = state
-        .rounds
-        .iter()
-        .map(normalize_round_record)
-        .collect::<Vec<_>>();
-    state.rounds.sort_by_key(|round| round.index);
-    state.rounds.dedup_by_key(|round| round.index);
+    state.rounds = normalize_round_records(&state.rounds);
     state
         .suppressed_message_ranges
         .retain(|range| range.start_at > 0.0 && range.end_at >= range.start_at);
@@ -1002,9 +1043,7 @@ pub fn current_occupied_round_index(round_state: Option<&OrchestrationRoundState
             state
                 .rounds
                 .iter()
-                .filter(|round| {
-                    !round.user_message.trim().is_empty() || round.finalized_at > 0.0
-                })
+                .filter(|round| !round.user_message.trim().is_empty() || round.finalized_at > 0.0)
                 .map(|round| round.index)
                 .max()
         })
@@ -1309,10 +1348,11 @@ pub fn ensure_orchestration_member_session(
         {
             let session_agent_id = session.agent_id.as_deref().unwrap_or("").trim();
             if session_agent_id == agent.agent_id.trim() {
-                let round_index = load_round_state(storage, user_id.trim(), &state.orchestration_id)
-                    .as_ref()
-                    .map(|round_state| current_occupied_round_index(Some(round_state)))
-                    .unwrap_or(1);
+                let round_index =
+                    load_round_state(storage, user_id.trim(), &state.orchestration_id)
+                        .as_ref()
+                        .map(|round_state| current_occupied_round_index(Some(round_state)))
+                        .unwrap_or(1);
                 persist_session_context(
                     storage,
                     user_id,
@@ -1528,9 +1568,12 @@ pub fn load_dispatch_context(
         if let Some(state) = load_hive_state(storage, user_id, &context.group_id) {
             if let Some(round_state) = load_round_state(storage, user_id, &state.orchestration_id) {
                 let round_index = current_occupied_round_index(Some(&round_state));
-                if context.round_index != round_index || context.run_id.trim() != state.run_id.trim() {
+                let next_round_index = round_index.max(context.round_index);
+                if context.round_index != next_round_index
+                    || context.run_id.trim() != state.run_id.trim()
+                {
                     context.run_id = state.run_id.clone();
-                    context.round_index = round_index;
+                    context.round_index = next_round_index;
                     context.mother_agent_id = state.mother_agent_id.clone();
                     let _ = persist_session_context(storage, user_id, session_id, &context);
                 }
@@ -1627,7 +1670,8 @@ pub fn session_has_visible_history(
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     };
-    let Some((state, binding)) = active_orchestration_for_agent(storage, cleaned_user_id, &context.mother_agent_id)
+    let Some((state, binding)) =
+        active_orchestration_for_agent(storage, cleaned_user_id, &context.mother_agent_id)
     else {
         return storage
             .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
@@ -1640,7 +1684,8 @@ pub fn session_has_visible_history(
             .map(|items| !items.is_empty())
             .unwrap_or(false);
     }
-    let Some(round_state) = load_round_state(storage, cleaned_user_id, &state.orchestration_id) else {
+    let Some(round_state) = load_round_state(storage, cleaned_user_id, &state.orchestration_id)
+    else {
         return storage
             .load_chat_history(cleaned_user_id, cleaned_session_id, Some(1))
             .map(|items| !items.is_empty())
@@ -1650,11 +1695,13 @@ pub fn session_has_visible_history(
         .load_chat_history(cleaned_user_id, cleaned_session_id, None)
         .map(|items| {
             items.into_iter().any(|item| {
-                let created_at = item.get("created_at").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
-                !round_state
-                    .suppressed_message_ranges
-                    .iter()
-                    .any(|range| created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at)
+                let created_at = item
+                    .get("created_at")
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(0.0);
+                !round_state.suppressed_message_ranges.iter().any(|range| {
+                    created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at
+                })
             })
         })
         .unwrap_or(false)
@@ -1887,14 +1934,158 @@ mod tests {
         )
         .expect("persist stale context");
 
-        let context =
-            load_dispatch_context(storage.as_ref(), &workspace, "alice__c__2", user_id, session_id)
-                .expect("dispatch context");
+        let context = load_dispatch_context(
+            storage.as_ref(),
+            &workspace,
+            "alice__c__2",
+            user_id,
+            session_id,
+        )
+        .expect("dispatch context");
 
         assert_eq!(context.round_index, 5);
         let repaired =
             load_session_context(storage.as_ref(), user_id, session_id).expect("repaired context");
         assert_eq!(repaired.round_index, 5);
+    }
+
+    #[test]
+    fn dispatch_context_does_not_regress_when_round_state_lags() {
+        let dir = tempdir().expect("tempdir");
+        let storage = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("orchestration-dispatch-no-regress.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = WorkspaceManager::new(
+            dir.path().join("workspaces").to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        );
+        let user_id = "alice";
+        let session_id = "sess_mother";
+        let state = OrchestrationHiveState {
+            orchestration_id: "orch_state".to_string(),
+            run_id: "run_state".to_string(),
+            group_id: "hive_state".to_string(),
+            mother_agent_id: "agent_mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: session_id.to_string(),
+            active: true,
+            entered_at: 1.0,
+            updated_at: 1.0,
+            mother_primer_injected: true,
+        };
+        persist_hive_state(storage.as_ref(), user_id, &state).expect("persist hive");
+        persist_round_state(
+            storage.as_ref(),
+            user_id,
+            &OrchestrationRoundState {
+                orchestration_id: state.orchestration_id.clone(),
+                run_id: state.run_id.clone(),
+                group_id: state.group_id.clone(),
+                rounds: vec![
+                    OrchestrationRoundRecord {
+                        id: round_id(1),
+                        index: 1,
+                        situation: "done".to_string(),
+                        user_message: "first".to_string(),
+                        created_at: 1.0,
+                        finalized_at: 2.0,
+                    },
+                    OrchestrationRoundRecord {
+                        id: round_id(2),
+                        index: 2,
+                        situation: "second".to_string(),
+                        user_message: "second".to_string(),
+                        created_at: 3.0,
+                        finalized_at: 0.0,
+                    },
+                ],
+                suppressed_message_ranges: Vec::new(),
+                updated_at: 3.0,
+            },
+        )
+        .expect("persist rounds");
+        persist_session_context(
+            storage.as_ref(),
+            user_id,
+            session_id,
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: state.run_id.clone(),
+                group_id: state.group_id.clone(),
+                role: "mother".to_string(),
+                round_index: 4,
+                mother_agent_id: state.mother_agent_id.clone(),
+            },
+        )
+        .expect("persist advanced context");
+
+        let context = load_dispatch_context(
+            storage.as_ref(),
+            &workspace,
+            "alice__c__2",
+            user_id,
+            session_id,
+        )
+        .expect("dispatch context");
+
+        assert_eq!(context.round_index, 4);
+        let repaired =
+            load_session_context(storage.as_ref(), user_id, session_id).expect("repaired context");
+        assert_eq!(repaired.round_index, 4);
+    }
+
+    #[test]
+    fn persist_round_state_keeps_stronger_duplicate_round() {
+        let dir = tempdir().expect("tempdir");
+        let storage = SqliteStorage::new(
+            dir.path()
+                .join("orchestration-duplicate-rounds.db")
+                .to_string_lossy()
+                .to_string(),
+        );
+        storage.ensure_initialized().expect("init");
+        persist_round_state(
+            &storage,
+            "alice",
+            &OrchestrationRoundState {
+                orchestration_id: "orch_demo".to_string(),
+                run_id: "run_demo".to_string(),
+                group_id: "hive_demo".to_string(),
+                rounds: vec![
+                    OrchestrationRoundRecord {
+                        id: round_id(2),
+                        index: 2,
+                        situation: "preview".to_string(),
+                        user_message: String::new(),
+                        created_at: 1.0,
+                        finalized_at: 0.0,
+                    },
+                    OrchestrationRoundRecord {
+                        id: round_id(2),
+                        index: 2,
+                        situation: "committed".to_string(),
+                        user_message: "hello".to_string(),
+                        created_at: 2.0,
+                        finalized_at: 3.0,
+                    },
+                ],
+                suppressed_message_ranges: Vec::new(),
+                updated_at: 3.0,
+            },
+        )
+        .expect("persist rounds");
+
+        let restored = load_round_state(&storage, "alice", "orch_demo").expect("restored");
+        assert_eq!(restored.rounds.len(), 1);
+        assert_eq!(restored.rounds[0].index, 2);
+        assert_eq!(restored.rounds[0].situation, "committed");
+        assert_eq!(restored.rounds[0].user_message, "hello");
+        assert_eq!(restored.rounds[0].finalized_at, 3.0);
     }
 
     #[test]
