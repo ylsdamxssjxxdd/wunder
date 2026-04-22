@@ -15,7 +15,8 @@ use crate::services::chat_media::{
 };
 use crate::services::llm::{is_llm_model, resolve_tool_call_mode, ToolCallMode};
 use crate::services::orchestration_context::{
-    active_orchestration_for_agent, build_locked_thread_message,
+    active_orchestration_for_agent, build_locked_thread_message, load_round_state,
+    load_session_context,
     repair_orchestration_session_main_thread, session_orchestration_lock_info,
     ORCHESTRATION_THREAD_LOCKED_CODE,
 };
@@ -580,6 +581,12 @@ async fn get_session(
     let active_queue_tasks = list_active_queue_tasks(&state.user_store, &session_id);
     let pure_queue_phase = !monitor_active && !active_queue_tasks.is_empty();
     let session_running = monitor_active || !active_queue_tasks.is_empty();
+    let history = filter_orchestration_suppressed_history(
+        state.as_ref(),
+        &resolved.user.user_id,
+        &session_id,
+        history,
+    );
     let filtered_history = filter_history_messages(history, session_running);
     let mut messages = filtered_history
         .into_iter()
@@ -910,6 +917,12 @@ async fn get_session_history(
         .first()
         .and_then(|item| item.get("_history_id"))
         .and_then(Value::as_i64);
+    let history = filter_orchestration_suppressed_history(
+        state.as_ref(),
+        &resolved.user.user_id,
+        &session_id,
+        history,
+    );
     let filtered_history = filter_history_messages(history, false);
     let monitor_record = state.monitor.get_record(&session_id);
     let message_feedback = extract_monitor_message_feedback_map(monitor_record.as_ref());
@@ -2698,6 +2711,50 @@ fn filter_history_messages(mut history: Vec<Value>, preserve_last_assistant: boo
             }
         })
         .map(|(_, item)| item)
+        .collect()
+}
+
+fn filter_orchestration_suppressed_history(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    history: Vec<Value>,
+) -> Vec<Value> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_session_id = session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_session_id.is_empty() {
+        return history;
+    }
+    let Some(context) = load_session_context(state.storage.as_ref(), cleaned_user_id, cleaned_session_id)
+    else {
+        return history;
+    };
+    let agent_id = context.mother_agent_id.trim();
+    if agent_id.is_empty() {
+        return history;
+    }
+    let Some((lock_state, binding)) =
+        active_orchestration_for_agent(state.storage.as_ref(), cleaned_user_id, agent_id)
+    else {
+        return history;
+    };
+    if binding.session_id.trim() != cleaned_session_id {
+        return history;
+    }
+    let Some(round_state) =
+        load_round_state(state.storage.as_ref(), cleaned_user_id, &lock_state.orchestration_id)
+    else {
+        return history;
+    };
+    history
+        .into_iter()
+        .filter(|item| {
+            let created_at = item.get("created_at").and_then(Value::as_f64).unwrap_or(0.0);
+            !round_state
+                .suppressed_message_ranges
+                .iter()
+                .any(|range| created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at)
+        })
         .collect()
 }
 

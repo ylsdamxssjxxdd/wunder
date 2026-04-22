@@ -54,34 +54,6 @@
               }"
               :d="edge.path"
             />
-            <circle
-              v-if="edge.active"
-              class="beeroom-swarm-edge-orb"
-              :class="{ 'is-subagent': edge.kind === 'subagent' }"
-              r="4.5"
-            >
-              <animateMotion
-                :dur="edge.motionDuration"
-                :begin="edge.motionDelay"
-                repeatCount="indefinite"
-                :path="edge.path"
-                rotate="auto"
-              />
-            </circle>
-            <circle
-              v-if="edge.active"
-              class="beeroom-swarm-edge-orb is-trailing"
-              :class="{ 'is-subagent': edge.kind === 'subagent' }"
-              r="3"
-            >
-              <animateMotion
-                :dur="edge.motionDuration"
-                :begin="edge.motionTrailDelay"
-                repeatCount="indefinite"
-                :path="edge.path"
-                rotate="auto"
-              />
-            </circle>
             <text
               v-if="edge.label"
               class="beeroom-swarm-edge-label"
@@ -553,17 +525,13 @@ const worldEdges = computed(() =>
       const dx = target.centerX - source.centerX;
       const controlOffset = Math.max(42, Math.abs(dx) * 0.22);
       const revealing = Boolean(nodeRevealMap.value[target.id]);
-      const motionSeed = index % 4;
       const path = `M ${source.centerX} ${source.centerY} C ${source.centerX + controlOffset} ${source.centerY} ${target.centerX - controlOffset} ${target.centerY} ${target.centerX} ${target.centerY}`;
       return {
         ...edge,
         path,
         revealing,
         labelX: Math.round(source.centerX + dx / 2),
-        labelY: Math.round(source.centerY + (target.centerY - source.centerY) / 2 - 10),
-        motionDuration: `${edge.kind === 'subagent' ? 1.18 : 1.4 + motionSeed * 0.12}s`,
-        motionDelay: `${-(motionSeed * 0.18)}s`,
-        motionTrailDelay: `${-(0.72 + motionSeed * 0.18)}s`
+        labelY: Math.round(source.centerY + (target.centerY - source.centerY) / 2 - 10)
       };
     })
     .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge))
@@ -1484,10 +1452,12 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-swarm-edge.is-active {
+  --beeroom-edge-flow-step: 22px;
   stroke: rgba(248, 113, 113, 0.94);
   stroke-width: 1.52;
-  stroke-dasharray: 10 8;
-  animation: beeroom-edge-flow 1.8s linear infinite;
+  stroke-dasharray: 12 10;
+  stroke-linecap: round;
+  animation: beeroom-edge-flow 4.4s linear infinite;
 }
 
 .beeroom-swarm-edge.is-subagent {
@@ -1496,9 +1466,11 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-swarm-edge.is-subagent.is-active {
+  --beeroom-edge-flow-step: 18px;
   stroke: rgba(34, 211, 238, 0.9);
   stroke-width: 1.46;
-  stroke-dasharray: 8 7;
+  stroke-dasharray: 10 8;
+  animation-duration: 3.6s;
 }
 
 .beeroom-swarm-edge.is-revealing,
@@ -1508,30 +1480,6 @@ onBeforeUnmount(() => {
 
 .beeroom-swarm-edge-activity.is-subagent.is-revealing {
   animation: beeroom-edge-reveal 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.beeroom-swarm-edge-orb {
-  fill: rgba(254, 202, 202, 0.96);
-  stroke: rgba(255, 241, 242, 0.9);
-  stroke-width: 1.1;
-  opacity: 0.96;
-  animation: beeroom-edge-orb-pulse 1.15s ease-in-out infinite;
-}
-
-.beeroom-swarm-edge-orb.is-trailing {
-  fill: rgba(248, 113, 113, 0.7);
-  stroke: rgba(254, 226, 226, 0.58);
-  opacity: 0.7;
-}
-
-.beeroom-swarm-edge-orb.is-subagent {
-  fill: rgba(165, 243, 252, 0.96);
-  stroke: rgba(224, 242, 254, 0.9);
-}
-
-.beeroom-swarm-edge-orb.is-trailing.is-subagent {
-  fill: rgba(34, 211, 238, 0.72);
-  stroke: rgba(165, 243, 252, 0.52);
 }
 
 .beeroom-swarm-edge-label {
@@ -1719,7 +1667,7 @@ onBeforeUnmount(() => {
   }
 
   to {
-    stroke-dashoffset: -36;
+    stroke-dashoffset: calc(-1 * var(--beeroom-edge-flow-step, 22px));
   }
 }
 
@@ -1731,17 +1679,6 @@ onBeforeUnmount(() => {
 
   50% {
     opacity: 0.88;
-  }
-}
-
-@keyframes beeroom-edge-orb-pulse {
-  0%,
-  100% {
-    opacity: 0.62;
-  }
-
-  50% {
-    opacity: 1;
   }
 }
 

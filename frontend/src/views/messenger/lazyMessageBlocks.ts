@@ -1,10 +1,7 @@
-import { defineAsyncComponent } from 'vue';
+import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
 const lazy = <T extends object>(loader: () => Promise<T>) =>
-  defineAsyncComponent({
-    loader,
-    suspensible: false
-  });
+  defineRecoverableAsyncComponent(loader);
 
 export const InquiryPanel = lazy(() => import('@/components/chat/InquiryPanel.vue'));
 export const MessageKnowledgeCitation = lazy(() => import('@/components/chat/MessageKnowledgeCitation.vue'));

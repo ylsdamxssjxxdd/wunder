@@ -1,8 +1,8 @@
 <template>
   <el-dialog
     v-model="visibleProxy"
-    width="min(1100px, calc(100vw - 28px))"
-    top="clamp(10px, 3vh, 28px)"
+    width="min(1160px, calc(100vw - 20px))"
+    top="clamp(8px, 2vh, 20px)"
     class="messenger-modal messenger-modal--beeroom orchestration-theme-dialog orchestration-artifact-preview-dialog"
     append-to-body
     destroy-on-close
@@ -11,7 +11,6 @@
       <div class="messenger-modal-header orchestration-artifact-preview-header">
         <div class="orchestration-artifact-preview-heading">
           <div class="messenger-modal-title">{{ resolvedTitle }}</div>
-          <div class="messenger-modal-subtitle">{{ resolvedPath }}</div>
         </div>
         <div class="orchestration-artifact-preview-toolbar">
           <button
@@ -54,24 +53,28 @@
       <div v-else-if="error" class="orchestration-artifact-preview-state is-error">
         {{ error }}
       </div>
-      <div v-else class="orchestration-artifact-preview-body" :style="previewBodyStyle">
-        <div
-          v-if="renderedHtml"
-          ref="contentRef"
-          class="orchestration-artifact-preview-markdown messenger-markdown"
-          v-html="renderedHtml"
-        ></div>
-        <pre v-else class="orchestration-artifact-preview-plain">{{ fallbackContent }}</pre>
+      <div
+        v-else
+        ref="previewBodyRef"
+        class="orchestration-artifact-preview-body"
+        :style="previewBodyStyle"
+      >
+        <div class="orchestration-artifact-preview-bubble messenger-message-bubble messenger-markdown">
+          <BeeroomCanvasChatMarkdown
+            :cache-key="`${resolvedPath}:${sourceContent.length}`"
+            :content="fallbackContent"
+          />
+        </div>
       </div>
     </div>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 
+import BeeroomCanvasChatMarkdown from '@/components/beeroom/BeeroomCanvasChatMarkdown.vue';
 import { useI18n } from '@/i18n';
-import { renderMarkdown } from '@/utils/markdown';
 
 const props = defineProps<{
   visible: boolean;
@@ -87,8 +90,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const contentRef = ref<HTMLElement | null>(null);
 const scale = ref(1);
+const previewBodyRef = ref<HTMLDivElement | null>(null);
 const MIN_SCALE = 0.8;
 const MAX_SCALE = 1.8;
 const SCALE_STEP = 0.1;
@@ -102,11 +105,6 @@ const resolvedTitle = computed(() => String(props.title || '').trim() || t('work
 const resolvedPath = computed(() => String(props.path || '').trim());
 const sourceContent = computed(() => String(props.content || ''));
 const fallbackContent = computed(() => sourceContent.value || t('workspace.preview.emptyContent'));
-const renderedHtml = computed(() => {
-  const source = sourceContent.value.trim();
-  if (!source) return '';
-  return renderMarkdown(source);
-});
 
 const canZoomOut = computed(() => scale.value > MIN_SCALE + 0.001);
 const canZoomIn = computed(() => scale.value < MAX_SCALE - 0.001);
@@ -116,18 +114,69 @@ const previewBodyStyle = computed(() => ({
 }));
 
 const clampScale = (value: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, value));
+const captureScrollAnchor = () => {
+  const container = previewBodyRef.value;
+  if (!container) return null;
+  return {
+    centerXRatio:
+      container.scrollWidth > 0
+        ? (container.scrollLeft + container.clientWidth / 2) / container.scrollWidth
+        : 0.5,
+    centerYRatio:
+      container.scrollHeight > 0
+        ? (container.scrollTop + container.clientHeight / 2) / container.scrollHeight
+        : 0.5
+  };
+};
+
+const restoreScrollAnchor = (anchor: ReturnType<typeof captureScrollAnchor>) => {
+  if (!anchor) return;
+  nextTick(() => {
+    const container = previewBodyRef.value;
+    if (!container) return;
+    const nextScrollLeft = Math.round(anchor.centerXRatio * container.scrollWidth - container.clientWidth / 2);
+    const nextScrollTop = Math.round(anchor.centerYRatio * container.scrollHeight - container.clientHeight / 2);
+    container.scrollLeft = Math.max(0, nextScrollLeft);
+    container.scrollTop = Math.max(0, nextScrollTop);
+    if (typeof window !== 'undefined') {
+      window.requestAnimationFrame(() => {
+        const currentContainer = previewBodyRef.value;
+        if (!currentContainer) return;
+        currentContainer.scrollLeft = Math.max(0, nextScrollLeft);
+        currentContainer.scrollTop = Math.max(0, nextScrollTop);
+      });
+    }
+  });
+};
+
+const setScale = (nextScale: number) => {
+  const roundedNextScale = Math.round(clampScale(nextScale) * 100) / 100;
+  if (Math.abs(roundedNextScale - scale.value) < 0.001) return;
+  const anchor = captureScrollAnchor();
+  scale.value = roundedNextScale;
+  restoreScrollAnchor(anchor);
+};
+
 const zoomOut = () => {
-  scale.value = Math.round(clampScale(scale.value - SCALE_STEP) * 100) / 100;
+  setScale(scale.value - SCALE_STEP);
 };
 const zoomIn = () => {
-  scale.value = Math.round(clampScale(scale.value + SCALE_STEP) * 100) / 100;
+  setScale(scale.value + SCALE_STEP);
 };
 const resetZoom = () => {
-  scale.value = 1;
+  setScale(1);
 };
 </script>
 
 <style scoped>
+.orchestration-artifact-preview-dialog :deep(.el-dialog) {
+  max-height: calc(100vh - 16px);
+}
+
+.orchestration-artifact-preview-dialog :deep(.el-dialog__body) {
+  padding: 8px 24px 12px;
+}
+
 .orchestration-artifact-preview-header {
   display: flex;
   align-items: flex-start;
@@ -137,26 +186,67 @@ const resetZoom = () => {
 
 .orchestration-artifact-preview-heading {
   min-width: 0;
+  padding-right: 12px;
+}
+
+.orchestration-artifact-preview-heading .messenger-modal-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .orchestration-artifact-preview-toolbar {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 24px rgba(2, 6, 23, 0.16);
 }
 
 .orchestration-artifact-preview-btn {
   min-width: 38px;
+  min-height: 38px;
+  border: 0;
+  outline: none;
+  appearance: none;
+  background: rgba(226, 232, 240, 0.08);
+  box-shadow: none;
+  color: rgba(248, 250, 252, 0.94);
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.orchestration-artifact-preview-btn:hover:not(:disabled),
+.orchestration-artifact-preview-btn:focus-visible:not(:disabled) {
+  background: rgba(96, 165, 250, 0.2);
+  color: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.orchestration-artifact-preview-btn:disabled {
+  background: rgba(148, 163, 184, 0.04);
+  color: rgba(148, 163, 184, 0.42);
+  cursor: not-allowed;
 }
 
 .orchestration-artifact-preview-scale {
   min-width: 72px;
+  padding: 0 14px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: rgba(56, 189, 248, 0.14);
 }
 
 .orchestration-artifact-preview-shell {
-  min-height: min(72vh, 760px);
-  max-height: min(72vh, 760px);
+  min-height: min(80vh, 860px);
+  max-height: min(80vh, 860px);
   display: flex;
   flex-direction: column;
 }
@@ -165,7 +255,7 @@ const resetZoom = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: min(72vh, 760px);
+  min-height: min(80vh, 860px);
   color: rgba(148, 163, 184, 0.92);
   font-size: 14px;
 }
@@ -176,61 +266,29 @@ const resetZoom = () => {
 
 .orchestration-artifact-preview-body {
   flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   min-height: 0;
   overflow: auto;
-  padding: 20px 22px 28px;
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.92), rgba(15, 23, 42, 0.98)),
-    radial-gradient(circle at top left, rgba(16, 185, 129, 0.14), transparent 40%);
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  padding: 0 0 8px;
 }
 
-.orchestration-artifact-preview-markdown,
-.orchestration-artifact-preview-plain {
-  transform: scale(var(--artifact-preview-scale, 1));
-  transform-origin: top left;
-  width: calc(100% / var(--artifact-preview-scale, 1));
-}
-
-.orchestration-artifact-preview-plain {
+.orchestration-artifact-preview-bubble {
   margin: 0;
-  color: rgba(241, 245, 249, 0.96);
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-  line-height: 1.68;
+  transform: scale(var(--artifact-preview-scale, 1));
+  transform-origin: top center;
+  border-radius: 20px;
+  width: calc(min(100%, 1120px) / var(--artifact-preview-scale, 1));
+  max-width: calc(100% / var(--artifact-preview-scale, 1));
+  padding: 18px 22px 24px;
+  box-sizing: border-box;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
 }
 
-.orchestration-artifact-preview-markdown :deep(.markdown-body) {
-  color: rgba(241, 245, 249, 0.96);
-}
-
-.orchestration-artifact-preview-markdown :deep(h1),
-.orchestration-artifact-preview-markdown :deep(h2),
-.orchestration-artifact-preview-markdown :deep(h3),
-.orchestration-artifact-preview-markdown :deep(h4) {
-  color: #f8fafc;
-}
-
-.orchestration-artifact-preview-markdown :deep(pre),
-.orchestration-artifact-preview-markdown :deep(code) {
-  font-family: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
-}
-
-.orchestration-artifact-preview-markdown :deep(pre) {
-  background: rgba(2, 6, 23, 0.82);
-  border: 1px solid rgba(148, 163, 184, 0.14);
-}
-
-.orchestration-artifact-preview-markdown :deep(blockquote) {
-  border-left-color: rgba(16, 185, 129, 0.72);
-  background: rgba(15, 118, 110, 0.12);
-}
-
-.orchestration-artifact-preview-markdown :deep(table) {
-  background: rgba(15, 23, 42, 0.56);
+.orchestration-artifact-preview-bubble :deep(.beeroom-chat-markdown),
+.orchestration-artifact-preview-bubble :deep(.markdown-body) {
+  width: 100%;
 }
 
 @media (max-width: 900px) {

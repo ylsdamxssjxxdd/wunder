@@ -1,10 +1,7 @@
-﻿import { defineAsyncComponent } from 'vue';
+import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
 const lazy = <T extends object>(loader: () => Promise<T>) =>
-  defineAsyncComponent({
-    loader,
-    suspensible: false
-  });
+  defineRecoverableAsyncComponent(loader);
 
 export const AgentCronPanel = lazy(() => import('@/components/messenger/AgentCronPanel.vue'));
 export const AgentRuntimeRecordsPanel = lazy(
@@ -115,4 +112,3 @@ export const preloadMessengerSettingsPanels = (options: { desktopMode?: boolean 
   scheduleSecondaryMorePanelsPreload(options.desktopMode === true);
   return messengerSettingsPanelPreloadPromise;
 };
-

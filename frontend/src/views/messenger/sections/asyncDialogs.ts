@@ -1,10 +1,7 @@
-import { defineAsyncComponent } from 'vue';
+import { defineRecoverableAsyncComponent } from '@/utils/asyncComponentRecovery';
 
 const lazy = <T extends object>(loader: () => Promise<T>) =>
-  defineAsyncComponent({
-    loader,
-    suspensible: false
-  });
+  defineRecoverableAsyncComponent(loader);
 
 export const MessengerGroupCreateDialog = lazy(
   () => import('@/components/messenger/MessengerGroupCreateDialog.vue')
@@ -21,4 +18,3 @@ export const MessengerTimelineDetailDialog = lazy(
 export const MessengerWorldHistoryDialog = lazy(
   () => import('@/components/messenger/MessengerWorldHistoryDialog.vue')
 );
-

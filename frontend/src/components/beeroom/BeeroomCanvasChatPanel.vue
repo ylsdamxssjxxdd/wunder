@@ -49,8 +49,16 @@
         data-testid="beeroom-chat-stream"
         @scroll.passive="handleStreamScroll"
       >
+        <div v-if="!renderableMessages.length" class="beeroom-canvas-chat-empty-state">
+          <slot name="empty">
+            <div class="beeroom-canvas-chat-empty-copy">
+              <i class="fa-solid fa-comments" aria-hidden="true"></i>
+              <span>{{ t('beeroom.canvas.chatTitle') }}</span>
+            </div>
+          </slot>
+        </div>
         <article
-          v-for="message in messages"
+          v-for="message in renderableMessages"
           :key="message.key"
           class="beeroom-canvas-chat-message"
           :class="[`is-${message.tone}`]"
@@ -258,12 +266,19 @@ const chatStreamRef = ref<HTMLElement | null>(null);
 const CHAT_SCROLL_STICKY_THRESHOLD_PX = 36;
 const shouldStickToBottom = ref(true);
 const resolvedTitle = computed(() => String(props.title || '').trim() || t('beeroom.canvas.chatTitle'));
+const renderableMessages = computed(() =>
+  (Array.isArray(props.messages) ? props.messages : []).filter((message) => {
+    const body = String(message?.body || '').trim();
+    const mention = String(message?.mention || '').trim();
+    return body.length > 0 || mention.length > 0;
+  })
+);
 const logChatPanel = (event: string, payload?: unknown) => {
   chatDebugLog('beeroom.chat-panel', event, payload);
 };
 
 const buildMessageListSignature = () =>
-  props.messages
+  renderableMessages.value
     .map((message) =>
       [
         String(message?.key || '').trim(),
@@ -306,8 +321,8 @@ const scrollChatToBottom = async () => {
   shouldStickToBottom.value = true;
   logChatPanel('scroll-to-bottom', {
     ...resolveScrollSnapshot(element),
-    messageCount: props.messages.length,
-    lastMessageKey: props.messages[props.messages.length - 1]?.key || ''
+    messageCount: renderableMessages.value.length,
+    lastMessageKey: renderableMessages.value[renderableMessages.value.length - 1]?.key || ''
   });
 };
 
@@ -326,9 +341,9 @@ const handleStreamScroll = () => {
 
 watch(
   [
-    () => props.messages.length,
-    () => props.messages[props.messages.length - 1]?.key || '',
-    () => props.messages[props.messages.length - 1]?.body || '',
+    () => renderableMessages.value.length,
+    () => renderableMessages.value[renderableMessages.value.length - 1]?.key || '',
+    () => renderableMessages.value[renderableMessages.value.length - 1]?.body || '',
     () => props.collapsed
   ],
   async ([, , , collapsed], previous) => {
@@ -339,8 +354,8 @@ watch(
       logChatPanel('auto-scroll-suppressed', {
         forceScroll,
         shouldStickToBottom: shouldStickToBottom.value,
-        messageCount: props.messages.length,
-        lastMessageKey: props.messages[props.messages.length - 1]?.key || '',
+        messageCount: renderableMessages.value.length,
+        lastMessageKey: renderableMessages.value[renderableMessages.value.length - 1]?.key || '',
         ...resolveScrollSnapshot(chatStreamRef.value)
       });
       return;
@@ -348,8 +363,8 @@ watch(
     logChatPanel('auto-scroll-run', {
       forceScroll,
       shouldStickToBottom: shouldStickToBottom.value,
-      messageCount: props.messages.length,
-      lastMessageKey: props.messages[props.messages.length - 1]?.key || ''
+      messageCount: renderableMessages.value.length,
+      lastMessageKey: renderableMessages.value[renderableMessages.value.length - 1]?.key || ''
     });
     await scrollChatToBottom();
   },
@@ -361,10 +376,10 @@ watch(
   (signature, previousSignature) => {
     if (signature === previousSignature) return;
     logChatPanel('message-list-changed', {
-      messageCount: props.messages.length,
-      firstMessageKey: props.messages[0]?.key || '',
-      lastMessageKey: props.messages[props.messages.length - 1]?.key || '',
-      senders: props.messages.slice(0, 8).map((message) => ({
+      messageCount: renderableMessages.value.length,
+      firstMessageKey: renderableMessages.value[0]?.key || '',
+      lastMessageKey: renderableMessages.value[renderableMessages.value.length - 1]?.key || '',
+      senders: renderableMessages.value.slice(0, 8).map((message) => ({
         key: message.key,
         tone: message.tone,
         senderName: message.senderName
@@ -536,6 +551,38 @@ watch(
   display: flex;
   align-items: flex-start;
   gap: 10px;
+}
+
+.beeroom-canvas-chat-empty-state {
+  flex: 1 1 auto;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 4px 10px;
+}
+
+.beeroom-canvas-chat-empty-copy {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(100%, 240px);
+  padding: 24px 18px;
+  border: 1px dashed rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.16), rgba(15, 23, 42, 0.08));
+  color: rgba(203, 213, 225, 0.82);
+  text-align: center;
+}
+
+.beeroom-canvas-chat-empty-copy i {
+  font-size: 18px;
+  color: rgba(125, 211, 252, 0.72);
+}
+
+.beeroom-canvas-chat-empty-copy span {
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .beeroom-canvas-chat-avatar {

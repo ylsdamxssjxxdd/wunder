@@ -13,6 +13,7 @@ import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
+import { clearAsyncComponentReloadMarker } from '@/utils/asyncComponentRecovery';
 
 const LEGACY_PERFORMANCE_STORAGE_KEYS = ['beeroom-performance-mode', 'wille-performance-mode'] as const;
 
@@ -41,6 +42,8 @@ if (import.meta.env.DEV && typeof window !== 'undefined') {
     window.location.reload();
   });
 }
+
+clearAsyncComponentReloadMarker();
 
 const bootstrap = async () => {
   await initDesktopRuntime();

@@ -91,7 +91,10 @@ type TimelineRunLayoutMeta = {
   roundColumns: Map<number, number>;
 };
 
-import { roundHasCommittedContent } from '@/components/orchestration/orchestrationRoundStateStability';
+import {
+  roundHasCommittedContent,
+  roundIsFinalized
+} from '@/components/orchestration/orchestrationRoundStateStability';
 
 const normalizeTimelineText = (value: unknown): string => String(value || '').trim();
 
@@ -262,7 +265,9 @@ export const buildOrchestrationTimelineLayout = ({
     ...round,
     orchestrationId: normalizeTimelineText(round.orchestrationId) || normalizedCurrentRunId
   }));
-  const currentFormalRounds = currentRounds.filter((round) => roundHasUserMessage(round));
+  const currentFormalRounds = currentRounds.filter(
+    (round) => roundHasUserMessage(round) && roundIsFinalized({ finalizedAt: round.finalizedAt })
+  );
   const currentFormalLatestRound = currentFormalRounds[currentFormalRounds.length - 1] || null;
   const normalizedHistoryItems = (Array.isArray(historyItems) ? historyItems : [])
     .map((item) => normalizeHistoryItem(item))
@@ -375,7 +380,8 @@ export const buildOrchestrationTimelineLayout = ({
       id: `history:${runId}:round_${String(index + 1).padStart(2, '0')}`,
       index: index + 1,
       orchestrationId: runId,
-      userMessage: ''
+      userMessage: '',
+      finalizedAt: 0
     }));
 
   orderedRuns.forEach((item) => {
@@ -441,6 +447,15 @@ export const buildOrchestrationTimelineLayout = ({
           return roundHasCommittedContent(round);
         })
       : scopedRounds;
+    const inFlightRound = isCurrentRun
+      ? scopedRounds.find((round) => {
+          const roundIndex = Math.max(1, Number(round.index || 0));
+          if (roundIndex <= latestCommittedRoundIndex) {
+            return false;
+          }
+          return roundHasUserMessage(round) && !roundIsFinalized({ finalizedAt: round.finalizedAt });
+        }) || null
+      : null;
     const lastCompletedRound = completedRounds[completedRounds.length - 1] || null;
     const branchBaseRound =
       branchFromRoundIndex > 0
@@ -463,6 +478,7 @@ export const buildOrchestrationTimelineLayout = ({
       isCurrentRun &&
       isActive &&
       !isBusy &&
+      !inFlightRound &&
       !existingPreparedNextRound &&
       (completedRounds.length > 0 || branchBaseRoundHasUserMessage || nextFrontierRoundIndex === 1);
     const displayRounds: Array<{
@@ -470,8 +486,12 @@ export const buildOrchestrationTimelineLayout = ({
       index: number;
       orchestrationId: string;
       userMessage?: string;
+      finalizedAt?: number;
     }> = [
       ...completedRounds,
+      ...(inFlightRound && !completedRounds.some((round) => round.id === inFlightRound.id)
+        ? [inFlightRound]
+        : []),
       ...(existingPreparedNextRound
         ? [existingPreparedNextRound]
         : shouldAppendPreviewRound
@@ -480,7 +500,8 @@ export const buildOrchestrationTimelineLayout = ({
                 id: `preview:${runId}:round_${String(nextFrontierRoundIndex).padStart(2, '0')}`,
                 index: nextFrontierRoundIndex,
                 orchestrationId: runId,
-                userMessage: ''
+                userMessage: '',
+                finalizedAt: 0
               }
             ]
           : [])

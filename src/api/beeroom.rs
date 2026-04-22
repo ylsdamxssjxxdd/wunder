@@ -32,11 +32,29 @@ use axum::response::Response;
 use axum::{routing::get, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
+
+fn compare_beeroom_agents(left: &UserAgentRecord, right: &UserAgentRecord) -> Ordering {
+    right
+        .prefer_mother
+        .cmp(&left.prefer_mother)
+        .then_with(|| {
+            left.name
+                .trim()
+                .to_lowercase()
+                .cmp(&right.name.trim().to_lowercase())
+        })
+        .then_with(|| left.agent_id.trim().cmp(right.agent_id.trim()))
+}
+
+fn sort_beeroom_agents(agents: &mut [UserAgentRecord]) {
+    agents.sort_by(compare_beeroom_agents);
+}
 
 fn close_existing_history_record(
     storage: &dyn crate::storage::StorageBackend,
@@ -1973,10 +1991,11 @@ async fn get_beeroom_group(
     let group = load_group(state.as_ref(), &user_id, &group_id)?;
     let mission_limit = query.mission_limit.unwrap_or(20).clamp(1, 100);
     let missions = load_group_missions(state.as_ref(), &user_id, &group.hive_id, mission_limit)?;
-    let agents = state
+    let mut agents = state
         .user_store
         .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sort_beeroom_agents(&mut agents);
     let activity = collect_agent_activity(
         state.storage.as_ref(),
         Some(state.monitor.as_ref()),
@@ -2256,10 +2275,11 @@ fn group_payload(
     group: &HiveRecord,
     mission_limit: i64,
 ) -> Result<Value, Response> {
-    let agents = state
+    let mut agents = state
         .user_store
         .list_user_agents_by_hive_with_default(&group.user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sort_beeroom_agents(&mut agents);
     let activity = collect_agent_activity(
         state.storage.as_ref(),
         Some(state.monitor.as_ref()),
@@ -2496,11 +2516,25 @@ fn latest_formal_round_index_or_zero(round_state: &OrchestrationRoundState) -> i
     round_state
         .rounds
         .iter()
-        .filter(|round| !round.user_message.trim().is_empty())
+        .filter(|round| is_round_formally_completed(round))
         .map(|round| round.index)
         .max()
         .unwrap_or(0)
         .max(0)
+}
+
+fn message_is_suppressed(round_state: &OrchestrationRoundState, created_at: f64) -> bool {
+    if created_at <= 0.0 {
+        return false;
+    }
+    round_state
+        .suppressed_message_ranges
+        .iter()
+        .any(|range| created_at >= range.start_at && created_at <= range.end_at)
+}
+
+fn is_round_formally_completed(round: &OrchestrationRoundRecord) -> bool {
+    !round.user_message.trim().is_empty() && round.finalized_at > 0.0
 }
 
 fn count_mother_user_rounds(
@@ -2538,6 +2572,9 @@ fn count_mother_user_rounds(
                 .get("created_at")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
+            if message_is_suppressed(round_state, created_at) {
+                return false;
+            }
             earliest_round_created_at <= 0.0
                 || created_at <= 0.0
                 || created_at >= earliest_round_created_at
@@ -2578,6 +2615,12 @@ fn load_or_migrate_round_state_by_orchestration_id(
         .load_chat_history(user_id.trim(), mother_session_id.trim(), Some(400))
         .ok()
         .unwrap_or_default();
+    let history = load_history_record(state.storage.as_ref(), user_id, group_id, orchestration_id);
+    let mut suppressed_message_ranges = history
+        .as_ref()
+        .and_then(|_| load_round_state(state.storage.as_ref(), user_id, orchestration_id))
+        .map(|item| item.suppressed_message_ranges)
+        .unwrap_or_default();
     let mut rounds = Vec::new();
     for message in messages {
         let role = message
@@ -2587,6 +2630,21 @@ fn load_or_migrate_round_state_by_orchestration_id(
             .trim()
             .to_ascii_lowercase();
         if role != "user" {
+            continue;
+        }
+        let created_at = message
+            .get("created_at")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(now_ts);
+        let suppression_probe = OrchestrationRoundState {
+            orchestration_id: orchestration_id.trim().to_string(),
+            run_id: run_id.trim().to_string(),
+            group_id: group_id.trim().to_string(),
+            rounds: Vec::new(),
+            suppressed_message_ranges: suppressed_message_ranges.clone(),
+            updated_at: 0.0,
+        };
+        if message_is_suppressed(&suppression_probe, created_at) {
             continue;
         }
         let index = rounds.len() as i64 + 1;
@@ -2600,14 +2658,8 @@ fn load_or_migrate_round_state_by_orchestration_id(
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
-            created_at: message
-                .get("created_at")
-                .and_then(Value::as_f64)
-                .unwrap_or_else(now_ts),
-            finalized_at: message
-                .get("created_at")
-                .and_then(Value::as_f64)
-                .unwrap_or_else(now_ts),
+            created_at,
+            finalized_at: created_at,
         });
     }
     let fallback_count = latest_round_index_hint.max(1).max(rounds.len() as i64);
@@ -2637,7 +2689,7 @@ fn load_or_migrate_round_state_by_orchestration_id(
         run_id: run_id.trim().to_string(),
         group_id: group_id.trim().to_string(),
         rounds,
-        suppressed_message_ranges: Vec::new(),
+        suppressed_message_ranges: std::mem::take(&mut suppressed_message_ranges),
         updated_at: now_ts(),
     };
     let _ = persist_round_state(state.storage.as_ref(), user_id, &migrated);

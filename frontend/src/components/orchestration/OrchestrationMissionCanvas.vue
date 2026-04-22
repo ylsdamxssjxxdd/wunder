@@ -234,6 +234,11 @@
               :aria-label="statusLampLabel"
             ></span>
           </template>
+          <template #empty>
+            <div class="orchestration-chat-empty">
+              <span>{{ t('orchestration.chat.empty') }}</span>
+            </div>
+          </template>
           <template #head-actions>
             <button
               class="beeroom-canvas-icon-btn orchestration-panel-action"
@@ -414,6 +419,7 @@ import {
   type TimelineRunItem,
   type TimelineRoundItem
 } from '@/components/orchestration/orchestrationTimelineLayout';
+import { roundIsFinalized } from '@/components/orchestration/orchestrationRoundStateStability';
 import { useI18n } from '@/i18n';
 import { chatDebugLog, isChatDebugEnabled } from '@/utils/chatDebug';
 import type { BeeroomSwarmDispatchPreview } from '@/components/beeroom/canvas/swarmCanvasModel';
@@ -582,8 +588,8 @@ const composerTargetOptions = computed(() => [
   }
 ]);
 
-const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
-  Boolean(String(round?.userMessage || '').trim());
+const roundIsCompleted = (round: { finalizedAt?: unknown } | null | undefined) =>
+  roundIsFinalized({ finalizedAt: Number(round?.finalizedAt || 0) });
 const sortedRounds = computed(() =>
   [...(Array.isArray(props.rounds) ? props.rounds : [])].sort(
     (left, right) =>
@@ -591,12 +597,12 @@ const sortedRounds = computed(() =>
       String(left.id || '').localeCompare(String(right.id || ''))
   )
 );
-const formalRounds = computed(() => sortedRounds.value.filter((round) => roundHasUserMessage(round)));
+const formalRounds = computed(() => sortedRounds.value.filter((round) => roundIsCompleted(round)));
 const latestFormalRound = computed(() => formalRounds.value[formalRounds.value.length - 1] || null);
 const frontierPreparedRound = computed(() => {
   const targetIndex = latestFormalRound.value ? Math.max(1, Number(latestFormalRound.value.index || 0) + 1) : 1;
   return sortedRounds.value.find(
-    (round) => Number(round.index || 0) === targetIndex && !roundHasUserMessage(round)
+    (round) => Number(round.index || 0) === targetIndex && !roundIsCompleted(round)
   ) || null;
 });
 const latestRenderableRound = computed(
@@ -667,12 +673,12 @@ const actionDisabled = computed(() => {
 });
 
 const currentRoundShowsNextAction = computed(
-  () => props.nextRoundReady || roundHasUserMessage(props.activeRound)
+  () => props.nextRoundReady || roundIsCompleted(props.activeRound)
 );
 
 const showBranchAction = computed(() => {
   if (!props.isReady || !props.isActive) return false;
-  return Boolean(roundHasUserMessage(props.activeRound));
+  return Boolean(roundIsCompleted(props.activeRound));
 });
 
 const branchActionDisabled = computed(() => {
@@ -1969,6 +1975,22 @@ watch(
   background: linear-gradient(135deg, rgba(180, 83, 9, 0.92), rgba(146, 64, 14, 0.92));
   color: #fef3c7;
   box-shadow: 0 10px 24px rgba(120, 53, 15, 0.24);
+}
+
+.orchestration-chat-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 220px);
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px dashed rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.18);
+  color: rgba(191, 219, 254, 0.68);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
 }
 
 .beeroom-canvas-chat-resizer {

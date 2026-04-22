@@ -44,7 +44,10 @@ import {
   buildOrchestrationRoundSituationPath,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
-import { stabilizeOrchestrationRoundSnapshots } from '@/components/orchestration/orchestrationRoundStateStability';
+import {
+  roundIsFinalized,
+  stabilizeOrchestrationRoundSnapshots
+} from '@/components/orchestration/orchestrationRoundStateStability';
 
 export type OrchestrationRound = {
   id: string;
@@ -152,6 +155,15 @@ const ORCHESTRATION_ARTIFACT_CARD_LIMIT = 6;
 const ORCHESTRATION_WORKFLOW_POLL_INTERVAL_MS = 1200;
 
 const normalizeText = normalizeOrchestrationText;
+
+const compareOrchestrationWorkerMembers = (left: BeeroomMember, right: BeeroomMember) => {
+  const leftName = normalizeText(left?.name || left?.agent_id);
+  const rightName = normalizeText(right?.name || right?.agent_id);
+  return leftName.localeCompare(rightName, 'zh-Hans-CN', {
+    numeric: true,
+    sensitivity: 'base'
+  }) || normalizeText(left?.agent_id).localeCompare(normalizeText(right?.agent_id), 'en');
+};
 
 const orchestrationDebugLog = (event: string, payload?: unknown) => {
   chatDebugLog('orchestration-runtime', event, payload);
@@ -273,7 +285,7 @@ const findLatestFormalRound = (rounds: OrchestrationRound[] | null | undefined) 
   const source = Array.isArray(rounds) ? rounds : [];
   return source.reduce<OrchestrationRound | null>((latest, round) => {
     if (!round) return latest;
-    if (!normalizeText(round.userMessage)) return latest;
+    if (!normalizeText(round.userMessage) || !roundIsFinalized({ finalizedAt: round.finalizedAt })) return latest;
     if (!latest) return round;
     return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
   }, null);
@@ -296,8 +308,15 @@ const resolveRoundUserMessageWindow = (
     return null;
   }
   const targetRoundPosition = orderedRounds.findIndex((round) => round.id === normalizedTargetRoundId);
-  const nextRound = targetRoundPosition >= 0 ? orderedRounds[targetRoundPosition + 1] || null : null;
-  const formalRounds = orderedRounds.filter((round) => normalizeText(round.userMessage));
+  const nextRound =
+    targetRoundPosition >= 0
+      ? orderedRounds
+          .slice(targetRoundPosition + 1)
+          .find((round) => normalizeText(round.userMessage) && roundIsFinalized({ finalizedAt: round.finalizedAt })) || null
+      : null;
+  const formalRounds = orderedRounds.filter(
+    (round) => normalizeText(round.userMessage) && roundIsFinalized({ finalizedAt: round.finalizedAt })
+  );
   const orderedMessages = [...(Array.isArray(messages) ? messages : [])].sort(compareMissionChatMessages);
   const userMessages = orderedMessages.filter((message) => message.tone === 'user');
   if (!userMessages.length) {
@@ -608,10 +627,13 @@ export const useOrchestrationRuntimeState = (options: {
 
   const visibleWorkers = computed(() => {
     const currentMotherAgentId = motherAgentId.value;
-    return (Array.isArray(options.agents.value) ? options.agents.value : []).filter((item) => {
-      const agentId = normalizeText(item?.agent_id);
-      return agentId && agentId !== currentMotherAgentId;
-    });
+    return (Array.isArray(options.agents.value) ? options.agents.value : [])
+      .filter((item) => {
+        const agentId = normalizeText(item?.agent_id);
+        return agentId && agentId !== currentMotherAgentId;
+      })
+      .slice()
+      .sort(compareOrchestrationWorkerMembers);
   });
 
   const activeRound = computed(() => {
@@ -647,7 +669,9 @@ export const useOrchestrationRuntimeState = (options: {
     if (!current || !round) {
       return source;
     }
-    const formalRounds = current.rounds.filter((item) => Boolean(normalizeText(item.userMessage)));
+    const formalRounds = current.rounds.filter(
+      (item) => Boolean(normalizeText(item.userMessage)) && roundIsFinalized({ finalizedAt: item.finalizedAt })
+    );
     if (!formalRounds.length) {
       return [];
     }
@@ -679,7 +703,12 @@ export const useOrchestrationRuntimeState = (options: {
       }
     }
     const roundIndex = current.rounds.findIndex((item) => item.id === round.id);
-    const nextRound = roundIndex >= 0 ? current.rounds[roundIndex + 1] || null : null;
+    const nextRound =
+      roundIndex >= 0
+        ? current.rounds
+            .slice(roundIndex + 1)
+            .find((item) => normalizeText(item.userMessage) && roundIsFinalized({ finalizedAt: item.finalizedAt })) || null
+        : null;
     const roundStart = Number(round.createdAt || 0);
     const nextRoundStart = Number(nextRound?.createdAt || 0);
     if (roundStart <= 0) {
@@ -1465,10 +1494,11 @@ export const useOrchestrationRuntimeState = (options: {
   const createRound = async (
     situation: string,
     userMessage = '',
-    options: { roundIndex?: number } = {}
+    options: { roundIndex?: number; select?: boolean } = {}
   ) => {
     const current = await ensureRuntime();
     if (!current) return null;
+    const shouldSelect = options.select !== false;
     const requestedRoundIndex = Math.max(0, Number.parseInt(String(options.roundIndex || 0), 10) || 0);
     const nextIndex =
       requestedRoundIndex > 0
@@ -1518,9 +1548,9 @@ export const useOrchestrationRuntimeState = (options: {
     };
     const nextState: PersistedRuntime = {
       ...current,
-      currentSituation: resolvedSituation,
+      currentSituation: shouldSelect ? resolvedSituation : current.currentSituation,
       rounds: [...current.rounds, round],
-      activeRoundId: round.id
+      activeRoundId: shouldSelect ? round.id : current.activeRoundId
     };
     await ensureRoundArtifactDirs(nextState, round);
     await ensureMotherRoundDir(nextState, round);

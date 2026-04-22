@@ -18,7 +18,8 @@ use crate::services::orchestration_context::{
 use crate::services::user_store::build_default_agent_record_from_storage;
 use crate::state::AppState;
 use crate::storage::{
-    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, DEFAULT_HIVE_ID,
+    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, SessionLockRecord,
+    DEFAULT_HIVE_ID,
     DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use crate::user_access::{
@@ -247,6 +248,58 @@ async fn list_running_agents(
         format_ts(value)
     }
 
+    fn is_hot_runtime_monitor_record(
+        state: &AppState,
+        user_id: &str,
+        record: &Value,
+        session_locks: &[SessionLockRecord],
+    ) -> bool {
+        let session_id = record
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if session_id.is_empty() {
+            return false;
+        }
+        let now = now_ts();
+        if let Ok(runs) = state
+            .storage
+            .list_session_runs_by_session(user_id, session_id, 8)
+        {
+            let thread_id = format!("thread_{session_id}");
+            let tasks = state
+                .storage
+                .list_agent_tasks_by_thread(&thread_id, None, 8)
+                .unwrap_or_default();
+            let run_statuses = runs
+                .iter()
+                .map(|run| (run.status.as_str(), run.finished_time))
+                .collect::<Vec<_>>();
+            let task_statuses = tasks
+                .iter()
+                .map(|task| task.status.as_str())
+                .collect::<Vec<_>>();
+            return has_active_runtime_evidence(
+                session_id,
+                now,
+                session_locks,
+                &run_statuses,
+                &task_statuses,
+            );
+        }
+        let thread_id = format!("thread_{session_id}");
+        let tasks = state
+            .storage
+            .list_agent_tasks_by_thread(&thread_id, None, 8)
+            .unwrap_or_default();
+        let task_statuses = tasks
+            .iter()
+            .map(|task| task.status.as_str())
+            .collect::<Vec<_>>();
+        has_active_runtime_evidence(session_id, now, session_locks, &[], &task_statuses)
+    }
+
     // Determine which agent apps should be included in the response.
     // Keep ordering stable: default, owned agents, shared agents.
     let access = state
@@ -306,7 +359,7 @@ async fn list_running_agents(
         .user_store
         .list_session_locks_by_user(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    for lock in locks {
+    for lock in &locks {
         let cleaned_agent = lock.agent_id.trim().to_string();
         if cleaned_agent.starts_with("subagent:") {
             continue;
@@ -317,7 +370,7 @@ async fn list_running_agents(
         let next = AgentStatusCandidate {
             state: STATE_RUNNING,
             updated_time: lock.updated_time,
-            session_id: lock.session_id,
+            session_id: lock.session_id.clone(),
             expires_at: Some(lock.expires_at),
             pending_question: false,
             last_error: None,
@@ -362,7 +415,7 @@ async fn list_running_agents(
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        let state = match status {
+        let runtime_state = match status {
             MonitorState::STATUS_WAITING => STATE_WAITING,
             MonitorState::STATUS_CANCELLING => STATE_CANCELLING,
             MonitorState::STATUS_RUNNING => STATE_RUNNING,
@@ -373,7 +426,12 @@ async fn list_running_agents(
             .and_then(Value::as_f64)
             .filter(|value| value.is_finite())
             .unwrap_or(0.0);
-        if state == STATE_WAITING {
+        if (runtime_state == STATE_RUNNING || runtime_state == STATE_CANCELLING)
+            && !is_hot_runtime_monitor_record(state.as_ref(), &user_id, &record, &locks)
+        {
+            continue;
+        }
+        if runtime_state == STATE_WAITING {
             let waiting_age = (now - updated_time).max(0.0);
             if updated_time <= 0.0 || waiting_age > WAITING_TTL_S {
                 continue;
@@ -386,11 +444,11 @@ async fn list_running_agents(
             .trim()
             .to_string();
         let next = AgentStatusCandidate {
-            state,
+            state: runtime_state,
             updated_time,
             session_id,
             expires_at: None,
-            pending_question: state == STATE_WAITING,
+            pending_question: runtime_state == STATE_WAITING,
             last_error: None,
         };
         if let Some(current) = status_by_agent.get(agent_id) {
@@ -515,6 +573,39 @@ async fn list_running_agents(
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))
+}
+
+fn has_active_runtime_evidence(
+    session_id: &str,
+    now: f64,
+    session_locks: &[SessionLockRecord],
+    session_run_statuses: &[(&str, f64)],
+    agent_task_statuses: &[&str],
+) -> bool {
+    let cleaned_session = session_id.trim();
+    if cleaned_session.is_empty() {
+        return false;
+    }
+    if session_locks
+        .iter()
+        .any(|lock| lock.session_id.trim() == cleaned_session && lock.expires_at > now)
+    {
+        return true;
+    }
+    if session_run_statuses.iter().any(|(status, finished_time)| {
+        matches!(
+            status.trim().to_ascii_lowercase().as_str(),
+            "queued" | "running"
+        ) && *finished_time <= 0.0
+    }) {
+        return true;
+    }
+    agent_task_statuses.iter().any(|status| {
+        matches!(
+            status.trim().to_ascii_lowercase().as_str(),
+            "pending" | "retry" | "running"
+        )
+    })
 }
 
 async fn list_agent_user_rounds(
@@ -2459,9 +2550,11 @@ struct AgentUpdateRequest {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_agent_payload, requested_create_ability_items, AgentCreateRequest,
+        default_agent_payload, has_active_runtime_evidence, requested_create_ability_items,
+        AgentCreateRequest,
         DefaultAgentConfig,
     };
+    use crate::storage::SessionLockRecord;
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -2539,5 +2632,50 @@ mod tests {
         assert_eq!(payload["tool_names"], json!(["read_file", "planner"]));
         assert_eq!(payload["declared_tool_names"], json!(["read_file"]));
         assert_eq!(payload["declared_skill_names"], json!(["planner"]));
+    }
+
+    #[test]
+    fn running_agent_state_requires_active_runtime_evidence() {
+        assert!(!has_active_runtime_evidence("sess_a", 100.0, &[], &[], &[]));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[SessionLockRecord {
+                session_id: "sess_a".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: "agent_a".to_string(),
+                updated_time: 99.0,
+                expires_at: 120.0,
+            }],
+            &[],
+            &[],
+        ));
+        assert!(!has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[SessionLockRecord {
+                session_id: "sess_a".to_string(),
+                user_id: "alice".to_string(),
+                agent_id: "agent_a".to_string(),
+                updated_time: 70.0,
+                expires_at: 80.0,
+            }],
+            &[("completed", 98.0)],
+            &[],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[("running", 0.0)],
+            &[],
+        ));
+        assert!(has_active_runtime_evidence(
+            "sess_a",
+            100.0,
+            &[],
+            &[],
+            &["retry"],
+        ));
     }
 }

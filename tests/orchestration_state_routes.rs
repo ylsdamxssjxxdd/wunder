@@ -547,6 +547,44 @@ async fn cancelled_pending_round_does_not_survive_history_restore() {
         Some("active")
     );
 
+    let (status, reserve_round_two_again_payload) = send_json(
+        &app.app,
+        &user.token,
+        Method::POST,
+        "/wunder/beeroom/orchestration/rounds/reserve",
+        Some(json!({
+            "group_id": hive.hive_id,
+            "round_index": 2,
+            "user_message": "第二轮重新开始",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        reserve_round_two_again_payload
+            .pointer("/data/round/id")
+            .and_then(Value::as_str),
+        Some("round_02")
+    );
+    assert_eq!(
+        reserve_round_two_again_payload
+            .pointer("/data/round/index")
+            .and_then(Value::as_i64),
+        Some(2)
+    );
+    assert_eq!(
+        reserve_round_two_again_payload
+            .pointer("/data/state/round_state/rounds")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| item.get("id").and_then(Value::as_str).unwrap_or_default().to_string())
+                    .collect::<Vec<_>>()
+            }),
+        Some(vec!["round_01".to_string(), "round_02".to_string()])
+    );
+
     let (status, exit_payload) = send_json(
         &app.app,
         &user.token,

@@ -41,9 +41,13 @@ const mergeMissionIds = (remoteIds: unknown, existingIds: unknown) => {
 export const roundHasCommittedUserMessage = (round: Pick<OrchestrationRoundSnapshot, 'userMessage'> | null | undefined) =>
   Boolean(trimRoundText(round?.userMessage));
 
+export const roundIsFinalized = (
+  round: Pick<OrchestrationRoundSnapshot, 'finalizedAt'> | null | undefined
+) => Number(round?.finalizedAt || 0) > 0;
+
 export const roundHasCommittedContent = (
   round: Pick<OrchestrationRoundSnapshot, 'userMessage' | 'finalizedAt'> | null | undefined
-) => roundHasCommittedUserMessage(round) || Number(round?.finalizedAt || 0) > 0;
+) => roundHasCommittedUserMessage(round) && roundIsFinalized(round);
 
 const mergeRoundPair = <T extends OrchestrationRoundSnapshot>(
   remoteRound: T,

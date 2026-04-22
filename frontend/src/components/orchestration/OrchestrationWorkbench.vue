@@ -291,6 +291,7 @@ import {
   normalizeOrchestrationStatus,
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
+import { roundIsFinalized } from '@/components/orchestration/orchestrationRoundStateStability';
 import { useOrchestrationRuntimeState } from '@/components/orchestration/orchestrationRuntimeState';
 import { getCurrentLanguage, useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
@@ -438,6 +439,8 @@ const hasActiveDispatchPreview = computed(() =>
 );
 const roundHasUserMessage = (round: { userMessage?: unknown } | null | undefined) =>
   Boolean(String(round?.userMessage || '').trim());
+const roundIsCompleted = (round: { finalizedAt?: unknown } | null | undefined) =>
+  roundIsFinalized({ finalizedAt: Number(round?.finalizedAt || 0) });
 const sortedRounds = computed(() =>
   [...rounds.value].sort(
     (left, right) =>
@@ -445,13 +448,13 @@ const sortedRounds = computed(() =>
       Number(left.createdAt || 0) - Number(right.createdAt || 0)
   )
 );
-const formalRounds = computed(() => sortedRounds.value.filter((round) => roundHasUserMessage(round)));
+const formalRounds = computed(() => sortedRounds.value.filter((round) => roundIsCompleted(round)));
 const latestFormalRound = computed(() => formalRounds.value[formalRounds.value.length - 1] || null);
 const resolveFrontierRoundIndex = () =>
   latestFormalRound.value ? Math.max(1, Number(latestFormalRound.value.index || 0) + 1) : 1;
 const findPreparedRoundByIndex = (roundIndex: number) =>
   sortedRounds.value.find(
-    (round) => Number(round.index || 0) === Math.max(1, Number(roundIndex || 0)) && !roundHasUserMessage(round)
+    (round) => Number(round.index || 0) === Math.max(1, Number(roundIndex || 0)) && !roundIsCompleted(round)
   ) || null;
 const frontierPreparedRound = computed(() => findPreparedRoundByIndex(resolveFrontierRoundIndex()));
 const latestInteractiveRound = computed(
@@ -462,7 +465,7 @@ const findDirectSuccessorRound = (roundIndex: number) => {
   const candidates = sortedRounds.value
     .filter((round) => Number(round.index || 0) === targetIndex)
     .sort((left, right) => {
-      const completionDiff = Number(roundHasUserMessage(right)) - Number(roundHasUserMessage(left));
+      const completionDiff = Number(roundIsCompleted(right)) - Number(roundIsCompleted(left));
       if (completionDiff !== 0) return completionDiff;
       return Number(left.createdAt || 0) - Number(right.createdAt || 0);
     });
@@ -490,7 +493,7 @@ const orchestrationNextRoundReady = computed(() => {
   if (!isReady.value || !isActive.value || orchestrationRunning.value) {
     return false;
   }
-  return roundHasUserMessage(activeRound.value);
+  return roundIsCompleted(activeRound.value);
 });
 
 const motherName = computed(() => {
@@ -568,15 +571,16 @@ const latestRoundIndex = computed(() =>
 const normalizeSituationRound = (value: unknown) =>
   Math.max(1, Number.parseInt(String(value ?? '').trim(), 10) || 1);
 
-const resolveNextUserRoundIndex = (state: { rounds?: Array<{ index?: number; userMessage?: string }> } | null | undefined) => {
+const resolveNextUserRoundIndex = (
+  state: { rounds?: Array<{ index?: number; userMessage?: string; finalizedAt?: number }> } | null | undefined
+) => {
   const formalRoundIndex = Math.max(
     0,
     ...(Array.isArray(state?.rounds) ? state.rounds : [])
-      .filter((round) => String(round?.userMessage || '').trim())
+      .filter((round) => Number(round?.finalizedAt || 0) > 0)
       .map((round) => Number(round?.index || 0))
   );
-  const sentUserMessageCount = activeRoundChatMessages.value.filter((message) => message.tone === 'user').length;
-  return Math.max(1, formalRoundIndex + 1, sentUserMessageCount + 1);
+  return Math.max(1, formalRoundIndex + 1);
 };
 
 const selectedSituationKey = computed(() => String(normalizeSituationRound(selectedSituationRound.value)));
@@ -754,7 +758,7 @@ const orchestrationPendingRoundActive = computed(() => {
   if (!pendingRound) return false;
   const pendingMessageStartedAt = Number(runtimeState.value?.pendingMessageStartedAt || 0);
   if (pendingMessageStartedAt > 0) return true;
-  return Boolean(normalizeOrchestrationText(pendingRound.userMessage));
+  return Boolean(normalizeOrchestrationText(pendingRound.userMessage)) && !roundIsCompleted(pendingRound);
 });
 
 const orchestrationRunning = computed(
@@ -835,11 +839,16 @@ const updateSituationForRound = async (roundIndex: number, value: string) => {
   await updatePlannedSituations(nextEntries);
 };
 
-const createPreparedRoundAtIndex = async (roundIndex: number, preferredSituation = '') => {
+const createPreparedRoundAtIndex = async (
+  roundIndex: number,
+  preferredSituation = '',
+  options: { select?: boolean } = {}
+) => {
   const nextRoundIndex = Math.max(1, Number(roundIndex || 0));
+  const shouldSelect = options.select !== false;
   const existingPreparedRound =
     rounds.value.find(
-      (round) => Number(round.index || 0) === nextRoundIndex && !String(round.userMessage || '').trim()
+      (round) => Number(round.index || 0) === nextRoundIndex && !roundIsCompleted(round)
     ) || null;
   if (existingPreparedRound?.id) {
     const nextSituation =
@@ -850,22 +859,27 @@ const createPreparedRoundAtIndex = async (roundIndex: number, preferredSituation
     if (nextSituation !== String(existingPreparedRound.situation || '').trim()) {
       await updateSituationForRound(nextRoundIndex, nextSituation);
     }
-    selectRound(existingPreparedRound.id);
+    if (shouldSelect) {
+      selectRound(existingPreparedRound.id);
+    }
     return existingPreparedRound;
   }
   const nextSituation =
     String(preferredSituation || '').trim() ||
     resolveDraftSituationByRoundIndex(nextRoundIndex) ||
     await resolveRoundSituation(nextRoundIndex);
-  const created = await createRound(nextSituation, '', { roundIndex: nextRoundIndex });
-  if (created?.id) {
+  const created = await createRound(nextSituation, '', {
+    roundIndex: nextRoundIndex,
+    select: shouldSelect
+  });
+  if (created?.id && shouldSelect) {
     selectRound(created.id);
   }
   return created;
 };
 
-const createNextPreparedRound = async (preferredSituation = '') =>
-  createPreparedRoundAtIndex(resolveImmediateNextRoundIndex(), preferredSituation);
+const createNextPreparedRound = async (preferredSituation = '', options: { select?: boolean } = {}) =>
+  createPreparedRoundAtIndex(resolveImmediateNextRoundIndex(), preferredSituation, options);
 
 const handleRunRoundAction = async () => {
   if (orchestrationRunning.value) {
@@ -882,9 +896,9 @@ const handleRunRoundAction = async () => {
   }
   await handleCommitCurrentSituation();
   const currentRoundIndex = Math.max(1, Number(activeRound.value?.index || latestRound.value?.index || 1));
-  const selectedRoundHasUserMessage = roundHasUserMessage(activeRound.value);
+  const selectedRoundHasCompleted = roundIsCompleted(activeRound.value);
   const directSuccessorRound = findDirectSuccessorRound(currentRoundIndex);
-  if (selectedRoundHasUserMessage) {
+  if (selectedRoundHasCompleted) {
     if (directSuccessorRound?.id) {
       selectRound(directSuccessorRound.id);
       return;
@@ -1035,7 +1049,7 @@ const handleBranchRun = async () => {
     return;
   }
   const branchSourceRound = activeRound.value || latestFormalRound.value || null;
-  if (!branchSourceRound || !roundHasUserMessage(branchSourceRound)) {
+  if (!branchSourceRound || !roundIsCompleted(branchSourceRound)) {
     ElMessage.warning(t('orchestration.message.branchRequired'));
     return;
   }
@@ -1058,7 +1072,7 @@ const handleBranchRun = async () => {
       1,
       Number(
         branchedState.rounds
-          .filter((round) => roundHasUserMessage(round))
+          .filter((round) => roundIsCompleted(round))
           .slice(-1)[0]?.index || branchBaseRoundIndex
       )
     );
@@ -1140,7 +1154,7 @@ const handleRestoreHistoryAction = async (
           rounds.value.find(
             (round) =>
               Number(round.index || 0) === normalizedPayload.roundIndex &&
-              !String(round.userMessage || '').trim()
+              !roundIsCompleted(round)
           ) || null;
         if (previewRound?.id) {
           selectRound(previewRound.id);
@@ -1168,7 +1182,7 @@ const handleRestoreHistoryAction = async (
           nextState.rounds.find(
             (round) =>
               Number(round.index || 0) === normalizedPayload.roundIndex &&
-              !String(round.userMessage || '').trim()
+              !roundIsCompleted(round)
           ) || null;
         if (previewRound?.id) {
           selectRound(previewRound.id);
@@ -1511,6 +1525,7 @@ const handleSendToMother = async () => {
       if (finalizedRound?.id) {
         selectRound(finalizedRound.id);
       }
+      await createPreparedRoundAtIndex(actualRoundIndex + 1, '', { select: false });
       reservedRoundId = '';
     } else {
       if (reservedRoundId) {
