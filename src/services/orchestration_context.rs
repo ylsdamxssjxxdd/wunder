@@ -46,6 +46,8 @@ pub struct OrchestrationSessionContext {
 #[derive(Debug, Clone)]
 pub struct OrchestrationDispatchContext {
     pub run_id: String,
+    pub group_id: String,
+    pub mother_agent_id: String,
     pub round_index: i64,
     pub situation: String,
 }
@@ -70,6 +72,8 @@ pub struct OrchestrationHiveState {
     pub entered_at: f64,
     #[serde(default)]
     pub updated_at: f64,
+    #[serde(default)]
+    pub mother_primer_injected: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -992,6 +996,22 @@ pub fn latest_formal_round_index(round_state: Option<&OrchestrationRoundState>) 
         .max(1)
 }
 
+pub fn current_occupied_round_index(round_state: Option<&OrchestrationRoundState>) -> i64 {
+    round_state
+        .and_then(|state| {
+            state
+                .rounds
+                .iter()
+                .filter(|round| {
+                    !round.user_message.trim().is_empty() || round.finalized_at > 0.0
+                })
+                .map(|round| round.index)
+                .max()
+        })
+        .unwrap_or(1)
+        .max(1)
+}
+
 pub fn rebuild_branch_round_state(
     source: &OrchestrationRoundState,
     target_orchestration_id: &str,
@@ -1289,6 +1309,23 @@ pub fn ensure_orchestration_member_session(
         {
             let session_agent_id = session.agent_id.as_deref().unwrap_or("").trim();
             if session_agent_id == agent.agent_id.trim() {
+                let round_index = load_round_state(storage, user_id.trim(), &state.orchestration_id)
+                    .as_ref()
+                    .map(|round_state| current_occupied_round_index(Some(round_state)))
+                    .unwrap_or(1);
+                persist_session_context(
+                    storage,
+                    user_id,
+                    existing.session_id.trim(),
+                    &OrchestrationSessionContext {
+                        mode: ORCHESTRATION_MODE.to_string(),
+                        run_id: state.run_id.clone(),
+                        group_id: state.group_id.clone(),
+                        role: existing.role.trim().to_string(),
+                        round_index,
+                        mother_agent_id: state.mother_agent_id.clone(),
+                    },
+                )?;
                 bind_member_session_as_main_thread(
                     storage,
                     user_id,
@@ -1486,7 +1523,20 @@ pub fn load_dispatch_context(
     user_id: &str,
     session_id: &str,
 ) -> Option<OrchestrationDispatchContext> {
-    let context = load_session_context(storage, user_id, session_id)?;
+    let mut context = load_session_context(storage, user_id, session_id)?;
+    if !context.group_id.trim().is_empty() {
+        if let Some(state) = load_hive_state(storage, user_id, &context.group_id) {
+            if let Some(round_state) = load_round_state(storage, user_id, &state.orchestration_id) {
+                let round_index = current_occupied_round_index(Some(&round_state));
+                if context.round_index != round_index || context.run_id.trim() != state.run_id.trim() {
+                    context.run_id = state.run_id.clone();
+                    context.round_index = round_index;
+                    context.mother_agent_id = state.mother_agent_id.clone();
+                    let _ = persist_session_context(storage, user_id, session_id, &context);
+                }
+            }
+        }
+    }
     let situation = read_situation_file(
         workspace,
         workspace_id,
@@ -1496,6 +1546,8 @@ pub fn load_dispatch_context(
     .unwrap_or_default();
     Some(OrchestrationDispatchContext {
         run_id: context.run_id,
+        group_id: context.group_id,
+        mother_agent_id: context.mother_agent_id,
         round_index: context.round_index,
         situation,
     })
@@ -1738,6 +1790,8 @@ mod tests {
         );
         let context = OrchestrationDispatchContext {
             run_id: "orch_demo".to_string(),
+            group_id: "hive_demo".to_string(),
+            mother_agent_id: "agent_mother".to_string(),
             round_index: 1,
             situation: "market pressure".to_string(),
         };
@@ -1756,6 +1810,91 @@ mod tests {
         assert!(!message.contains("位置：round_01/Risk Worker"));
         assert!(message.contains("market pressure"));
         assert!(message.contains("analyze risk"));
+    }
+
+    #[test]
+    fn dispatch_context_prefers_current_occupied_round_over_stale_session_round() {
+        let dir = tempdir().expect("tempdir");
+        let storage = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("orchestration-dispatch-round-test.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        let workspace = WorkspaceManager::new(
+            dir.path().join("workspaces").to_string_lossy().as_ref(),
+            storage.clone(),
+            0,
+            &HashMap::new(),
+        );
+        let user_id = "alice";
+        let session_id = "sess_mother";
+        let state = OrchestrationHiveState {
+            orchestration_id: "orch_state".to_string(),
+            run_id: "run_state".to_string(),
+            group_id: "hive_state".to_string(),
+            mother_agent_id: "agent_mother".to_string(),
+            mother_agent_name: "Mother".to_string(),
+            mother_session_id: session_id.to_string(),
+            active: true,
+            entered_at: 1.0,
+            updated_at: 1.0,
+            mother_primer_injected: true,
+        };
+        persist_hive_state(storage.as_ref(), user_id, &state).expect("persist hive");
+        persist_round_state(
+            storage.as_ref(),
+            user_id,
+            &OrchestrationRoundState {
+                orchestration_id: state.orchestration_id.clone(),
+                run_id: state.run_id.clone(),
+                group_id: state.group_id.clone(),
+                rounds: vec![
+                    OrchestrationRoundRecord {
+                        id: round_id(1),
+                        index: 1,
+                        situation: "done".to_string(),
+                        user_message: "first".to_string(),
+                        created_at: 1.0,
+                        finalized_at: 2.0,
+                    },
+                    OrchestrationRoundRecord {
+                        id: round_id(5),
+                        index: 5,
+                        situation: "current".to_string(),
+                        user_message: "fifth".to_string(),
+                        created_at: 5.0,
+                        finalized_at: 0.0,
+                    },
+                ],
+                suppressed_message_ranges: Vec::new(),
+                updated_at: 5.0,
+            },
+        )
+        .expect("persist rounds");
+        persist_session_context(
+            storage.as_ref(),
+            user_id,
+            session_id,
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: state.run_id.clone(),
+                group_id: state.group_id.clone(),
+                role: "mother".to_string(),
+                round_index: 2,
+                mother_agent_id: state.mother_agent_id.clone(),
+            },
+        )
+        .expect("persist stale context");
+
+        let context =
+            load_dispatch_context(storage.as_ref(), &workspace, "alice__c__2", user_id, session_id)
+                .expect("dispatch context");
+
+        assert_eq!(context.round_index, 5);
+        let repaired =
+            load_session_context(storage.as_ref(), user_id, session_id).expect("repaired context");
+        assert_eq!(repaired.round_index, 5);
     }
 
     #[test]
@@ -1798,6 +1937,7 @@ mod tests {
             active: true,
             entered_at: 10.0,
             updated_at: 12.0,
+            mother_primer_injected: true,
         };
         let branch_state = OrchestrationHiveState {
             orchestration_id: "orch_branch".to_string(),
@@ -1809,6 +1949,7 @@ mod tests {
             active: true,
             entered_at: 20.0,
             updated_at: 21.0,
+            mother_primer_injected: false,
         };
         let root_history =
             build_history_record_from_state(&parent_state, ORCHESTRATION_HISTORY_STATUS_ACTIVE, 4);
@@ -1845,6 +1986,7 @@ mod tests {
             active: true,
             entered_at: 10.0,
             updated_at: 12.0,
+            mother_primer_injected: true,
         };
         let branch_a_state = OrchestrationHiveState {
             orchestration_id: "orch_branch_a".to_string(),
@@ -1856,6 +1998,7 @@ mod tests {
             active: false,
             entered_at: 20.0,
             updated_at: 21.0,
+            mother_primer_injected: false,
         };
         let branch_b_state = OrchestrationHiveState {
             orchestration_id: "orch_branch_b".to_string(),
@@ -1867,6 +2010,7 @@ mod tests {
             active: false,
             entered_at: 30.0,
             updated_at: 31.0,
+            mother_primer_injected: false,
         };
         let branch_b_child_state = OrchestrationHiveState {
             orchestration_id: "orch_branch_b_child".to_string(),
@@ -1878,6 +2022,7 @@ mod tests {
             active: false,
             entered_at: 40.0,
             updated_at: 41.0,
+            mother_primer_injected: false,
         };
         let root_history =
             build_history_record_from_state(&root_state, ORCHESTRATION_HISTORY_STATUS_ACTIVE, 6);

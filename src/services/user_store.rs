@@ -41,6 +41,12 @@ const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+const DEFAULT_AGENT_DESCRIPTION: &str =
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
+const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
+const DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str =
+    "用公文写作技能写一篇广州旅游攻略";
 const SESSION_TIME_EPSILON_MICROS: u64 = 1;
 const DEFAULT_SESSION_SCOPE: &str = "default";
 const SESSION_SCOPE_MAX_LEN: usize = 32;
@@ -1211,6 +1217,15 @@ pub(crate) fn build_default_agent_record_from_storage(
         if existing.status.trim().is_empty() {
             existing.status = DEFAULT_AGENT_STATUS.to_string();
         }
+        if existing.description.trim().is_empty() {
+            existing.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+        }
+        if existing.system_prompt.trim().is_empty() {
+            existing.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+        }
+        if existing.preset_questions.is_empty() {
+            existing.preset_questions = default_agent_preset_questions();
+        }
         existing.is_shared = false;
         return Ok(existing);
     }
@@ -1234,6 +1249,12 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     if config.name.trim().is_empty() {
         config.name = DEFAULT_AGENT_NAME.to_string();
     }
+    if config.description.trim().is_empty() {
+        config.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+    }
+    if config.system_prompt.trim().is_empty() {
+        config.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+    }
     if config.status.trim().is_empty() {
         config.status = DEFAULT_AGENT_STATUS.to_string();
     }
@@ -1252,6 +1273,12 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     config.declared_skill_names = crate::services::user_agent_presets::normalize_tool_list(
         std::mem::take(&mut config.declared_skill_names),
     );
+    config.preset_questions = crate::services::user_agent_presets::normalize_preset_questions(
+        std::mem::take(&mut config.preset_questions),
+    );
+    if config.preset_questions.is_empty() {
+        config.preset_questions = default_agent_preset_questions();
+    }
     config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
     let now = now_ts();
     if config.created_at <= 0.0 {
@@ -1260,6 +1287,13 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     if config.updated_at <= 0.0 {
         config.updated_at = config.created_at;
     }
+}
+
+fn default_agent_preset_questions() -> Vec<String> {
+    vec![
+        DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART.to_string(),
+        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
+    ]
 }
 
 fn next_session_issued_at(last_login_at: Option<f64>) -> f64 {

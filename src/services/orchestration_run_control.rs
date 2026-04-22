@@ -302,6 +302,7 @@ mod tests {
                 active: true,
                 entered_at: 1.0,
                 updated_at: 1.0,
+                mother_primer_injected: true,
             },
         )
         .expect("persist hive");

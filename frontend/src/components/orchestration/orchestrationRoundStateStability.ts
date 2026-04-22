@@ -24,6 +24,33 @@ const sortRounds = <T extends OrchestrationRoundSnapshot>(rounds: T[]) =>
       trimRoundText(left.id).localeCompare(trimRoundText(right.id))
   );
 
+const pickStrongerRoundSnapshot = <T extends OrchestrationRoundSnapshot>(left: T | null | undefined, right: T | null | undefined) => {
+  if (!left) return right || null;
+  if (!right) return left;
+  const leftCompleted = roundHasCommittedContent(left);
+  const rightCompleted = roundHasCommittedContent(right);
+  if (leftCompleted !== rightCompleted) return leftCompleted ? left : right;
+  const leftFinalized = roundIsFinalized(left);
+  const rightFinalized = roundIsFinalized(right);
+  if (leftFinalized !== rightFinalized) return leftFinalized ? left : right;
+  const leftHasMessage = roundHasCommittedUserMessage(left);
+  const rightHasMessage = roundHasCommittedUserMessage(right);
+  if (leftHasMessage !== rightHasMessage) return leftHasMessage ? left : right;
+  return Number(left.createdAt || 0) >= Number(right.createdAt || 0) ? left : right;
+};
+
+const indexByRoundIndex = <T extends OrchestrationRoundSnapshot>(rounds: T[]) => {
+  const byIndex = new Map<number, T>();
+  rounds.forEach((round) => {
+    const index = normalizeRoundIndex(round.index);
+    const picked = pickStrongerRoundSnapshot(byIndex.get(index), round);
+    if (picked) {
+      byIndex.set(index, picked);
+    }
+  });
+  return byIndex;
+};
+
 const mergeMissionIds = (remoteIds: unknown, existingIds: unknown) => {
   const merged: string[] = [];
   const seen = new Set<string>();
@@ -93,8 +120,8 @@ export const stabilizeOrchestrationRoundSnapshots = <T extends OrchestrationRoun
   if (!remote.length) return existing;
   if (!existing.length) return remote;
 
-  const existingByIndex = new Map(existing.map((round) => [normalizeRoundIndex(round.index), round] as const));
-  const remoteByIndex = new Map(remote.map((round) => [normalizeRoundIndex(round.index), round] as const));
+  const existingByIndex = indexByRoundIndex(existing);
+  const remoteByIndex = indexByRoundIndex(remote);
   const remoteLatestCommittedIndex = remote.reduce((latest, round) => {
     if (!roundHasCommittedContent(round)) {
       return latest;
@@ -112,8 +139,7 @@ export const stabilizeOrchestrationRoundSnapshots = <T extends OrchestrationRoun
     if (remoteRound && existingRound) {
       const preserveExistingCommit =
         roundHasCommittedContent(existingRound) &&
-        !roundHasCommittedContent(remoteRound) &&
-        remoteLatestCommittedIndex > index;
+        !roundHasCommittedContent(remoteRound);
       nextRounds.push(mergeRoundPair(remoteRound, existingRound, preserveExistingCommit));
       continue;
     }

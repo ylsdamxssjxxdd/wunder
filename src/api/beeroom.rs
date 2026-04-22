@@ -9,7 +9,7 @@ use crate::services::orchestration_context::{
     clear_hive_state, clear_member_bindings, clear_orchestration_workspace_tree, clear_round_state,
     clear_session_context, collect_descendant_history_ids_after_round,
     copy_chat_history_until_round, copy_round_directory_tree, copy_round_situation_files,
-    delete_round_directories_after, latest_formal_round_index, list_history_records,
+    current_occupied_round_index, delete_round_directories_after, latest_formal_round_index, list_history_records,
     load_history_record, load_hive_state, load_round_state, normalize_orchestration_run_name,
     orchestration_agent_artifact_dir_name, persist_history_record, persist_hive_state,
     persist_member_binding, persist_round_state, persist_session_context,
@@ -197,6 +197,28 @@ async fn update_orchestration_session_context(
     };
     persist_session_context(state.storage.as_ref(), &user_id, session_id, &context)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut mother_primer_injected = false;
+    if let Some(mut hive_state) = payload
+        .group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|group_id| load_hive_state(state.storage.as_ref(), &user_id, group_id))
+    {
+        let mut changed = false;
+        if let Some(injected) = payload.mother_primer_injected {
+            if hive_state.mother_primer_injected != injected {
+                hive_state.mother_primer_injected = injected;
+                changed = true;
+            }
+        }
+        mother_primer_injected = hive_state.mother_primer_injected;
+        if changed {
+            hive_state.updated_at = now_ts();
+            persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+    }
     let _ = repair_orchestration_session_main_thread(
         state.storage.as_ref(),
         &user_id,
@@ -213,6 +235,7 @@ async fn update_orchestration_session_context(
             "role": context.role,
             "round_index": context.round_index,
             "mother_agent_id": context.mother_agent_id,
+            "mother_primer_injected": mother_primer_injected,
         }
     })))
 }
@@ -233,7 +256,7 @@ async fn get_orchestration_state(
     }
     let state_value = load_hive_state(state.storage.as_ref(), &user_id, &group_id);
     if let Some(active_state) = state_value.as_ref() {
-        let round_index = latest_formal_round_index(
+        let round_index = current_occupied_round_index(
             load_or_migrate_round_state(state.as_ref(), &user_id, active_state).as_ref(),
         );
         let _ = repair_active_orchestration_main_threads(
@@ -446,6 +469,7 @@ async fn create_orchestration_state(
         active: true,
         entered_at: now,
         updated_at: now,
+        mother_primer_injected: false,
     };
     persist_hive_state(state.storage.as_ref(), &user_id, &hive_state)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -760,6 +784,10 @@ async fn restore_orchestration_history(
         active: activate,
         entered_at: history.entered_at.max(now),
         updated_at: now,
+        mother_primer_injected: round_state
+            .rounds
+            .iter()
+            .any(|round| !round.user_message.trim().is_empty()),
     };
 
     let mut member_bindings = Vec::new();
@@ -1082,6 +1110,10 @@ async fn branch_orchestration_history(
         active: activate,
         entered_at: now,
         updated_at: now,
+        mother_primer_injected: source_round_state
+            .rounds
+            .iter()
+            .any(|round| round.index <= branch_round_index && !round.user_message.trim().is_empty()),
     };
     let mut round_state = rebuild_branch_round_state(
         &source_round_state,
@@ -1418,7 +1450,7 @@ async fn reserve_orchestration_round(
         })?;
     let mut round_state = load_or_migrate_round_state(state.as_ref(), &user_id, &hive_state)
         .unwrap_or_else(|| build_initial_round_state(&hive_state));
-    let current_round_index = latest_formal_round_index(Some(&round_state));
+    let current_round_index = current_occupied_round_index(Some(&round_state));
     let _ = repair_active_orchestration_main_threads(
         state.storage.as_ref(),
         &user_id,
@@ -2470,6 +2502,7 @@ fn orchestration_state_payload(
         "mother_agent_id": state.mother_agent_id,
         "mother_agent_name": state.mother_agent_name,
         "mother_session_id": state.mother_session_id,
+        "mother_primer_injected": state.mother_primer_injected,
         "active": state.active,
         "entered_at": state.entered_at,
         "updated_at": state.updated_at,
@@ -2758,6 +2791,8 @@ struct UpdateOrchestrationSessionContextRequest {
     round_index: Option<i64>,
     #[serde(default, alias = "motherAgentId")]
     mother_agent_id: Option<String>,
+    #[serde(default, alias = "motherPrimerInjected", alias = "mother_primer_injected")]
+    mother_primer_injected: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

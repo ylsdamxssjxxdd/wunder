@@ -707,7 +707,9 @@ const activeRoundMissions = computed(() => {
 });
 
 const activeRoundRunningMissions = computed(() =>
-  activeRoundMissions.value.filter((item) => isOrchestrationMissionRunning(item))
+  roundIsCompleted(activeRound.value)
+    ? []
+    : activeRoundMissions.value.filter((item) => isOrchestrationMissionRunning(item))
 );
 
 const latestRoundMissions = computed(() => {
@@ -718,7 +720,9 @@ const latestRoundMissions = computed(() => {
 });
 
 const latestRoundRunningMissions = computed(() =>
-  latestRoundMissions.value.filter((item) => isOrchestrationMissionRunning(item))
+  roundIsCompleted(latestFormalRound.value)
+    ? []
+    : latestRoundMissions.value.filter((item) => isOrchestrationMissionRunning(item))
 );
 
 const beginOrchestrationDispatchFlow = () => {
@@ -741,6 +745,16 @@ const buildOrchestrationDispatchStoppedError = () => {
   return error;
 };
 
+const scheduleRuntimeRefreshPulse = () => {
+  if (typeof window === 'undefined') {
+    emit('refresh');
+    return;
+  }
+  [240, 900, 1800].forEach((delay) => {
+    window.setTimeout(() => emit('refresh'), delay);
+  });
+};
+
 const ensureOrchestrationDispatchFlowActive = (token: number) => {
   if (orchestrationDispatchFlowToken.value !== token || orchestrationDispatchStopRequested.value) {
     throw buildOrchestrationDispatchStoppedError();
@@ -761,11 +775,38 @@ const orchestrationPendingRoundActive = computed(() => {
   return Boolean(normalizeOrchestrationText(pendingRound.userMessage)) && !roundIsCompleted(pendingRound);
 });
 
+const liveDispatchPreviewIsBlocking = computed(() => {
+  const preview = dispatchPreview.value;
+  if (!preview) return false;
+  const previewStatus = activeDispatchPreviewStatus.value;
+  if (!previewStatus || !hasActiveDispatchPreview.value) return false;
+  if (orchestrationPendingRoundActive.value || composerSending.value || orchestrationDispatchPreparing.value) {
+    return true;
+  }
+  const activeRoundValue = activeRound.value;
+  if (roundIsCompleted(activeRoundValue)) {
+    return false;
+  }
+  const activeRoundMissionIds = new Set((activeRoundValue?.missionIds || []).map((item) => String(item || '').trim()).filter(Boolean));
+  if (activeRoundMissionIds.size > 0) {
+    const previewMissionId = String(
+      (preview as { missionId?: unknown; teamRunId?: unknown; taskId?: unknown }).missionId ||
+      (preview as { missionId?: unknown; teamRunId?: unknown; taskId?: unknown }).teamRunId ||
+      (preview as { missionId?: unknown; teamRunId?: unknown; taskId?: unknown }).taskId ||
+      ''
+    ).trim();
+    if (previewMissionId && activeRoundMissionIds.has(previewMissionId)) {
+      return true;
+    }
+  }
+  return latestRoundRunningMissions.value.length > 0 || activeRoundRunningMissions.value.length > 0;
+});
+
 const orchestrationRunning = computed(
   () =>
     orchestrationDispatchPreparing.value ||
     composerSending.value ||
-    hasActiveDispatchPreview.value ||
+    liveDispatchPreviewIsBlocking.value ||
     latestRoundRunningMissions.value.length > 0 ||
     activeRoundRunningMissions.value.length > 0 ||
     orchestrationPendingRoundActive.value
@@ -1278,7 +1319,8 @@ const resolveHistoryStatusClass = (item: { orchestrationId: string; status: stri
 
 const syncMotherSessionContextForState = async (
   state: { motherSessionId?: string; runId?: string } | null | undefined,
-  roundIndex: number
+  roundIndex: number,
+  options: { motherPrimerInjected?: boolean } = {}
 ) => {
   const sessionId = String(state?.motherSessionId || '').trim();
   const nextRunId = String(state?.runId || '').trim();
@@ -1290,7 +1332,10 @@ const syncMotherSessionContextForState = async (
     group_id: groupId,
     role: 'mother',
     round_index: Math.max(1, Number(roundIndex) || 1),
-    mother_agent_id: String(motherAgentId.value || '').trim()
+    mother_agent_id: String(motherAgentId.value || '').trim(),
+    ...(typeof options.motherPrimerInjected === 'boolean'
+      ? { mother_primer_injected: options.motherPrimerInjected }
+      : {})
   });
 };
 
@@ -1371,8 +1416,10 @@ const handleDeleteBranchAfterRound = async (payload: { orchestrationId: string; 
   }
 };
 
-const syncMotherSessionContext = async (roundIndex: number) =>
-  syncMotherSessionContextForState(runtimeState.value, roundIndex);
+const syncMotherSessionContext = async (
+  roundIndex: number,
+  options: { motherPrimerInjected?: boolean } = {}
+) => syncMotherSessionContextForState(runtimeState.value, roundIndex, options);
 
 const stopActiveRoundMissions = async () => {
   const sessionId = String(motherSessionId.value || '').trim();
@@ -1481,6 +1528,8 @@ const handleSendToMother = async () => {
     if (reservedRoundId) {
       selectRound(reservedRoundId);
     }
+    emit('refresh');
+    scheduleRuntimeRefreshPulse();
     ensureOrchestrationDispatchFlowActive(flowToken);
     const actualRoundIndex = Math.max(1, Number(reservedRound?.index || inferredNextRoundIndex));
     const roundSituation =
@@ -1489,7 +1538,8 @@ const handleSendToMother = async () => {
       await resolveRoundSituation(actualRoundIndex);
     await syncMotherSessionContext(actualRoundIndex);
     ensureOrchestrationDispatchFlowActive(flowToken);
-    const includePrimer = state?.motherPrimerInjected !== true;
+    const latestRuntimeBeforeDispatch = runtimeState.value || state;
+    const includePrimer = latestRuntimeBeforeDispatch?.motherPrimerInjected !== true;
     const templates = await ensureOrchestrationPromptTemplates();
     ensureOrchestrationDispatchFlowActive(flowToken);
     const dispatchContent = buildMotherDispatchEnvelope({
@@ -1525,7 +1575,12 @@ const handleSendToMother = async () => {
       if (finalizedRound?.id) {
         selectRound(finalizedRound.id);
       }
-      await createPreparedRoundAtIndex(actualRoundIndex + 1, '', { select: false });
+      const finalizedRoundIndex = Math.max(
+        1,
+        Number(finalizedRound?.index || actualRoundIndex || 0) || 1
+      );
+      await createPreparedRoundAtIndex(finalizedRoundIndex + 1, '', { select: false });
+      emit('refresh');
       reservedRoundId = '';
     } else {
       if (reservedRoundId) {
@@ -1539,6 +1594,7 @@ const handleSendToMother = async () => {
     }
     if (includePrimer) {
       markMotherPrimerInjected();
+      await syncMotherSessionContext(actualRoundIndex, { motherPrimerInjected: true }).catch(() => null);
     }
     clearStagedSituationDraft();
   } catch (error: any) {

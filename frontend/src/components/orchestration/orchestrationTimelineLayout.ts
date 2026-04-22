@@ -439,13 +439,7 @@ export const buildOrchestrationTimelineLayout = ({
         }, 0)
       : 0;
     const completedRounds = isCurrentRun
-      ? scopedRounds.filter((round) => {
-          const roundIndex = Math.max(1, Number(round.index || 0));
-          if (latestCommittedRoundIndex > 0) {
-            return roundIndex <= latestCommittedRoundIndex;
-          }
-          return roundHasCommittedContent(round);
-        })
+      ? scopedRounds.filter((round) => roundHasCommittedContent(round))
       : scopedRounds;
     const inFlightRound = isCurrentRun
       ? scopedRounds.find((round) => {
@@ -513,10 +507,7 @@ export const buildOrchestrationTimelineLayout = ({
       const hasCommittedContent = isCurrentRun ? roundHasCommittedContent(round) : true;
       const isSelectedRound = isCurrentRun && round.id === normalizeTimelineText(activeRoundId);
       const isPreviewRound = String(round.id || '').startsWith(`preview:${runId}:`);
-      const hasCompletedLaterRound = completedRounds.some(
-        (completedRound) => Math.max(1, Number(completedRound.index || 0)) > roundIndex
-      );
-      const isCompletedRound = hasCommittedContent || hasCompletedLaterRound;
+      const isCompletedRound = hasCommittedContent;
       const column = runChipColumn + Math.max(1, roundIndex - branchFromRoundIndex);
       roundColumns.set(roundIndex, column);
       lastRoundColumn = Math.max(lastRoundColumn, column);

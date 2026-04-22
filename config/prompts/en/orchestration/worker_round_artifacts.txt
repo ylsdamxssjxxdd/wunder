@@ -1,3 +1,4 @@
 [Current Round Artifact Directory]
 Artifact directory: {{artifact_path}}
 Write this round's new or modified files only here. Do not write to another round or another worker directory.
+Reminder: report files as produced only after confirming they were written.

@@ -84,8 +84,9 @@ use crate::schemas::WunderRequest;
 use crate::services::agent_abilities::resolve_agent_runtime_tool_names;
 use crate::services::orchestration_context::{
     active_orchestration_for_agent, build_worker_dispatch_message,
-    ensure_orchestration_member_session, load_dispatch_context, session_has_visible_history,
-    session_orchestration_run_root,
+    ensure_orchestration_member_session, load_dispatch_context, persist_session_context,
+    session_has_visible_history, session_orchestration_run_root, OrchestrationSessionContext,
+    ORCHESTRATION_MODE,
 };
 use crate::services::orchestration_run_control::worker_already_dispatched_in_round;
 use crate::services::subagents;
@@ -2521,6 +2522,21 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         created_session
             || !session_has_visible_history(context.storage.as_ref(), user_id, &target_session_id),
     );
+    if let Some(orchestration_context) = orchestration_context.as_ref() {
+        persist_session_context(
+            context.storage.as_ref(),
+            user_id,
+            &target_session_id,
+            &OrchestrationSessionContext {
+                mode: ORCHESTRATION_MODE.to_string(),
+                run_id: orchestration_context.run_id.clone(),
+                group_id: orchestration_context.group_id.clone(),
+                role: "worker".to_string(),
+                round_index: orchestration_context.round_index,
+                mother_agent_id: orchestration_context.mother_agent_id.clone(),
+            },
+        )?;
+    }
     context.storage.upsert_team_task(&task_record)?;
     emit_swarm_task_dispatched(context, &run_record, &task_record);
 
@@ -3156,6 +3172,21 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             created_session
                 || !session_has_visible_history(context.storage.as_ref(), user_id, &session_id),
         );
+        if let Some(orchestration_context) = orchestration_context.as_ref() {
+            persist_session_context(
+                context.storage.as_ref(),
+                user_id,
+                &session_id,
+                &OrchestrationSessionContext {
+                    mode: ORCHESTRATION_MODE.to_string(),
+                    run_id: orchestration_context.run_id.clone(),
+                    group_id: orchestration_context.group_id.clone(),
+                    role: "worker".to_string(),
+                    round_index: orchestration_context.round_index,
+                    mother_agent_id: orchestration_context.mother_agent_id.clone(),
+                },
+            )?;
+        }
         task_record.target_session_id = Some(session_id.clone());
         task_record.spawned_session_id = created_session.then_some(session_id.clone());
         context.storage.upsert_team_task(&task_record)?;

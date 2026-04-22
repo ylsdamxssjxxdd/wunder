@@ -105,20 +105,48 @@ const resolveNodeStatusLabel = (status: string, t: TranslationFn) => {
   return t('beeroom.status.unknown');
 };
 
+const resolveWorkflowToneRank = (tone: unknown) => {
+  const normalized = normalizeText(tone).toLowerCase();
+  if (normalized === 'loading') return 4;
+  if (normalized === 'failed') return 3;
+  if (normalized === 'completed') return 2;
+  if (normalized === 'pending') return 1;
+  return 0;
+};
+
+const resolveStatusFromWorkflowTone = (tone: unknown) => {
+  const normalized = normalizeText(tone).toLowerCase();
+  if (normalized === 'loading') return 'running';
+  if (normalized === 'failed') return 'failed';
+  if (normalized === 'completed') return 'completed';
+  return '';
+};
+
 const resolveWorkerStatus = (
   workerId: string,
   activeRoundMissions: BeeroomMission[],
   workerOutputs: MissionChatMessage[],
   fallbackStatus: string,
-  runtimeWorkerStatus: string
+  runtimeWorkerStatus: string,
+  workflowTone: string
 ) => {
+  const workflowStatus = resolveStatusFromWorkflowTone(workflowTone);
   const normalizedWorkerId = normalizeText(workerId);
   const missionTaskStatus = activeRoundMissions
     .flatMap((mission) => (Array.isArray(mission.tasks) ? mission.tasks : []))
     .filter((task) => normalizeText(task?.agent_id) === normalizedWorkerId)
     .map((task) => normalizeText(task?.status).toLowerCase())
     .find(Boolean);
-  if (missionTaskStatus) return missionTaskStatus;
+  if (missionTaskStatus) {
+    if (
+      (missionTaskStatus === 'queued' || missionTaskStatus === 'pending' || missionTaskStatus === 'accepted' || missionTaskStatus === 'waiting') &&
+      resolveWorkflowToneRank(workflowTone) > resolveWorkflowToneRank('pending')
+    ) {
+      return workflowStatus || missionTaskStatus;
+    }
+    return missionTaskStatus;
+  }
+  if (workflowStatus) return workflowStatus;
   if (runtimeWorkerStatus) return runtimeWorkerStatus;
   if (workerOutputs.length) return 'completed';
   return normalizeText(fallbackStatus).toLowerCase() || 'idle';
@@ -462,12 +490,20 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workerOutputs = options.resolveWorkerOutputs(agentId);
     const runtimeWorkerStatus = runtimeWorkers.statusByAgentId.get(agentId) || '';
     const workerTasks = tasksByAgent.get(agentId) || [];
+    const latestWorkerTask = pickLatestWorkerTask(workerTasks);
+    const workflowSnapshot = buildWorkerWorkflowSnapshot({
+      task: latestWorkerTask,
+      workflowItemsByTask: options.workflowItemsByTask,
+      workflowPreviewByTask: options.workflowPreviewByTask,
+      t: options.t
+    });
     const workerStatus = resolveWorkerStatus(
       agentId,
       options.activeRoundMissions,
       workerOutputs,
       member?.idle === false ? 'running' : 'idle',
-      runtimeWorkerStatus
+      runtimeWorkerStatus,
+      workflowSnapshot.tone
     );
     const workerActive =
       workerTasks.some((task) => isActiveTaskStatus(task?.status)) ||
@@ -479,13 +515,6 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workerOverride = options.nodePositionOverrides[workerNodeId];
     const workerY = index * ROW_GAP;
     const threadShort = normalizeText(options.resolveWorkerThreadSessionId(agentId)).slice(0, 8) || '-';
-    const latestWorkerTask = pickLatestWorkerTask(workerTasks);
-    const workflowSnapshot = buildWorkerWorkflowSnapshot({
-      task: latestWorkerTask,
-      workflowItemsByTask: options.workflowItemsByTask,
-      workflowPreviewByTask: options.workflowPreviewByTask,
-      t: options.t
-    });
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
       includeEventFallback: true
     }).slice(0, 3);

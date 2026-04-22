@@ -179,14 +179,16 @@ const resetZoom = () => {
 
 .orchestration-artifact-preview-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
+  min-height: 30px;
 }
 
 .orchestration-artifact-preview-heading {
+  flex: 1 1 auto;
   min-width: 0;
-  padding-right: 12px;
+  padding-right: 8px;
 }
 
 .orchestration-artifact-preview-heading .messenger-modal-title {
@@ -198,50 +200,52 @@ const resetZoom = () => {
 .orchestration-artifact-preview-toolbar {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.42);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 10px 24px rgba(2, 6, 23, 0.16);
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .orchestration-artifact-preview-btn {
-  min-width: 38px;
-  min-height: 38px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   border: 0;
+  border-radius: 8px;
   outline: none;
   appearance: none;
-  background: rgba(226, 232, 240, 0.08);
+  background: transparent;
   box-shadow: none;
-  color: rgba(248, 250, 252, 0.94);
+  color: rgba(203, 213, 225, 0.82);
   transition:
     background-color 0.18s ease,
     color 0.18s ease,
-    transform 0.18s ease,
     opacity 0.18s ease;
 }
 
 .orchestration-artifact-preview-btn:hover:not(:disabled),
 .orchestration-artifact-preview-btn:focus-visible:not(:disabled) {
-  background: rgba(96, 165, 250, 0.2);
+  background: rgba(148, 163, 184, 0.12);
   color: #f8fafc;
-  transform: translateY(-1px);
 }
 
 .orchestration-artifact-preview-btn:disabled {
-  background: rgba(148, 163, 184, 0.04);
-  color: rgba(148, 163, 184, 0.42);
+  background: transparent;
+  color: rgba(148, 163, 184, 0.36);
   cursor: not-allowed;
 }
 
 .orchestration-artifact-preview-scale {
-  min-width: 72px;
-  padding: 0 14px;
-  font-weight: 700;
+  width: auto;
+  min-width: 44px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  background: rgba(56, 189, 248, 0.14);
+  color: rgba(226, 232, 240, 0.74);
 }
 
 .orchestration-artifact-preview-shell {
@@ -293,8 +297,7 @@ const resetZoom = () => {
 
 @media (max-width: 900px) {
   .orchestration-artifact-preview-header {
-    flex-direction: column;
-    align-items: stretch;
+    align-items: center;
   }
 
   .orchestration-artifact-preview-toolbar {

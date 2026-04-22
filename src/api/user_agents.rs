@@ -46,6 +46,12 @@ const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
+const DEFAULT_AGENT_DESCRIPTION: &str =
+    "我是wunder，很高兴帮助你，试着把整理资料，分析数据，写文章等工作交给我吧~";
+const DEFAULT_AGENT_SYSTEM_PROMPT: &str = "你是一个乐于助人的智能体";
+const DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART: &str = "绘制一个爱心到本地";
+const DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE: &str =
+    "用公文写作技能写一篇广州旅游攻略";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
 const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
@@ -2162,6 +2168,12 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     if config.name.trim().is_empty() {
         config.name = DEFAULT_AGENT_NAME.to_string();
     }
+    if config.description.trim().is_empty() {
+        config.description = DEFAULT_AGENT_DESCRIPTION.to_string();
+    }
+    if config.system_prompt.trim().is_empty() {
+        config.system_prompt = DEFAULT_AGENT_SYSTEM_PROMPT.to_string();
+    }
     if config.status.trim().is_empty() {
         config.status = DEFAULT_AGENT_STATUS.to_string();
     } else {
@@ -2183,6 +2195,16 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
         normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
+    if config.preset_questions.is_empty() {
+        config.preset_questions = default_agent_preset_questions();
+    }
+}
+
+fn default_agent_preset_questions() -> Vec<String> {
+    vec![
+        DEFAULT_AGENT_PRESET_QUESTION_DRAW_HEART.to_string(),
+        DEFAULT_AGENT_PRESET_QUESTION_TRAVEL_GUIDE.to_string(),
+    ]
 }
 
 async fn load_default_agent_config(
@@ -2220,13 +2242,13 @@ async fn build_default_agent_config(
     let now = now_ts();
     let mut config = DefaultAgentConfig {
         name: DEFAULT_AGENT_NAME.to_string(),
-        description: String::new(),
-        system_prompt: String::new(),
+        description: DEFAULT_AGENT_DESCRIPTION.to_string(),
+        system_prompt: DEFAULT_AGENT_SYSTEM_PROMPT.to_string(),
         ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
         tool_names,
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
-        preset_questions: Vec::new(),
+        preset_questions: default_agent_preset_questions(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
         icon: Some("avatar-046".to_string()),
