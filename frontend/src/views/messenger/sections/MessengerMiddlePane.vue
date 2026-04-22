@@ -979,11 +979,13 @@ import avatar016Url from '@/assets/agent-avatars/avatar-016.png';
 import type { PlazaBrowseKind } from '@/components/messenger/hivePlazaPanelState';
 import { useBeeroomStore } from '@/stores/beeroom';
 import { useAgentStore } from '@/stores/agents';
+import { useChatStore } from '@/stores/chat';
 import { runUnsavedChangesGuards } from '@/utils/unsavedChangesGuard';
 
 const { t } = useI18n();
 const beeroomStore = useBeeroomStore();
 const agentStore = useAgentStore();
+const chatStore = useChatStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 const swarmCreateVisible = ref(false);
 const swarmCreateSaving = ref(false);
@@ -1576,6 +1578,16 @@ function isBeeroomGroupRunning(group: Record<string, any> | null | undefined): b
   }
   if (isHotBeeroomMissionStatus(group?.latest_mission?.completion_status || group?.latest_mission?.status)) {
     return true;
+  }
+  const activeOrchestrationSessionId = String(group?.active_orchestration?.mother_session_id || '').trim();
+  if (activeOrchestrationSessionId) {
+    try {
+      if (chatStore.isSessionBusy(activeOrchestrationSessionId)) {
+        return true;
+      }
+    } catch {
+      // Ignore session snapshot lookup failures and keep the lighter mission fallback.
+    }
   }
   const groupId = normalizeBeeroomGroupId(group);
   if (!groupId || groupId !== String(selectedBeeroomGroupId || '').trim()) {

@@ -6383,8 +6383,31 @@ const hasHotBeeroomRuntimeState = computed(() => {
   if (Number(beeroomStore.activeGroup?.running_mission_total || 0) > 0) {
     return true;
   }
+  const activeOrchestrationSessionId = String(
+    beeroomStore.activeGroup?.active_orchestration?.mother_session_id || ''
+  ).trim();
+  if (activeOrchestrationSessionId) {
+    try {
+      if (chatStore.isSessionBusy(activeOrchestrationSessionId)) {
+        return true;
+      }
+    } catch {
+      // Keep mission-based hot detection as a safe fallback if busy lookup is unavailable.
+    }
+  }
   const groups = Array.isArray(beeroomStore.groups) ? beeroomStore.groups : [];
-  return groups.some((group) => Number(group?.running_mission_total || 0) > 0);
+  return groups.some((group) => {
+    if (Number(group?.running_mission_total || 0) > 0) {
+      return true;
+    }
+    const motherSessionId = String(group?.active_orchestration?.mother_session_id || '').trim();
+    if (!motherSessionId) return false;
+    try {
+      return chatStore.isSessionBusy(motherSessionId);
+    } catch {
+      return false;
+    }
+  });
 });
 
 const normalizeAgentUserRoundsKey = (value: unknown): string => {

@@ -418,6 +418,7 @@ const orchestrationPromptLanguage = ref('');
 const orchestrationDispatchPreparing = ref(false);
 const orchestrationDispatchStopRequested = ref(false);
 const orchestrationDispatchFlowToken = ref(0);
+const orchestrationExplicitStopRequested = ref(false);
 let orchestrationPromptLoadTask: Promise<OrchestrationPromptTemplates> | null = null;
 
 const ORCHESTRATION_PROMPT_TEMPLATE_KEYS = [
@@ -1484,6 +1485,7 @@ const handleSendToMother = async () => {
     if (orchestrationDispatchPreparing.value) {
       orchestrationDispatchStopRequested.value = true;
     }
+    orchestrationExplicitStopRequested.value = true;
     const pending = pendingRound.value;
     await stopOrchestrationDispatch();
     if (pending?.id) {
@@ -1505,6 +1507,7 @@ const handleSendToMother = async () => {
   const flowToken = beginOrchestrationDispatchFlow();
   let reservedRoundId = '';
   try {
+    orchestrationExplicitStopRequested.value = false;
     ensureOrchestrationDispatchFlowActive(flowToken);
     const state = await ensureRuntime();
     ensureOrchestrationDispatchFlowActive(flowToken);
@@ -1602,6 +1605,9 @@ const handleSendToMother = async () => {
       emit('refresh');
       reservedRoundId = '';
     } else {
+      if (sendResult?.status === 'stopped') {
+        return;
+      }
       if (reservedRoundId) {
         await discardPendingRound(reservedRoundId).catch(() => null);
         reservedRoundId = '';
@@ -1617,10 +1623,10 @@ const handleSendToMother = async () => {
     }
     clearStagedSituationDraft();
   } catch (error: any) {
-    if (reservedRoundId) {
+    if (reservedRoundId && orchestrationExplicitStopRequested.value) {
       await discardPendingRound(reservedRoundId, { clearSituation: false }).catch(() => null);
       reservedRoundId = '';
-    } else {
+    } else if (orchestrationExplicitStopRequested.value) {
       const pending = pendingRound.value;
       if (pending?.id) {
         await discardPendingRound(pending.id, { clearSituation: false }).catch(() => null);
@@ -1634,6 +1640,41 @@ const handleSendToMother = async () => {
     ElMessage.error(String(error?.message || t('common.requestFailed')));
   } finally {
     finishOrchestrationDispatchFlow(flowToken);
+  }
+};
+
+const maybeFinalizeRecoveredPendingRound = async () => {
+  const pending = pendingRound.value;
+  if (!pending?.id || roundIsCompleted(pending)) return;
+  if (!roundHasUserMessage(pending)) return;
+  const hasVisibleSessionMessage = activeRoundVisibleChatMessages.value.length > 0;
+  if (!hasVisibleSessionMessage) return;
+  if (orchestrationDispatchPreparing.value || composerSending.value) return;
+  if (motherSessionBusy.value) return;
+  if (activeRoundRunningMissions.value.length > 0 || latestRoundRunningMissions.value.length > 0) return;
+  if (liveDispatchPreviewIsBlocking.value) return;
+  if (orchestrationExplicitStopRequested.value) return;
+  try {
+    const finalizedRound = await finalizePendingRound(pending.id, {
+      situation: String(pending.situation || '').trim(),
+      userMessage: String(pending.userMessage || '').trim()
+    });
+    orchestrationWorkbenchDebug('send:recovered-finalize', {
+      pendingRoundId: pending.id,
+      finalizedRoundId: String(finalizedRound?.id || '').trim(),
+      finalizedRoundIndex: Number(finalizedRound?.index || 0)
+    });
+    const finalizedRoundIndex = Math.max(1, Number(finalizedRound?.index || pending.index || 1));
+    await createPreparedRoundAtIndex(finalizedRoundIndex + 1, '', { select: false });
+    if (finalizedRound?.id && String(activeRound.value?.id || '').trim() === pending.id) {
+      selectRound(finalizedRound.id);
+    }
+    emit('refresh');
+  } catch (error: any) {
+    orchestrationWorkbenchDebug('send:recovered-finalize:error', {
+      pendingRoundId: pending.id,
+      message: String(error?.message || '')
+    });
   }
 };
 
@@ -1691,6 +1732,24 @@ watch(
   displayChatMessages,
   (value) => {
     displayChatMessagesSeed.value = value;
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [
+    pendingRound.value?.id || '',
+    pendingRound.value?.finalizedAt || 0,
+    pendingRound.value?.userMessage || '',
+    composerSending.value,
+    motherSessionBusy.value,
+    activeDispatchPreviewStatus.value,
+    activeRoundRunningMissions.value.length,
+    latestRoundRunningMissions.value.length,
+    orchestrationDispatchPreparing.value
+  ].join('|'),
+  () => {
+    void maybeFinalizeRecoveredPendingRound();
   },
   { immediate: true }
 );

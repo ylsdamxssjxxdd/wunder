@@ -1768,13 +1768,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     });
   };
 
-  const applyFixedMotherDispatchSession = () => {
+  const applyFixedMotherDispatchSession = (options: { preserveLiveStatus?: boolean } = {}) => {
     const fixedSessionId = fixedMotherDispatchSessionId.value;
     const resolvedMotherAgentId = String(motherAgentId.value || '').trim();
     if (!fixedSessionId || !resolvedMotherAgentId) {
       return;
     }
     const previousSessionId = String(dispatchSessionId.value || '').trim();
+    const preserveLiveStatus = options.preserveLiveStatus === true;
     dispatchSessionId.value = fixedSessionId;
     dispatchTargetAgentId.value = resolvedMotherAgentId;
     dispatchTargetName.value = resolveAgentNameById(resolvedMotherAgentId);
@@ -1782,7 +1783,12 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (previousSessionId !== fixedSessionId) {
       dispatchLastEventId.value = 0;
       dispatchRequestId.value = '';
-      dispatchRuntimeStatus.value = 'idle';
+      if (
+        !preserveLiveStatus ||
+        !ACTIVE_CACHED_DISPATCH_RUNTIME_STATUSES.has(dispatchRuntimeStatus.value)
+      ) {
+        dispatchRuntimeStatus.value = 'idle';
+      }
       if (
         previousSessionId &&
         hasSessionScopedMessageFor(manualChatMessages.value, previousSessionId) &&
@@ -2799,6 +2805,29 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     restartChatPolling();
   };
 
+  const handleRuntimeScopeBindingChanged = () => {
+    const groupId = String(activeGroupId.value || '').trim();
+    const runtimeScopeKey = chatRuntimeScopeKey.value || (groupId ? `runtime:${groupId}` : '');
+    const cachedRealtimeCursor = Math.max(0, Number(readCachedChatState(runtimeScopeKey)?.realtimeCursor || 0));
+    chatMessagesClearedAfter.value = Number(
+      getBeeroomMissionCanvasState(chatClearScopeKey.value || (groupId ? `chat:${groupId}` : ''))?.chatClearedAfter || 0
+    );
+    chatRealtimeCursor.value = cachedRealtimeCursor;
+    clearDispatchMessageRefreshTimer();
+    pendingDispatchMessageRefresh = null;
+    clearSyncRequiredHistoryReloadTimer();
+    applyFixedMotherDispatchSession({ preserveLiveStatus: true });
+    void loadManualChatHistory();
+    logBeeroomRuntime('runtime-scope-binding-changed', {
+      groupId,
+      runtimeScopeKey,
+      fixedMotherDispatchSessionId: fixedMotherDispatchSessionId.value,
+      dispatchSessionId: dispatchSessionId.value,
+      runtimeStatus: dispatchRuntimeStatus.value,
+      cachedRealtimeCursor
+    });
+  };
+
   watch(
     activeGroupId,
     (groupId) => {
@@ -2832,9 +2861,16 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   });
 
   watch(
-    () => [chatRuntimeScopeKey.value, chatClearScopeKey.value, fixedMotherDispatchSessionId.value].join('|'),
+    () => [chatRuntimeScopeKey.value, chatClearScopeKey.value].join('|'),
     () => {
       handleActiveGroupChanged(activeGroupId.value);
+    }
+  );
+
+  watch(
+    fixedMotherDispatchSessionId,
+    () => {
+      handleRuntimeScopeBindingChanged();
     }
   );
 

@@ -45,6 +45,7 @@ import {
   normalizeOrchestrationText
 } from '@/components/orchestration/orchestrationShared';
 import {
+  roundHasCommittedContent,
   roundIsFinalized,
   stabilizeOrchestrationRoundSnapshots
 } from '@/components/orchestration/orchestrationRoundStateStability';
@@ -1083,6 +1084,16 @@ export const useOrchestrationRuntimeState = (options: {
       findLatestFormalRound(nextRoundsWithSituations) ||
       nextRoundsWithSituations[nextRoundsWithSituations.length - 1] ||
       null;
+    const existingPendingRoundId =
+      existing && normalizeText(existing.runId) === runId ? normalizeText(existing.pendingRoundId) : '';
+    const existingPendingRound =
+      existingPendingRoundId
+        ? nextRoundsWithSituations.find((item) => item.id === existingPendingRoundId) || null
+        : null;
+    const shouldKeepPendingRound =
+      Boolean(existingPendingRound) &&
+      !roundHasCommittedContent(existingPendingRound) &&
+      (normalizeText(existingPendingRound.userMessage) || Number(existing?.pendingMessageStartedAt || 0) > 0);
     const nextState =
       existing && normalizeText(existing.runId) === runId
         ? {
@@ -1100,9 +1111,9 @@ export const useOrchestrationRuntimeState = (options: {
             memberThreads,
             motherPrimerInjected:
               remoteState.mother_primer_injected === true || existing.motherPrimerInjected === true,
-            pendingRoundId: '',
-            pendingRoundCreated: false,
-            pendingMessageStartedAt: 0,
+            pendingRoundId: shouldKeepPendingRound ? existingPendingRoundId : '',
+            pendingRoundCreated: shouldKeepPendingRound ? existing.pendingRoundCreated === true : false,
+            pendingMessageStartedAt: shouldKeepPendingRound ? normalizeMsTime(existing.pendingMessageStartedAt) : 0,
             suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
           }
         : {
@@ -1118,6 +1129,9 @@ export const useOrchestrationRuntimeState = (options: {
             rounds: nextRoundsWithSituations,
             activeRoundId: nextActiveRound?.id || '',
             motherPrimerInjected: remoteState.mother_primer_injected === true,
+            pendingRoundId: '',
+            pendingRoundCreated: false,
+            pendingMessageStartedAt: 0,
             suppressedMessageRanges: remoteRoundState.suppressedMessageRanges
           };
     orchestrationDebugLog('apply-remote-state', {
