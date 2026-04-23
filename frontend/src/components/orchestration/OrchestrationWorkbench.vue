@@ -581,6 +581,15 @@ const normalizeSituationRound = (value: unknown) =>
 const resolveNextUserRoundIndex = (
   state: { rounds?: Array<{ index?: number; userMessage?: string; finalizedAt?: number }> } | null | undefined
 ) => {
+  const reusablePreparedRoundIndex = Math.min(
+    ...((Array.isArray(state?.rounds) ? state?.rounds : [])
+      .filter((round) => !String(round?.userMessage || '').trim() && Number(round?.finalizedAt || 0) <= 0)
+      .map((round) => Math.max(1, Number(round?.index || 0)))
+      .filter((value) => Number.isFinite(value) && value > 0))
+  );
+  if (Number.isFinite(reusablePreparedRoundIndex)) {
+    return Math.max(1, reusablePreparedRoundIndex);
+  }
   const formalRoundIndex = Math.max(
     0,
     ...(Array.isArray(state?.rounds) ? state.rounds : [])
@@ -1647,13 +1656,20 @@ const maybeFinalizeRecoveredPendingRound = async () => {
   const pending = pendingRound.value;
   if (!pending?.id || roundIsCompleted(pending)) return;
   if (!roundHasUserMessage(pending)) return;
+  if (orchestrationExplicitStopRequested.value) return;
+  if (
+    String(dispatchRuntimeStatus.value || '').trim().toLowerCase() === 'idle' &&
+    !composerSending.value &&
+    !motherSessionBusy.value
+  ) {
+    return;
+  }
   const hasVisibleSessionMessage = activeRoundVisibleChatMessages.value.length > 0;
   if (!hasVisibleSessionMessage) return;
   if (orchestrationDispatchPreparing.value || composerSending.value) return;
   if (motherSessionBusy.value) return;
   if (activeRoundRunningMissions.value.length > 0 || latestRoundRunningMissions.value.length > 0) return;
   if (liveDispatchPreviewIsBlocking.value) return;
-  if (orchestrationExplicitStopRequested.value) return;
   try {
     const finalizedRound = await finalizePendingRound(pending.id, {
       situation: String(pending.situation || '').trim(),

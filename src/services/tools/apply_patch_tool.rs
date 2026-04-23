@@ -595,7 +595,7 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
         return lines
             .iter()
             .filter(|line| line.trim() != "***")
-            .cloned()
+            .map(|line| strip_line_number_from_prefixed_line(line))
             .collect();
     }
     // Models may emit raw empty lines in Update hunks; treat them as context blank lines.
@@ -618,7 +618,7 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
                 if line.is_empty() {
                     " ".to_string()
                 } else {
-                    line.clone()
+                    strip_line_number_from_prefixed_line(line)
                 }
             })
             .collect();
@@ -652,6 +652,22 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
     repaired.extend(before.into_iter().map(|line| format!("-{line}")));
     repaired.extend(after.into_iter().map(|line| format!("+{line}")));
     repaired
+}
+
+fn strip_line_number_from_prefixed_line(line: &str) -> String {
+    let mut chars = line.chars();
+    let Some(prefix) = chars.next() else {
+        return line.to_string();
+    };
+    if !matches!(prefix, ' ' | '+' | '-') {
+        return line.to_string();
+    }
+    let body = chars.as_str();
+    let stripped = strip_display_line_number(body);
+    match stripped {
+        Some(content) => format!("{prefix}{content}"),
+        None => line.to_string(),
+    }
 }
 
 fn strip_display_line_number(raw: &str) -> Option<String> {
@@ -1392,6 +1408,81 @@ fn find_chunk_range(
     if let Some(start) = primary_matches.first().copied() {
         let end = start + old_lines.len();
         return ChunkRangeSearchResult::Found((start, end));
+    }
+
+    // Fallback: strip display line numbers from old_lines and retry matching.
+    let stripped_old: Vec<String> = old_lines
+        .iter()
+        .map(|line| strip_display_line_number(line).unwrap_or_else(|| line.clone()))
+        .collect();
+    if stripped_old != old_lines {
+        let stripped_matches = collect_chunk_match_starts(
+            source_lines,
+            &stripped_old,
+            search_start,
+            max_start,
+            chunk.end_of_file,
+        );
+        if let Some(start) = stripped_matches.first().copied() {
+            let end = start + stripped_old.len();
+            return ChunkRangeSearchResult::Found((start, end));
+        }
+        if search_start > 0 {
+            let fallback_end = search_start.saturating_sub(1).min(max_start);
+            let fallback_stripped = collect_chunk_match_starts(
+                source_lines,
+                &stripped_old,
+                0,
+                fallback_end,
+                chunk.end_of_file,
+            );
+            match fallback_stripped.len() {
+                0 => {}
+                1 => {
+                    let start = fallback_stripped[0];
+                    let end = start + stripped_old.len();
+                    return ChunkRangeSearchResult::Found((start, end));
+                }
+                matches => return ChunkRangeSearchResult::Ambiguous { matches },
+            }
+        }
+    }
+
+    // Fallback: fuzzy match by normalizing whitespace (trim leading/trailing).
+    let fuzzy_old: Vec<String> = old_lines.iter().map(|line| line.trim().to_string()).collect();
+    let fuzzy_source: Vec<String> = source_lines.iter().map(|line| line.trim().to_string()).collect();
+    if fuzzy_old != old_lines.iter().map(|l| l.trim().to_string()).collect::<Vec<_>>() {
+        let fuzzy_max_start = len.saturating_sub(old_lines.len());
+        let fuzzy_matches = collect_fuzzy_match_starts(
+            &fuzzy_source,
+            &fuzzy_old,
+            search_start,
+            fuzzy_max_start,
+            chunk.end_of_file,
+        );
+        if let Some(start) = fuzzy_matches.first().copied() {
+            let end = start + old_lines.len();
+            return ChunkRangeSearchResult::Found((start, end));
+        }
+        if search_start > 0 {
+            let fuzzy_fallback_end = search_start.saturating_sub(1).min(fuzzy_max_start);
+            let fuzzy_fallback = collect_fuzzy_match_starts(
+                &fuzzy_source,
+                &fuzzy_old,
+                0,
+                fuzzy_fallback_end,
+                chunk.end_of_file,
+            );
+            match fuzzy_fallback.len() {
+                0 => {}
+                1 => {
+                    let start = fuzzy_fallback[0];
+                    let end = start + old_lines.len();
+                    return ChunkRangeSearchResult::Found((start, end));
+                }
+                matches => return ChunkRangeSearchResult::Ambiguous { matches },
+            }
+        }
     }
 
     if search_start == 0 {

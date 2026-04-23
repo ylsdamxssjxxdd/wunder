@@ -2151,29 +2151,9 @@
     "en-US": "Programmatic tool call: write and run a temporary Python script when CLI commands are too many or fragile, or when structured processing is needed. The script is saved to ptc_temp in the workspace and executed immediately, returning stdout/stderr.",
     "zh-CN": "程序化工具调用：当 CLI 命令过多、解析脆弱或需要结构化处理时，编写并运行临时 Python 脚本。脚本会保存到工作区的 ptc_temp 目录并立即执行，返回 stdout/stderr。"
   },
-  "tool.spec.read.args.files": {
-    "en-US": "List of files to read, with optional line ranges.",
-    "zh-CN": "要读取的文件列表，可选指定行号范围。"
-  },
-  "tool.spec.read.args.files.end_line": {
-    "en-US": "Optional end line (inclusive). Must be greater than or equal to start_line.",
-    "zh-CN": "可选结束行（包含），且必须大于等于 start_line。"
-  },
-  "tool.spec.read.args.files.line_ranges": {
-    "en-US": "Optional list of inclusive line ranges. Each range must be ascending.",
-    "zh-CN": "可选的包含式行号范围列表；每个范围都必须按升序填写。"
-  },
-  "tool.spec.read.args.files.path": {
-    "en-US": "Path to a local plain-text file for targeted reading. Relative paths and current-workspace public paths like /workspaces/{user_id}/... are allowed. Do not invent pseudo roots such as /工作目录/...; if the file or heading is uncertain, use list_files/search_content first. Do not pass images or other binary files here.",
-    "zh-CN": "用于定点读取的本地纯文本文件路径。支持相对路径，也支持当前工作区的公开路径 `/workspaces/{user_id}/...`；不要虚构 `/工作目录/...` 这类伪根路径。文件或标题不确定时先用 list_files/search_content。不要在这里传入图片或其他二进制文件。"
-  },
-  "tool.spec.read.args.files.start_line": {
-    "en-US": "Optional start line (inclusive). If end_line is omitted, the tool reads a 200-line window starting here. Use end_line or offset+limit when you need a different window size.",
-    "zh-CN": "可选起始行（包含）。如果未提供 end_line，工具会从这里开始默认读取 200 行；需要不同窗口大小时请同时提供 end_line，或改用 offset+limit。"
-  },
   "tool.spec.read.description": {
-    "en-US": "Read targeted local plain-text excerpts. If the file or location is uncertain, use search_content first; prefer path with start_line/end_line or line_ranges; use mode=indentation only for indentation-based code blocks. Do not use it for images or binary files.",
-    "zh-CN": "定点读取本地纯文本片段。若不确定文件或位置，先用 search_content；常用 path + start_line/end_line 或 line_ranges；mode=indentation 仅用于按缩进读取代码块。不要用于图片或二进制文件。"
+    "en-US": "Read a local plain-text file, like cat. Only for text files (code, config, logs, markdown). For images use read_image. If the file location is uncertain, use list_files or search_content first.",
+    "zh-CN": "读取本地纯文本文件，类似 cat。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。文件位置不确定时先用 list_files 或 search_content。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",
@@ -2520,28 +2500,16 @@
     "zh-CN": "是否包含系统资源指标。"
   },
   "tool.spec.read.args.path": {
-    "en-US": "Path to a local plain-text file. Use it for targeted reads of code, config, logs, markdown, and similar text files; do not pass images or other binary files.",
-    "zh-CN": "本地纯文本文件路径。适合代码、配置、日志、Markdown 等定点读取；不要传图片或其他二进制文件。"
+    "en-US": "Path to a local plain-text file. Only for text files (code, config, logs, markdown). For images use read_image.",
+    "zh-CN": "本地纯文本文件路径。仅限文本文件（代码、配置、日志、Markdown）。图片请用 read_image。"
   },
   "tool.spec.read.args.start_line": {
-    "en-US": "Start line (inclusive). Usually used together with end_line.",
-    "zh-CN": "起始行（包含）。常与 end_line 一起使用。"
+    "en-US": "Start line (inclusive, 1-based). Omit to read from line 1.",
+    "zh-CN": "起始行（包含，从 1 开始）。省略则从第 1 行开始。"
   },
   "tool.spec.read.args.end_line": {
-    "en-US": "End line (inclusive). Must be greater than or equal to start_line.",
-    "zh-CN": "结束行（包含），必须大于等于 start_line。"
-  },
-  "tool.spec.read.args.line_ranges": {
-    "en-US": "Multiple line ranges. Each item is [start_line, end_line].",
-    "zh-CN": "多个行区间，每项为 [start_line, end_line]。"
-  },
-  "tool.spec.read.args.mode": {
-    "en-US": "Read mode: slice reads explicit line slices, indentation reads indentation-based code blocks.",
-    "zh-CN": "读取模式：slice 为按行切片，indentation 为按缩进读取代码块。"
-  },
-  "tool.spec.read.args.indentation": {
-    "en-US": "Indentation block options used when mode=indentation.",
-    "zh-CN": "mode=indentation 时使用的缩进块参数。"
+    "en-US": "End line (inclusive). Omit to read to end of file.",
+    "zh-CN": "结束行（包含）。省略则读到文件末尾。"
   },
   "tool.spec.subagent_control.args.parent_id": {
     "en-US": "Parent session id. list/status/wait default to the current session when omitted.",

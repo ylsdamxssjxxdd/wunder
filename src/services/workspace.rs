@@ -2,6 +2,7 @@
 use crate::core::atomic_write::atomic_write_text;
 use crate::i18n;
 use crate::path_utils::is_within_root;
+use crate::services::orchestration_context::filter_orchestration_suppressed_messages;
 use crate::storage::{
     normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
     USER_PRIVATE_CONTAINER_ID,
@@ -1109,7 +1110,13 @@ impl WorkspaceManager {
 
     pub fn load_history(&self, user_id: &str, session_id: &str, limit: i64) -> Result<Vec<Value>> {
         let limit = normalize_history_limit(limit);
-        self.storage.load_chat_history(user_id, session_id, limit)
+        let history = self.storage.load_chat_history(user_id, session_id, limit)?;
+        Ok(filter_orchestration_suppressed_messages(
+            self.storage.as_ref(),
+            user_id,
+            session_id,
+            history,
+        ))
     }
 
     pub fn load_history_page(
@@ -1122,8 +1129,15 @@ impl WorkspaceManager {
         if limit <= 0 {
             return Ok(Vec::new());
         }
-        self.storage
-            .load_chat_history_page(user_id, session_id, before_id, limit)
+        let history = self
+            .storage
+            .load_chat_history_page(user_id, session_id, before_id, limit)?;
+        Ok(filter_orchestration_suppressed_messages(
+            self.storage.as_ref(),
+            user_id,
+            session_id,
+            history,
+        ))
     }
 
     pub fn load_artifact_logs(

@@ -12,6 +12,10 @@ export type OrchestrationRoundSnapshot = {
   orchestrationId?: string;
 };
 
+type StabilizeRoundSnapshotOptions = {
+  preserveMissingPreview?: boolean;
+};
+
 const trimRoundText = (value: unknown) => String(value || '').trim();
 
 const normalizeRoundIndex = (value: unknown) => Math.max(1, Number(value || 0) || 0);
@@ -113,12 +117,14 @@ const mergeRoundPair = <T extends OrchestrationRoundSnapshot>(
 
 export const stabilizeOrchestrationRoundSnapshots = <T extends OrchestrationRoundSnapshot>(
   existingRounds: T[] | null | undefined,
-  remoteRounds: T[] | null | undefined
+  remoteRounds: T[] | null | undefined,
+  options: StabilizeRoundSnapshotOptions = {}
 ): T[] => {
   const existing = sortRounds(Array.isArray(existingRounds) ? existingRounds : []);
   const remote = sortRounds(Array.isArray(remoteRounds) ? remoteRounds : []);
   if (!remote.length) return existing;
   if (!existing.length) return remote;
+  const preserveMissingPreview = options.preserveMissingPreview !== false;
 
   const existingByIndex = indexByRoundIndex(existing);
   const remoteByIndex = indexByRoundIndex(remote);
@@ -156,7 +162,7 @@ export const stabilizeOrchestrationRoundSnapshots = <T extends OrchestrationRoun
     const preserveTrailingPreview = index > remoteMaxIndex && !roundHasCommittedContent(existingRound);
     const preserveMissingCommittedGap =
       roundHasCommittedContent(existingRound) && remoteLatestCommittedIndex > index;
-    if (preserveTrailingPreview || preserveMissingCommittedGap) {
+    if ((preserveMissingPreview && preserveTrailingPreview) || preserveMissingCommittedGap) {
       nextRounds.push(existingRound);
     }
   }

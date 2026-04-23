@@ -374,34 +374,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "type": "string",
                         "description": t("tool.spec.read.args.path")
                     },
-                    "files": {
-                        "type": "array",
-                        "description": t("tool.spec.read.args.files"),
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {
-                                    "type": "string",
-                                    "description": t("tool.spec.read.args.files.path")
-                                },
-                                "start_line": {
-                                    "type": "integer",
-                                    "description": t("tool.spec.read.args.files.start_line")
-                                },
-                                "end_line": {
-                                    "type": "integer",
-                                    "description": t("tool.spec.read.args.files.end_line")
-                                },
-                                "line_ranges": {
-                                    "type": "array",
-                                    "description": t("tool.spec.read.args.files.line_ranges"),
-                                    "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}
-                                }
-                            },
-                            "required": ["path"],
-                            "additionalProperties": false
-                        }
-                    },
                     "start_line": {
                         "type": "integer",
                         "description": t("tool.spec.read.args.start_line")
@@ -409,34 +381,9 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "end_line": {
                         "type": "integer",
                         "description": t("tool.spec.read.args.end_line")
-                    },
-                    "line_ranges": {
-                        "type": "array",
-                        "description": t("tool.spec.read.args.line_ranges"),
-                        "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["slice", "indentation"],
-                        "description": t("tool.spec.read.args.mode")
-                    },
-                    "indentation": {
-                        "type": "object",
-                        "description": t("tool.spec.read.args.indentation"),
-                        "properties": {
-                            "anchor_line": {"type": "integer", "minimum": 1},
-                            "max_levels": {"type": "integer", "minimum": 0},
-                            "include_siblings": {"type": "boolean"},
-                            "include_header": {"type": "boolean"},
-                            "max_lines": {"type": "integer", "minimum": 1}
-                        },
-                        "additionalProperties": false
                     }
                 },
-                "anyOf": [
-                    {"required": ["path"]},
-                    {"required": ["files"]}
-                ],
+                "required": ["path"],
                 "additionalProperties": false
             }),
         },
@@ -1428,33 +1375,28 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("plain-text"));
-        assert!(spec.description.contains("search_content"));
-        assert!(spec.description.contains("line_ranges"));
-        assert!(spec.description.contains("binary files"));
+        assert!(spec.description.contains("cat"));
+        assert!(spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("plain-text"));
-        assert!(path_description.contains("targeted"));
-        assert!(path_description.contains("binary"));
-        let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
-            .as_str()
-            .expect("start_line description");
-        assert!(start_line_description.contains("Start line"));
-        assert!(start_line_description.contains("end_line"));
-        assert!(spec.input_schema["properties"]["files"].is_object());
-        let files_description = spec.input_schema["properties"]["files"]["description"]
-            .as_str()
-            .expect("files description");
-        assert!(files_description.contains("List of files"));
+        assert!(path_description.contains("read_image"));
+        assert!(spec.input_schema["properties"]["start_line"].is_object());
+        assert!(spec.input_schema["properties"]["end_line"].is_object());
+        assert!(spec.input_schema["properties"]["files"].is_null());
+        assert!(spec.input_schema["properties"]["line_ranges"].is_null());
+        assert!(spec.input_schema["properties"]["mode"].is_null());
+        assert!(spec.input_schema["properties"]["indentation"].is_null());
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
-        assert!(spec.input_schema["anyOf"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["required"][0] == "path")));
-        assert!(spec.input_schema["anyOf"]
-            .as_array()
-            .is_some_and(|items| items.iter().any(|item| item["required"][0] == "files")));
+        assert!(spec.input_schema["anyOf"].is_null());
+        assert_eq!(
+            spec.input_schema["required"]
+                .as_array()
+                .map(|items| items.len()),
+            Some(1)
+        );
     }
 
     #[test]
@@ -1464,25 +1406,19 @@ mod tests {
             .find(|spec| spec.name == "读取文件")
             .expect("read_file spec");
         assert!(spec.description.contains("纯文本"));
-        assert!(spec.description.contains("search_content"));
-        assert!(spec.description.contains("line_ranges"));
-        assert!(spec.description.contains("二进制文件"));
+        assert!(spec.description.contains("cat"));
+        assert!(spec.description.contains("read_image"));
         let path_description = spec.input_schema["properties"]["path"]["description"]
             .as_str()
             .expect("path description");
         assert!(path_description.contains("纯文本"));
-        assert!(path_description.contains("定点"));
-        assert!(path_description.contains("二进制"));
-        let start_line_description = spec.input_schema["properties"]["start_line"]["description"]
-            .as_str()
-            .expect("start_line description");
-        assert!(start_line_description.contains("起始行"));
-        assert!(start_line_description.contains("end_line"));
-        assert!(spec.input_schema["properties"]["files"].is_object());
-        let files_description = spec.input_schema["properties"]["files"]["description"]
-            .as_str()
-            .expect("files description");
-        assert!(files_description.contains("文件列表"));
+        assert!(path_description.contains("read_image"));
+        assert!(spec.input_schema["properties"]["start_line"].is_object());
+        assert!(spec.input_schema["properties"]["end_line"].is_object());
+        assert!(spec.input_schema["properties"]["files"].is_null());
+        assert!(spec.input_schema["properties"]["line_ranges"].is_null());
+        assert!(spec.input_schema["properties"]["mode"].is_null());
+        assert!(spec.input_schema["properties"]["indentation"].is_null());
         assert!(spec.input_schema["properties"]["file_path"].is_null());
         assert!(spec.input_schema["properties"]["dry_run"].is_null());
     }
@@ -2089,10 +2025,8 @@ mod tests {
             read_spec.input_schema["additionalProperties"].as_bool(),
             Some(false)
         );
-        assert_eq!(
-            read_spec.input_schema["properties"]["indentation"]["additionalProperties"].as_bool(),
-            Some(false)
-        );
+        assert!(read_spec.input_schema["properties"]["indentation"].is_null());
+        assert!(read_spec.input_schema["properties"]["files"].is_null());
         assert!(read_spec.input_schema["properties"]["dry_run"].is_null());
 
         let read_image_spec = specs

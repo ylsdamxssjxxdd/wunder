@@ -292,6 +292,26 @@ const findLatestFormalRound = (rounds: OrchestrationRound[] | null | undefined) 
   }, null);
 };
 
+const findLatestCommittedRound = (rounds: OrchestrationRound[] | null | undefined) => {
+  const source = Array.isArray(rounds) ? rounds : [];
+  return source.reduce<OrchestrationRound | null>((latest, round) => {
+    if (!round || !roundHasCommittedContent(round)) return latest;
+    if (!latest) return round;
+    return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
+  }, null);
+};
+
+const findLatestMeaningfulRound = (rounds: OrchestrationRound[] | null | undefined) => {
+  const source = Array.isArray(rounds) ? rounds : [];
+  const committed = findLatestCommittedRound(source);
+  if (committed) return committed;
+  return source.reduce<OrchestrationRound | null>((latest, round) => {
+    if (!round) return latest;
+    if (!latest) return round;
+    return Number(round.index || 0) >= Number(latest.index || 0) ? round : latest;
+  }, null);
+};
+
 const resolveRoundUserMessageWindow = (
   rounds: OrchestrationRound[],
   targetRoundId: string,
@@ -936,20 +956,7 @@ export const useOrchestrationRuntimeState = (options: {
       })
     );
     if (!changed) return state;
-    const roundsSeed = [...state.rounds];
-    roundIndexes.forEach((roundIndex) => {
-      if (roundsSeed.some((round) => round.index === roundIndex)) return;
-      roundsSeed.push({
-        id: buildRoundId(roundIndex),
-        index: roundIndex,
-        situation: String(plannedSituations[String(roundIndex)] || '').trim(),
-        userMessage: '',
-        createdAt: Date.now(),
-        missionIds: []
-      });
-    });
-    roundsSeed.sort((left, right) => left.index - right.index);
-    const rounds = applyPlannedSituationsToRounds(roundsSeed, plannedSituations);
+    const rounds = applyPlannedSituationsToRounds([...state.rounds], plannedSituations);
     const activeRoundId = normalizeText(state.activeRoundId);
     const currentActiveRound = rounds.find((item) => item.id === activeRoundId) || rounds[rounds.length - 1] || null;
     return {
@@ -1051,7 +1058,9 @@ export const useOrchestrationRuntimeState = (options: {
     }));
     const nextRounds = remoteRounds.length
       ? existingMatchesRun
-        ? stabilizeOrchestrationRoundSnapshots(existingRounds, remoteRounds)
+        ? stabilizeOrchestrationRoundSnapshots(existingRounds, remoteRounds, {
+            preserveMissingPreview: false
+          })
         : remoteRounds
       : existingRounds.length
         ? existingRounds
@@ -1064,11 +1073,13 @@ export const useOrchestrationRuntimeState = (options: {
     const existingActiveRoundId =
       existing && normalizeText(existing.runId) === runId ? normalizeText(existing.activeRoundId) : '';
     const latestFormalRound = findLatestFormalRound(nextRounds);
+    const latestMeaningfulRound = findLatestMeaningfulRound(nextRounds);
     const retainedActiveRound =
       nextRounds.find((item) => item.id === existingActiveRoundId) || null;
     const activeRound =
       retainedActiveRound ||
       latestFormalRound ||
+      latestMeaningfulRound ||
       nextRounds[nextRounds.length - 1] ||
       null;
     const nextPlannedSituations = mergeRoundSituationsIntoPlanned(
@@ -1657,13 +1668,22 @@ export const useOrchestrationRuntimeState = (options: {
     });
     if (!nextState || !reservedRound) return reservedRound;
     await saveRoundSituationFile(nextState, reservedRound.index, normalizedSituation);
+    const pendingMessageStartedAt = Date.now();
     setRuntime({
       ...nextState,
+      rounds: nextState.rounds.map((item) =>
+        item.id === reservedRound.id
+          ? {
+              ...item,
+              createdAt: Number(reservedRound.createdAt || 0) > 0 ? Number(reservedRound.createdAt) : pendingMessageStartedAt
+            }
+          : item
+      ),
       currentSituation: normalizedSituation,
       activeRoundId: reservedRound.id,
       pendingRoundId: reservedRound.id,
       pendingRoundCreated: shouldCreateRound,
-      pendingMessageStartedAt: Date.now()
+      pendingMessageStartedAt
     });
     return reservedRound;
   };
@@ -1821,12 +1841,23 @@ export const useOrchestrationRuntimeState = (options: {
     const currentPendingId = normalizeText(current.pendingRoundId);
     const pendingMessageStartedAt = normalizeMsTime(current.pendingMessageStartedAt);
     const discardCompletedAt = Date.now();
-    const removeWholeRound =
-      clearSituation &&
+    const latestCommittedRound = findLatestCommittedRound(current.rounds);
+    const latestCommittedIndex = Math.max(0, Number(latestCommittedRound?.index || 0));
+    const roundIsLast = current.rounds[current.rounds.length - 1]?.id === resolvedRoundId;
+    const roundHasCommittedMessage = Boolean(normalizeText(round.userMessage));
+    const shouldRemoveAbortedPreviewRound =
       currentPendingId === resolvedRoundId &&
       current.pendingRoundCreated === true &&
-      normalizeText(round.userMessage) &&
-      current.rounds[current.rounds.length - 1]?.id === resolvedRoundId;
+      !roundIsFinalized(round) &&
+      Number(round.index || 0) > latestCommittedIndex &&
+      roundIsLast;
+    const removeWholeRound =
+      shouldRemoveAbortedPreviewRound ||
+      (clearSituation &&
+        currentPendingId === resolvedRoundId &&
+        current.pendingRoundCreated === true &&
+        roundHasCommittedMessage &&
+        roundIsLast);
     const nextRounds = removeWholeRound
       ? current.rounds.filter((item) => item.id !== resolvedRoundId)
       : current.rounds.map((item) =>
@@ -1845,12 +1876,16 @@ export const useOrchestrationRuntimeState = (options: {
         delete nextPlannedSituations[roundKey];
       }
     }
-    const fallbackRound = nextRounds.find((item) => item.id === current.activeRoundId) || nextRounds[nextRounds.length - 1] || null;
+    const fallbackRound =
+      nextRounds.find((item) => item.id === current.activeRoundId) ||
+      findLatestMeaningfulRound(nextRounds) ||
+      nextRounds[nextRounds.length - 1] ||
+      null;
     const response = await cancelBeeroomOrchestrationRound({
       group_id: groupId.value,
       round_id: resolvedRoundId,
-      message_started_at: pendingMessageStartedAt || undefined,
-      message_ended_at: discardCompletedAt,
+      message_started_at: pendingMessageStartedAt > 0 ? pendingMessageStartedAt / 1000 : undefined,
+      message_ended_at: discardCompletedAt > 0 ? discardCompletedAt / 1000 : undefined,
       remove_round: removeWholeRound
     });
     const remoteState = attachResponseRoundState(
@@ -1909,6 +1944,7 @@ export const useOrchestrationRuntimeState = (options: {
             : appliedState.plannedSituations,
           activeRoundId:
             (appliedRounds || appliedState.rounds).find((item) => item.id === fallbackRound?.id)?.id ||
+            findLatestMeaningfulRound(appliedRounds || appliedState.rounds)?.id ||
             appliedState.activeRoundId,
           pendingRoundId: '',
           pendingRoundCreated: false,
@@ -1930,42 +1966,19 @@ export const useOrchestrationRuntimeState = (options: {
           pendingMessageStartedAt: 0
         };
     setRuntime(nextState);
-    if (removeWholeRound) {
-      const motherId = normalizeText(current.motherAgentId);
-      const roundPath = ['orchestration', current.runId, buildRoundDirName(round.index)].filter(Boolean).join('/');
-      if (motherId && roundPath) {
-        await deleteWunderWorkspaceEntry({
-          agent_id: resolveWorkspaceAgentId(motherId),
-          path: roundPath
+    await Promise.all(
+      visibleWorkers.value.map((member) => {
+        const agentId = normalizeText(member?.agent_id);
+        const agentName = normalizeText(member?.name) || agentId;
+        if (!agentId) return Promise.resolve();
+        return deleteWunderWorkspaceEntry({
+          agent_id: resolveWorkspaceAgentId(agentId),
+          container_id: resolveWorkspaceContainerId(member),
+          path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
         }).catch(() => null);
-      }
-      await Promise.all(
-        visibleWorkers.value.map((member) => {
-          const agentId = normalizeText(member?.agent_id);
-          const agentName = normalizeText(member?.name) || agentId;
-          if (!agentId) return Promise.resolve();
-          return deleteWunderWorkspaceEntry({
-            agent_id: resolveWorkspaceAgentId(agentId),
-            container_id: resolveWorkspaceContainerId(member),
-            path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
-          }).catch(() => null);
-        })
-      );
-    } else {
-      await Promise.all(
-        visibleWorkers.value.map((member) => {
-          const agentId = normalizeText(member?.agent_id);
-          const agentName = normalizeText(member?.name) || agentId;
-          if (!agentId) return Promise.resolve();
-          return deleteWunderWorkspaceEntry({
-            agent_id: resolveWorkspaceAgentId(agentId),
-            container_id: resolveWorkspaceContainerId(member),
-            path: buildAgentArtifactPath(current.runId, round.index, agentName, agentId)
-          }).catch(() => null);
-        })
-      );
-      await saveRoundSituationFile(nextState, round.index, clearSituation ? '' : round.situation);
-    }
+      })
+    );
+    await saveRoundSituationFile(nextState, round.index, clearSituation ? '' : round.situation);
     return nextState.rounds.find((item) => item.id === nextState.activeRoundId) || null;
   };
 

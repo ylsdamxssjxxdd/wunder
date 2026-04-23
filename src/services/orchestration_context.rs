@@ -1707,6 +1707,51 @@ pub fn session_has_visible_history(
         .unwrap_or(false)
 }
 
+pub fn filter_orchestration_suppressed_messages(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    session_id: &str,
+    history: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
+    let cleaned_user_id = user_id.trim();
+    let cleaned_session_id = session_id.trim();
+    if cleaned_user_id.is_empty() || cleaned_session_id.is_empty() {
+        return history;
+    }
+    let Some(context) = load_session_context(storage, cleaned_user_id, cleaned_session_id) else {
+        return history;
+    };
+    let agent_id = context.mother_agent_id.trim();
+    if agent_id.is_empty() {
+        return history;
+    }
+    let Some((lock_state, binding)) =
+        active_orchestration_for_agent(storage, cleaned_user_id, agent_id)
+    else {
+        return history;
+    };
+    if binding.session_id.trim() != cleaned_session_id {
+        return history;
+    }
+    let Some(round_state) =
+        load_round_state(storage, cleaned_user_id, &lock_state.orchestration_id)
+    else {
+        return history;
+    };
+    history
+        .into_iter()
+        .filter(|item| {
+            let created_at = item
+                .get("created_at")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            !round_state.suppressed_message_ranges.iter().any(|range| {
+                created_at > 0.0 && created_at >= range.start_at && created_at <= range.end_at
+            })
+        })
+        .collect()
+}
+
 fn read_situation_file(
     workspace: &WorkspaceManager,
     workspace_id: &str,

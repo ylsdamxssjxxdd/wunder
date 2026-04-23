@@ -2907,7 +2907,11 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         if !is_agent_allowed_by_access(user_id, agent_access.as_ref(), &agent) {
             continue;
         }
-        ensure_swarm_agent_in_hive(&agent, &swarm_hive_id)?;
+        // Batch send should only validate the concrete requested targets.
+        // Unrelated agents from other hives must not poison the local lookup cache.
+        if !agent_in_hive(&agent, &swarm_hive_id) {
+            continue;
+        }
         agent_map.entry(agent.agent_id.clone()).or_insert(agent);
     }
 
@@ -12191,6 +12195,108 @@ PATCH"#;
             .expect("list team runs");
         assert_eq!(total, 0);
         assert!(runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_swarm_batch_send_ignores_other_hive_agents_during_prefetch() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("swarm-batch-send-cross-hive-prefetch.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let storage_backend: Arc<dyn StorageBackend> = storage.clone();
+
+        let parent_agent = sample_parent_agent_record();
+        let worker_agent = sample_agent_record();
+        let mut other_hive_agent = sample_agent_record();
+        other_hive_agent.agent_id = "agent_other_hive".to_string();
+        other_hive_agent.hive_id = "hive_other".to_string();
+        other_hive_agent.name = "other hive worker".to_string();
+        storage_backend
+            .upsert_user_agent(&parent_agent)
+            .expect("upsert parent agent");
+        storage_backend
+            .upsert_user_agent(&worker_agent)
+            .expect("upsert worker agent");
+        storage_backend
+            .upsert_user_agent(&other_hive_agent)
+            .expect("upsert other hive agent");
+
+        let mut parent_session = sample_chat_session_record(&parent_agent.agent_id);
+        parent_session.session_id = "sess_parent".to_string();
+        parent_session.tool_overrides = vec!["agent_swarm".to_string()];
+        storage_backend
+            .upsert_chat_session(&parent_session)
+            .expect("upsert parent session");
+
+        let mut worker_session = sample_chat_session_record(&worker_agent.agent_id);
+        worker_session.session_id = "sess_worker".to_string();
+        storage_backend
+            .upsert_chat_session(&worker_session)
+            .expect("upsert worker session");
+
+        let workspace_root = dir.path().join("workspace");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage_backend.clone(),
+            0,
+            &HashMap::new(),
+        ));
+        let lsp_manager = LspManager::new(workspace.clone());
+        let config = Config::default();
+        let a2a_store = A2aStore::default();
+        let skills = SkillRegistry::default();
+        let http = reqwest::Client::new();
+        let context = ToolContext {
+            user_id: "alice",
+            session_id: "sess_parent",
+            workspace_id: "workspace-test",
+            agent_id: Some("agent_parent"),
+            user_round: Some(1),
+            model_round: Some(1),
+            is_admin: false,
+            storage: storage_backend.clone(),
+            orchestrator: None,
+            monitor: None,
+            beeroom_realtime: None,
+            workspace,
+            lsp_manager,
+            config: &config,
+            a2a_store: &a2a_store,
+            skills: &skills,
+            gateway: None,
+            user_world: None,
+            cron_wake_signal: None,
+            user_tool_manager: None,
+            user_tool_bindings: None,
+            user_tool_store: None,
+            request_config_overrides: None,
+            allow_roots: None,
+            read_roots: None,
+            command_sessions: None,
+            event_emitter: None,
+            http: &http,
+        };
+
+        let err = agent_swarm_batch_send(
+            &context,
+            &json!({
+                "action": "batch_send",
+                "tasks": [{
+                    "session_id": "sess_worker",
+                    "agent_name": "wrong worker name",
+                    "message": "review this",
+                    "wait_seconds": 0
+                }]
+            }),
+        )
+        .await
+        .expect_err("cross-hive prefetch should not fail before target validation");
+
+        assert!(
+            err.to_string()
+                .contains("agent_swarm send agent_name does not match target session"),
+            "unexpected error: {err}"
+        );
     }
 
     #[tokio::test]

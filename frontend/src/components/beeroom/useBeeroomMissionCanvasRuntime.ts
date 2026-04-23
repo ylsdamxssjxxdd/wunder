@@ -834,6 +834,21 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     if (role !== 'user' && role !== 'assistant') {
       return null;
     }
+    const normalizeBooleanFlag = (flag: unknown) => {
+      if (flag === true) return true;
+      return String(flag || '').trim().toLowerCase() === 'true';
+    };
+    const hasPendingWorkflowItem = Array.isArray(payload.workflowItems)
+      ? payload.workflowItems.some((item) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            return false;
+          }
+          const status = String((item as Record<string, unknown>).status || '')
+            .trim()
+            .toLowerCase();
+          return status === 'loading' || status === 'pending' || status === 'running' || status === 'queued';
+        })
+      : false;
     const body = String(payload.content || '').trim();
     if (!body) return null;
     const timeMs = toSessionTimestampMs(
@@ -843,6 +858,17 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     const time = timeMs / 1000;
     const historyId = String(payload.history_id ?? payload.historyId ?? '').trim();
     const streamEventId = normalizeStreamEventId(payload.stream_event_id ?? payload.streamEventId);
+    if (
+      role === 'assistant' &&
+      !historyId &&
+      (streamEventId > 0 ||
+        normalizeBooleanFlag(payload.stream_incomplete ?? payload.streamIncomplete) ||
+        normalizeBooleanFlag(payload.workflowStreaming ?? payload.workflow_streaming) ||
+        normalizeBooleanFlag(payload.reasoningStreaming ?? payload.reasoning_streaming) ||
+        hasPendingWorkflowItem)
+    ) {
+      return null;
+    }
     const key =
       historyId ||
       (streamEventId > 0 ? `event:${streamEventId}` : `message:${role}:${Math.round(timeMs)}:${index}`);
@@ -939,11 +965,14 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     persistCachedChatState();
   };
 
-  const mergeRuntimeRelayChatMessages = (messages: MissionChatMessage[]) => {
-    if (!messages.length) return;
+  const reconcileRuntimeRelayChatMessages = (messages: MissionChatMessage[]) => {
+    const incoming = filterBeeroomRuntimeRelayMessagesAfter(messages, chatMessagesClearedAfter.value);
+    const preserved = runtimeRelayChatMessages.value.filter(
+      (message) => !String(message?.key || '').trim().startsWith('subagent:')
+    );
     const next = mergeBeeroomRuntimeRelayMessages(
-      runtimeRelayChatMessages.value,
-      filterBeeroomRuntimeRelayMessagesAfter(messages, chatMessagesClearedAfter.value),
+      preserved,
+      incoming,
       MANUAL_CHAT_HISTORY_LIMIT
     );
     if (!sameManualChatMessages(runtimeRelayChatMessages.value, next)) {
@@ -2539,6 +2568,11 @@ export const useBeeroomMissionCanvasRuntime = (options: {
       } else {
         await chatStore.preloadSessionDetail(sessionId, { force: true, syncActive: false }).catch(() => null);
       }
+      resetDispatchRuntime({
+        keepSession: true,
+        keepRuntimeStatus: false,
+        persist: true
+      });
       logBeeroomRuntime('dispatch-stop:done', {
         sessionId,
         force,
@@ -2708,7 +2742,7 @@ export const useBeeroomMissionCanvasRuntime = (options: {
     derivedSubagentMessageSignature,
     (signature, previousSignature) => {
       if (signature === previousSignature) return;
-      mergeRuntimeRelayChatMessages(derivedSubagentChatMessages.value);
+      reconcileRuntimeRelayChatMessages(derivedSubagentChatMessages.value);
       logBeeroomRuntime('derived-subagent-messages-changed', {
         messageCount: derivedSubagentChatMessages.value.length,
         persistedCount: runtimeRelayChatMessages.value.length,

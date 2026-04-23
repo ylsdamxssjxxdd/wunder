@@ -1561,8 +1561,17 @@ async fn reserve_orchestration_round(
         .max(history_user_round_index)
         .saturating_add(1)
         .max(1);
+    let can_reuse_requested_empty_round = round_state.rounds.iter().any(|round| {
+        round.index == normalized_target_index
+            && round.user_message.trim().is_empty()
+            && round.finalized_at <= 0.0
+    });
     if normalized_target_index < authoritative_next_index {
-        normalized_target_index = authoritative_next_index;
+        normalized_target_index = if can_reuse_requested_empty_round {
+            normalized_target_index
+        } else {
+            authoritative_next_index
+        };
     }
     if let Some(existing) = round_state
         .rounds
@@ -1605,11 +1614,15 @@ async fn reserve_orchestration_round(
         .iter_mut()
         .find(|round| round.index == normalized_target_index)
     {
+        let had_user_message = !existing.user_message.trim().is_empty();
         if !situation.is_empty() {
             existing.situation = situation;
         }
         if !user_message.is_empty() {
             existing.user_message = user_message;
+            if !had_user_message {
+                existing.created_at = now;
+            }
         }
         if existing.created_at <= 0.0 {
             existing.created_at = now;
@@ -1806,11 +1819,10 @@ async fn cancel_orchestration_round(
         .unwrap_or_default()
         .to_string();
     let target_round_index = payload.round_index.unwrap_or(0).max(0);
-    let start_at = payload.message_started_at.unwrap_or(0.0).max(0.0);
-    let end_at = payload
-        .message_ended_at
-        .unwrap_or_else(now_ts)
-        .max(start_at);
+    let start_at = normalize_timestamp_seconds(payload.message_started_at.unwrap_or(0.0)).max(0.0);
+    let end_at = normalize_timestamp_seconds(payload.message_ended_at.unwrap_or_else(now_ts))
+        .max(start_at)
+        .max(now_ts());
     let remove_round = payload.remove_round.unwrap_or(false);
     let mut cancelled_round: Option<OrchestrationRoundRecord> = None;
     if remove_round {
@@ -1843,16 +1855,28 @@ async fn cancel_orchestration_round(
         round.finalized_at = 0.0;
         cancelled_round = Some(round.clone());
     }
+    trim_trailing_empty_rounds(&mut round_state);
     if cancelled_round.is_none() {
         return Err(error_response(
             StatusCode::NOT_FOUND,
             "round not found".to_string(),
         ));
     }
-    if start_at > 0.0 {
-        round_state
-            .suppressed_message_ranges
-            .push(OrchestrationSuppressedMessageRange { start_at, end_at });
+    let suppression_start_at = cancelled_round
+        .as_ref()
+        .map(|round| round.created_at.max(0.0))
+        .filter(|value| *value > 0.0)
+        .unwrap_or(start_at)
+        .max(0.0);
+    if let Some(range) = resolve_cancelled_round_suppression_range(
+        state.storage.as_ref(),
+        &user_id,
+        &hive_state.mother_session_id,
+        &round_state,
+        suppression_start_at,
+        end_at,
+    ) {
+        round_state.suppressed_message_ranges.push(range);
         if round_state.suppressed_message_ranges.len() > 24 {
             let trim_from = round_state.suppressed_message_ranges.len() - 24;
             round_state.suppressed_message_ranges.drain(0..trim_from);
@@ -2625,13 +2649,36 @@ fn message_is_suppressed(round_state: &OrchestrationRoundState, created_at: f64)
         .any(|range| created_at >= range.start_at && created_at <= range.end_at)
 }
 
+fn trim_trailing_empty_rounds(round_state: &mut OrchestrationRoundState) {
+    while round_state.rounds.len() > 1 {
+        let should_remove = round_state.rounds.last().is_some_and(|round| {
+            round.user_message.trim().is_empty() && round.finalized_at <= 0.0
+        });
+        if !should_remove {
+            break;
+        }
+        round_state.rounds.pop();
+    }
+}
+
+fn normalize_timestamp_seconds(value: f64) -> f64 {
+    if !value.is_finite() || value <= 0.0 {
+        return 0.0;
+    }
+    let mut normalized = value;
+    while normalized >= 10_000_000_000.0 {
+        normalized /= 1000.0;
+    }
+    normalized.max(0.0)
+}
+
 fn is_round_formally_completed(round: &OrchestrationRoundRecord) -> bool {
     !round.user_message.trim().is_empty() && round.finalized_at > 0.0
 }
 
 fn parse_chat_message_time(value: &Value) -> f64 {
     if let Some(numeric) = value.as_f64() {
-        return numeric.max(0.0);
+        return normalize_timestamp_seconds(numeric);
     }
     if let Some(text) = value
         .as_str()
@@ -2639,13 +2686,73 @@ fn parse_chat_message_time(value: &Value) -> f64 {
         .filter(|text| !text.is_empty())
     {
         if let Ok(numeric) = text.parse::<f64>() {
-            return numeric.max(0.0);
+            return normalize_timestamp_seconds(numeric);
         }
         if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(text) {
             return (parsed.timestamp_millis() as f64 / 1000.0).max(0.0);
         }
     }
     0.0
+}
+
+fn resolve_cancelled_round_suppression_range(
+    storage: &dyn crate::storage::StorageBackend,
+    user_id: &str,
+    mother_session_id: &str,
+    round_state: &OrchestrationRoundState,
+    candidate_start_at: f64,
+    candidate_end_at: f64,
+) -> Option<OrchestrationSuppressedMessageRange> {
+    let normalized_start_at = normalize_timestamp_seconds(candidate_start_at).max(0.0);
+    let normalized_end_at = normalize_timestamp_seconds(candidate_end_at).max(normalized_start_at);
+    if normalized_end_at <= 0.0 {
+        return None;
+    }
+    let mut latest_user_created_at = 0.0;
+    if !mother_session_id.trim().is_empty() {
+        latest_user_created_at = storage
+            .load_chat_history(user_id.trim(), mother_session_id.trim(), None)
+            .ok()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|message| {
+                let role = message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase();
+                if role != "user" {
+                    return None;
+                }
+                let created_at = message
+                    .get("created_at")
+                    .map(parse_chat_message_time)
+                    .unwrap_or(0.0);
+                if created_at <= 0.0
+                    || created_at < normalized_start_at
+                    || created_at > normalized_end_at
+                    || message_is_suppressed(round_state, created_at)
+                {
+                    return None;
+                }
+                Some(created_at)
+            })
+            .max_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal))
+            .unwrap_or(0.0);
+    }
+    let resolved_start_at = if latest_user_created_at > 0.0 {
+        latest_user_created_at
+    } else {
+        normalized_start_at
+    };
+    if resolved_start_at <= 0.0 || normalized_end_at < resolved_start_at {
+        return None;
+    }
+    Some(OrchestrationSuppressedMessageRange {
+        start_at: resolved_start_at,
+        end_at: normalized_end_at,
+    })
 }
 
 fn count_mother_user_rounds(

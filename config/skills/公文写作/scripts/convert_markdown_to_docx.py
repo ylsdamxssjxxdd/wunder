@@ -39,6 +39,10 @@ CITATION_RE = re.compile(r"\[(\d{1,3})\]")
 REFERENCE_LINE_RE = re.compile(r"^\[\d{1,3}\]\s+")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 URL_PREFIXES = ("http://", "https://", "data:", "file:")
+INLINE_HEADING_SPLIT_RE = re.compile(r"([^\n])\s+(#{2,5}\s+)")
+DOCX_MARKDOWN_HEADING_RE = re.compile(r"^\s*#{2,5}\s+\S")
+DOCX_PIPE_TABLE_RE = re.compile(r"\|\s*[-:]{3,}\s*(?:\||$)")
+DOCX_FENCE_RE = re.compile(r"^\s*```")
 
 
 class PandocNotFoundError(RuntimeError):
@@ -844,6 +848,55 @@ def normalize_reference_entries(md_text: str) -> str:
         output.append(line)
 
     return "\n".join(output)
+
+
+def normalize_markdown_layout(md_text: str) -> str:
+    text = md_text.replace("\r\n", "\n").replace("\r", "\n")
+    text = INLINE_HEADING_SPLIT_RE.sub(r"\1\n\n\2", text)
+    lines = text.splitlines()
+    output: list[str] = []
+    in_code_block = False
+
+    def append_blank_line() -> None:
+        if output and output[-1] != "":
+            output.append("")
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if not in_code_block:
+                append_blank_line()
+            output.append(line)
+            in_code_block = not in_code_block
+            if not in_code_block:
+                append_blank_line()
+            continue
+        if in_code_block:
+            output.append(line)
+            continue
+        if stripped == "":
+            append_blank_line()
+            continue
+        if is_markdown_thematic_break(stripped):
+            append_blank_line()
+            continue
+        if HEADING_RE.match(stripped):
+            append_blank_line()
+            output.append(stripped)
+            append_blank_line()
+            continue
+        if is_table_row(stripped):
+            append_blank_line()
+            output.append(stripped)
+            continue
+        output.append(line)
+
+    normalized = "\n".join(output)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+    if normalized:
+        normalized += "\n"
+    return normalized
 
 
 def apply_heading_numbering(md_text: str, force_heading_numbering: bool) -> str:
@@ -2134,6 +2187,22 @@ def postprocess_docx(path: Path, args: argparse.Namespace, space_pt: float) -> N
     doc.save(path)
 
 
+def collect_docx_markdown_residue(path: Path) -> list[str]:
+    doc = Document(path)
+    issues: list[str] = []
+    for idx, paragraph in enumerate(doc.paragraphs, start=1):
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        if DOCX_MARKDOWN_HEADING_RE.match(text):
+            issues.append(f"paragraph {idx}: heading marker residue: {text[:80]}")
+        if DOCX_FENCE_RE.match(text):
+            issues.append(f"paragraph {idx}: code fence residue: {text[:80]}")
+        if DOCX_PIPE_TABLE_RE.search(text):
+            issues.append(f"paragraph {idx}: pipe table residue: {text[:80]}")
+    return issues
+
+
 def run_pandoc(
     pandoc: Optional[Path],
     input_path: Path,
@@ -2179,7 +2248,8 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     raw_text = input_path.read_text(encoding="utf-8-sig")
-    preprocessed_text = promote_ordered_list_headings(raw_text)
+    normalized_layout_text = normalize_markdown_layout(raw_text)
+    preprocessed_text = promote_ordered_list_headings(normalized_layout_text)
     try:
         normalized_text = apply_heading_numbering(
             preprocessed_text,
@@ -2258,6 +2328,13 @@ def main() -> int:
         except PermissionError:
             print(f"Output file is locked: {output_path}", file=sys.stderr)
             return 1
+
+    residue_issues = collect_docx_markdown_residue(output_path)
+    if residue_issues:
+        print("DOCX still contains Markdown residue:", file=sys.stderr)
+        for issue in residue_issues[:20]:
+            print(f"- {issue}", file=sys.stderr)
+        return 1
 
     print(f"Saved: {output_path}")
     return 0
