@@ -17,6 +17,7 @@ import {
   type SwarmProjectionEdge,
   type SwarmProjectionNode
 } from '@/components/beeroom/canvas/swarmCanvasModel';
+import { resolveBeeroomSwarmNodeStatus } from '@/components/beeroom/canvas/beeroomSwarmNodeStatus';
 import type { OrchestrationArtifactCard, OrchestrationRound } from '@/components/orchestration/orchestrationRuntimeState';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import {
@@ -105,51 +106,23 @@ const resolveNodeStatusLabel = (status: string, t: TranslationFn) => {
   return t('beeroom.status.unknown');
 };
 
-const resolveWorkflowToneRank = (tone: unknown) => {
-  const normalized = normalizeText(tone).toLowerCase();
-  if (normalized === 'loading') return 4;
-  if (normalized === 'failed') return 3;
-  if (normalized === 'completed') return 2;
-  if (normalized === 'pending') return 1;
-  return 0;
-};
-
-const resolveStatusFromWorkflowTone = (tone: unknown) => {
-  const normalized = normalizeText(tone).toLowerCase();
-  if (normalized === 'loading') return 'running';
-  if (normalized === 'failed') return 'failed';
-  if (normalized === 'completed') return 'completed';
-  return '';
-};
-
 const resolveWorkerStatus = (
-  workerId: string,
-  activeRoundMissions: BeeroomMission[],
-  workerOutputs: MissionChatMessage[],
+  workerTasks: BeeroomMissionTask[],
+  member: BeeroomMember | null | undefined,
   fallbackStatus: string,
   runtimeWorkerStatus: string,
   workflowTone: string
 ) => {
-  const workflowStatus = resolveStatusFromWorkflowTone(workflowTone);
-  const normalizedWorkerId = normalizeText(workerId);
-  const missionTaskStatus = activeRoundMissions
-    .flatMap((mission) => (Array.isArray(mission.tasks) ? mission.tasks : []))
-    .filter((task) => normalizeText(task?.agent_id) === normalizedWorkerId)
-    .map((task) => normalizeText(task?.status).toLowerCase())
-    .find(Boolean);
-  if (missionTaskStatus) {
-    if (
-      (missionTaskStatus === 'queued' || missionTaskStatus === 'pending' || missionTaskStatus === 'accepted' || missionTaskStatus === 'waiting') &&
-      resolveWorkflowToneRank(workflowTone) > resolveWorkflowToneRank('pending')
-    ) {
-      return workflowStatus || missionTaskStatus;
-    }
-    return missionTaskStatus;
-  }
-  if (workflowStatus) return workflowStatus;
-  if (runtimeWorkerStatus) return runtimeWorkerStatus;
-  if (workerOutputs.length) return 'completed';
-  return normalizeText(fallbackStatus).toLowerCase() || 'idle';
+  const missionStatus =
+    normalizeText(runtimeWorkerStatus).toLowerCase() ||
+    normalizeText(fallbackStatus).toLowerCase() ||
+    'idle';
+  return resolveBeeroomSwarmNodeStatus({
+    tasks: workerTasks,
+    member,
+    missionStatus,
+    workflowTailTone: workflowTone
+  });
 };
 
 const isTerminalMissionStatus = (value: unknown) =>
@@ -497,14 +470,7 @@ export const buildOrchestrationCanvasProjection = (options: {
       workflowPreviewByTask: options.workflowPreviewByTask,
       t: options.t
     });
-    const workerStatus = resolveWorkerStatus(
-      agentId,
-      options.activeRoundMissions,
-      workerOutputs,
-      member?.idle === false ? 'running' : 'idle',
-      runtimeWorkerStatus,
-      workflowSnapshot.tone
-    );
+    const workerStatus = resolveWorkerStatus(workerTasks, member, member?.idle === false ? 'running' : 'idle', runtimeWorkerStatus, workflowSnapshot.tone);
     const workerActive =
       workerTasks.some((task) => isActiveTaskStatus(task?.status)) ||
       workerStatus === 'running' ||
