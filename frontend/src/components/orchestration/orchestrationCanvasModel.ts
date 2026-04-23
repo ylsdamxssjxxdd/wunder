@@ -18,6 +18,7 @@ import {
   type SwarmProjectionNode
 } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { resolveBeeroomSwarmNodeStatus } from '@/components/beeroom/canvas/beeroomSwarmNodeStatus';
+import { resolveBeeroomSwarmWorkerShadowMatch } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import type { OrchestrationArtifactCard, OrchestrationRound } from '@/components/orchestration/orchestrationRuntimeState';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import {
@@ -123,6 +124,60 @@ const resolveWorkerStatus = (
     missionStatus,
     workflowTailTone: workflowTone
   });
+};
+
+const resolveWorkerShadowStatus = (
+  shadowItem: {
+    status?: unknown;
+    workflowItems?: unknown;
+  } | null | undefined,
+  fallbackStatus: string
+) => {
+  const baseStatus = resolveDispatchPreviewStatus(shadowItem?.status) || normalizeText(fallbackStatus).toLowerCase() || 'idle';
+  const workflowItems = Array.isArray(shadowItem?.workflowItems)
+    ? (shadowItem?.workflowItems as BeeroomWorkflowItem[])
+    : [];
+  const workflowTailStatus = normalizeText(workflowItems[workflowItems.length - 1]?.status).toLowerCase();
+  if (workflowTailStatus === 'loading' || workflowTailStatus === 'pending') {
+    return 'running';
+  }
+  if (['queued', 'pending', 'accepted', 'waiting', 'running', 'awaiting_idle', 'resuming'].includes(baseStatus)) {
+    return 'running';
+  }
+  return baseStatus || 'idle';
+};
+
+const buildWorkerShadowWorkflowLines = (
+  workerNodeId: string,
+  shadowItem: {
+    workflowItems?: unknown;
+    summary?: unknown;
+    assistantMessage?: unknown;
+    sessionId?: unknown;
+  } | null | undefined,
+  t: TranslationFn
+) => {
+  const workflowItems = Array.isArray(shadowItem?.workflowItems)
+    ? (shadowItem?.workflowItems as BeeroomWorkflowItem[])
+    : [];
+  const workflowLines = buildNodeWorkflowPreviewLines(workflowItems, {
+    includeEventFallback: true
+  }).slice(0, 3);
+  if (workflowLines.length > 0) {
+    return workflowLines;
+  }
+  const replyPreview = trimText(
+    shadowItem?.assistantMessage || shadowItem?.summary || '',
+    24
+  );
+  return [
+    {
+      key: `${workerNodeId}:shadow`,
+      main: t('orchestration.canvas.workerDispatchRunning'),
+      detail: replyPreview || t('beeroom.status.running'),
+      title: String(shadowItem?.sessionId || replyPreview || t('orchestration.canvas.workerDispatchRunning'))
+    }
+  ];
 };
 
 const isTerminalMissionStatus = (value: unknown) =>
@@ -387,6 +442,7 @@ export const buildOrchestrationCanvasProjection = (options: {
   const motherOverride = options.nodePositionOverrides[motherNodeId];
   const workerCenterY = options.visibleWorkers.length > 1 ? ((options.visibleWorkers.length - 1) * ROW_GAP) / 2 : 0;
   const runtimeWorkers = resolveRuntimeWorkers(runtimeDispatch, motherId);
+  const runtimeDispatchSubagents = Array.isArray(runtimeDispatch?.subagents) ? runtimeDispatch.subagents : [];
   options.activeRoundMissions.forEach((mission) => {
     const missionTasks = Array.isArray(mission?.tasks) ? mission.tasks : [];
     missionTasks.forEach((task) => {
@@ -470,7 +526,21 @@ export const buildOrchestrationCanvasProjection = (options: {
       workflowPreviewByTask: options.workflowPreviewByTask,
       t: options.t
     });
-    const workerStatus = resolveWorkerStatus(workerTasks, member, member?.idle === false ? 'running' : 'idle', runtimeWorkerStatus, workflowSnapshot.tone);
+    const workerShadowItem = resolveBeeroomSwarmWorkerShadowMatch({
+      workerAgentId: agentId,
+      tasks: workerTasks,
+      runtimeSubagents: runtimeDispatchSubagents
+    });
+    const baseWorkerStatus = resolveWorkerStatus(
+      workerTasks,
+      member,
+      member?.idle === false ? 'running' : 'idle',
+      runtimeWorkerStatus,
+      workflowSnapshot.tone
+    );
+    const workerStatus = workerShadowItem
+      ? resolveWorkerShadowStatus(workerShadowItem, baseWorkerStatus)
+      : baseWorkerStatus;
     const workerActive =
       workerTasks.some((task) => isActiveTaskStatus(task?.status)) ||
       workerStatus === 'running' ||
@@ -484,6 +554,9 @@ export const buildOrchestrationCanvasProjection = (options: {
     const workflowLines = buildNodeWorkflowPreviewLines(workflowSnapshot.items, {
       includeEventFallback: true
     }).slice(0, 3);
+    const effectiveWorkflowLines = workerShadowItem
+      ? buildWorkerShadowWorkflowLines(workerNodeId, workerShadowItem, options.t)
+      : workflowLines;
     nodes.push({
       id: workerNodeId,
       agentId,
@@ -512,17 +585,19 @@ export const buildOrchestrationCanvasProjection = (options: {
       height: NODE_HEIGHT,
       workflowTaskId: '',
       workflowTone:
-        workflowLines.length > 0
-          ? workflowSnapshot.tone
-          : workerStatus === 'completed' || workerStatus === 'success'
-            ? 'completed'
-            : workerStatus === 'failed'
-              ? 'failed'
-              : workerActive
-                ? 'loading'
-                : 'pending',
-      workflowLines: workflowLines.length
-        ? workflowLines
+        workerShadowItem
+          ? 'loading'
+          : workflowLines.length > 0
+            ? workflowSnapshot.tone
+            : workerStatus === 'completed' || workerStatus === 'success'
+              ? 'completed'
+              : workerStatus === 'failed'
+                ? 'failed'
+                : workerActive
+                  ? 'loading'
+                  : 'pending',
+      workflowLines: effectiveWorkflowLines.length
+        ? effectiveWorkflowLines
         : [
             ...(workerActive
               ? [
@@ -557,7 +632,11 @@ export const buildOrchestrationCanvasProjection = (options: {
       task_total: workerTasks.length,
       active_session_total: 1,
       updated_time: Number(options.activeRound?.createdAt || 0),
-      summary: workerOutputs[0]?.body || workflowLines[0]?.title || '',
+      summary:
+        normalizeText(workerShadowItem?.summary) ||
+        workerOutputs[0]?.body ||
+        effectiveWorkflowLines[0]?.title ||
+        '',
       entry_agent: false,
       parent_id: motherNodeId,
       emphasis: workerActive ? 'active' : 'default'
