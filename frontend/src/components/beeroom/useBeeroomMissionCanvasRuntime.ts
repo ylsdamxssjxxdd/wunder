@@ -43,6 +43,7 @@ import {
   resolveBeeroomSwarmScopeKey
 } from '@/components/beeroom/canvas/swarmCanvasModel';
 import { resolveBeeroomProjectedSubagentAvatarImage } from '@/components/beeroom/canvas/beeroomSwarmAvatarIdentity';
+import { isBeeroomSwarmWorkerShadowItem } from '@/components/beeroom/canvas/beeroomSwarmSubagentProjection';
 import {
   resolveNextBeeroomMotherDispatchSessionId,
   resolvePreferredBeeroomDispatchSessionId,
@@ -1908,6 +1909,9 @@ export const useBeeroomMissionCanvasRuntime = (options: {
   };
 
   const buildSubagentRuntimeMessages = (item: BeeroomMissionSubagentItem): MissionChatMessage[] => {
+    if (isBeeroomSwarmWorkerShadowItem(item)) {
+      return [];
+    }
     const messageTime = Number(item.updatedTime || 0);
     const childAgentId = String(item.agentId || '').trim();
     const fallbackSubagentName = options.t('beeroom.canvas.legendSubagent');
